@@ -118,6 +118,26 @@ public actor TunnelRunner {
     /// outlive the runtime it describes.
     public var boundPort: Int? { runtime?.boundPort }
 
+    /// The English sentence of the failure the state carries — the text the
+    /// `tunnel … failed` log line wrote — or `nil` whenever the state is not
+    /// `.failed`.
+    ///
+    /// Beside the state rather than in it: `TunnelState.failed` carries a
+    /// `TunnelFailureKind`, which holds no foreign error's text, and the App
+    /// translates that. The command line prints English and has no
+    /// diagnostic log a user reads, so `macscp-cli tunnels start` takes this
+    /// sentence instead — which keeps the detail a free-text
+    /// `TunnelFailure` payload carries (a `GatewayPorts` clause, "the server
+    /// did not answer the forwarding request") on its stderr, where the kind
+    /// alone would have said "the forward could not start listening".
+    public var failureReason: String? {
+        guard case .failed = state else { return nil }
+        return lastFailureReason
+    }
+
+    /// Written in the same actor step as the `.failed` state it describes.
+    private var lastFailureReason: String?
+
     public init(
         profile: TunnelProfile,
         connect: @escaping Connect,
@@ -262,7 +282,7 @@ public actor TunnelRunner {
         /// it back.
         case lost
         /// The run ends here. The ERROR travels, not its mapped text: the
-        /// state needs `DialSupport.reason(for:)`'s sentence and the log
+        /// state needs `DialSupport.failureKind(for:)`'s kind and the log
         /// line needs the error itself, because `DiagnosticLog
         /// .log(_:_:_:reason:)` is the only sanctioned way to write a
         /// `reason=` key and it takes an `Error`.
@@ -285,7 +305,8 @@ public actor TunnelRunner {
                 return
 
             case .failed(let error):
-                apply(.failed(reason: DialSupport.reason(for: error)))
+                lastFailureReason = DialSupport.reason(for: error)
+                apply(.failed(DialSupport.failureKind(for: error)))
                 log(.info, "tunnel \(profile.name) failed", reason: error)
                 return
 
@@ -298,10 +319,12 @@ public actor TunnelRunner {
                 apply(.connectionLost(reconnects: profile.reconnects))
                 guard case .reconnecting(let attempt) = state else {
                     // The plan routed the loss to `failed` — the profile
-                    // does not reconnect. Its own sentence, not one written
-                    // here, so the state and the line cannot disagree.
-                    if case .failed(let reason) = state {
-                        log(.info, "tunnel \(profile.name) failed \(reason)")
+                    // does not reconnect. The kind's own sentence, not one
+                    // written here, so the state and the line cannot
+                    // disagree.
+                    if case .failed(let kind) = state {
+                        lastFailureReason = kind.sentence
+                        log(.info, "tunnel \(profile.name) failed \(kind.sentence)")
                     }
                     return
                 }
@@ -533,9 +556,9 @@ public actor TunnelRunner {
     ///
     /// ONE line carries no `reason=` and cannot: the loss of a connection on
     /// a profile that does not reconnect. There is no error there — a
-    /// disconnect signal carries none — and the sentence is
-    /// `TunnelStatePlan`'s own `"connection lost"`, taken from the state the
-    /// plan just computed so that the line and the state cannot disagree.
+    /// disconnect signal carries none — and the sentence is the
+    /// `.connectionLost` kind's own, taken from the state the plan just
+    /// computed so that the line and the state cannot disagree.
     /// Inventing an error to wrap it would put a second spelling of that
     /// sentence in this file; recorded as a limit instead (Task 5 report,
     /// round 1).
@@ -548,8 +571,9 @@ public actor TunnelRunner {
     /// `DiagnosticLog.log(_:_:_:reason:)` is the ONLY sanctioned way that
     /// key is written: it runs `DialSupport.reason(for:)` itself, so no call
     /// site can format an unaudited one. The line's state counterpart runs
-    /// the same mapping on the same error, which is what keeps
-    /// `TunnelState.failed(reason:)` and the log line from ever disagreeing.
+    /// `DialSupport.failureKind(for:)` — the same switch — on the same error,
+    /// which is what keeps `TunnelState.failed` and the log line from ever
+    /// describing two different failures.
     private func log(
         _ level: DiagnosticLogLevel, _ message: @autoclosure @Sendable () -> String,
         reason error: any Error

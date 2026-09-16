@@ -24,6 +24,10 @@ public protocol ForegroundTunnel: Sendable {
     /// is up.
     var boundPort: Int? { get async }
 
+    /// The English sentence of the failure a `.failed` state carries, or
+    /// `nil` when the tunnel is not failed (`TunnelRunner.failureReason`).
+    var failureReason: String? { get async }
+
     /// Starts the tunnel. The decider answers for an UNKNOWN host key; a
     /// MISMATCH never reaches it.
     func start(decider: HostKeyDecider) async
@@ -204,14 +208,21 @@ public enum TunnelForegroundRun {
                 } else {
                     port = nil
                 }
-                output.line(TunnelStateLine.render(state, port: port, json: json))
+                // Read when the state arrives, like the port: a `failed`
+                // that has already moved on reads `nil`, and the kind's own
+                // sentence stands in.
+                var reason: String?
+                if case .failed = state { reason = await runner.failureReason }
+                output.line(TunnelStateLine.render(state, port: port, reason: reason, json: json))
                 if verbose, case .reconnecting(let attempt) = state {
                     output.note(backoffNote(attempt: attempt))
                 }
                 let failure = dialFailure.current
                 guard let terminal = TunnelExit.code(for: state, dialFailure: failure?.code)
                 else { continue }
-                if let note = TunnelExit.note(for: state, dialMessage: failure?.message) {
+                if let note = TunnelExit.note(
+                    for: state, dialMessage: failure?.message, reason: reason)
+                {
                     output.note(note)
                 }
                 code = terminal

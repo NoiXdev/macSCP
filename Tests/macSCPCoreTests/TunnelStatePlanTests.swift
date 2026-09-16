@@ -27,9 +27,9 @@ struct TunnelStatePlanTests {
         rows.append((.connecting, .connectionLost(reconnects: true), .reconnecting(attempt: 1)))
         rows.append(
             (.active(connections: 2), .connectionLost(reconnects: false),
-             .failed(reason: "connection lost")))
+             .failed(.connectionLost)))
         rows.append(
-            (.connecting, .connectionLost(reconnects: false), .failed(reason: "connection lost")))
+            (.connecting, .connectionLost(reconnects: false), .failed(.connectionLost)))
         rows.append((.reconnecting(attempt: 1), .retryDue, .connecting))
         rows.append((.reconnecting(attempt: 4), .retryDue, .connecting))
         rows.append(
@@ -42,14 +42,15 @@ struct TunnelStatePlanTests {
         // failing.
         rows.append(
             (.reconnecting(attempt: 1), .connectionLost(reconnects: false), .reconnecting(attempt: 2)))
-        rows.append((.stopped, .failed(reason: "x"), .failed(reason: "x")))
-        rows.append((.connecting, .failed(reason: "bind failed"), .failed(reason: "bind failed")))
-        rows.append((.active(connections: 1), .failed(reason: "y"), .failed(reason: "y")))
-        rows.append((.reconnecting(attempt: 2), .failed(reason: "z"), .failed(reason: "z")))
+        rows.append((.stopped, .failed(.unknown), .failed(.unknown)))
+        rows.append((.connecting, .failed(.bindFailed), .failed(.bindFailed)))
+        rows.append(
+            (.active(connections: 1), .failed(.portInUse(port: 8080)), .failed(.portInUse(port: 8080))))
+        rows.append((.reconnecting(attempt: 2), .failed(.connectionFailed), .failed(.connectionFailed)))
         rows.append((.connecting, .stop, .stopped))
         rows.append((.active(connections: 5), .stop, .stopped))
         rows.append((.reconnecting(attempt: 3), .stop, .stopped))
-        rows.append((.failed(reason: "x"), .stop, .stopped))
+        rows.append((.failed(.unknown), .stop, .stopped))
         rows.append((.stopped, .stop, .stopped))
         rows.append((.connecting, .needsConfirmation, .needsConfirmation))
         // A failed tunnel restarts from the context menu — the design says
@@ -59,7 +60,7 @@ struct TunnelStatePlanTests {
         // together with the runner clearing its own `task` when a run ends
         // by itself; before that, a terminal state could not be restarted at
         // all and the gap was invisible.
-        rows.append((.failed(reason: "bind failed"), .start, .connecting))
+        rows.append((.failed(.bindFailed), .start, .connecting))
         return rows
     }()
 

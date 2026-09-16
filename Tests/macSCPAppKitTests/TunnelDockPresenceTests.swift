@@ -68,7 +68,7 @@ struct TunnelDockPresenceTests {
         await rig.manager.start(profile, decider: Self.refusing)
         try await pollUntil("the badge counts the started forwarding") { tile.badge == "1" }
 
-        try rig.runner(profile).emit(.failed(reason: "port 8080 is in use"))
+        try rig.runner(profile).emit(.failed(.portInUse(port: 8080)))
         try await pollUntil("the badge marks the failure") { tile.badge == "!" }
 
         try rig.runner(profile).emit(.stopped)
@@ -205,7 +205,7 @@ struct TunnelDockPresenceTests {
             "a stopped, manual forwarding is listed in the Dock menu")
 
         await rig.manager.start(manual, decider: Self.refusing)
-        try rig.runner(manual).emit(.failed(reason: "port 8080 is in use"))
+        try rig.runner(manual).emit(.failed(.portInUse(port: 8080)))
         try await pollUntil("the badge marks the failure") { tile.badge == "!" }
 
         let listed = block.items()
@@ -218,8 +218,8 @@ struct TunnelDockPresenceTests {
         let entry = try #require(listed.first { $0.title == "manual" })
         #expect(entry.state == .off, "a failed forwarding is checked as though it were running")
         #expect(
-            entry.toolTip == "port 8080 is in use",
-            "the entry does not carry the audited failure reason verbatim")
+            entry.toolTip == TunnelProfilesSheet.stateLabel(.failed(.portInUse(port: 8080))),
+            "the entry does not carry the state's own translated label")
     }
 
     /// Nothing configured: the block says so rather than showing an empty

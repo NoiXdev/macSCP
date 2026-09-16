@@ -311,9 +311,8 @@ struct TunnelProfilesSheet: View {
                 Text(Self.autoStartLabel(profile.autoStart))
             }
             TableColumn(L10n.string("tunnel.column.state", "State")) { profile in
-                // The failure sentence is `DialSupport.reason(for:)`'s own,
-                // shown verbatim — re-mapping it here would put a second
-                // spelling of the same finding in the app.
+                // A failure is shown in the app's language: `stateLabel`
+                // translates the kind the state carries.
                 Text(Self.stateLabel(manager.state(of: profile.id)))
             }
             TableColumn(L10n.string("tunnel.column.action", "Action")) { profile in
@@ -533,20 +532,17 @@ struct TunnelProfilesSheet: View {
         }
     }
 
-    /// The state, as one line. `.failed` carries the sentence Core already
-    /// audited (`DialSupport.reason(for:)`) and it is shown as it is — the
-    /// hand-off from Task 5 is explicit that it must never be re-mapped.
+    /// The state, as one line, in the app's language.
     ///
-    /// **That sentence is English on every localized surface, by
-    /// construction**, and the four places it reaches are this column, the
-    /// autostart sheet's state column, the Dock menu's tooltip and the
-    /// sidebar glyph's tooltip. It cannot be localized from here: `TunnelState
-    /// .failed(reason:)` carries the rendered text and not the case it was
-    /// rendered from, so the App has nothing left to map — a translation
-    /// would have to guess the failure back out of its own message. Recorded
-    /// as a limit in the port-forwarding design and as a row in
-    /// `docs/BACKLOG.md` (Interface), whose fix shape is a typed failure on
-    /// the state, mapped through `L10n` here.
+    /// The four places it reaches are this column, the autostart sheet's
+    /// state column, the Dock menu's tooltip and the sidebar glyph's tooltip
+    /// — one function decides the text and four show it. A `.failed` state
+    /// carries a `TunnelFailureKind`, translated by `failureLabel(_:)`; until
+    /// 2026-09-16 it carried `DialSupport.reason(for:)`'s English sentence,
+    /// shown verbatim on all four, because the case it was rendered from was
+    /// gone by the time it got here (the BACKLOG row "A forwarding's failure
+    /// reason is English on four localized surfaces"). The English sentence
+    /// is still what the diagnostic log writes; it is never shown here.
     static func stateLabel(_ state: TunnelState) -> String {
         switch state {
         case .stopped: return L10n.string("tunnel.state.stopped", "Stopped")
@@ -561,10 +557,126 @@ struct TunnelProfilesSheet: View {
             return String(
                 format: L10n.string("tunnel.state.reconnecting %lld", "Reconnecting, attempt %lld"),
                 attempt)
-        case .failed(let reason): return reason
+        case .failed(let kind): return failureLabel(kind)
         case .needsConfirmation:
             return L10n.string(
                 "tunnel.state.needsConfirmation", "Connect this session once by hand")
+        }
+    }
+
+    /// The catalogue key of one failure kind: `tunnel.failure.<name>`, plus
+    /// ` %@` where the kind shows its payload. Exhaustive over
+    /// `TunnelFailureKind.Name`, so a kind added in Core does not compile
+    /// here until it has a key; `TunnelFailureLabelGuardTests` holds every
+    /// key to its name and to the catalogue.
+    static func failureKey(_ name: TunnelFailureKind.Name) -> String {
+        switch name {
+        case .hostKeyMismatch: return "tunnel.failure.hostKeyMismatch %@"
+        case .hostKeyNotAccepted: return "tunnel.failure.hostKeyNotAccepted"
+        case .authenticationFailed: return "tunnel.failure.authenticationFailed"
+        case .keyFileNotFound: return "tunnel.failure.keyFileNotFound %@"
+        case .keyPassphraseRequired: return "tunnel.failure.keyPassphraseRequired"
+        case .keyPassphraseRejected: return "tunnel.failure.keyPassphraseRejected"
+        case .keyUnparsable: return "tunnel.failure.keyUnparsable"
+        case .keyTypeNotLoadable: return "tunnel.failure.keyTypeNotLoadable %@"
+        case .keyPEMNotReadable: return "tunnel.failure.keyPEMNotReadable"
+        case .agentUnavailable: return "tunnel.failure.agentUnavailable"
+        case .agentHasNoIdentities: return "tunnel.failure.agentHasNoIdentities"
+        case .agentHasNoUsableIdentity: return "tunnel.failure.agentHasNoUsableIdentity"
+        case .agentRefusedEveryIdentity: return "tunnel.failure.agentRefusedEveryIdentity"
+        case .agentMisbehaved: return "tunnel.failure.agentMisbehaved"
+        case .keychainUnreadable: return "tunnel.failure.keychainUnreadable"
+        case .connectionFailed: return "tunnel.failure.connectionFailed"
+        case .serverAnswerUnusable: return "tunnel.failure.serverAnswerUnusable"
+        case .sessionUsesLoginSet: return "tunnel.failure.sessionUsesLoginSet %@"
+        case .sessionUsesJumpHost: return "tunnel.failure.sessionUsesJumpHost %@"
+        case .sessionIsNotSSH: return "tunnel.failure.sessionIsNotSSH %@"
+        case .sessionMissing: return "tunnel.failure.sessionMissing"
+        case .portInUse: return "tunnel.failure.portInUse %@"
+        case .bindFailed: return "tunnel.failure.bindFailed"
+        case .channelOpenFailed: return "tunnel.failure.channelOpenFailed"
+        case .connectFailed: return "tunnel.failure.connectFailed"
+        case .pumpFailed: return "tunnel.failure.pumpFailed"
+        case .alreadyStarted: return "tunnel.failure.alreadyStarted"
+        case .connectionLost: return "tunnel.failure.connectionLost"
+        case .unknown: return "tunnel.failure.unknown"
+        }
+    }
+
+    /// One failure kind in the app's language.
+    ///
+    /// Reads the kind's DATA — a host, a path, an algorithm, a session name,
+    /// a port — and never its English `sentence`, which is the log's; and
+    /// never a description of the kind itself, which would print a case
+    /// name. `TunnelFailureLabelGuardTests` holds both.
+    static func failureLabel(_ kind: TunnelFailureKind) -> String {
+        let key = failureKey(kind.name)
+        switch kind {
+        case .hostKeyMismatch(let host):
+            return String(format: L10n.string(key, "The host key of %@ has changed"), host)
+        case .hostKeyNotAccepted:
+            return L10n.string(key, "The host key was not accepted")
+        case .authenticationFailed:
+            return L10n.string(key, "Authentication failed")
+        case .keyFileNotFound(let path):
+            return String(format: L10n.string(key, "No key file at %@"), path)
+        case .keyPassphraseRequired:
+            return L10n.string(key, "The key needs a passphrase, and none is stored")
+        case .keyPassphraseRejected:
+            return L10n.string(key, "The key's passphrase is wrong")
+        case .keyUnparsable:
+            return L10n.string(key, "The key file could not be read")
+        case .keyTypeNotLoadable(let algorithm):
+            return String(format: L10n.string(key, "Keys of type %@ are not supported"), algorithm)
+        case .keyPEMNotReadable:
+            return L10n.string(key, "The PEM key uses a feature that is not supported")
+        case .agentUnavailable:
+            return L10n.string(key, "No SSH agent answered")
+        case .agentHasNoIdentities:
+            return L10n.string(key, "The SSH agent holds no keys")
+        case .agentHasNoUsableIdentity:
+            return L10n.string(key, "The SSH agent holds no key of a supported type")
+        case .agentRefusedEveryIdentity:
+            return L10n.string(key, "No key from the SSH agent was accepted")
+        case .agentMisbehaved:
+            return L10n.string(key, "The SSH agent did not answer as expected")
+        case .keychainUnreadable:
+            return L10n.string(key, "The Keychain could not be read")
+        case .connectionFailed:
+            return L10n.string(key, "Could not connect to the server")
+        case .serverAnswerUnusable:
+            return L10n.string(key, "The server sent an answer that could not be used")
+        case .sessionUsesLoginSet(let session):
+            return String(
+                format: L10n.string(
+                    key, "“%@” uses a login set; forwardings need the connection's own login"),
+                session)
+        case .sessionUsesJumpHost(let session):
+            return String(
+                format: L10n.string(key, "“%@” uses a jump host; forwardings cannot use one"),
+                session)
+        case .sessionIsNotSSH(let session, _):
+            return String(
+                format: L10n.string(key, "“%@” is not an SSH connection; forwardings need SSH"),
+                session)
+        case .sessionMissing:
+            return L10n.string(key, "The connection of this forwarding no longer exists")
+        case .portInUse(let port):
+            return String(format: L10n.string(key, "Port %@ is already in use"), String(port))
+        case .bindFailed:
+            return L10n.string(key, "The forwarding could not start listening")
+        case .channelOpenFailed:
+            return L10n.string(key, "The server did not open a channel for the forwarding")
+        case .connectFailed:
+            return L10n.string(key, "A connection for the forwarding failed")
+        case .pumpFailed:
+            return L10n.string(key, "A forwarded connection could not be set up")
+        case .alreadyStarted:
+            return L10n.string(key, "The forwarding had already been started")
+        case .connectionLost:
+            return L10n.string(key, "Connection lost")
+        case .unknown:
+            return L10n.string(key, "The forwarding failed")
         }
     }
 }

@@ -74,7 +74,7 @@ struct TunnelStatusPlanTests {
             TunnelGlyphPlan.glyph(states: [.active(connections: 0)])
                 == TunnelGlyphPlan.Glyph(tint: .green, text: "1"))
         #expect(
-            TunnelGlyphPlan.glyph(states: [.failed(reason: "port 8080 is in use")])
+            TunnelGlyphPlan.glyph(states: [.failed(.portInUse(port: 8080))])
                 == TunnelGlyphPlan.Glyph(tint: .red, text: "!"))
     }
 
@@ -82,7 +82,7 @@ struct TunnelStatusPlanTests {
     /// precedence the Dock badge has, because both read one aggregate.
     @Test func theWorstStatePicksTheColour() {
         let mixed: [TunnelState] = [
-            .active(connections: 2), .failed(reason: "the host refused the connection"),
+            .active(connections: 2), .failed(.connectionFailed),
         ]
         #expect(TunnelGlyphPlan.glyph(states: mixed)?.tint == .red)
         #expect(TunnelGlyphPlan.glyph(states: mixed)?.text == "!")
@@ -176,7 +176,7 @@ struct TunnelStatusPlanTests {
             profiles: [failed, waiting],
             state: { id in
                 id == failed.id
-                    ? .failed(reason: "the host refused the connection")
+                    ? .failed(.connectionFailed)
                     : .needsConfirmation
             })
 
@@ -200,7 +200,7 @@ struct TunnelStatusPlanTests {
     @Test func everyStateTheBadgeShoutsAboutIsListedInTheBlock() {
         let states: [TunnelState] = [
             .stopped, .connecting, .active(connections: 0), .reconnecting(attempt: 1),
-            .failed(reason: "the host refused the connection"), .needsConfirmation,
+            .failed(.connectionFailed), .needsConfirmation,
         ]
         for state in states {
             let manual = Self.profile("manual")

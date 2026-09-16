@@ -296,8 +296,8 @@ struct TunnelPresenceWiringGuardTests {
             "the forwarding glyph is gated on the sidebar's density")
     }
 
-    /// The tooltip shows the state's own sentence — for a failure, the reason
-    /// Core audited, shown verbatim. A row that re-mapped it would put a
+    /// The tooltip shows the state's own label — for a failure, its kind
+    /// translated by `stateLabel`. A row that mapped it again would put a
     /// second spelling of the same finding in the app.
     @Test func theTooltipReadsTheStateLabelRatherThanRewritingIt() throws {
         let sidebar = try Self.strict(Self.sidebarFile)
@@ -308,7 +308,7 @@ struct TunnelPresenceWiringGuardTests {
             "the glyph's tooltip no longer reads the state's own sentence")
         #expect(
             !tooltip.contains("case .failed"),
-            "the glyph's tooltip re-maps the failure reason instead of showing it verbatim")
+            "the glyph's tooltip maps the failure itself instead of reading stateLabel")
     }
 
     // MARK: - The login-item seam

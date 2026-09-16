@@ -1527,10 +1527,10 @@ private struct SessionRow: View {
         TunnelGlyphPlan.glyph(states: tunnelStates)
     }
 
-    /// The tooltip: the worst state's own sentence, which for a failure is
-    /// the reason Core already audited, shown verbatim. Re-mapping it here
-    /// would put a second spelling of the same finding in the app — the same
-    /// rule the profile sheet's state column follows.
+    /// The tooltip: the worst state's own label, which for a failure is its
+    /// kind in the app's language. Mapping it again here would put a second
+    /// spelling of the same finding in the app — the same rule the profile
+    /// sheet's state column follows, through the same `stateLabel`.
     private var tunnelTooltip: String {
         let worst = TunnelManager.Aggregate.of(tunnelStates).worst ?? .stopped
         return String(

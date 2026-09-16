@@ -72,9 +72,9 @@ final class TunnelStateCollector: @unchecked Sendable {
         }
     }
 
-    /// Any `.failed`, whatever its reason — the reason is a mapped sentence
-    /// this suite deliberately does not spell out, so a change to
-    /// `DialSupport.reason(for:)` does not rewrite these tests.
+    /// Any `.failed`, whatever its kind — the kind is a mapping this suite
+    /// deliberately does not spell out, so a change to
+    /// `DialSupport.failureKind(for:)` does not rewrite these tests.
     func waitForFailure() async throws {
         try await pollUntil("the runner to publish a failure") {
             self.consume {

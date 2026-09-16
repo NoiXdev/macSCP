@@ -143,12 +143,15 @@ public enum DialSupport {
     /// — `N` being the case index, whatever it is — which says nothing about
     /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
-    /// commonest SSH dial failures. Every arm below is an exhaustive
-    /// `switch` with no `default` — re-counted 2026-09-06: FIVE of them, over
-    /// `HostKeyError`, `SSHKeyError`, `AgentError`, `RemoteFSError` and
-    /// `TunnelFailure` (four until the port-forwarding plan's Task 5 added
-    /// the fifth) — so a case added to any of the five fails to compile here
-    /// until someone writes its sentence.
+    /// commonest SSH dial failures. Every enum arm below is an exhaustive
+    /// `switch` with no `default` — re-counted 2026-09-16: SIX of them, over
+    /// `HostKeyError`, `TunnelFailure`, `TunnelRefusal`, `SSHKeyError`,
+    /// `AgentError` and `RemoteFSError` (four until the port-forwarding
+    /// plan's Task 5 added `TunnelFailure`, five until the technical-backlog
+    /// plan's Task 6 added `TunnelRefusal`) — so a case added to any of the
+    /// six fails to compile here until someone writes its sentence and names
+    /// its kind. `KeychainError`, a struct with no cases, is the one arm that
+    /// is not a switch.
     ///
     /// `RemoteFSError` is spelled out too, and this comment used to argue
     /// the opposite — that every one of its cases carries strings this
@@ -167,7 +170,7 @@ public enum DialSupport {
     /// `TunnelFailure` is spelled out because it conforms to no
     /// `LocalizedError` either, and its generic rendering was measured on
     /// 2026-09-06 as the exact shape the paragraph above describes:
-    /// `portInUse(port: 8080)` reached `TunnelState.failed(reason:)` and the
+    /// `portInUse(port: 8080)` reached the tunnel's failed state and the
     /// `tunnel … failed reason=` line as "The operation couldn't be
     /// completed. (macSCPCore.TunnelFailure error 0.)" — the port, the one
     /// thing a person can act on, replaced by a case index.
@@ -177,9 +180,16 @@ public enum DialSupport {
     /// and the difference is where the text comes from. `RemoteFSError`'s
     /// free text is composed out of an endpoint the user typed;
     /// `TunnelFailure`'s is not composed out of user input at all. Counted
-    /// 2026-09-06 — 14 construction sites under `Sources/` carry a `reason:`,
-    /// and every one of them passes either this function's own output or a
-    /// fixed English sentence written in this repository: SEVEN pass
+    /// 2026-09-06 as 14 construction sites under `Sources/` that carry a
+    /// `reason:`. Recounted 2026-09-16 with `grep -rnE
+    /// '(bindFailed|channelOpenFailed|connectFailed|pumpFailed)\((reason:|\s*$)'
+    /// Sources/`, doc-comment lines and the case declarations dropped: 16 at
+    /// `9167f325` — the two that count had not listed were
+    /// `TunnelConnection`'s refusal, which passed `TunnelCarriers`' sentence,
+    /// and `TunnelManager`'s "no longer exists" literal — and 14 after both
+    /// became `TunnelRefusal` the same day. Every one of the 14 passes either
+    /// this function's own output or a fixed English sentence written in this
+    /// repository: SEVEN pass
     /// `DialSupport.reason(for:)` (or `CitadelFileSystem.bindReason(for:
     /// bind:)`, which is that plus a fixed clause naming `GatewayPorts`) —
     /// `CitadelFileSystem.openDirectTCPIP` and `withRemotePortForward`,
@@ -188,11 +198,18 @@ public enum DialSupport {
     /// pass a literal: `CitadelFileSystem`'s port-0 refusal,
     /// `LocalForwardListener`'s "the bound socket reports no port",
     /// `RemoteForward`'s two answer-bound sentences and its two "the forward
-    /// has been stopped", and `TunnelConnection`'s "port forwarding needs an
-    /// SSH session". A payload that is already this function's output must
+    /// has been stopped", and `TunnelConnection`'s "built a non-SSH
+    /// connection" sentence (named here as "port forwarding needs an SSH
+    /// session" until 2026-09-16, a sentence `Sources/` at `9167f325` held
+    /// only in this comment). A payload
+    /// that is already this function's output must
     /// not be re-mapped (that is `LocalForwardListener.acceptFailure`'s own
     /// argument, one layer down), and a payload that is a fixed sentence has
-    /// nothing to hide.
+    /// nothing to hide. The payload reaches the log and the command line's
+    /// stderr (`TunnelRunner.failureReason`) only — never the state:
+    /// `failureKind(for:)` names these four cases `bindFailed` …
+    /// `pumpFailed` and drops the text, because a payload built by this
+    /// function can be a foreign error's `localizedDescription`.
     ///
     /// Everything else — a `URLError`, an NIO or Citadel error — is reduced
     /// to `localizedDescription` and never `String(describing:)`, because
@@ -205,6 +222,28 @@ public enum DialSupport {
     /// the keys — the report for this task lists the ones these sentences
     /// need.
     public static func reason(for error: any Error) -> String {
+        classify(error).sentence
+    }
+
+    /// What a forwarding's failure IS, for `TunnelState.failed`: the kind,
+    /// from the same switch `reason(for:)` renders its sentence from, so the
+    /// state and the log line describe one failure.
+    ///
+    /// An error a forwarding's dial or start does not produce — a bucket
+    /// refusal, a path not found — is `.unknown`; its sentence is unchanged.
+    public static func failureKind(for error: any Error) -> TunnelFailureKind {
+        classify(error).kind
+    }
+
+    /// The one switch behind both. An arm whose kind carries everything its
+    /// sentence needs returns `known(_:)` — the sentence is then the kind's
+    /// own (`TunnelFailureKind.sentence`) and has no second spelling here.
+    /// An arm whose sentence carries text the kind must not hold (a
+    /// `TunnelFailure` payload, a path) names its kind beside the sentence.
+    private static func classify(_ error: any Error) -> (kind: TunnelFailureKind, sentence: String) {
+        func known(_ kind: TunnelFailureKind) -> (kind: TunnelFailureKind, sentence: String) {
+            (kind, kind.sentence)
+        }
         switch error {
         case let error as HostKeyError:
             switch error {
@@ -220,31 +259,46 @@ public enum DialSupport {
                 // `expected`/`presented` instead of calling this function,
                 // and keep showing both — they are shown only to the person
                 // deciding whether to trust the new key, never persisted.
-                return "host key MISMATCH for \(host): the presented key differs from the recorded one"
+                return known(.hostKeyMismatch(host: host))
             case .rejectedByUser:
-                return "the host key is not known to this app and was not accepted"
+                return known(.hostKeyNotAccepted)
             }
         case let error as TunnelFailure:
             switch error {
             case .portInUse(let port):
-                // The port is the whole finding: it is what the user has to
-                // free, or change in the profile.
-                return "port \(port) is already in use"
+                return known(.portInUse(port: port))
             case .bindFailed(let reason):
-                return reason
+                return (.bindFailed, reason)
             case .channelOpenFailed(let reason):
-                return reason
+                return (.channelOpenFailed, reason)
             case .connectFailed(let reason):
-                return reason
+                return (.connectFailed, reason)
             case .pumpFailed(let reason):
-                return reason
+                return (.pumpFailed, reason)
             case .alreadyStarted:
-                // Not a condition a user can be in: every forward type is
-                // single-use by contract and a reconnect builds a new one.
-                // A sentence rather than a case index, because if it ever
-                // does reach a person it should say what happened.
-                return "this forward has already been started"
+                return known(.alreadyStarted)
             }
+        case let error as TunnelRefusal:
+            // The refusals a stored session earns before anything is dialled.
+            // Each sentence names the session and the rule; none names a
+            // jump's host or a login set's contents.
+            switch error {
+            case .loginSet(let session):
+                return known(.sessionUsesLoginSet(session: session))
+            case .jumpHost(let session):
+                return known(.sessionUsesJumpHost(session: session))
+            case .notSSH(let session, let connectionKind):
+                return known(.sessionIsNotSSH(session: session, connectionKind: connectionKind))
+            case .sessionMissing:
+                return known(.sessionMissing)
+            }
+        case is KeychainError:
+            // The status code is dropped: `KeychainError` has no
+            // `LocalizedError` conformance, so the generic rendering was
+            // "The operation couldn't be completed. (macSCPCore.KeychainError
+            // error 1.)" — a case index where the finding is that the
+            // Keychain would not answer (BACKLOG, 2026-09-16).
+            return known(.keychainUnreadable)
         case let error as SSHKeyError:
             switch error {
             case .fileNotFound(let path):
@@ -253,11 +307,11 @@ public enum DialSupport {
                 // an artifact written to be pasted publicly. Kept because the
                 // whole finding is WHICH file is missing, and a login name is
                 // not a credential — but kept deliberately, not by accident.
-                return "no key file at \(path)"
+                return known(.keyFileNotFound(path: path))
             case .passphraseRequired:
-                return "the key is encrypted and no passphrase was available"
+                return known(.keyPassphraseRequired)
             case .wrongPassphrase:
-                return "the key's passphrase was rejected"
+                return known(.keyPassphraseRejected)
             case .unsupportedFormat:
                 // The payload is deliberately dropped. `SSHPrivateKeyLoader`
                 // builds it as `String(describing: error)` over Citadel's or
@@ -266,34 +320,34 @@ public enum DialSupport {
                 // properties. That is the rule this function states above,
                 // and this arm was the one place that broke it. Nothing a
                 // user can act on is lost: the file does not parse.
-                return "the key file could not be parsed"
+                return known(.keyUnparsable)
             case .typeNotLoadable(let algorithm):
-                return "this app cannot load a key of type \(algorithm)"
+                return known(.keyTypeNotLoadable(algorithm: algorithm))
             case .pemNotReadable:
                 // The payload is dropped, like `unsupportedFormat`'s above,
                 // though for the milder reason: it is one of the decoder's
                 // own constants, not a foreign error's description. The rule
                 // this function states is fixed sentences with no payload,
                 // and the connect form is where the feature gets named.
-                return "the key is a PEM file with a feature this app does not read"
+                return known(.keyPEMNotReadable)
             }
         case let error as AgentError:
             switch error {
             case .socketUnavailable:
-                return "no ssh-agent answered on SSH_AUTH_SOCK"
+                return known(.agentUnavailable)
             case .noIdentities:
-                return "the ssh-agent holds no identities"
+                return known(.agentHasNoIdentities)
             case .noUsableIdentities:
-                return "the ssh-agent holds no identity of a type this app can offer"
+                return known(.agentHasNoUsableIdentity)
             case .refused:
-                return "the ssh-agent refused every identity it offered"
+                return known(.agentRefusedEveryIdentity)
             case .protocolError:
                 // Dropped for the same reason, one step weaker: the agent is
                 // never handed the passphrase, but `SSHAgentClient` builds
                 // this payload as "\(error)" over a NIO error, and "no
                 // foreign error's description is printed by this module" is
                 // one rule rather than a judgement per error type.
-                return "the ssh-agent connection misbehaved"
+                return known(.agentMisbehaved)
             }
         case let error as RemoteFSError:
             switch error {
@@ -305,41 +359,41 @@ public enum DialSupport {
                 // `KEY:SECRET@`. Nothing a reader can act on is lost — the
                 // row already carries the endpoint, the duration and the
                 // step that failed.
-                return "the connection failed"
+                return known(.connectionFailed)
             case .authenticationFailed:
-                return "authentication failed"
+                return known(.authenticationFailed)
             case .jumpAuthenticationFailed:
-                return "authentication at the jump host failed"
+                return (.authenticationFailed, "authentication at the jump host failed")
             case .notFound(let path):
                 // Paths are kept: a path is this project's own string, it is
                 // what the finding IS, and the browser shows it already.
-                return "nothing at \(path)"
+                return (.unknown, "nothing at \(path)")
             case .permissionDenied(let path):
-                return "permission denied at \(path)"
+                return (.unknown, "permission denied at \(path)")
             case .protocolError:
                 // Dropped for the same reason as `connectionFailed`: the
                 // backends compose this text too, and a server's own message
                 // can quote the request line it refused.
-                return "the server answered something this app could not use"
+                return known(.serverAnswerUnusable)
             case .bucketListForbidden:
-                return "the key may not list the account's buckets"
+                return (.unknown, "the key may not list the account's buckets")
             case .bucketListEmpty:
-                return "the account has no buckets"
+                return (.unknown, "the account has no buckets")
             case .bucketLevelRefused(let operation, let path):
                 // The operation names itself through its `rawValue` — the
                 // same derivation `BucketLevelOperation.refusalMessageKey`
                 // uses for its catalogue key — rather than through the
                 // enum's description, so a renamed case carries this
                 // sentence with it.
-                return "\(operation.rawValue) is not available at the bucket list (\(path))"
+                return (.unknown, "\(operation.rawValue) is not available at the bucket list (\(path))")
             case .crossBucketRenameRefused:
                 // Both paths dropped. They are bucket-qualified paths and
                 // the finding is the refusal, not where it pointed; the
                 // browser knows what the user asked for.
-                return "a rename across buckets is refused"
+                return (.unknown, "a rename across buckets is refused")
             }
         default:
-            return (error as NSError).localizedDescription
+            return (.unknown, (error as NSError).localizedDescription)
         }
     }
 

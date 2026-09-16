@@ -96,7 +96,7 @@ struct TunnelMenuWiringGuardTests {
         let plan = SessionRowTunnelMenuPlan.build(
             for: session, profiles: [running, failed],
             state: { id in
-                id == running.id ? .active(connections: 1) : .failed(reason: "port 8080 is in use")
+                id == running.id ? .active(connections: 1) : .failed(.portInUse(port: 8080))
             })
 
         #expect(plan.entries.first(where: { $0.id == running.id })?.isRunning == true)

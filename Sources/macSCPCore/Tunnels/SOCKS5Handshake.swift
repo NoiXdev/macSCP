@@ -55,24 +55,26 @@ extension SOCKS5ReplyCode {
     /// |---|---|---|
     /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
     /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install` or `confirm` |
-    /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`, which refuses a session that cannot carry a forwarding (`TunnelCarriers.refusal`) before a listener exists; `RemoteForward`, which is not this path at all; and `TunnelManager`, for a profile whose session has been deleted. Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
+    /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     ///
     /// So in production **`01` is what every refusal produces**, `05` is
     /// waiting for a factory that distinguishes a refusal, and `04` is
-    /// produced by nothing. Recounted 2026-09-06 with `grep -rn "throw
-    /// TunnelFailure\." Sources/`: ELEVEN throw sites — `TunnelConnection
-    /// .swift:80` and `:92`, `LocalForwardListener.swift:179` and `:205`,
+    /// produced by nothing. Recounted 2026-09-16 with `grep -rn "throw
+    /// TunnelFailure\." Sources/`: NINE throw sites — `TunnelConnection
+    /// .swift:95`, `LocalForwardListener.swift:180` and `:206`,
     /// `RemoteForward.swift:132`, `:288` and `:322`,
-    /// `CitadelFileSystem.swift:1451`, `:1556` and `:1574`,
-    /// `TunnelManager.swift:521`. A `throw` is not the only way one is
+    /// `CitadelFileSystem.swift:1451`, `:1556` and `:1574`. ELEVEN on
+    /// 2026-09-06; the two that left were `TunnelConnection`'s refusal and
+    /// `TunnelManager`'s deleted session, which throw `TunnelRefusal` since
+    /// 2026-09-16. A `throw` is not the only way one is
     /// built, and the earlier clause here counted only two of the other
     /// ways. `grep -rn "func .* -> TunnelFailure" Sources/` finds FOUR
     /// helpers that RETURN one — the `func` in the pattern is load-bearing:
     /// the bare return type also matches this very sentence, and a count
     /// that reads its own comment is off by exactly the number of times it
-    /// is quoted — `LocalForwardListener.acceptFailure` (`:341`) and
-    /// `.bindFailure` (`:347`), `RemoteForward.startFailure` (`:344`) and
+    /// is quoted — `LocalForwardListener.acceptFailure` (`:342`) and
+    /// `.bindFailure` (`:348`), `RemoteForward.startFailure` (`:344`) and
     /// `.pairFailure` (`:349`) — and subtracting the throw sites from
     /// `grep -rn "TunnelFailure\." Sources/` (comment lines dropped) leaves
     /// THREE inline constructions: `RemoteForward.swift:155` and `:172`,

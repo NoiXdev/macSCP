@@ -144,8 +144,9 @@ struct CLITunnelForegroundRunTests {
 
         #expect(code == .connection)
         #expect(out.lines == ["connecting", "failed"])
-        #expect(out.notes.count == 1)
-        #expect(out.notes.first?.hasPrefix("Error: ") == true)
+        // The runner's own sentence — the free-text payload the kind drops —
+        // is what stderr carries, not the kind's summary.
+        #expect(out.notes == ["Error: port 8080 in use"])
     }
 
     /// A session with no secret this tool can reach is `needsConfirmation`,
@@ -272,10 +273,29 @@ struct CLITunnelForegroundRunTests {
                 verbose: false, dialFailure: record, output: out.output)
         }
         try await pollUntil("the run to start") { await tunnel.startCount == 1 }
-        tunnel.publish(.failed(reason: "the forward could not bind"))
+        await tunnel.publish(.failed(.bindFailed), reason: "the forward could not bind")
 
         #expect(try await run.result() == .connection)
         #expect(out.notes == ["Error: the forward could not bind"])
+    }
+
+    /// A `failed` whose runner has no sentence to give — its state already
+    /// moved on by the time the loop asks — says the kind's own English.
+    @Test func aFailureWithoutARunnerSentenceSaysTheKindsOwn() async throws {
+        let tunnel = ScriptedForegroundTunnel(boundPort: 8080)
+        let out = ForegroundOutputCollector()
+
+        let run = ForegroundRun {
+            await TunnelForegroundRun.drive(
+                runner: tunnel, stops: AsyncStream { _ in }, decider: .refusing, json: true,
+                verbose: false, dialFailure: TunnelDialFailureRecord(), output: out.output)
+        }
+        try await pollUntil("the run to start") { await tunnel.startCount == 1 }
+        await tunnel.publish(.failed(.portInUse(port: 8080)), reason: nil)
+
+        #expect(try await run.result() == .connection)
+        #expect(out.notes == ["Error: port 8080 is already in use"])
+        #expect(out.lines.last == #"{"reason":"port 8080 is already in use","state":"failed"}"#)
     }
 
     /// `drive` stops the tunnel before it returns, whatever the tunnel did
@@ -297,7 +317,7 @@ struct CLITunnelForegroundRunTests {
                 verbose: false, dialFailure: TunnelDialFailureRecord(), output: out.output)
         }
         try await pollUntil("the run to start") { await tunnel.startCount == 1 }
-        tunnel.publish(.failed(reason: "the forward could not bind"))
+        await tunnel.publish(.failed(.bindFailed), reason: "the forward could not bind")
         let code = try await run.result()
         let stops = await tunnel.stopEntered
         let finished = await tunnel.stopFinished
@@ -473,6 +493,8 @@ actor ScriptedForegroundTunnel: ForegroundTunnel {
 
     var boundPort: Int? { port }
 
+    private(set) var failureReason: String?
+
     func start(decider: HostKeyDecider) async {
         startCount += 1
         continuation.yield(.connecting)
@@ -485,7 +507,11 @@ actor ScriptedForegroundTunnel: ForegroundTunnel {
         continuation.yield(.stopped)
     }
 
-    nonisolated func publish(_ state: TunnelState) {
+    /// Publishes `state`, with `reason` as the sentence `failureReason`
+    /// answers — set in the same actor step, the way `TunnelRunner` writes
+    /// both.
+    func publish(_ state: TunnelState, reason: String?) {
+        failureReason = reason
         continuation.yield(state)
     }
 }

@@ -413,9 +413,9 @@ struct TunnelManagerTests {
         await rig.manager.start(profile, decider: Self.accepting)
         try await pollUntil("the tunnel is active") { rig.manager.runningCount == 1 }
 
-        try rig.runner(profile).emit(.failed(reason: "port 8080 is already in use"))
+        try rig.runner(profile).emit(.failed(.portInUse(port: 8080)))
         try await pollUntil("the failure reached the manager") {
-            rig.manager.state(of: profile.id) == .failed(reason: "port 8080 is already in use")
+            rig.manager.state(of: profile.id) == .failed(.portInUse(port: 8080))
         }
         #expect(rig.manager.runningCount == 0)
     }
@@ -437,11 +437,11 @@ struct TunnelManagerTests {
 
         let failing = TunnelManager.Aggregate.of([
             .active(connections: 1), .reconnecting(attempt: 1),
-            .failed(reason: "port 8080 is already in use"),
+            .failed(.portInUse(port: 8080)),
         ])
         #expect(failing.active == 1)
         #expect(
-            failing.worst == .failed(reason: "port 8080 is already in use"),
+            failing.worst == .failed(.portInUse(port: 8080)),
             "a failure must outrank a reconnect — the glyph's colour is the worst state")
     }
 

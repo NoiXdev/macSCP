@@ -88,10 +88,15 @@ public enum TunnelState: Sendable, Equatable {
     case connecting
     case active(connections: Int)
     case reconnecting(attempt: Int)
-    /// `reason` is always the MAPPED text — the same rule the diagnostic
-    /// log's `reason=` follows (`DiagnosticLog.log(_:_:_:reason:)`'s doc
-    /// comment) — never a raw error's description and never a secret.
-    case failed(reason: String)
+    /// Why, as a value: the kind and the data a sentence needs, never the
+    /// sentence. The App translates it (`TunnelProfilesSheet.stateLabel`);
+    /// the diagnostic log writes the English sentence from the same switch
+    /// (`DialSupport.failureKind(for:)` / `reason(for:)`). No raw error's
+    /// description and no secret — see `TunnelFailureKind`.
+    ///
+    /// Not persisted: `TunnelState` is not `Codable`, and `TunnelStore`
+    /// writes profiles only.
+    case failed(TunnelFailureKind)
     /// Autostart met an unknown host key or a session with no stored secret
     /// and refused rather than prompt (the `.refusing` host-key decider).
     /// Resolved only by connecting the session once, by hand, in a window.

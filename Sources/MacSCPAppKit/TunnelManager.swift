@@ -683,11 +683,9 @@ final class TunnelManager {
     /// The session is looked up at DIAL time, not here: a profile outlives
     /// any particular read of `sessions-v2.json`, and a reconnect an hour
     /// later must use the session as it stands then. A profile whose session
-    /// is gone fails with a sentence rather than a case index — the same
-    /// rule every other `TunnelFailure.connectFailed(reason:)` in this
-    /// project follows (`DialSupport.reason(for:)` passes those payloads
-    /// through because they are fixed English written here, never composed
-    /// out of what a user typed).
+    /// is gone fails with `TunnelRefusal.sessionMissing` — a kind the state
+    /// carries and the App translates, and whose English sentence the
+    /// diagnostic log writes (`DialSupport.reason(for:)`).
     ///
     /// The stores are the App's own, all four rooted at
     /// `SessionStore.defaultDirectory`: the sessions, the known hosts, the
@@ -728,8 +726,7 @@ final class TunnelManager {
         let sessionID = profile.sessionID
         return TunnelRunner(profile: profile, connect: { decider in
             guard let session = (try? sessions.all())?.first(where: { $0.id == sessionID }) else {
-                throw TunnelFailure.connectFailed(
-                    reason: "the connection this forwarding belongs to no longer exists")
+                throw TunnelRefusal.sessionMissing
             }
             return try await TunnelConnection.connect(
                 session: session,

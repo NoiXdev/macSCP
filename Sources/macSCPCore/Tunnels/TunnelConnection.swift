@@ -20,9 +20,9 @@ import NIOCore
 /// What that mapping refuses, it refuses here too — a session bound to a
 /// login set, and a session that dials through a jump host — plus the one
 /// refusal that is the tunnel's own: a session that is not SSH. All three are
-/// `TunnelCarriers.refusal(for:)`'s sentences, asked once at the top of
-/// `connect` rather than worded again here, so the text the command line
-/// prints before dialling and the text a failed dial reports cannot say
+/// `TunnelCarriers.refusalError(for:)`'s `TunnelRefusal`, asked once at the
+/// top of `connect` rather than decided again here, so the text the command
+/// line prints before dialling and the text a failed dial reports cannot say
 /// different things about the same rule. Lifting the first two needs
 /// `LoginResolver` plus the stores the App layer holds, which is a decision
 /// for the task that wires the App up, not a silent guess made here.
@@ -56,7 +56,10 @@ public enum TunnelConnection {
         // on one, and refusing first keeps a Keychain prompt off a session
         // that could not carry a forwarding anyway.
         //
-        // A `TunnelFailure` raised before any transport exists. Two of the
+        // A `TunnelRefusal` raised before any transport exists — typed, so
+        // `TunnelState.failed` carries which rule refused rather than a
+        // sentence the App could not translate. It was a
+        // `TunnelFailure.connectFailed(reason:)` until 2026-09-16. Two of the
         // three rules would otherwise come back from
         // `StoredSessionConnectionConfig.build` as
         // `StoredSessionConnectionError`, whose sentences say "the CLI does
@@ -66,7 +69,7 @@ public enum TunnelConnection {
         // `TunnelState.needsConfirmation` (`TunnelRunner.needsAPerson` reads
         // `.secretRequired` and `HostKeyError.rejectedByUser`, and nothing
         // else), so nothing downstream loses an answer by their arriving
-        // typed as a `TunnelFailure`.
+        // typed as a `TunnelRefusal`.
         //
         // ONE case did change answer, and deliberately: a session that is
         // refused here AND has no stored secret used to reach `build`'s
@@ -76,8 +79,8 @@ public enum TunnelConnection {
         // connecting a WebDAV session by hand, or resolving a jump host's
         // login, does not make it able to carry a forwarding, so inviting
         // the user to try was inviting a loop.
-        if let refusal = TunnelCarriers.refusal(for: session) {
-            throw TunnelFailure.connectFailed(reason: refusal)
+        if let refusal = TunnelCarriers.refusalError(for: session) {
+            throw refusal
         }
         let secret = try SecretResolver(sources: secrets).resolve(for: session.id)
         let config = try StoredSessionConnectionConfig.build(for: session, secret: secret?.value)

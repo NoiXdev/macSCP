@@ -26,7 +26,7 @@ struct CLITunnelStartRenderingTests {
         .connecting,
         .active(connections: 0),
         .reconnecting(attempt: 2),
-        .failed(reason: "connection refused"),
+        .failed(.connectionFailed),
         .needsConfirmation,
     ]
 
@@ -39,7 +39,7 @@ struct CLITunnelStartRenderingTests {
         (TunnelState.active(connections: 3), "active connections=3"),
         (TunnelState.reconnecting(attempt: 1), "reconnecting attempt=1"),
         (TunnelState.reconnecting(attempt: 4), "reconnecting attempt=4"),
-        (TunnelState.failed(reason: "connection refused"), "failed"),
+        (TunnelState.failed(.connectionFailed), "failed"),
         (TunnelState.needsConfirmation, "needs confirmation"),
     ])
     func theTextLineNamesTheStateAndItsNumbers(state: TunnelState, expected: String) {
@@ -86,8 +86,8 @@ struct CLITunnelStartRenderingTests {
             TunnelStateJSONLine(state: "reconnecting", attempt: 3)
         ),
         (
-            TunnelState.failed(reason: "connection refused"),
-            TunnelStateJSONLine(state: "failed", reason: "connection refused")
+            TunnelState.failed(.connectionFailed),
+            TunnelStateJSONLine(state: "failed", reason: "the connection failed")
         ),
         (TunnelState.needsConfirmation, TunnelStateJSONLine(state: "needsConfirmation")),
     ])
@@ -96,6 +96,16 @@ struct CLITunnelStartRenderingTests {
     ) throws {
         let line = TunnelStateLine.render(state, port: nil, json: true)
         #expect(try TunnelStateJSONLine.decode(line) == expected)
+    }
+
+    /// The runner's own sentence, where it has one, is the `reason` — the
+    /// log's text, fuller than the kind's summary for a free-text failure.
+    @Test func theJSONReasonIsTheRunnersSentenceWhenGiven() throws {
+        let line = TunnelStateLine.render(
+            .failed(.bindFailed), port: nil, reason: "the server did not answer", json: true)
+        #expect(
+            try TunnelStateJSONLine.decode(line)
+                == TunnelStateJSONLine(state: "failed", reason: "the server did not answer"))
     }
 
     @Test func theJSONActiveLineCarriesTheBoundPort() throws {
@@ -152,7 +162,7 @@ struct CLITunnelStartExitTests {
     /// "keep printing" — the loop's own continue signal.
     @Test(arguments: [
         (TunnelState.stopped, CLIExitCode.success),
-        (TunnelState.failed(reason: "connection refused"), CLIExitCode.connection),
+        (TunnelState.failed(.connectionFailed), CLIExitCode.connection),
         (TunnelState.needsConfirmation, CLIExitCode.hostKeyUnknown),
     ])
     func aTerminalStateHasItsOwnExitCode(state: TunnelState, expected: CLIExitCode) {
@@ -185,11 +195,11 @@ struct CLITunnelStartExitTests {
         // A MISMATCH is never a confirmation — it reaches `failed`, and it
         // keeps its own code there.
         (
-            TunnelState.failed(reason: "host key mismatch"), CLIExitCode.hostKeyMismatch,
+            TunnelState.failed(.hostKeyMismatch(host: "server.test")), CLIExitCode.hostKeyMismatch,
             CLIExitCode.hostKeyMismatch
         ),
         (
-            TunnelState.failed(reason: "connection refused"), CLIExitCode.connection,
+            TunnelState.failed(.connectionFailed), CLIExitCode.connection,
             CLIExitCode.connection
         ),
     ])
@@ -208,7 +218,7 @@ struct CLITunnelStartExitTests {
     @Test(arguments: [CLIExitCode.remote, .conflict, .diagnosis, .usage, .success])
     func aCodeThisCommandCannotMeanLeavesTheStateAnswering(dialFailure: CLIExitCode) {
         #expect(
-            TunnelExit.code(for: .failed(reason: "something else"), dialFailure: dialFailure)
+            TunnelExit.code(for: .failed(.unknown), dialFailure: dialFailure)
                 == .connection)
         #expect(
             TunnelExit.code(for: .needsConfirmation, dialFailure: dialFailure)
@@ -233,8 +243,15 @@ struct CLITunnelStartExitTests {
 
     @Test func aFailureSaysWhatTheRunnerMapped() {
         #expect(
-            TunnelExit.note(for: .failed(reason: "connection refused"))
+            TunnelExit.note(for: .failed(.connectionFailed), reason: "connection refused")
                 == "Error: connection refused")
+    }
+
+    /// Without the runner's sentence, the kind's own English.
+    @Test func aFailureWithoutTheRunnersSentenceSaysTheKindsOwn() {
+        #expect(
+            TunnelExit.note(for: .failed(.portInUse(port: 8080)))
+                == "Error: port 8080 is already in use")
     }
 
     /// The runner already mapped the very error the dial threw
@@ -243,7 +260,9 @@ struct CLITunnelStartExitTests {
     /// diagnostic log, whatever the dial's own message was.
     @Test func aFailureKeepsItsOwnReasonEvenWhenTheDialSuppliedAMessage() {
         #expect(
-            TunnelExit.note(for: .failed(reason: "connection refused"), dialMessage: "Error: other")
+            TunnelExit.note(
+                for: .failed(.connectionFailed), dialMessage: "Error: other",
+                reason: "connection refused")
                 == "Error: connection refused")
     }
 

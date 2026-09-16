@@ -40,13 +40,18 @@ public enum TunnelStateLine {
     ///     the `active` line, because that is the only state where a bound
     ///     port exists — a remote forward's is the SERVER's port and is the
     ///     news a profile configured on port 0 was waiting for.
+    ///   - reason: the English sentence of a `failed` state's failure
+    ///     (`TunnelRunner.failureReason`), or `nil` to use the kind's own
+    ///     sentence (`TunnelFailureKind.sentence`). Read only for `failed`.
     ///   - json: one JSON object instead of one column line. The two carry
     ///     the same facts; only `failed`'s reason differs in placement,
     ///     since the text form puts that sentence on stderr (where a person
     ///     reads it) and the JSON form carries it in the object (where a
     ///     script does).
-    public static func render(_ state: TunnelState, port: Int? = nil, json: Bool) -> String {
-        json ? jsonLine(state, port: port) : textLine(state, port: port)
+    public static func render(
+        _ state: TunnelState, port: Int? = nil, reason: String? = nil, json: Bool
+    ) -> String {
+        json ? jsonLine(state, port: port, reason: reason) : textLine(state, port: port)
     }
 
     private static func textLine(_ state: TunnelState, port: Int?) -> String {
@@ -65,7 +70,7 @@ public enum TunnelStateLine {
         }
     }
 
-    private static func jsonLine(_ state: TunnelState, port: Int?) -> String {
+    private static func jsonLine(_ state: TunnelState, port: Int?, reason: String?) -> String {
         var object: [String: Any] = ["state": key(state)]
         switch state {
         case .stopped, .connecting, .needsConfirmation:
@@ -75,8 +80,8 @@ public enum TunnelStateLine {
             if let port { object["port"] = port }
         case .reconnecting(let attempt):
             object["attempt"] = attempt
-        case .failed(let reason):
-            object["reason"] = reason
+        case .failed(let kind):
+            object["reason"] = reason ?? kind.sentence
         }
         // `.sortedKeys` so the line a script diffs is stable run to run;
         // JSON objects are unordered, so nothing about the shape depends on
@@ -154,10 +159,12 @@ public enum TunnelExit {
     /// What goes to stderr when the run ends, or `nil` where there is
     /// nothing to say.
     ///
-    /// A `failed` keeps the runner's OWN reason — `DialSupport.reason(for:)`
-    /// mapped the very error the dial threw, and it is the sentence the
-    /// `reason=` of the diagnostic log line carries, so the two cannot
-    /// disagree about the same failure. A `needsConfirmation` prefers
+    /// A `failed` keeps the runner's OWN reason — `reason`, which is
+    /// `TunnelRunner.failureReason`: `DialSupport.reason(for:)` mapped the
+    /// very error the dial threw, and it is the sentence the `reason=` of the
+    /// diagnostic log line carries, so the two cannot disagree about the
+    /// same failure. Without one, the kind's own English sentence
+    /// (`TunnelFailureKind.sentence`). A `needsConfirmation` prefers
     /// `dialMessage` (`CLIErrorMapping.message(for:)`'s own sentence, prefix
     /// included) because the state alone cannot tell an unknown host key
     /// from a missing secret.
@@ -174,12 +181,14 @@ public enum TunnelExit {
     /// caller — a tunnel started with no record to consult — is a plausible
     /// thing to write. `anUnexplainedConfirmationNamesTheHostKeyAndTheFlag`
     /// is what pins the wording.
-    public static func note(for state: TunnelState, dialMessage: String? = nil) -> String? {
+    public static func note(
+        for state: TunnelState, dialMessage: String? = nil, reason: String? = nil
+    ) -> String? {
         switch state {
         case .stopped, .connecting, .active, .reconnecting:
             return nil
-        case .failed(let reason):
-            return "Error: \(reason)"
+        case .failed(let kind):
+            return "Error: \(reason ?? kind.sentence)"
         case .needsConfirmation:
             return dialMessage ?? "Error: host key unknown; rerun with --accept-new"
         }

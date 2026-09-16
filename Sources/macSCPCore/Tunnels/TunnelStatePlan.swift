@@ -47,9 +47,9 @@ public enum TunnelEvent: Sendable, Equatable {
     case retryDue
     /// A step failed in a way that ends the run outright (a listener could
     /// not bind, autostart met `.needsConfirmation`'s own precondition
-    /// turning into an outright failure, etc.). `reason` is the mapped text,
-    /// never a secret — same rule as `TunnelState.failed(reason:)`.
-    case failed(reason: String)
+    /// turning into an outright failure, etc.). Carries the kind, never a
+    /// sentence and never a secret — same rule as `TunnelState.failed`.
+    case failed(TunnelFailureKind)
     /// The context menu (or the quit chain's `stopAll()`) asked the tunnel
     /// to stop.
     case stop
@@ -79,11 +79,11 @@ public enum TunnelStatePlan {
     /// | `active(n)` | `connectionAccepted` | `active(n+1)` |
     /// | `active(n)` | `connectionClosed` | `active(max(0, n−1))` |
     /// | `active` or `connecting` | `connectionLost(reconnects: true)` | `reconnecting(1)` |
-    /// | `active` or `connecting` | `connectionLost(reconnects: false)` | `failed("connection lost")` |
+    /// | `active` or `connecting` | `connectionLost(reconnects: false)` | `failed(.connectionLost)` |
     /// | `reconnecting(k)` | `retryDue` | `connecting` |
     /// | `failed` | `start` | `connecting` |
     /// | `reconnecting(k)` | `connectionLost` | `reconnecting(k+1)` |
-    /// | any | `failed(reason)` | `failed(reason)` |
+    /// | any | `failed(kind)` | `failed(kind)` |
     /// | any | `stop` | `stopped` |
     /// | `connecting` | `needsConfirmation` | `needsConfirmation` |
     ///
@@ -127,7 +127,7 @@ public enum TunnelStatePlan {
             return .active(connections: max(0, connections - 1))
 
         case (.active, .connectionLost(let reconnects)), (.connecting, .connectionLost(let reconnects)):
-            return reconnects ? .reconnecting(attempt: 1) : .failed(reason: "connection lost")
+            return reconnects ? .reconnecting(attempt: 1) : .failed(.connectionLost)
 
         case (.reconnecting, .retryDue):
             return .connecting
@@ -135,8 +135,8 @@ public enum TunnelStatePlan {
         case (.reconnecting(let attempt), .connectionLost):
             return .reconnecting(attempt: attempt + 1)
 
-        case (_, .failed(let reason)):
-            return .failed(reason: reason)
+        case (_, .failed(let kind)):
+            return .failed(kind)
 
         case (_, .stop):
             return .stopped

@@ -12,15 +12,16 @@ import NIOPosix
 /// `.failed` and must stay distinguishable.
 ///
 /// The three refusals a stored session earns BEFORE any of that — not SSH,
-/// bound to a login set, dialling through a jump host — are `.connectFailed`
-/// with `TunnelCarriers.refusal(for:)`'s sentence. They were the two
-/// `StoredSessionConnectionError` cases plus one hand-written string until
-/// 2026-09-06. Nothing lost an answer: `needsAPerson` reads
-/// `.secretRequired` and `HostKeyError.rejectedByUser` and nothing else, so
-/// all three were already `.failed`, and the sentences those errors carry
-/// are the session-connect path's ("the CLI does not resolve this yet"),
-/// which is the wrong reason on a path where a forwarding dials with the
-/// session's own login by design.
+/// bound to a login set, dialling through a jump host — are not cases here
+/// either: since 2026-09-16 they are `TunnelRefusal`, thrown by
+/// `TunnelConnection.connect`, and the App's "the session no longer exists"
+/// is `TunnelRefusal.sessionMissing`. Until then they were `.connectFailed`
+/// with `TunnelCarriers.refusal(for:)`'s sentence, which a typed
+/// `TunnelState.failed` could not tell apart from a real connect failure
+/// without reading the prose.
+///
+/// `TunnelFailureKind.init(_:)` maps each case to the kind a state carries;
+/// the four `reason:` payloads stay in the log and are not carried there.
 ///
 /// Every `reason` is a MAPPED sentence — `DialSupport.reason(for:)`, never
 /// `String(describing:)` — for the reason that function's own doc comment

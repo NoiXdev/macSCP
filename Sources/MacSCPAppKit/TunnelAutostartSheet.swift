@@ -141,8 +141,8 @@ struct TunnelAutostartSheet: View {
                 Text(TunnelProfilesSheet.autoStartLabel(profile.autoStart))
             }
             TableColumn(L10n.string("tunnel.column.state", "State")) { profile in
-                // The failure sentence is Core's own, shown verbatim — the
-                // same rule the profile sheet's state column follows.
+                // The same label the profile sheet's state column shows — a
+                // failure translated from its kind (`stateLabel`).
                 Text(TunnelProfilesSheet.stateLabel(manager.state(of: profile.id)))
             }
             TableColumn(L10n.string("tunnel.column.action", "Action")) { profile in

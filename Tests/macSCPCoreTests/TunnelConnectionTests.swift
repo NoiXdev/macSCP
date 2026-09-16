@@ -18,35 +18,38 @@ struct TunnelConnectionTests {
         let session = s3Session(name: "objects")
         let store = KnownHostsStore(directory: directory)
 
-        await #expect(throws: TunnelFailure.self) {
+        await #expect(throws: TunnelRefusal.notSSH(session: "objects", connectionKind: .s3)) {
             _ = try await TunnelConnection.connect(
                 session: session, secrets: [FixedSecret("secret-access-key")],
                 knownHosts: store, decider: .refusing)
         }
     }
 
-    /// The three refusals are `TunnelCarriers`', word for word — the dial
-    /// does not word them a second time. Derived from the rule rather than
-    /// spelled here, so a reworded sentence cannot leave the dial saying one
-    /// thing and the command line, which asks `TunnelCarriers` directly
-    /// before dialling at all, saying another.
+    /// The three refusals are `TunnelCarriers`' — the dial does not decide
+    /// them a second time, and the sentence its log line writes is the one
+    /// the command line prints before dialling at all. Derived from the rule
+    /// rather than spelled here, so a reworded sentence cannot leave the dial
+    /// saying one thing and the command line, which asks `TunnelCarriers`
+    /// directly, saying another.
     @Test(arguments: [
         TunnelSessionShape.notSSH, .loginSet, .jumpHost,
     ])
-    private func aRefusedSessionThrowsTheCarriersSentence(
+    private func aRefusedSessionThrowsTheCarriersRefusal(
         shape: TunnelSessionShape
     ) async throws {
         let directory = throwawayDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = shape.session
         let store = KnownHostsStore(directory: directory)
-        let refusal = try #require(TunnelCarriers.refusal(for: session))
+        let refusal = try #require(TunnelCarriers.refusalError(for: session))
 
-        await #expect(throws: TunnelFailure.connectFailed(reason: refusal)) {
+        let thrown = await #expect(throws: TunnelRefusal.self) {
             _ = try await TunnelConnection.connect(
                 session: session, secrets: [FixedSecret("unused")],
                 knownHosts: store, decider: .refusing)
         }
+        #expect(thrown == refusal)
+        #expect(thrown.map { DialSupport.reason(for: $0) } == TunnelCarriers.refusal(for: session))
     }
 
     /// A missing secret is NOT a `TunnelFailure`: it is the existing

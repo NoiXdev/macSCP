@@ -163,7 +163,8 @@ struct TunnelRunnerTests {
         await runner.start(decider: .asking { _ in true })
         try await states.waitFor(.active(connections: 0))
         connections.made[0].drop()
-        try await states.waitFor(.failed(reason: "connection lost"))
+        try await states.waitFor(.failed(.connectionLost))
+        #expect(await runner.failureReason == "connection lost")
 
         #expect(sleeper.slept.isEmpty)
         #expect(connections.made[0].disconnectCount == 1)
@@ -284,11 +285,12 @@ struct TunnelRunnerTests {
         await runner.start(decider: .asking { _ in true })
         try await states.waitForFailure()
 
-        let reported: String? = states.recorded.compactMap {
-            if case .failed(let reason) = $0 { return reason }
+        let reported: TunnelFailureKind? = states.recorded.compactMap {
+            if case .failed(let kind) = $0 { return kind }
             return nil
         }.first
-        #expect(reported == "port 8080 is already in use")
+        #expect(reported == .portInUse(port: 8080))
+        #expect(await runner.failureReason == "port 8080 is already in use")
         // The connection dialled for a forward that never bound is released.
         #expect(connections.made[0].disconnectCount == 1)
     }
