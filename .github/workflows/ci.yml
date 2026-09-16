@@ -60,8 +60,22 @@ jobs:
             echo "Metal toolchain already present."
             exit 0
           fi
-          if xcodebuild -help 2>&1 | grep -q -- '-downloadComponent'; then
-            xcodebuild -downloadComponent MetalToolchain
+          # `xcodebuild -help` is piped into `grep -q` in an earlier version
+          # of this step; under `set -o pipefail` a `grep -q` match closes
+          # the pipe as soon as it fires, and if xcodebuild is still writing
+          # its (24 KB+) help text at that moment it dies of SIGPIPE, which
+          # makes the pipeline's exit status non-zero and sends the `if`
+          # down the "flag absent" branch even though the flag was there.
+          # Not observed with today's 24 KB of help text, reproduced 3/3
+          # with a shim whose `-help` prints the flag line first and then
+          # 100+ KB more. Capturing the output into a variable first (never
+          # itself part of a pipeline `grep` can outrun) avoids the race.
+          help_output=$(xcodebuild -help 2>&1 || true)
+          if [[ "$help_output" == *-downloadComponent* ]]; then
+            if ! xcodebuild -downloadComponent MetalToolchain; then
+              echo "::error::could not download the Metal toolchain component (xcodebuild -downloadComponent MetalToolchain)"
+              exit 1
+            fi
             if ! xcrun metal --version; then
               echo "::error::xcodebuild -downloadComponent MetalToolchain reported success but 'xcrun metal --version' still fails; the MetalToolchain component is still missing."
               exit 1
