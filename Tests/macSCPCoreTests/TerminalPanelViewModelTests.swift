@@ -518,8 +518,11 @@ struct TerminalPanelViewModelTests {
     /// stalled window-change returns whenever it returns, and without an
     /// identity check it writes onto whatever the view model has become.
     ///
-    /// The sequence below is the whole failure, and every step is forced
-    /// rather than waited for:
+    /// The sequence below is the whole failure. Each step is forced by a
+    /// gate rather than left to timing, and observed with `pollUntil` before
+    /// the next — except one hand-off: between steps 4 and 5 the test sleeps
+    /// 100 ms so the view model's own post-`await` write can run, and the
+    /// comment at that sleep says why it is measured rather than assumed:
     ///
     /// 1. shell A is running; a 100x30 window-change stalls on the link;
     /// 2. shell A ends — `forgetGeometry()` clears `lastSentSize`;

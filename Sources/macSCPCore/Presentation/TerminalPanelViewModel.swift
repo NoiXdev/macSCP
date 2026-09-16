@@ -323,9 +323,14 @@ public final class TerminalPanelViewModel {
     ///    loop on its own;
     /// 2. only if the shell it was sent to is still the panel's shell. The
     ///    write sits after an `await`, so it is no longer inside the
-    ///    synchronous step that owns the shell -- the same discipline every
-    ///    other post-`await` write in this file follows (the open task has
-    ///    its generation check, the read loop has one too). Without it, a
+    ///    synchronous step that owns the shell -- the check most, not all,
+    ///    post-`await` writes in this file carry. The open task checks its
+    ///    generation on both its success and its failure path, and the read
+    ///    loop's `finishShell` checks one too. Two do not, counted
+    ///    2026-09-16: the read loop's per-chunk `bufferForReplay`, which
+    ///    appends to `replayBuffer` with no generation check, and
+    ///    `shutdown()`, which bumps the generation itself before its
+    ///    `await`s instead of checking one after them. Without it, a
     ///    100x30 window-change stalling across an end and a Reopen writes
     ///    `lastSentSize` while `shell` is `nil`, the remounted surface holds
     ///    the same unchanged 100x30 in `pendingSize`, and the next shell's
