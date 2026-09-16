@@ -374,16 +374,22 @@ struct SecretSourcesManagedKeyTests {
         private let lock = NSLock()
         private var storage: [UUID: String] = [:]
         private var reads: [UUID] = []
+        private var failing: Set<UUID> = []
 
         var readIDs: [UUID] { lock.withLock { reads } }
+
+        /// Makes every read of `id` throw a `KeychainError` — what a denied
+        /// or locked Keychain item answers.
+        func failReads(of id: UUID) { lock.withLock { _ = failing.insert(id) } }
 
         func savePassword(_ password: String, for sessionID: UUID) throws {
             lock.withLock { storage[sessionID] = password }
         }
 
         func password(for sessionID: UUID) throws -> String? {
-            lock.withLock {
+            try lock.withLock {
                 reads.append(sessionID)
+                if failing.contains(sessionID) { throw KeychainError(status: errSecAuthFailed) }
                 return storage[sessionID]
             }
         }
@@ -473,6 +479,53 @@ struct SecretSourcesManagedKeyTests {
         let session = rig.session(authKind: .privateKey, keyPath: "/tmp/not-a-managed-key")
         let resolvedNothing = try rig.resolve(session) == nil
         #expect(resolvedNothing, "an unmanaged key path resolved a secret")
+    }
+
+    /// Task 2 fix round 3: a Keychain error on the KEY's slot propagates, the
+    /// way `KeychainSecretSource` lets one on the session's slot propagate.
+    /// Swallowed, a denied item read as "no secret" and the dial failed later
+    /// at authentication with nothing pointing at the Keychain.
+    @Test func aKeychainErrorOnTheKeysSlotIsThrownNotSwallowed() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        rig.secrets.failReads(of: rig.keyID)
+        let source = ManagedKeyPassphraseSecretSource(
+            keyPath: rig.managedPath, keys: rig.keys, secrets: rig.secrets)
+        let session = rig.session(authKind: .privateKey, keyPath: rig.managedPath)
+        #expect(throws: KeychainError.self) { try source.secret(for: session.id) }
+        // And through the chain: the resolver stops at it instead of
+        // answering nil.
+        #expect(throws: KeychainError.self) { try rig.resolve(session) }
+    }
+
+    /// The key store's own read is a throwing read too: an unreadable
+    /// `managed_keys.json` is not "this key is not managed".
+    @Test func anUnreadableKeyStoreIsThrownNotSwallowed() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        try Data("not json".utf8).write(to: rig.directory.appendingPathComponent("managed_keys.json"))
+        let source = ManagedKeyPassphraseSecretSource(
+            keyPath: rig.managedPath, keys: rig.keys, secrets: rig.secrets)
+        #expect(throws: DecodingError.self) { try source.secret(for: UUID()) }
+    }
+
+    /// An unencrypted managed key has nothing to ask the Keychain for, so its
+    /// slot is never read — no consent prompt for a passphrase that does not
+    /// exist.
+    @Test func anUnencryptedManagedKeyReadsNoSlot() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        let plain = ManagedKey(
+            name: "plain", comment: "", type: .ed25519, fingerprint: "SHA256:plain",
+            publicKeyOpenSSH: "ssh-ed25519 AAAAplain", createdAt: Date(),
+            hasPassphrase: false, fileName: "plain-key")
+        try rig.keys.add(plain)
+        let path = rig.keys.keyDirectory.appendingPathComponent("plain-key").path(percentEncoded: false)
+        rig.secrets.failReads(of: plain.id)
+        let source = ManagedKeyPassphraseSecretSource(keyPath: path, keys: rig.keys, secrets: rig.secrets)
+        let answeredNothing = try source.secret(for: UUID()) == nil
+        #expect(answeredNothing)
+        #expect(rig.secrets.readIDs.contains(plain.id) == false)
     }
 
     @Test func aPasswordSessionNeverConsultsTheManagedKey() throws {

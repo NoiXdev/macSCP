@@ -3,8 +3,8 @@ import Foundation
 /// A managed key's own passphrase slot, as a `SecretSource`.
 ///
 /// The Keychain item is keyed by the KEY's id, not by the session's — see
-/// `ManagedKeyPassphrase.resolve(keyPath:typed:store:secrets:)`, which is
-/// what this wraps — so a session using a managed private key has its
+/// `ManagedKeyPassphrase.resolve(keyPath:typed:store:secrets:)`, whose lookup
+/// this repeats with throwing reads — so a session using a managed private key has its
 /// passphrase in a slot no session-keyed lookup can reach. That is the whole
 /// reason this type exists: `KeychainSecretSource` asks for
 /// `sessionID.uuidString` and comes back empty for exactly those sessions.
@@ -32,13 +32,25 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
         self.secrets = secrets
     }
 
-    /// `typed: ""` because nobody typed anything: a forwarding and the command
-    /// line both dial without a form, so the stored passphrase is the only
-    /// one there is. An
-    /// unencrypted or unmanaged key answers `""`, which `SecretResolver`
-    /// treats as no answer and walks past.
+    /// The key's stored passphrase, or nil when no managed key matches the
+    /// path, the key is not encrypted, or its slot is absent or empty. Nobody
+    /// typed anything: a forwarding and the command line both dial without a
+    /// form, so the stored passphrase is the only one there is.
+    ///
+    /// Both reads THROW (Task 2 fix round 3), exactly as
+    /// `KeychainSecretSource`'s does: a denied or locked Keychain item, or an
+    /// unreadable key store, stops `SecretResolver` with that error instead
+    /// of reading as "no secret" and failing later at authentication with
+    /// nothing pointing at the Keychain.
+    ///
+    /// `hasPassphrase` is a fast path, as in `ManagedKeyPassphrase.resolve`:
+    /// an unencrypted key's slot is never read, so no consent prompt is
+    /// raised for a passphrase that does not exist.
     public func secret(for sessionID: UUID) throws -> String? {
-        ManagedKeyPassphrase.resolve(
-            keyPath: keyPath, typed: "", store: keys, secrets: secrets)
+        // Not `ManagedKeyPassphrase.resolve`: its `try?` is what the App's
+        // form path relies on, and this source must not swallow the error.
+        guard let key = try keys.key(forPath: keyPath), key.hasPassphrase else { return nil }
+        guard let stored = try secrets.password(for: key.id), !stored.isEmpty else { return nil }
+        return stored
     }
 }
