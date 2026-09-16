@@ -177,6 +177,29 @@ struct SessionListViewModelTests {
         }
     }
 
+    /// The population the "Update login set" question counts (Task 5 fix
+    /// round 1): every session that depends on the set — bound to it, jumping
+    /// with it in its own mode, or jumping through a session bound to it —
+    /// each once, and nothing unrelated. `usageCount(of:)` counts only the
+    /// first two, which is what delete's restoration touches.
+    @Test func aSetsDependentsAreDirectOwnModeJumpAndSessionModeJumpSessions() throws {
+        let setID = UUID()
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let direct = ssh("direct", loginSetID: setID)
+        let ownModeJump = ssh("own-mode", jump: .init(host: "hop.invalid", username: "u", loginSetID: setID))
+        let sessionModeJump = ssh("session-mode", jump: .init(host: "", username: "", sessionID: direct.id))
+        let both = ssh("both", loginSetID: setID, jump: .init(host: "hop.invalid", username: "u", loginSetID: setID))
+        let unrelatedBastion = ssh("other-bastion", loginSetID: UUID())
+        let unrelated = ssh("unrelated", jump: .init(host: "", username: "", loginSetID: setID, sessionID: unrelatedBastion.id))
+        try plant([direct, ownModeJump, sessionModeJump, both, unrelatedBastion, unrelated], in: vm, dir: dir)
+
+        let dependents = Set(vm.sessionsDependingOn(setID: setID).map(\.id))
+        #expect(dependents == Set([direct.id, ownModeJump.id, sessionModeJump.id, both.id]))
+        #expect(vm.dependentSessionCount(of: setID) == 4)
+        #expect(vm.usageCount(of: setID) == 3, "usageCount(of:) changed its population")
+    }
+
     @Test func aSetServesNoJumpHopForUnrelatedShapes() throws {
         let setID = UUID()
         let (vm, _, dir) = makeVM()

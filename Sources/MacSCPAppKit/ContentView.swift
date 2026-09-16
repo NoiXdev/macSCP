@@ -2668,11 +2668,13 @@ struct ContentView: View {
             }
             retryConnect(tab)
         } else if stored != nil {
-            // The usage count is read now, with the request, so the dialog
-            // names the number of sessions the set served when it was asked.
+            // The count is read now, with the request, so the dialog names
+            // the number of sessions that depended on the set when it was
+            // asked — directly or through a jump hop
+            // (`SessionListViewModel.sessionsDependingOn(setID:)`).
             if let request = LoginSetRepointPlan.request(
                 session: stored, sets: sessionListViewModel.loginSets,
-                usageCount: { sessionListViewModel.usageCount(of: $0) },
+                usageCount: { sessionListViewModel.dependentSessionCount(of: $0) },
                 key: key, keyPath: path, tab: tab)
             {
                 setRepointRequest = request

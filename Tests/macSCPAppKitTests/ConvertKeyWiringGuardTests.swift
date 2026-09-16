@@ -43,7 +43,8 @@ import Testing
 /// 5. The import sheet converts on the way in instead of copying bytes.
 /// 6. A session bound to a login set is ASKED whether to update the set
 ///    (`LoginSetRepointPlan.request(`, `setRepointRequest`) rather than
-///    routed to the attempt-only path in silence.
+///    routed to the attempt-only path in silence, with the count of the
+///    set's dependents (`dependentSessionCount(of:`, not `usageCount(of:`).
 /// 7. Updating the set re-reads it (`LoginSetRepointPlan.currentSet(`),
 ///    writes it through `saveLoginSet(`, drops the SET's slot only inside a
 ///    branch that `hasStoredPassphrase(`'s positive answer and
@@ -443,6 +444,19 @@ struct ConvertKeyWiringGuardTests {
     /// the state from something the plan never decided.
     @Test func aSetBoundSessionIsAskedWhetherToUpdateTheSet() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
+        // The count the question shows is every session that depends on the
+        // set, jump hops through a set-bound session included — the
+        // population its wording names (Task 5 fix round 1). `usageCount(of:`
+        // counts only direct and own-mode-jump bindings.
+        #expect(body.contains("dependentSessionCount(of:"), """
+            `convertedKeyImported(_:for:)` no longer counts the set's dependents through \
+            `dependentSessionCount(of:` — the question's "directly or as their jump host" \
+            then names a population the number does not count.
+            """)
+        #expect(!body.contains("usageCount(of:"), """
+            `convertedKeyImported(_:for:)` counts through `usageCount(of:`, which misses \
+            sessions whose jump goes through a session bound to the set.
+            """)
         #expect(body.contains("LoginSetRepointPlan.request("), """
             `convertedKeyImported(_:for:)` no longer consults `LoginSetRepointPlan.request(` — \
             a session bound to a login set is then converted for one attempt without being \

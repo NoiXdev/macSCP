@@ -903,11 +903,35 @@ public final class SessionListViewModel {
     /// never removes a slot a hop reads while that fallback is the only thing
     /// standing behind it.
     public func setServesAJumpHop(_ setID: UUID) -> Bool {
-        sessions.contains { session in
-            guard let jump = session.jump else { return false }
-            guard let referencedID = jump.sessionID else { return jump.loginSetID == setID }
-            return sessions.contains { $0.id == referencedID && $0.loginSetID == setID }
-        }
+        sessions.contains { jumpHopReadsSet(of: $0, setID) }
+    }
+
+    /// Whether `session`'s jump hop resolves from the set — the two shapes
+    /// `setServesAJumpHop(_:)` describes. One copy, read by that predicate and
+    /// by `sessionsDependingOn(setID:)`.
+    private func jumpHopReadsSet(of session: StoredSession, _ setID: UUID) -> Bool {
+        guard let jump = session.jump else { return false }
+        guard let referencedID = jump.sessionID else { return jump.loginSetID == setID }
+        return sessions.contains { $0.id == referencedID && $0.loginSetID == setID }
+    }
+
+    /// Every session that depends on the set (technical backlog of 2026-09-16,
+    /// Task 5 fix round 1): bound to it directly, or whose jump hop resolves
+    /// from it — in its own mode, or through a session bound to the set. Each
+    /// session once.
+    ///
+    /// Wider than `sessionsUsing(setID:)`, which leaves out the session-mode
+    /// shape because it lists the sessions that REFERENCE the set, the ones
+    /// `deleteLoginSet` restores. This is what re-pointing the set affects,
+    /// and what "Update login set"'s question counts as "used by N sessions,
+    /// directly or as their jump host".
+    public func sessionsDependingOn(setID: UUID) -> [StoredSession] {
+        sessions.filter { $0.loginSetID == setID || jumpHopReadsSet(of: $0, setID) }
+    }
+
+    /// `sessionsDependingOn(setID:)`'s count.
+    public func dependentSessionCount(of setID: UUID) -> Int {
+        sessionsDependingOn(setID: setID).count
     }
 
     /// Whether some session's session-mode JUMP HOP references this session

@@ -199,7 +199,7 @@ struct LoginSetRepointPlanTests {
             #expect(text.contains("%") == false, "\(language), \(count): \(text)")
         }
         // The count covers sessions that use the set directly AND sessions
-        // whose jump host uses it (`SessionListViewModel.sessionsUsing(setID:)`),
+        // whose jump host uses it (`SessionListViewModel.sessionsDependingOn(setID:)`),
         // and the wording says so in every form (technical backlog of
         // 2026-09-16, Task 5).
         let jumpTerm = try #require(Self.jumpHostTerms[language])

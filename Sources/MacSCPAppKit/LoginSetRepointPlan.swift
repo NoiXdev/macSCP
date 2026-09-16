@@ -19,7 +19,10 @@ struct LoginSetRepointRequest: Identifiable, Equatable {
     /// `managedKeyStore`.
     let keyPath: String
     let set: LoginSet
-    /// How many sessions reference the set, read when the request is made.
+    /// How many sessions depend on the set — bound to it, or jumping with it
+    /// directly or through a session bound to it
+    /// (`SessionListViewModel.sessionsDependingOn(setID:)`) — read when the
+    /// request is made.
     let usageCount: Int
 
     /// Identity, not value: two requests are the same presentation or none.
