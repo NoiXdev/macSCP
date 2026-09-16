@@ -2,6 +2,7 @@ import Foundation
 import MacSCPTestSupport
 import NIOCore
 import NIOPosix
+import Synchronization
 import Testing
 
 @testable import macSCPCore
@@ -192,6 +193,173 @@ struct SOCKS5ListenerTests {
         await listener.stop()
     }
 
+    // MARK: - The handshake deadline and the parked-handshake cap
+
+    /// The production defaults, pinned: a listener built the public way
+    /// carries the two named limits, not some other number.
+    @Test func aListenerBuiltThePublicWayCarriesTheProductionLimits() {
+        let listener = SOCKS5Listener()
+        #expect(listener.handshakeDeadline == .seconds(30))
+        #expect(listener.parkedHandshakeLimit == 64)
+        #expect(SOCKS5Listener.socks5HandshakeDeadline == .seconds(30))
+        #expect(SOCKS5Listener.socks5ParkedHandshakeLimit == 64)
+    }
+
+    /// A client that connects and then says nothing is closed once the
+    /// deadline fires, its parked wait ends, and the tunnel is not told
+    /// about it. The deadline is fired BY HAND through the injected sleeper:
+    /// nothing here waits for thirty seconds, or for any wall-clock time.
+    @Test func aClientThatSendsNothingIsClosedWhenTheDeadlineFires() async throws {
+        let deadline = ManualDeadline()
+        let listener = SOCKS5Listener(
+            handshakeDeadline: .seconds(30), parkedHandshakeLimit: 64,
+            deadlineSleeper: deadline.sleep)
+        let failures = FailureRecorder()
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                directTCPIPFactory: { _, _ in
+                    Issue.record("the factory must not be reached")
+                    throw FactoryRefusedTheChannel()
+                },
+                onFailure: { failures.record($0) })
+
+            let inbox = ByteInbox()
+            let client = try await connectClient(port: port, inbox: inbox)
+            try await pollUntil("the handshake is parked") { listener.parkedHandshakes == 1 }
+            try await pollUntil("the deadline is armed") { deadline.requested.count == 1 }
+            // Positive check before the negative one below: the connection
+            // is open and parked right up to the moment the deadline fires.
+            #expect(client.isActive)
+
+            deadline.fire()
+            try await awaitCancellably(client.closeFuture)
+            try await pollUntil("the parked wait ends") { listener.parkedHandshakes == 0 }
+
+            #expect(deadline.requested == [.seconds(30)])
+            #expect(inbox.bytes.isEmpty)
+            #expect(failures.failures.isEmpty)
+        } catch {
+            await listener.stop()
+            throw error
+        }
+        await listener.stop()
+    }
+
+    /// With a cap of two, a third client that connects while two handshakes
+    /// are parked is closed at once and parks nothing; once one of the two
+    /// completes, a fourth is accepted and answered. The deadline is never
+    /// fired here, so no closure below can be the deadline's doing.
+    @Test func aClientBeyondTheParkedCapIsRefusedUntilOneCompletes() async throws {
+        let echo = try await EchoServer.start()
+        let deadline = ManualDeadline()
+        let listener = SOCKS5Listener(
+            handshakeDeadline: .seconds(30), parkedHandshakeLimit: 2,
+            deadlineSleeper: deadline.sleep)
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                directTCPIPFactory: { _, _ in try await echo.connect() })
+
+            let firstInbox = ByteInbox()
+            let first = try await connectClient(port: port, inbox: firstInbox)
+            let second = try await connectClient(port: port, inbox: ByteInbox())
+            try await pollUntil("two handshakes are parked") { listener.parkedHandshakes == 2 }
+
+            let thirdInbox = ByteInbox()
+            let third = try await connectClient(port: port, inbox: thirdInbox)
+            try await awaitCancellably(third.closeFuture)
+            #expect(thirdInbox.bytes.isEmpty)
+            #expect(listener.parkedHandshakes == 2)
+            #expect(first.isActive)
+            #expect(second.isActive)
+
+            try await awaitCancellably(
+                first.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00] + connectToADomain)))
+            try await pollUntil("the first handshake completes") { firstInbox.bytes.count >= 12 }
+            try await pollUntil("its parked slot is released") { listener.parkedHandshakes == 1 }
+
+            let fourthInbox = ByteInbox()
+            let fourth = try await connectClient(port: port, inbox: fourthInbox)
+            try await awaitCancellably(fourth.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00])))
+            try await pollUntil("the fourth client is answered") { fourthInbox.bytes.count >= 2 }
+            #expect(Array(fourthInbox.bytes.prefix(2)) == [0x05, 0x00])
+            #expect(fourth.isActive)
+
+            for client in [first, second, fourth] {
+                client.close(promise: nil)
+                try await awaitCancellably(client.closeFuture)
+            }
+        } catch {
+            await listener.stop()
+            await echo.stop()
+            throw error
+        }
+        await listener.stop()
+        await echo.stop()
+    }
+
+    /// A client that completes inside the deadline is forwarded as today —
+    /// and a deadline that fires AFTER the handover changes nothing: the
+    /// connection keeps carrying bytes.
+    @Test func aDeadlineFiringAfterTheHandoverLeavesTheConnectionAlone() async throws {
+        let echo = try await EchoServer.start()
+        let deadline = ManualDeadline()
+        let listener = SOCKS5Listener(
+            handshakeDeadline: .seconds(30), parkedHandshakeLimit: 64,
+            deadlineSleeper: deadline.sleep)
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                directTCPIPFactory: { _, _ in try await echo.connect() })
+
+            let inbox = ByteInbox()
+            let client = try await connectClient(port: port, inbox: inbox)
+            try await awaitCancellably(
+                client.writeAndFlush(ByteBuffer(bytes: [0x05, 0x01, 0x00] + connectToADomain)))
+            try await pollUntil("the success reply comes back") { inbox.bytes.count >= 12 }
+            #expect(Array(inbox.bytes[2..<12]) == [0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            try await pollUntil("the parked slot is released") { listener.parkedHandshakes == 0 }
+
+            deadline.fire()
+            try await awaitCancellably(client.writeAndFlush(ByteBuffer(string: "hello")))
+            try await pollUntil("the echo comes back after the deadline fired") {
+                inbox.bytes.count >= 17
+            }
+            #expect(String(decoding: inbox.bytes[12...], as: UTF8.self) == "hello")
+            #expect(client.isActive)
+
+            client.close(promise: nil)
+            try await awaitCancellably(client.closeFuture)
+        } catch {
+            await listener.stop()
+            await echo.stop()
+            throw error
+        }
+        await listener.stop()
+        await echo.stop()
+    }
+
+    /// `stop()` still ends every parked handshake: both stalled clients are
+    /// closed and neither wait is left parked. The deadline is never fired.
+    @Test func stopEndsEveryParkedHandshake() async throws {
+        let deadline = ManualDeadline()
+        let listener = SOCKS5Listener(
+            handshakeDeadline: .seconds(30), parkedHandshakeLimit: 64,
+            deadlineSleeper: deadline.sleep)
+        let port = try await listener.start(
+            bind: "127.0.0.1", localPort: 0,
+            directTCPIPFactory: { _, _ in throw FactoryRefusedTheChannel() })
+        let first = try await connectClient(port: port, inbox: ByteInbox())
+        let second = try await connectClient(port: port, inbox: ByteInbox())
+        try await pollUntil("two handshakes are parked") { listener.parkedHandshakes == 2 }
+
+        await listener.stop()
+        try await awaitCancellably(first.closeFuture)
+        try await awaitCancellably(second.closeFuture)
+        try await pollUntil("every parked wait ends") { listener.parkedHandshakes == 0 }
+    }
+
     private func connectClient(port: Int, inbox: ByteInbox) async throws -> Channel {
         try await awaitCancellably(
             ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -214,6 +382,61 @@ private let connectToADomain: [UInt8] = [
 ]
 
 private struct FactoryRefusedTheChannel: Error {}
+
+/// The handover box on its own: a waiter whose task is cancelled is released
+/// with the cancellation, and the box stays resolved exactly once — a later
+/// resolve is dropped.
+@Suite("SOCKS5RequestBox", .timeLimit(.minutes(1)))
+struct SOCKS5RequestBoxTests {
+    @Test func cancellingTheWaitingTaskResolvesTheBoxOnce() async throws {
+        let box = SOCKS5RequestBox()
+        let waiting = Task { try await box.value() }
+        waiting.cancel()
+        // Polled rather than awaited first: a box whose park ignores
+        // cancellation never settles, and awaiting the task's result would
+        // then hang past the suite's time limit instead of failing inside it.
+        try await pollUntil("the cancelled wait settles the box") { box.settled != nil }
+        let outcome = await waiting.result
+
+        let endedWithCancellation: Bool
+        if case .failure(let error) = outcome, error is CancellationError {
+            endedWithCancellation = true
+        } else {
+            endedWithCancellation = false
+        }
+        #expect(endedWithCancellation)
+
+        let laterResolveWon = box.resolve(
+            .success(SOCKS5Destination(host: "echo.example", port: 7)))
+        #expect(laterResolveWon == false)
+        let settledAsCancellation: Bool
+        if case .failure(let error)? = box.settled, error is CancellationError {
+            settledAsCancellation = true
+        } else {
+            settledAsCancellation = false
+        }
+        #expect(settledAsCancellation)
+    }
+}
+
+/// The handshake deadline, fired by hand. `sleep` parks until `fire()` and
+/// throws when its task is cancelled — the contract `TunnelRunner.Sleeper`
+/// states — and records what it was asked to wait for.
+private final class ManualDeadline: Sendable {
+    private let signal = AsyncSignal()
+    private let asked = Mutex<[Duration]>([])
+
+    var requested: [Duration] { asked.withLock { $0 } }
+
+    func fire() { signal.signal() }
+
+    var sleep: TunnelRunner.Sleeper {
+        { [self] duration in
+            asked.withLock { $0.append(duration) }
+            guard await signal.wait() == .signalled else { throw CancellationError() }
+        }
+    }
+}
 
 /// One way a `direct-tcpip` factory can refuse, and the SOCKS5 code the
 /// client must read for it. `failure: nil` means "throw something that is not

@@ -300,6 +300,39 @@ struct SOCKS5HandshakeTests {
         #expect(SOCKS5ReplyCode(.alreadyStarted) == .generalFailure)
     }
 
+    /// The deadline, as the handler sees it: expiring a handshake that is
+    /// still talking resolves the wait with `deadlineExpired` and closes the
+    /// connection, and reports that it did.
+    @Test func anExpiredHandshakeResolvesWithAFailureAndCloses() throws {
+        let socks = try socks5Channel()
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        #expect(isSettled(socks.handshake) == false)
+
+        let expired = ExpiryBox()
+        socks.handshake.expire(on: socks.channel).whenSuccess { expired.record($0) }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(expired.value == true)
+        #expect(handshakeError(socks.handshake) == .deadlineExpired)
+        #expect(socks.channel.isActive == false)
+    }
+
+    /// A deadline that fires once the destination is out does nothing: the
+    /// wait already has its answer and the connection stays open.
+    @Test func anExpiryAfterTheRequestIsIgnored() throws {
+        let socks = try socks5Channel()
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try socks.channel.writeInbound(ByteBuffer(bytes: connectToIPv4))
+
+        let expired = ExpiryBox()
+        socks.handshake.expire(on: socks.channel).whenSuccess { expired.record($0) }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(expired.value == false)
+        #expect(decodedDestination(socks.handshake) == SOCKS5Destination(host: "10.0.0.1", port: 80))
+        #expect(socks.channel.isActive)
+    }
+
     /// A connection that goes away mid-handshake resolves the wait rather
     /// than parking it: `LocalForwardListener`'s accept task awaits the
     /// destination, and a client that hangs up before naming one must not
@@ -457,6 +490,24 @@ private final class ByteRecorder: ChannelInboundHandler, @unchecked Sendable {
         let chunk = buffer.readBytes(length: buffer.readableBytes) ?? []
         lock.lock()
         collected += chunk
+        lock.unlock()
+    }
+}
+
+/// What `expire(on:)` answered, recorded without a blocking wait.
+private final class ExpiryBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answer: Bool?
+
+    var value: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return answer
+    }
+
+    func record(_ expired: Bool) {
+        lock.lock()
+        answer = expired
         lock.unlock()
     }
 }

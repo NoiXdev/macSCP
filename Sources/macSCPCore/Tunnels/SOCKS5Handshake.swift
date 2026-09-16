@@ -140,13 +140,21 @@ extension SOCKS5ReplyCode {
 /// Every case closes the connection. `noAcceptableMethod`,
 /// `unsupportedCommand` and `unsupportedAddressType` are answered with a
 /// SOCKS5 frame first; `malformedFrame` is not, because the peer has just
-/// demonstrated that it is not reading SOCKS5.
+/// demonstrated that it is not reading SOCKS5. Neither are the two limits,
+/// `deadlineExpired` and `tooManyParkedHandshakes`: RFC 1928 has no frame
+/// for "you took too long" before a request, and a refused client has not
+/// been read from at all.
 enum SOCKS5HandshakeError: Error, Equatable {
     case noAcceptableMethod
     case unsupportedCommand
     case unsupportedAddressType
     case malformedFrame
     case closedBeforeARequest
+    /// The handshake deadline fired before the client named a destination.
+    case deadlineExpired
+    /// The connection arrived while the parked-handshake cap was reached,
+    /// and was closed before any byte of it was read.
+    case tooManyParkedHandshakes
 }
 
 // MARK: - The frames
@@ -445,6 +453,32 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
         }
     }
 
+    /// The handshake deadline fired: if the client has not named a
+    /// destination yet, end the conversation with `deadlineExpired` and close
+    /// the connection. Answers whether THIS call is what ended it.
+    ///
+    /// On the event loop, like every other change to `state`, so a request
+    /// completing in the same instant is decided by the loop's own ordering
+    /// rather than by a race: whichever runs first wins, and the other finds
+    /// the state already past `.request`. Once the destination is out
+    /// (`.connecting` and later) the deadline has nothing left to bound and
+    /// this does nothing. The answer is the box's own latch rather than the
+    /// state alone, because `channelInactive` resolves the box without moving
+    /// the state — a client that hung up is not a deadline that fired.
+    func expire(on channel: Channel) -> EventLoopFuture<Bool> {
+        channel.eventLoop.submit {
+            switch self.state {
+            case .greeting, .request:
+                self.state = .done
+                let ended = self.requested.resolve(.failure(SOCKS5HandshakeError.deadlineExpired))
+                channel.close(promise: nil)
+                return ended
+            case .connecting, .handedOver, .done:
+                return false
+            }
+        }
+    }
+
     // MARK: - The state machine
 
     private func advance(context: ChannelHandlerContext) {
@@ -544,6 +578,11 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
 /// `await`. Resolved at most once — a second `resolve` is dropped — so the
 /// continuation is resumed exactly once however the conversation ends,
 /// including `channelInactive` after a refusal has already been published.
+///
+/// `resolve` answers whether it was the call that settled the box, so a
+/// caller racing another resolver — the handshake deadline against the
+/// conversation itself — can tell whether its own outcome is the one that
+/// stood.
 final class SOCKS5RequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var outcome: Result<SOCKS5Destination, any Error>?
@@ -556,45 +595,45 @@ final class SOCKS5RequestBox: @unchecked Sendable {
         return outcome
     }
 
-    func resolve(_ result: Result<SOCKS5Destination, any Error>) {
+    @discardableResult
+    func resolve(_ result: Result<SOCKS5Destination, any Error>) -> Bool {
         lock.lock()
         guard outcome == nil else {
             lock.unlock()
-            return
+            return false
         }
         outcome = result
         let waiting = waiter
         waiter = nil
         lock.unlock()
         waiting?.resume(with: result)
+        return true
     }
 
-    /// Parks until the conversation settles.
+    /// Parks until the conversation settles, or until the waiting task is
+    /// cancelled.
     ///
-    /// **A bare continuation with no cancellation handler, deliberately, and
-    /// only while nothing cancels the caller** (recorded 2026-09-06 by the
-    /// port-forwarding plan's final review). The one caller is the accept
-    /// task in `SOCKS5Handshake.negotiate(on:)`, which nothing cancels: the
-    /// listener ends a handshake by closing the channel, and
-    /// `channelInactive` resolves this box, so the park ends through
-    /// `resolve` on every path there is today. If a caller ever DOES cancel
-    /// it — a per-handshake deadline is the obvious candidate, and the design
-    /// records the missing timeout as a limit — this becomes a task parked
-    /// forever, and the shape to rebuild it from is `OpenPortBox` in
-    /// `RemoteForward.swift`, which was itself a bare continuation until Task
-    /// 4's review: `withTaskCancellationHandler` around the park, with the
-    /// box's one latch deciding which of the two racing sides resumes the
-    /// continuation.
+    /// **With a cancellation handler**, the shape `OpenPortBox` in
+    /// `RemoteForward.swift` has: `withTaskCancellationHandler` around the
+    /// park, and the box's one latch deciding which of the two racing sides
+    /// resumes the continuation. Until the handshake deadline existed this
+    /// was a bare continuation, justified by nothing ever cancelling the one
+    /// caller (`SOCKS5Handshake.negotiate(on:limits:)`); a bare park that is
+    /// cancelled is a task parked forever, and a deadline is precisely the
+    /// kind of code that ends waits early. A cancellation settles the box
+    /// with `CancellationError`, so every later `resolve` is dropped.
     func value() async throws -> SOCKS5Destination {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.lock()
-            if let outcome {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<SOCKS5Destination, any Error>) in
+                lock.lock()
+                let already = outcome
+                if already == nil { waiter = continuation }
                 lock.unlock()
-                continuation.resume(with: outcome)
-            } else {
-                waiter = continuation
-                lock.unlock()
+                if let already { continuation.resume(with: already) }
             }
+        } onCancel: {
+            resolve(.failure(CancellationError()))
         }
     }
 }
@@ -607,13 +646,118 @@ enum SOCKS5Handshake {
     ///
     /// Nothing here touches `autoRead` or calls `read()`. The handler turns
     /// reading on itself, from `handlerAdded`/`channelActive` — see the long
-    /// comment on those, which is the whole reason this function is three
-    /// lines instead of five.
-    static func negotiate(on channel: Channel) async throws -> any ForwardNegotiation {
+    /// comment on those.
+    ///
+    /// **Bounded twice** (`SOCKS5HandshakeLimits`). A connection that arrives
+    /// while `limits.parked` is full is closed before a handler is installed
+    /// — nothing is read from it and no box is parked for it. One that is
+    /// admitted holds its slot until its box settles, however that happens,
+    /// and is ended by `SOCKS5HandshakeHandler.expire(on:)` if the deadline
+    /// fires first. Each of the two endings writes one `.debug` line in the
+    /// `tunnel` category naming the local listening port and nothing about
+    /// the client.
+    static func negotiate(
+        on channel: Channel, limits: SOCKS5HandshakeLimits
+    ) async throws -> any ForwardNegotiation {
+        guard limits.parked.claim() else {
+            channel.close(promise: nil)
+            let port = listeningPort(of: channel)
+            DiagnosticLog.shared.log(
+                .debug, "tunnel", "socks5 handshake refused, parked limit reached port=\(port)")
+            throw SOCKS5HandshakeError.tooManyParkedHandshakes
+        }
+        defer { limits.parked.release() }
+
         let handshake = SOCKS5HandshakeHandler()
         try await channel.pipeline.addHandler(handshake).get()
+        // A task of its own resolving the handler's latch, not a task-group
+        // race, for the reason `RemoteForward.start` gives for its answer
+        // bound: the other side of the race is a park that ends only through
+        // that latch. Cancelled as soon as the box settles; a sleeper that
+        // throws on cancellation (`TunnelRunner.Sleeper`'s contract) then
+        // ends it without touching the channel.
+        let deadline = Task {
+            do {
+                try await limits.sleeper(limits.deadline)
+            } catch {
+                return
+            }
+            let expired = (try? await handshake.expire(on: channel).get()) ?? false
+            if expired {
+                let port = listeningPort(of: channel)
+                DiagnosticLog.shared.log(.debug, "tunnel", "socks5 handshake timed out port=\(port)")
+            }
+        }
+        defer { deadline.cancel() }
         let destination = try await handshake.requested.value()
         return SOCKS5Negotiation(handshake: handshake, destination: destination)
+    }
+
+    /// The port a refused or timed-out handshake's log line names: the
+    /// accepted channel's LOCAL address — the listener's own port — and
+    /// never its remote one, since which local process knocked is not this
+    /// log's business. `-` when the socket no longer reports one.
+    ///
+    /// Only the port text is factored out, not the log call: the two lines
+    /// are written directly, because `DiagnosticLogSecrecyGuardTests` treats
+    /// a function wrapping the call as a forwarder and requires its call
+    /// sites to interpolate.
+    private static func listeningPort(of channel: Channel) -> String {
+        channel.localAddress?.port.map(String.init) ?? "-"
+    }
+}
+
+/// The two limits one dynamic forward puts on its SOCKS5 handshakes, and the
+/// shared count the second of them is measured against.
+struct SOCKS5HandshakeLimits: Sendable {
+    /// How long a client has, from being accepted, to name a destination.
+    let deadline: Duration
+    /// Waits out `deadline`. Injected — `TunnelRunner.Sleeper`'s shape and
+    /// contract, cancellable — so a test fires the deadline by hand instead
+    /// of waiting for it (CLAUDE.md, "A wall-clock ceiling in a test
+    /// measures the runner").
+    let sleeper: TunnelRunner.Sleeper
+    /// Handshakes currently parked on this listener, against its cap.
+    let parked: SOCKS5ParkedHandshakes
+}
+
+/// How many handshakes are parked on one listener, and whether one more may
+/// be.
+///
+/// `NSLock`, the synchronisation `OpenForwards` in `LocalForwardListener.swift`
+/// uses for the same reason: accepted channels of one listener are spread
+/// over the group's event loops, so no single loop confines this count —
+/// the claim runs on the accept task and the release wherever the park ends.
+final class SOCKS5ParkedHandshakes: @unchecked Sendable {
+    let limit: Int
+    private let lock = NSLock()
+    private var parked = 0
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return parked
+    }
+
+    /// Takes a slot. `false` means the cap is reached and the caller refuses
+    /// the connection; nothing was taken, so there is nothing to release.
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard parked < limit else { return false }
+        parked += 1
+        return true
+    }
+
+    /// Gives back a slot a successful `claim` took. Exactly once per claim.
+    func release() {
+        lock.lock()
+        parked -= 1
+        lock.unlock()
     }
 }
 
