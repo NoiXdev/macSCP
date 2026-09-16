@@ -130,6 +130,26 @@
             <string>Aktywnych przekierowań: %lld</string>
         </dict>
     </dict>
+    <key>tunnel.state.activeWithFailures %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Aktywne · %lld nieudane połączenie</string>
+            <key>few</key>
+            <string>Aktywne · %lld nieudane połączenia</string>
+            <key>many</key>
+            <string>Aktywne · %lld nieudanych połączeń</string>
+            <key>other</key>
+            <string>Aktywne · %lld nieudanego połączenia</string>
+        </dict>
+    </dict>
     <key>connection.convertKey.repoint.message %lld %@</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

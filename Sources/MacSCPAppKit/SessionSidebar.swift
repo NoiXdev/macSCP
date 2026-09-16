@@ -1527,15 +1527,17 @@ private struct SessionRow: View {
         TunnelGlyphPlan.glyph(states: tunnelStates)
     }
 
-    /// The tooltip: the worst state's own label, which for a failure is its
-    /// kind in the app's language. Mapping it again here would put a second
-    /// spelling of the same finding in the app — the same rule the profile
-    /// sheet's state column follows, through the same `stateLabel`.
+    /// The tooltip: the worst state's own tooltip text, which for a failure
+    /// is its kind in the app's language and for an active forwarding that
+    /// is failing connections adds the last one's kind. Mapping it again
+    /// here would put a second spelling of the same finding in the app — the
+    /// same rule the profile sheet's state column follows, through the same
+    /// `stateTooltip`.
     private var tunnelTooltip: String {
         let worst = TunnelManager.Aggregate.of(tunnelStates).worst ?? .stopped
         return String(
             format: L10n.string("tunnel.glyph.tooltip %@", "Port forwarding: %@"),
-            TunnelProfilesSheet.stateLabel(worst))
+            TunnelProfilesSheet.stateTooltip(worst))
     }
 
     private var snippetPlan: SessionRowSnippetMenuPlan {

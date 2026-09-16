@@ -86,7 +86,21 @@ public struct TunnelProfile: Codable, Hashable, Identifiable, Sendable {
 public enum TunnelState: Sendable, Equatable {
     case stopped
     case connecting
-    case active(connections: Int)
+    /// Up and carrying traffic. `connections` is how many tunnelled
+    /// connections are open right now.
+    ///
+    /// `failedConnections` counts the accepted connections whose channel
+    /// through the server (or, for a remote forward, whose local target)
+    /// could not be opened since the last one that could, and
+    /// `lastFailure` is the kind of the latest of them. The next connection
+    /// that opens resets both to `0`/`nil`, and so does every entry into
+    /// `active`. A failed connection does not change the lifecycle: the
+    /// forward itself is still up, so `.failed` would be untrue (the
+    /// maintainer decision of 2026-09-16, "Log + counter in the status").
+    ///
+    /// The two have defaults so a state that has seen no failure is still
+    /// spelled `.active(connections: n)`.
+    case active(connections: Int, failedConnections: Int = 0, lastFailure: TunnelFailureKind? = nil)
     case reconnecting(attempt: Int)
     /// Why, as a value: the kind and the data a sentence needs, never the
     /// sentence. The App translates it (`TunnelProfilesSheet.stateLabel`);

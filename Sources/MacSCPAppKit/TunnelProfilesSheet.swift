@@ -312,8 +312,11 @@ struct TunnelProfilesSheet: View {
             }
             TableColumn(L10n.string("tunnel.column.state", "State")) { profile in
                 // A failure is shown in the app's language: `stateLabel`
-                // translates the kind the state carries.
+                // translates the kind the state carries, and the tooltip
+                // adds the last failed connection's kind while the
+                // forwarding stays up.
                 Text(Self.stateLabel(manager.state(of: profile.id)))
+                    .help(Self.stateTooltip(manager.state(of: profile.id)))
             }
             TableColumn(L10n.string("tunnel.column.action", "Action")) { profile in
                 if TunnelManager.Aggregate.isRunning(manager.state(of: profile.id)) {
@@ -547,7 +550,12 @@ struct TunnelProfilesSheet: View {
         switch state {
         case .stopped: return L10n.string("tunnel.state.stopped", "Stopped")
         case .connecting: return L10n.string("tunnel.state.connecting", "Connecting…")
-        case .active(let connections):
+        case .active(_, let failed, _) where failed > 0:
+            return String(
+                format: L10n.string(
+                    "tunnel.state.activeWithFailures %lld", "Active · %lld connections failed"),
+                failed)
+        case .active(let connections, _, _):
             return connections == 0
                 ? L10n.string("tunnel.state.active", "Active")
                 : String(
@@ -562,6 +570,23 @@ struct TunnelProfilesSheet: View {
             return L10n.string(
                 "tunnel.state.needsConfirmation", "Connect this session once by hand")
         }
+    }
+
+    /// The state as a tooltip: `stateLabel`, and — while connections are
+    /// failing on a forwarding that is up — the last failure, translated
+    /// from its kind by `failureLabel(_:)`, on a line of its own. Every
+    /// other state's tooltip is its label.
+    ///
+    /// Read by the same four surfaces as `stateLabel`: the two sheets' state
+    /// columns as `.help`, the Dock menu entry's `toolTip`, the sidebar
+    /// glyph's tooltip.
+    static func stateTooltip(_ state: TunnelState) -> String {
+        let label = stateLabel(state)
+        guard case .active(_, let failed, let last?) = state, failed > 0 else { return label }
+        return label + "\n"
+            + String(
+                format: L10n.string("tunnel.state.lastFailure %@", "Last failure: %@"),
+                failureLabel(last))
     }
 
     /// The catalogue key of one failure kind: `tunnel.failure.<name>`, plus

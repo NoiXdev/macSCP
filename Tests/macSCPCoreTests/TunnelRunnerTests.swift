@@ -82,6 +82,95 @@ struct TunnelRunnerTests {
         await runner.stop()
     }
 
+    // MARK: - Connections that could not be carried
+
+    /// A connection the forward could not carry is counted while the tunnel
+    /// stays `active`, the latest kind rides along, and the next connection
+    /// that opens resets both — through the seams the runner hands the
+    /// runtime, not through the plan alone.
+    @Test func aFailedConnectionIsCountedAndTheNextOpenResetsTheCount() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed))
+        runtimes.made[0].onConnectionFailure(.connectFailed(reason: "refused"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 2, lastFailure: .connectFailed))
+
+        runtimes.made[0].observer?(.opened)
+        try await states.waitFor(.active(connections: 1))
+        #expect(await runner.state == .active(connections: 1, failedConnections: 0, lastFailure: nil))
+
+        await runner.stop()
+    }
+
+    /// The reports reach the plan in the order the forward made them. An
+    /// `opened` followed at once by a failure — a SOCKS5 pair whose reply
+    /// could not be written after the pump was installed reports exactly
+    /// that — must end counted, not reset by an `opened` that overtook it.
+    @Test func connectionReportsKeepTheirOrder() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 1080)
+        let runner = TunnelRunner(
+            profile: dynamicProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        // Many pairs, and the WHOLE published sequence compared, not only
+        // the last state: one pair delivered out of order anywhere shows up
+        // as a wrong element, where a final-state check sees only the last
+        // pair.
+        let pairs = 200
+        var expected: [TunnelState] = [.connecting, .active(connections: 0)]
+        for pair in 1...pairs {
+            runtimes.made[0].observer?(.opened)
+            runtimes.made[0].onConnectionFailure(.pumpFailed(reason: "reply not written"))
+            expected.append(.active(connections: pair))
+            expected.append(
+                .active(connections: pair, failedConnections: 1, lastFailure: .pumpFailed))
+        }
+        try await states.waitFor(
+            .active(connections: pairs, failedConnections: 1, lastFailure: .pumpFailed))
+        #expect(states.recorded == expected)
+
+        await runner.stop()
+    }
+
+    /// A reconnect forgets the failures: they belonged to the forward that
+    /// was lost.
+    @Test func aReconnectForgetsTheFailedConnections() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(reconnects: true), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed))
+
+        connections.made[0].drop()
+        try await states.waitFor(.reconnecting(attempt: 1))
+        try await states.waitFor(.active(connections: 0, failedConnections: 0, lastFailure: nil))
+
+        await runner.stop()
+    }
+
     // MARK: - Reconnect
 
     /// A loss after a HEALTHY period starts the backoff over: three drops,

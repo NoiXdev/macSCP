@@ -150,8 +150,10 @@ final class TunnelMenuBlockController: NSObject {
             item.state = entry.isRunning ? .on : .off
             // The second channel beside the checkmark: the state's own
             // label, which for a `.failed` tunnel is its failure kind in the
-            // app's language (`TunnelProfilesSheet.stateLabel`).
-            item.toolTip = TunnelProfilesSheet.stateLabel(manager.state(of: entry.profile.id))
+            // app's language, plus the last failed connection's kind while
+            // an active one is failing some (`TunnelProfilesSheet
+            // .stateTooltip`).
+            item.toolTip = TunnelProfilesSheet.stateTooltip(manager.state(of: entry.profile.id))
             items.append(item)
         }
 

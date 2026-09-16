@@ -456,6 +456,97 @@ struct TunnelRigITests {
             #expect(await runner.state == .stopped)
         }
     }
+
+    /// A `-L` whose target has nothing listening, as the SERVER sees it: sshd
+    /// refuses the `direct-tcpip` channel, the client's connection is
+    /// closed, and the tunnel stays `active` with that connection counted.
+    /// Then a listener is started at the same port inside the container,
+    /// and the next connection through the tunnel opens and resets the
+    /// count — the same forward, not a new one.
+    ///
+    /// The port is drawn at random from 40000–60000, for the reason
+    /// `aRemoteForwardCarriesAConnectionFromInsideTheContainer` gives about
+    /// shared ports inside the container. OpenBSD `nc -lk` keeps listening
+    /// across connections, so the probe that waits for it to be up does not
+    /// use the one accept the tunnel needs; `-d` detaches it and the
+    /// teardown kills it by its full command line. Every wait is on a
+    /// process ending or a published state, never a clock.
+    @Test func aFailedConnectionIsCountedWhileTheForwardStaysUp() async throws {
+        try await withRigTeardown { teardown in
+            let carrierHosts = throwawayDirectory("failure-carrier")
+            teardown.add { try? FileManager.default.removeItem(at: carrierHosts) }
+
+            let targetPort = Int.random(in: 40_000...60_000)
+            let session = sshSession(
+                name: "rig", host: "127.0.0.1", port: 2222, username: "testuser",
+                authKind: .password)
+            let profile = TunnelProfile(
+                sessionID: session.id, name: "rig-failures",
+                kind: .local(
+                    bind: "127.0.0.1", localPort: 0, host: "127.0.0.1", remotePort: targetPort))
+            let runner = TunnelRunner(
+                profile: profile,
+                connect: { decider in
+                    try await TunnelConnection.connect(
+                        session: session, secrets: [RigSecret()],
+                        knownHosts: KnownHostsStore(directory: carrierHosts), decider: decider)
+                })
+            let states = TunnelStateCollector(runner.states)
+            teardown.add { await runner.stop() }
+
+            await runner.start(decider: .asking { _ in true })
+            try await states.waitFor(.active(connections: 0))
+            let port = try #require(await runner.boundPort)
+
+            let refused = try await awaitCancellably(
+                ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .connect(host: "127.0.0.1", port: port))
+            try await awaitCancellably(refused.closeFuture)
+            try await states.waitFor("one failed connection") { state in
+                guard case .active(0, 1, .some) = state else { return false }
+                return true
+            }
+            let counted = await runner.state
+            guard case .active(_, 1, let kind) = counted else {
+                Issue.record("the tunnel left active: \(counted)")
+                return
+            }
+            #expect(kind == .channelOpenFailed)
+
+            let listen = "nc -lk 127.0.0.1 \(targetPort)"
+            let started = try await SubprocessRunner.run(
+                URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: ["docker", "exec", "-d", "macscp-test-sshd", "sh", "-c", listen],
+                timeout: .seconds(60))
+            #expect(started.status == 0)
+            teardown.add {
+                _ = try? await SubprocessRunner.run(
+                    URL(fileURLWithPath: "/usr/bin/env"),
+                    arguments: ["docker", "exec", "macscp-test-sshd", "pkill", "-f", listen],
+                    timeout: .seconds(60))
+            }
+            try await pollUntil("the listener inside the container is up") {
+                let probe = try? await SubprocessRunner.run(
+                    URL(fileURLWithPath: "/usr/bin/env"),
+                    arguments: [
+                        "docker", "exec", "macscp-test-sshd", "nc", "-z", "127.0.0.1",
+                        String(targetPort),
+                    ],
+                    timeout: .seconds(60))
+                return probe?.status == 0
+            }
+
+            let carried = try await awaitCancellably(
+                ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .connect(host: "127.0.0.1", port: port))
+            teardown.add {
+                carried.close(promise: nil)
+                try? await awaitCancellably(carried.closeFuture)
+            }
+            try await states.waitFor(.active(connections: 1))
+            #expect(await runner.state == .active(connections: 1, failedConnections: 0, lastFailure: nil))
+        }
+    }
 }
 
 // MARK: - Helpers

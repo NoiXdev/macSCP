@@ -20,6 +20,12 @@ public enum TunnelEvent: Sendable, Equatable {
     case connectionAccepted
     /// One pumped connection finished (either side closed).
     case connectionClosed
+    /// One accepted connection could not be carried: its channel through the
+    /// server could not be opened, or (remote forward) its local target
+    /// could not be reached. The forward itself is still up. A SOCKS5 client
+    /// that never named a destination is not reported — that is the
+    /// client's failure, not the tunnel's.
+    case connectionFailed(TunnelFailureKind)
     /// The tunnel's own SSH connection dropped. `reconnects` carries the
     /// profile's own `reconnects` flag, not a retry state — it says whether
     /// this LOSS should be retried at all.
@@ -75,9 +81,10 @@ public enum TunnelStatePlan {
     /// | `stopped` | `start` | `connecting` |
     /// | `needsConfirmation` | `start` | `connecting` |
     /// | `connecting` | `connected` | `connecting` (unchanged — see below) |
-    /// | `connecting` | `listening` | `active(0)` |
-    /// | `active(n)` | `connectionAccepted` | `active(n+1)` |
-    /// | `active(n)` | `connectionClosed` | `active(max(0, n−1))` |
+    /// | `connecting` | `listening` | `active(0, 0, nil)` |
+    /// | `active(n, f, k)` | `connectionAccepted` | `active(n+1, 0, nil)` |
+    /// | `active(n, f, k)` | `connectionClosed` | `active(max(0, n−1), f, k)` |
+    /// | `active(n, f, _)` | `connectionFailed(kind)` | `active(n, f+1, kind)` |
     /// | `active` or `connecting` | `connectionLost(reconnects: true)` | `reconnecting(1)` |
     /// | `active` or `connecting` | `connectionLost(reconnects: false)` | `failed(.connectionLost)` |
     /// | `reconnecting(k)` | `retryDue` | `connecting` |
@@ -95,6 +102,13 @@ public enum TunnelStatePlan {
     /// as its own event (rather than dropped) so a caller can log or show
     /// "connecting…" progress without the plan inventing a state for it;
     /// `listening` is the event that actually advances to `active(0)`.
+    ///
+    /// **A failed connection is counted, never a lifecycle change.** The
+    /// forward is up, so `failed` would be untrue; `connectionFailed` only
+    /// moves `active`'s `failedConnections`/`lastFailure`, the next
+    /// `connectionAccepted` clears them, and every other state ignores it.
+    /// A reconnect clears them by construction: its `active` comes from
+    /// `listening`, which starts at `0`/`nil`.
     ///
     /// **`reconnecting(k) + connectionLost → reconnecting(k+1)`, regardless
     /// of the event's own `reconnects` flag.** That flag is the profile's
@@ -120,11 +134,18 @@ public enum TunnelStatePlan {
         case (.connecting, .listening):
             return .active(connections: 0)
 
-        case (.active(let connections), .connectionAccepted):
-            return .active(connections: connections + 1)
+        // A connection that opened proves the forward carries traffic
+        // again, so the failures before it are history; a close says
+        // nothing about them either way and leaves them.
+        case (.active(let connections, _, _), .connectionAccepted):
+            return .active(connections: connections + 1, failedConnections: 0, lastFailure: nil)
 
-        case (.active(let connections), .connectionClosed):
-            return .active(connections: max(0, connections - 1))
+        case (.active(let connections, let failed, let last), .connectionClosed):
+            return .active(
+                connections: max(0, connections - 1), failedConnections: failed, lastFailure: last)
+
+        case (.active(let connections, let failed, _), .connectionFailed(let kind)):
+            return .active(connections: connections, failedConnections: failed + 1, lastFailure: kind)
 
         case (.active, .connectionLost(let reconnects)), (.connecting, .connectionLost(let reconnects)):
             return reconnects ? .reconnecting(attempt: 1) : .failed(.connectionLost)

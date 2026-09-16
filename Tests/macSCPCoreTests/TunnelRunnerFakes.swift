@@ -84,6 +84,17 @@ final class TunnelStateCollector: @unchecked Sendable {
         }
     }
 
+    /// The next state `match` accepts — for a test that pins part of a
+    /// payload and leaves the rest (a failure kind a real server chooses)
+    /// to the code under test.
+    func waitFor(_ what: String, where match: @escaping @Sendable (TunnelState) -> Bool)
+        async throws
+    {
+        try await pollUntil("the runner to publish \(what)") {
+            self.consume(match)
+        }
+    }
+
     private func consume(_ match: (TunnelState) -> Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -212,7 +223,9 @@ final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
 
     func start(
         _ kind: TunnelProfile.Kind, over connection: any TunnelSSHConnection,
-        observer: @escaping TunnelConnectionObserver, onEnded: @escaping @Sendable () -> Void
+        observer: @escaping TunnelConnectionObserver,
+        onConnectionFailure: @escaping @Sendable (TunnelFailure) -> Void,
+        onEnded: @escaping @Sendable () -> Void
     ) async throws -> any TunnelRuntime {
         let planned: (any Error)? = lock.withLock {
             starts += 1
@@ -221,7 +234,8 @@ final class TunnelFakeRuntimes: TunnelRuntimeFactory, @unchecked Sendable {
         if let planned { throw planned }
         let gate = lock.withLock { runtimes.isEmpty ? firstStopGate : nil }
         let runtime = TunnelFakeRuntime(
-            port: port, observer: observer, onEnded: onEnded, stopGate: gate)
+            port: port, observer: observer, onConnectionFailure: onConnectionFailure,
+            onEnded: onEnded, stopGate: gate)
         lock.withLock {
             runtimes.append(runtime)
             kinds.append(kind)
@@ -239,14 +253,19 @@ final class TunnelFakeRuntime: TunnelRuntime, @unchecked Sendable {
     /// The runner's own connection observer, so a test can report an
     /// accepted connection without a socket.
     let observer: TunnelConnectionObserver?
+    /// The runner's per-connection failure seam, so a test can report a
+    /// connection that could not be carried without a socket.
+    let onConnectionFailure: @Sendable (TunnelFailure) -> Void
     private let onEnded: @Sendable () -> Void
 
     init(
         port: Int, observer: @escaping TunnelConnectionObserver,
+        onConnectionFailure: @escaping @Sendable (TunnelFailure) -> Void = { _ in },
         onEnded: @escaping @Sendable () -> Void, stopGate: TunnelLatch? = nil
     ) {
         self.port = port
         self.observer = observer
+        self.onConnectionFailure = onConnectionFailure
         self.onEnded = onEnded
         self.stopGate = stopGate
     }

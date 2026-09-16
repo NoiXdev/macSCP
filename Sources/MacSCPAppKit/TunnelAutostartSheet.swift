@@ -144,6 +144,7 @@ struct TunnelAutostartSheet: View {
                 // The same label the profile sheet's state column shows — a
                 // failure translated from its kind (`stateLabel`).
                 Text(TunnelProfilesSheet.stateLabel(manager.state(of: profile.id)))
+                    .help(TunnelProfilesSheet.stateTooltip(manager.state(of: profile.id)))
             }
             TableColumn(L10n.string("tunnel.column.action", "Action")) { profile in
                 if TunnelManager.Aggregate.isRunning(manager.state(of: profile.id)) {

@@ -60,10 +60,15 @@ public enum TunnelStateLine {
             return key(state)
         case .needsConfirmation:
             return "needs confirmation"
-        case .active(let connections):
+        case .active(let connections, let failed, _):
             var line = "active"
             if let port { line += " port=\(port)" }
             if connections > 0 { line += " connections=\(connections)" }
+            // A connection the forward could not carry is published as a
+            // new `active` state; without the count its line would repeat
+            // the previous one. The kind stays out: this is not a failure
+            // of the tunnel, and the diagnostic log has the sentence.
+            if failed > 0 { line += " failed=\(failed)" }
             return line
         case .reconnecting(let attempt):
             return "reconnecting attempt=\(attempt)"
@@ -75,9 +80,10 @@ public enum TunnelStateLine {
         switch state {
         case .stopped, .connecting, .needsConfirmation:
             break
-        case .active(let connections):
+        case .active(let connections, let failed, _):
             object["connections"] = connections
             if let port { object["port"] = port }
+            if failed > 0 { object["failedConnections"] = failed }
         case .reconnecting(let attempt):
             object["attempt"] = attempt
         case .failed(let kind):

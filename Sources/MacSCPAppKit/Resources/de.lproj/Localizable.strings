@@ -1259,6 +1259,8 @@
 "tunnel.state.connecting" = "Verbinde…";
 "tunnel.state.active" = "Aktiv";
 "tunnel.state.activeConnections %lld" = "Aktiv (%lld)";
+"tunnel.state.activeWithFailures %lld" = "Aktiv · %lld Verbindungen fehlgeschlagen";
+"tunnel.state.lastFailure %@" = "Letzter Fehler: %@";
 "tunnel.state.reconnecting %lld" = "Neuer Versuch, Nr. %lld";
 "tunnel.state.needsConfirmation" = "Verbinde diese Sitzung einmal von Hand";
 "tunnel.failure.hostKeyMismatch %@" = "Der Host-Schlüssel von %@ hat sich geändert";

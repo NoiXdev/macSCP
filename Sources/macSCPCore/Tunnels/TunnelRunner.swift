@@ -108,6 +108,10 @@ public actor TunnelRunner {
     private(set) var queuedCommands = 0
     private var connection: (any TunnelSSHConnection)?
     private var runtime: (any TunnelRuntime)?
+    /// The current attempt's per-connection report stream — see
+    /// `attempt(decider:isRetry:)` for why the reports travel through one.
+    /// Finished by `releaseCurrent()` once the forward is stopped.
+    private var connectionReports: AsyncStream<ConnectionReport>.Continuation?
 
     /// The port the running forward actually bound — a LOCAL port for
     /// `.local`/`.dynamic`, the SERVER's for `.remote`. `nil` whenever no
@@ -385,13 +389,27 @@ public actor TunnelRunner {
 
         if Task.isCancelled { return .cancelled }
 
+        // One stream and one reader for every per-connection report, rather
+        // than a `Task` per report: separate tasks reach the actor in no
+        // guaranteed order, and the failure count depends on order — an
+        // `opened` resets it, so a failure reported just after an `opened`
+        // (a SOCKS5 reply that could not be written once the pump was in)
+        // would be erased if the `opened` overtook it. A stream's `yield`s
+        // are delivered in the order they were made.
+        let (reports, report) = AsyncStream.makeStream(of: ConnectionReport.self)
+        connectionReports = report
+        Task { [weak self] in
+            for await next in reports {
+                await self?.connectionReport(next)
+            }
+        }
+
         let started: any TunnelRuntime
         do {
             started = try await runtimes.start(
                 profile.kind, over: opened,
-                observer: { [weak self] event in
-                    Task { await self?.connectionEvent(event) }
-                },
+                observer: { event in report.yield(.event(event)) },
+                onConnectionFailure: { failure in report.yield(.failed(failure)) },
                 onEnded: { reportDrop.yield(()) })
         } catch {
             return outcome(for: error, isRetry: isRetry)
@@ -461,16 +479,54 @@ public actor TunnelRunner {
     /// Releases whatever this attempt held: the forward first, then the
     /// connection carrying it. Idempotent — `stop()` and the run loop both
     /// call it, and the second call finds nothing.
+    ///
+    /// The report stream is finished only after the forward has stopped, so
+    /// the `closed` reports its teardown produces still reach the log.
     private func releaseCurrent() async {
         let held = runtime
         let dialled = connection
+        let reports = connectionReports
         runtime = nil
         connection = nil
+        connectionReports = nil
         await held?.stop()
+        reports?.finish()
         await dialled?.disconnect()
     }
 
     // MARK: - Per-connection accounting
+
+    /// What a running forward reports about one of its connections.
+    private enum ConnectionReport: Sendable {
+        /// `BytePump`'s counters: a pair opened, or closed.
+        case event(TunnelConnectionEvent)
+        /// A connection the forward could not carry — the listeners'
+        /// `onFailure`, the remote forward's `onConnectionFailure`.
+        case failed(TunnelFailure)
+    }
+
+    private func connectionReport(_ report: ConnectionReport) {
+        switch report {
+        case .event(let event): connectionEvent(event)
+        case .failed(let failure): connectionFailed(failure)
+        }
+    }
+
+    /// One connection the forward could not carry: counted in the state,
+    /// the tunnel left up, one `debug` line.
+    ///
+    /// The line carries the kind's own English sentence and the bound port,
+    /// and nothing the failure's `reason:` payload holds — that text can be
+    /// a foreign error's, and nothing about the client that connected is
+    /// in it either. A SOCKS5 client that never named a destination never
+    /// gets here: `LocalForwardListener` does not report it, because that
+    /// is the client's failure, not the tunnel's.
+    private func connectionFailed(_ failure: TunnelFailure) {
+        let kind = TunnelFailureKind(failure)
+        apply(.connectionFailed(kind))
+        let portText = boundPort.map(String.init) ?? "-"
+        log(.debug, "tunnel \(profile.name) connection failed port=\(portText) \(kind.sentence)")
+    }
 
     /// One tunnelled connection opening or closing, from `BytePump`'s
     /// counters.
@@ -555,14 +611,18 @@ public actor TunnelRunner {
     /// `reason:` overload below writes the key, and it runs
     /// `DialSupport.reason(for:)` itself.
     ///
-    /// ONE line carries no `reason=` and cannot: the loss of a connection on
-    /// a profile that does not reconnect. There is no error there — a
+    /// TWO lines carry no `reason=`. The loss of a connection on a profile
+    /// that does not reconnect cannot: there is no error there — a
     /// disconnect signal carries none — and the sentence is the
     /// `.connectionLost` kind's own, taken from the state the plan just
     /// computed so that the line and the state cannot disagree.
     /// Inventing an error to wrap it would put a second spelling of that
     /// sentence in this file; recorded as a limit instead (Task 5 report,
-    /// round 1).
+    /// round 1). A connection the forward could not carry
+    /// (`connectionFailed(_:)`) does have an error, and deliberately does
+    /// not pass it: its `reason:` payload can be a foreign error's text, so
+    /// the line writes the kind's own sentence, the same value the state
+    /// carries.
     private func log(_ level: DiagnosticLogLevel, _ message: @autoclosure @Sendable () -> String) {
         DiagnosticLog.shared.log(level, "tunnel", message())
     }

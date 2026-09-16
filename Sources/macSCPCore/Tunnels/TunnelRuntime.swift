@@ -70,9 +70,16 @@ public protocol TunnelRuntimeFactory: Sendable {
     ///     nobody (a remote forward whose transport returns or throws after
     ///     the server confirmed it). Never called for a cancellation, which
     ///     is how `stop()` ends a forward normally.
+    ///   - onConnectionFailure: one call per accepted connection that could
+    ///     not be carried — the listeners' `onFailure`, the remote forward's
+    ///     `onConnectionFailure`. The forward stays up; the runner counts
+    ///     these in `active(failedConnections:)`. The success that resets
+    ///     that count is `observer`'s `.opened`, which all three forwards
+    ///     already report once both halves of a pair are installed.
     func start(
         _ kind: TunnelProfile.Kind, over connection: any TunnelSSHConnection,
         observer: @escaping TunnelConnectionObserver,
+        onConnectionFailure: @escaping @Sendable (TunnelFailure) -> Void,
         onEnded: @escaping @Sendable () -> Void
     ) async throws -> any TunnelRuntime
 }
@@ -90,6 +97,7 @@ public struct LiveTunnelRuntimeFactory: TunnelRuntimeFactory {
     public func start(
         _ kind: TunnelProfile.Kind, over connection: any TunnelSSHConnection,
         observer: @escaping TunnelConnectionObserver,
+        onConnectionFailure: @escaping @Sendable (TunnelFailure) -> Void,
         onEnded: @escaping @Sendable () -> Void
     ) async throws -> any TunnelRuntime {
         switch kind {
@@ -101,7 +109,7 @@ public struct LiveTunnelRuntimeFactory: TunnelRuntimeFactory {
                     directTCPIPFactory: { host, port in
                         try await connection.openDirectTCPIP(host: host, port: port)
                     },
-                    observer: observer)
+                    observer: observer, onFailure: onConnectionFailure)
             } catch {
                 // A listener whose bind failed holds no socket, but one
                 // whose `start` failed AFTER binding would — and only
@@ -120,7 +128,7 @@ public struct LiveTunnelRuntimeFactory: TunnelRuntimeFactory {
                     directTCPIPFactory: { host, port in
                         try await connection.openDirectTCPIP(host: host, port: port)
                     },
-                    observer: observer)
+                    observer: observer, onFailure: onConnectionFailure)
             } catch {
                 await listener.stop()
                 throw error
@@ -134,7 +142,7 @@ public struct LiveTunnelRuntimeFactory: TunnelRuntimeFactory {
             // its own `catch`), so there is no `stop()` to add here.
             _ = try await forward.start(
                 bind: bind, remotePort: remotePort, localHost: localHost, localPort: localPort,
-                observer: observer)
+                observer: observer, onConnectionFailure: onConnectionFailure)
             return RemoteForwardRuntime(forward: forward)
         }
     }

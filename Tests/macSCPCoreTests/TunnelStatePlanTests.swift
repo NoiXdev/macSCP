@@ -22,6 +22,26 @@ struct TunnelStatePlanTests {
         rows.append((.active(connections: 3), .connectionAccepted, .active(connections: 4)))
         rows.append((.active(connections: 1), .connectionClosed, .active(connections: 0)))
         rows.append((.active(connections: 0), .connectionClosed, .active(connections: 0)))
+        // A connection that could not be carried is counted while the
+        // forward stays up; the next one that opens resets the count; a
+        // close leaves it alone (the maintainer decision of 2026-09-16).
+        rows.append(
+            (.active(connections: 2), .connectionFailed(.channelOpenFailed),
+             .active(connections: 2, failedConnections: 1, lastFailure: .channelOpenFailed)))
+        rows.append(
+            (.active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed),
+             .connectionFailed(.connectFailed),
+             .active(connections: 0, failedConnections: 2, lastFailure: .connectFailed)))
+        rows.append(
+            (.active(connections: 2, failedConnections: 5, lastFailure: .pumpFailed),
+             .connectionAccepted, .active(connections: 3)))
+        rows.append(
+            (.active(connections: 2, failedConnections: 5, lastFailure: .pumpFailed),
+             .connectionClosed,
+             .active(connections: 1, failedConnections: 5, lastFailure: .pumpFailed)))
+        rows.append(
+            (.active(connections: 1, failedConnections: 3, lastFailure: .channelOpenFailed),
+             .connectionLost(reconnects: true), .reconnecting(attempt: 1)))
         rows.append(
             (.active(connections: 2), .connectionLost(reconnects: true), .reconnecting(attempt: 1)))
         rows.append((.connecting, .connectionLost(reconnects: true), .reconnecting(attempt: 1)))
@@ -82,12 +102,32 @@ struct TunnelStatePlanTests {
         rows.append((.active(connections: 0), .start))
         rows.append((.needsConfirmation, .listening))
         rows.append((.needsConfirmation, .connected))
+        // A per-connection failure means nothing outside `active`: there is
+        // no forward to have failed a connection on.
+        rows.append((.stopped, .connectionFailed(.channelOpenFailed)))
+        rows.append((.connecting, .connectionFailed(.channelOpenFailed)))
+        rows.append((.reconnecting(attempt: 2), .connectionFailed(.connectFailed)))
+        rows.append((.failed(.unknown), .connectionFailed(.pumpFailed)))
         return rows
     }()
 
     @Test("unknown combination leaves the state unchanged", arguments: Self.unknownRows)
     private func unknownCombinationIsUnchanged(_ row: UnknownRow) {
         #expect(TunnelStatePlan.next(row.state, on: row.event) == row.state)
+    }
+
+    /// A reconnect starts the count over: the failures belonged to the
+    /// forward that was lost, and the new one has failed nothing yet. Walked
+    /// through the table rather than asserted as one row, because the reset
+    /// is the path `active → reconnecting → connecting → active` produces,
+    /// not a row of its own.
+    @Test func aReconnectStartsTheFailureCountOver() {
+        var state = TunnelState.active(
+            connections: 1, failedConnections: 4, lastFailure: .channelOpenFailed)
+        for event: TunnelEvent in [.connectionLost(reconnects: true), .retryDue, .listening] {
+            state = TunnelStatePlan.next(state, on: event)
+        }
+        #expect(state == .active(connections: 0, failedConnections: 0, lastFailure: nil))
     }
 
     @Test(

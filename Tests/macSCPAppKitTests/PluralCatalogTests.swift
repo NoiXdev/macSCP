@@ -5,9 +5,10 @@ import Testing
 
 /// Guards the `%lld`-count messages that would read as "1 snippets"/"1
 /// logins"/"1 of them" without real plural support. Counted while writing
-/// this sentence, `catalogKeys()` carries three:
-/// `snippets.export.confirm.message %lld`, `logins.export.summary %lld` and
-/// `tabs.closeOthers.incomingTransfers %lld`. A fourth key,
+/// this sentence (2026-09-17), `catalogKeys()` carries four:
+/// `snippets.export.confirm.message %lld`, `logins.export.summary %lld`,
+/// `tabs.closeOthers.incomingTransfers %lld` and
+/// `tunnel.state.activeWithFailures %lld`. A fourth key,
 /// `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on its own
 /// (`activeTransfersKey`) because only its first argument is pluralized.
 /// Each is backed by a `Localizable.stringsdict` per language, alongside the
@@ -48,6 +49,7 @@ struct PluralCatalogTests {
                 "tabs.closeOthers.incomingTransfers %lld",
                 "%lld of them are receiving transfers from other tabs; closing cancels those."
             ),
+            ("tunnel.state.activeWithFailures %lld", "Active · %lld connections failed"),
         ]
     }
 
@@ -161,9 +163,10 @@ struct PluralCatalogTests {
     ///
     /// One call site per key in `catalogKeys()`, counted while writing this
     /// sentence: `SnippetsSheet.swift` for the snippet export,
-    /// `SessionExportImportSheets.swift` for the login export, and
+    /// `SessionExportImportSheets.swift` for the login export,
     /// `TabCloseWarning.bulkMessage` for the incoming-transfer line of the
-    /// bulk-close warning.
+    /// bulk-close warning, and `TunnelProfilesSheet.stateLabel` for a
+    /// forwarding that is up while connections fail (counted 2026-09-17).
     @Test
     func resolvesThroughTheProductionLookupPath() {
         for entry in Self.catalogKeys() {

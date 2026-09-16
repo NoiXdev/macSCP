@@ -288,7 +288,7 @@ final class TunnelManager {
         static func of(_ states: [TunnelState]) -> Aggregate {
             var aggregate = Aggregate(total: states.count)
             for state in states {
-                if case .active(let connections) = state {
+                if case .active(let connections, _, _) = state {
                     aggregate.active += 1
                     aggregate.connections += connections
                 }

@@ -296,15 +296,16 @@ struct TunnelPresenceWiringGuardTests {
             "the forwarding glyph is gated on the sidebar's density")
     }
 
-    /// The tooltip shows the state's own label — for a failure, its kind
-    /// translated by `stateLabel`. A row that mapped it again would put a
-    /// second spelling of the same finding in the app.
+    /// The tooltip shows the state's own tooltip text — for a failure, its
+    /// kind translated by `stateLabel`, which `stateTooltip` reads. A row
+    /// that mapped it again would put a second spelling of the same finding
+    /// in the app.
     @Test func theTooltipReadsTheStateLabelRatherThanRewritingIt() throws {
         let sidebar = try Self.strict(Self.sidebarFile)
         let tooltip = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "private var tunnelTooltip: String", in: sidebar)
         #expect(
-            tooltip.contains("TunnelProfilesSheet.stateLabel("),
+            tooltip.contains("TunnelProfilesSheet.stateTooltip("),
             "the glyph's tooltip no longer reads the state's own sentence")
         #expect(
             !tooltip.contains("case .failed"),

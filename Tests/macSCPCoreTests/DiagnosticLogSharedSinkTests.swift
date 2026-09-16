@@ -626,6 +626,10 @@ struct DiagnosticLogSharedSinkTests {
 
         await runner.start(decider: .asking { _ in true })
         try await states.waitFor(.active(connections: 0))
+        runtimes.made[0].onConnectionFailure(
+            .channelOpenFailed(reason: "open failed \(Self.tunnelFailurePayload)"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed))
         runtimes.made[0].observer?(.opened)
         try await states.waitFor(.active(connections: 1))
         runtimes.made[0].observer?(
@@ -653,7 +657,20 @@ struct DiagnosticLogSharedSinkTests {
             contents.contains(
                 "[debug] tunnel tunnel \(profile.name) connection closed to internal:80 "
                     + "in=11 out=22 ms=250"))
+        // A connection the forward could not carry: one line, the kind's
+        // own sentence and the bound port — never the failure's free-text
+        // payload, which can be a foreign error's.
+        let failedLine =
+            "[debug] tunnel tunnel \(profile.name) connection failed port=18080 "
+            + TunnelFailureKind.channelOpenFailed.sentence
+        #expect(contents.components(separatedBy: failedLine).count - 1 == 1)
+        let payloadInLog = contents.contains(Self.tunnelFailurePayload)
+        #expect(payloadInLog == false)
     }
+
+    /// Stands in for text a foreign error could put in a per-connection
+    /// failure's `reason:` — an address the log must not carry.
+    private static let tunnelFailurePayload = "198.51.100.23:5432"
 
     /// The `failed` line carries `reason=` through the sanctioned overload.
     ///

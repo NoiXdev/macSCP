@@ -114,6 +114,22 @@
             <string>%lld Weiterleitungen aktiv</string>
         </dict>
     </dict>
+    <key>tunnel.state.activeWithFailures %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Aktiv · %lld Verbindung fehlgeschlagen</string>
+            <key>other</key>
+            <string>Aktiv · %lld Verbindungen fehlgeschlagen</string>
+        </dict>
+    </dict>
     <key>connection.convertKey.repoint.message %lld %@</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

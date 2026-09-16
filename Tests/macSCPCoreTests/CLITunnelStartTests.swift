@@ -37,6 +37,14 @@ struct CLITunnelStartRenderingTests {
         (TunnelState.connecting, "connecting"),
         (TunnelState.active(connections: 0), "active"),
         (TunnelState.active(connections: 3), "active connections=3"),
+        (
+            TunnelState.active(connections: 0, failedConnections: 2, lastFailure: .channelOpenFailed),
+            "active failed=2"
+        ),
+        (
+            TunnelState.active(connections: 1, failedConnections: 1, lastFailure: .connectFailed),
+            "active connections=1 failed=1"
+        ),
         (TunnelState.reconnecting(attempt: 1), "reconnecting attempt=1"),
         (TunnelState.reconnecting(attempt: 4), "reconnecting attempt=4"),
         (TunnelState.failed(.connectionFailed), "failed"),
@@ -108,6 +116,21 @@ struct CLITunnelStartRenderingTests {
                 == TunnelStateJSONLine(state: "failed", reason: "the server did not answer"))
     }
 
+    /// A connection the forward could not carry is news the runner
+    /// publishes as a new `active` state, so the line it prints says what
+    /// changed — otherwise a failure would print the previous line again.
+    /// The kind is not rendered: `failed` on stderr is where a sentence goes,
+    /// and the tunnel has not failed.
+    @Test func theJSONActiveLineCarriesTheFailedCount() throws {
+        let line = TunnelStateLine.render(
+            .active(connections: 0, failedConnections: 3, lastFailure: .pumpFailed),
+            port: 2222, json: true)
+        #expect(
+            try TunnelStateJSONLine.decode(line)
+                == TunnelStateJSONLine(
+                    state: "active", connections: 0, port: 2222, failedConnections: 3))
+    }
+
     @Test func theJSONActiveLineCarriesTheBoundPort() throws {
         let line = TunnelStateLine.render(.active(connections: 0), port: 2222, json: true)
         #expect(
@@ -138,16 +161,18 @@ struct TunnelStateJSONLine: Decodable, Equatable {
     var attempt: Int?
     var port: Int?
     var reason: String?
+    var failedConnections: Int?
 
     init(
         state: String, connections: Int? = nil, attempt: Int? = nil, port: Int? = nil,
-        reason: String? = nil
+        reason: String? = nil, failedConnections: Int? = nil
     ) {
         self.state = state
         self.connections = connections
         self.attempt = attempt
         self.port = port
         self.reason = reason
+        self.failedConnections = failedConnections
     }
 
     static func decode(_ line: String) throws -> TunnelStateJSONLine {
