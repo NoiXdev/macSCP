@@ -18,10 +18,19 @@ BUILD="${MACSCP_BUILD:-1}"
 # Metal toolchain component (absent on CI runners and flaky locally).
 # The native single-arch pipeline ships the shader as a plain resource —
 # no Metal toolchain needed anywhere.
-swift build -c release --triple arm64-apple-macosx
-swift build -c release --triple x86_64-apple-macosx
-ARM_BIN="$(swift build -c release --triple arm64-apple-macosx --show-bin-path)"
-X86_BIN="$(swift build -c release --triple x86_64-apple-macosx --show-bin-path)"
+#
+# `--build-system native` is spelled out because it stopped being the
+# default: Swift 6.4 (Xcode 27) builds with Swift Build unless told
+# otherwise, and measured on 2026-09-16 that engine (a) writes both
+# triples' products to the one `.build/out/Products/Release`, so the second
+# slice overwrote the first and `lipo` failed with "same architectures
+# (x86_64)", and (b) compiles Shaders.metal, which is the toolchain
+# dependency this paragraph exists to avoid.
+BUILD_FLAGS=(-c release --build-system native)
+swift build "${BUILD_FLAGS[@]}" --triple arm64-apple-macosx
+swift build "${BUILD_FLAGS[@]}" --triple x86_64-apple-macosx
+ARM_BIN="$(swift build "${BUILD_FLAGS[@]}" --triple arm64-apple-macosx --show-bin-path)"
+X86_BIN="$(swift build "${BUILD_FLAGS[@]}" --triple x86_64-apple-macosx --show-bin-path)"
 
 APP="dist/macSCP.app"
 rm -rf dist
