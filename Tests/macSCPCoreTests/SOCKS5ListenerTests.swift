@@ -300,11 +300,23 @@ struct SOCKS5ListenerTests {
     }
 
     /// A client that completes inside the deadline is forwarded as today —
-    /// and a deadline that fires AFTER the handover changes nothing: the
-    /// connection keeps carrying bytes.
+    /// and a deadline whose sleep completes AFTER the handover changes
+    /// nothing: the connection keeps carrying bytes.
+    ///
+    /// The sleeper IGNORES cancellation on purpose. With a cancellable one
+    /// the deadline task is cancelled when the wait settles, `fire()` then
+    /// releases nobody, and `expire` is never called — the version of this
+    /// test that did that passed with `.handedOver` moved into `expire`'s
+    /// closing arm (review of `86135e0a`). Here the sleep returns on `fire()`
+    /// however late, which is the production race: a sleep that completes as
+    /// `value()` returns, so the cancel lands too late and `expire` runs
+    /// after `succeed` has handed the connection over. The test waits until
+    /// that sleep has returned before it sends anything. The handler-level
+    /// `anExpiryAfterTheHandoverLeavesTheConnectionCarryingBytes` pins the
+    /// same arm without the scheduling in between.
     @Test func aDeadlineFiringAfterTheHandoverLeavesTheConnectionAlone() async throws {
         let echo = try await EchoServer.start()
-        let deadline = ManualDeadline()
+        let deadline = ManualDeadline(ignoresCancellation: true)
         let listener = SOCKS5Listener(
             handshakeDeadline: .seconds(30), parkedHandshakeLimit: 64,
             deadlineSleeper: deadline.sleep)
@@ -322,6 +334,7 @@ struct SOCKS5ListenerTests {
             try await pollUntil("the parked slot is released") { listener.parkedHandshakes == 0 }
 
             deadline.fire()
+            try await pollUntil("the late deadline's sleep returns") { deadline.returned == 1 }
             try await awaitCancellably(client.writeAndFlush(ByteBuffer(string: "hello")))
             try await pollUntil("the echo comes back after the deadline fired") {
                 inbox.bytes.count >= 17
@@ -420,20 +433,42 @@ struct SOCKS5RequestBoxTests {
 }
 
 /// The handshake deadline, fired by hand. `sleep` parks until `fire()` and
-/// throws when its task is cancelled — the contract `TunnelRunner.Sleeper`
-/// states — and records what it was asked to wait for.
+/// records what it was asked to wait for, and how many sleeps returned.
+///
+/// By default it throws when its task is cancelled — the contract
+/// `TunnelRunner.Sleeper` states. `ignoresCancellation: true` breaks that
+/// contract deliberately, to stand in for a sleep that completed in the same
+/// instant its task was cancelled: the wait is taken on a detached task,
+/// which the cancellation does not reach, so it returns on `fire()` however
+/// late that is. Only a test that does fire it may use that mode — an
+/// unfired one parks its detached wait for the rest of the process.
 private final class ManualDeadline: Sendable {
     private let signal = AsyncSignal()
+    private let ignoresCancellation: Bool
     private let asked = Mutex<[Duration]>([])
+    private let returnedCount = Mutex(0)
+
+    init(ignoresCancellation: Bool = false) {
+        self.ignoresCancellation = ignoresCancellation
+    }
 
     var requested: [Duration] { asked.withLock { $0 } }
+    var returned: Int { returnedCount.withLock { $0 } }
 
     func fire() { signal.signal() }
 
     var sleep: TunnelRunner.Sleeper {
         { [self] duration in
             asked.withLock { $0.append(duration) }
-            guard await signal.wait() == .signalled else { throw CancellationError() }
+            let outcome: AsyncSignal.WaitOutcome
+            if ignoresCancellation {
+                let signal = self.signal
+                outcome = await Task.detached { await signal.wait() }.value
+            } else {
+                outcome = await signal.wait()
+            }
+            guard outcome == .signalled else { throw CancellationError() }
+            returnedCount.withLock { $0 += 1 }
         }
     }
 }

@@ -659,9 +659,13 @@ enum SOCKS5Handshake {
     static func negotiate(
         on channel: Channel, limits: SOCKS5HandshakeLimits
     ) async throws -> any ForwardNegotiation {
+        // Read before anything below can close the channel: NIO clears a
+        // socket channel's cached addresses in an `execute` scheduled after
+        // the close (`BaseSocketChannel.close0`), so a read after `close`
+        // races that and can come back `-`.
+        let port = listeningPort(of: channel)
         guard limits.parked.claim() else {
             channel.close(promise: nil)
-            let port = listeningPort(of: channel)
             DiagnosticLog.shared.log(
                 .debug, "tunnel", "socks5 handshake refused, parked limit reached port=\(port)")
             throw SOCKS5HandshakeError.tooManyParkedHandshakes
@@ -684,7 +688,6 @@ enum SOCKS5Handshake {
             }
             let expired = (try? await handshake.expire(on: channel).get()) ?? false
             if expired {
-                let port = listeningPort(of: channel)
                 DiagnosticLog.shared.log(.debug, "tunnel", "socks5 handshake timed out port=\(port)")
             }
         }
@@ -696,7 +699,8 @@ enum SOCKS5Handshake {
     /// The port a refused or timed-out handshake's log line names: the
     /// accepted channel's LOCAL address — the listener's own port — and
     /// never its remote one, since which local process knocked is not this
-    /// log's business. `-` when the socket no longer reports one.
+    /// log's business. `-` when the socket does not report one — which is
+    /// why `negotiate` reads it once, before any close.
     ///
     /// Only the port text is factored out, not the log call: the two lines
     /// are written directly, because `DiagnosticLogSecrecyGuardTests` treats

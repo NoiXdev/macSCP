@@ -333,6 +333,37 @@ struct SOCKS5HandshakeTests {
         #expect(socks.channel.isActive)
     }
 
+    /// The race production can reach: the deadline's sleep completes just as
+    /// the destination is handed out, so the cancellation of the deadline
+    /// task lands too late and `expire` is submitted AFTER `succeed` has set
+    /// `.handedOver`. It must not end a connection that is already carrying
+    /// payload. Driven through `succeed(on:)` itself rather than by a state
+    /// assignment, so the handler is in exactly the state the race leaves.
+    ///
+    /// The positive checks sit beside the negative one: the success frame WAS
+    /// written and bytes DO reach the pump after the expiry, so "not closed"
+    /// is said of a connection that demonstrably works.
+    @Test func anExpiryAfterTheHandoverLeavesTheConnectionCarryingBytes() throws {
+        let socks = try socks5Channel()
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try socks.channel.writeInbound(ByteBuffer(bytes: connectToIPv4))
+        let handedOver = CompletionBox()
+        socks.handshake.succeed(on: socks.channel).whenComplete { handedOver.record($0) }
+        socks.channel.embeddedEventLoop.run()
+        #expect(handedOver.succeeded)
+        #expect(try outboundBytes(socks.channel) == [0x05, 0x00] + replyFrame(code: 0x00))
+
+        let expired = ExpiryBox()
+        socks.handshake.expire(on: socks.channel).whenSuccess { expired.record($0) }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(expired.value == false)
+        #expect(socks.channel.isActive)
+        #expect(try outboundBytes(socks.channel).isEmpty)
+        try socks.channel.writeInbound(ByteBuffer(string: "after"))
+        #expect(socks.tail.bytes == Array("after".utf8))
+    }
+
     /// A connection that goes away mid-handshake resolves the wait rather
     /// than parking it: `LocalForwardListener`'s accept task awaits the
     /// destination, and a client that hangs up before naming one must not
