@@ -69,11 +69,25 @@ public struct LocalFileSystem: RemoteFileSystem {
     /// is cleared again.
     public let stuckPaths: StuckPaths?
 
+    /// The clock `metadata(for items:)` reads immediately around each
+    /// entry's `metadataProbe` call to decide whether that entry crossed
+    /// `metadataDeadlines.slowEntryThreshold` and earns the on-return
+    /// `browser.local entry slow` line. Defaults to `ContinuousClock().now`.
+    ///
+    /// A seam so a test can make an entry fast or slow BY CONSTRUCTION — an
+    /// instant that never advances, or one that advances an hour per
+    /// reading — instead of asserting that this machine happened to probe a
+    /// file in under 500 ms (CLAUDE.md: a wall-clock ceiling measures the
+    /// runner). It times only the per-child line: the supervisor's two
+    /// deadlines are `Task.sleep`s, driven by `metadataDeadlines`.
+    let metadataNow: @Sendable () -> ContinuousClock.Instant
+
     public init(
         fetchesOwnerGroup: Bool = false,
         metadataProbe: (@Sendable (URL) async -> RemoteFileItem?)? = nil,
         metadataDeadlines: MetadataDeadlines = .default,
-        stuckPaths: StuckPaths? = nil
+        stuckPaths: StuckPaths? = nil,
+        metadataNow: (@Sendable () -> ContinuousClock.Instant)? = nil
     ) {
         self.fetchesOwnerGroup = fetchesOwnerGroup
         self.metadataProbe = metadataProbe ?? { url in
@@ -81,6 +95,7 @@ public struct LocalFileSystem: RemoteFileSystem {
         }
         self.metadataDeadlines = metadataDeadlines
         self.stuckPaths = stuckPaths
+        self.metadataNow = metadataNow ?? { ContinuousClock().now }
     }
 
     /// How this file system expresses permissions — the one capability of

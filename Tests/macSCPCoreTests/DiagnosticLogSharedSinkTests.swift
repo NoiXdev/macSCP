@@ -1,16 +1,21 @@
 import Foundation
 import MacSCPTestSupport
+import Synchronization
 import Testing
 
 @testable import macSCPCore
 
-/// The ten tests that MUST touch `DiagnosticLog.shared`, because the
+/// The eleven tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
 /// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
 /// through that exact singleton and cannot be pointed at a private instance
 /// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
-/// Ten counted 2026-09-06, in Task 5's fix round 2 — seven before that
-/// task, eight after its first commit, nine after round 1. Every other diagnostic-log test lives in
+/// Eleven counted 2026-09-16 (technical backlog, Task 4, which added the
+/// clock-driven `entry slow` test) — ten on 2026-09-06, in Task 5's fix
+/// round 2; seven before that task, eight after its first commit, nine
+/// after round 1. `dialSupportReasonNamesTheHostNeverTheFingerprintsForAMismatch`
+/// sits here too but never touches the singleton, so the file holds one
+/// more `@Test` than that count. Every other diagnostic-log test lives in
 /// `DiagnosticLogTests.swift` against its own, private `DiagnosticLog()`.
 ///
 /// `DiagnosticLogSharedSinkIsolationGuardTests` holds this split in place:
@@ -109,15 +114,25 @@ struct DiagnosticLogSharedSinkTests {
     /// admitting `.debug` is what makes the absence assertion below
     /// actually test the threshold logic; at `.info` neither could appear
     /// regardless of whether the threshold check is right, and the absence
-    /// would be trivially true. Three PLAIN files probe well under the
-    /// default `MetadataDeadlines.slowEntryThreshold` (500 ms), so the
-    /// negative (no `entry slow`) sits beside the positive (`list start`/
-    /// `list done` ARE present) rather than standing alone. That each
-    /// writer CAN fire is proven through the same shared sink by
+    /// would be trivially true.
+    ///
+    /// Fast BY CONSTRUCTION, not by the runner's speed (technical backlog
+    /// of 2026-09-16): this test used to rely on three plain files probing
+    /// under the default 500 ms threshold, and came back red once under a
+    /// loaded full run — a wall-clock ceiling. Now the entry timing reads
+    /// `LocalFileSystem`'s `metadataNow` seam, pinned to one instant that
+    /// never advances, against `slowTestThreshold` (an hour), so every
+    /// entry's measured duration is exactly zero; the supervisor's own
+    /// first deadline is that same hour of real sleep, cancelled when the
+    /// last entry reports. The negative (no `entry slow`) sits beside the
+    /// positive (`list start`/`list done` ARE present), and beside
+    /// `localFileSystemMetadataWritesAnEntrySlowLineWhenTheClockSaysSlow`,
+    /// the same listing and the same threshold with a clock that advances
+    /// an hour per reading — so the absence here is the threshold check
+    /// answering, not a writer that cannot fire. The supervisor's
+    /// `(still pending)` line is proven through the same shared sink by
     /// `metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry`
-    /// (a parked entry, the supervisor's line) and
-    /// `metadataLogsAnEntrySlowLineOnReturnForAnEntryThatCameBackLate` (a
-    /// late-returning entry, the per-child line) below.
+    /// below.
     @Test("LocalFileSystem.list/metadata write list start/done, with no entry-slow line for fast entries")
     func localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine() async throws {
         let logDirectory = makeTempDirectory()
@@ -126,7 +141,8 @@ struct DiagnosticLogSharedSinkTests {
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
-        for name in ["one.txt", "two.txt", "three.txt"] {
+        let names = Self.ownEntryNames()
+        for name in names {
             try Data("x".utf8).write(to: listedDirectory.appendingPathComponent(name))
         }
         let listedPath = listedDirectory.path(percentEncoded: false)
@@ -134,7 +150,11 @@ struct DiagnosticLogSharedSinkTests {
         let fixedNow = Date()
         DiagnosticLog.shared.configure(
             level: .debug, directory: logDirectory, now: { fixedNow })
-        let fs = LocalFileSystem()
+        let instant = ContinuousClock().now
+        let fs = LocalFileSystem(
+            metadataDeadlines: MetadataDeadlines(
+                slowEntryThreshold: Self.slowTestThreshold, stuckEntryDeadline: Self.slowTestThreshold),
+            metadataNow: { instant })
         let phaseOne = try await fs.list(path: listedPath)
         for await _ in fs.metadata(for: phaseOne) {}
         await DiagnosticLog.shared.flush()
@@ -142,7 +162,93 @@ struct DiagnosticLogSharedSinkTests {
         let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
         #expect(contents.contains("list start path=\(listedPath)"))
         #expect(contents.contains("list done path=\(listedPath) count=3"))
-        #expect(!contents.contains("entry slow"))
+        let ownSlowLines = contents.split(separator: "\n").filter { line in
+            line.contains("entry slow") && names.contains { line.contains("name=\($0) ") }
+        }
+        #expect(ownSlowLines.isEmpty, "\(ownSlowLines)")
+    }
+
+    /// Three entry names no other test writes. The shared sink is
+    /// process-wide, and suites that run in parallel with this `.serialized`
+    /// one — `LocalFileSystemTests` drives `metadata(for:)` with 5 ms
+    /// thresholds and parked probes — log `entry slow … (still pending)`
+    /// lines into whatever directory this suite has configured at that
+    /// moment. Measured 2026-09-16: the positive test below read one such
+    /// line in a filtered run beside `LocalFileSystemTests`. So both
+    /// `entry slow` tests judge only lines naming their own entries; an
+    /// unfiltered absence check would be red on another suite's timing.
+    private static func ownEntryNames() -> [String] {
+        let run = UUID().uuidString
+        return ["one-\(run).txt", "two-\(run).txt", "three-\(run).txt"]
+    }
+
+    /// The threshold both `entry slow` tests above and below run against: an
+    /// hour. Far above an instant that never advances (zero), far below a
+    /// clock that advances two hours per reading — and far above any real
+    /// sleep the supervisor could finish inside the suite's one-minute
+    /// `.timeLimit`, so its `(still pending)` line cannot join either test.
+    private static let slowTestThreshold: Duration = .seconds(3600)
+
+    /// A clock that advances two hours every time it is read. Each entry's
+    /// two readings are strictly ordered, so every entry measures at least
+    /// one step — slow by construction, with no real time passing.
+    private final class AdvancingClock: Sendable {
+        private let base = ContinuousClock().now
+        private let readings = Mutex(0)
+
+        func now() -> ContinuousClock.Instant {
+            let reading = readings.withLock { count -> Int in
+                count += 1
+                return count
+            }
+            return base.advanced(by: .seconds(7200) * reading)
+        }
+    }
+
+    /// The positive half of the test above (technical backlog of
+    /// 2026-09-16): the same three plain files, the same hour-long
+    /// threshold, and a `metadataNow` that advances two hours per reading —
+    /// so each entry's on-return `entry slow` line is written because the
+    /// clock the line reads says slow, not because this machine was. Every
+    /// line is the per-child one: the supervisor sleeps the real hour and is
+    /// cancelled long before, so none carries `(still pending)`.
+    @Test("LocalFileSystem.metadata writes an entry-slow line for each entry the clock measures as slow")
+    func localFileSystemMetadataWritesAnEntrySlowLineWhenTheClockSaysSlow() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let listedDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: listedDirectory) }
+        let names = Self.ownEntryNames()
+        for name in names {
+            try Data("x".utf8).write(to: listedDirectory.appendingPathComponent(name))
+        }
+        let listedPath = listedDirectory.path(percentEncoded: false)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(
+            level: .debug, directory: logDirectory, now: { fixedNow })
+        let clock = AdvancingClock()
+        let fs = LocalFileSystem(
+            metadataDeadlines: MetadataDeadlines(
+                slowEntryThreshold: Self.slowTestThreshold, stuckEntryDeadline: Self.slowTestThreshold),
+            metadataNow: { clock.now() })
+        let phaseOne = try await fs.list(path: listedPath)
+        #expect(phaseOne.count == 3)
+        for await _ in fs.metadata(for: phaseOne) {}
+        await DiagnosticLog.shared.flush()
+
+        let lines = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+            .split(separator: "\n")
+        for name in names {
+            let slow = lines.filter { $0.contains("entry slow name=\(name) ms=") }
+            #expect(slow.count == 1, "\(name): \(slow)")
+        }
+        let ownPending = lines.filter { line in
+            line.contains("(still pending)") && names.contains { line.contains("name=\($0) ") }
+        }
+        #expect(ownPending.isEmpty, "\(ownPending)")
     }
 
     /// Mirrors `LocalFileSystemTests`' own private `Gate`: a probe parks on

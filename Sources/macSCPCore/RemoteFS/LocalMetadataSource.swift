@@ -175,7 +175,8 @@ extension LocalFileSystem: LocalMetadataSource {
     ///   `yield` once it has finished the stream, so a late child cannot
     ///   reopen it or emit into a continuation nobody reads any more.
     ///
-    /// Each child is timed with a `ContinuousClock` reading taken
+    /// Each child is timed with a `ContinuousClock` reading
+    /// (`LocalFileSystem.metadataNow`, a seam a test can pin) taken
     /// immediately around its own `metadataProbe` call — never derived from
     /// a running total, so one slow entry cannot be hidden by several fast
     /// ones averaging it out.
@@ -233,7 +234,7 @@ extension LocalFileSystem: LocalMetadataSource {
     /// directory probes the path again instead of skipping it forever.
     public func metadata(for items: [RemoteFileItem]) -> AsyncStream<RemoteFileItem> {
         let probe = metadataProbe
-        let clock = ContinuousClock()
+        let now = metadataNow
         let stuckPaths = self.stuckPaths
         let deadlines = self.metadataDeadlines
         return AsyncStream { continuation in
@@ -283,9 +284,9 @@ extension LocalFileSystem: LocalMetadataSource {
             for item in toProbe {
                 let url = URL(fileURLWithPath: item.path)
                 Task {
-                    let entryStart = clock.now
+                    let entryStart = now()
                     let filled = await probe(url)
-                    let elapsed = entryStart.duration(to: clock.now)
+                    let elapsed = entryStart.duration(to: now())
                     if elapsed >= deadlines.slowEntryThreshold {
                         DiagnosticLog.shared.log(
                             .debug, "browser.local",
