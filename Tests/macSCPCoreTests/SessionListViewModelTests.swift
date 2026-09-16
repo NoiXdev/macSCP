@@ -154,8 +154,9 @@ struct SessionListViewModelTests {
     /// read none. `LoginResolver.resolveJump` reads the set's slot for a jump
     /// bound to it in its own mode (`sessionID == nil`, `loginSetID == set`),
     /// and for a session-mode jump whose referenced session is bound to the
-    /// set; neither path falls back to a managed key's own slot, so a set
-    /// serving either must keep its slot.
+    /// set. A set serving either keeps its slot — defence in depth beside the
+    /// jump fills' fallback to a managed key's own slot
+    /// (`JumpManagedKeyPassphraseTests`).
     @Test func aSetServesAJumpHopBoundToItOrThroughASessionBoundToIt() throws {
         let setID = UUID()
         do {

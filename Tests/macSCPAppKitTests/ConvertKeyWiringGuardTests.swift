@@ -288,8 +288,9 @@ struct ConvertKeyWiringGuardTests {
             """)
         #expect(body.contains("sessionServesAJumpHop("), """
             `convertedKeyImported(_:for:)` no longer asks `sessionServesAJumpHop(` — a \
-            session-mode jump through this session reads the session's own slot and never the \
-            managed key's, so dropping that slot breaks every session that jumps through it. \
+            session-mode jump through this session reads the session's own slot first, so \
+            dropping that slot leaves every session that jumps through it depending on the \
+            managed-key fallback alone. \
             This is also the token `theSlotDropSitsInsideTheBranchTheProbeOpens` reads the \
             jump check's identifier from.
             """)
@@ -330,9 +331,10 @@ struct ConvertKeyWiringGuardTests {
     ///
     /// Since Task 2 fix round 1 the same `if` must also carry the NEGATED
     /// result of `sessionServesAJumpHop(`, read out of the body the same way:
-    /// a jump hop reads the session's own slot and has no fallback to the
-    /// managed key's, so a drop the jump check does not also gate breaks the
-    /// sessions that jump through this one.
+    /// a jump hop reads the session's own slot first, so a drop the jump check
+    /// does not also gate leaves the sessions that jump through this one
+    /// depending on the managed-key fallback alone (kept as defence in depth
+    /// since the technical backlog of 2026-09-16, Task 5).
     @Test func theSlotDropSitsInsideTheBranchTheProbeOpens() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
@@ -343,7 +345,8 @@ struct ConvertKeyWiringGuardTests {
         #expect(dropsInsideTheGate >= 1, """
             `convertedKeyImported(_:for:)` does not call `dropSessionSecret(` inside a branch \
             that `\(identifier)` being TRUE and `\(jumpHop)` being FALSE open together — a drop \
-            the jump check does not gate breaks every session that jumps through this one; or \
+            the jump check does not gate removes the slot every session that jumps through this \
+            one reads first; or \
             the branch tests the probe's result \
             inverted (`!`, or `== false`), which drops the session's Keychain slot in exactly \
             the case where the managed key's slot holds no passphrase and the session's copy is \
@@ -469,8 +472,8 @@ struct ConvertKeyWiringGuardTests {
             """)
         #expect(body.contains("setServesAJumpHop("), """
             `repointLoginSet(_:)` no longer asks `setServesAJumpHop(` — a jump hop bound to the \
-            set reads the set's slot and never the managed key's, so dropping it breaks every \
-            session that jumps with this set.
+            set reads the set's slot first, so dropping it leaves every session that jumps with \
+            this set depending on the managed-key fallback alone.
             """)
         #expect(body.contains("saveLoginSet("), """
             `repointLoginSet(_:)` no longer calls `saveLoginSet(` — the set keeps pointing at \
@@ -508,7 +511,8 @@ struct ConvertKeyWiringGuardTests {
         #expect(dropsInsideTheGate >= 1, """
             `repointLoginSet(_:)` does not call `dropLoginSetSecret(` inside a branch that \
             `\(identifier)` being TRUE and `\(jumpHop)` being FALSE open together — a drop the \
-            jump check does not gate breaks every jump hop bound to the set; an inverted \
+            jump check does not gate removes the slot every jump hop bound to the set reads \
+            first; an inverted \
             probe gate drops the set's slot exactly \
             when the managed key's slot holds no passphrase and the set's copy is the only one.
             """)
@@ -882,7 +886,8 @@ struct ConvertKeyWiringGuardTests {
         let gate = Self.positiveGateSpan(on: identifier, alsoRequiringNegated: jumpHop, inBlankedBody: body)
         #expect(gate == nil, """
             the branch scanner accepted `\(condition)` as gated on the jump check — the check \
-            over the source would pass a drop that breaks every jump through the session.
+            over the source would pass a drop of the slot every jump through the session reads \
+            first.
             """)
     }
 

@@ -2652,9 +2652,10 @@ struct ContentView: View {
             // copy is not.
             let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
                 keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
-            // The slot stays while a session-mode jump references this session,
-            // because a jump hop reads only this slot and never the managed
-            // key's (Task 2 fix round 1).
+            // The slot stays while a session-mode jump references this session
+            // (Task 2 fix round 1) — defence in depth since the jump fills
+            // fall back to the managed key's slot when this one is empty
+            // (`SessionListViewModel.setServesAJumpHop(_:)` says why).
             let jumpHopReadsTheSessionSlot = sessionListViewModel.sessionServesAJumpHop(updated.id)
             if keySlotHoldsThePassphrase && !jumpHopReadsTheSessionSlot {
                 sessionListViewModel.dropSessionSecret(for: updated.id)
@@ -2720,9 +2721,10 @@ struct ContentView: View {
         sessionListViewModel.saveLoginSet(set, secret: nil)
         let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: request.keyPath, store: managedKeyStore, secrets: secretStore)) == true
-        // The set's slot stays while a jump hop resolves from the set, because
-        // a jump hop reads only the set's slot and never the managed key's
-        // (Task 2 fix round 1).
+        // The set's slot stays while a jump hop resolves from the set (Task 2
+        // fix round 1) — defence in depth since the jump fills fall back to
+        // the managed key's slot when the set's is empty
+        // (`SessionListViewModel.setServesAJumpHop(_:)` says why).
         let jumpHopReadsTheSetSlot = sessionListViewModel.setServesAJumpHop(set.id)
         if keySlotHoldsThePassphrase && !jumpHopReadsTheSetSlot {
             sessionListViewModel.dropLoginSetSecret(for: set.id)

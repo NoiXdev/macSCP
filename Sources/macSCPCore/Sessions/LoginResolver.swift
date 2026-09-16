@@ -180,6 +180,38 @@ public enum LoginResolver {
             keyPath: set.keyPath, secret: secret)
     }
 
+    /// A jump hop's login with its passphrase falling back to the managed
+    /// key's own Keychain slot (technical backlog of 2026-09-16, Task 5).
+    ///
+    /// The two `resolveJump` overloads read the one slot the hop is bound to
+    /// — the jump's own, its login set's, or the referenced session's — and
+    /// nothing else. A slot dropped because the managed key's slot holds the
+    /// same passphrase (one passphrase, one place) therefore left a hop added
+    /// after the drop with nothing to authenticate with. This is the target's
+    /// connect-time rule applied to the hop: `ManagedKeyPassphrase.resolve`
+    /// with the slot's value as the typed one, so a slot that still holds a
+    /// passphrase keeps winning, and an empty one asks the key.
+    ///
+    /// Only a private-key login with a non-empty key path is looked at; a
+    /// password or agent hop is returned unchanged, and a key path macSCP
+    /// does not manage resolves to the slot's own value. Kept apart from
+    /// `resolveJump` so the export, which must not write a managed key's
+    /// passphrase into a jump's `jumpPassword`, can go on reading the slot
+    /// alone.
+    public static func fallingBackToManagedKeyPassphrase(
+        _ login: ResolvedLogin, keys: ManagedKeyStore, secrets: any SecretStore
+    ) -> ResolvedLogin {
+        guard login.authKind == .privateKey else { return login }
+        let keyPath = (login.keyPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyPath.isEmpty else { return login }
+        let resolved = ManagedKeyPassphrase.resolve(
+            keyPath: keyPath, typed: login.secret ?? "", store: keys, secrets: secrets)
+        guard !resolved.isEmpty else { return login }
+        var result = login
+        result.secret = resolved
+        return result
+    }
+
     /// Resolves a jump host's login (M10c): unlike `resolve`, this is ALWAYS
     /// non-nil — a jump either carries its own credentials (manual mode,
     /// secret read from `spec.secretID`) or a set's. A dangling

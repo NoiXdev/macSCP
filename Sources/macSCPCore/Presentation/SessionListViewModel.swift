@@ -264,7 +264,8 @@ public final class SessionListViewModel {
             // call sites, keeps a future caller from silently copying the
             // resolved secret into this jump's otherwise unused slot.
             if let jump, jump.loginSetID == nil, jump.sessionID == nil,
-               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty {
+               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty,
+               !jumpUsesStoredManagedPassphrase(jump) {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
             cleanOrphanedJumpSlot(previous: previousJump, new: jump)
@@ -562,6 +563,34 @@ public final class SessionListViewModel {
         return JumpRestoreResult(restored: affected.count, secretFailures: secretFailures)
     }
 
+    /// `LoginResolver.fallingBackToManagedKeyPassphrase` over this view
+    /// model's own key store and secret store — the one spelling the three
+    /// jump fills in Core share (`resolvedJumpLogin(for:)`,
+    /// `resolvedJump(for:)`, and `fillJumpForm` in
+    /// `SessionListViewModel+Submit.swift`).
+    func withManagedKeyPassphrase(_ login: ResolvedLogin) -> ResolvedLogin {
+        LoginResolver.fallingBackToManagedKeyPassphrase(login, keys: keys, secrets: secrets)
+    }
+
+    /// Whether a manual jump's passphrase already lives under its managed
+    /// key's own Keychain slot, so `save` and `updateSession` must not copy it
+    /// into the jump's slot (technical backlog of 2026-09-16, Task 5).
+    ///
+    /// The connect-time fill puts that key's passphrase into `jumpPassword`
+    /// when the jump's slot is empty
+    /// (`LoginResolver.fallingBackToManagedKeyPassphrase`), and both save
+    /// paths hand `jumpPassword` over as `jumpSecret` — without this, saving
+    /// a form filled that way would put one passphrase in two places. The
+    /// target's rule, `SessionSecretPolicy.usesStoredManagedPassphrase`, asked
+    /// of the jump's own auth kind and key path, including its answer of
+    /// `true` when the probe cannot be made.
+    private func jumpUsesStoredManagedPassphrase(_ jump: StoredSession.JumpSpec) -> Bool {
+        guard jump.authKind == .privateKey else { return false }
+        return SessionSecretPolicy.usesStoredManagedPassphrase(
+            kind: .ssh, authChoice: .privateKey, keyPath: jump.keyPath ?? "",
+            keys: keys, secrets: secrets)
+    }
+
     public func password(for session: StoredSession) -> String? {
         (try? secrets.password(for: session.id)) ?? nil
     }
@@ -670,7 +699,8 @@ public final class SessionListViewModel {
             // Same invariant as `save` above: a session-referencing jump never
             // owns a secret, regardless of what the caller passes.
             if let jump = updated.jump, jump.loginSetID == nil, jump.sessionID == nil,
-               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty {
+               jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty,
+               !jumpUsesStoredManagedPassphrase(jump) {
                 try secrets.savePassword(jumpSecret, for: jump.secretID)
             }
             cleanOrphanedJumpSlot(previous: previousJump, new: updated.jump)
@@ -863,10 +893,15 @@ public final class SessionListViewModel {
     /// (`jump.sessionID == nil`, `jump.loginSetID == setID`), and a
     /// session-mode jump (`jump.sessionID != nil`) whose referenced session is
     /// bound to the set. A session-mode jump's own `loginSetID` is inert, the
-    /// same rule `sessionsUsing(setID:)` applies. A hop's passphrase comes only
-    /// from that slot — the jump path runs no `ManagedKeyPassphrase.resolve` —
-    /// so a set serving a hop must keep its slot even when a managed key's own
-    /// slot holds the same passphrase.
+    /// same rule `sessionsUsing(setID:)` applies. A set serving a hop keeps its
+    /// slot even when a managed key's own slot holds the same passphrase.
+    ///
+    /// Defence in depth since the technical backlog of 2026-09-16, Task 5:
+    /// every jump fill in Core now falls back to the managed key's slot when
+    /// the slot it reads is empty (`withManagedKeyPassphrase(_:)`), so a hop
+    /// no longer depends on this slot alone. The predicate stays so a drop
+    /// never removes a slot a hop reads while that fallback is the only thing
+    /// standing behind it.
     public func setServesAJumpHop(_ setID: UUID) -> Bool {
         sessions.contains { session in
             guard let jump = session.jump else { return false }
@@ -877,8 +912,9 @@ public final class SessionListViewModel {
 
     /// Whether some session's session-mode JUMP HOP references this session
     /// (`jump.sessionID == sessionID`), and so reads this session's login —
-    /// for a session without a set, its own Keychain slot, with no fallback to
-    /// a managed key's slot (Task 2 fix round 1; see `setServesAJumpHop(_:)`).
+    /// for a session without a set, its own Keychain slot (Task 2 fix round 1).
+    /// Defence in depth beside the jump fills' managed-key fallback, for the
+    /// reason `setServesAJumpHop(_:)` gives.
     public func sessionServesAJumpHop(_ sessionID: UUID) -> Bool {
         sessions.contains { $0.jump?.sessionID == sessionID }
     }
@@ -1311,9 +1347,13 @@ public final class SessionListViewModel {
     /// on the jump throws, same as `resolvedCredentials(for:)` (spec §2), and
     /// so does one bound to a set that is not an SSH set
     /// (`.jumpSetNotSSH`, M28/T7 — a jump is an SSH bastion).
+    ///
+    /// A private-key hop whose slot is empty takes the managed key's own
+    /// passphrase (`LoginResolver.fallingBackToManagedKeyPassphrase`).
     public func resolvedJumpLogin(for session: StoredSession) throws -> ResolvedLogin? {
         guard let jump = session.jump else { return nil }
-        return try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
+        let login = try LoginResolver.resolveJump(spec: jump, sets: loginSets, secrets: secrets)
+        return withManagedKeyPassphrase(login)
     }
 
     /// Resolves a session's jump host fully (M11a), including host/port:
@@ -1326,11 +1366,16 @@ public final class SessionListViewModel {
     /// session, `.jumpChainNotSupported` for a chain or self-reference, and
     /// -- on the `sessionID == nil` half it delegates -- `.missingSet` and
     /// `.jumpSetNotSSH` for the jump's own `loginSetID`.
+    ///
+    /// Its login takes the managed key's passphrase when the slot it reads is
+    /// empty, as `resolvedJumpLogin(for:)`'s does.
     public func resolvedJump(for session: StoredSession) throws -> ResolvedJump? {
         guard let jump = session.jump else { return nil }
-        return try LoginResolver.resolveJump(
+        var resolved = try LoginResolver.resolveJump(
             spec: jump, sets: loginSets, secrets: secrets, sessions: sessions,
             referencingSessionID: session.id)
+        resolved.login = withManagedKeyPassphrase(resolved.login)
+        return resolved
     }
 
     /// What subset of the sidebar an export covers.

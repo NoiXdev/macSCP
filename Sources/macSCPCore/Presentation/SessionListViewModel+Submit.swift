@@ -92,7 +92,12 @@ extension SessionListViewModel {
             return
         }
         let synthetic = StoredSession(id: set.id, name: set.name)
-        form.jumpPassword = password(for: synthetic) ?? ""
+        let login = ResolvedLogin(
+            username: set.username, authKind: set.authKind, keyPath: set.keyPath,
+            secret: password(for: synthetic))
+        // An empty set slot on a private-key set takes the managed key's own
+        // passphrase, as every other jump fill does.
+        form.jumpPassword = withManagedKeyPassphrase(login).secret ?? ""
     }
 
     /// Resolves the form's referenced JUMP CONNECTION before a submit: fills

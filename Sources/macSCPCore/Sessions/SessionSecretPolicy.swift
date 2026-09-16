@@ -1,19 +1,18 @@
 import Foundation
 
 /// Decides what a session (or a login set built alongside it) writes into
-/// its OWN secret slot when a NEW session is created.
+/// its OWN secret slot.
 ///
-/// Only the new-session creation path consults this type: `ContentView.
-/// startSession` reaches `valueToPersist` through `SessionListViewModel.
-/// save`. The edit-save path does NOT — `ContentView+Detail`'s
-/// `onSaveEdited` closure hands the edited secret straight to
-/// `SessionListViewModel.updateSession`, which calls `secrets.
-/// savePassword` unconditionally (the "save as new login set" branch is the
-/// one exception, since it routes through `maybeCreateNewLoginSet` ->
-/// `usesStoredManagedPassphrase` instead). Editing a private-key login's
-/// passphrase in place, without creating a login set, can therefore
-/// duplicate it into both the session's own slot and the managed key's
-/// slot — this type does not guard against that.
+/// Consulted, counted 2026-09-16 with `grep -rn "usesStoredManagedPassphrase\|valueToPersist" Sources`
+/// outside comments, by: the new-session creation path
+/// (`ContentView.persistFormAsSession`, `valueToPersist`, whose value goes
+/// to `SessionListViewModel.save`); `ContentView.maybeCreateNewLoginSet` for
+/// a set built alongside a session; `SessionListViewModel.updateSession` for
+/// the session's own slot on an edit-save (since `bdf6f013` — this paragraph
+/// said until 2026-09-16 that the edit-save path wrote unconditionally); and
+/// `SessionListViewModel`'s `jumpUsesStoredManagedPassphrase`, which both
+/// `save` and `updateSession` ask before writing a manual jump's slot
+/// (technical backlog of 2026-09-16, Task 5).
 ///
 /// A private-key login's passphrase can live in two different places: the
 /// managed key's own Keychain slot (addressed by `key.id`,
