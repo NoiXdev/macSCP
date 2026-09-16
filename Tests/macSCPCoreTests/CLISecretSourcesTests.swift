@@ -498,15 +498,33 @@ struct SecretSourcesManagedKeyTests {
         #expect(throws: KeychainError.self) { try rig.resolve(session) }
     }
 
-    /// The key store's own read is a throwing read too: an unreadable
-    /// `managed_keys.json` is not "this key is not managed".
-    @Test func anUnreadableKeyStoreIsThrownNotSwallowed() throws {
+    /// Task 2 fix round 4: an unreadable `managed_keys.json` answers "no
+    /// managed key is known" instead of throwing. The store is decoded whole
+    /// before the path can be matched, so a throw here stopped every
+    /// private-key session, including those whose key the store does not
+    /// manage. No Keychain slot is read for any id.
+    @Test func anUnreadableKeyStoreAnswersNotManaged() throws {
         let rig = try Rig()
         defer { rig.tearDown() }
         try Data("not json".utf8).write(to: rig.directory.appendingPathComponent("managed_keys.json"))
         let source = ManagedKeyPassphraseSecretSource(
             keyPath: rig.managedPath, keys: rig.keys, secrets: rig.secrets)
-        #expect(throws: DecodingError.self) { try source.secret(for: UUID()) }
+        let answeredNothing = try source.secret(for: UUID()) == nil
+        #expect(answeredNothing, "an unreadable key store did not answer nil")
+        #expect(rig.secrets.readIDs.isEmpty, "a Keychain slot was read behind an unreadable key store")
+    }
+
+    /// The defect round 4 fixes, through the whole CLI chain: a private-key
+    /// session with an unmanaged key and an empty own slot resolves nil over
+    /// a corrupt key store, and so dials, instead of stopping the resolver.
+    @Test func aCorruptKeyStoreDoesNotStopAnUnmanagedKeysChain() throws {
+        let rig = try Rig()
+        defer { rig.tearDown() }
+        try Data("not json".utf8).write(to: rig.directory.appendingPathComponent("managed_keys.json"))
+        let session = rig.session(authKind: .privateKey, keyPath: "/tmp/not-a-managed-key")
+        let resolvedNothing = try rig.resolve(session) == nil
+        #expect(resolvedNothing, "a corrupt key store resolved a secret")
+        #expect(rig.secrets.readIDs == [session.id], "only the session's own slot should be read")
     }
 
     /// An unencrypted managed key has nothing to ask the Keychain for, so its

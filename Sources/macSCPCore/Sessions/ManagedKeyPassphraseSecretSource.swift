@@ -37,11 +37,14 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
     /// typed anything: a forwarding and the command line both dial without a
     /// form, so the stored passphrase is the only one there is.
     ///
-    /// Both reads THROW (Task 2 fix round 3), exactly as
-    /// `KeychainSecretSource`'s does: a denied or locked Keychain item, or an
-    /// unreadable key store, stops `SecretResolver` with that error instead
-    /// of reading as "no secret" and failing later at authentication with
-    /// nothing pointing at the Keychain.
+    /// The Keychain read THROWS (Task 2 fix round 3), exactly as
+    /// `KeychainSecretSource`'s does: a denied or locked Keychain item stops
+    /// `SecretResolver` with that error instead of reading as "no secret" and
+    /// failing later at authentication with nothing pointing at the Keychain.
+    /// The key store's read does NOT (Task 2 fix round 4): an unreadable
+    /// `managed_keys.json` answers nil, "no managed key is known", because
+    /// the store is decoded whole before the path can be matched, and a throw
+    /// there stopped sessions whose key it does not manage.
     ///
     /// `hasPassphrase` is a fast path, as in `ManagedKeyPassphrase.resolve`:
     /// an unencrypted key's slot is never read, so no consent prompt is
@@ -49,7 +52,11 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
     public func secret(for sessionID: UUID) throws -> String? {
         // Not `ManagedKeyPassphrase.resolve`: its `try?` is what the App's
         // form path relies on, and this source must not swallow the error.
-        guard let key = try keys.key(forPath: keyPath), key.hasPassphrase else { return nil }
+        let key: ManagedKey?
+        // An unreadable key store must not stop sessions whose key it does not
+        // manage; the Keychain read below still throws.
+        do { key = try keys.key(forPath: keyPath) } catch { return nil }
+        guard let key, key.hasPassphrase else { return nil }
         guard let stored = try secrets.password(for: key.id), !stored.isEmpty else { return nil }
         return stored
     }
