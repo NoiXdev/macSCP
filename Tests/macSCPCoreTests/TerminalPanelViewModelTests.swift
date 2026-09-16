@@ -242,7 +242,10 @@ struct TerminalPanelViewModelTests {
         try await pollUntil("the shell is running") { vm.state == .running }
         #expect(vm.state == .running)
 
-        Task {
+        // Discarded on purpose (Swift 6.4 `NoUseUnstructuredThrowingTask`):
+        // nothing here awaits this task or could act on `Task.sleep`'s own
+        // cancellation error, which is the only way it throws.
+        _ = Task {
             try await Task.sleep(for: .milliseconds(50))
             shell.finish()
         }

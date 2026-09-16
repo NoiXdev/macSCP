@@ -2213,7 +2213,11 @@ struct ContentView: View {
         // `SessionTab.reconnectAttempt`'s own doc comment.
         let myAttempt = UUID()
         tab.reconnectAttempt = myAttempt
-        Task {
+        // Discarded on purpose (Swift 6.4 `NoUseUnstructuredThrowingTask`):
+        // `fillForm`'s `throws` is meant to escape uncaught here — see
+        // `openExternalTerminalFromSidebar`'s own doc comment, which states
+        // this path shows nothing for a fill failure, unlike its own `catch`.
+        _ = Task {
             defer {
                 if tab.reconnectAttempt == myAttempt { tab.isReconnecting = false }
             }
