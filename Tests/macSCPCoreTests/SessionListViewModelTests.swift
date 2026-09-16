@@ -596,6 +596,47 @@ struct SessionListViewModelTests {
         #expect(vm.sessions.map(\.name) == ["web"])
     }
 
+    /// `saveLoginSet` reports whether the set was written (technical backlog
+    /// of 2026-09-16, Task 5): "Update login set" drops the set's slot and
+    /// redials only after a save that happened, so a failed write must say
+    /// so by what it returns, not only through `errorMessage`.
+    @Test func saveLoginSetReportsWhetherItSaved() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let set = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/k")
+        #expect(vm.saveLoginSet(set, secret: nil) == true)
+        #expect(vm.loginSets.map(\.id) == [set.id])
+        #expect(vm.errorMessage == nil)
+    }
+
+    /// Both ways the write can fail: the set store refuses (its directory
+    /// sits under a regular file), or the Keychain refuses the secret.
+    @Test func saveLoginSetReportsAFailedWriteAsNotSaved() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-slvm-setfail-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let blocker = dir.appendingPathComponent("blocker")
+        try Data().write(to: blocker)
+
+        let storeRefuses = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: InMemorySecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: blocker.appendingPathComponent("sets")),
+            keys: ManagedKeyStore(directory: dir))
+        let set = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/k")
+        #expect(storeRefuses.saveLoginSet(set, secret: nil) == false)
+        #expect(storeRefuses.errorMessage != nil)
+
+        let keychainRefuses = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: FailingSecretStore(),
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: ManagedKeyStore(directory: dir))
+        let passwordSet = LoginSet(name: "pw", username: "u", authKind: .password)
+        #expect(keychainRefuses.saveLoginSet(passwordSet, secret: "not-stored") == false)
+        #expect(keychainRefuses.errorMessage != nil)
+    }
+
     @Test func groupCRUDRoundtrip() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

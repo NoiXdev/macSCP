@@ -49,7 +49,9 @@ import Testing
 ///    branch that `hasStoredPassphrase(`'s positive answer and
 ///    `setServesAJumpHop(`'s negative answer both open (and nowhere else in
 ///    the app target), and re-dials through
-///    `retryConnect(` and nothing else.
+///    `retryConnect(` and nothing else — the drop and the re-dial both
+///    after a `guard` that returns unless `saveLoginSet(` answered true
+///    (technical backlog of 2026-09-16, Task 5).
 /// 8. "This attempt only" hands the tab back to the form
 ///    (`dismissConnectFailure(`) and writes no set.
 /// 9. The window presents that question as a `.confirmationDialog(` bound to
@@ -594,6 +596,21 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
+    /// The save's answer gates everything after it (technical backlog of
+    /// 2026-09-16, Task 5): a set whose new key path was never written must
+    /// not lose its own slot, and must not be redialled against the old PEM
+    /// path. `saveGateViolations(inBlankedBody:)` names what it reads; its
+    /// positives — one save, at least one drop and one re-dial, all found —
+    /// sit beside the negatives in the same list.
+    @Test func updatingTheSetDropsAndRedialsOnlyAfterASuccessfulSave() throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        let violations = Self.saveGateViolations(inBlankedBody: body)
+        #expect(violations.isEmpty, """
+            `repointLoginSet(_:)` does not gate its drop and re-dial on the save's result: \
+            \(violations)
+            """)
+    }
+
     // MARK: - 8. This attempt only
 
     /// Positive and negative over the same body: the attempt-only answer
@@ -1034,6 +1051,74 @@ struct ConvertKeyWiringGuardTests {
         }
     }
 
+    /// `repointLoginSet(_:)`'s shape since Task 5 of the technical backlog,
+    /// with the save line and the tail replaceable, for the save-gate
+    /// scanner's own measurements.
+    private static func repointFixture(
+        save: String = "guard sessionListViewModel.saveLoginSet(set, secret: nil) else { return }",
+        tail: String = ""
+    ) -> String {
+        """
+        func repointLoginSet(_ request: LoginSetRepointRequest) {
+            guard var set = LoginSetRepointPlan.currentSet(
+                id: request.set.id, in: sessionListViewModel.loginSets)
+            else {
+                convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                return
+            }
+            set.keyPath = request.keyPath
+            \(save)
+            let keySlotHoldsThePassphrase = probe()
+            let jumpHopReadsTheSetSlot = sessionListViewModel.setServesAJumpHop(set.id)
+            if keySlotHoldsThePassphrase && !jumpHopReadsTheSetSlot {
+                sessionListViewModel.dropLoginSetSecret(for: set.id)
+            }
+            retryConnect(request.tab)
+            \(tail)
+        }
+        """
+    }
+
+    @Test func theSaveGateScannerAcceptsTheRealShape() throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.repointFixture())
+        #expect(Self.saveGateViolations(inBlankedBody: body).isEmpty)
+    }
+
+    @Test("a save the gate does not read, or reads inverted, is reported", arguments: [
+        "sessionListViewModel.saveLoginSet(set, secret: nil)",
+        "_ = sessionListViewModel.saveLoginSet(set, secret: nil)",
+        "guard !sessionListViewModel.saveLoginSet(set, secret: nil) else { return }",
+        "guard sessionListViewModel.saveLoginSet(set, secret: nil) == false else { return }",
+        "guard sessionListViewModel.saveLoginSet(set, secret: nil) else { print(set) }",
+    ])
+    func theSaveGateScannerReportsAnUngatedSave(save: String) throws {
+        let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.repointFixture(save: save))
+        #expect(Self.saveGateViolations(inBlankedBody: body).isEmpty == false, """
+            the save-gate scanner accepted `\(save)` — the check over the source would pass a \
+            drop and a re-dial that run whatever the save answered.
+            """)
+    }
+
+    @Test func theSaveGateScannerSeesADropOrARedialBeforeTheGate() throws {
+        for early in [
+            "sessionListViewModel.dropLoginSetSecret(for: set.id)",
+            "retryConnect(request.tab)",
+        ] {
+            let save = early + "\n    guard sessionListViewModel.saveLoginSet(set, secret: nil) else { return }"
+            let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.repointFixture(save: save))
+            #expect(Self.saveGateViolations(inBlankedBody: body).isEmpty == false, """
+                the save-gate scanner accepted `\(early)` written before the gate.
+                """)
+        }
+    }
+
+    @Test func theSaveGateScannerSeesASecondSave() throws {
+        let body = try Self.strippedBody(
+            after: "func repointLoginSet(",
+            in: Self.repointFixture(tail: "sessionListViewModel.saveLoginSet(set, secret: nil)"))
+        #expect(Self.saveGateViolations(inBlankedBody: body).isEmpty == false)
+    }
+
     @Test func theScannedFilesAreTheOnesThisSuiteNames() throws {
         for file in [Self.contentViewFile, Self.sheetsFile, Self.keysSheetFile] {
             let code = try Self.strictSource(of: file)
@@ -1222,6 +1307,70 @@ struct ConvertKeyWiringGuardTests {
                 guard endsTheWord else { continue }
             }
             return try? balancedSpan(from: openBrace, in: body)
+        }
+        return nil
+    }
+
+    /// What is wrong with `body`'s save gate, as sentences — empty when the
+    /// shape claim 7 requires is there (technical backlog of 2026-09-16,
+    /// Task 5).
+    ///
+    /// The gate is a `guard` whose condition calls `saveLoginSet(`
+    /// POSITIVELY — not preceded by `!`, not compared `== false` — and whose
+    /// `else` block contains a `return`. Everything else is measured against
+    /// where that block ends: every `dropLoginSetSecret(` and every
+    /// `retryConnect(` in the body must start after it. The positives sit in
+    /// the same list: exactly one `saveLoginSet(` (a second, ungated save
+    /// would write around the gate), and at least one drop and one re-dial —
+    /// without those, "every drop is after the gate" is true of nothing.
+    private static func saveGateViolations(inBlankedBody body: String) -> [String] {
+        var violations: [String] = []
+        let saves = occurrences(of: "saveLoginSet(", in: body)
+        let drops = occurrences(of: "dropLoginSetSecret(", in: body)
+        let redials = occurrences(of: "retryConnect(", in: body)
+        if saves != 1 { violations.append("`saveLoginSet(` is called \(saves) times, not once") }
+        if drops < 1 { violations.append("no `dropLoginSetSecret(` found — the scan reads nothing") }
+        if redials < 1 { violations.append("no `retryConnect(` found — the scan reads nothing") }
+        guard let gateEnd = saveGateEnd(inBlankedBody: body) else {
+            violations.append(
+                "no `guard` returns unless `saveLoginSet(` answered true")
+            return violations
+        }
+        for token in ["dropLoginSetSecret(", "retryConnect("] {
+            let total = occurrences(of: token, in: body)
+            let after = occurrences(of: token, in: String(body[gateEnd...]))
+            if after != total {
+                violations.append("\(total - after) of \(total) `\(token)` run before the save gate")
+            }
+        }
+        return violations
+    }
+
+    /// Where the first positive save gate in `body` ends — the index just
+    /// past its `else` block — or `nil` when there is none.
+    private static func saveGateEnd(inBlankedBody body: String) -> String.Index? {
+        var searchStart = body.startIndex
+        while let keyword = body.range(of: "guard", range: searchStart..<body.endIndex) {
+            searchStart = keyword.upperBound
+            let startsAWord = keyword.lowerBound == body.startIndex
+                || !isIdentifierCharacter(body[body.index(before: keyword.lowerBound)])
+            let endsAWord = keyword.upperBound == body.endIndex
+                || !isIdentifierCharacter(body[keyword.upperBound])
+            guard startsAWord, endsAWord else { continue }
+            guard let elseKeyword = body.range(of: "else", range: keyword.upperBound..<body.endIndex)
+            else { return nil }
+            let condition = String(body[keyword.upperBound..<elseKeyword.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard condition.contains("saveLoginSet("),
+                  condition.hasPrefix("!") == false,
+                  condition.contains("== false") == false,
+                  condition.contains("{") == false
+            else { continue }
+            guard let openBrace = body[elseKeyword.upperBound...].firstIndex(of: "{"),
+                  let elseBlock = try? balancedSpan(from: openBrace, in: body),
+                  elseBlock.contains("return")
+            else { continue }
+            return body.index(openBrace, offsetBy: elseBlock.count)
         }
         return nil
     }

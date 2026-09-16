@@ -959,7 +959,14 @@ public final class SessionListViewModel {
     /// (M10d) never write a secret at all, regardless of what's passed —
     /// the invariant "no keychain data for agent" holds even if a caller
     /// passes one by mistake.
-    public func saveLoginSet(_ set: LoginSet, secret: String?) {
+    ///
+    /// Returns whether the set was written (technical backlog of 2026-09-16,
+    /// Task 5): `false` exactly when the store or the Keychain refused, with
+    /// the reason in `errorMessage` as before. `ContentView.repointLoginSet`
+    /// reads it — a set whose new key path was never written must neither
+    /// lose its slot nor be redialled.
+    @discardableResult
+    public func saveLoginSet(_ set: LoginSet, secret: String?) -> Bool {
         do {
             try loginSetStore.upsert(set)
             if set.authKind == .agent {
@@ -971,10 +978,12 @@ public final class SessionListViewModel {
                 try secrets.savePassword(secret, for: set.id)
             }
             reload()
+            return true
         } catch {
             reload()
             errorMessage = String(
                 format: CoreL10n.string("core.login.saveFailed %@"), String(describing: error))
+            return false
         }
     }
 

@@ -2686,7 +2686,9 @@ struct ContentView: View {
     /// Three steps, each through the function that already owns it:
     ///
     /// * `saveLoginSet(_:secret:)` with a nil secret writes the new key path
-    ///   and leaves the set's Keychain slot as it is.
+    ///   and leaves the set's Keychain slot as it is. When it answers `false`
+    ///   nothing below runs — no drop, no redial (technical backlog of
+    ///   2026-09-16, Task 5) — and the tab stays on the failed surface.
     /// * The set's slot is then dropped if — and only if — the managed key's
     ///   own slot HOLDS the passphrase AND no jump hop resolves from the set
     ///   (`setServesAJumpHop(_:)`). That is decision 2 of 2026-09-16
@@ -2718,7 +2720,10 @@ struct ContentView: View {
             return
         }
         set.keyPath = request.keyPath
-        sessionListViewModel.saveLoginSet(set, secret: nil)
+        // A set whose new key path was not written keeps its slot and is not
+        // redialled: the redial would fail against the old PEM path again, and
+        // the view model's `errorMessage` already says why the save failed.
+        guard sessionListViewModel.saveLoginSet(set, secret: nil) else { return }
         let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: request.keyPath, store: managedKeyStore, secrets: secretStore)) == true
         // The set's slot stays while a jump hop resolves from the set (Task 2
