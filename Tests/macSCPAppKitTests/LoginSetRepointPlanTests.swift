@@ -108,6 +108,35 @@ struct LoginSetRepointPlanTests {
         #expect(made.tab === tab)
     }
 
+    // MARK: - The set as it stands when the question is answered
+
+    /// `repointLoginSet(_:)` re-reads the set at confirm time: the dialog can
+    /// stay open while another window edits or deletes the set, and saving
+    /// the copy captured with the request would undo that edit or re-create
+    /// the deleted set.
+    @Test func theCurrentSetIsReadFreshByID() throws {
+        let captured = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        var edited = captured
+        edited.username = "renamed-meanwhile"
+        let found = try #require(LoginSetRepointPlan.currentSet(id: captured.id, in: [edited]))
+        #expect(found == edited)
+    }
+
+    @Test func aSetDeletedMeanwhileIsNoLongerCurrent() {
+        let captured = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        #expect(LoginSetRepointPlan.currentSet(id: captured.id, in: []) == nil)
+    }
+
+    /// A set switched to password or agent auth meanwhile no longer has a
+    /// key path to re-point.
+    @Test(arguments: [StoredSession.AuthKind.password, .agent])
+    func aSetThatStoppedBeingAPrivateKeySetIsNoLongerCurrent(authKind: StoredSession.AuthKind) {
+        let captured = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
+        var edited = captured
+        edited.authKind = authKind
+        #expect(LoginSetRepointPlan.currentSet(id: captured.id, in: [edited]) == nil)
+    }
+
     // MARK: - The dialog's text, in every catalog
 
     nonisolated static let languages = ["en", "de", "fr", "pl"]

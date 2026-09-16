@@ -848,6 +848,34 @@ public final class SessionListViewModel {
         sessionsUsing(setID: setID).count
     }
 
+    /// Whether some session's JUMP HOP reads this login set's Keychain slot
+    /// (maintainer decisions of 2026-09-16, Task 2 fix round 1).
+    ///
+    /// Two shapes do, the two in which `LoginResolver.resolveJump` resolves a
+    /// hop from the set: a jump in its own mode bound to the set
+    /// (`jump.sessionID == nil`, `jump.loginSetID == setID`), and a
+    /// session-mode jump (`jump.sessionID != nil`) whose referenced session is
+    /// bound to the set. A session-mode jump's own `loginSetID` is inert, the
+    /// same rule `sessionsUsing(setID:)` applies. A hop's passphrase comes only
+    /// from that slot — the jump path runs no `ManagedKeyPassphrase.resolve` —
+    /// so a set serving a hop must keep its slot even when a managed key's own
+    /// slot holds the same passphrase.
+    public func setServesAJumpHop(_ setID: UUID) -> Bool {
+        sessions.contains { session in
+            guard let jump = session.jump else { return false }
+            guard let referencedID = jump.sessionID else { return jump.loginSetID == setID }
+            return sessions.contains { $0.id == referencedID && $0.loginSetID == setID }
+        }
+    }
+
+    /// Whether some session's session-mode JUMP HOP references this session
+    /// (`jump.sessionID == sessionID`), and so reads this session's login —
+    /// for a session without a set, its own Keychain slot, with no fallback to
+    /// a managed key's slot (Task 2 fix round 1; see `setServesAJumpHop(_:)`).
+    public func sessionServesAJumpHop(_ sessionID: UUID) -> Bool {
+        sessions.contains { $0.jump?.sessionID == sessionID }
+    }
+
     /// Sessions whose jump host references the given session (M11a) --
     /// used for the "N sessions use this as their jump host" delete
     /// confirmation.

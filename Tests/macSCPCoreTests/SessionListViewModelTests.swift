@@ -131,6 +131,86 @@ struct SessionListViewModelTests {
             """)
     }
 
+    // MARK: - Jump hops that read a slot (Task 2 fix round 1)
+
+    /// A session of `makeVM`'s store, written straight through `SessionStore`
+    /// and reloaded, so a jump of any shape can be planted without a form.
+    private func plant(_ sessions: [StoredSession], in vm: SessionListViewModel, dir: URL) throws {
+        let store = SessionStore(directory: dir)
+        for session in sessions { try store.upsert(session) }
+        vm.reload()
+        #expect(vm.sessions.count == sessions.count, "the planted sessions did not load")
+    }
+
+    private func ssh(_ name: String, loginSetID: UUID? = nil, jump: StoredSession.JumpSpec? = nil)
+        -> StoredSession
+    {
+        StoredSession(
+            name: name, loginSetID: loginSetID, kind: .ssh,
+            ssh: StoredSSHConfig(host: "\(name).invalid", username: "u", jump: jump))
+    }
+
+    /// The two ways a jump hop reads a login set's slot, and the shapes that
+    /// read none. `LoginResolver.resolveJump` reads the set's slot for a jump
+    /// bound to it in its own mode (`sessionID == nil`, `loginSetID == set`),
+    /// and for a session-mode jump whose referenced session is bound to the
+    /// set; neither path falls back to a managed key's own slot, so a set
+    /// serving either must keep its slot.
+    @Test func aSetServesAJumpHopBoundToItOrThroughASessionBoundToIt() throws {
+        let setID = UUID()
+        do {
+            let (vm, _, dir) = makeVM()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try plant([ssh("b", jump: .init(host: "hop.invalid", username: "u", loginSetID: setID))], in: vm, dir: dir)
+            #expect(vm.setServesAJumpHop(setID), "a jump bound to the set in its own mode was not seen")
+        }
+        do {
+            let (vm, _, dir) = makeVM()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let bastion = ssh("bastion", loginSetID: setID)
+            try plant([
+                bastion,
+                ssh("b", jump: .init(host: "", username: "", sessionID: bastion.id)),
+            ], in: vm, dir: dir)
+            #expect(vm.setServesAJumpHop(setID), "a session-mode jump through a session bound to the set was not seen")
+        }
+    }
+
+    @Test func aSetServesNoJumpHopForUnrelatedShapes() throws {
+        let setID = UUID()
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let unrelatedBastion = ssh("other-bastion", loginSetID: UUID())
+        try plant([
+            // Uses the set as its OWN login, not as a hop.
+            ssh("target", loginSetID: setID),
+            // A jump bound to another set.
+            ssh("b", jump: .init(host: "hop.invalid", username: "u", loginSetID: UUID())),
+            unrelatedBastion,
+            // Session mode with a stale `loginSetID` naming the set: inert.
+            ssh("c", jump: .init(host: "", username: "", loginSetID: setID, sessionID: unrelatedBastion.id)),
+        ], in: vm, dir: dir)
+        #expect(vm.setServesAJumpHop(setID) == false)
+    }
+
+    /// A session-mode jump reads the referenced session's login, which for a
+    /// session without a set is that session's own slot
+    /// (`LoginResolver.resolveJump(spec:sets:secrets:sessions:referencingSessionID:)`).
+    @Test func aSessionServesAJumpHopOnlyWhenAJumpReferencesIt() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bastion = ssh("bastion")
+        let lonely = ssh("lonely")
+        try plant([
+            bastion,
+            lonely,
+            ssh("b", jump: .init(host: "", username: "", sessionID: bastion.id)),
+            ssh("c", jump: .init(host: "hop.invalid", username: "u")),
+        ], in: vm, dir: dir)
+        #expect(vm.sessionServesAJumpHop(bastion.id))
+        #expect(vm.sessionServesAJumpHop(lonely.id) == false)
+    }
+
     /// `save(tags:)` (P3a/T5): whatever the caller passes goes through
     /// `TagList.normalized` — trimmed, empties dropped, exact duplicates
     /// dropped, order kept.

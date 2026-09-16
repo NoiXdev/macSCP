@@ -2532,6 +2532,10 @@ struct ContentView: View {
         guard case .convertKey(let path)? = tab.connectionViewModel.lastFailureRemedy else {
             return
         }
+        // A question the last conversion left unasked must not open when
+        // this one's sheet closes (Task 2 fix round 1).
+        setRepointRequest = nil
+        setRepointDialogArmed = false
         convertKeyTarget = ImportKeyTarget(fileURL: URL(fileURLWithPath: path), tab: tab)
     }
 
@@ -2563,7 +2567,8 @@ struct ContentView: View {
     /// * A STORED session THAT OWNS ITS OWN LOGIN gets the new path written
     ///   into it through `sessionListViewModel.updateSession(_:newSecret:)`,
     ///   with `newSecret: nil` — this path replaces no secret. If the managed
-    ///   key's OWN Keychain slot holds a passphrase, the project's rule is
+    ///   key's OWN Keychain slot holds a passphrase, and no session-mode jump
+    ///   references this session (`sessionServesAJumpHop(_:)`), the project's rule is
     ///   that a session using such a key carries no copy of its own
     ///   (`SessionSecretPolicy.usesStoredManagedPassphrase`): the session's
     ///   slot is dropped, because `ManagedKeyPassphrase.resolve` answers the
@@ -2576,8 +2581,8 @@ struct ContentView: View {
     ///   1 of 2026-09-16): `LoginSetRepointPlan.request` builds the question
     ///   — the set, how many sessions use it, the converted key — and
     ///   `setRepointRequest` presents it. "Update login set" is
-    ///   `repointLoginSet(_:)`; "This attempt only", or closing the dialog,
-    ///   is `convertForThisAttemptOnly(_:keyPath:)`. A set the question does
+    ///   `repointLoginSet(_:)`; "This attempt only", the cancel button Escape
+    ///   presses, is `convertForThisAttemptOnly(_:keyPath:)`. A set the question does
     ///   not apply to (gone, or not an SSH private-key set) takes the
     ///   attempt-only route straight away.
     /// * An AD-HOC attempt has nothing stored to write to and nothing stored
@@ -2647,7 +2652,11 @@ struct ContentView: View {
             // copy is not.
             let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
                 keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
-            if keySlotHoldsThePassphrase {
+            // The slot stays while a session-mode jump references this session,
+            // because a jump hop reads only this slot and never the managed
+            // key's (Task 2 fix round 1).
+            let jumpHopReadsTheSessionSlot = sessionListViewModel.sessionServesAJumpHop(updated.id)
+            if keySlotHoldsThePassphrase && !jumpHopReadsTheSessionSlot {
                 sessionListViewModel.dropSessionSecret(for: updated.id)
             }
             retryConnect(tab)
@@ -2678,7 +2687,8 @@ struct ContentView: View {
     /// * `saveLoginSet(_:secret:)` with a nil secret writes the new key path
     ///   and leaves the set's Keychain slot as it is.
     /// * The set's slot is then dropped if — and only if — the managed key's
-    ///   own slot HOLDS the passphrase. That is decision 2 of 2026-09-16
+    ///   own slot HOLDS the passphrase AND no jump hop resolves from the set
+    ///   (`setServesAJumpHop(_:)`). That is decision 2 of 2026-09-16
     ///   carried over from sessions to sets: one passphrase, one place. The
     ///   connect-time fill types the set's slot into the form
     ///   (`LoginResolver.resolve`) and `ManagedKeyPassphrase.resolve` answers
@@ -2692,15 +2702,29 @@ struct ContentView: View {
     ///   the path just saved, TOFU stays the hard stop it is, and this adds no
     ///   dial site.
     ///
-    /// The set written is the one captured in the request, with only its key
-    /// path changed. The tab is the request's too, never the active tab.
+    /// The set written is the set as it stands NOW, re-read by id
+    /// (`LoginSetRepointPlan.currentSet`), with only its key path changed: the
+    /// dialog can stay open while another window edits the set, and saving
+    /// the copy captured with the request would undo that edit. A set deleted
+    /// meanwhile, or no longer an SSH private-key set, is not written at all —
+    /// the conversion then applies to this attempt only. The tab is the
+    /// request's, never the active tab (Task 2 fix round 1).
     func repointLoginSet(_ request: LoginSetRepointRequest) {
-        var set = request.set
+        guard var set = LoginSetRepointPlan.currentSet(
+            id: request.set.id, in: sessionListViewModel.loginSets)
+        else {
+            convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+            return
+        }
         set.keyPath = request.keyPath
         sessionListViewModel.saveLoginSet(set, secret: nil)
         let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: request.keyPath, store: managedKeyStore, secrets: secretStore)) == true
-        if keySlotHoldsThePassphrase {
+        // The set's slot stays while a jump hop resolves from the set, because
+        // a jump hop reads only the set's slot and never the managed key's
+        // (Task 2 fix round 1).
+        let jumpHopReadsTheSetSlot = sessionListViewModel.setServesAJumpHop(set.id)
+        if keySlotHoldsThePassphrase && !jumpHopReadsTheSetSlot {
             sessionListViewModel.dropLoginSetSecret(for: set.id)
         }
         retryConnect(request.tab)
@@ -2708,9 +2732,10 @@ struct ContentView: View {
 
     /// The conversion for this attempt only: the converted key goes onto the
     /// form and the tab goes back to it, with nothing stored changed and no
-    /// dial. The route an ad-hoc attempt always takes, and the answer "This
-    /// attempt only" — or closing the login-set question — gives for a
-    /// set-bound session (`convertedKeyImported(_:for:)` says which).
+    /// dial. The route an ad-hoc attempt always takes, the answer "This
+    /// attempt only" (or Escape) gives for a set-bound session
+    /// (`convertedKeyImported(_:for:)` says which), and the fallback
+    /// `repointLoginSet(_:)` takes when the set is gone at confirm time.
     func convertForThisAttemptOnly(_ tab: SessionTab, keyPath: String) {
         tab.connectionViewModel.keyPath = keyPath
         dismissConnectFailure(tab)

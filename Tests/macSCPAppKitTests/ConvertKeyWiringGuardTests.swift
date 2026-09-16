@@ -37,20 +37,26 @@ import Testing
 ///    `updateSession(`, `dropSessionSecret(`, `retryConnect(`,
 ///    `convertForThisAttemptOnly(` — after asking the two questions that
 ///    decide which path it takes (`hasStoredPassphrase(`, `loginSetID`), with
-///    the drop INSIDE the branch the first question's positive answer opens
-///    and nowhere else, and dials nothing itself.
+///    the drop INSIDE a branch that both the first question's positive
+///    answer and `sessionServesAJumpHop(`'s negative answer open, and nowhere
+///    else, and dials nothing itself.
 /// 5. The import sheet converts on the way in instead of copying bytes.
 /// 6. A session bound to a login set is ASKED whether to update the set
 ///    (`LoginSetRepointPlan.request(`, `setRepointRequest`) rather than
 ///    routed to the attempt-only path in silence.
-/// 7. Updating the set writes it through `saveLoginSet(`, drops the SET's
-///    slot only inside the branch `hasStoredPassphrase(`'s positive answer
-///    opens, and re-dials through `retryConnect(` and nothing else.
+/// 7. Updating the set re-reads it (`LoginSetRepointPlan.currentSet(`),
+///    writes it through `saveLoginSet(`, drops the SET's slot only inside a
+///    branch that `hasStoredPassphrase(`'s positive answer and
+///    `setServesAJumpHop(`'s negative answer both open, and re-dials through
+///    `retryConnect(` and nothing else.
 /// 8. "This attempt only" hands the tab back to the form
 ///    (`dismissConnectFailure(`) and writes no set.
 /// 9. The window presents that question as a `.confirmationDialog(` bound to
-///    `setRepointRequest`, opened only once the conversion sheet has closed,
-///    whose buttons reach claims 7 and 8 and whose text is catalog keys.
+///    `setRepointRequest`, opened only once the conversion sheet has closed
+///    and disarmed when a new conversion starts, whose "Update login set"
+///    button alone reaches claim 7 and whose cancel-role "This attempt only"
+///    button alone reaches claim 8, whose `isPresented:` setter runs neither,
+///    and whose text is catalog keys.
 @Suite("Convert key wiring guard")
 struct ConvertKeyWiringGuardTests {
     /// `#filePath` here is
@@ -207,9 +213,11 @@ struct ConvertKeyWiringGuardTests {
     /// stored session, drops the session's own passphrase slot and re-dials
     /// through `retryConnect(`, or hands an ad-hoc attempt back to the form
     /// through `convertForThisAttemptOnly(` (which claim 8 holds to
-    /// `dismissConnectFailure(`). SIX tokens are named individually
+    /// `dismissConnectFailure(`). SEVEN tokens are named individually
     /// (counted 2026-09-10 against the `#expect` calls in this function's
-    /// body) because "the handler does something" is not the property — the
+    /// body; `sessionServesAJumpHop(` made it seven in Task 2 fix round 1,
+    /// counted 2026-09-16) because "the handler does something" is not the
+    /// property — the
     /// property is that each of its paths ends in the function that already
     /// owns that action, and that the two facts it branches on are asked
     /// rather than assumed.
@@ -277,6 +285,13 @@ struct ConvertKeyWiringGuardTests {
             the token `theSlotDropSitsInsideTheBranchTheProbeOpens` reads the branch's \
             identifier from, and that test fails closed without it.
             """)
+        #expect(body.contains("sessionServesAJumpHop("), """
+            `convertedKeyImported(_:for:)` no longer asks `sessionServesAJumpHop(` — a \
+            session-mode jump through this session reads the session's own slot and never the \
+            managed key's, so dropping that slot breaks every session that jumps through it. \
+            This is also the token `theSlotDropSitsInsideTheBranchTheProbeOpens` reads the \
+            jump check's identifier from.
+            """)
         #expect(body.contains("loginSetID"), """
             `convertedKeyImported(_:for:)` no longer reads `loginSetID` — a session whose \
             login comes from a SET resolves its key path and its passphrase from that set on \
@@ -311,15 +326,24 @@ struct ConvertKeyWiringGuardTests {
     /// string when they cannot find what they name, so a handler that stops
     /// binding the probe at all is a loud failure here as well as in
     /// `theConvertedKeyIsWiredThroughTheRealHandlers` above.
+    ///
+    /// Since Task 2 fix round 1 the same `if` must also carry the NEGATED
+    /// result of `sessionServesAJumpHop(`, read out of the body the same way:
+    /// a jump hop reads the session's own slot and has no fallback to the
+    /// managed key's, so a drop the jump check does not also gate breaks the
+    /// sessions that jump through this one.
     @Test func theSlotDropSitsInsideTheBranchTheProbeOpens() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
         let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
-        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        let jumpHop = try Self.resultIdentifier(of: "sessionServesAJumpHop(", inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, alsoRequiringNegated: jumpHop, inBlankedBody: body)
         let dropsInsideTheGate = gate.map { Self.occurrences(of: "dropSessionSecret(", in: $0) } ?? 0
         let dropsInTheBody = Self.occurrences(of: "dropSessionSecret(", in: body)
         #expect(dropsInsideTheGate >= 1, """
-            `convertedKeyImported(_:for:)` does not call `dropSessionSecret(` inside the branch \
-            that `\(identifier)` being TRUE opens — either the branch tests the probe's result \
+            `convertedKeyImported(_:for:)` does not call `dropSessionSecret(` inside a branch \
+            that `\(identifier)` being TRUE and `\(jumpHop)` being FALSE open together — a drop \
+            the jump check does not gate breaks every session that jumps through this one; or \
+            the branch tests the probe's result \
             inverted (`!`, or `== false`), which drops the session's Keychain slot in exactly \
             the case where the managed key's slot holds no passphrase and the session's copy is \
             the only one there is, or the drop has moved out of that branch altogether.
@@ -433,6 +457,20 @@ struct ConvertKeyWiringGuardTests {
     /// applied to a set: one passphrase, one place.
     @Test func updatingTheSetGoesThroughTheRealHandlers() throws {
         let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        #expect(body.contains("LoginSetRepointPlan.currentSet("), """
+            `repointLoginSet(_:)` no longer re-reads the set through \
+            `LoginSetRepointPlan.currentSet(` — the copy captured when the dialog opened is \
+            saved instead, undoing an edit made meanwhile or re-creating a deleted set.
+            """)
+        #expect(body.contains("convertForThisAttemptOnly("), """
+            `repointLoginSet(_:)` no longer falls back to `convertForThisAttemptOnly(` when the \
+            set is gone or no longer a private-key set — the tab stays on the failed surface.
+            """)
+        #expect(body.contains("setServesAJumpHop("), """
+            `repointLoginSet(_:)` no longer asks `setServesAJumpHop(` — a jump hop bound to the \
+            set reads the set's slot and never the managed key's, so dropping it breaks every \
+            session that jumps with this set.
+            """)
         #expect(body.contains("saveLoginSet("), """
             `repointLoginSet(_:)` no longer calls `saveLoginSet(` — the set keeps pointing at \
             the PEM file, and the redial fails the same way again.
@@ -457,16 +495,20 @@ struct ConvertKeyWiringGuardTests {
     /// The POLARITY of the set's slot drop — the same structural read
     /// `theSlotDropSitsInsideTheBranchTheProbeOpens` makes for the session's
     /// slot, over `repointLoginSet(_:)`'s body: the drop inside the branch a
-    /// TRUE answer opens, and nowhere else.
+    /// TRUE answer and a FALSE `setServesAJumpHop(` answer open together, and
+    /// nowhere else.
     @Test func theSetSlotDropSitsInsideTheBranchTheProbeOpens() throws {
         let body = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
         let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
-        let gate = Self.positiveGateSpan(on: identifier, inBlankedBody: body)
+        let jumpHop = try Self.resultIdentifier(of: "setServesAJumpHop(", inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, alsoRequiringNegated: jumpHop, inBlankedBody: body)
         let dropsInsideTheGate = gate.map { Self.occurrences(of: "dropLoginSetSecret(", in: $0) } ?? 0
         let dropsInTheBody = Self.occurrences(of: "dropLoginSetSecret(", in: body)
         #expect(dropsInsideTheGate >= 1, """
-            `repointLoginSet(_:)` does not call `dropLoginSetSecret(` inside the branch that \
-            `\(identifier)` being TRUE opens — an inverted gate drops the set's slot exactly \
+            `repointLoginSet(_:)` does not call `dropLoginSetSecret(` inside a branch that \
+            `\(identifier)` being TRUE and `\(jumpHop)` being FALSE open together — a drop the \
+            jump check does not gate breaks every jump hop bound to the set; an inverted \
+            probe gate drops the set's slot exactly \
             when the managed key's slot holds no passphrase and the set's copy is the only one.
             """)
         #expect(dropsInTheBody == dropsInsideTheGate, """
@@ -511,8 +553,8 @@ struct ConvertKeyWiringGuardTests {
 
     // MARK: - 9. The question is presented
 
-    /// The dialog bound to `setRepointRequest`: its buttons reach claims 7
-    /// and 8, its presentation waits for the conversion sheet to close, and
+    /// The dialog bound to `setRepointRequest`: each button reaches its OWN
+    /// claim, its presentation waits for the conversion sheet to close, and
     /// every text it shows comes from a catalog key.
     ///
     /// The wait is the conversion sheet's `onDismiss:` arming
@@ -521,6 +563,11 @@ struct ConvertKeyWiringGuardTests {
     /// presentation raised while a sheet is still up does not appear — the
     /// import-password sheet's `onDismiss:` in the same file says so for the
     /// conflict sheet (M19/T8).
+    ///
+    /// The pairing is per button (Task 2 fix round 1): a check over the whole
+    /// buttons closure stayed green with the two actions swapped, which puts
+    /// the shared-set rewrite on the cancel-role button — the one Escape
+    /// presses. `dialogViolations(_:)` names what it checks.
     ///
     /// "Catalog keys only" is read in two views at the same offsets: in the
     /// strict view, every `Button(` and `Text(` and the dialog's title open
@@ -532,13 +579,10 @@ struct ConvertKeyWiringGuardTests {
     @Test func theQuestionIsAConfirmationDialogBoundToTheRequest() throws {
         let source = try String(contentsOf: Self.sheetsFile, encoding: .utf8)
         let dialog = try Self.dialog(boundTo: "setRepointRequest", in: source)
-        #expect(dialog.buttons.contains("repointLoginSet("), """
-            the login-set question's buttons no longer call `repointLoginSet(` — "Update login \
-            set" updates nothing.
-            """)
-        #expect(dialog.buttons.contains("convertForThisAttemptOnly("), """
-            the login-set question's buttons no longer call `convertForThisAttemptOnly(` — \
-            "This attempt only" leaves the tab on the failed surface.
+        let violations = Self.dialogViolations(dialog)
+        #expect(violations.isEmpty, """
+            the login-set question's buttons, setter or presentation are wired wrong: \
+            \(violations)
             """)
         #expect(dialog.arguments.contains("setRepointDialogArmed"), """
             the login-set question's presentation no longer waits for `setRepointDialogArmed` \
@@ -562,6 +606,27 @@ struct ConvertKeyWiringGuardTests {
         }, """
             the login-set question reads catalog keys outside `connection.convertKey.repoint.`, \
             or fewer than four: \(dialog.keys)
+            """)
+    }
+
+    /// Starting a conversion clears whatever the last one left behind (Task 2
+    /// fix round 1): a request whose presentation was lost, or an armed flag
+    /// no dialog consumed, would otherwise open the previous conversion's
+    /// question when this sheet closes. Both positive — the clearing is a
+    /// thing that must be present.
+    @Test func startingAConversionDisarmsTheLastQuestion() throws {
+        let body = try Self.strippedBody(after: "func convertFailedKey(", in: Self.contentViewFile)
+        #expect(body.contains("convertKeyTarget = ImportKeyTarget("), """
+            `convertFailedKey(_:)` no longer opens the conversion sheet — this check is not \
+            reading the function that starts a conversion.
+            """)
+        #expect(body.contains("setRepointRequest = nil"), """
+            `convertFailedKey(_:)` no longer clears `setRepointRequest` — a request left by an \
+            earlier conversion is asked again when this one's sheet closes.
+            """)
+        #expect(body.contains("setRepointDialogArmed = false"), """
+            `convertFailedKey(_:)` no longer disarms `setRepointDialogArmed` — a flag left armed \
+            by an earlier conversion presents a question the moment a new request appears.
             """)
     }
 
@@ -663,6 +728,7 @@ struct ConvertKeyWiringGuardTests {
             if var updated = failedConnectTarget(for: tab), updated.loginSetID == nil {
                 let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
                     keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
+                let jumpHopReadsTheSlot = sessionListViewModel.sessionServesAJumpHop(updated.id)
                 if \(condition) {
                     sessionListViewModel.dropSessionSecret(for: updated.id)
                 }
@@ -719,16 +785,53 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
+    @Test func theBranchScannerReadsTheJumpGatedDropOutOfTheRealShape() throws {
+        let body = try Self.strippedBody(
+            after: "func convertedKeyImported(",
+            in: Self.handlerFixture(gatedBy: "keySlotHoldsThePassphrase && !jumpHopReadsTheSlot"))
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let jumpHop = try Self.resultIdentifier(of: "sessionServesAJumpHop(", inBlankedBody: body)
+        #expect(jumpHop == "jumpHopReadsTheSlot")
+        let gate = Self.positiveGateSpan(on: identifier, alsoRequiringNegated: jumpHop, inBlankedBody: body)
+        #expect(Self.occurrences(of: "dropSessionSecret(", in: gate ?? "") == 1, """
+            the branch scanner cannot find the drop in a handler gated on both questions the \
+            way the real one is — the check over the source would be red for correct code.
+            """)
+    }
+
+    @Test("a gate that skips or inverts the jump check leaves no branch to be inside",
+          arguments: [
+            "keySlotHoldsThePassphrase",
+            "keySlotHoldsThePassphrase && jumpHopReadsTheSlot",
+            "keySlotHoldsThePassphrase && !jumpHopReadsTheSlotElsewhere",
+          ])
+    func theBranchScannerSeesAGateThatSkipsTheJumpCheck(_ condition: String) throws {
+        let body = try Self.strippedBody(
+            after: "func convertedKeyImported(", in: Self.handlerFixture(gatedBy: condition))
+        let identifier = try Self.probeResultIdentifier(inBlankedBody: body)
+        let jumpHop = try Self.resultIdentifier(of: "sessionServesAJumpHop(", inBlankedBody: body)
+        let gate = Self.positiveGateSpan(on: identifier, alsoRequiringNegated: jumpHop, inBlankedBody: body)
+        #expect(gate == nil, """
+            the branch scanner accepted `\(condition)` as gated on the jump check — the check \
+            over the source would pass a drop that breaks every jump through the session.
+            """)
+    }
+
     @Test func theProbeReaderFailsClosedWhenNothingIsAsked() {
         #expect(throws: ScanError.self) {
             try Self.probeResultIdentifier(inBlankedBody: "func handler() { dropSessionSecret(id) }")
         }
     }
 
-    /// A window with two dialogs, the second bound to the request, and the
-    /// text of the bound one as the knob — the shape
+    /// A window with three dialogs, the second bound to the request, and the
+    /// bound one's message, button actions and setter as knobs — the shape
     /// `theQuestionIsAConfirmationDialogBoundToTheRequest` reads.
-    private static func dialogFixture(message: String) -> String {
+    private static func dialogFixture(
+        message: String = "Text(String(format: L10n.string(\"connection.convertKey.repoint.message %lld %@\", \"N\"), request.usageCount, request.key.name))",
+        confirmAction: String = "repointLoginSet(request)",
+        attemptAction: String = "convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)",
+        setter: String = "if !isPresented { setRepointRequest = nil; setRepointDialogArmed = false }"
+    ) -> String {
         """
         func sheets() -> some View {
             content
@@ -747,16 +850,17 @@ struct ConvertKeyWiringGuardTests {
                     setRepointRequest?.set.name ?? ""),
                 isPresented: Binding(
                     get: { setRepointDialogArmed && setRepointRequest != nil },
-                    set: { _ in }),
-                titleVisibility: .visible
-            ) {
+                    set: { isPresented in \(setter) }),
+                titleVisibility: .visible,
+                presenting: setRepointRequest
+            ) { request in
                 Button(L10n.string("connection.convertKey.repoint.confirm", "Update")) {
-                    repointLoginSet(request)
+                    \(confirmAction)
                 }
-                Button(L10n.string("connection.convertKey.repoint.thisAttempt", "Only")) {
-                    convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                Button(L10n.string("connection.convertKey.repoint.thisAttempt", "Only"), role: .cancel) {
+                    \(attemptAction)
                 }
-            } message: {
+            } message: { request in
                 \(message)
             }
             .confirmationDialog(
@@ -772,13 +876,8 @@ struct ConvertKeyWiringGuardTests {
     }
 
     @Test func theDialogScannerReadsTheBoundDialogAndOnlyIt() throws {
-        let dialog = try Self.dialog(
-            boundTo: "setRepointRequest",
-            in: Self.dialogFixture(message: """
-                Text(String(format: L10n.string("connection.convertKey.repoint.message %lld %@", "N"), 1, ""))
-                """))
-        #expect(dialog.buttons.contains("repointLoginSet("))
-        #expect(dialog.buttons.contains("convertForThisAttemptOnly("))
+        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture())
+        #expect(Self.dialogViolations(dialog).isEmpty, "\(Self.dialogViolations(dialog))")
         #expect(dialog.arguments.contains("setRepointDialogArmed"))
         #expect(dialog.unlocalizedTexts.isEmpty, "\(dialog.unlocalizedTexts)")
         #expect(dialog.textCount == 4)
@@ -788,9 +887,39 @@ struct ConvertKeyWiringGuardTests {
             "connection.convertKey.repoint.thisAttempt",
             "connection.convertKey.repoint.message %lld %@",
         ])
+        #expect(dialog.buttonSpans.map(\.key) == [
+            "connection.convertKey.repoint.confirm", "connection.convertKey.repoint.thisAttempt",
+        ])
         #expect(!dialog.buttons.contains("performClose(") && !dialog.buttons.contains("startWithoutAsking("), """
             the dialog span reached into a neighbouring dialog — the bound dialog's checks would \
             then read another dialog's buttons.
+            """)
+    }
+
+    /// The swap the review planted: each action on the other button. A check
+    /// over the whole buttons closure cannot see it; the per-button pairing
+    /// must.
+    @Test func theDialogScannerSeesSwappedActions() throws {
+        let dialog = try Self.dialog(
+            boundTo: "setRepointRequest",
+            in: Self.dialogFixture(
+                confirmAction: "convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)",
+                attemptAction: "repointLoginSet(request)"))
+        #expect(Self.dialogViolations(dialog).isEmpty == false, """
+            swapping the two buttons' actions passed the pairing — Escape would then rewrite \
+            the shared login set.
+            """)
+    }
+
+    @Test("a handler in the setter is reported",
+          arguments: [
+            "if !isPresented { setRepointRequest = nil; repointLoginSet(setRepointRequest!) }",
+            "if !isPresented { setRepointRequest = nil; convertForThisAttemptOnly(t, keyPath: p) }",
+          ])
+    func theDialogScannerSeesAHandlerInTheSetter(_ setter: String) throws {
+        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(setter: setter))
+        #expect(Self.dialogViolations(dialog).isEmpty == false, """
+            a handler run from the `isPresented:` setter passed — the setter must only clear state.
             """)
     }
 
@@ -806,7 +935,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theDialogScannerFailsClosedWhenNoDialogIsBound() {
         #expect(throws: ScanError.self) {
-            try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(message: "Text(x)")
+            try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture()
                 .replacingOccurrences(of: "setRepointRequest", with: "otherRequest"))
         }
     }
@@ -906,7 +1035,14 @@ struct ConvertKeyWiringGuardTests {
     /// handler that stops asking the question is red here instead of turning
     /// the branch scanner into a search for an empty string.
     private static func probeResultIdentifier(inBlankedBody body: String) throws -> String {
-        guard let call = body.range(of: "hasStoredPassphrase(") else { throw ScanError.probeNotFound }
+        try resultIdentifier(of: "hasStoredPassphrase(", inBlankedBody: body)
+    }
+
+    /// The name the first call to `call` in `body` is bound to by a `let` —
+    /// the reader `probeResultIdentifier` has always been, for any call. Used
+    /// for the jump-hop checks (Task 2 fix round 1), with the same throws.
+    private static func resultIdentifier(of callToken: String, inBlankedBody body: String) throws -> String {
+        guard let call = body.range(of: callToken) else { throw ScanError.probeNotFound }
         let beforeTheCall = body[body.startIndex..<call.lowerBound]
         guard let equals = beforeTheCall.range(of: "=", options: .backwards) else {
             throw ScanError.probeNotBound
@@ -936,7 +1072,16 @@ struct ConvertKeyWiringGuardTests {
     /// `nil` rather than a throw: "there is no positive branch" is the
     /// violation this scanner exists to report, and its caller says so in a
     /// sentence the offsets could not.
-    private static func positiveGateSpan(on identifier: String, inBlankedBody body: String) -> String? {
+    ///
+    /// With `jumpHop` (Task 2 fix round 1) the condition must ALSO carry
+    /// `!jumpHop` as a whole word — the drop is allowed only when no jump hop
+    /// reads the slot. A condition naming `jumpHop` without the `!`, or not
+    /// at all, is not the branch. The probe has to be written first: the
+    /// `hasPrefix("!")` rule above reads a condition that opens with `!` as
+    /// an inverted probe.
+    private static func positiveGateSpan(
+        on identifier: String, alsoRequiringNegated jumpHop: String? = nil, inBlankedBody body: String
+    ) -> String? {
         var searchStart = body.startIndex
         while let keyword = body.range(of: "if", range: searchStart..<body.endIndex) {
             searchStart = keyword.upperBound
@@ -955,6 +1100,12 @@ struct ConvertKeyWiringGuardTests {
                   condition.contains("== false") == false,
                   negatedInPlace == false
             else { continue }
+            if let jumpHop {
+                guard let negated = condition.range(of: "!" + jumpHop) else { continue }
+                let endsTheWord = negated.upperBound == condition.endIndex
+                    || !isIdentifierCharacter(condition[negated.upperBound])
+                guard endsTheWord else { continue }
+            }
             return try? balancedSpan(from: openBrace, in: body)
         }
         return nil
@@ -977,6 +1128,71 @@ struct ConvertKeyWiringGuardTests {
         let textCount: Int
         /// Every key literal an `L10n.string(` in the dialog names, in order.
         let keys: [String]
+        /// The `isPresented:` binding's `set:` closure, strict view.
+        let setter: String
+        /// Each `Button(` in the buttons closure, in order.
+        let buttonSpans: [ButtonSpan]
+    }
+
+    /// One `Button(` of a dialog: the catalog key its label names, read from
+    /// the comment-only view, beside its argument list and trailing action,
+    /// read from the strict view — at the same offsets, which is what pairs
+    /// a key with its action.
+    private struct ButtonSpan {
+        let key: String?
+        let arguments: String
+        let action: String
+    }
+
+    /// Everything the login-set question's wiring must satisfy, one sentence
+    /// per broken property (Task 2 fix round 1). Empty means wired right.
+    ///
+    /// Each button's action must reach its own handler and NOT the other's;
+    /// the cancel role must sit on "This attempt only" (Escape presses the
+    /// cancel button) and not on "Update login set"; the setter must clear
+    /// the request and run neither handler; and the request must reach the
+    /// buttons through `presenting:`.
+    private static func dialogViolations(_ dialog: Dialog) -> [String] {
+        var violations: [String] = []
+        let confirm = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.confirm" }
+        let attempt = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.thisAttempt" }
+        if confirm.count != 1 { violations.append("\(confirm.count) Update-login-set buttons") }
+        if attempt.count != 1 { violations.append("\(attempt.count) This-attempt-only buttons") }
+        for button in confirm {
+            if !button.action.contains("repointLoginSet(") {
+                violations.append("Update login set does not call repointLoginSet(")
+            }
+            if button.action.contains("convertForThisAttemptOnly(") {
+                violations.append("Update login set calls convertForThisAttemptOnly(")
+            }
+            if button.arguments.contains(".cancel") {
+                violations.append("Update login set carries the cancel role")
+            }
+        }
+        for button in attempt {
+            if !button.action.contains("convertForThisAttemptOnly(") {
+                violations.append("This attempt only does not call convertForThisAttemptOnly(")
+            }
+            if button.action.contains("repointLoginSet(") {
+                violations.append("This attempt only calls repointLoginSet(")
+            }
+            if !button.arguments.contains(".cancel") {
+                violations.append("This attempt only does not carry the cancel role")
+            }
+        }
+        if !dialog.setter.contains("setRepointRequest = nil") {
+            violations.append("the setter does not clear setRepointRequest")
+        }
+        if dialog.setter.contains("repointLoginSet(") {
+            violations.append("the setter calls repointLoginSet(")
+        }
+        if dialog.setter.contains("convertForThisAttemptOnly(") {
+            violations.append("the setter calls convertForThisAttemptOnly(")
+        }
+        if !dialog.arguments.contains("presenting:") {
+            violations.append("the request does not reach the buttons through presenting:")
+        }
+        return violations
     }
 
     /// The first `.confirmationDialog(` whose ARGUMENT LIST names `state`,
@@ -1024,25 +1240,61 @@ struct ConvertKeyWiringGuardTests {
                     || window.hasPrefix("String(format:L10n.string(")
                 return localized ? nil : String(window.prefix(40))
             }
-            let span = String(literal[parenOpen...messageClose])
-            // Walked by hand rather than matched with a regex literal: the
-            // project's source strippers read every test file, and a bare
-            // `/…/` literal carrying a quote is what they cannot parse.
-            var keys: [String] = []
-            for piece in span.components(separatedBy: "L10n.string(").dropFirst() {
-                let rest = piece.drop(while: { $0.isWhitespace })
-                guard rest.first == "\"" else { continue }
-                keys.append(String(rest.dropFirst().prefix(while: { $0 != "\"" })))
+            guard let setLabel = firstOffset(of: Array("set:"), in: strict, from: parenOpen),
+                  setLabel < parenClose,
+                  let setterOpen = firstOffset(of: ["{"], in: strict, from: setLabel),
+                  let setterClose = closingOffset(from: setterOpen, in: strict, open: "{", close: "}"),
+                  setterClose < parenClose
+            else { throw ScanError.dialogNotFound }
+
+            // Offsets pair the two views: both blank in place, so the key
+            // literal at an offset in `literal` belongs to the `Button(` at
+            // the same offset in `strict`.
+            var buttonSpans: [ButtonSpan] = []
+            var buttonFrom = buttonsOpen
+            let buttonToken = Array("Button(")
+            while let hit = firstOffset(of: buttonToken, in: strict, from: buttonFrom), hit < buttonsClose {
+                let argsOpen = hit + buttonToken.count - 1
+                guard let argsClose = closingOffset(from: argsOpen, in: strict, open: "(", close: ")"),
+                      let actionOpen = firstOffset(of: ["{"], in: strict, from: argsClose),
+                      strict[(argsClose + 1)..<actionOpen].allSatisfy(\.isWhitespace),
+                      let actionClose = closingOffset(from: actionOpen, in: strict, open: "{", close: "}")
+                else { throw ScanError.dialogNotFound }
+                let labelLiteral = String(literal[argsOpen...argsClose])
+                buttonSpans.append(ButtonSpan(
+                    key: Self.catalogKeys(in: labelLiteral).first,
+                    arguments: String(strict[argsOpen...argsClose]),
+                    action: String(strict[actionOpen...actionClose])))
+                buttonFrom = actionClose
             }
+
+            let span = String(literal[parenOpen...messageClose])
+            let keys = Self.catalogKeys(in: span)
             return Dialog(
                 arguments: arguments,
                 buttons: String(strict[buttonsOpen...buttonsClose]),
                 message: String(strict[messageOpen...messageClose]),
                 unlocalizedTexts: unlocalized,
                 textCount: textStarts.count,
-                keys: keys)
+                keys: keys,
+                setter: String(strict[setterOpen...setterClose]),
+                buttonSpans: buttonSpans)
         }
         throw ScanError.dialogNotFound
+    }
+
+    /// Every key literal an `L10n.string(` in `text` names, in order.
+    /// Walked by hand rather than matched with a regex literal: the project's
+    /// source strippers read every test file, and a bare `/…/` literal
+    /// carrying a quote is what they cannot parse.
+    private static func catalogKeys(in text: String) -> [String] {
+        var keys: [String] = []
+        for piece in text.components(separatedBy: "L10n.string(").dropFirst() {
+            let rest = piece.drop(while: { $0.isWhitespace })
+            guard rest.first == "\"" else { continue }
+            keys.append(String(rest.dropFirst().prefix(while: { $0 != "\"" })))
+        }
+        return keys
     }
 
     private static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {

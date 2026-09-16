@@ -179,10 +179,11 @@ extension ContentView {
         // The login-set question (maintainer decisions of 2026-09-16, Task
         // 2): a conversion for a session bound to an SSH private-key set asks
         // whether to update the set, naming it and how many sessions use it.
-        // Both answers do something, so neither is destructive; "This attempt
-        // only" carries the cancel role, so Escape gives that answer, and any
-        // other way the dialog closes gives it too (the binding's setter) —
-        // the conversion is never dropped unanswered.
+        // Both answers do something, so neither is destructive. The request
+        // reaches each button through `presenting:`, and each button acts on
+        // the request it was handed; "This attempt only" carries the cancel
+        // role, so Escape gives that answer. The `isPresented:` setter only
+        // clears state and runs no handler (Task 2 fix round 1).
         .confirmationDialog(
             String(
                 format: L10n.string(
@@ -191,41 +192,30 @@ extension ContentView {
             isPresented: Binding(
                 get: { setRepointDialogArmed && setRepointRequest != nil },
                 set: { isPresented in
-                    guard !isPresented else { return }
-                    setRepointDialogArmed = false
-                    if let request = setRepointRequest {
+                    if !isPresented {
                         setRepointRequest = nil
-                        convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
+                        setRepointDialogArmed = false
                     }
                 }
             ),
-            titleVisibility: .visible
-        ) {
+            titleVisibility: .visible,
+            presenting: setRepointRequest
+        ) { request in
             Button(L10n.string("connection.convertKey.repoint.confirm", "Update login set")) {
-                if let request = setRepointRequest {
-                    setRepointRequest = nil
-                    setRepointDialogArmed = false
-                    repointLoginSet(request)
-                }
+                repointLoginSet(request)
             }
             Button(
                 L10n.string("connection.convertKey.repoint.thisAttempt", "This attempt only"),
                 role: .cancel
             ) {
-                if let request = setRepointRequest {
-                    setRepointRequest = nil
-                    setRepointDialogArmed = false
-                    convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
-                }
+                convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)
             }
-        } message: {
-            if let request = setRepointRequest {
-                Text(String(
-                    format: L10n.string(
-                        "connection.convertKey.repoint.message %lld %@",
-                        "This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them."),
-                    request.usageCount, request.key.name))
-            }
+        } message: { request in
+            Text(String(
+                format: L10n.string(
+                    "connection.convertKey.repoint.message %lld %@",
+                    "This login set is used by %1$lld sessions. Its key will point to the converted key “%2$@” for all of them."),
+                request.usageCount, request.key.name))
         }
         // The window's ONE forwarding sheet (fix round 1): the profile
         // table, or the unknown-host-key question, whichever

@@ -47,13 +47,25 @@ enum LoginSetRepointPlan {
     ///
     /// `usageCount` is called once, for the set the request names, and only
     /// when a request is made.
+    /// The set `id` names as it stands in `sets` NOW, or nil when it is gone
+    /// or no longer an SSH private-key set (Task 2 fix round 1) — the re-read
+    /// `ContentView.repointLoginSet(_:)` makes at confirm time, because the
+    /// dialog can stay open while another window edits or deletes the set.
+    static func currentSet(id: UUID, in sets: [LoginSet]) -> LoginSet? {
+        guard let set = sets.first(where: { $0.id == id }), qualifies(set) else { return nil }
+        return set
+    }
+
+    /// The one kind of set a converted key can be written into.
+    private static func qualifies(_ set: LoginSet) -> Bool {
+        set.kind == .ssh && set.authKind == .privateKey
+    }
+
     static func request(
         session: StoredSession?, sets: [LoginSet], usageCount: (UUID) -> Int,
         key: ManagedKey, keyPath: String, tab: SessionTab
     ) -> LoginSetRepointRequest? {
-        guard let setID = session?.loginSetID,
-              let set = sets.first(where: { $0.id == setID }),
-              set.kind == .ssh, set.authKind == .privateKey
+        guard let setID = session?.loginSetID, let set = currentSet(id: setID, in: sets)
         else { return nil }
         return LoginSetRepointRequest(
             tab: tab, key: key, keyPath: keyPath, set: set, usageCount: usageCount(set.id))
