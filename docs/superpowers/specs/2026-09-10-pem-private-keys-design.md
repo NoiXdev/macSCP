@@ -620,9 +620,11 @@ ledger, `.superpowers/sdd/2026-09-16-maintainer-decisions/progress.md`.
 Confirmed ("Ja, löschen"): after a login set (or a plain session) is
 re-pointed at a converted key, its OWN Keychain slot is dropped once the
 managed key's slot holds the passphrase — one passphrase, one place.
-Built first as exactly that single condition (`5ce949b7`,
-`ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`
-probed with `try?`, `== true` gating the drop) and REFINED by review,
+Built first as exactly that single condition — for a session's own
+slot by the PEM plan (`6e89ee9b` dropped the slot, `38e1e062` gated the
+drop on `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`
+probed with `try?`, `== true`), carried over to a set's slot by
+`5ce949b7` — and REFINED by review,
 because it was wrong as written: a jump hop that reaches a set or a
 session for its OWN credentials never falls back to the managed key's
 slot, so dropping the shared copy the jump reads would leave that hop
@@ -687,9 +689,14 @@ private-key set; when it is, a `.confirmationDialog(` bound to
   (`ContentView.swift:2739`): today's one-attempt route, moved rather
   than duplicated — the tab's `keyPath` is set locally and
   `dismissConnectFailure(tab)` returns to the form; the set is untouched.
-- **Escape** presses the dialog's `.cancel`-role button by AppKit's own
-  rule, so it takes the same "this attempt only" route; no other close
-  path exists for a `.confirmationDialog`.
+- **Escape** is expected to press the dialog's `.cancel`-role button,
+  and so to take the same "this attempt only" route; and no other close
+  path is expected for a `.confirmationDialog`. Neither is observed in a
+  running app; both are assumptions. Sight checks, open: (1) Escape on
+  the open question returns the tab to the form with the set unchanged;
+  (2) nothing else closes the question without one of the two answers —
+  to try, among others: a click outside it, ⌘W, switching tabs with
+  ⌘1-9.
 
 Both buttons are pinned to their own handler by a dedicated scanner
 (`ConvertKeyWiringGuardTests.dialogViolations(_:)`, Task 2 fix rounds 1
@@ -721,11 +728,18 @@ Keychain slot: the forwarding chain
 (`secretSources(for:passwordCommand:keychainStore:keyStore:)`,
 `CLISecretSources.swift:212` keychain, `:223` managed), both gated on
 an SSH private-key session with a non-empty trimmed `keyPath`.
+The final fix of the plan (commit `91046cc5`) added a third: the App's
+diagnosis chain (`DiagnosticsSecretSources.chain(kind:values:keys:secrets:)`,
+`Sources/MacSCPAppKit/DiagnosticsSecretSources.swift:28` keychain, `:33`
+managed), gated the same way on the target's field values — before it, a
+session whose slot (a) dropped connected from its tab while its
+diagnosis skipped the dial for want of a secret
+(`DiagnosticReason.noSecret`, `DialProbes.swift:57`).
 
 The link is READ-ONLY (its own doc comment says so): it reads the
 managed-key store's record and the key's Keychain slot, writes neither.
 Two rounds of review split what an error on each read should do
-(`ManagedKeyPassphraseSecretSource.swift:52-62`):
+(`ManagedKeyPassphraseSecretSource.swift:54-64`):
 
 - A **Keychain error** on the key's own slot (`secrets.password(for:
   key.id)`) is THROWN, not swallowed (`79e161ab`, fix round 3) — the
@@ -741,13 +755,19 @@ Two rounds of review split what an error on each read should do
   including ones whose key the store does not manage at all. Ruling,
   recorded in the ledger: "store error → nil, Keychain error → throw."
 
-**Consequence measured, not designed away**: an unattended CLI run
-(cron, CI) can now need a SECOND Keychain consent grant — one for the
-session's own item, a second, separate one for the managed key's item
-— because the two live under different Keychain items and macOS asks
-per item. This is reached only when the session's own slot is empty,
-i.e. only for a session whose slot (a) has already dropped in favour
-of the managed key's shared one. A workstation user sees one extra
+**Consequence read from the code, not measured**: an unattended CLI
+run (cron, CI) can now need a SECOND Keychain consent grant — one for
+the session's own item, a second, separate one for the managed key's
+item — because the two live under different Keychain items and macOS
+asks per item. This is reached whenever the session's own slot is
+empty for an SSH private-key session whose key path names a managed,
+encrypted key: a session whose slot (a) dropped in favour of the managed
+key's, and equally a session that never had a slot of its own because
+it was saved under the managed-passphrase policy
+(`SessionSecretPolicy.usesStoredManagedPassphrase`, from the M19-era
+one-slot rule, `fad0e01d`/`ec01a214`), which writes nothing into the
+session's slot when the managed key's slot already holds the
+passphrase. A workstation user sees one extra
 "Always Allow" prompt the first time; a cron job pre-authorized only for
 the session's item will fail on the key's item until someone grants
 that one too. Not measured with a signed binary.
@@ -756,7 +776,8 @@ that one too. Not measured with a signed binary.
 
 Confirmed ("Weglassen"), Task 1, `8db25be8`. `DialSupport.reason(for:)`'s
 `HostKeyError.mismatch` arm (`Sources/macSCPCore/Diagnostics/DialProbes
-.swift:207-224`, the arm itself at `:211-222`) now pattern-discards
+.swift`, the function at `:207`, the arm itself — `case` through
+`return` — at `:211-223`) now pattern-discards
 `expected`/`presented` and returns a fixed sentence naming only the
 host: `"host key MISMATCH for \(host): the presented key differs from
 the recorded one"`. Every consumer of this one function is covered by
@@ -774,18 +795,44 @@ App's `core.hostkey.mismatch %@ %@ %@` alert
 (`ConnectionViewModel.swift:2284-2289`) and the CLI's stderr
 (`CLIErrorMapping.swift:202`).
 
-**The one surface that lost the fingerprints** (Task 1's report): the
-tunnel profile's failure reason — `TunnelProfilesSheet`'s state column
-and the three other places that render the same `TunnelState
-.failed(reason:)` text verbatim (the autostart sheet's state column,
-the Dock menu's tooltip, the sidebar glyph's tooltip; all four
-documented at `TunnelProfilesSheet.swift:508-521`). Before this fix, a
-mismatch during a tunnel's own SSH dial showed both fingerprints inline
-in that state text; after it, that text names only the host. What that
-surface still offers, unaffected by this change: `Sources/MacSCPAppKit
-/KnownHostsSheet.swift`, the known-hosts sheet, where the recorded and
-presented keys remain visible and comparable — it never went through
-`DialSupport.reason(for:)`.
+**The surfaces that lost the fingerprints** — Task 1's report named only
+the first family below; the final review of the plan found the other two,
+and each render site was counted from the tree the same day (nine, in
+three families). Before `8db25be8` every one of them showed
+`expected <fp>, got <fp>` inline; after it, each shows the host-only
+sentence:
+
+1. The forwarding failure reason, `TunnelState.failed(reason:)`, returned
+   verbatim by `TunnelProfilesSheet.stateLabel` (`TunnelProfilesSheet
+   .swift:536`) and rendered in four places: the forwardings sheet's
+   state column (`TunnelProfilesSheet.swift:317`), the autostart sheet's
+   state column (`TunnelAutostartSheet.swift:146`), the Dock menu's
+   tooltip (`TunnelDockPresence.swift:154`) and the sidebar glyph's
+   tooltip (`SessionSidebar.swift:1538`).
+2. The audit `connectFailed` row, whose `detail` is
+   `ConnectionViewModel.lastFailureReason` (written at
+   `ContentView.swift:2351-2383`): the session overview's history
+   (`SessionOverviewView.swift:486-487`), the audit log sheet's detail
+   column (`AuditLogSheet.swift:153`, through `AuditEventText.detail`)
+   and that sheet's text export (`AuditLogSheet.swift:292`).
+3. The diagnostics step reason: the panel's row
+   (`DiagnosticsPanel.swift:200-202`) and the report it copies
+   (`DiagnosticReport.swift:140` plain text, `:210` Markdown, both
+   through `DiagnosticOutcome.label`).
+
+Beside those renderers the sentence is persisted in the diagnostic log
+(`DiagnosticLog.swift:293`) and in the audit store.
+
+**After `8db25be8` a forwarding's host-key mismatch shows the presented
+fingerprint nowhere.** The known-hosts sheet
+(`Sources/MacSCPAppKit/KnownHostsSheet.swift:151-154`) lists only
+RECORDED fingerprints — its rows are `KnownHostsStore.allKeys()`
+(`KnownHostsSheet.swift:253`), and a mismatching presented key is never
+stored — so it offers nothing to compare against.
+The only places a person sees a presented fingerprint are the App's
+mismatch alert on a manual tab connect (`core.hostkey.mismatch %@ %@ %@`,
+`ConnectionViewModel.swift:2284-2289`) and the CLI's stderr
+(`CLIErrorMapping.swift:202`); a forwarding raises neither.
 
 ### Decision 4, outside this record
 
