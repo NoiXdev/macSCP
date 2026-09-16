@@ -360,6 +360,46 @@ struct TunnelManagerTests {
         #expect(rig.manager.state(of: profile.id) == .stopped)
     }
 
+    /// A `tunnels.json` that cannot be decoded refuses the sheet's save and
+    /// delete, and the manager hands the store's own error up — which is
+    /// what the sheet turns into `tunnel.store.unreadable` — instead of the
+    /// store starting over from empty with the one profile being saved.
+    @Test func savingOrRemovingOverAnUnreadableStoreThrowsAndLeavesTheFile() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let profile = Self.profile(session: UUID(), name: "web")
+        try await rig.manager.save(profile)
+        let fileURL = rig.directory.appendingPathComponent("tunnels.json")
+        let before = Data("kein json".utf8)
+        try before.write(to: fileURL)
+        let refusal = TunnelStoreError.unreadable(path: fileURL.path(percentEncoded: false))
+
+        await #expect(throws: refusal) { try await rig.manager.save(profile) }
+        await #expect(throws: refusal) { try await rig.manager.remove(profile) }
+
+        #expect(try Data(contentsOf: fileURL) == before, "a refused write rewrote tunnels.json")
+    }
+
+    /// The sheet's text for that refusal names the file, and it is not the
+    /// generic "Could not save" line — that line prints the error's
+    /// `localizedDescription`, which for this error is a type name and a
+    /// number.
+    @Test func theSheetNamesTheUnreadableFileInsteadOfTheGenericFailure() {
+        let path = "/tmp/macscp-sheet/tunnels.json"
+        let refusal = TunnelStoreError.unreadable(path: path)
+        for action in [TunnelProfilesSheet.WriteAction.save, .delete] {
+            let message = TunnelProfilesSheet.writeFailureMessage(for: refusal, during: action)
+            #expect(message.contains(path), "\(action): \(message)")
+            // The control: an unrelated error still gets the generic line,
+            // so the check above is not satisfied by a function that always
+            // answered the store sentence.
+            let generic = TunnelProfilesSheet.writeFailureMessage(
+                for: CocoaError(.fileWriteNoPermission), during: action)
+            #expect(generic != message)
+            #expect(!generic.contains(path))
+        }
+    }
+
     // MARK: - What a view reads
 
     /// `runningCount` counts what is HOLDING something — a failed or
@@ -780,6 +820,43 @@ struct TunnelManagerTests {
             rig.log.runners[foreign.id]?.stopCount == 0,
             "deleting one session stopped another session's tunnel")
         #expect(rig.store.profiles(for: survivor).count == 1)
+    }
+
+    /// A session deleted while `tunnels.json` cannot be decoded still takes
+    /// its RUNNING forwardings with it.
+    ///
+    /// The store refuses the `deleteAll` now, and the reconcile that would
+    /// normally stop the deleted rows keeps everything when the read fails —
+    /// so without a path of its own this left a deleted session's tunnel
+    /// holding its port. The file itself is left exactly as it was: the rows
+    /// stay in it until someone repairs it, which is the store's promise.
+    @Test func deletingASessionOverAnUnreadableStoreStillStopsItsTunnels() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let doomed = UUID()
+        let survivor = UUID()
+        let mine = Self.profile(session: doomed, name: "web")
+        let foreign = Self.profile(session: survivor, name: "elsewhere", port: 9000)
+        for profile in [mine, foreign] { try await rig.manager.save(profile) }
+        await rig.manager.start(mine, decider: Self.accepting)
+        await rig.manager.start(foreign, decider: Self.accepting)
+        try await pollUntil("both forwardings are running") { rig.manager.runningCount == 2 }
+        let fileURL = rig.directory.appendingPathComponent("tunnels.json")
+        let before = Data("kein json".utf8)
+        try before.write(to: fileURL)
+
+        await rig.manager.forgetEverything(for: doomed)
+
+        #expect(try rig.runner(mine).stopCount == 1, """
+            the deleted session's forwarding is still running — an unreadable store \
+            left a tunnel holding its port with no row anywhere left to stop it from.
+            """)
+        #expect(rig.manager.profiles(for: doomed).isEmpty, "the mirror still lists the rows")
+        #expect(rig.manager.states[mine.id] == nil)
+        #expect(try rig.runner(foreign).stopCount == 0, "another session's tunnel was stopped")
+        #expect(rig.manager.profiles(for: survivor) == [foreign])
+        #expect(rig.manager.runningCount == 1)
+        #expect(try Data(contentsOf: fileURL) == before, "the deletion rewrote tunnels.json")
     }
 
     /// A menu holds the profile it was drawn with. Clicking it after the

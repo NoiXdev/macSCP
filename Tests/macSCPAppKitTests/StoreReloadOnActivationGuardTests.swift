@@ -366,34 +366,94 @@ struct StoreReloadOnActivationGuardTests {
     /// user selects precisely when hunting a failure, leaving the one
     /// unreadable-store record that matters unwritten.
     ///
-    /// Both levels are DERIVED, from the single `DiagnosticLog.shared.log(`
-    /// call each of the two files contains — so the check is "these agree",
-    /// not "both are `.error`", and it fails closed if either file grows a
-    /// second call and the derivation stops being unambiguous.
-    @Test func theReconcileLogsAnUnreadableStoreAtTheStoresOwnLevel() throws {
-        let storeLevel = try Self.soleLogLevel(in: Self.tunnelStoreFile)
-        let reconcileLevel = try Self.soleLogLevel(in: Self.tunnelManagerFile)
-        #expect(reconcileLevel == storeLevel, """
-            the reconcile writes its unreadable-store line at \(reconcileLevel) while \
+    /// Both levels are DERIVED — the store's from the single
+    /// `DiagnosticLog.shared.log(` call its file contains, the manager's from
+    /// the single such call inside the function that performs the store
+    /// operation — so the check is "these agree", not "both are `.error`",
+    /// and it fails closed if either span grows a second call and the
+    /// derivation stops being unambiguous.
+    ///
+    /// Scoped to a FUNCTION on the manager's side since 2026-09-16 (technical
+    /// backlog, Task 2), when `TunnelManager.swift` gained its second call:
+    /// the line `forgetEverything(for:)` writes when the store refuses a
+    /// deleted session's `deleteAll`. That line records the same condition
+    /// from the other side, so it is held to the same level, as a second
+    /// span rather than as a whole-file count.
+    @Test(arguments: ["store.readProfiles(", "store.deleteAll("])
+    func theManagerLogsAStoreFailureAtTheStoresOwnLevel(storeCall: String) throws {
+        let storeLevel = try Self.soleLogLevel(
+            in: Self.strictSource(of: Self.tunnelStoreFile),
+            named: Self.tunnelStoreFile.lastPathComponent)
+        let body = try Self.enclosingFunctionBody(
+            of: storeCall, in: Self.strictSource(of: Self.tunnelManagerFile))
+        let managerLevel = try Self.soleLogLevel(
+            in: body, named: "the TunnelManager function calling \(storeCall)")
+        #expect(managerLevel == storeLevel, """
+            the manager writes its line about \(storeCall) failing at \(managerLevel) while \
             TunnelStore writes the same condition at \(storeLevel) — a sink configured at \
             the stricter of the two keeps one record of an unreadable file and drops the \
             other.
             """)
     }
 
-    /// The level argument of the ONE `DiagnosticLog.shared.log(` call `file`
+    /// The level argument of the ONE `DiagnosticLog.shared.log(` call `text`
     /// contains. Throws when there is not exactly one, so a second call site
     /// makes this loud rather than arbitrary.
-    private static func soleLogLevel(in file: URL) throws -> String {
+    private static func soleLogLevel(in text: String, named name: String) throws -> String {
         let levels = try captures(
-            of: #"DiagnosticLog\.shared\.log\(\s*\.(\w+)"#, in: strictSource(of: file))
+            of: #"DiagnosticLog\.shared\.log\(\s*\.(\w+)"#, in: text)
         guard levels.count == 1, let only = levels.first else {
             throw ScanError.derivation("""
                 expected exactly one DiagnosticLog.shared.log( call in \
-                \(file.lastPathComponent) — found \(levels.count): \(levels)
+                \(name) — found \(levels.count): \(levels)
                 """)
         }
         return only
+    }
+
+    /// The text of the function whose body holds the only occurrence of
+    /// `marker`: from the last `func ` before it to that declaration's
+    /// matching closing brace. Fails closed when the marker is absent or
+    /// repeated, when no `func ` precedes it, or when the span that brace
+    /// closes does not reach the marker (a function declared and closed
+    /// before it).
+    private static func enclosingFunctionBody(of marker: String, in source: String) throws
+        -> String
+    {
+        let ranges = occurrenceRanges(of: marker, in: source)
+        guard ranges.count == 1, let markerRange = ranges.first else {
+            throw ScanError.derivation(
+                "expected exactly one \(marker) — found \(ranges.count)")
+        }
+        guard let declaration = source.range(
+            of: "func ", options: .backwards, range: source.startIndex..<markerRange.lowerBound)
+        else {
+            throw ScanError.derivation("no func declaration precedes \(marker)")
+        }
+        var depth = 0
+        var entered = false
+        var index = declaration.lowerBound
+        while index < source.endIndex {
+            let character = source[index]
+            if character == "{" { depth += 1; entered = true }
+            if character == "}" { depth -= 1 }
+            index = source.index(after: index)
+            if entered, depth == 0 { break }
+        }
+        guard entered, depth == 0, index > markerRange.upperBound else {
+            throw ScanError.derivation("the function before \(marker) does not enclose it")
+        }
+        return String(source[declaration.lowerBound..<index])
+    }
+
+    private static func occurrenceRanges(of needle: String, in text: String) -> [Range<String.Index>] {
+        var found: [Range<String.Index>] = []
+        var searchStart = text.startIndex
+        while let range = text.range(of: needle, range: searchStart..<text.endIndex) {
+            found.append(range)
+            searchStart = range.upperBound
+        }
+        return found
     }
 
     /// Every direct store read the activation path must not perform, with the

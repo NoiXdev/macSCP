@@ -211,6 +211,126 @@ struct TunnelStoreTests {
         #expect(holdsNoSecretLikeKey)
     }
 
+    // MARK: - A write never starts over from an unreadable file
+
+    /// The two ways a present `tunnels.json` fails to decode.
+    enum UnreadableFixture: String, CaseIterable, CustomTestStringConvertible {
+        /// Bytes that are not JSON at all.
+        case garbage
+        /// Well-formed JSON in the shape this store writes, carrying a
+        /// forwarding kind this build does not know — what a file written
+        /// by a LATER version looks like. The file has no version key (see
+        /// `TunnelStore.StoreFile`), so a new kind case is exactly the
+        /// change a future format would make.
+        case futureVersion
+
+        var testDescription: String { rawValue }
+    }
+
+    /// The three writes, each of which used to read through `load()`.
+    enum Write: String, CaseIterable, CustomTestStringConvertible {
+        case upsert, delete, deleteAll
+        var testDescription: String { rawValue }
+    }
+
+    /// Writes `fixture` as `tunnels.json` in `dir` and returns its bytes.
+    ///
+    /// The future-version file is derived from what this store really
+    /// writes: one profile is persisted by a scratch store, and only its
+    /// kind's case name is renamed. Both halves of the fixture are checked
+    /// before it is used — the bytes still parse as JSON, and the store
+    /// really cannot decode them — so a fixture that silently became
+    /// readable cannot make the refusal tests pass for the wrong reason.
+    private func writeUnreadable(_ fixture: UnreadableFixture, in dir: URL) throws -> Data {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let bytes: Data
+        switch fixture {
+        case .garbage:
+            bytes = Data("kein json".utf8)
+        case .futureVersion:
+            let scratch = dir.appendingPathComponent("scratch-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: scratch) }
+            try TunnelStore(directory: scratch).upsert(profile(sessionID: UUID()))
+            let written = try String(
+                contentsOf: scratch.appendingPathComponent("tunnels.json"), encoding: .utf8)
+            let anchor = "\"local\""
+            #expect(written.contains(anchor), "the store no longer writes a local kind as \(anchor)")
+            bytes = Data(written.replacingOccurrences(of: anchor, with: "\"unixSocket\"").utf8)
+            #expect((try? JSONSerialization.jsonObject(with: bytes)) != nil, """
+                the future-version fixture is not JSON — it would test the garbage case twice
+                """)
+        }
+        let url = dir.appendingPathComponent("tunnels.json")
+        try bytes.write(to: url)
+        let decodes: Bool
+        switch TunnelStore(directory: dir).readProfiles() {
+        case .success: decodes = true
+        case .failure: decodes = false
+        }
+        #expect(decodes == false, "the \(fixture.rawValue) fixture decodes")
+        return bytes
+    }
+
+    /// A present-but-undecodable file refuses every write and is left exactly
+    /// as it was.
+    ///
+    /// Before this, each write went through `load()`, which reads such a
+    /// file as an empty store, so the first `upsert` after a corrupt or
+    /// newer-format file replaced every profile with the one being written.
+    @Test(arguments: UnreadableFixture.allCases, Write.allCases)
+    func aWriteOverAnUnreadableFileIsRefusedAndLeavesItByteIdentical(
+        fixture: UnreadableFixture, write: Write
+    ) throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let before = try writeUnreadable(fixture, in: dir)
+        let fileURL = dir.appendingPathComponent("tunnels.json")
+        let sessionID = UUID()
+
+        #expect(throws: TunnelStoreError.unreadable(path: fileURL.path(percentEncoded: false))) {
+            switch write {
+            case .upsert: try store.upsert(profile(sessionID: sessionID))
+            case .delete: try store.delete(id: UUID())
+            case .deleteAll: try store.deleteAll(for: sessionID)
+            }
+        }
+
+        let after = try Data(contentsOf: fileURL)
+        #expect(after == before, "\(write.rawValue) rewrote an unreadable tunnels.json")
+    }
+
+    /// The control beside the refusal: with NO file there is nothing to
+    /// protect, and the first write creates the store as it always did. A
+    /// store that refused every write would satisfy the test above.
+    @Test func aWriteWithNoFileCreatesTheStore() throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fileURL = dir.appendingPathComponent("tunnels.json")
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)))
+
+        let saved = profile(sessionID: UUID())
+        try store.upsert(saved)
+
+        #expect(FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)))
+        #expect(try store.readProfiles().get() == [saved])
+    }
+
+    /// The readers that have nowhere to put a failure — the sidebar glyph
+    /// and autostart — still read either unreadable file as an empty store.
+    /// Only the writes changed.
+    @Test(arguments: UnreadableFixture.allCases)
+    func theLenientReadersStillReadAnUnreadableFileAsEmpty(fixture: UnreadableFixture) throws {
+        let (store, dir) = makeTempStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        _ = try writeUnreadable(fixture, in: dir)
+
+        #expect(store.allProfiles() == [])
+        #expect(store.profiles(for: UUID()) == [])
+        for when in TunnelProfile.AutoStart.allCases {
+            #expect(store.autoStart(when) == [])
+        }
+    }
+
     // MARK: - Session-deletion pin
 
     @MainActor
@@ -232,9 +352,12 @@ struct TunnelStoreTests {
     /// itself until the final review's fix round (2026-09-06) removed it —
     /// a store that only rewrites `tunnels.json` leaves the tunnels running,
     /// so nothing in production ever registered it and only this test did.
-    /// `try?` is the production adapter's own choice: an unwritable
-    /// `tunnels.json` is a residual, never a reason to fail the session
-    /// deletion.
+    /// Swallowing a failed `deleteAll` is the production adapter's own
+    /// choice: an unwritable or unreadable `tunnels.json` is a residual,
+    /// never a reason to fail the session deletion (the production adapter
+    /// additionally stops that session's runners when the delete fails —
+    /// `TunnelManagerTests
+    /// .deletingASessionOverAnUnreadableStoreStillStopsItsTunnels`).
     private struct ProfileDeleting: SessionDeletionObserver {
         let store: TunnelStore
         func sessionDeleted(id: UUID) { try? store.deleteAll(for: id) }

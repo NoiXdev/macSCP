@@ -626,6 +626,35 @@ struct CLISessionsEditingTests {
         #expect(tunnels.profiles(for: spared.id).count == 1, "another session's profile was deleted")
     }
 
+    /// `sessions rm` over a `tunnels.json` it cannot decode: the SESSION is
+    /// still removed, the forwarding store is left exactly as it was, and
+    /// stderr says so, naming the file.
+    ///
+    /// Not blocked, deliberately. The forwarding store can only be repaired
+    /// by hand, and a session nobody can delete until then is a worse
+    /// outcome than a few rows left in a file the person has just been told
+    /// to look at. What must not happen is the old behaviour — the file
+    /// rewritten from empty, every other session's forwardings gone with it.
+    @Test func rmOverAnUnreadableForwardingStoreRemovesTheSessionAndWarns() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh", "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+        let fileURL = cli.storageDirectory.appendingPathComponent("tunnels.json")
+        let before = Data("kein json".utf8)
+        try before.write(to: fileURL)
+        let path = fileURL.path(percentEncoded: false)
+
+        let removed = try await cli.run(["sessions", "rm", "web", "--yes"])
+
+        #expect(removed.status == 0, "sessions rm failed: \(removed.stderr)")
+        #expect(cli.storedSession(named: "web") == nil, "the session was not removed")
+        #expect(removed.stderr.contains(path), "\(removed.stderr)")
+        #expect(removed.stderr.contains("could not be read"), "\(removed.stderr)")
+        #expect(try Data(contentsOf: fileURL) == before, "sessions rm rewrote an unreadable store")
+    }
+
     @Test func rmRefusesANameNoSessionCarries() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }

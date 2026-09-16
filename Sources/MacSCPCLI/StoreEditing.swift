@@ -198,8 +198,24 @@ enum StoreEditing {
     /// The keychain entry is NOT touched — this tool never opens the
     /// keychain, in either direction — and `rm --verbose` says so out loud
     /// rather than leaving it to be discovered.
+    ///
+    /// **An unreadable `tunnels.json` does not stop the removal.** The store
+    /// refuses the `deleteAll` and leaves the file as it was
+    /// (`TunnelStoreError.unreadable`); this prints a warning naming the
+    /// file and goes on to remove the session. Blocking instead would make a
+    /// session undeletable until someone repaired a file by hand, and the
+    /// rows left behind are the order above's orphans — in a file the
+    /// warning has just told the person to inspect. Any OTHER failure of
+    /// the forwarding write — the file decoded but could not be written —
+    /// still stops the removal, as before.
     static func deleteSession(_ session: StoredSession) throws {
-        try tunnelStore().deleteAll(for: session.id)
+        do {
+            try tunnelStore().deleteAll(for: session.id)
+        } catch TunnelStoreError.unreadable(let path) {
+            OutputFormatter.note(
+                "Warning: the forwarding list \(path) could not be read, so it was not "
+                    + "changed; any forwardings of \(session.name) are still in it")
+        }
         try sessionStore().delete(id: session.id)
     }
 

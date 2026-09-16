@@ -1279,6 +1279,7 @@
 "tunnel.error.targetPort" = "The target port must be between 1 and 65535.";
 "tunnel.error.save %@" = "Could not save: %@";
 "tunnel.error.delete %@" = "Could not delete: %@";
+"tunnel.store.unreadable" = "The forwarding list could not be read, so it was not changed. Check %@.";
 "tunnel.empty" = "No forwardings for this connection yet.";
 "tunnel.help.unsupportedSessions" = "Forwardings are not available for connections that use a jump host or a saved login: a forwarding opens its own connection, and that path supports neither.";
 "tunnel.help.externalEdits" = "A forwarding edited outside the app keeps running as it was until you stop and start it.";

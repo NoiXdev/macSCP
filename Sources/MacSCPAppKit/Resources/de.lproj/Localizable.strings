@@ -1281,6 +1281,7 @@
 "tunnel.error.targetPort" = "Der Zielport muss zwischen 1 und 65535 liegen.";
 "tunnel.error.save %@" = "Konnte nicht gesichert werden: %@";
 "tunnel.error.delete %@" = "Konnte nicht gelöscht werden: %@";
+"tunnel.store.unreadable" = "Die Liste der Weiterleitungen konnte nicht gelesen werden und wurde deshalb nicht geändert. Prüfe %@.";
 "tunnel.empty" = "Für diese Verbindung gibt es noch keine Weiterleitung.";
 "tunnel.help.unsupportedSessions" = "Für Verbindungen mit Jump-Host oder gespeichertem Login gibt es keine Weiterleitungen: eine Weiterleitung öffnet ihre eigene Verbindung, und dieser Weg unterstützt beides nicht.";
 "tunnel.help.externalEdits" = "Eine Weiterleitung, die außerhalb der App geändert wurde, läuft unverändert weiter, bis du sie stoppst und wieder startest.";

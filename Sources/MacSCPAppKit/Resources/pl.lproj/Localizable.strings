@@ -1283,6 +1283,7 @@
 "tunnel.error.targetPort" = "Port docelowy musi mieścić się w zakresie od 1 do 65535.";
 "tunnel.error.save %@" = "Nie udało się zapisać: %@";
 "tunnel.error.delete %@" = "Nie udało się usunąć: %@";
+"tunnel.store.unreadable" = "Nie udało się odczytać listy przekierowań, więc nie została zmieniona. Sprawdź %@.";
 "tunnel.empty" = "Brak przekierowań dla tego połączenia.";
 "tunnel.help.unsupportedSessions" = "Przekierowania nie są dostępne dla połączeń korzystających z hosta pośredniego lub zapisanego loginu: przekierowanie otwiera własne połączenie, a ta ścieżka nie obsługuje żadnego z nich.";
 "tunnel.help.externalEdits" = "Przekierowanie zmienione poza aplikacją działa dalej bez zmian, dopóki go nie zatrzymasz i nie uruchomisz ponownie.";

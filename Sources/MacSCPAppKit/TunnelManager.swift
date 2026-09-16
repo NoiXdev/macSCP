@@ -162,15 +162,19 @@ final class TunnelManager {
     /// Throw-free, like every other cleanup on the deletion path
     /// (`SessionListViewModel.delete(_:)`'s audit-log and stray-secret
     /// steps): an unwritable `tunnels.json` is a residual, never a reason to
-    /// leave a tunnel running.
+    /// leave a tunnel running. The session itself is already gone from its
+    /// store when this runs, so there is nothing a failure here could still
+    /// stop, and no window to show one in.
     ///
     /// **The stop-and-forget loop is `reloadReconciling()`'s** (fix round
     /// 1). This used to snapshot the doomed ids itself and run its own copy
     /// of that loop; the activation re-read needs exactly the same one, for
-    /// exactly the same reason, so there is one of them and this deletes
-    /// through it. Deleting first still loses nothing — but NOT because "the
-    /// mirror has not been re-read yet", which the chain makes false as soon
-    /// as another pass is in flight and reads after the `deleteAll` above.
+    /// exactly the same reason, so there is one of them
+    /// (`discardAndForget(_:)`) and a successful delete goes through the
+    /// reconcile to reach it. Deleting first still loses nothing — but NOT
+    /// because "the mirror has not been re-read yet", which the chain makes
+    /// false as soon as another pass is in flight and reads after the
+    /// `deleteAll` above.
     /// What holds either way is that some pass sees the TRANSITION. Every
     /// read older than the delete left a mirror still listing these rows, so
     /// whichever chained pass performs the first read AFTER it snapshots
@@ -186,16 +190,38 @@ final class TunnelManager {
     /// waits and then runs its own pass, which is what makes this function
     /// correct while another one is parked in a `stop()`.
     ///
-    /// **What it inherits from round 2**, stated rather than worked around:
-    /// the reconcile discards nothing when the store read FAILS, so a
-    /// session deleted while `tunnels.json` is both undecodable AND
-    /// unwritable would leave its forwardings running. The write above is
-    /// what makes that pair almost unreachable — `deleteAll(for:)` goes
-    /// through `load()`, which flattens an undecodable file to empty, and
-    /// `persist` then writes a valid one, so the following read fails only
-    /// if that write threw.
+    /// **A refused or failed `deleteAll` takes a path of its own**
+    /// (technical backlog of 2026-09-16, Task 2). The reconcile discards
+    /// only what a SUCCESSFUL read no longer lists, and after a failed
+    /// delete no read can say that: an undecodable file fails the read, and
+    /// a file that decoded but could not be written still lists the rows.
+    /// This paragraph used to call the first case almost unreachable,
+    /// because `deleteAll(for:)` read an undecodable file as empty and wrote
+    /// a valid one — which was the defect, since every OTHER session's
+    /// profiles went with it. The store now refuses that write
+    /// (`TunnelStoreError.unreadable`) and leaves the file alone. So on any
+    /// failure the deleted session's rows leave the MIRROR here — first,
+    /// before any `await`, so `start(_:decider:)`'s guard already refuses
+    /// them — and their runners are stopped from it. The rows stay in the
+    /// file, and the line written says so.
+    ///
+    /// Reported in the diagnostic log only, not to the user: the session
+    /// deletion has already happened and there is no sheet open for this
+    /// call to put a sentence in. A later save in the sheet meets the same
+    /// file and shows `tunnel.store.unreadable` there.
     func forgetEverything(for sessionID: UUID) async {
-        try? store.deleteAll(for: sessionID)
+        do {
+            try store.deleteAll(for: sessionID)
+        } catch {
+            DiagnosticLog.shared.log(
+                .error, "app",
+                "tunnels.json not updated, stopping a deleted session's forwardings without removing them from it",
+                reason: error)
+            let doomed = allProfiles.filter { $0.sessionID == sessionID }.map(\.id)
+            allProfiles.removeAll { $0.sessionID == sessionID }
+            await discardAndForget(doomed)
+            return
+        }
         await reloadReconciling()
     }
 
@@ -450,9 +476,9 @@ final class TunnelManager {
     ///
     /// The ids are snapshotted BEFORE the mirror is replaced, because after
     /// it the deleted ones are exactly what is no longer there to name.
-    /// `discardRunner(for:)` then `states[id] = nil` is
-    /// `forgetEverything(for:)`'s own shape — and that function is now
-    /// written in terms of this one, so there is one such loop rather than
+    /// `discardAndForget(_:)` is the loop, and `forgetEverything(for:)`
+    /// reaches it too: through this function after a successful delete,
+    /// directly after a failed one — so there is one such loop rather than
     /// two.
     ///
     /// **The passes are CHAINED** (fix round 4): every call links a pass of
@@ -547,7 +573,15 @@ final class TunnelManager {
         // `allProfiles()`, a read that could disagree with the one above.
         let before = Set(allProfiles.map(\.id))
         allProfiles = profiles
-        for profileID in before.subtracting(Set(profiles.map(\.id))) {
+        await discardAndForget(before.subtracting(Set(profiles.map(\.id))))
+    }
+
+    /// Stops each profile's runner and forgets its state — what a profile
+    /// that is gone for good leaves behind. The one copy of that loop; its
+    /// two callers, counted 2026-09-16, are `performReconcilingReload()` and
+    /// `forgetEverything(for:)`'s failed-delete path.
+    private func discardAndForget(_ profileIDs: some Sequence<UUID>) async {
+        for profileID in profileIDs {
             await discardRunner(for: profileID)
             states[profileID] = nil
         }

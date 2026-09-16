@@ -83,6 +83,14 @@ public enum CLIErrorMapping {
             }
         case is StoredSessionConnectionError, is PasswordCommandError, is KeychainError:
             return .auth
+        // Named rather than left to the `default` arm, with the code that arm
+        // gives: an unreadable `sessions-v2.json` reaches the CLI as the
+        // decoder's own error and exits through `default`, and the two store
+        // failures exit alike. `CLIErrorMappingTests
+        // .anUnreadableForwardingStoreExitsLikeAnUnreadableSessionStore`
+        // reads that code off the real session-store error.
+        case is TunnelStoreError:
+            return .connection
         case let error as RemoteFSError:
             switch error {
             case .authenticationFailed, .jumpAuthenticationFailed:
@@ -226,6 +234,12 @@ public enum CLIErrorMapping {
                     + "the environment, and the keychain)"
             case .incompleteConfiguration(let field):
                 return "Error: the stored session's \(field) is missing or invalid"
+            }
+        case let error as TunnelStoreError:
+            switch error {
+            case .unreadable(let path):
+                return "Error: the forwarding list \(path) could not be read, "
+                    + "so it was not changed; check the file"
             }
         case is PasswordCommandError:
             return "Error: --password-command failed: \(error)"

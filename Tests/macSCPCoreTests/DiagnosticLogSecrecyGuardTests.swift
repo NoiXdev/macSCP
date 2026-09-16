@@ -25,20 +25,25 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **41** as
-/// of 2026-09-06 — recounted by running exactly that command and summing its
-/// per-file numbers, and it is one more than the 40 this paragraph carried,
-/// because the CLI-store plan's Task 5 round 2 added a call in
-/// `TunnelManager.swift` (the line written when `tunnels.json` cannot be
-/// read and the activation reconcile therefore changes nothing). The
-/// preceding numbers, newest first: 40 came from the port-forwarding plan's
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **42** as
+/// of 2026-09-16 — recounted by running exactly that command and summing its
+/// per-file numbers, and it is one more than the 41 this paragraph carried,
+/// because Task 2 of the technical backlog of 2026-09-16 added a call in
+/// `TunnelManager.forgetEverything(for:)` (the line written when a deleted
+/// session's profiles cannot be removed from `tunnels.json`). The preceding
+/// numbers, newest first: 41 came from the CLI-store plan's Task 5 round 2,
+/// a call in `TunnelManager.swift` (the line written when `tunnels.json`
+/// cannot be read and the activation reconcile therefore changes nothing);
+/// 40 from the port-forwarding plan's
 /// Task 6 round 3 (`7046da25`), a call in `MacSCPApp.swift`; 39 from that
 /// plan's Task 5 round 2, which added the second `reason:` overload wrapper
 /// in `TunnelRunner`; 38 before it, and 27 on 2026-09-05. That grep and this scan
 /// do NOT count the same thing, and the difference is two: the grep counts
 /// the literal text wherever it appears, INCLUDING inside a doc comment —
 /// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
-/// — while this scan blanks comments first and sees 39 real calls. Both numbers are stated because
+/// — while this scan blanks comments first and sees 40 real calls (39 before
+/// the 2026-09-16 call; recounted that day with this file's own
+/// `callSites(in:file:)`). Both numbers are stated because
 /// either one alone is a claim somebody will later check with the other's
 /// method. (`docs/BACKLOG.md` records 27, the number measured on
 /// 2026-09-05; that row is a dated record of that day, not a claim about
@@ -686,8 +691,11 @@ struct DiagnosticLogSecrecyGuardTests {
         // collects, per file, with the name set split into seeds and the names
         // the fixpoint grew onto — RE-RUN the same way on 2026-09-06 for the
         // CLI-store plan's Task 5 round 3, which is where every number below
-        // comes from. TWELVE files under `Sources/` have a forwarder; SEVEN of
-        // them yield call sites:
+        // comes from except the two `Tunnel` rows, re-run on 2026-09-16 for
+        // Task 2 of that day's technical backlog (that run measured only
+        // those two files, after reproducing both of their 2026-09-06 rows on
+        // the parent commit). TWELVE files under `Sources/` have a forwarder;
+        // SEVEN of them yield call sites:
         //
         //   file                       all  seeded  names  seeds  direct
         //   CitadelFileSystem           23      11     13      1       2
@@ -695,8 +703,14 @@ struct DiagnosticLogSecrecyGuardTests {
         //   RemoteBrowserViewModel       8       8      9      1       2
         //   ContentView+Lifecycle        7       4      8      2       2
         //   MacSCPApp                    7       5      6      4       6
-        //   TunnelStore                  6       6      7      1       1
-        //   TunnelManager                3       1      4      1       1
+        //   TunnelStore                  3       3      4      1       1
+        //   TunnelManager                3       2      4      2       2
+        //
+        // 2026-09-16: `TunnelStore` was `6 6 7 1 1` — its three writes stopped
+        // reading through the marker-holding `load()`, so `upsert`, `delete`
+        // and `deleteAll` left the name set and their three call sites left
+        // the walk. `TunnelManager` was `3 1 4 1 1` — a second marker call,
+        // in `forgetEverything(for:)`, made that function a seed as well.
         //
         // Three rows moved and one is new, and the re-run is what found them:
         // `TunnelManager` because round 3 put its unreadable-store line inside

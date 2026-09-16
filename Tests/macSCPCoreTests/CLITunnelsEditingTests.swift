@@ -216,6 +216,32 @@ struct CLITunnelsEditingTests {
         #expect(refused.stderr.contains("nowhere"))
     }
 
+    /// A `tunnels.json` the binary cannot decode is refused, not started
+    /// over: before this, `add` read it as an empty store and wrote a file
+    /// holding only the new forwarding. The exit code is the one
+    /// `CLIErrorMapping` gives the store error — read from Core, not spelled
+    /// here — and the stderr names the file so the person knows what to
+    /// inspect.
+    @Test func addOverAnUnreadableStoreIsRefusedAndLeavesTheFileAlone() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+        let fileURL = cli.storageDirectory.appendingPathComponent("tunnels.json")
+        let before = Data("kein json".utf8)
+        try before.write(to: fileURL)
+        let path = fileURL.path(percentEncoded: false)
+
+        let refused = try await cli.run([
+            "tunnels", "add", "db", "--session", CLI.sshSessionName, "--local", "8080:db:5432",
+        ])
+
+        let expected = CLIErrorMapping.exitCode(for: TunnelStoreError.unreadable(path: path))
+        #expect(refused.status != 0)
+        #expect(refused.status == expected.rawValue, "exit \(refused.status): \(refused.stderr)")
+        #expect(refused.stderr.contains(path), "\(refused.stderr)")
+        #expect(refused.stderr.contains("could not be read"), "\(refused.stderr)")
+        #expect(try Data(contentsOf: fileURL) == before, "tunnels add rewrote an unreadable store")
+    }
+
     // MARK: - list
 
     @Test func listShowsEverySessionsForwardingsAndTheSessionFilterNarrowsIt() async throws {

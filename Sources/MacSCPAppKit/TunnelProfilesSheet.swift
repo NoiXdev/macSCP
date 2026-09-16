@@ -423,9 +423,7 @@ struct TunnelProfilesSheet: View {
                 selection = profile.id
                 errorMessage = nil
             } catch {
-                errorMessage = String(
-                    format: L10n.string("tunnel.error.save %@", "Could not save: %@"),
-                    error.localizedDescription)
+                errorMessage = Self.writeFailureMessage(for: error, during: .save)
             }
         }
     }
@@ -439,13 +437,43 @@ struct TunnelProfilesSheet: View {
             self.selection = nil
             beginNew()
         } catch {
-            errorMessage = String(
-                format: L10n.string("tunnel.error.delete %@", "Could not delete: %@"),
-                error.localizedDescription)
+            errorMessage = Self.writeFailureMessage(for: error, during: .delete)
         }
     }
 
     // MARK: - Text
+
+    /// Which write failed.
+    enum WriteAction {
+        case save, delete
+    }
+
+    /// The line under the form when a save or a delete threw.
+    ///
+    /// An unreadable `tunnels.json` gets its own sentence, naming the file,
+    /// for either action: the store refused the write and changed nothing,
+    /// and the one thing the person can do is inspect that file. The
+    /// generic lines would print this error's `localizedDescription`, which
+    /// for a Swift enum is a type name and a case number.
+    static func writeFailureMessage(for error: any Error, during action: WriteAction) -> String {
+        if case TunnelStoreError.unreadable(let path) = error {
+            return String(
+                format: L10n.string(
+                    "tunnel.store.unreadable",
+                    "The forwarding list could not be read, so it was not changed. Check %@."),
+                path)
+        }
+        switch action {
+        case .save:
+            return String(
+                format: L10n.string("tunnel.error.save %@", "Could not save: %@"),
+                error.localizedDescription)
+        case .delete:
+            return String(
+                format: L10n.string("tunnel.error.delete %@", "Could not delete: %@"),
+                error.localizedDescription)
+        }
+    }
 
     private static func message(for reason: TunnelProfileDraft.Invalid) -> String {
         switch reason {

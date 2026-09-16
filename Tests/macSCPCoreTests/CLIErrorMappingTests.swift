@@ -178,4 +178,35 @@ struct CLIErrorMappingTests {
         #expect(refused.count == 2, "refused: \(refused.map(\.rawValue))")
         #expect(DiagnosticScope.allCases.count == 5)
     }
+    /// An unreadable forwarding store exits the way an unreadable SESSION
+    /// store already does — the code is read off the error `SessionStore`
+    /// really throws for a garbage file, not written down here, so the two
+    /// store failures cannot drift apart unnoticed.
+    @Test func anUnreadableForwardingStoreExitsLikeAnUnreadableSessionStore() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-cli-error-mapping-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("kein json".utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
+        var sessionStoreFailure: (any Error)?
+        do {
+            _ = try SessionStore(directory: dir).all()
+        } catch {
+            sessionStoreFailure = error
+        }
+        let reference = try #require(sessionStoreFailure, "a garbage sessions-v2.json decoded")
+
+        let error = TunnelStoreError.unreadable(path: "/tmp/store/tunnels.json")
+        #expect(CLIErrorMapping.exitCode(for: error) == CLIErrorMapping.exitCode(for: reference))
+    }
+
+    /// The message names the file and says it was not changed, so the person
+    /// reading stderr knows which file to look at and that nothing was lost.
+    @Test func anUnreadableForwardingStoreNamesTheFile() {
+        let message = CLIErrorMapping.message(
+            for: TunnelStoreError.unreadable(path: "/tmp/store/tunnels.json"))
+        #expect(message.contains("/tmp/store/tunnels.json"))
+        #expect(message.contains("could not be read"))
+        #expect(message.contains("not changed"))
+    }
 }

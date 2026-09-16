@@ -1,5 +1,15 @@
 import Foundation
 
+/// Why `TunnelStore` refused a write.
+public enum TunnelStoreError: Error, Equatable, Sendable {
+    /// `tunnels.json` exists and could not be decoded — garbage, or a format
+    /// a later version wrote — so the write was refused and the file was
+    /// left exactly as it was. `path` is the file, for the person who has to
+    /// inspect it; the decoder's own error is not carried, because nothing
+    /// that shows this refusal has a use for it.
+    case unreadable(path: String)
+}
+
 /// JSON persistence for port-forwarding profiles. Stateless, the same shape
 /// as `SessionStore`: every operation reads and writes `tunnels.json` in
 /// full (a small number of profiles per install, atomic writes). Written
@@ -29,8 +39,9 @@ public struct TunnelStore: Sendable {
 
     /// The read, with its outcome intact — the one place this file is
     /// decoded. Neither logs nor flattens: `load()` below is what decides
-    /// that a failure reads as empty, and `readProfiles()` is what hands the
-    /// failure to a caller that must not treat it that way.
+    /// that a failure reads as empty, while `readProfiles()` hands the
+    /// failure to a caller that must not treat it that way and
+    /// `writableFile()` turns it into a refused write.
     ///
     /// **A MISSING file is a success, not a failure**, and it is genuinely
     /// an empty store: only a fresh install has none. Deleting the LAST
@@ -62,11 +73,14 @@ public struct TunnelStore: Sendable {
     /// the `app` category (the fixed list `DiagnosticLogSecrecyGuardTests`
     /// holds every call site to).
     ///
-    /// **Every write path goes through this**, deliberately: an
-    /// `upsert`/`delete` over an unreadable file rewrites it from empty,
-    /// which is the existing behaviour and is not what this round changed.
-    /// What changed is that a READER which stops things — the activation
-    /// reconcile — no longer comes through here; see `readProfiles()`.
+    /// **Only the lenient READERS go through this** — `allProfiles()`,
+    /// `profiles(for:)` and `autoStart(_:)`. No write does: a write that
+    /// read an unreadable file as empty would persist that empty reading,
+    /// replacing every profile with the one being written (the BACKLOG row
+    /// "`TunnelStore` writes rewrite an unreadable file from empty", fixed
+    /// 2026-09-16). The writes read through `writableFile()` instead, and
+    /// the reader that stops things — the activation reconcile — through
+    /// `readProfiles()`.
     private func load() -> StoreFile {
         switch decode() {
         case .success(let file):
@@ -75,6 +89,23 @@ public struct TunnelStore: Sendable {
             DiagnosticLog.shared.log(
                 .error, "app", "tunnels.json unreadable, returning no profiles", reason: error)
             return StoreFile()
+        }
+    }
+
+    /// The file a write starts from, or `TunnelStoreError.unreadable` when a
+    /// present file cannot be decoded. A MISSING file is an empty store here
+    /// as everywhere (see `decode()`), so the first write still creates it.
+    ///
+    /// Throws before anything is written, and writes no log line of its
+    /// own: the refusal goes to a caller that shows it (the profiles sheet,
+    /// the command line) or records it (`TunnelManager
+    /// .forgetEverything(for:)`), for the reason `readProfiles()` gives.
+    private func writableFile() throws -> StoreFile {
+        switch decode() {
+        case .success(let file):
+            return file
+        case .failure:
+            throw TunnelStoreError.unreadable(path: fileURL.path(percentEncoded: false))
         }
     }
 
@@ -113,8 +144,10 @@ public struct TunnelStore: Sendable {
         load().profiles.filter { $0.sessionID == sessionID }
     }
 
+    /// Adds or replaces `profile`. Throws `TunnelStoreError.unreadable`,
+    /// changing nothing, when `tunnels.json` is present but undecodable.
     public func upsert(_ profile: TunnelProfile) throws {
-        var file = load()
+        var file = try writableFile()
         if let index = file.profiles.firstIndex(where: { $0.id == profile.id }) {
             file.profiles[index] = profile
         } else {
@@ -123,8 +156,10 @@ public struct TunnelStore: Sendable {
         try persist(file)
     }
 
+    /// Removes the profile `id`. Throws `TunnelStoreError.unreadable`,
+    /// changing nothing, when `tunnels.json` is present but undecodable.
     public func delete(id: UUID) throws {
-        var file = load()
+        var file = try writableFile()
         file.profiles.removeAll { $0.id == id }
         try persist(file)
     }
@@ -140,8 +175,13 @@ public struct TunnelStore: Sendable {
     /// themselves running. `TunnelStore` used to carry the conformance
     /// itself; it was deleted in the final review's fix round (2026-09-06)
     /// once nothing but a test registered it.
+    ///
+    /// Throws `TunnelStoreError.unreadable`, changing nothing, when
+    /// `tunnels.json` is present but undecodable. Neither caller lets that
+    /// stop the session deletion — see `TunnelManager
+    /// .forgetEverything(for:)` and `StoreEditing.deleteSession(_:)`.
     public func deleteAll(for sessionID: UUID) throws {
-        var file = load()
+        var file = try writableFile()
         file.profiles.removeAll { $0.sessionID == sessionID }
         try persist(file)
     }
