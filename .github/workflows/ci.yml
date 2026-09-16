@@ -38,6 +38,37 @@ jobs:
       MAX_WARNINGS: 0
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Metal toolchain (Xcode 26+)
+        # Measured 2026-09-16: Xcode 27 (27A266a) / Swift 6.4. `swift build`
+        # defaults to Swift Build, which compiles SwiftTerm's `Shaders.metal`
+        # and fails with "cannot execute tool 'metal' due to missing Metal
+        # Toolchain; use: xcodebuild -downloadComponent MetalToolchain"
+        # unless the component is already installed. Installing it once with
+        # `xcodebuild -downloadComponent MetalToolchain` printed "Done
+        # downloading: Metal Toolchain 27A266a." and `xcrun metal --version`
+        # then printed "Apple metal version 32023.921 (metalfe-32023.921.6)".
+        # release.yml's build job runs the same "Run tests" step, so it
+        # carries this same step -- but only for that step: scripts/release
+        # calls scripts/package-app, which pins `--build-system native`
+        # (commit 3522be3c, so both architecture slices land in one
+        # directory) and does not invoke `metal`.
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          if xcrun metal --version; then
+            echo "Metal toolchain already present."
+            exit 0
+          fi
+          if xcodebuild -help 2>&1 | grep -q -- '-downloadComponent'; then
+            xcodebuild -downloadComponent MetalToolchain
+            if ! xcrun metal --version; then
+              echo "::error::xcodebuild -downloadComponent MetalToolchain reported success but 'xcrun metal --version' still fails; the MetalToolchain component is still missing."
+              exit 1
+            fi
+          else
+            echo "xcodebuild -help does not list -downloadComponent; this Xcode ships Metal in the base toolchain."
+          fi
       - name: Build
         run: |
           set -o pipefail
