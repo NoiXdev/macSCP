@@ -68,7 +68,7 @@ extension ContentView {
                 sessionID: stored.secretSlot)
         }
         diagnostics.present(
-            DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets),
+            DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets(for: target)),
             for: source.tabID)
     }
 
@@ -94,8 +94,12 @@ extension ContentView {
 
     /// The secret source the diagnosis authenticates through: the window's
     /// own `SecretStore`, adapted — the same store the connect path reads
-    /// (`ContentView.secretStore`), never a second copy of a credential.
-    var diagnosticsSecrets: any SecretSource {
-        KeychainSecretSource(store: secretStore)
+    /// (`ContentView.secretStore`), never a second copy of a credential —
+    /// followed, for an SSH private-key target, by the managed key's slot in
+    /// the window's own `managedKeyStore` (`DiagnosticsSecretSources` says
+    /// why; final review of the 2026-09-16 plan).
+    func diagnosticsSecrets(for target: DiagnosticsTarget) -> any SecretSource {
+        DiagnosticsSecretSources.source(
+            kind: target.kind, values: target.values, keys: managedKeyStore, secrets: secretStore)
     }
 }

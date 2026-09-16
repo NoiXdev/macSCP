@@ -13,9 +13,11 @@ import Foundation
 /// the key path the session points at.
 ///
 /// READ-ONLY: it reads the key store's record and the key's Keychain slot,
-/// and writes neither. Two chains end in it, each after the session's own
+/// and writes neither. Three chains end in it, each after the session's own
 /// Keychain slot: the App's forwarding chain
-/// (`TunnelSecretSources.chain(for:keys:secrets:)`) and the command line's
+/// (`TunnelSecretSources.chain(for:keys:secrets:)`), the App's diagnosis
+/// chain (`DiagnosticsSecretSources.chain(kind:values:keys:secrets:)`, added
+/// in the final fix of the 2026-09-16 plan) and the command line's
 /// (`secretSources(for:passwordCommand:keychainStore:keyStore:)`). It lived
 /// in the App target until Task 2 fix round 2 of the 2026-09-16 plan moved it
 /// here so the command line could share it.

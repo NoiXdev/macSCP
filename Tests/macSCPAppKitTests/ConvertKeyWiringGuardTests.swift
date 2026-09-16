@@ -39,7 +39,7 @@ import Testing
 ///    decide which path it takes (`hasStoredPassphrase(`, `loginSetID`), with
 ///    the drop INSIDE a branch that both the first question's positive
 ///    answer and `sessionServesAJumpHop(`'s negative answer open, and nowhere
-///    else, and dials nothing itself.
+///    else in the app target, and dials nothing itself.
 /// 5. The import sheet converts on the way in instead of copying bytes.
 /// 6. A session bound to a login set is ASKED whether to update the set
 ///    (`LoginSetRepointPlan.request(`, `setRepointRequest`) rather than
@@ -47,7 +47,8 @@ import Testing
 /// 7. Updating the set re-reads it (`LoginSetRepointPlan.currentSet(`),
 ///    writes it through `saveLoginSet(`, drops the SET's slot only inside a
 ///    branch that `hasStoredPassphrase(`'s positive answer and
-///    `setServesAJumpHop(`'s negative answer both open, and re-dials through
+///    `setServesAJumpHop(`'s negative answer both open (and nowhere else in
+///    the app target), and re-dials through
 ///    `retryConnect(` and nothing else.
 /// 8. "This attempt only" hands the tab back to the form
 ///    (`dismissConnectFailure(`) and writes no set.
@@ -518,6 +519,62 @@ struct ConvertKeyWiringGuardTests {
             """)
     }
 
+    /// Claims 4 and 7 across the whole app target (final review, probe 2):
+    /// each slot drop is called exactly ONCE in `Sources/MacSCPAppKit`, and
+    /// that one call is the one inside its gate.
+    ///
+    /// The two checks above count drops only inside the handler they read,
+    /// so a `dropLoginSetSecret(for: request.set.id)` planted in
+    /// `convertedKeyImported(_:for:)`'s set branch — before the question is
+    /// even asked — left them green: it is outside `repointLoginSet(_:)`,
+    /// where the set check looks, and it is not `dropSessionSecret(`, which
+    /// is what the session check counts. Counting over the target closes
+    /// that: one call in the target plus one call inside the gate leaves no
+    /// room for a second anywhere.
+    ///
+    /// Read in the blanked view, so a comment naming either call does not
+    /// count. The positive checks — each symbol is found in the target at
+    /// all, and the walk read files — sit beside the counts: an exact count
+    /// over a scan that read nothing would be red anyway, but it would say
+    /// "0 calls" rather than "the scan is broken".
+    @Test func eachSlotDropIsCalledOnceInTheTargetAndThatCallIsGated() throws {
+        let files = try Self.appTargetFiles()
+        #expect(files.count > 20, """
+            the app target walk found \(files.count) Swift files under Sources/MacSCPAppKit — \
+            this check is not reading the target.
+            """)
+        var target = ""
+        for file in files { target += try Self.strictSource(of: file) + "\n" }
+
+        let sessionBody = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
+        let sessionProbe = try Self.probeResultIdentifier(inBlankedBody: sessionBody)
+        let sessionJump = try Self.resultIdentifier(of: "sessionServesAJumpHop(", inBlankedBody: sessionBody)
+        let sessionGate = Self.positiveGateSpan(
+            on: sessionProbe, alsoRequiringNegated: sessionJump, inBlankedBody: sessionBody)
+
+        let setBody = try Self.strippedBody(after: "func repointLoginSet(", in: Self.contentViewFile)
+        let setProbe = try Self.probeResultIdentifier(inBlankedBody: setBody)
+        let setJump = try Self.resultIdentifier(of: "setServesAJumpHop(", inBlankedBody: setBody)
+        let setGate = Self.positiveGateSpan(on: setProbe, alsoRequiringNegated: setJump, inBlankedBody: setBody)
+
+        for (drop, gate) in [("dropSessionSecret(", sessionGate), ("dropLoginSetSecret(", setGate)] {
+            let inTheTarget = Self.occurrences(of: drop, in: target)
+            let inTheGate = gate.map { Self.occurrences(of: drop, in: $0) } ?? 0
+            #expect(inTheTarget >= 1, """
+                `\(drop)` is not called anywhere in Sources/MacSCPAppKit — the drop moved or was \
+                renamed, and this check would count nothing.
+                """)
+            #expect(inTheTarget == 1, """
+                `\(drop)` is called \(inTheTarget) times in Sources/MacSCPAppKit — a second call \
+                drops the slot without the probe or the jump-hop check deciding it.
+                """)
+            #expect(inTheGate == 1, """
+                `\(drop)` is called \(inTheGate) times inside the branch the slot probe and the \
+                negated jump-hop check open together — the target's one call is not the gated one.
+                """)
+        }
+    }
+
     /// The negative half, pinned by `retryConnect(` in
     /// `updatingTheSetGoesThroughTheRealHandlers` over the same body: the
     /// set update dials nothing itself.
@@ -588,10 +645,22 @@ struct ConvertKeyWiringGuardTests {
             the login-set question's presentation no longer waits for `setRepointDialogArmed` \
             — it is then raised while the conversion sheet is still up.
             """)
+        // The span is the presenter through the close of its first closure,
+        // which `.sheet(item:onDismiss:content:)` makes the `onDismiss:` one.
+        // The ASSIGNMENT is required, not the name (final review, probe 1):
+        // `setRepointDialogArmed = setRepointRequest == nil` carries the name
+        // too, and arms the flag exactly when there is no question to ask.
+        // Compared with every whitespace character removed on both sides, so
+        // a reflow of the line does not read as a violation.
         let sheet = try Self.strippedBody(after: Self.conversionSheetPresenter, in: source)
-        #expect(sheet.contains("setRepointDialogArmed"), """
-            the conversion sheet's `onDismiss:` no longer arms `setRepointDialogArmed` — the \
-            login-set question is never presented, and a set-bound conversion does nothing.
+        let armsOnARequest = Self.removingWhitespace(from: sheet)
+            .contains(Self.removingWhitespace(from: Self.armingAssignment))
+        #expect(armsOnARequest, """
+            the conversion sheet's `onDismiss:` no longer assigns \
+            `\(Self.armingAssignment)` — either the flag is never armed and the login-set \
+            question is never presented, or it is armed on some other condition, and an \
+            inverted one opens a dialog with no request behind it while a set-bound \
+            conversion does nothing.
             """)
         #expect(dialog.unlocalizedTexts.isEmpty, """
             the login-set question shows text that does not open into `L10n.string(`: \
@@ -972,6 +1041,17 @@ struct ConvertKeyWiringGuardTests {
 
     // MARK: - Scanner
 
+    /// Every Swift file under `Sources/MacSCPAppKit`, sorted — the whole
+    /// target, so the target-wide count reads no list somebody maintains.
+    private static func appTargetFiles() throws -> [URL] {
+        let root = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        else { throw ScanError.anchorNotFound }
+        return walker.compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
+    }
+
     private static func strictSource(of file: URL) throws -> String {
         try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
     }
@@ -1039,6 +1119,16 @@ struct ConvertKeyWiringGuardTests {
 
     private static func isIdentifierCharacter(_ character: Character) -> Bool {
         character.isLetter || character.isNumber || character == "_"
+    }
+
+    /// What the conversion sheet's `onDismiss:` must assign, as code. Kept
+    /// here as the one spelling both the check and its message read.
+    private static let armingAssignment = "setRepointDialogArmed = setRepointRequest != nil"
+
+    /// `text` with every whitespace character removed — the normalisation
+    /// the arming check compares under, applied to both of its sides.
+    private static func removingWhitespace(from text: String) -> String {
+        String(text.filter { !$0.isWhitespace })
     }
 
     private static func occurrences(of token: String, in source: String) -> Int {

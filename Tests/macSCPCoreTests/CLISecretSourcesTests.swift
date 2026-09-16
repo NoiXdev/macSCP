@@ -516,7 +516,7 @@ struct SecretSourcesManagedKeyTests {
 
     /// The defect round 4 fixes, through the whole CLI chain: a private-key
     /// session with an unmanaged key and an empty own slot resolves nil over
-    /// a corrupt key store, and so dials, instead of stopping the resolver.
+    /// a corrupt key store, and so continues, instead of stopping the resolver.
     @Test func aCorruptKeyStoreDoesNotStopAnUnmanagedKeysChain() throws {
         let rig = try Rig()
         defer { rig.tearDown() }
