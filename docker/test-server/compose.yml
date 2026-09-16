@@ -232,6 +232,36 @@ services:
     volumes:
       - ./sshd_config.d-hostkey/rsa:/config/sshd/sshd_config.d:ro
 
+  # An OpenSSH server WITHOUT the SFTP subsystem (2026-09-17). A port
+  # forwarding needs an authenticated SSH connection and nothing else, so the
+  # gated `ForwardingWithoutSFTPITests` prove against this server that a
+  # forwarding reaches `active` and carries bytes, while the server refuses a
+  # tab's dial its SFTP subsystem. Same image pin, credentials and shared
+  # `sshd_config.d` include (`AllowTcpForwarding yes`) as `sshd`; seed-less.
+  #
+  # The subsystem cannot be removed from an include (sshd keeps the first
+  # value it reads, and the image writes `Subsystem sftp` into the main
+  # file), so the custom-cont-init.d hook comments it out of
+  # /config/sshd/sshd_config -- the container's own volume, nothing written
+  # back to this repository. Port 2236: the next one after the host-key
+  # services' 2231-2235, not published by any service here and not used by
+  # any test (`grep -rn 2236 Tests Sources` was empty on 2026-09-17).
+  # Published on loopback only.
+  sshd-nosftp:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-nosftp
+    ports:
+      - "127.0.0.1:2236:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d:/config/sshd/sshd_config.d:ro
+      - ./custom-cont-init.d-nosftp:/custom-cont-init.d:ro
+
   # SFTPGo (2026-09-02): the rig's only Go-based SSH server. Every other SSH
   # service here is OpenSSH; SFTPGo's server side is `golang.org/x/crypto/ssh`,
   # the library that parses a user-auth public-key blob's leading string as a

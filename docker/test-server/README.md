@@ -144,6 +144,87 @@ field — the banner's second field is the host:port repeated, never a
 second type — so no port printed more than one type in either form of the
 command.)
 
+## An OpenSSH server without SFTP (2026-09-17)
+
+`sshd-nosftp` (container `macscp-test-sshd-nosftp`, host port **2236**,
+published on `127.0.0.1` only) is the `sshd` image with the SFTP subsystem
+removed: same image pin, `testuser`/`testpass`, and the same shared
+`sshd_config.d` include, so `AllowTcpForwarding yes` holds here too.
+Seed-less. It exists so the gated `ForwardingWithoutSFTPITests` can prove
+that a port forwarding connects without an SFTP channel — a forwarding
+reaches `active` and carries bytes here, while the server refuses a tab's
+dial its SFTP subsystem. That dial does not come back with an error: it
+stays suspended in Citadel's `openSFTP` (measured 2026-09-17, still
+suspended after more than seven minutes), so the gated suite reads the
+refusal from this server's own log, `/config/logs/openssh/current`
+(`subsystem request for sftp by user testuser failed, subsystem not
+found`), rather than awaiting the dial.
+
+The subsystem is removed by a hook, not by an include. The image's
+`init-openssh-server-config` writes `Subsystem sftp internal-sftp` into
+`/config/sshd/sshd_config` itself, after the `Include` line, and sshd keeps
+the first value it reads for a keyword — an included
+`Subsystem sftp /bin/false` came back from `sshd.pam -T` as
+`subsystem sftp /bin/false` (measured 2026-09-17), i.e. a subsystem that is
+still granted and then fails, and OpenSSH has no `Subsystem sftp none`. So
+`custom-cont-init.d-nosftp/10-disable-sftp-subsystem.sh`, mounted at
+`/custom-cont-init.d` and run as root after the image's own init, comments
+the line out and exits non-zero if a `Subsystem sftp` line is still there.
+The edit lands in the container's own `/config` volume; nothing is written
+back to this repository. Idempotent: on a restart the pattern no longer
+matches.
+
+Port 2236 is the next one after the host-key services' 2231–2235. No other
+service publishes it, and `grep -rn 2236 Tests Sources` was empty when it
+was chosen (the disposable servers in `LivenessProbeDropIntegrationTests`
+use 2224 and 2225).
+
+### Proof, measured 2026-09-17
+
+Brought up alone from the main checkout with
+`docker compose -f docker/test-server/compose.yml up -d sshd-nosftp`. The
+container log and the effective configuration:
+
+```
+[custom-init] 10-disable-sftp-subsystem.sh: executing...
+sshd-nosftp: sftp subsystem disabled
+[custom-init] 10-disable-sftp-subsystem.sh: exited 0
+
+$ docker exec -u root macscp-test-sshd-nosftp sh -c 'grep -n -i "subsystem" /config/sshd/sshd_config; /usr/sbin/sshd.pam -T -f /config/sshd/sshd_config | grep -i "subsystem\|allowtcpforwarding"'
+115:# override default of no subsystems
+116:# disabled by macSCP rig (sshd-nosftp): Subsystem	sftp	internal-sftp
+allowtcpforwarding yes
+```
+
+`sshd -T` prints no `subsystem` line at all. The file stays
+`-rw-r----- root users`, as the image's init left it.
+
+SFTP is refused (password auth through `sshpass`, public keys and the agent
+switched off so only the password is offered):
+
+```
+$ printf 'ls /\nbye\n' | sshpass -p testpass sftp -P 2236 -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o IdentityAgent=none -o UserKnownHostsFile=<scratch> testuser@127.0.0.1
+subsystem request failed on channel 0
+Connection closed
+exit=255
+```
+
+The identical command against `sshd` on 2222 connects and lists
+`/data/seed/hello.txt`, exit 0 — so the refusal is this server's, not the
+command's.
+
+A local forward through the same server carries bytes to a listener inside
+the container:
+
+```
+$ docker exec -d macscp-test-sshd-nosftp sh -c 'printf "hello-from-inside-sshd-nosftp\n" | nc -l 127.0.0.1 45555'
+$ sshpass -p testpass ssh -f -N -L 127.0.0.1:47236:127.0.0.1:45555 -p 2236 <same -o options, ExitOnForwardFailure=yes> testuser@127.0.0.1
+ssh exit=0
+$ nc -w 5 127.0.0.1 47236 < /dev/null
+hello-from-inside-sshd-nosftp
+nc exit=0
+```
+
 ## SFTPGo — the rig's Go-based SSH server (2026-09-02)
 
 `sftpgo` (`drakkan/sftpgo:v2.6.6`, arm64 and amd64 both in the manifest;
