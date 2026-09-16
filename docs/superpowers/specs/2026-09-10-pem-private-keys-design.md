@@ -606,3 +606,189 @@ in `Tests/macSCPCoreTests/FileKeyTypeIntegrationTests.swift` and
 - No key material is written by the reader. The converter writes one
   file, the copy the person asked for, into the key directory the store
   already protects (0700 / 0600).
+
+## Decisions 2026-09-16
+
+The maintainer ruled on four open points from this design and the port-
+forwarding design's own fingerprint row; three are implemented, the
+fourth is a manual measurement handed off outside the plan. Full record:
+`docs/superpowers/plans/2026-09-16-maintainer-decisions.md` and its
+ledger, `.superpowers/sdd/2026-09-16-maintainer-decisions/progress.md`.
+
+### (a) The passphrase-slot rule after a re-point
+
+Confirmed ("Ja, löschen"): after a login set (or a plain session) is
+re-pointed at a converted key, its OWN Keychain slot is dropped once the
+managed key's slot holds the passphrase — one passphrase, one place.
+Built first as exactly that single condition (`5ce949b7`,
+`ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`
+probed with `try?`, `== true` gating the drop) and REFINED by review,
+because it was wrong as written: a jump hop that reaches a set or a
+session for its OWN credentials never falls back to the managed key's
+slot, so dropping the shared copy the jump reads would leave that hop
+with nothing to authenticate with. Task 2's report traced the jump
+path to confirm this before the fix landed — `ContentView.swift:2913`
+and `:2961` put `resolved…secret ?? ""` into `form.jumpPassword`, and
+`ConnectionViewModel.buildJumpConfig` passes
+`passphrase: jumpPassword.isEmpty ? nil : jumpPassword`
+(`ConnectionViewModel.swift:1954`): no call to
+`ManagedKeyPassphrase.resolve` sits anywhere on that path, so a jump
+hop's own slot is the only place its passphrase can come from.
+
+The rule as built (`d8db692c`, Task 2 fix round 1): a slot — the
+session's own, or a set's — is dropped only when BOTH hold:
+
+1. `ManagedKeyPassphrase.hasStoredPassphrase(keyPath:store:secrets:)`
+   says the managed key's slot holds the passphrase, and
+2. no session depends on that slot for a jump hop —
+   `SessionListViewModel.sessionServesAJumpHop(_:)`
+   (`Sources/macSCPCore/Presentation/SessionListViewModel.swift:875`)
+   for a session's own slot, `setServesAJumpHop(_:)` (`:863`) for a
+   set's.
+
+Both gates are written as one `if` — `keySlotHoldsThePassphrase &&
+!jumpHopReadsTheSessionSlot` (`ContentView.swift:2659`) and
+`keySlotHoldsThePassphrase && !jumpHopReadsTheSetSlot` (`:2727`) — read
+by `ConvertKeyWiringGuardTests`' structural gate scanner, which requires
+the probe and the negated jump check in the same condition and rejects
+two nested `if`s. `dropSessionSecret(for:)` /
+`dropLoginSetSecret(for:)` (`SessionListViewModel.swift:583`, `:599`)
+do the actual `secrets.deletePassword(for:)`, `try?`, no reload.
+
+### (b) A PEM conversion on a login-set session offers to re-point the set
+
+Confirmed ("Set umhängen, nachfragen"). `ContentView.convertedKeyImported`
+(`5ce949b7`) asks `LoginSetRepointPlan.request(session:sets:usageCount:
+key:keyPath:tab:)` (`Sources/MacSCPAppKit/LoginSetRepointPlan.swift:64`)
+whether the failed attempt's stored session is bound to an SSH
+private-key set; when it is, a `.confirmationDialog(` bound to
+`@State var setRepointRequest: LoginSetRepointRequest?`
+(`ContentView+Sheets.swift:187-219`) asks
+`connection.convertKey.repoint.title %@` — "Update the login set
+"%@"?" — naming the set, with the session/jump count in
+`connection.convertKey.repoint.message %lld %@` (a `Localizable
+.stringsdict` plural, `pl` carrying `one`/`few`/`many`/`other`).
+
+- **Confirm** ("Update login set", `connection.convertKey.repoint
+  .confirm`) → `repointLoginSet(_:)` (`ContentView.swift:2712`):
+  re-reads the set through `LoginSetRepointPlan.currentSet(id:in:)`
+  (`LoginSetRepointPlan.swift:54`, added in fix round 1, `d8db692c`,
+  MINOR 5) — a FRESH copy from `sessionListViewModel.loginSets` at
+  confirm time, not the one captured when the sheet opened, so an edit
+  made to the set while the dialog was up is kept and a deleted or
+  retyped set falls back to the one-attempt route instead of resurrecting
+  a stale copy. Only `keyPath` is changed on that fresh copy;
+  `saveLoginSet(set, secret: nil)` persists it, the probe/jump gate from
+  (a) decides whether `dropLoginSetSecret(for:)` runs, and
+  `retryConnect(request.tab)` re-dials the same tab through
+  `connect(in:stored:)` — no other dial path.
+- **"This attempt only"** (`connection.convertKey.repoint.thisAttempt`,
+  `role: .cancel`) → `convertForThisAttemptOnly(_:keyPath:)`
+  (`ContentView.swift:2739`): today's one-attempt route, moved rather
+  than duplicated — the tab's `keyPath` is set locally and
+  `dismissConnectFailure(tab)` returns to the form; the set is untouched.
+- **Escape** presses the dialog's `.cancel`-role button by AppKit's own
+  rule, so it takes the same "this attempt only" route; no other close
+  path exists for a `.confirmationDialog`.
+
+Both buttons are pinned to their own handler by a dedicated scanner
+(`ConvertKeyWiringGuardTests.dialogViolations(_:)`, Task 2 fix rounds 1
+and 2, `d8db692c`/`5680442c`): exactly two buttons, their keys are
+exactly the two catalog keys above, the confirm span calls
+`repointLoginSet(` and never `convertForThisAttemptOnly(`, the
+this-attempt span the reverse, and `repointLoginSet(` appears exactly
+once in the whole buttons closure — closing the gap a first version of
+the guard missed (a swapped pair of actions stayed green until the
+pairing check existed).
+
+### (c) The CLI secret chain gained a last, read-only link
+
+Not a maintainer decision on its own — a consequence review found while
+implementing (a): the session's slot being the only place the CLI's
+secret chain looked meant that dropping it, exactly as (a) now does,
+broke `macscp-cli` for that session, because nothing in the CLI's chain
+ever read the managed key's own slot. Task 2 re-review round 1 named
+this "pre-existing, fixed here because it falsifies the confirmed rule".
+
+`ManagedKeyPassphraseSecretSource` (`5680442c`, Task 2 fix round 2)
+moved from `Sources/MacSCPAppKit/TunnelSecretSources.swift` into Core as
+`Sources/macSCPCore/Sessions/ManagedKeyPassphraseSecretSource.swift`,
+`public`, unchanged in body — the type depended only on Core already —
+and is now the last link in BOTH chains, after the session's own
+Keychain slot: the forwarding chain
+(`TunnelSecretSources.chain(for:keys:secrets:)`, `TunnelSecretSources
+.swift:50` keychain, `:55` managed) and the CLI's
+(`secretSources(for:passwordCommand:keychainStore:keyStore:)`,
+`CLISecretSources.swift:212` keychain, `:223` managed), both gated on
+an SSH private-key session with a non-empty trimmed `keyPath`.
+
+The link is READ-ONLY (its own doc comment says so): it reads the
+managed-key store's record and the key's Keychain slot, writes neither.
+Two rounds of review split what an error on each read should do
+(`ManagedKeyPassphraseSecretSource.swift:52-62`):
+
+- A **Keychain error** on the key's own slot (`secrets.password(for:
+  key.id)`) is THROWN, not swallowed (`79e161ab`, fix round 3) — the
+  same behaviour `KeychainSecretSource`'s own read already has — so it
+  stops the chain visibly (`SecretResolver` propagates it) instead of
+  reading as "no secret" and failing later, unexplained, at key-loading
+  time.
+- An **unreadable key store** (`managed_keys.json` failing to decode)
+  answers **nil**, "not managed" (`12573d5a`, fix round 4, superseding
+  round 3's first attempt at throwing here too) — because the whole
+  store is decoded before the path can even be matched, so a throw here
+  would stop every private-key session with an empty own slot,
+  including ones whose key the store does not manage at all. Ruling,
+  recorded in the ledger: "store error → nil, Keychain error → throw."
+
+**Consequence measured, not designed away**: an unattended CLI run
+(cron, CI) can now need a SECOND Keychain consent grant — one for the
+session's own item, a second, separate one for the managed key's item
+— because the two live under different Keychain items and macOS asks
+per item. This is reached only when the session's own slot is empty,
+i.e. only for a session whose slot (a) has already dropped in favour
+of the managed key's shared one. A workstation user sees one extra
+"Always Allow" prompt the first time; a cron job pre-authorized only for
+the session's item will fail on the key's item until someone grants
+that one too. Not measured with a signed binary.
+
+### (d) Host-key fingerprints leave the fixed mismatch reason
+
+Confirmed ("Weglassen"), Task 1, `8db25be8`. `DialSupport.reason(for:)`'s
+`HostKeyError.mismatch` arm (`Sources/macSCPCore/Diagnostics/DialProbes
+.swift:207-224`, the arm itself at `:211-222`) now pattern-discards
+`expected`/`presented` and returns a fixed sentence naming only the
+host: `"host key MISMATCH for \(host): the presented key differs from
+the recorded one"`. Every consumer of this one function is covered by
+construction — the diagnostic log, `ConnectionViewModel.lastFailureReason`
+(the audit-row field), `TunnelState.failed(reason:)` (the forwarding
+failure reason, `TunnelRunner.swift:288`), and the diagnostics report
+rows all persist or display this same sentence, and none of them sees a
+fingerprint any more.
+
+Two surfaces were read and confirmed to build their OWN sentence
+directly from `host`/`expected`/`presented`, never through
+`DialSupport.reason(for:)`, and so are unchanged and still show both
+fingerprints to the person deciding whether to trust a new key: the
+App's `core.hostkey.mismatch %@ %@ %@` alert
+(`ConnectionViewModel.swift:2284-2289`) and the CLI's stderr
+(`CLIErrorMapping.swift:202`).
+
+**The one surface that lost the fingerprints** (Task 1's report): the
+tunnel profile's failure reason — `TunnelProfilesSheet`'s state column
+and the three other places that render the same `TunnelState
+.failed(reason:)` text verbatim (the autostart sheet's state column,
+the Dock menu's tooltip, the sidebar glyph's tooltip; all four
+documented at `TunnelProfilesSheet.swift:508-521`). Before this fix, a
+mismatch during a tunnel's own SSH dial showed both fingerprints inline
+in that state text; after it, that text names only the host. What that
+surface still offers, unaffected by this change: `Sources/MacSCPAppKit
+/KnownHostsSheet.swift`, the known-hosts sheet, where the recorded and
+presented keys remain visible and comparable — it never went through
+`DialSupport.reason(for:)`.
+
+### Decision 4, outside this record
+
+"At login" ("first measure with a signed build and a real login") is a
+manual measurement, not a code change, and stays outside this plan; its
+handoff is recorded in `docs/BACKLOG.md`'s "Forwardings 'At login'" row.
