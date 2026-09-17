@@ -697,8 +697,15 @@ final class TunnelManager {
     ///
     /// The delete comes first for `save(_:)`'s reason: a delete the store
     /// refuses removed nothing, so it stops nothing either.
+    ///
+    /// **And the row leaves the mirror before the `await`**, for
+    /// `forgetEverything(for:)`'s reason: the stop takes as long as the dial
+    /// it is inside, and `start(_:decider:)` decides on `allProfiles`, so a
+    /// menu start landing there would otherwise build a runner for a row
+    /// about to disappear (`aStartDuringARemoveReachesNothing`).
     func remove(_ profile: TunnelProfile) async throws {
         try store.delete(id: profile.id)
+        allProfiles.removeAll { $0.id == profile.id }
         await discardRunner(for: profile.id)
         states[profile.id] = nil
         reload()

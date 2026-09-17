@@ -1120,6 +1120,43 @@ struct TunnelManagerTests {
         #expect(rig.manager.runningCount == 0)
     }
 
+    /// `remove(_:)` takes the row out of the mirror BEFORE it awaits the
+    /// runner's stop, so a menu start landing while that stop is parked is
+    /// refused by `start(_:decider:)`'s guard instead of building a runner
+    /// for a profile with no row left anywhere to stop it from.
+    @Test func aStartDuringARemoveReachesNothing() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        let profile = Self.profile(session: sessionID, name: "web")
+        try await rig.manager.save(profile)
+        await rig.manager.start(profile, decider: Self.accepting)
+        let gate = Gate()
+        let first = try rig.runner(profile)
+        first.beforeStop = { await gate.wait() }
+
+        let removed = Flag()
+        _ = Task { @MainActor in
+            try? await rig.manager.remove(profile)
+            removed.set()
+        }
+        try await pollUntil("the remove's stop is parked") { gate.arrived == 1 }
+
+        // Read while parked, before anything heals.
+        let listedWhileParked = rig.manager.profiles(for: sessionID)
+        await rig.manager.start(profile, decider: Self.accepting)
+        let rebuiltWhileParked = rig.log.runners[profile.id] !== first
+
+        gate.open()
+        try await pollUntil("the remove finished") { removed.isSet }
+
+        #expect(listedWhileParked.isEmpty, "the removed row was listed while its runner was stopping")
+        #expect(rebuiltWhileParked == false, "a start during the remove built a runner with no row")
+        #expect(first.stopCount == 1)
+        #expect(rig.manager.runningCount == 0)
+        #expect(rig.manager.allProfiles.isEmpty)
+    }
+
     /// A menu holds the profile it was drawn with. Clicking it after the
     /// session was deleted must reach nothing — a runner built here would
     /// hold a port and a connection with no row anywhere left to stop it
