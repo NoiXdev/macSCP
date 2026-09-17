@@ -30,6 +30,16 @@ enum ToolbarTransferPlan: Equatable {
         return .ask(itemCount: transferable.count, includesFolders: includesFolders)
     }
 
+    /// Where a toolbar transfer out of `side` goes: the OTHER pane's
+    /// directory. Read once at press, it is both what the question names and
+    /// what the transfer is handed, so the two cannot disagree.
+    static func destinationPath(side: BrowserPaneSide, localPath: String, remotePath: String) -> String {
+        switch side {
+        case .local: remotePath
+        case .remote: localPath
+        }
+    }
+
     // MARK: - The question's text
 
     static func titleKey(side: BrowserPaneSide) -> (key: String, defaultValue: String) {
@@ -95,7 +105,8 @@ struct ToolbarTransferRequest: Identifiable, Equatable {
     let selection: [RemoteFileItem]
     let itemCount: Int
     let includesFolders: Bool
-    /// The directory the OTHER pane showed at press, for the message.
+    /// The directory the OTHER pane showed at press: named in the message
+    /// and handed to the transfer on confirm.
     let destinationPath: String
 
     /// Identity, not value: `SessionTab` is a reference type with no

@@ -71,6 +71,16 @@ struct ToolbarTransferPlanTests {
         #expect(ToolbarTransferPlan.plan(for: [Self.item("fifo", .other)]) == .transferNow)
     }
 
+    /// The destination a toolbar transfer goes to, and the question names,
+    /// is the OTHER pane's directory: upload goes to the remote pane's,
+    /// download to the local pane's.
+    @Test func theDestinationIsTheOtherPanesDirectory() {
+        #expect(ToolbarTransferPlan.destinationPath(side: .local, localPath: "/Users/me", remotePath: "/srv/in")
+            == "/srv/in")
+        #expect(ToolbarTransferPlan.destinationPath(side: .remote, localPath: "/Users/me", remotePath: "/srv/in")
+            == "/Users/me")
+    }
+
     // MARK: - The question's text
 
     /// Four message keys and two titles, one per direction and folder case,

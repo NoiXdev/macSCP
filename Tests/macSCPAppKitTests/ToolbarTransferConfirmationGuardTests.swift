@@ -16,12 +16,18 @@ import Testing
 ///
 /// 1. Both buttons call `requestToolbarTransfer(` and never
 ///    `transferSelection(` themselves.
-/// 2. `requestToolbarTransfer(` asks `ToolbarTransferPlan.plan(`, reaches
-///    `transferSelection(` only in its `.transferNow` case, and in its `.ask`
-///    case stores a `ToolbarTransferRequest(` built from the selection it
-///    was handed — captured at press.
-/// 3. `confirmToolbarTransfer(` transfers the request's own selection, side,
-///    tab and session, and reads no pane's `selectedItems`.
+/// 2. `requestToolbarTransfer(` asks `ToolbarTransferPlan.plan(`, reads the
+///    destination once through `ToolbarTransferPlan.destinationPath(`,
+///    reaches `transferSelection(` only in its `.transferNow` case — passing
+///    that destination — and in its `.ask` case stores a
+///    `ToolbarTransferRequest(` built from the selection it was handed and
+///    that same destination — captured at press.
+/// 3. `confirmToolbarTransfer(` first compares the tab's current session id
+///    with the captured one and returns when they differ, then transfers the
+///    request's own selection, side, tab, session and captured destination,
+///    and reads no pane's `selectedItems`. `transferSelection(` resolves a
+///    nil `destinationDirectory` to the other pane's current path, in both
+///    directions, so the routes that pass none are unchanged.
 /// 4. The window presents the question as a `.confirmationDialog(` bound to
 ///    `toolbarTransferRequest` through `presenting:`, with exactly two
 ///    buttons: a confirm button whose action alone reaches
@@ -64,9 +70,10 @@ struct ToolbarTransferConfirmationGuardTests {
     private static func transfersFixture(
         upload: String = "requestToolbarTransfer(selected, from: .local, in: tab, session: session)",
         download: String = "requestToolbarTransfer(selected, from: .remote, in: tab, session: session)",
-        transferNow: String = "transferSelection(selection, from: side, in: tab, session: session)",
-        ask: String = "toolbarTransferRequest = ToolbarTransferRequest(tab: tab, session: session, side: side, selection: selection, itemCount: count, includesFolders: folders, destinationPath: path)",
-        confirm: String = "transferSelection(request.selection, from: request.side, in: request.tab, session: request.session)",
+        transferNow: String = "transferSelection(selection, from: side, in: tab, session: session, destinationDirectory: destination)",
+        ask: String = Self.fixtureAsk,
+        identity: String = "guard request.tab.session?.id == request.session.id else { return }",
+        confirm: String = Self.fixtureConfirm,
         extra: String = ""
     ) -> String {
         """
@@ -80,6 +87,7 @@ struct ToolbarTransferConfirmationGuardTests {
                 Button { \(download) } label: { Label("Download", systemImage: "arrow.down") }
             }
             func requestToolbarTransfer(_ selection: [RemoteFileItem], from side: BrowserPaneSide, in tab: SessionTab, session: BrowserSession) {
+                let destination = ToolbarTransferPlan.destinationPath(side: side, localPath: session.local.currentPath, remotePath: session.remote.currentPath)
                 switch ToolbarTransferPlan.plan(for: selection) {
                 case .transferNow:
                     \(transferNow)
@@ -88,15 +96,21 @@ struct ToolbarTransferConfirmationGuardTests {
                 }
             }
             func confirmToolbarTransfer(_ request: ToolbarTransferRequest) {
-                guard request.tab.session?.id == request.session.id else { return }
+                \(identity)
                 \(confirm)
             }
-            func transferSelection(_ selection: [RemoteFileItem], from side: BrowserPaneSide, in tab: SessionTab, session: BrowserSession) {
+            func transferSelection(_ selection: [RemoteFileItem], from side: BrowserPaneSide, in tab: SessionTab, session: BrowserSession, destinationDirectory: String? = nil) {
                 \(extra)
+                let remoteDestination = destinationDirectory ?? session.remote.currentPath
+                let localDestination = destinationDirectory ?? session.local.currentPath
+                queue.enqueue(fileName: item.name, destinationDirectory: remoteDestination, onCompleted: {})
             }
         }
         """
     }
+
+    private static let fixtureAsk = "toolbarTransferRequest = ToolbarTransferRequest(tab: tab, session: session, side: side, selection: selection, itemCount: count, includesFolders: folders, destinationPath: destination)"
+    private static let fixtureConfirm = "transferSelection(request.selection, from: request.side, in: request.tab, session: request.session, destinationDirectory: request.destinationPath)"
 
     @Test func theTransfersScannerAcceptsTheIntendedShape() throws {
         let violations = try Self.transfersViolations(Self.transfersFixture())
@@ -109,13 +123,25 @@ struct ToolbarTransferConfirmationGuardTests {
         ["ask": "transferSelection(selection, from: side, in: tab, session: session)"],
         ["confirm": "transferSelection(tab.session!.remote.selectedItems, from: request.side, in: request.tab, session: request.session)"],
         ["extra": "func other() { transferSelection(a, from: .local, in: t, session: s) }"],
+        ["identity": ""],
+        ["identity": "guard request.tab.session != nil else { return }"],
+        ["identity": "if request.tab.session?.id == request.session.id { print(1) }"],
+        ["confirmThenIdentity": ""],
+        ["confirm": "transferSelection(request.selection, from: request.side, in: request.tab, session: request.session)"],
+        ["transferNow": "transferSelection(selection, from: side, in: tab, session: session)"],
+        ["extra": "queue.enqueueTree(directoryName: item.name, destinationDirectory: session.local.currentPath, onCompleted: {})"],
+        ["ask": "toolbarTransferRequest = ToolbarTransferRequest(tab: tab, session: session, side: side, selection: selection, itemCount: count, includesFolders: folders, destinationPath: session.remote.currentPath)"],
     ])
     func theTransfersScannerSeesABypass(_ planted: [String: String]) throws {
         let fixture = Self.transfersFixture(
             upload: planted["upload"] ?? "requestToolbarTransfer(selected, from: .local, in: tab, session: session)",
             download: planted["download"] ?? "requestToolbarTransfer(selected, from: .remote, in: tab, session: session)",
-            ask: planted["ask"] ?? "toolbarTransferRequest = ToolbarTransferRequest(tab: tab, session: session, side: side, selection: selection, itemCount: count, includesFolders: folders, destinationPath: path)",
-            confirm: planted["confirm"] ?? "transferSelection(request.selection, from: request.side, in: request.tab, session: request.session)",
+            transferNow: planted["transferNow"] ?? "transferSelection(selection, from: side, in: tab, session: session, destinationDirectory: destination)",
+            ask: planted["ask"] ?? Self.fixtureAsk,
+            identity: planted["confirmThenIdentity"] != nil
+                ? Self.fixtureConfirm : (planted["identity"] ?? "guard request.tab.session?.id == request.session.id else { return }"),
+            confirm: planted["confirmThenIdentity"] != nil
+                ? "guard request.tab.session?.id == request.session.id else { return }" : (planted["confirm"] ?? Self.fixtureConfirm),
             extra: planted["extra"] ?? "")
         #expect(try Self.transfersViolations(fixture).isEmpty == false, "planted \(planted) passed")
     }
@@ -217,6 +243,9 @@ struct ToolbarTransferConfirmationGuardTests {
         if !request.contains("ToolbarTransferPlan.plan(") {
             violations.append("requestToolbarTransfer( does not ask ToolbarTransferPlan.plan(")
         }
+        if !Self.squeezed(request).contains("letdestination=ToolbarTransferPlan.destinationPath(") {
+            violations.append("requestToolbarTransfer( does not read the destination once through ToolbarTransferPlan.destinationPath(")
+        }
         if let now = request.range(of: "case .transferNow"), let ask = request.range(of: "case .ask"),
            now.upperBound <= ask.lowerBound {
             let nowBranch = request[now.upperBound..<ask.lowerBound]
@@ -224,12 +253,16 @@ struct ToolbarTransferConfirmationGuardTests {
             if !nowBranch.contains("transferSelection(") {
                 violations.append("the .transferNow case does not call transferSelection(")
             }
+            if !Self.squeezed(String(nowBranch)).contains("destinationDirectory:destination)") {
+                violations.append("the .transferNow case does not pass the destination it read")
+            }
             if askBranch.contains("transferSelection(") {
                 violations.append("the .ask case calls transferSelection(")
             }
             let squeezedAsk = Self.squeezed(String(askBranch))
             if !squeezedAsk.contains("toolbarTransferRequest=ToolbarTransferRequest(")
-                || !squeezedAsk.contains("selection:selection") {
+                || !squeezedAsk.contains("selection:selection")
+                || !squeezedAsk.contains("destinationPath:destination)") {
                 violations.append("the .ask case does not store a ToolbarTransferRequest( carrying the pressed selection")
             }
         } else {
@@ -240,12 +273,37 @@ struct ToolbarTransferConfirmationGuardTests {
         }
 
         let confirm = try Self.body(after: "func confirmToolbarTransfer(", in: strict)
-        if !Self.squeezed(confirm).contains(
-            "transferSelection(request.selection,from:request.side,in:request.tab,session:request.session)") {
-            violations.append("confirmToolbarTransfer( does not transfer the request's own selection, side, tab and session")
+        let squeezedConfirm = Self.squeezed(confirm)
+        let transferCall = "transferSelection(request.selection,from:request.side,in:request.tab,"
+            + "session:request.session,destinationDirectory:request.destinationPath)"
+        let identityGuard = "guardrequest.tab.session?.id==request.session.idelse{return}"
+        let callAt = squeezedConfirm.range(of: transferCall)
+        if callAt == nil {
+            violations.append("confirmToolbarTransfer( does not transfer the request's own selection, side, tab, session and captured destination")
+        }
+        if let identityAt = squeezedConfirm.range(of: identityGuard) {
+            if let callAt, identityAt.lowerBound > callAt.lowerBound {
+                violations.append("confirmToolbarTransfer( compares the session identity only after transferring")
+            }
+        } else {
+            violations.append("confirmToolbarTransfer( does not return when the tab's session is no longer the captured one")
         }
         if confirm.contains("selectedItems") {
             violations.append("confirmToolbarTransfer( re-reads a pane's selectedItems at confirm")
+        }
+
+        let transfer = Self.squeezed(try Self.body(after: "func transferSelection(", in: strict))
+        if !transfer.contains("destinationDirectory:String?=nil)") {
+            violations.append("transferSelection( has no defaulted destinationDirectory parameter")
+        }
+        for side in ["remote", "local"]
+        where !transfer.contains("destinationDirectory??session.\(side).currentPath") {
+            violations.append("transferSelection( does not fall back to session.\(side).currentPath")
+        }
+        // Beside the fallback above: an enqueue that still reads a pane's
+        // path itself ignores the destination it was handed.
+        if transfer.contains("destinationDirectory:session.") {
+            violations.append("an enqueue in transferSelection( reads a pane's currentPath instead of the resolved destination")
         }
 
         // The declaration, the .transferNow case and the confirm action: no

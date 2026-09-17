@@ -102,32 +102,44 @@ extension ContentView {
         _ selection: [RemoteFileItem], from side: BrowserPaneSide,
         in tab: SessionTab, session: BrowserSession
     ) {
+        let destination = ToolbarTransferPlan.destinationPath(
+            side: side, localPath: session.local.currentPath, remotePath: session.remote.currentPath)
         switch ToolbarTransferPlan.plan(for: selection) {
         case .transferNow:
-            transferSelection(selection, from: side, in: tab, session: session)
+            transferSelection(selection, from: side, in: tab, session: session, destinationDirectory: destination)
         case .ask(let itemCount, let includesFolders):
             toolbarTransferRequest = ToolbarTransferRequest(
                 tab: tab, session: session, side: side, selection: selection,
                 itemCount: itemCount, includesFolders: includesFolders,
-                destinationPath: side == .local ? session.remote.currentPath : session.local.currentPath)
+                destinationPath: destination)
         }
     }
 
     /// The question's confirm action: transfers the selection captured at
-    /// press. A tab whose session was replaced or ended while the question
+    /// press into the destination captured at press — the one the question
+    /// named, even if the other pane has moved since. A tab whose session was replaced or ended while the question
     /// was open (a disconnect, a reconnect) transfers nothing — the captured
     /// session's file systems are no longer the tab's.
     func confirmToolbarTransfer(_ request: ToolbarTransferRequest) {
         guard request.tab.session?.id == request.session.id else { return }
-        transferSelection(request.selection, from: request.side, in: request.tab, session: request.session)
+        transferSelection(
+            request.selection, from: request.side, in: request.tab, session: request.session,
+            destinationDirectory: request.destinationPath)
     }
 
     /// The per-item enqueue behind the context menu's transfer and the
     /// toolbar buttons (the latter through `requestToolbarTransfer`).
+    ///
+    /// `destinationDirectory` nil means the other pane's current directory,
+    /// read now — what the context menu passes. The toolbar passes the
+    /// directory it read at press, so a confirmed question transfers to the
+    /// directory it named.
     func transferSelection(
         _ selection: [RemoteFileItem], from side: BrowserPaneSide,
-        in tab: SessionTab, session: BrowserSession
+        in tab: SessionTab, session: BrowserSession, destinationDirectory: String? = nil
     ) {
+        let remoteDestination = destinationDirectory ?? session.remote.currentPath
+        let localDestination = destinationDirectory ?? session.local.currentPath
         let queue = tab.transferQueue
         for item in selection where item.kind != .symlink {
             switch (side, item.kind) {
@@ -136,28 +148,28 @@ extension ContentView {
                     directoryName: item.name, direction: .upload,
                     source: session.localFS, sourceDirectory: item.path,
                     destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
+                    destinationDirectory: remoteDestination,
                     onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
             case (.local, _):
                 queue.enqueue(
                     fileName: item.name, direction: .upload,
                     source: session.localFS, sourcePath: item.path,
                     destination: session.remoteFS,
-                    destinationDirectory: session.remote.currentPath,
+                    destinationDirectory: remoteDestination,
                     onCompleted: { [weak remote = session.remote] in await remote?.refresh() })
             case (.remote, .directory):
                 queue.enqueueTree(
                     directoryName: item.name, direction: .download,
                     source: session.remoteFS, sourceDirectory: item.path,
                     destination: session.localFS,
-                    destinationDirectory: session.local.currentPath,
+                    destinationDirectory: localDestination,
                     onCompleted: { [weak local = session.local] in await local?.refresh() })
             case (.remote, _):
                 queue.enqueue(
                     fileName: item.name, direction: .download,
                     source: session.remoteFS, sourcePath: item.path,
                     destination: session.localFS,
-                    destinationDirectory: session.local.currentPath,
+                    destinationDirectory: localDestination,
                     onCompleted: { [weak local = session.local] in await local?.refresh() })
             }
         }
