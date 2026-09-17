@@ -146,5 +146,69 @@
             <string>Dieses Login-Set wird von %1$lld Sitzungen verwendet, direkt oder für ihren Jump-Host. Sein Schlüssel zeigt dann für alle auf den konvertierten Schlüssel „%2$@“.</string>
         </dict>
     </dict>
+    <key>browser.transferConfirm.upload.message %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld Element wird nach „%2$@“ hochgeladen.</string>
+            <key>other</key>
+            <string>%1$lld Elemente werden nach „%2$@“ hochgeladen.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.upload.messageWithFolders %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld Ordner wird mit seinem gesamten Inhalt nach „%2$@“ hochgeladen.</string>
+            <key>other</key>
+            <string>%1$lld Elemente, darunter Ordner mit ihrem gesamten Inhalt, werden nach „%2$@“ hochgeladen.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.download.message %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld Element wird nach „%2$@“ heruntergeladen.</string>
+            <key>other</key>
+            <string>%1$lld Elemente werden nach „%2$@“ heruntergeladen.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.download.messageWithFolders %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld Ordner wird mit seinem gesamten Inhalt nach „%2$@“ heruntergeladen.</string>
+            <key>other</key>
+            <string>%1$lld Elemente, darunter Ordner mit ihrem gesamten Inhalt, werden nach „%2$@“ heruntergeladen.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

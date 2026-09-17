@@ -215,6 +215,14 @@
 "browser.uploadHelp" = "Wyślij zaznaczony lokalny plik/folder do katalogu zdalnego";
 "browser.download" = "Pobierz";
 "browser.downloadHelp" = "Pobierz zaznaczony zdalny plik/folder do katalogu lokalnego";
+
+/* Toolbar transfer question (2026-09-17): asked before Upload/Download transfers more than one item or a folder */
+"browser.transferConfirm.upload.title" = "Wysłać zaznaczenie?";
+"browser.transferConfirm.download.title" = "Pobrać zaznaczenie?";
+"browser.transferConfirm.upload.message %lld %@" = "%1$lld elementu zostanie wysłane do „%2$@”.";
+"browser.transferConfirm.upload.messageWithFolders %lld %@" = "%1$lld elementu, w tym foldery z całą zawartością, zostanie wysłane do „%2$@”.";
+"browser.transferConfirm.download.message %lld %@" = "%1$lld elementu zostanie pobrane do „%2$@”.";
+"browser.transferConfirm.download.messageWithFolders %lld %@" = "%1$lld elementu, w tym foldery z całą zawartością, zostanie pobrane do „%2$@”.";
 "browser.pane.goUpHelp" = "Katalog nadrzędny";
 "browser.pane.refreshHelp" = "Odśwież";
 "browser.pane.retry" = "Spróbuj ponownie";

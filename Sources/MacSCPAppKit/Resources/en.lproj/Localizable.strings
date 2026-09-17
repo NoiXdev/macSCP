@@ -213,6 +213,14 @@
 "browser.uploadHelp" = "Upload the selected local file/folder to the remote directory";
 "browser.download" = "Download";
 "browser.downloadHelp" = "Download the selected remote file/folder to the local directory";
+
+/* Toolbar transfer question (2026-09-17): asked before Upload/Download transfers more than one item or a folder */
+"browser.transferConfirm.upload.title" = "Upload the selection?";
+"browser.transferConfirm.download.title" = "Download the selection?";
+"browser.transferConfirm.upload.message %lld %@" = "%1$lld items will be uploaded to “%2$@”.";
+"browser.transferConfirm.upload.messageWithFolders %lld %@" = "%1$lld items, including folders with everything in them, will be uploaded to “%2$@”.";
+"browser.transferConfirm.download.message %lld %@" = "%1$lld items will be downloaded to “%2$@”.";
+"browser.transferConfirm.download.messageWithFolders %lld %@" = "%1$lld items, including folders with everything in them, will be downloaded to “%2$@”.";
 "browser.pane.goUpHelp" = "Parent directory";
 "browser.pane.refreshHelp" = "Refresh";
 "browser.pane.retry" = "Try again";

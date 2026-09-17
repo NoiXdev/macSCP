@@ -56,12 +56,13 @@ extension ContentView {
     /// Locally selected files/folders → current remote directory.
     /// Symlinks in the selection are skipped silently (not a meaningful
     /// transfer target); enabled exactly when the menu would offer the same
-    /// transfer — see `offersTransfer`.
+    /// transfer — see `offersTransfer`. Asks first when the selection holds
+    /// more than one item or a folder — see `requestToolbarTransfer`.
     @ViewBuilder
     func uploadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.local.selectedItems
         Button {
-            transferSelection(selected, from: .local, in: tab, session: session)
+            requestToolbarTransfer(selected, from: .local, in: tab, session: session)
         } label: {
             Label(L10n.string("browser.upload", "Upload"), systemImage: "arrow.up")
         }
@@ -74,12 +75,13 @@ extension ContentView {
     /// Remotely selected files/folders → current local directory.
     /// Symlinks in the selection are skipped silently (not a meaningful
     /// transfer target); enabled exactly when the menu would offer the same
-    /// transfer — see `offersTransfer`.
+    /// transfer — see `offersTransfer`. Asks first when the selection holds
+    /// more than one item or a folder — see `requestToolbarTransfer`.
     @ViewBuilder
     func downloadButton(in tab: SessionTab, session: BrowserSession) -> some View {
         let selected = session.remote.selectedItems
         Button {
-            transferSelection(selected, from: .remote, in: tab, session: session)
+            requestToolbarTransfer(selected, from: .remote, in: tab, session: session)
         } label: {
             Label(L10n.string("browser.download", "Download"), systemImage: "arrow.down")
         }
@@ -89,7 +91,39 @@ extension ContentView {
             "browser.downloadHelp", "Download the selected remote file/folder to the local directory"))
     }
 
-    /// Context-menu transfer: same per-item enqueue the toolbar buttons use.
+    /// The toolbar buttons' route to a transfer (maintainer decision of
+    /// 2026-09-16): `ToolbarTransferPlan` decides whether to ask. A single
+    /// file transfers at once; anything more stores a
+    /// `ToolbarTransferRequest` carrying the selection as it stands at this
+    /// press, and the window's question (`ContentView+Sheets.swift`)
+    /// answers it through `confirmToolbarTransfer(_:)`. The context menu and
+    /// drag and drop do not come through here and do not ask.
+    func requestToolbarTransfer(
+        _ selection: [RemoteFileItem], from side: BrowserPaneSide,
+        in tab: SessionTab, session: BrowserSession
+    ) {
+        switch ToolbarTransferPlan.plan(for: selection) {
+        case .transferNow:
+            transferSelection(selection, from: side, in: tab, session: session)
+        case .ask(let itemCount, let includesFolders):
+            toolbarTransferRequest = ToolbarTransferRequest(
+                tab: tab, session: session, side: side, selection: selection,
+                itemCount: itemCount, includesFolders: includesFolders,
+                destinationPath: side == .local ? session.remote.currentPath : session.local.currentPath)
+        }
+    }
+
+    /// The question's confirm action: transfers the selection captured at
+    /// press. A tab whose session was replaced or ended while the question
+    /// was open (a disconnect, a reconnect) transfers nothing — the captured
+    /// session's file systems are no longer the tab's.
+    func confirmToolbarTransfer(_ request: ToolbarTransferRequest) {
+        guard request.tab.session?.id == request.session.id else { return }
+        transferSelection(request.selection, from: request.side, in: request.tab, session: request.session)
+    }
+
+    /// The per-item enqueue behind the context menu's transfer and the
+    /// toolbar buttons (the latter through `requestToolbarTransfer`).
     func transferSelection(
         _ selection: [RemoteFileItem], from side: BrowserPaneSide,
         in tab: SessionTab, session: BrowserSession

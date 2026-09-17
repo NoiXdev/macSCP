@@ -64,6 +64,31 @@ extension ContentView {
         } message: {
             Text(closeOthersWarningText)
         }
+        // The toolbar's Upload/Download question (maintainer decision of
+        // 2026-09-16): asked for a selection of more than one item or a
+        // folder, never for a single file (`ToolbarTransferPlan`). The
+        // request reaches the buttons through `presenting:`; the confirm
+        // button transfers the selection captured at press, Cancel only
+        // closes the question, and the `isPresented:` setter only clears
+        // state.
+        .confirmationDialog(
+            toolbarTransferRequest.map { ToolbarTransferPlan.title(side: $0.side) } ?? "",
+            isPresented: Binding(
+                get: { toolbarTransferRequest != nil },
+                set: { isPresented in if !isPresented { toolbarTransferRequest = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: toolbarTransferRequest
+        ) { request in
+            Button(ToolbarTransferPlan.confirmLabel(side: request.side)) {
+                confirmToolbarTransfer(request)
+            }
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {}
+        } message: { request in
+            Text(ToolbarTransferPlan.message(
+                side: request.side, itemCount: request.itemCount,
+                includesFolders: request.includesFolders, destinationPath: request.destinationPath))
+        }
         // "Session is already open" (C2) — the same shape as the two close
         // dialogs above, and non-destructive: both answers do something, so
         // neither carries a role. Only what is possible is offered, per this

@@ -345,6 +345,11 @@ struct ContentView: View {
     /// `closeWarningText` is: the dialog reads a snapshot rather than
     /// recomputing counts that can change while it is on screen.
     @State var closeOthersWarningText: String = ""
+    /// The toolbar's pending Upload/Download question (maintainer decision
+    /// of 2026-09-16), or `nil` when none is showing — set by
+    /// `requestToolbarTransfer` for a selection of more than one item or a
+    /// folder, answered in `ContentView+Sheets.swift`.
+    @State var toolbarTransferRequest: ToolbarTransferRequest?
 
     // MARK: - Session already open ("Sitzung ist schon offen", C2)
 

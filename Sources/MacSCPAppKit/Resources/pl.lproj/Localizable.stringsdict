@@ -170,5 +170,85 @@
             <string>Ten zestaw logowania jest używany przez %1$lld sesji, bezpośrednio lub dla ich hosta pośredniczącego. Jego klucz będzie wskazywał na przekonwertowany klucz „%2$@” dla wszystkich z nich.</string>
         </dict>
     </dict>
+    <key>browser.transferConfirm.upload.message %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld element zostanie wysłany do „%2$@”.</string>
+            <key>few</key>
+            <string>%1$lld elementy zostaną wysłane do „%2$@”.</string>
+            <key>many</key>
+            <string>%1$lld elementów zostanie wysłanych do „%2$@”.</string>
+            <key>other</key>
+            <string>%1$lld elementu zostanie wysłane do „%2$@”.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.upload.messageWithFolders %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld folder zostanie wysłany do „%2$@” wraz z całą zawartością.</string>
+            <key>few</key>
+            <string>%1$lld elementy, w tym foldery z całą zawartością, zostaną wysłane do „%2$@”.</string>
+            <key>many</key>
+            <string>%1$lld elementów, w tym foldery z całą zawartością, zostanie wysłanych do „%2$@”.</string>
+            <key>other</key>
+            <string>%1$lld elementu, w tym foldery z całą zawartością, zostanie wysłane do „%2$@”.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.download.message %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld element zostanie pobrany do „%2$@”.</string>
+            <key>few</key>
+            <string>%1$lld elementy zostaną pobrane do „%2$@”.</string>
+            <key>many</key>
+            <string>%1$lld elementów zostanie pobranych do „%2$@”.</string>
+            <key>other</key>
+            <string>%1$lld elementu zostanie pobrane do „%2$@”.</string>
+        </dict>
+    </dict>
+    <key>browser.transferConfirm.download.messageWithFolders %lld %@</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%1$#@items@</string>
+        <key>items</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%1$lld folder zostanie pobrany do „%2$@” wraz z całą zawartością.</string>
+            <key>few</key>
+            <string>%1$lld elementy, w tym foldery z całą zawartością, zostaną pobrane do „%2$@”.</string>
+            <key>many</key>
+            <string>%1$lld elementów, w tym foldery z całą zawartością, zostanie pobranych do „%2$@”.</string>
+            <key>other</key>
+            <string>%1$lld elementu, w tym foldery z całą zawartością, zostanie pobrane do „%2$@”.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

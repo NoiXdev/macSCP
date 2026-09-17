@@ -213,6 +213,14 @@
 "browser.uploadHelp" = "Ausgewählte lokale Datei/Ordner ins Remote-Verzeichnis hochladen";
 "browser.download" = "Herunterladen";
 "browser.downloadHelp" = "Ausgewählte Remote-Datei/Ordner ins lokale Verzeichnis herunterladen";
+
+/* Toolbar transfer question (2026-09-17): asked before Upload/Download transfers more than one item or a folder */
+"browser.transferConfirm.upload.title" = "Auswahl hochladen?";
+"browser.transferConfirm.download.title" = "Auswahl herunterladen?";
+"browser.transferConfirm.upload.message %lld %@" = "%1$lld Elemente werden nach „%2$@“ hochgeladen.";
+"browser.transferConfirm.upload.messageWithFolders %lld %@" = "%1$lld Elemente, darunter Ordner mit ihrem gesamten Inhalt, werden nach „%2$@“ hochgeladen.";
+"browser.transferConfirm.download.message %lld %@" = "%1$lld Elemente werden nach „%2$@“ heruntergeladen.";
+"browser.transferConfirm.download.messageWithFolders %lld %@" = "%1$lld Elemente, darunter Ordner mit ihrem gesamten Inhalt, werden nach „%2$@“ heruntergeladen.";
 "browser.pane.goUpHelp" = "Übergeordnetes Verzeichnis";
 "browser.pane.refreshHelp" = "Aktualisieren";
 "browser.pane.retry" = "Erneut versuchen";

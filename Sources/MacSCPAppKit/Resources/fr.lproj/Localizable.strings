@@ -215,6 +215,14 @@
 "browser.uploadHelp" = "Envoyer le fichier/dossier local sélectionné vers le répertoire distant";
 "browser.download" = "Télécharger";
 "browser.downloadHelp" = "Télécharger le fichier/dossier distant sélectionné vers le répertoire local";
+
+/* Toolbar transfer question (2026-09-17): asked before Upload/Download transfers more than one item or a folder */
+"browser.transferConfirm.upload.title" = "Envoyer la sélection ?";
+"browser.transferConfirm.download.title" = "Télécharger la sélection ?";
+"browser.transferConfirm.upload.message %lld %@" = "%1$lld éléments seront envoyés vers « %2$@ ».";
+"browser.transferConfirm.upload.messageWithFolders %lld %@" = "%1$lld éléments, dont des dossiers avec tout leur contenu, seront envoyés vers « %2$@ ».";
+"browser.transferConfirm.download.message %lld %@" = "%1$lld éléments seront téléchargés dans « %2$@ ».";
+"browser.transferConfirm.download.messageWithFolders %lld %@" = "%1$lld éléments, dont des dossiers avec tout leur contenu, seront téléchargés dans « %2$@ ».";
 "browser.pane.goUpHelp" = "Répertoire parent";
 "browser.pane.refreshHelp" = "Actualiser";
 "browser.pane.retry" = "Réessayer";
