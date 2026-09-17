@@ -29,7 +29,11 @@ struct ExportManagedKeyPassphraseTests {
         let uncoveredPath: String
     }
 
-    private func makeFixture() throws -> Fixture {
+    /// - Parameter coveredSlotUnreadable: the view model reads its secrets
+    ///   through a store whose read of the COVERED key's own slot throws,
+    ///   the way a locked Keychain does, while that slot does hold the
+    ///   passphrase. Every other slot reads normally.
+    private func makeFixture(coveredSlotUnreadable: Bool = false) throws -> Fixture {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-exportkey-\(UUID().uuidString)")
         let secrets = InMemorySecretStore()
@@ -45,8 +49,11 @@ struct ExportManagedKeyPassphraseTests {
         try keys.add(covered)
         try keys.add(uncovered)
         try secrets.savePassword(Self.managedPassphrase, for: covered.id)
+        let vmSecrets: any SecretStore =
+            coveredSlotUnreadable
+            ? SlotUnreadableSecretStore(inner: secrets, unreadableID: covered.id) : secrets
         let vm = SessionListViewModel(
-            store: SessionStore(directory: dir), secrets: secrets,
+            store: SessionStore(directory: dir), secrets: vmSecrets,
             auditStore: AuditLogStore(directory: dir),
             loginSetStore: LoginSetStore(directory: dir), keys: keys)
         return Fixture(
@@ -131,5 +138,40 @@ struct ExportManagedKeyPassphraseTests {
 
         #expect(exportMissing(fixture, uncovered).missing == 1)
         #expect(exportMissing(fixture, foreign).missing == 1)
+    }
+
+    /// Fail closed: when the Keychain cannot say whether the managed key's
+    /// slot holds the passphrase, the export counts the login as missing it
+    /// — the answer a user can check — rather than as covered. The slot
+    /// DOES hold the passphrase here, so only the unanswered read separates
+    /// this case from `aSessionOnAManagedKeyWithAStoredPassphraseIsCovered`.
+    @Test func aManagedKeySlotTheKeychainCannotReadCountsAsMissing() throws {
+        let fixture = try makeFixture(coveredSlotUnreadable: true)
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let session = try keySession(fixture, path: fixture.coveredPath)
+
+        let result = exportMissing(fixture, session)
+        #expect(result.missing == 1, "an unanswered managed-key read was counted as covered")
+        #expect(result.carriesNoSecret)
+    }
+}
+
+/// Reads every slot from `inner`, except `unreadableID`'s, whose read throws
+/// the status a locked Keychain returns (`errSecInteractionNotAllowed`).
+private struct SlotUnreadableSecretStore: SecretStore {
+    let inner: InMemorySecretStore
+    let unreadableID: UUID
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        try inner.savePassword(password, for: sessionID)
+    }
+
+    func password(for sessionID: UUID) throws -> String? {
+        if sessionID == unreadableID { throw KeychainError(status: -25308) }
+        return try inner.password(for: sessionID)
+    }
+
+    func deletePassword(for sessionID: UUID) throws {
+        try inner.deletePassword(for: sessionID)
     }
 }

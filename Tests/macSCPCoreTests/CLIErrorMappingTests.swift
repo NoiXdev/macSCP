@@ -178,6 +178,7 @@ struct CLIErrorMappingTests {
         #expect(refused.count == 2, "refused: \(refused.map(\.rawValue))")
         #expect(DiagnosticScope.allCases.count == 5)
     }
+
     /// An unreadable forwarding store exits the way an unreadable SESSION
     /// store already does — the code is read off the error `SessionStore`
     /// really throws for a garbage file, not written down here, so the two
@@ -187,7 +188,7 @@ struct CLIErrorMappingTests {
             .appendingPathComponent("macscp-cli-error-mapping-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data("kein json".utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
+        try Data("not json".utf8).write(to: dir.appendingPathComponent("sessions-v2.json"))
         var sessionStoreFailure: (any Error)?
         do {
             _ = try SessionStore(directory: dir).all()
