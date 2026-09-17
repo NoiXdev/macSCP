@@ -612,18 +612,32 @@ final class TunnelManager {
     /// forwarding the OLD ports while the sheet showed the new ones. Stopping
     /// is the honest answer, and starting again is one click in the same
     /// menu.
+    ///
+    /// **The write comes first, and only a write that happened stops
+    /// anything** (next build of 2026-09-17, Task 2). The stop is for an
+    /// edit that took effect; a write the store refuses — an unreadable
+    /// `tunnels.json` (`TunnelStoreError.unreadable`) — changed nothing, so
+    /// the running tunnel is still forwarding exactly the profile that is
+    /// still stored, and it is left running. `upsert` is synchronous, so the
+    /// order changes nothing else: the discard still follows before this
+    /// returns, and the runner it stops is still the one built from the old
+    /// profile. `aRefusedSaveOrRemoveLeavesTheRunningTunnelRunning` is the
+    /// measurement.
     func save(_ profile: TunnelProfile) async throws {
-        await discardRunner(for: profile.id)
         try store.upsert(profile)
+        await discardRunner(for: profile.id)
         reload()
     }
 
-    /// Deletes a profile, stopping it first, and forgets its state — a state
+    /// Deletes a profile, then stops it and forgets its state — a state
     /// left behind would keep a row's colour alive for a profile that no
     /// longer exists.
+    ///
+    /// The delete comes first for `save(_:)`'s reason: a delete the store
+    /// refuses removed nothing, so it stops nothing either.
     func remove(_ profile: TunnelProfile) async throws {
-        await discardRunner(for: profile.id)
         try store.delete(id: profile.id)
+        await discardRunner(for: profile.id)
         states[profile.id] = nil
         reload()
     }

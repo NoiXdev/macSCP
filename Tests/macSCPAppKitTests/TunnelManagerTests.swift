@@ -380,6 +380,39 @@ struct TunnelManagerTests {
         #expect(try Data(contentsOf: fileURL) == before, "a refused write rewrote tunnels.json")
     }
 
+    /// A save or delete the store refuses changes nothing — including the
+    /// tunnel. The runner used to be discarded BEFORE the write, so a
+    /// refused edit of a running forwarding stopped it although nothing on
+    /// disk had changed.
+    @Test func aRefusedSaveOrRemoveLeavesTheRunningTunnelRunning() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let sessionID = UUID()
+        var profile = Self.profile(session: sessionID, name: "web")
+        try await rig.manager.save(profile)
+        await rig.manager.start(profile, decider: Self.accepting)
+        try await pollUntil("the forwarding is running") { rig.manager.runningCount == 1 }
+        let runner = try rig.runner(profile)
+        let fileURL = rig.directory.appendingPathComponent("tunnels.json")
+        try Data("kein json".utf8).write(to: fileURL)
+
+        profile.name = "web (renamed)"
+        await #expect(throws: TunnelStoreError.self) { try await rig.manager.save(profile) }
+        await #expect(throws: TunnelStoreError.self) { try await rig.manager.remove(profile) }
+
+        #expect(runner.stopCount == 0, "a refused write stopped the running forwarding")
+        #expect(try rig.runner(profile) === runner, "a refused write replaced the runner")
+        #expect(rig.manager.state(of: profile.id) == .active(connections: 0))
+        #expect(rig.manager.runningCount == 1)
+        #expect(rig.manager.profiles(for: sessionID).map(\.name) == ["web"])
+
+        // The control: once the file reads again, the same save does stop
+        // the runner — an edited profile is not left forwarding old ports.
+        try Data("{\"profiles\":[]}".utf8).write(to: fileURL)
+        try await rig.manager.save(profile)
+        #expect(runner.stopCount == 1, "a successful save no longer drops the runner")
+    }
+
     /// The sheet's text for that refusal names the file, and it is not the
     /// generic "Could not save" line — that line prints the error's
     /// `localizedDescription`, which for this error is a type name and a
