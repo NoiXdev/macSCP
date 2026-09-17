@@ -194,6 +194,67 @@ struct TunnelRunnerTests {
         #expect(await runner.reportReaders == 0)
     }
 
+    /// Reports a stopping attempt still has buffered are DROPPED, not
+    /// applied: no `.active` is published once `stop()` has begun.
+    ///
+    /// The reader used to drain them all into the plan first — one
+    /// intermediate `.active` and one `.debug` line per report — before the
+    /// `.stopped` (BACKLOG, "A stopped forwarding attempt's buffered
+    /// connection reports still publish intermediate `.active` states while
+    /// they drain"). The order is made deterministic by the gated runtime:
+    /// the reports are sent only once its `stop()` has been ENTERED, which
+    /// is after the runner's stop began and before the report stream is
+    /// finished, so every one of them sits in the buffer of a live reader.
+    ///
+    /// Two controls: the reader is still awaited (`reportReaders == 0` the
+    /// moment `stop()` returns), and the NEXT attempt's reports are applied
+    /// again — a runner that dropped every report from the first stop on
+    /// would satisfy the first half.
+    @Test func reportsBufferedWhileStoppingAreDroppedNotPublished() async throws {
+        let latch = TunnelLatch()
+        defer { latch.release() }
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080, firstStopGate: latch)
+        let runner = TunnelRunner(
+            profile: localProfile(), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        let stopped = TunnelCallCounter()
+        _ = Task {
+            await runner.stop()
+            stopped.record()
+        }
+        try await pollUntil("the first runtime's stop to be parked") {
+            runtimes.made[0].stopEntered == 1
+        }
+        for _ in 1...20_000 {
+            runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        }
+        runtimes.made[0].observer?(.opened)
+        latch.release()
+        try await pollUntil("the stop to return") { stopped.count == 1 }
+        #expect(await runner.reportReaders == 0)
+        try await states.waitFor(.stopped)
+
+        let recorded = states.recorded
+        #expect(recorded.count == 3, "\(recorded.count) states published, expected 3")
+        let publishedWhileStopping = recorded.dropFirst(2).dropLast().count
+        #expect(publishedWhileStopping == 0)
+        #expect(recorded.last == .stopped)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        runtimes.made[1].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+    }
+
     /// A reconnect forgets the failures: they belonged to the forward that
     /// was lost.
     @Test func aReconnectForgetsTheFailedConnections() async throws {

@@ -124,6 +124,15 @@ public actor TunnelRunner {
     /// a stale report happens to land in the next attempt.
     private(set) var reportReaders = 0
 
+    /// Set while `performStop()` runs: from its first statement until the
+    /// attempt it stops has released everything. A report that reaches
+    /// `connectionReport(_:)` inside that span is dropped — it describes a
+    /// forward the user has just asked to be gone, and applying it would
+    /// publish an `.active` between the stop and its `.stopped`. Cleared
+    /// before `performStop()` returns, so the next attempt's reports count
+    /// again.
+    private var isStopping = false
+
     /// The port the running forward actually bound — a LOCAL port for
     /// `.local`/`.dynamic`, the SERVER's for `.remote`. `nil` whenever no
     /// forward is up, which includes the whole of a reconnect.
@@ -280,6 +289,8 @@ public actor TunnelRunner {
     /// `command(_:)` queue a second stop unconditionally instead of asking
     /// whether one is needed.
     private func performStop() async {
+        isStopping = true
+        defer { isStopping = false }
         let running = task
         task = nil
         running?.cancel()
@@ -494,7 +505,10 @@ public actor TunnelRunner {
     /// call it, and the second call finds nothing.
     ///
     /// The report stream is finished only after the forward has stopped, so
-    /// the `closed` reports its teardown produces still reach the log.
+    /// the `closed` reports its teardown produces still reach the log — on
+    /// a LOSS. Under `stop()` they do not: every report arriving once the
+    /// stop has begun is dropped (`isStopping`, next build of 2026-09-17,
+    /// Task 2), buffered ones included.
     ///
     /// **And its reader is awaited.** Finishing a stream does not discard
     /// what is buffered: the reader goes on delivering it. Without the wait
@@ -504,8 +518,11 @@ public actor TunnelRunner {
     /// (`reportsFromAStoppedAttemptDoNotReachTheNext`). The wait is bounded:
     /// the stream is finished, so the reader ends once the buffer is empty,
     /// and the actor is re-entrant, so the reader's own hops onto it are not
-    /// blocked by this suspension. Whatever it delivers lands before the
-    /// caller's next state (`.stopped`, or `reconnecting`).
+    /// blocked by this suspension. Under a loss, whatever it delivers lands
+    /// before the caller's next state (`reconnecting`); under a stop it
+    /// delivers into `connectionReport(_:)`'s drop, so nothing lands between
+    /// the stop and its `.stopped`
+    /// (`reportsBufferedWhileStoppingAreDroppedNotPublished`).
     private func releaseCurrent() async {
         let held = runtime
         let dialled = connection
@@ -536,7 +553,12 @@ public actor TunnelRunner {
         reportReaders -= 1
     }
 
+    /// Applies one report — unless a stop has begun, in which case the
+    /// report is dropped (see `isStopping`). The reader still consumes it,
+    /// so the buffer still empties and `releaseCurrent()`'s wait on the
+    /// reader still ends; it only publishes nothing and logs nothing.
     private func connectionReport(_ report: ConnectionReport) {
+        guard !isStopping else { return }
         switch report {
         case .event(let event): connectionEvent(event)
         case .failed(let failure): connectionFailed(failure)
