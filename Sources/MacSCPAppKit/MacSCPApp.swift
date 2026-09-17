@@ -1046,6 +1046,16 @@ struct MacSCPApp: App {
                          launchLanguage: launchLanguage, settingsBridge: settingsBridge)
                 .tint(DesignTokens.remoteBlue)
         }
+        // Lets the Settings window grow past `SettingsView`'s 680×620 floor
+        // (next build of 2026-09-17, Task 4) instead of the fixed size a
+        // `Settings` scene renders at by default. `.contentMinSize` reads
+        // the minimum from the content's own `.frame(minWidth:minHeight:)`
+        // — `SettingsView.body` — rather than a second copy of the number
+        // here. Available since macOS 13 (`WindowResizability`'s own
+        // availability), well under this project's macOS 15 floor, and
+        // applies to `Scene` generally, `Settings` included — there is no
+        // narrower, Settings-specific opt-out.
+        .windowResizability(.contentMinSize)
 
         // The menu-bar status item is an AppKit `NSStatusItem` driven by
         // `menuBarController` (created in `init`), NOT a SwiftUI scene —

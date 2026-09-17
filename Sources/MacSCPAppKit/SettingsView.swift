@@ -71,6 +71,19 @@ enum SettingsSection: Hashable {
 /// window's "Manage Data" section (it left the "SSH" section when that
 /// section was created).
 struct SettingsView: View {
+    /// AppKit frame autosave name for the Settings window (next build of
+    /// 2026-09-17, Task 4: the Settings window can be resized). One
+    /// constant, one call site (`body`, below), so the string cannot come
+    /// to differ between the place that names it and the place that reads
+    /// it back — same reasoning as `ContentView.primaryFrameAutosaveName`.
+    ///
+    /// Unlike the primary window (`ContentView.applyFrameAutosave(to:)`),
+    /// this window has no shrink/suspend dance: it is never resized
+    /// programmatically to a compact "form" size, so there is no frame a
+    /// relaunch must avoid remembering. Set once, when the window first
+    /// resolves, is the whole mechanism.
+    static let frameAutosaveName = "macSCP.settings"
+
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
     /// instance the app menu's "Check for Updates…" item drives, threaded
@@ -158,7 +171,28 @@ struct SettingsView: View {
         // task step. The tag-filter row (E1) was added to that section
         // afterwards and has NOT been re-measured against the headroom; if
         // "View" scrolls, this frame is where that is decided.
-        .frame(width: 680, height: 620)
+        //
+        // MINIMUM rather than fixed (next build of 2026-09-17, Task 4): the
+        // 680×620 measurement above still holds as a floor every pane fits
+        // above, in all four languages — only the ceiling that used to pin
+        // the window to exactly that size is gone. `MacSCPApp`'s `Settings`
+        // scene carries the matching `.windowResizability(.contentMinSize)`,
+        // which is what makes a `minWidth`/`minHeight` frame here actually
+        // let the window grow rather than just relax which minimum SwiftUI
+        // enforces.
+        .frame(minWidth: 680, minHeight: 620)
+        // Frame autosave, so the size a resize is left at survives a
+        // relaunch (same task). `WindowAccessor` calls back on every
+        // ordinary body update, not only the first resolve — the identity
+        // check (`frameAutosaveName` is a single fixed string, never
+        // suspended) makes the actual `setFrameAutosaveName` write a
+        // one-time thing in practice, the same write-on-change shape
+        // `ContentView.applyFrameAutosave(to:)` uses for the primary
+        // window.
+        .background(WindowAccessor { window in
+            guard let window, window.frameAutosaveName != Self.frameAutosaveName else { return }
+            window.setFrameAutosaveName(Self.frameAutosaveName)
+        })
     }
 }
 

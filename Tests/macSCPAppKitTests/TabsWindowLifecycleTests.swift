@@ -627,6 +627,15 @@ struct TabsWindowLifecycleTests {
         .appendingPathComponent("Sources/MacSCPAppKit/MacSCPApp.swift")
     private static let lifecycleFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Lifecycle.swift")
+    /// Owns `primaryFrameAutosaveName` — read by
+    /// `onlyThePrimaryWindowRemembersItsFrame()` to check it differs from
+    /// the Settings window's own name.
+    private static let contentViewFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
+    /// Owns the Settings window's OWN frame autosave call (next build of
+    /// 2026-09-17, Task 4) — read by the same test, for the same reason.
+    private static let settingsViewFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/SettingsView.swift")
     /// The one owner of a tab's four teardown stages since the Quit
     /// Teardown plan, Task 1 — they used to be spelled inside
     /// `ContentView.teardown(_:reason:)`, which no delegate could call.
@@ -1231,9 +1240,14 @@ struct TabsWindowLifecycleTests {
             window opened by a move would fight the primary one for the same \
             saved frame.
             """)
-        // The negative beside them, over the whole App target: there is
-        // exactly ONE place a frame autosave name is set, so no seeded
-        // window can quietly acquire one somewhere else.
+        // The negative beside them, over the whole App target: exactly TWO
+        // places set a frame autosave name (next build of 2026-09-17,
+        // Task 4 added the second) — `ContentView`'s primary window and
+        // `SettingsView`'s Settings window — so no THIRD, seeded window can
+        // quietly acquire one somewhere else. Counted in the pass that
+        // writes this (CLAUDE.md's rule on numbers in comments): before
+        // Task 4 this was 1, and a return to that count means this guard's
+        // number goes back down too.
         let sources = try FileManager.default.contentsOfDirectory(
             at: Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit"),
             includingPropertiesForKeys: nil)
@@ -1242,11 +1256,36 @@ struct TabsWindowLifecycleTests {
             callSites += Self.occurrences(
                 of: "setFrameAutosaveName(", in: try Self.code(of: file))
         }
-        #expect(callSites == 1, """
+        #expect(callSites == 2, """
             Sources/MacSCPAppKit sets a frame autosave name in \(callSites) \
-            places, not the one applyFrameAutosave(to:) owns. Counted in the \
-            pass that writes this; a second call site means two windows can \
-            claim the same saved frame.
+            places, not the two owned by ContentView's \
+            applyFrameAutosave(to:) and SettingsView. Counted in the pass \
+            that writes this; a third call site means a window this guard \
+            does not know about can claim a saved frame.
+            """)
+        // A count alone cannot tell two DIFFERENT windows apart from one
+        // window's name set twice — that needs the two literal names
+        // themselves, over the LITERAL-KEEPING view (blanking strings would
+        // delete the very thing being checked). Two call sites sharing one
+        // name would still pass the count above while colliding on disk —
+        // the primary window's remembered frame overwriting the Settings
+        // window's, or the other way around, whichever wrote last.
+        let contentViewWithLiterals = try Self.codeWithLiterals(of: Self.contentViewFile)
+        let settingsViewWithLiterals = try Self.codeWithLiterals(of: Self.settingsViewFile)
+        let primaryName = "\"macSCP.primary\""
+        let settingsName = "\"macSCP.settings\""
+        #expect(contentViewWithLiterals.contains(primaryName), """
+            ContentView.swift no longer declares "macSCP.primary" as the \
+            primary window's autosave name — re-anchor this guard.
+            """)
+        #expect(settingsViewWithLiterals.contains(settingsName), """
+            SettingsView.swift no longer declares "macSCP.settings" as the \
+            Settings window's autosave name — re-anchor this guard.
+            """)
+        #expect(primaryName != settingsName, """
+            the primary window and the Settings window would autosave under \
+            the same name — this compares two string literals above, so a \
+            failure here means one of them was edited to match the other.
             """)
     }
 
