@@ -678,6 +678,48 @@ struct CLISessionsEditingTests {
         #expect(removed.stderr.contains("keychain entry left in place"), "\(removed.stderr)")
     }
 
+    /// `sessions rm` over a `tunnels.json` that DECODES but cannot be
+    /// written: the removal aborts with the write's own error, and the
+    /// session and the file are both left as they were.
+    ///
+    /// The other half of `rmOverAnUnreadableForwardingStoreRemovesTheSessionAndWarns`:
+    /// only an unreadable file is warned past (`StoreEditing.deleteSession`).
+    /// A file that reads fine and refuses the write would otherwise leave
+    /// the session gone and its forwardings in the file, addressing an id
+    /// nothing resolves — the order that function's doc comment exists for.
+    /// Unwritable by the file's user-immutable flag, not by permissions:
+    /// the store writes atomically, renaming a temporary file over the
+    /// target, which a read-only FILE does not prevent — and a read-only
+    /// DIRECTORY would refuse the session store's write too, so the
+    /// session would survive whatever order the removal took.
+    @Test func rmOverAForwardingStoreThatCannotBeWrittenAbortsTheRemoval() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh", "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+        let session = try #require(cli.storedSession(named: "web"))
+        try TunnelStore(directory: cli.storageDirectory).upsert(TunnelProfile(
+            sessionID: session.id, name: "db",
+            kind: .local(bind: "127.0.0.1", localPort: 5432, host: "db.internal", remotePort: 5432)))
+        let fileURL = cli.storageDirectory.appendingPathComponent("tunnels.json")
+        let before = try Data(contentsOf: fileURL)
+        let filePath = fileURL.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: filePath)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: filePath) }
+
+        let removed = try await cli.run(["sessions", "rm", "web", "--yes", "--verbose"])
+
+        #expect(
+            removed.status == CLIExitCode.connection.rawValue,
+            "exit \(removed.status): \(removed.stderr)")
+        #expect(removed.stderr.hasPrefix("Error: "), "\(removed.stderr)")
+        #expect(!removed.stderr.contains("Deleted"), "\(removed.stderr)")
+        #expect(!removed.stderr.contains("Warning:"), "\(removed.stderr)")
+        #expect(cli.storedSession(named: "web") != nil, "the session was removed anyway")
+        #expect(try Data(contentsOf: fileURL) == before, "tunnels.json changed")
+    }
+
     @Test func rmRefusesANameNoSessionCarries() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }

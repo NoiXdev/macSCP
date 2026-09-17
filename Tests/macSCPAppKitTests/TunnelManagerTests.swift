@@ -978,6 +978,58 @@ struct TunnelManagerTests {
         #expect(try Data(contentsOf: fileURL) == before, "the deletion rewrote tunnels.json")
     }
 
+    /// On a refused `deleteAll`, the deleted session's rows leave the mirror
+    /// BEFORE the first runner is stopped — which is what makes
+    /// `start(_:decider:)`'s guard refuse them while the stops are parked.
+    ///
+    /// The case above reads its results after `forgetEverything(for:)` has
+    /// returned, by which point a removal placed after the `await` would
+    /// have caught up. Here the first stop is held open on a gate and the
+    /// mirror and a racing start are read INSIDE it, before the gate opens.
+    @Test func aRefusedDeletionDropsTheRowsBeforeItStopsAnything() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let doomed = UUID()
+        let first = Self.profile(session: doomed, name: "web")
+        let second = Self.profile(session: doomed, name: "db", port: 9000)
+        for profile in [first, second] {
+            try await rig.manager.save(profile)
+            await rig.manager.start(profile, decider: Self.accepting)
+        }
+        let gate = Gate()
+        let started = try [rig.runner(first), rig.runner(second)]
+        for runner in started { runner.beforeStop = { await gate.wait() } }
+        try Data("kein json".utf8).write(to: rig.directory.appendingPathComponent("tunnels.json"))
+
+        let finished = Flag()
+        _ = Task { @MainActor in
+            await rig.manager.forgetEverything(for: doomed)
+            finished.set()
+        }
+        try await pollUntil("a stop is parked inside the deletion") { gate.arrived == 1 }
+
+        // Read while parked, before anything heals.
+        let listedWhileParked = rig.manager.profiles(for: doomed)
+        await rig.manager.start(first, decider: Self.accepting)
+        await rig.manager.start(second, decider: Self.accepting)
+        let rebuiltWhileParked = [first, second].filter { profile in
+            rig.log.runners[profile.id] !== started.first { $0.profile.id == profile.id }
+        }
+        let restartsWhileParked = started.map(\.startCount)
+
+        gate.open()
+        try await pollUntil("the deletion finished") { finished.isSet }
+
+        #expect(listedWhileParked.isEmpty, """
+            the deleted session's rows were still in the mirror while its runners were being \
+            stopped — a menu click there passes start()'s guard.
+            """)
+        #expect(rebuiltWhileParked.isEmpty, "a start during the deletion built a new runner")
+        #expect(restartsWhileParked == [1, 1], "a start during the deletion restarted a runner")
+        #expect(started.allSatisfy { $0.stopCount == 1 })
+        #expect(rig.manager.runningCount == 0)
+    }
+
     /// A menu holds the profile it was drawn with. Clicking it after the
     /// session was deleted must reach nothing — a runner built here would
     /// hold a port and a connection with no row anywhere left to stop it
