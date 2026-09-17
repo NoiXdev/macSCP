@@ -261,8 +261,8 @@ struct SessionsRemoveCommand: ParsableCommand {
         let session = try StoreEditing.requireSession(named: name)
         let forwardings = StoreEditing.forwardingCount(for: session)
         if !yes {
-            let question =
-                "Delete session \(session.name) and \(forwardings) forwardings? [y/N] "
+            let subject = SessionRemovalWording.questionSubject(forwardings: forwardings)
+            let question = "Delete session \(session.name) and \(subject)? [y/N] "
             guard CLIEnvironment.confirm(question) else {
                 OutputFormatter.note("Left \(session.name) in place.")
                 return
@@ -271,8 +271,7 @@ struct SessionsRemoveCommand: ParsableCommand {
         try StoreEditing.deleteSession(session)
         if verbose {
             OutputFormatter.note(
-                "Deleted \(session.name) and \(forwardings) forwardings; "
-                    + "keychain entry left in place.")
+                SessionRemovalWording.summary(sessionName: session.name, forwardings: forwardings))
         }
     }
 }

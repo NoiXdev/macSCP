@@ -655,6 +655,29 @@ struct CLISessionsEditingTests {
         #expect(try Data(contentsOf: fileURL) == before, "sessions rm rewrote an unreadable store")
     }
 
+    /// `--verbose` over a `tunnels.json` that cannot be read does not claim
+    /// a count it never had. The count used to come from the lenient reader,
+    /// which answers an unreadable file with no profiles, so the summary
+    /// read "Deleted web and 0 forwardings" while the file still held them.
+    @Test func rmVerboseOverAnUnreadableForwardingStoreSaysTheCountIsUnknown() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+        #expect(try await cli.run([
+            "sessions", "add", "web", "--kind", "ssh", "--host", "h.example.org", "--user", "bob",
+        ]).status == 0)
+        try Data("kein json".utf8)
+            .write(to: cli.storageDirectory.appendingPathComponent("tunnels.json"))
+
+        let removed = try await cli.run(["sessions", "rm", "web", "--yes", "--verbose"])
+
+        #expect(removed.status == 0, "sessions rm failed: \(removed.stderr)")
+        #expect(!removed.stderr.contains("0 forwardings"), "\(removed.stderr)")
+        #expect(
+            removed.stderr.contains(SessionRemovalWording.summary(sessionName: "web", forwardings: nil)),
+            "\(removed.stderr)")
+        #expect(removed.stderr.contains("keychain entry left in place"), "\(removed.stderr)")
+    }
+
     @Test func rmRefusesANameNoSessionCarries() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }
@@ -1049,6 +1072,11 @@ struct CLISessionsStoreEditingGuardTests {
             guard cannot see.
             """)
         #expect(slice.contains("[y/N]"), "sessions rm asks nothing that reads as a question")
+        // The question's forwarding count comes from the wording that says
+        // "unknown" for a count that could not be read, not from a number
+        // interpolated here (next build of 2026-09-17, Task 2).
+        let wording = "\(String(describing: SessionRemovalWording.self)).questionSubject("
+        #expect(slice.contains(wording), "sessions rm no longer asks through \(wording)")
         #expect(slice.count < source.count, "the slice swallowed the whole file")
     }
 

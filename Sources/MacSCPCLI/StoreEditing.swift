@@ -179,9 +179,15 @@ enum StoreEditing {
 
     /// How many port forwardings the session carries — the number `rm`'s
     /// question names, so a person deleting a session knows what else goes
-    /// with it.
-    static func forwardingCount(for session: StoredSession) -> Int {
-        tunnelStore().profiles(for: session.id).count
+    /// with it — or `nil` when `tunnels.json` could not be read.
+    ///
+    /// Read through `readProfiles()`, not the lenient `profiles(for:)`: that
+    /// reader answers an unreadable file with no profiles, and the question
+    /// then said "0 forwardings" about a file that still held them
+    /// (`SessionRemovalWording`).
+    static func forwardingCount(for session: StoredSession) -> Int? {
+        guard case .success(let profiles) = tunnelStore().readProfiles() else { return nil }
+        return profiles.count(where: { $0.sessionID == session.id })
     }
 
     /// Deletes a session and everything that belongs to it.
