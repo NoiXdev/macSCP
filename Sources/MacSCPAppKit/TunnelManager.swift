@@ -114,7 +114,7 @@ final class TunnelManager {
         self.store = store
         self.makeRunner = makeRunner
         self.sessionIDs = sessionIDs
-        allProfiles = store.allProfiles()
+        allProfiles = Self.listed(store.allProfiles(), known: sessionIDs())
     }
 
     /// Handed to `SessionListViewModel.addDeletionObserver(_:)` so a deleted
@@ -457,15 +457,39 @@ final class TunnelManager {
     /// one decision, and it belongs beside the model that spells
     /// `AutoStart`. `.off` is excluded by asking for every OTHER case, so a
     /// fourth moment added to `AutoStart` appears here without an edit.
+    ///
+    /// The store's rows are kept only where the mirror lists them, so a
+    /// row whose session is gone (`listed(_:known:)`) is not offered here
+    /// either — its Start button would be refused by the same guard.
     func reloadAutoStartProfiles() -> [TunnelProfile] {
         reload()
+        let mirrored = Set(allProfiles.map(\.id))
         return TunnelProfile.AutoStart.allCases
             .filter { $0 != .off }
             .flatMap { store.autoStart($0) }
+            .filter { mirrored.contains($0.id) }
     }
 
+    /// Re-reads the store into the mirror, through the same session filter
+    /// as `init` and the activation reconcile (`listed(_:known:)`).
     func reload() {
-        allProfiles = store.allProfiles()
+        allProfiles = Self.listed(store.allProfiles(), known: sessionIDs())
+    }
+
+    /// The rows the mirror lists out of what the store read: every row whose
+    /// session the session store lists, or every row when the session store
+    /// could not be read (`known == nil`). The one spelling of that rule;
+    /// its three callers, counted 2026-09-17, are `init`, `reload()` and
+    /// `performReconcilingReload()`. `reload()`'s own four callers in this
+    /// file, counted the same day, are `save(_:)`, `remove(_:)`,
+    /// `startAutoStart(_:)` and `reloadAutoStartProfiles()`, so none of them
+    /// brings an orphan row back — at launch
+    /// `startAutoStart(_:)` runs before any activation reconcile, and an
+    /// orphan with autostart set would otherwise be dialled into a
+    /// `sessionMissing` failure.
+    private static func listed(_ profiles: [TunnelProfile], known: Set<UUID>?) -> [TunnelProfile] {
+        guard let known else { return profiles }
+        return profiles.filter { known.contains($0.sessionID) }
     }
 
     /// The re-read the app performs when it becomes active (CLI sessions and
@@ -513,7 +537,11 @@ final class TunnelManager {
     /// the mirror and not from the file: this is a reader, and the rows are
     /// the user's to inspect in a file the earlier refusal named. A session
     /// store that cannot be read drops nothing. A row dropped here is
-    /// discarded like a deleted one, runner included.
+    /// discarded like a deleted one, runner included — and so is a runner
+    /// whose row `reload()` dropped earlier by the same rule, since
+    /// `reload()` is synchronous and stops nothing: the ids discarded are
+    /// the mirror's AND the runners', minus what this pass lists
+    /// (`aRunningOrphanDroppedByAReloadIsStoppedByTheNextReconcile`).
     ///
     /// The ids are snapshotted BEFORE the mirror is replaced, because after
     /// it the deleted ones are exactly what is no longer there to name.
@@ -618,13 +646,11 @@ final class TunnelManager {
         // `reloadReconciling()`. A session store that cannot be read answers
         // `nil`, and that drops nothing, for the reason an unreadable
         // `tunnels.json` drops nothing above.
-        let listed: [TunnelProfile]
-        if let known = sessionIDs() {
-            listed = profiles.filter { known.contains($0.sessionID) }
-        } else {
-            listed = profiles
-        }
-        let before = Set(allProfiles.map(\.id))
+        let listed = Self.listed(profiles, known: sessionIDs())
+        // `runners.keys` beside the mirror: a synchronous `reload()` can
+        // already have taken an orphan's row out of the mirror while its
+        // runner is still up, and `reload()` stops nothing.
+        let before = Set(allProfiles.map(\.id)).union(runners.keys)
         allProfiles = listed
         await discardAndForget(before.subtracting(Set(listed.map(\.id))))
     }

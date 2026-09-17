@@ -691,14 +691,104 @@ struct TunnelManagerTests {
             an unreadable session store dropped rows — every forwarding would vanish \
             whenever sessions-v2.json failed to decode.
             """)
+        // The orphan is RUNNING when the reconcile drops it, so the claim
+        // that a dropped row is discarded "runner included" is measured
+        // rather than satisfied by a row that never had a runner.
+        await rig.manager.start(orphan, decider: Self.accepting)
+        try await pollUntil("the orphan's forwarding is running") { rig.manager.runningCount == 1 }
+        let orphanRunner = try rig.runner(orphan)
 
         rig.sessions.ids = [kept]
         await rig.manager.reloadReconciling()
 
         #expect(rig.manager.allProfiles == [mine], "a deleted session's row is still in the mirror")
+        #expect(orphanRunner.stopCount == 1, "a dropped row's runner was left running")
+        #expect(rig.manager.states[orphan.id] == nil, "a dropped row's state was kept")
+        #expect(rig.manager.runningCount == 0)
         #expect(
             Set(rig.store.allProfiles().map(\.id)) == [mine.id, orphan.id],
             "the reconcile rewrote tunnels.json")
+    }
+
+    /// Every OTHER read of the store applies the same rule: a `save`'s
+    /// `reload()` and a freshly built manager's `init` do not bring an
+    /// orphan row back into the mirror.
+    @Test func aSaveOrANewManagerDoesNotBringAnOrphanBack() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let kept = UUID()
+        var mine = Self.profile(session: kept, name: "web")
+        let orphan = Self.profile(session: UUID(), name: "db", port: 5432)
+        for profile in [mine, orphan] { try rig.store.upsert(profile) }
+        rig.sessions.ids = [kept]
+        await rig.manager.reloadReconciling()
+        #expect(rig.manager.allProfiles == [mine])
+
+        mine.name = "web (renamed)"
+        try await rig.manager.save(mine)
+        #expect(rig.manager.allProfiles == [mine], "a save's reload brought the orphan back")
+        rig.manager.reload()
+        #expect(rig.manager.allProfiles == [mine], "reload() brought the orphan back")
+
+        let sessions = rig.sessions
+        let fresh = TunnelManager(
+            store: rig.store, makeRunner: { FakeTunnelRunner(profile: $0) },
+            sessionIDs: { sessions.ids })
+        #expect(fresh.allProfiles == [mine], "a new manager's init listed the orphan")
+        #expect(Set(rig.store.allProfiles().map(\.id)) == [mine.id, orphan.id])
+    }
+
+    /// A RUNNING orphan that a `reload()` has already taken out of the
+    /// mirror is still stopped by the next reconcile. `reload()` is
+    /// synchronous and stops nothing, so the reconcile cannot find what to
+    /// discard only in the mirror it replaces: it also discards every
+    /// runner whose profile it does not list.
+    @Test func aRunningOrphanDroppedByAReloadIsStoppedByTheNextReconcile() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let kept = UUID()
+        let mine = Self.profile(session: kept, name: "web")
+        let orphan = Self.profile(session: UUID(), name: "db", port: 5432)
+        for profile in [mine, orphan] { try rig.store.upsert(profile) }
+        rig.sessions.ids = nil
+        rig.manager.reload()
+        await rig.manager.start(orphan, decider: Self.accepting)
+        try await pollUntil("the orphan's forwarding is running") { rig.manager.runningCount == 1 }
+        let orphanRunner = try rig.runner(orphan)
+
+        rig.sessions.ids = [kept]
+        try await rig.manager.save(mine)
+        #expect(rig.manager.allProfiles == [mine])
+
+        await rig.manager.reloadReconciling()
+
+        #expect(orphanRunner.stopCount == 1, """
+            an orphan's runner outlived its row — a bound port with nothing anywhere left to \
+            stop it from until quit.
+            """)
+        #expect(rig.manager.states[orphan.id] == nil)
+        #expect(rig.manager.runningCount == 0)
+    }
+
+    /// An orphan set to start on its own is not started: at launch
+    /// `startAutoStart(_:)` runs before any activation reconcile, and a
+    /// dial of a session that no longer exists ends in a `.failed` that
+    /// stays in the Dock badge. Nor is it a row in the autostart overlay,
+    /// whose Start button would do nothing for it.
+    @Test func autoStartDoesNotStartAnOrphan() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let kept = UUID()
+        let mine = Self.profile(session: kept, name: "web", autoStart: .appStart)
+        let orphan = Self.profile(session: UUID(), name: "db", port: 5432, autoStart: .appStart)
+        for profile in [mine, orphan] { try rig.store.upsert(profile) }
+        rig.sessions.ids = [kept]
+
+        await rig.manager.startAutoStart(.appStart)
+
+        #expect(try rig.runner(mine).startCount == 1, "the control: a stored session's profile starts")
+        #expect(rig.log.runners[orphan.id] == nil, "autostart dialled an orphan row")
+        #expect(rig.manager.reloadAutoStartProfiles() == [mine], "the overlay lists an orphan row")
     }
 
     /// The production reader behind that rule: a session store that cannot
