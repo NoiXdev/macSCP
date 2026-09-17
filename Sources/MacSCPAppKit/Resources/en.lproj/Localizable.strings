@@ -57,6 +57,9 @@
 "settings.terminal.cursor.bar" = "Bar";
 "settings.terminal.cursor.underline" = "Underline";
 "settings.terminal.cursorBlink" = "Blinking";
+"settings.terminal.copyOnSelect" = "Copy text when you select it";
+"settings.terminal.pasteOnRightClick" = "Paste on right-click";
+"settings.terminal.pasteOnRightClick.footer" = "While right-click pastes, Option-right-click opens the snippet menu.";
 "settings.terminal.target.header" = "External Terminal";
 "settings.terminal.target" = "Open sessions in";
 "settings.terminal.target.builtIn" = "Built-in Terminal";

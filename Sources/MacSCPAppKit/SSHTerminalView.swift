@@ -24,8 +24,8 @@ struct SSHTerminalView: NSViewRepresentable {
         Coordinator(viewModel: viewModel)
     }
 
-    func makeNSView(context: Context) -> TerminalView {
-        let terminal = TerminalView(frame: .zero)
+    func makeNSView(context: Context) -> MacSCPTerminalView {
+        let terminal = MacSCPTerminalView(frame: .zero)
         terminal.terminalDelegate = context.coordinator
         terminal.font = resolvedFont()
         terminal.nativeBackgroundColor = DesignTokens.terminalBackground
@@ -43,6 +43,9 @@ struct SSHTerminalView: NSViewRepresentable {
         // needed.
         terminal.getTerminal().setCursorStyle(cursorStyle)
         context.coordinator.appliedCursorStyle = cursorStyle
+
+        terminal.copyOnSelect = settingsStore.terminalCopyOnSelect
+        terminal.pasteOnRightClick = settingsStore.terminalPasteOnRightClick
 
         context.coordinator.onRunSnippet = onRunSnippet
         Self.attachSnippetMenu(to: terminal, model: snippetMenu, coordinator: context.coordinator)
@@ -74,7 +77,7 @@ struct SSHTerminalView: NSViewRepresentable {
     /// reissuing `setCursorStyle` restarts the blink animation — so both are
     /// applied ONLY when the resolved value actually differs from what's
     /// currently active.
-    func updateNSView(_ terminal: TerminalView, context: Context) {
+    func updateNSView(_ terminal: MacSCPTerminalView, context: Context) {
         let desiredFont = resolvedFont()
         if terminal.font.fontName != desiredFont.fontName
             || terminal.font.pointSize != desiredFont.pointSize
@@ -89,6 +92,11 @@ struct SSHTerminalView: NSViewRepresentable {
             context.coordinator.appliedCursorStyle = desiredCursorStyle
         }
 
+        // Two plain flags read at the moment of a click, so assigning them
+        // on every render costs nothing and restarts nothing.
+        terminal.copyOnSelect = settingsStore.terminalCopyOnSelect
+        terminal.pasteOnRightClick = settingsStore.terminalPasteOnRightClick
+
         // Refreshed on EVERY render, deliberately: rebuilding the menu is
         // gated on the model below, so this is what keeps an already-built
         // menu calling the current closure instead of a captured stale one.
@@ -100,7 +108,9 @@ struct SSHTerminalView: NSViewRepresentable {
     }
 
     /// Builds the right-click menu for `model` and attaches it, recording on
-    /// the coordinator which model it was built from.
+    /// the coordinator which model it was built from. Whether a right click
+    /// opens it is `MacSCPTerminalView.menu(for:)`'s decision: with paste on
+    /// right click on, it opens on Option-right-click instead.
     @MainActor
     private static func attachSnippetMenu(
         to terminal: TerminalView, model: SnippetMenuModel, coordinator: Coordinator
@@ -131,7 +141,10 @@ struct SSHTerminalView: NSViewRepresentable {
     /// `SnippetMenuModel` carries zero items (measured), and attaching an
     /// empty menu would answer a right-click with an empty popup. With no
     /// menu attached the surface behaves exactly as it did before this
-    /// existed, which for the right mouse button is: nothing at all.
+    /// existed, which for the right mouse button is: nothing at all — unless
+    /// paste on right click is on, in which case it pastes
+    /// (`MacSCPTerminalView.menu(for:)`, which overrides the lookup this
+    /// comment measures on SwiftTerm's own class).
     @MainActor
     static func snippetContextMenu(
         model: SnippetMenuModel, action: @escaping (Snippet, Bool) -> Void

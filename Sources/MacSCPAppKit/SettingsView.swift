@@ -1004,6 +1004,20 @@ private struct TerminalSettingsTab: View {
                         L10n.string("settings.terminal.cursorBlink", "Blinking"),
                         isOn: $store.terminalCursorBlink)
                 }
+
+                Section {
+                    Toggle(
+                        L10n.string("settings.terminal.copyOnSelect", "Copy text when you select it"),
+                        isOn: $store.terminalCopyOnSelect)
+                    Toggle(
+                        L10n.string("settings.terminal.pasteOnRightClick", "Paste on right-click"),
+                        isOn: $store.terminalPasteOnRightClick)
+                } footer: {
+                    Text(L10n.string(
+                        "settings.terminal.pasteOnRightClick.footer",
+                        "While right-click pastes, Option-right-click opens the snippet menu."))
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
 

@@ -576,6 +576,37 @@ struct SettingsStoreTests {
         #expect(store.terminalCursorBlink == true)
     }
 
+    // MARK: - Terminal mouse behaviour (next build 2026-09-17, Task 6)
+
+    /// Both switches are opt-in: a right click that pastes into a remote
+    /// shell, or a selection that silently replaces the clipboard, is not
+    /// something a settings.json predating these keys may start doing.
+    @Test func terminalCopyOnSelectAndPasteOnRightClickDefaultOff() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalCopyOnSelect == false)
+        #expect(store.terminalPasteOnRightClick == false)
+    }
+
+    /// Two separate switches: flipping one must not move the other, in
+    /// either direction, and each survives a reload on its own.
+    @Test func terminalCopyOnSelectAndPasteOnRightClickRoundtripIndependently() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalCopyOnSelect = true
+        let afterCopy = SettingsStore(directory: dir)
+        #expect(afterCopy.terminalCopyOnSelect == true)
+        #expect(afterCopy.terminalPasteOnRightClick == false)
+
+        store.terminalCopyOnSelect = false
+        store.terminalPasteOnRightClick = true
+        let afterPaste = SettingsStore(directory: dir)
+        #expect(afterPaste.terminalCopyOnSelect == false)
+        #expect(afterPaste.terminalPasteOnRightClick == true)
+    }
+
     // MARK: - Update check (M11b Task 2)
 
     @Test func updateCheckDefaultsToEnabledWithNoLastCheck() {

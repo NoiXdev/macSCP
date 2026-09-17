@@ -59,6 +59,9 @@
 "settings.terminal.cursor.bar" = "Kreska";
 "settings.terminal.cursor.underline" = "Podkreślenie";
 "settings.terminal.cursorBlink" = "Miganie";
+"settings.terminal.copyOnSelect" = "Kopiuj tekst po zaznaczeniu";
+"settings.terminal.pasteOnRightClick" = "Wklejaj prawym przyciskiem myszy";
+"settings.terminal.pasteOnRightClick.footer" = "Gdy prawy przycisk myszy wkleja, menu fragmentów otwiera kliknięcie prawym przyciskiem z wciśniętym klawiszem Option.";
 "settings.terminal.target.header" = "Terminal zewnętrzny";
 "settings.terminal.target" = "Otwieraj sesje w";
 "settings.terminal.target.builtIn" = "Wbudowany terminal";

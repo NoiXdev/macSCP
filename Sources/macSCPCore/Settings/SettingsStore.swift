@@ -67,6 +67,8 @@ public final class SettingsStore {
         static let terminalFontSize = "terminalFontSize"
         static let terminalCursorStyle = "terminalCursorStyle"
         static let terminalCursorBlink = "terminalCursorBlink"
+        static let terminalCopyOnSelect = "terminalCopyOnSelect"
+        static let terminalPasteOnRightClick = "terminalPasteOnRightClick"
         static let updateCheckEnabled = "updateCheckEnabled"
         static let lastUpdateCheck = "lastUpdateCheck"
         static let terminalTarget = "terminalTarget"
@@ -101,6 +103,8 @@ public final class SettingsStore {
         static let terminalFontSize = 13
         static let terminalCursorStyle = TerminalCursorStyle.block
         static let terminalCursorBlink = true
+        static let terminalCopyOnSelect = false
+        static let terminalPasteOnRightClick = false
         static let updateCheckEnabled = true
         static let menuBarEnabled = true
         static let presignedDefaultExpiry = PresignedExpiry.oneHour
@@ -294,6 +298,23 @@ public final class SettingsStore {
     public var terminalCursorBlink: Bool {
         get { boolValue(for: Keys.terminalCursorBlink, default: Defaults.terminalCursorBlink) }
         set { setBool(newValue, for: Keys.terminalCursorBlink) }
+    }
+
+    /// Whether ending a mouse selection in the terminal copies it to the
+    /// clipboard. Default OFF: a selection that silently replaces the
+    /// clipboard is opt-in. A separate switch from
+    /// `terminalPasteOnRightClick` (maintainer decision, 2026-09-16).
+    public var terminalCopyOnSelect: Bool {
+        get { boolValue(for: Keys.terminalCopyOnSelect, default: Defaults.terminalCopyOnSelect) }
+        set { setBool(newValue, for: Keys.terminalCopyOnSelect) }
+    }
+
+    /// Whether a right click on the terminal pastes. Default OFF. While ON,
+    /// the snippet menu that a right click opens otherwise moves to
+    /// Option-right-click (maintainer decision, 2026-09-16).
+    public var terminalPasteOnRightClick: Bool {
+        get { boolValue(for: Keys.terminalPasteOnRightClick, default: Defaults.terminalPasteOnRightClick) }
+        set { setBool(newValue, for: Keys.terminalPasteOnRightClick) }
     }
 
     /// Automatic once-a-day update check at startup (M11b). Default ON;

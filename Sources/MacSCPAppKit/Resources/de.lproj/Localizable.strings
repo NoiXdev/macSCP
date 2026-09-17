@@ -57,6 +57,9 @@
 "settings.terminal.cursor.bar" = "Balken";
 "settings.terminal.cursor.underline" = "Unterstrich";
 "settings.terminal.cursorBlink" = "Blinken";
+"settings.terminal.copyOnSelect" = "Text beim Auswählen kopieren";
+"settings.terminal.pasteOnRightClick" = "Mit Rechtsklick einfügen";
+"settings.terminal.pasteOnRightClick.footer" = "Solange ein Rechtsklick einfügt, öffnest du das Snippet-Menü mit einem Rechtsklick bei gedrückter Wahltaste.";
 "settings.terminal.target.header" = "Externes Terminal";
 "settings.terminal.target" = "Sitzungen öffnen in";
 "settings.terminal.target.builtIn" = "Eingebautes Terminal";
