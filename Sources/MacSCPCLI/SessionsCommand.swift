@@ -261,8 +261,9 @@ struct SessionsRemoveCommand: ParsableCommand {
         let session = try StoreEditing.requireSession(named: name)
         let forwardings = StoreEditing.forwardingCount(for: session)
         if !yes {
-            let subject = SessionRemovalWording.questionSubject(forwardings: forwardings)
-            let question = "Delete session \(session.name) and \(subject)? [y/N] "
+            let asked = SessionRemovalWording.question(
+                sessionName: session.name, forwardings: forwardings)
+            let question = "\(asked) [y/N] "
             guard CLIEnvironment.confirm(question) else {
                 OutputFormatter.note("Left \(session.name) in place.")
                 return

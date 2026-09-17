@@ -14,13 +14,19 @@ import Foundation
 /// with no profiles, and the question and the summary said "0 forwardings"
 /// about a file that still held them.
 public enum SessionRemovalWording {
-    /// What the question names beside the session:
-    /// `Delete session <name> and <this>? [y/N]`.
-    public static func questionSubject(forwardings count: Int?) -> String {
+    /// The question, without the `[y/N]` the command appends.
+    ///
+    /// With no count it asks about the session alone and says the
+    /// forwardings stay: over an unreadable file `StoreEditing
+    /// .deleteSession(_:)` warns past the refused `deleteAll` and leaves
+    /// them in it, so "delete … and its forwardings" would promise a
+    /// deletion that does not happen.
+    public static func question(sessionName: String, forwardings count: Int?) -> String {
         guard let count else {
-            return "an unknown number of forwardings (\(unreadable))"
+            return "Delete session \(sessionName)? Its forwardings could not be read "
+                + "and will be left in the forwarding list."
         }
-        return "\(count) forwardings"
+        return "Delete session \(sessionName) and \(count) forwardings?"
     }
 
     /// The `--verbose` line written after the session was removed.

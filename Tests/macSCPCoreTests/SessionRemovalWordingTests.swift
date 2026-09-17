@@ -11,30 +11,28 @@ import Testing
 struct SessionRemovalWordingTests {
 
     @Test func aKnownCountIsNamed() {
-        #expect(SessionRemovalWording.questionSubject(forwardings: 3) == "3 forwardings")
-        #expect(SessionRemovalWording.questionSubject(forwardings: 0) == "0 forwardings")
+        #expect(
+            SessionRemovalWording.question(sessionName: "web", forwardings: 3)
+                == "Delete session web and 3 forwardings?")
+        #expect(
+            SessionRemovalWording.question(sessionName: "web", forwardings: 0)
+                == "Delete session web and 0 forwardings?")
         #expect(
             SessionRemovalWording.summary(sessionName: "web", forwardings: 2)
                 == "Deleted web and 2 forwardings; keychain entry left in place.")
     }
 
-    /// A count that could not be read says so, and says no number at all —
-    /// "0" was what the lenient reader made of an unreadable file.
-    @Test func anUnreadableCountIsUnknownNotZero() {
-        let subject = SessionRemovalWording.questionSubject(forwardings: nil)
-        #expect(subject.contains("unknown"), "\(subject)")
-        #expect(subject.contains("could not be read"), "\(subject)")
-        let subjectHasDigits = subject.contains { $0.isNumber }
-        #expect(subjectHasDigits == false, "\(subject)")
-
-        let summary = SessionRemovalWording.summary(sessionName: "web", forwardings: nil)
-        #expect(summary.contains("unknown"), "\(summary)")
-        #expect(summary.hasPrefix("Deleted web;"), "\(summary)")
-        let summaryHasDigits = summary.contains { $0.isNumber }
-        #expect(summaryHasDigits == false, "\(summary)")
-        // It does not claim the forwardings were deleted: over an unreadable
-        // file they were not.
-        #expect(!summary.contains("and"), "\(summary)")
-        #expect(summary.hasSuffix("keychain entry left in place."), "\(summary)")
+    /// A count that could not be read is not "0", and neither text promises
+    /// to delete forwardings that an unreadable file keeps: `sessions rm`
+    /// warns past that file and leaves them in it.
+    @Test func anUnreadableCountIsUnknownAndNothingPromisesToDeleteThem() {
+        #expect(
+            SessionRemovalWording.question(sessionName: "web", forwardings: nil)
+                == "Delete session web? Its forwardings could not be read "
+                + "and will be left in the forwarding list.")
+        #expect(
+            SessionRemovalWording.summary(sessionName: "web", forwardings: nil)
+                == "Deleted web; the number of its forwardings is unknown "
+                + "(the forwarding list could not be read); keychain entry left in place.")
     }
 }

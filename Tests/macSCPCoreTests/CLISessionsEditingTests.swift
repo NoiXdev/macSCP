@@ -1117,7 +1117,7 @@ struct CLISessionsStoreEditingGuardTests {
         // The question's forwarding count comes from the wording that says
         // "unknown" for a count that could not be read, not from a number
         // interpolated here (next build of 2026-09-17, Task 2).
-        let wording = "\(String(describing: SessionRemovalWording.self)).questionSubject("
+        let wording = "\(String(describing: SessionRemovalWording.self)).question("
         #expect(slice.contains(wording), "sessions rm no longer asks through \(wording)")
         #expect(slice.count < source.count, "the slice swallowed the whole file")
     }
