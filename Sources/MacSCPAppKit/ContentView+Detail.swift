@@ -268,7 +268,10 @@ extension ContentView {
         // Compact form vs. browser: the minimum size depends on the window's
         // pristine state (M5c/T0, M8a/T3) — replaces the global `.frame` from
         // `MacSCPApp.swift`.
-        .frame(minWidth: isPristine ? 700 : 930, minHeight: 460)
+        .frame(
+            minWidth: isPristine
+                ? MainWindowSizePlan.formSize.width : MainWindowSizePlan.browserFloor.width,
+            minHeight: MainWindowSizePlan.formSize.height)
         .tint(DesignTokens.remoteBlue)
         .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
         .background(WindowAccessor {
@@ -291,6 +294,11 @@ extension ContentView {
         .onReceive(
             NotificationCenter.default.publisher(for: NSWindow.willCloseNotification),
             perform: handleWindowWillClose)
+        // The size a user drags the main window to is remembered across
+        // launches — see `handleWindowDidEndLiveResize(_:)`.
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSWindow.didEndLiveResizeNotification),
+            perform: handleWindowDidEndLiveResize)
         // The other half of a tab dragged into ANOTHER window (Detachable
         // Tabs plan, Task 3): the window it arrived in performed the move
         // and took the close decision on this window's behalf, because a

@@ -88,6 +88,7 @@ public final class SettingsStore {
         static let lastSeenVersion = "lastSeenVersion"
         static let diagnosticLogLevel = "diagnosticLogLevel"
         static let restoresWindows = "restoresWindows"
+        static let mainWindowBrowserSize = "mainWindowBrowserSize"
     }
 
     private enum Defaults {
@@ -341,6 +342,43 @@ public final class SettingsStore {
     public var restoresWindows: Bool {
         get { boolValue(for: Keys.restoresWindows, default: Defaults.restoresWindows) }
         set { setBool(newValue, for: Keys.restoresWindows) }
+    }
+
+    /// The size the main window was last used at while it showed a file
+    /// browser, in points — `nil` until it has been (key
+    /// `mainWindowBrowserSize`, stored as `{"width": w, "height": h}`).
+    ///
+    /// A connect grows the main window to this size rather than to the
+    /// smallest browser size, so a window that shrank to the connection form
+    /// on a disconnect — or came back at the form size after a relaunch —
+    /// opens its next session at the size it was used at. Geometry, not a
+    /// secret, and not a window: when it is written and what it grows are
+    /// App-layer decisions (`MainWindowSizePlan`), because nothing in Core
+    /// knows about windows.
+    ///
+    /// Anything on disk that is not two positive, finite numbers — a hand
+    /// edit, a future format — reads as `nil`: no remembered size, rather
+    /// than a window with no width. Setting `nil` removes the key.
+    public var mainWindowBrowserSize: CGSize? {
+        get {
+            guard case .object(let size)? = raw[Keys.mainWindowBrowserSize],
+                  case .number(let width)? = size["width"],
+                  case .number(let height)? = size["height"],
+                  width.isFinite, height.isFinite, width > 0, height > 0
+            else { return nil }
+            return CGSize(width: width, height: height)
+        }
+        set {
+            if let newValue {
+                raw[Keys.mainWindowBrowserSize] = .object([
+                    "width": .number(Double(newValue.width)),
+                    "height": .number(Double(newValue.height)),
+                ])
+            } else {
+                raw[Keys.mainWindowBrowserSize] = nil
+            }
+            persist()
+        }
     }
 
     /// Compact sidebar mode (sidebar-polish plan, Task 2): tighter row

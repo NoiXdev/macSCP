@@ -232,8 +232,9 @@ struct ContentView: View {
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
     /// bridge, title, edit error, reconnect flag) now lives per tab in
-    /// `SessionTab`; only `window`, `lastBrowserSize`, `importedHosts`,
-    /// `sessionListViewModel` and the two injected stores stay window-wide.
+    /// `SessionTab`; only `window`, `lastBrowserSize`,
+    /// `frameAutosaveSuspended`, `importedHosts`, `sessionListViewModel` and
+    /// the two injected stores stay window-wide.
     @State var tabsModel: TabsViewModel<SessionTab>
     @State var importedHosts: [SSHConfigHost] = []
     /// The full, unfiltered `~/.ssh/config` parse (M11f/T2) — read from disk
@@ -305,7 +306,16 @@ struct ContentView: View {
     @Environment(\.controlActiveState) var controlActiveState
     /// Last browser window size, remembered on disconnect — the next
     /// connect grows to it instead of the minimum size, if it's larger.
+    /// In memory, for this run only; the primary window also persists it
+    /// (`SettingsStore.mainWindowBrowserSize`) and prefers that — see
+    /// `MainWindowSizePlan.rememberedBrowserSize`.
     @State var lastBrowserSize: CGSize?
+    /// Whether the primary window's frame autosave is suspended: set by the
+    /// shrink to the form size, cleared by the next connect's grow, so the
+    /// form size is never what AppKit keeps as the window's frame. Always
+    /// `false` in a window opened by a move, which has no autosave name.
+    /// See `MainWindowSizePlan`.
+    @State var frameAutosaveSuspended = false
     /// The width the session sidebar comes up at, read from `SettingsStore`
     /// once, when the window is built.
     ///
@@ -1834,25 +1844,10 @@ struct ContentView: View {
         // disconnect/reconnect so `retryInterrupted` can resume them.
 
         // Grow the window to the browser size (user feedback 2026-07-10,
-        // M5c/T0) — to the last remembered browser size, if any and larger
-        // than the minimum size. Gated on actual window GEOMETRY, not tab
-        // connectivity (M8a/T3 review): "no tab connected" is not the same
-        // as "window is form-sized" — a second form tab plus a manually
-        // resized window would otherwise let a later connect yank the
-        // window back down. The target is clamped to at least the current
-        // frame size and the resize only fires when the window is smaller
-        // than that target in either dimension, so a connect can only grow
-        // the window, never shrink it.
-        if let window {
-            let targetSize = CGSize(
-                width: max(lastBrowserSize?.width ?? 0, 930),
-                height: max(lastBrowserSize?.height ?? 0, 620))
-            if window.frame.width < targetSize.width || window.frame.height < targetSize.height {
-                resizeWindow(
-                    toWidth: max(targetSize.width, window.frame.width),
-                    height: max(targetSize.height, window.frame.height))
-            }
-        }
+        // M5c/T0) — to the remembered browser size, if any and larger than
+        // the minimum size, and never smaller than the window already is.
+        // The decisions are `MainWindowSizePlan`'s; see `growToBrowserSize()`.
+        growToBrowserSize()
 
         var titleName = storedName
         // M31: hoisted out of the branch below so the audit recorder can be

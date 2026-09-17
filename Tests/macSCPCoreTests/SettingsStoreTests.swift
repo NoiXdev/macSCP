@@ -1198,6 +1198,55 @@ struct SettingsStoreTests {
         #expect(reloaded.sidebarWidth == 275)
     }
 
+    // MARK: - mainWindowBrowserSize
+
+    /// Absent until the main window has been used at a browser size: a
+    /// settings.json predating the key grows a connect to the floor, as
+    /// before.
+    @Test func mainWindowBrowserSizeIsAbsentByDefault() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(SettingsStore(directory: dir).mainWindowBrowserSize == nil)
+    }
+
+    @Test func mainWindowBrowserSizeRoundtripsAndIsStoredAsWidthAndHeight() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.mainWindowBrowserSize = CGSize(width: 1240.5, height: 810)
+        #expect(SettingsStore(directory: dir).mainWindowBrowserSize
+            == CGSize(width: 1240.5, height: 810))
+        #expect(try persistedRaw(dir)["mainWindowBrowserSize"]
+            == .object(["width": .number(1240.5), "height": .number(810)]))
+    }
+
+    @Test func mainWindowBrowserSizeCanBeClearedBackToNil() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.mainWindowBrowserSize = CGSize(width: 1000, height: 700)
+        store.mainWindowBrowserSize = nil
+        #expect(SettingsStore(directory: dir).mainWindowBrowserSize == nil)
+        #expect(try persistedRaw(dir)["mainWindowBrowserSize"] == nil)
+    }
+
+    /// A value typed into the file by hand that is not a usable size reads
+    /// as no size at all, rather than as a window with no width.
+    @Test(arguments: [
+        #"{"mainWindowBrowserSize": {"width": 0, "height": 700}}"#,
+        #"{"mainWindowBrowserSize": {"width": 900, "height": -1}}"#,
+        #"{"mainWindowBrowserSize": {"width": 900}}"#,
+        #"{"mainWindowBrowserSize": "900x700"}"#,
+        #"{"mainWindowBrowserSize": {"width": "900", "height": 700}}"#,
+    ])
+    func mainWindowBrowserSizeIgnoresWhatIsNotASize(_ json: String) throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: fileURL(dir))
+        #expect(SettingsStore(directory: dir).mainWindowBrowserSize == nil)
+    }
+
     /// Pins the bounds the view reads (`SettingsStore.sidebarWidthRange`,
     /// which is what the sidebar's own frame is built from) against the
     /// clamp the store applies. The two are the same range by construction;
