@@ -119,6 +119,14 @@ struct TunnelManagerTests {
         func record(_ runner: FakeTunnelRunner) { runners[runner.profile.id] = runner }
     }
 
+    /// The session ids the manager's reconcile is told exist. `nil` — the
+    /// default — is what an unreadable session store answers, and keeps
+    /// every row, so a case that is not about orphans never meets the rule.
+    @MainActor
+    final class KnownSessions {
+        var ids: Set<UUID>?
+    }
+
     /// One manager over a fresh store directory, plus the record of every
     /// runner it built.
     @MainActor
@@ -127,20 +135,26 @@ struct TunnelManagerTests {
         let store: TunnelStore
         let manager: TunnelManager
         let log: RunnerLog
+        let sessions: KnownSessions
 
         init() {
             let directory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("tunnel-manager-\(UUID().uuidString)")
             let store = TunnelStore(directory: directory)
             let log = RunnerLog()
+            let sessions = KnownSessions()
             self.directory = directory
             self.store = store
             self.log = log
-            manager = TunnelManager(store: store, makeRunner: { profile in
-                let runner = FakeTunnelRunner(profile: profile)
-                log.record(runner)
-                return runner
-            })
+            self.sessions = sessions
+            manager = TunnelManager(
+                store: store,
+                makeRunner: { profile in
+                    let runner = FakeTunnelRunner(profile: profile)
+                    log.record(runner)
+                    return runner
+                },
+                sessionIDs: { sessions.ids })
         }
 
         func tearDown() {
@@ -651,6 +665,56 @@ struct TunnelManagerTests {
         #expect(runnerBefore.stopCount == 1, "a readable deletion no longer stops its runner")
         #expect(rig.manager.states[running.id] == nil)
         #expect(rig.manager.runningCount == 0)
+    }
+
+    /// Rows whose session no longer exists leave the mirror on the
+    /// activation reconcile, and the file keeps them.
+    ///
+    /// They arise when a session is deleted while `tunnels.json` cannot be
+    /// read: the store refuses the `deleteAll`, and once the file is repaired
+    /// the deleted session's rows read back — invisible in every sheet (no
+    /// session to open one from) but present in `allProfiles`. The control
+    /// beside it: a session store that cannot be read (`nil`) drops nothing,
+    /// so the rule is not satisfied by a reconcile that drops everything.
+    @Test func theReconcileDropsRowsWhoseSessionIsGoneAndLeavesTheFile() async throws {
+        let rig = Rig()
+        defer { rig.tearDown() }
+        let kept = UUID()
+        let deleted = UUID()
+        let mine = Self.profile(session: kept, name: "web")
+        let orphan = Self.profile(session: deleted, name: "db", port: 5432)
+        for profile in [mine, orphan] { try rig.store.upsert(profile) }
+
+        rig.sessions.ids = nil
+        await rig.manager.reloadReconciling()
+        #expect(Set(rig.manager.allProfiles.map(\.id)) == [mine.id, orphan.id], """
+            an unreadable session store dropped rows — every forwarding would vanish \
+            whenever sessions-v2.json failed to decode.
+            """)
+
+        rig.sessions.ids = [kept]
+        await rig.manager.reloadReconciling()
+
+        #expect(rig.manager.allProfiles == [mine], "a deleted session's row is still in the mirror")
+        #expect(
+            Set(rig.store.allProfiles().map(\.id)) == [mine.id, orphan.id],
+            "the reconcile rewrote tunnels.json")
+    }
+
+    /// The production reader behind that rule: a session store that cannot
+    /// be decoded answers `nil` — keep every row — while a MISSING one is a
+    /// successful read of no sessions.
+    @Test func theLiveSessionReaderTellsAnUnreadableStoreFromAnEmptyOne() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tunnel-manager-sessions-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessions = SessionStore(directory: directory)
+
+        #expect(TunnelManager.liveSessionIDs(sessions: sessions) == [])
+
+        try Data("kein json".utf8).write(to: directory.appendingPathComponent("sessions-v2.json"))
+        #expect(TunnelManager.liveSessionIDs(sessions: sessions) == nil)
     }
 
     /// Two activations arriving close together never DISCARD at the same time

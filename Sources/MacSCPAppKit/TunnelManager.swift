@@ -61,15 +61,22 @@ final class TunnelManager {
     /// `TunnelRunning`.
     typealias RunnerFactory = @MainActor (TunnelProfile) -> any TunnelRunning
 
+    /// The ids of every stored session, or `nil` when the session store
+    /// cannot be read. What the activation reconcile drops orphan rows by —
+    /// see `performReconcilingReload()`.
+    typealias SessionIDReader = @MainActor () -> Set<UUID>?
+
     /// The app's one manager. Its store sits beside `sessions-v2.json`, and
     /// its runners dial through `TunnelConnection` from the session each
     /// profile names.
     static let shared = TunnelManager(
         store: TunnelStore(directory: SessionStore.defaultDirectory),
-        makeRunner: { profile in TunnelManager.liveRunner(for: profile) })
+        makeRunner: { profile in TunnelManager.liveRunner(for: profile) },
+        sessionIDs: { TunnelManager.liveSessionIDs() })
 
     @ObservationIgnored private let store: TunnelStore
     @ObservationIgnored private let makeRunner: RunnerFactory
+    @ObservationIgnored private let sessionIDs: SessionIDReader
     @ObservationIgnored private var runners: [UUID: any TunnelRunning] = [:]
     /// One mirror task per RUNNER, keyed by that runner's generation — not
     /// by the profile, which is what round 1 keyed it by. Two runners for
@@ -100,9 +107,13 @@ final class TunnelManager {
     /// no entry has never been started, which is `.stopped`.
     private(set) var states: [UUID: TunnelState] = [:]
 
-    init(store: TunnelStore, makeRunner: @escaping RunnerFactory) {
+    init(
+        store: TunnelStore, makeRunner: @escaping RunnerFactory,
+        sessionIDs: @escaping SessionIDReader
+    ) {
         self.store = store
         self.makeRunner = makeRunner
+        self.sessionIDs = sessionIDs
         allProfiles = store.allProfiles()
     }
 
@@ -491,6 +502,19 @@ final class TunnelManager {
     /// on the store side; see `TunnelStore.decode()`). So the reconcile does
     /// not need to tell the two empty states apart.
     ///
+    /// **A row without a session is not listed** (next build of
+    /// 2026-09-17, Task 2). A session deleted while `tunnels.json` could not
+    /// be read leaves its rows in the file — the store refuses the
+    /// `deleteAll`, and `forgetEverything(for:)` removes them from the
+    /// mirror only — so once the file is repaired they read back: in
+    /// `allProfiles`, in no sheet (there is no session to open one from),
+    /// and unable to dial (`TunnelRefusal.sessionMissing`). The pass drops
+    /// every row whose `sessionID` the session store does not list, from
+    /// the mirror and not from the file: this is a reader, and the rows are
+    /// the user's to inspect in a file the earlier refusal named. A session
+    /// store that cannot be read drops nothing. A row dropped here is
+    /// discarded like a deleted one, runner included.
+    ///
     /// The ids are snapshotted BEFORE the mirror is replaced, because after
     /// it the deleted ones are exactly what is no longer there to name.
     /// `discardAndForget(_:)` is the loop, and `forgetEverything(for:)`
@@ -588,9 +612,21 @@ final class TunnelManager {
         // The mirror is assigned here rather than through `reload()`, which
         // would be a second read of the same file — and, having gone through
         // `allProfiles()`, a read that could disagree with the one above.
+        //
+        // Rows whose session is gone are dropped from the mirror, never from
+        // the file — see "A row without a session" on
+        // `reloadReconciling()`. A session store that cannot be read answers
+        // `nil`, and that drops nothing, for the reason an unreadable
+        // `tunnels.json` drops nothing above.
+        let listed: [TunnelProfile]
+        if let known = sessionIDs() {
+            listed = profiles.filter { known.contains($0.sessionID) }
+        } else {
+            listed = profiles
+        }
         let before = Set(allProfiles.map(\.id))
-        allProfiles = profiles
-        await discardAndForget(before.subtracting(Set(profiles.map(\.id))))
+        allProfiles = listed
+        await discardAndForget(before.subtracting(Set(listed.map(\.id))))
     }
 
     /// Stops each profile's runner and forgets its state — what a profile
@@ -707,6 +743,16 @@ final class TunnelManager {
     }
 
     // MARK: - The production runner
+
+    /// The ids of every session in the App's own session store, or `nil`
+    /// when that store cannot be read — the reader `shared` hands the
+    /// reconcile.
+    static func liveSessionIDs(
+        sessions: SessionStore = SessionStore(directory: SessionStore.defaultDirectory)
+    ) -> Set<UUID>? {
+        guard let stored = try? sessions.all() else { return nil }
+        return Set(stored.map(\.id))
+    }
 
     /// A runner that dials for itself, from the stored session the profile
     /// names.
