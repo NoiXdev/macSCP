@@ -13,7 +13,7 @@ import Testing
     @Test(arguments: ["0.0.0.0", "192.0.2.10", "::"])
     func aNonLoopbackBindNeedsGatewayPortsAndSaysSo(bind: String) {
         let error = Refused()
-        let failure = CitadelFileSystem.remoteBindFailure(for: error, bind: bind)
+        let failure = SSHForwardingConnection.remoteBindFailure(for: error, bind: bind)
         #expect(
             failure
                 == .remoteBindRefused(
@@ -28,7 +28,7 @@ import Testing
     @Test(arguments: ["127.0.0.1", "::1", "localhost"])
     func aLoopbackBindDoesNotNeedGatewayPorts(bind: String) {
         let error = Refused()
-        let failure = CitadelFileSystem.remoteBindFailure(for: error, bind: bind)
+        let failure = SSHForwardingConnection.remoteBindFailure(for: error, bind: bind)
         #expect(
             failure
                 == .remoteBindRefused(

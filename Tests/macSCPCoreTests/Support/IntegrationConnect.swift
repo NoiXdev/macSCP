@@ -6,15 +6,19 @@ import Foundation
 /// Use ONLY for connects that are SUPPOSED to succeed — not for
 /// mismatch/reject tests (there the error is intentional).
 ///
-/// Shared by `CitadelFileSystemIntegrationTests`,
-/// `HostKeyTypeIntegrationTests` and `CrossBackendTransferIntegrationTests`
-/// (counted 2026-09-02). Two suites still carry a private variant of the
+/// Shared by SIX suites, counted 2026-09-17 with `grep -rln
+/// "connectWithRetry {" Tests`: `CitadelFileSystemIntegrationTests`,
+/// `CrossBackendTransferIntegrationTests`, `FileKeyTypeIntegrationTests`,
+/// `GoServerRSAIntegrationTests`, `HostKeyTypeIntegrationTests` and
+/// `TunnelRigITests` (three on 2026-09-02). Generic over what it connects
+/// since `TunnelRigITests` dials a forwarding's connection through it, which
+/// is not a `CitadelFileSystem`. Two suites still carry a private variant of the
 /// same idea with a different signature — `CitadelShellIntegrationTests
 /// .connectWithRetry()` and `WebDAVFileSystemIntegrationTests
 /// .connectSSHWithRetry(_:)` — so this is the shared copy, not the only one.
-func connectWithRetry(
-    _ make: () async throws -> CitadelFileSystem
-) async throws -> CitadelFileSystem {
+func connectWithRetry<Connection>(
+    _ make: () async throws -> Connection
+) async throws -> Connection {
     do {
         return try await make()
     } catch {

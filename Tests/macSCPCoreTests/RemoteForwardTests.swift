@@ -11,7 +11,7 @@ import Testing
 /// place of the SSH connection — the same shape `LocalForwardListenerTests`
 /// and `SOCKS5ListenerTests` use for the other two directions.
 ///
-/// What the fake stands in for is `CitadelFileSystem.withRemotePortForward`:
+/// What the fake stands in for is `SSHForwardingConnection.withRemotePortForward`:
 /// it names a bound port through `onOpen`, keeps the `handleChannel` closure,
 /// sleeps until it is cancelled (exactly as Citadel's own wrapper does), and
 /// lets a test hand in an inbound connection whenever it likes.
@@ -310,7 +310,7 @@ struct RemoteForwardTests {
 
 // MARK: - The transport seam
 
-/// Stands in for `CitadelFileSystem.withRemotePortForward`, in the same three
+/// Stands in for `SSHForwardingConnection.withRemotePortForward`, in the same three
 /// moments Citadel's own wrapper has: it names the bound port, it keeps the
 /// per-connection closure, and it sleeps until the task is cancelled.
 private final class FakeRemoteForwardTransport: RemoteForwardTransport, Sendable {

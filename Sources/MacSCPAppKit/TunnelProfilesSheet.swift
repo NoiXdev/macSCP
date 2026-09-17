@@ -129,7 +129,7 @@ struct TunnelProfileDraft: Equatable {
     /// A port number, or `nil`. `0` is refused here rather than read as "let
     /// the system choose": the design's form validates 1–65535, and a remote
     /// forward on a server-chosen port is refused one layer down anyway
-    /// (`CitadelFileSystem`'s port-0 refusal, and the fork debt behind it).
+    /// (`SSHForwardingConnection`'s port-0 refusal, and the fork debt behind it).
     private static func port(_ text: String) -> Int? {
         guard let value = Int(text.trimmingCharacters(in: .whitespaces)),
             (1...65535).contains(value)

@@ -7,7 +7,7 @@ import NIOSSH
 /// needs from a connection.
 ///
 /// A seam for the same reason `LocalForwardListener.DirectTCPIPFactory` is
-/// one: the `SSHClient` stays private to `CitadelFileSystem`, so a tunnel
+/// one: the `SSHClient` stays private to `SSHForwardingConnection`, so a tunnel
 /// gets channels and never the client that made them — and the whole forward
 /// can then be measured on loopback with no server at all.
 public protocol RemoteForwardTransport: Sendable {
@@ -18,7 +18,7 @@ public protocol RemoteForwardTransport: Sendable {
     /// - Parameters:
     ///   - port: the port the SERVER listens on. **`0` — "let the server
     ///     pick" — is refused by the only transport there is**; see
-    ///     `CitadelFileSystem.withRemotePortForward`, which carries the
+    ///     `SSHForwardingConnection.withRemotePortForward`, which carries the
     ///     measurement. The protocol still takes an `Int` rather than
     ///     forbidding zero in the type, because the refusal belongs to that
     ///     transport's dependency and not to this seam. `onOpen` fires
@@ -113,7 +113,7 @@ public final class RemoteForward: @unchecked Sendable {
     ///   - bind, remotePort: the address the SERVER listens on. `0.0.0.0`
     ///     needs the server's `GatewayPorts`. **`remotePort` must name a
     ///     port**: the SSH transport refuses `0`; see
-    ///     `CitadelFileSystem.withRemotePortForward` for why, and for what
+    ///     `SSHForwardingConnection.withRemotePortForward` for why, and for what
     ///     would have to change to allow it.
     ///   - localHost, localPort: where each inbound connection is connected
     ///     to on THIS machine.

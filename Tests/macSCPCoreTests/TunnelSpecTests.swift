@@ -100,7 +100,7 @@ struct TunnelSpecTests {
         // Port 0 is refused on the SERVER's listener specifically — the
         // client cannot learn the port the server picked, so the forward
         // would look healthy and swallow every connection
-        // (`CitadelFileSystem.withRemotePortForward`).
+        // (`SSHForwardingConnection.withRemotePortForward`).
         #expect(throws: TunnelSpecError.remotePortZero) {
             _ = try TunnelSpec.parse(remote: "0:example.invalid:1")
         }

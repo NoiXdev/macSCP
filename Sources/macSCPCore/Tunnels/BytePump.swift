@@ -33,7 +33,7 @@ public typealias TunnelConnectionObserver = @Sendable (TunnelConnectionEvent) ->
 /// production they never do: the accepted socket belongs to the listener's
 /// group, and the `direct-tcpip` child channel belongs to the SSH client's
 /// (which, for an agent-authenticated connection, is a dedicated group of
-/// its own — see `CitadelFileSystem`'s `dedicatedGroup`). Every cross-channel
+/// its own — see `SSHForwardingConnection`'s `dedicatedGroup`). Every cross-channel
 /// call this file makes therefore goes through the `Channel` API —
 /// `write(_:promise:)`, `flush()`, `close(mode:promise:)`,
 /// `setOption(_:value:)` — and never through a `ChannelHandlerContext`,

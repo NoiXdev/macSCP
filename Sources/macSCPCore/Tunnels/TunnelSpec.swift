@@ -17,7 +17,7 @@ public enum TunnelSpecError: Error, Equatable, Sendable, CustomStringConvertible
     /// A field parsed as a number that is not a TCP port.
     case portOutOfRange(Int)
     /// A remote forwarding asked the server to choose the port. See
-    /// `CitadelFileSystem.withRemotePortForward`, which refuses the same
+    /// `SSHForwardingConnection.withRemotePortForward`, which refuses the same
     /// thing for the same reason one layer down.
     case remotePortZero
 
@@ -67,7 +67,7 @@ public enum TunnelSpecError: Error, Equatable, Sendable, CustomStringConvertible
 /// .boundPort`, `SOCKS5Listener.boundPort`). A remote forward cannot: the
 /// pinned Citadel registers its channel handler under the port that was
 /// REQUESTED, so a server-chosen port never matches and every connection is
-/// swallowed inside the library. `CitadelFileSystem.withRemotePortForward`
+/// swallowed inside the library. `SSHForwardingConnection.withRemotePortForward`
 /// carries the measurement; `parse(remote:)` refuses the spec before a dial
 /// is even attempted so the message names the spec rather than the dial.
 public enum TunnelSpec {

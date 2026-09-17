@@ -269,7 +269,7 @@ struct TunnelRigITests {
     /// failed with `(sent.stdoutText → "") == "ho"` and then ran into the
     /// suite's five-minute limit waiting for bytes that could not come;
     /// changing only that number to a named port made it pass in 0.104 s.
-    /// `CitadelFileSystem.withRemotePortForward` now refuses port 0 outright,
+    /// `SSHForwardingConnection.withRemotePortForward` now refuses port 0 outright,
     /// with the line numbers of the mismatch, and
     /// `aRemoteForwardOnPortZeroIsRefused` below pins that refusal.
     ///
@@ -365,11 +365,11 @@ struct TunnelRigITests {
     /// both are one change, recorded as a debt in
     /// `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` with what
     /// the fork would have to do. The measurement that put the guard there
-    /// is in `CitadelFileSystem.withRemotePortForward`'s doc comment and in
+    /// is in `SSHForwardingConnection.withRemotePortForward`'s doc comment and in
     /// the case above.
     ///
     /// It runs against the rig rather than in the unit suite because the
-    /// accessor it measures belongs to a connected `CitadelFileSystem`, and
+    /// accessor it measures belongs to a connected `SSHForwardingConnection`, and
     /// there is no such thing without a server.
     @Test func aRemoteForwardOnPortZeroIsRefused() async throws {
         try await withRigTeardown { teardown in
@@ -606,7 +606,7 @@ private final class RigTeardown {
 /// consumes that use even when it fails. A second `remoteBindRefused` is thrown
 /// rather than retried — see the calling test's doc comment.
 private func forwardOnAFreeRemotePort(
-    carrier: CitadelFileSystem, targetPort: Int,
+    carrier: any TunnelSSHConnection, targetPort: Int,
     observer: @escaping TunnelConnectionObserver
 ) async throws -> (RemoteForward, Int) {
     var lastFailure: (any Error)?

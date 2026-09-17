@@ -53,23 +53,25 @@ extension SOCKS5ReplyCode {
     ///
     /// | `TunnelFailure` | code | raised by, today |
     /// |---|---|---|
-    /// | `.channelOpenFailed` | `01` | `CitadelFileSystem.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
+    /// | `.channelOpenFailed` | `01` | `SSHForwardingConnection.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
     /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`. (A failed `confirm` was a producer too until 2026-09-17; the accept path now closes that pair without calling `reject`, because a reply that cannot be written is the client's failure — see `LocalForwardListener.accepted`.) |
     /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
-    /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`CitadelFileSystem.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
+    /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`SSHForwardingConnection.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
     ///
     /// So in production **`01` is what every refusal produces**, `05` is
     /// waiting for a factory that distinguishes a refusal, and `04` is
     /// produced by nothing. Recounted 2026-09-17, after fix round 1 of the
     /// technical-backlog plan's Task 6, with `grep -rn "throw
     /// TunnelFailure\." Sources/`: EIGHT throw sites — `TunnelConnection
-    /// .swift:95`, `LocalForwardListener.swift:195` and `:221`,
-    /// `RemoteForward.swift:132`, `:286` and `:320`,
-    /// `CitadelFileSystem.swift:1451` and `:1558`. ELEVEN on 2026-09-06;
+    /// .swift:100`, `LocalForwardListener.swift:196` and `:222`,
+    /// `RemoteForward.swift:133`, `:287` and `:321`,
+    /// `SSHForwardingConnection.swift:119` and `:228` (every line number in
+    /// this paragraph retaken 2026-09-17, when the forwarding code moved out
+    /// of `CitadelFileSystem.swift`; no count changed). ELEVEN on 2026-09-06;
     /// NINE on 2026-09-16 once `TunnelConnection`'s refusal and
     /// `TunnelManager`'s deleted session began throwing `TunnelRefusal`;
-    /// EIGHT once `CitadelFileSystem`'s refused remote bind began throwing
+    /// EIGHT once the refused remote bind began throwing
     /// the value `remoteBindFailure(for:bind:)` returns (`throw
     /// Self.remoteBindFailure`, which that grep does not match). A `throw`
     /// is not the only way one is built. `grep -rnE "func .* -> TunnelFailure
@@ -77,13 +79,13 @@ extension SOCKS5ReplyCode {
     /// pattern also matches `DialSupport.failureKind(for:)`, whose return
     /// type is `TunnelFailureKind`, and a bare return type matches this very
     /// sentence — finds FIVE helpers that RETURN one:
-    /// `LocalForwardListener.acceptFailure` (`:357`) and `.bindFailure`
-    /// (`:363`), `RemoteForward.startFailure` (`:342`) and `.pairFailure`
-    /// (`:347`), and `CitadelFileSystem.remoteBindFailure` (`:1586`). And
+    /// `LocalForwardListener.acceptFailure` (`:375`) and `.bindFailure`
+    /// (`:381`), `RemoteForward.startFailure` (`:344`) and `.pairFailure`
+    /// (`:349`), and `SSHForwardingConnection.remoteBindFailure` (`:256`). And
     /// subtracting the throw sites from `grep -rn "TunnelFailure\." Sources/`
     /// (comment lines dropped) leaves THREE inline constructions:
-    /// `RemoteForward.swift:155` and `:171`, which resolve a failure into the
-    /// once-latch instead of throwing it, and `:311`, which binds one to a
+    /// `RemoteForward.swift:156` and `:172`, which resolve a failure into the
+    /// once-latch instead of throwing it, and `:312`, which binds one to a
     /// name so the same value can be reported and thrown. None of these is
     /// on the accept path this table is about, so the table's first four
     /// rows did not change with them.

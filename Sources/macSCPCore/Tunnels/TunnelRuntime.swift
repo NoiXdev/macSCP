@@ -6,13 +6,14 @@ import Synchronization
 ///
 /// A seam for the same reason `LocalForwardListener.DirectTCPIPFactory` and
 /// `RemoteForwardTransport` are seams: the `SSHClient` stays private to
-/// `CitadelFileSystem`, so the runner gets channels and a disconnect signal
+/// `SSHForwardingConnection`, so the runner gets channels and a disconnect signal
 /// and never the client that made them — and the whole lifecycle can then be
 /// measured with no server at all.
 ///
 /// It inherits `RemoteForwardTransport` rather than restating
 /// `withRemotePortForward`: a remote forward already speaks to a connection
-/// through exactly that protocol, and `CitadelFileSystem` already conforms.
+/// through exactly that protocol, and `SSHForwardingConnection` conforms to
+/// both.
 public protocol TunnelSSHConnection: RemoteForwardTransport {
     /// Registers the one handler called when this connection's transport
     /// drops — the signal `TunnelRunner` turns into
@@ -34,8 +35,6 @@ public protocol TunnelSSHConnection: RemoteForwardTransport {
     /// one until this one is actually gone.
     func disconnect() async
 }
-
-extension CitadelFileSystem: TunnelSSHConnection {}
 
 /// One STARTED forward, whichever of the three kinds it is — what the runner
 /// holds between `active` and `stop`.

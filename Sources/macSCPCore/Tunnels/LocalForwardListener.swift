@@ -57,7 +57,7 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     /// listener binds once; see `LocalForwardListener.start`.
     case alreadyStarted
     /// A remote forward asked the server to choose its port (`0`), which
-    /// this client refuses — see `CitadelFileSystem.withRemotePortForward`.
+    /// this client refuses — see `SSHForwardingConnection.withRemotePortForward`.
     case remotePortZeroRefused
     /// The server refused a remote forward's `tcpip-forward` request — the
     /// port is taken on the server, or the bind address is not allowed.
@@ -116,7 +116,7 @@ protocol ForwardNegotiation: Sendable {
 ///
 /// The channel through the server arrives from a closure rather than from a
 /// connection this type holds. That keeps the SSH client private to
-/// `CitadelFileSystem` — the production factory is one call to
+/// `SSHForwardingConnection` — the production factory is one call to
 /// `openDirectTCPIP` — and it is what lets the whole accept path be measured
 /// on loopback with no server at all.
 public final class LocalForwardListener: @unchecked Sendable {
@@ -125,7 +125,7 @@ public final class LocalForwardListener: @unchecked Sendable {
     /// Contract, because it cannot be enforced by the type: the channel
     /// comes back with `autoRead` off. Nothing is pumping it yet, and a
     /// channel that reads before its pump is installed drops what it read.
-    /// `CitadelFileSystem.openDirectTCPIP` satisfies this.
+    /// `SSHForwardingConnection.openDirectTCPIP` satisfies this.
     public typealias DirectTCPIPFactory = @Sendable (String, Int) async throws -> Channel
 
     private let group: any EventLoopGroup

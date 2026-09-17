@@ -194,7 +194,7 @@ public enum DialSupport {
     /// own and the refused remote bind became `remoteBindRefused`. Every one
     /// of the 12 passes either this function's own output or a fixed English
     /// sentence written in this repository: SEVEN pass
-    /// `DialSupport.reason(for:)` — `CitadelFileSystem.openDirectTCPIP` and
+    /// `DialSupport.reason(for:)` — `SSHForwardingConnection.openDirectTCPIP` and
     /// `remoteBindFailure(for:bind:)`, `LocalForwardListener.acceptFailure`
     /// and `bindFailure`, `RemoteForward.serve`, `startFailure` and
     /// `pairFailure` — and FIVE pass a literal:

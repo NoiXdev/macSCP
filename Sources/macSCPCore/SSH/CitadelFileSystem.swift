@@ -42,7 +42,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// I-2's dedicated event-loop group, if `.agent` auth caused one to be
     /// created — `nil` for password/privateKey connections, which stay on
     /// the shared `.singleton` default. Owned by THIS instance once a
-    /// connection attempt actually succeeds (see `connect()`'s comment on
+    /// connection attempt actually succeeds (see `connectAuthenticated`'s comment on
     /// why it must not be shut down there): the client's own channel still
     /// runs on this group's loop, so shutdown is deferred to `disconnect()`.
     private let dedicatedGroup: MultiThreadedEventLoopGroup?
@@ -118,12 +118,69 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// outside Core is `BackendDescriptor.openConnection`, which is where the
     /// deciders and the configured connect timeout are supplied. Core's own
     /// tests import `@testable` and keep this.
+    ///
+    /// Everything up to and including user authentication — agent, jump,
+    /// TOFU, timeout, error mapping, the dedicated group's release — is
+    /// `connectAuthenticated`, which `SSHForwardingConnection.connect` calls
+    /// too. What is this dial's own is the step after it: the SFTP child
+    /// channel a tab reads through.
     static func connect(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
         onUnknownHostKey: HostKeyDecider
     ) async throws -> CitadelFileSystem {
+        try await connectAuthenticated(
+            config: config, connectTimeout: connectTimeout, knownHosts: knownHosts,
+            onUnknownHostKey: onUnknownHostKey
+        ) { authenticated, sftpOpenAttempted in
+            sftpOpenAttempted.markAttempted()
+            let sftp = try await BoundedSFTPSession.open(on: authenticated.client)
+            return CitadelFileSystem(
+                client: authenticated.client, sftp: sftp, jumpClient: authenticated.jumpClient,
+                dedicatedGroup: authenticated.dedicatedGroup)
+        }
+    }
+
+    /// An SSH connection whose user authentication has succeeded, and on
+    /// which nothing has been opened yet — what `connectAuthenticated` hands
+    /// to the step that decides what the connection is for.
+    struct AuthenticatedSSH {
+        let client: SSHClient
+        /// The jump host's client when the target was reached through one.
+        /// Closed by whoever takes ownership of `client`, after it.
+        let jumpClient: SSHClient?
+        /// I-2's dedicated event-loop group, when `.agent` auth created one.
+        /// Both connections still run on it, so the owner releases it after
+        /// closing them — never before.
+        let dedicatedGroup: MultiThreadedEventLoopGroup?
+    }
+
+    /// The one connect path both kinds of connection share: agent contexts,
+    /// the dedicated event-loop group, the TOFU accept-retry loop over both
+    /// hops, user authentication, and the error mapping — then `establish`,
+    /// which turns the authenticated connection into what the caller asked
+    /// for.
+    ///
+    /// **The TOFU hard stop lives here and nowhere else.** A key mismatch on
+    /// either hop is decided inside this function, before `establish` runs
+    /// and without asking the decider, whichever caller dialled.
+    ///
+    /// `establish` runs inside a single attempt, exactly where the SFTP open
+    /// used to be written: whatever it throws closes the client (and the
+    /// jump client) and is mapped like any other connect error. It gets the
+    /// R-1 flag and has to mark it BEFORE it calls `openSFTP`, because that
+    /// flag is what decides whether a failure releases the dedicated group
+    /// at once or only after Citadel's uncancelled 15-second timer; a step
+    /// that never opens SFTP never marks it, and its failures release the
+    /// group at once.
+    static func connectAuthenticated<Connection>(
+        config: SSHConnectionConfig,
+        connectTimeout: TimeAmount,
+        knownHosts: KnownHostsStore,
+        onUnknownHostKey: HostKeyDecider,
+        establish: (AuthenticatedSSH, SFTPOpenAttemptFlag) async throws -> Connection
+    ) async throws -> Connection {
         var jumpAgent: AgentAuthContext?
         if let jump = config.jump, isAgentAuth(jump.auth) {
             do {
@@ -148,7 +205,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // `MultiThreadedEventLoopGroup.singleton`, shared by every open tab)
         // that would freeze every other tab's traffic for the duration of the
         // stall. Give agent-authenticated connects their OWN single-threaded
-        // group instead, scoped to this `connect()` call's lifetime; the jump
+        // group instead, scoped to this `connectAuthenticated` call's lifetime; the jump
         // hop's child channel (`SSHClient.jump(to:)`) inherits its parent's
         // event loop automatically, so this one group covers both hops.
         let dedicatedGroup: MultiThreadedEventLoopGroup? =
@@ -164,18 +221,19 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 config: config, connectTimeout: connectTimeout, knownHosts: knownHosts,
                 onUnknownHostKey: onUnknownHostKey,
                 jumpAgent: jumpAgent, targetAgent: targetAgent, group: dedicatedGroup,
-                sftpOpenAttempted: sftpOpenAttempted)
+                sftpOpenAttempted: sftpOpenAttempted, establish: establish)
             await jumpAgent?.close()
             await targetAgent?.close()
             // NOT shut down here on success: `result`'s own SSHClient (and,
             // for a jump, the jump client too) still runs its channel on
             // this group's event loop. `result` now owns `dedicatedGroup`
-            // (see `attemptConnect`) and releases it in `disconnect()`.
+            // (`establish` handed it over) and releases it in its own
+            // `disconnect()`.
             return result
         } catch {
             await jumpAgent?.close()
             await targetAgent?.close()
-            // No `CitadelFileSystem` survived to take ownership — the group
+            // No connection survived to take ownership — the group
             // would otherwise leak its thread, so it must be released here.
             if let dedicatedGroup {
                 if sftpOpenAttempted.attempted {
@@ -211,7 +269,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// from scratch, so trying every identity again from the start on such
     /// a retry is correct: the previous attempt never got far enough into
     /// user-auth to consume any of them).
-    private static func connectWithTOFURetries(
+    private static func connectWithTOFURetries<Connection>(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
@@ -219,8 +277,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         jumpAgent: AgentAuthContext?,
         targetAgent: AgentAuthContext?,
         group: MultiThreadedEventLoopGroup?,
-        sftpOpenAttempted: SFTPOpenAttemptFlag
-    ) async throws -> CitadelFileSystem {
+        sftpOpenAttempted: SFTPOpenAttemptFlag,
+        establish: (AuthenticatedSSH, SFTPOpenAttemptFlag) async throws -> Connection
+    ) async throws -> Connection {
         var acceptRetries = 0
         let maxAcceptRetries = config.jump == nil ? 1 : 2  // one accept per hop
         while true {
@@ -231,7 +290,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     config: config, connectTimeout: connectTimeout, knownHosts: knownHosts,
                     jumpBox: jumpBox, targetBox: targetBox,
                     jumpAgent: jumpAgent, targetAgent: targetAgent, group: group,
-                    sftpOpenAttempted: sftpOpenAttempted)
+                    sftpOpenAttempted: sftpOpenAttempted, establish: establish)
             } catch {
                 // At most ONE hop can carry a verdict per attempt (stage 2
                 // only starts after stage 1 succeeds) — check the jump hop first.
@@ -292,7 +351,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         return false
     }
 
-    /// Test hook for how `connect()` establishes the ssh-agent connection.
+    /// Test hook for how `connectAuthenticated` establishes the ssh-agent
+    /// connection — for a tab's dial and a forwarding's alike.
     ///
     /// The brief asks for an injectable factory WITHOUT changing `connect`'s
     /// public signature, so this is a `@TaskLocal` override rather than a
@@ -310,7 +370,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
 
     /// The ONE ssh-agent connection + identity list a hop's `.agent` auth
     /// reuses across every connect attempt (spec §1: listed once, kept open
-    /// for signing, closed exactly once when `connect()` returns or throws).
+    /// for signing, closed exactly once when `connectAuthenticated` returns or
+    /// throws).
     private struct AgentAuthContext: Sendable {
         let client: SSHAgentClient
         let identities: [AgentIdentity]
@@ -337,14 +398,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    /// R-1: lets `attemptConnect` signal back to `connect()`'s failure-cleanup
-    /// path whether Citadel's `openSFTP()` was ever invoked on `dedicatedGroup`
-    /// before the error that unwinds the whole `connect()` call. `openSFTP`
+    /// R-1: lets the `establish` step that opens SFTP signal back to
+    /// `connectAuthenticated`'s failure-cleanup path whether Citadel's
+    /// `openSFTP()` was ever invoked on `dedicatedGroup` before the error that
+    /// unwinds the whole call. `openSFTP`
     /// schedules its internal 15s timer (see `disconnect()`'s comment for the
     /// exact citation) as soon as it is CALLED, even if it then fails — so
     /// this must be set the moment the call is made, not on success. Same
     /// `NSLock`-boxed-reference shape as `TOFUHostKeyValidator.Box` above.
-    private final class SFTPOpenAttemptFlag: @unchecked Sendable {
+    ///
+    /// Internal rather than private only because `connectAuthenticated`'s
+    /// `establish` parameter names it.
+    final class SFTPOpenAttemptFlag: @unchecked Sendable {
         private let lock = NSLock()
         private var value = false
 
@@ -366,7 +431,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// evaluated on every attempt, which differs only in the
     /// `.lookupFailed`-on-retry case (now a fail-closed typed error, strictly
     /// better than before).
-    private static func attemptConnect(
+    private static func attemptConnect<Connection>(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
         knownHosts: KnownHostsStore,
@@ -375,8 +440,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         jumpAgent: AgentAuthContext?,
         targetAgent: AgentAuthContext?,
         group: MultiThreadedEventLoopGroup?,
-        sftpOpenAttempted: SFTPOpenAttemptFlag
-    ) async throws -> CitadelFileSystem {
+        sftpOpenAttempted: SFTPOpenAttemptFlag,
+        establish: (AuthenticatedSSH, SFTPOpenAttemptFlag) async throws -> Connection
+    ) async throws -> Connection {
         if let jump = config.jump {
             // Stage 1 (jump host) — any failure here (auth, key loading,
             // host-key rejection, transport) is marked as a JumpStageError so
@@ -388,7 +454,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 jumpClient = try await connectHop(
                     auth: jump.auth, username: jump.username, agent: jumpAgent, box: jumpBox
                 ) { method in
-                    // I-2: `group` is the dedicated event-loop group `connect()`
+                    // I-2: `group` is the dedicated event-loop group `connectAuthenticated`
                     // creates whenever either hop uses `.agent`; the target
                     // hop's `jump(to:)` call below inherits THIS group's loop
                     // via the jump client's own channel, so passing it only
@@ -422,10 +488,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     return try await jumpClient.jump(to: settings)
                 }
                 do {
-                    sftpOpenAttempted.markAttempted()
-                    let sftp = try await BoundedSFTPSession.open(on: client)
-                    return CitadelFileSystem(
-                        client: client, sftp: sftp, jumpClient: jumpClient, dedicatedGroup: group)
+                    return try await establish(
+                        AuthenticatedSSH(client: client, jumpClient: jumpClient, dedicatedGroup: group),
+                        sftpOpenAttempted)
                 } catch {
                     try? await client.close()
                     throw error
@@ -452,9 +517,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             )
         }
         do {
-            sftpOpenAttempted.markAttempted()
-            let sftp = try await BoundedSFTPSession.open(on: client)
-            return CitadelFileSystem(client: client, sftp: sftp, dedicatedGroup: group)
+            return try await establish(
+                AuthenticatedSSH(client: client, jumpClient: nil, dedicatedGroup: group),
+                sftpOpenAttempted)
         } catch {
             try? await client.close()
             throw error
@@ -529,7 +594,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             return try await connectOnce(method)
         case .agent:
             guard let agent else {
-                // `connect()` always establishes an `AgentAuthContext` for
+                // `connectAuthenticated` always establishes an `AgentAuthContext` for
                 // every hop whose `auth` is `.agent` before attemptConnect
                 // ever runs — reaching this means that invariant broke.
                 throw AgentError.noIdentities
@@ -1308,7 +1373,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             try? await jumpClient?.close()
         }
         // I-2/R-1: release the dedicated event-loop group this connection
-        // took ownership of at construction time (see `connect()`) — but not
+        // took ownership of at construction time (see `connectAuthenticated`) — but not
         // immediately. Citadel's `SFTPClient.openSFTP` schedules an internal
         // 15-second "no reply" timeout task on the connection's event loop
         // unconditionally when it's CALLED, and never cancels it once
@@ -1414,235 +1479,6 @@ private final class SFTPReadHandle: Sendable {
         Task { _ = await file.closeBounded() }
     }
 }
-
-extension CitadelFileSystem {
-    /// Opens a `direct-tcpip` channel to `host:port` **as the far side
-    /// reaches it** — the child channel a local or dynamic forward pumps
-    /// bytes through.
-    ///
-    /// A fourth kind of child channel on this connection, beside SFTP, the
-    /// terminal's PTY and the checksum `exec`, and it is here for the same
-    /// reason those are: the `SSHClient` stays private to this class, so a
-    /// tunnel gets a `Channel` and never the client that made it. Opening one
-    /// does not disturb the connection or the other channels on it.
-    ///
-    /// The returned channel speaks `ByteBuffer` in both directions: Citadel
-    /// installs its own `DataToBufferCodec` before this initializer runs
-    /// (`DirectTCPIP+Client.swift`), which also turns remote half-closure on.
-    ///
-    /// `autoRead` is off on the way out. Nothing is pumping the channel yet,
-    /// and bytes read before `BytePump` is installed would be fired at the
-    /// end of a pipeline that drops them — see `LocalForwardListener
-    /// .DirectTCPIPFactory`, whose contract this satisfies.
-    ///
-    /// The originator address is `127.0.0.1:0`. It is a courtesy field in the
-    /// channel-open request (the server may log it); this app is the
-    /// originator, and it names no port it is not actually listening on.
-    public func openDirectTCPIP(host: String, port: Int) async throws -> Channel {
-        do {
-            let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
-            return try await client.createDirectTCPIPChannel(
-                using: SSHChannelType.DirectTCPIP(
-                    targetHost: host, targetPort: port, originatorAddress: originator)
-            ) { channel in
-                channel.setOption(ChannelOptions.autoRead, value: false)
-            }
-        } catch {
-            throw TunnelFailure.channelOpenFailed(reason: DialSupport.reason(for: error))
-        }
-    }
-
-    /// Registers the one handler called when this connection's transport
-    /// drops — the signal a `TunnelRunner` turns into a reconnect.
-    ///
-    /// **One handler, not a list.** Citadel's `SSHClient` stores a single
-    /// closure (`Client.swift`, `onDisconnect(perform:)`), so a second
-    /// registration replaces the first. Nothing else in this project
-    /// registers one, and a tunnel owns its connection outright
-    /// (`TunnelConnection`'s doc comment), so the runner is the only
-    /// registrant there is.
-    ///
-    /// Fired from the SSH channel's own `closeFuture`, which means it fires
-    /// for a deliberate `disconnect()` as well as for a drop. The runner
-    /// tears its stream down before disconnecting, so a self-inflicted call
-    /// reaches nobody; a caller that cannot say the same has to tell the two
-    /// apart itself.
-    public func onDisconnect(_ handler: @escaping @Sendable () -> Void) {
-        client.onDisconnect(perform: handler)
-    }
-
-    /// Asks the server to listen on `bind:port` and hands every connection it
-    /// accepts there back as a channel — the `forwarded-tcpip` side of a
-    /// remote forward (`-R`).
-    ///
-    /// Runs until the calling task is cancelled. Citadel's own wrapper sends
-    /// `tcpip-forward`, reports the bound port, dispatches inbound channels,
-    /// sleeps, and sends `cancel-tcpip-forward` when the sleep is cancelled
-    /// (`RemotePortForward+Client.swift`), so cancelling the task is what
-    /// takes the listener down on the server.
-    ///
-    /// **The codec is installed here, and that is a difference from
-    /// `openDirectTCPIP`.** Citadel adds its own `DataToBufferCodec` to a
-    /// channel it opens (`DirectTCPIP+Client.swift`), but an INBOUND child
-    /// channel reaches `handleChannel` raw, straight from NIOSSH's
-    /// `inboundChildChannelInitializer` — it speaks `SSHChannelData`, and a
-    /// `BytePump` installed on it would unwrap the wrong type. Citadel's
-    /// codec is `internal` to that package, so `ForwardedTCPIPCodec` below is
-    /// this module's own; like Citadel's it also turns remote half-closure
-    /// on, without which a far side that shuts down its write half would
-    /// close the whole connection instead.
-    ///
-    /// Nothing is read from the channel before `handleChannel` returns: an
-    /// inbound child channel does not ACTIVATE until the initializer's future
-    /// completes (`SSHChildChannel.configure`), and that future is this
-    /// closure. Which is also why `handleChannel` must return once the
-    /// connection is wired rather than when it ends.
-    ///
-    /// A `handleChannel` that THROWS refuses that one connection: the
-    /// initializer's failure makes NIOSSH answer the server with
-    /// `SSH_MSG_CHANNEL_OPEN_FAILURE` and reason code 2, "connect failed",
-    /// which is exactly what a local target that refused is. The forward
-    /// itself is unaffected.
-    ///
-    /// A server that refuses the global request — `AllowTcpForwarding no`, or
-    /// a non-loopback `bind` without `GatewayPorts`, a port already taken on
-    /// the server — comes back as `TunnelFailure.remoteBindRefused`, with
-    /// `needsGatewayPorts` true when the bind is not loopback, because the
-    /// server does not say which it was and that is the one the user can do
-    /// something about; the log's sentence and the App's message both name
-    /// `GatewayPorts` then. A cancellation is NOT mapped: it is how a forward
-    /// ends normally.
-    ///
-    /// **`port` 0 is refused**, and that is a limitation of the pinned
-    /// Citadel rather than a decision. Measured against the rig on
-    /// 2026-09-06: with port 0 the server binds and reports its port, and no
-    /// connection ever arrives; with a named port the identical test passes
-    /// in 0.1 s.
-    ///
-    /// The cause is a key mismatch in Citadel `0.12.1-noix.3`, and the key is
-    /// the PAIR `(host, port)`, not the port alone.
-    /// `SSHClientInboundChannelHandler.registerForwardedTCPIP`
-    /// (`ClientSession.swift:19-31`) stores the handler under an
-    /// `SSHRemotePortForward(host:boundPort:)` built from what was
-    /// REQUESTED, before the request is even sent; the dispatch in
-    /// `handleChannel` (`:47-60`) rebuilds that key from
-    /// `forwardedTCPIP.listeningHost` and `.listeningPort` — what the server
-    /// actually BOUND — and a miss fails the channel with
-    /// `CitadelError.channelCreationFailed` inside the library, where nothing
-    /// here can see it.
-    ///
-    /// So port 0 is one instance of a general hazard, and the HOST half is
-    /// **unverified**: a server that echoes a `listeningHost` other than the
-    /// string that was sent — `0.0.0.0` answered as `""`, or a name resolved
-    /// to an address — would produce the identical silent swallow with a
-    /// perfectly ordinary port. That was not measured, and could not be on
-    /// this rig: `GatewayPorts` is off there, so a non-loopback bind cannot
-    /// be exercised at all. It is stated rather than guarded because
-    /// guessing which spellings a server may answer with would be a second
-    /// unmeasured claim on top of the first.
-    ///
-    /// Refusing port 0 is the alternative to a forward that looks healthy and
-    /// silently swallows every connection. What would retire the guard is a
-    /// fork that registers the handler under the BOUND pair, after the reply,
-    /// instead of under the requested one before it — written down as a debt
-    /// in `docs/superpowers/specs/2026-08-20-backlog-dependencies.md`.
-    /// `TunnelRigITests.aRemoteForwardOnPortZeroIsRefused` pins THIS guard,
-    /// not Citadel's behaviour, so it cannot announce the fix: it must be
-    /// removed together with the guard.
-    public func withRemotePortForward(
-        bind: String, port: Int,
-        onOpen: @escaping @Sendable (Int) -> Void,
-        handleChannel: @escaping @Sendable (Channel) async throws -> Void
-    ) async throws {
-        guard port != 0 else {
-            // The sentence is `TunnelFailureKind.remotePortZeroRefused`'s,
-            // rendered by `DialSupport.reason(for:)`.
-            throw TunnelFailure.remotePortZeroRefused
-        }
-        do {
-            try await client.withRemotePortForward(
-                host: bind, port: port,
-                onOpen: { forward in onOpen(forward.boundPort) },
-                handleChannel: { channel, _ in
-                    channel.eventLoop.makeFutureWithTask {
-                        try await channel.pipeline.addHandler(ForwardedTCPIPCodec()).get()
-                        try await handleChannel(channel)
-                    }
-                })
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw Self.remoteBindFailure(for: error, bind: bind)
-        }
-    }
-
-    /// The server's refusal of a `tcpip-forward` request, typed.
-    ///
-    /// Loopback binds are the server's default and need no permission; every
-    /// other bind address needs `GatewayPorts`, and a refusal that does not
-    /// say so is a dead end for the user. So the refusal carries
-    /// `needsGatewayPorts` as a fact, which the App translates, and the log's
-    /// sentence (`DialSupport.reason(for:)`) appends the same clause this
-    /// function used to append itself — `TunnelFailureKind
-    /// .gatewayPortsClause`, byte for byte.
-    static func remoteBindFailure(for error: any Error, bind: String) -> TunnelFailure {
-        let loopback = ["127.0.0.1", "::1", "localhost"]
-        return .remoteBindRefused(
-            reason: DialSupport.reason(for: error), needsGatewayPorts: !loopback.contains(bind))
-    }
-}
-
-/// `SSHChannelData` in, `ByteBuffer` out, on a `forwarded-tcpip` child
-/// channel — the same translation Citadel installs on a channel IT opens,
-/// written here because that type is `internal` to Citadel and an inbound
-/// channel never passes through the code that adds it.
-///
-/// `allowRemoteHalfClosure` is turned on from `handlerAdded`, as Citadel's
-/// does: without it NIOSSH turns a peer's EOF into a full close, and
-/// `BytePumpHandler`'s half-close propagation — the shape a client that shuts
-/// its write side down and waits for an answer depends on — never sees
-/// `ChannelEvent.inputClosed`.
-final class ForwardedTCPIPCodec: ChannelDuplexHandler, @unchecked Sendable {
-    typealias InboundIn = SSHChannelData
-    typealias InboundOut = ByteBuffer
-    typealias OutboundIn = ByteBuffer
-    typealias OutboundOut = SSHChannelData
-
-    func handlerAdded(context: ChannelHandlerContext) {
-        // `syncOptions` rather than the future-returning `setOption`, which
-        // would have to report a failure from a `@Sendable` closure that
-        // cannot legally capture the context. `handlerAdded` runs on the
-        // event loop, which is exactly the precondition `syncOptions` has.
-        do {
-            try context.channel.syncOptions?.setOption(
-                ChannelOptions.allowRemoteHalfClosure, value: true)
-        } catch {
-            context.fireErrorCaught(error)
-        }
-    }
-
-    /// Anything that is not ordinary channel data — an `extended` stream, or
-    /// a payload NIOSSH did not deliver as a buffer — is an error rather than
-    /// something to guess at. Citadel's own codec traps on the second of
-    /// those; a tunnel closes the one connection instead.
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let payload = unwrapInboundIn(data)
-        guard case .channel = payload.type, case .byteBuffer(let bytes) = payload.data else {
-            context.fireErrorCaught(SSHChannelError.invalidDataType)
-            return
-        }
-        context.fireChannelRead(wrapInboundOut(bytes))
-    }
-
-    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-        let bytes = unwrapOutboundIn(data)
-        context.write(
-            wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(bytes))),
-            promise: promise)
-    }
-}
-
-extension CitadelFileSystem: RemoteForwardTransport {}
 
 extension CitadelFileSystem: RemoteShellProvider {
     /// Shell channel over the SAME connection as SFTP (multiplexed, like WinSCP).

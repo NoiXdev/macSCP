@@ -45,13 +45,18 @@ public enum TunnelConnection {
     ///     from a window hands in the window's (it may prompt); an autostart
     ///     hands in `.refusing`. A key MISMATCH never reaches it — that stays
     ///     a hard stop inside the dial.
+    ///
+    /// The connection comes back authenticated and with no child channel
+    /// open — no SFTP — which is what `SSHForwardingConnection` is. Its dial
+    /// is the tab's own up to and including user authentication, so the
+    /// mismatch hard stop `decider` names is the tab's code, not a copy.
     public static func connect(
         session: StoredSession,
         secrets: [any SecretSource],
         knownHosts: KnownHostsStore,
         decider: HostKeyDecider,
         connectTimeoutSeconds: Int = SettingsStore.defaultConnectTimeoutSeconds
-    ) async throws -> CitadelFileSystem {
+    ) async throws -> any TunnelSSHConnection {
         // Before the secret is even resolved: none of the three rules depends
         // on one, and refusing first keeps a Keychain prompt off a session
         // that could not carry a forwarding anyway.
@@ -96,7 +101,7 @@ public enum TunnelConnection {
                 reason: "session \(session.name) built a non-SSH connection although "
                     + "its kind says a forwarding can be carried")
         }
-        return try await CitadelFileSystem.connect(
+        return try await SSHForwardingConnection.connect(
             config: ssh,
             connectTimeout: .seconds(Int64(connectTimeoutSeconds)),
             knownHosts: knownHosts,
