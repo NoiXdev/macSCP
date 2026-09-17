@@ -135,7 +135,22 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             onUnknownHostKey: onUnknownHostKey
         ) { authenticated, sftpOpenAttempted in
             sftpOpenAttempted.markAttempted()
-            let sftp = try await BoundedSFTPSession.open(on: authenticated.client)
+            // Bounded by this dial's own connect timeout: Citadel's open
+            // waits on the server's SFTP version reply with no timer, and a
+            // server without the subsystem never sends one (see
+            // `SFTPStartBound`). The raw client crosses into the two
+            // closures, which this file's opening comment asks to argue
+            // for: both run inside `SFTPStartBound.run`'s task group, which
+            // does not return until both have ended, so neither outlives
+            // this step. The one concurrent use is the close racing the
+            // open, and that is the point: the close is what fails the
+            // future the open waits on (`SFTPStartBound` cites the path).
+            let client = authenticated.client
+            let sftp = try await SFTPStartBound.run(
+                deadline: .nanoseconds(connectTimeout.nanoseconds),
+                sleeper: SFTPStartBound.sleeper,
+                open: { try await BoundedSFTPSession.open(on: client) },
+                closeClient: { try? await client.close() })
             return CitadelFileSystem(
                 client: authenticated.client, sftp: sftp, jumpClient: authenticated.jumpClient,
                 dedicatedGroup: authenticated.dedicatedGroup)
@@ -239,7 +254,8 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                 if sftpOpenAttempted.attempted {
                     // R-1: this attempt got as far as calling `openSFTP`
                     // on `dedicatedGroup` before failing (e.g. `openSFTP` itself
-                    // timed out) — Citadel already scheduled its uncancelled 15s
+                    // timed out, or `SFTPStartBound`'s deadline closed the
+                    // client) — Citadel already scheduled its uncancelled 15s
                     // "no reply" timer on this group's loop the moment `openSFTP`
                     // was called, win or lose (see `disconnect()`'s comment for
                     // the exact citation). Shutting the group down immediately
@@ -672,6 +688,10 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         case let error as HostKeyError:
             return error
         case let error as RemoteFSError:
+            return error
+        case let error as SFTPStartError:
+            // A tab's SFTP start that got no answer (`SFTPStartBound`): its
+            // own condition, not a transport failure to reduce to text.
             return error
         case let error as AgentError:
             // `.socketUnavailable`/`.noIdentities` are their OWN honest,

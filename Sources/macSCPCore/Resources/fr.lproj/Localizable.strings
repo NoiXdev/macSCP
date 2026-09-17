@@ -73,6 +73,7 @@
 "core.connect.invalidPort %@" = "Port invalide : %@.";
 "core.connect.authFailed" = "Échec de l'authentification — vérifiez le nom d'utilisateur ou le mot de passe.";
 "core.connect.connectionFailed %@" = "Connexion échouée : %@";
+"core.connect.sftpUnavailable" = "Ce serveur n'a pas démarré SFTP. Il ne propose peut-être pas SFTP du tout.";
 "core.connect.keyNotFound %@" = "Clé SSH introuvable : %@";
 "core.connect.keyPassphraseRequired" = "La clé SSH est chiffrée — saisissez une phrase secrète.";
 "core.connect.keyWrongPassphrase" = "La phrase secrète est incorrecte.";

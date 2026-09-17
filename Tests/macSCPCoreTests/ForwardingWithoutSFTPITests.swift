@@ -19,18 +19,20 @@ import Testing
 /// since a server that quietly still served SFTP would let them pass for the
 /// wrong reason.
 ///
-/// **A dial that asks this server for SFTP does not fail, it never returns**
-/// (measured 2026-09-17, before the forwarding path stopped asking): sshd
-/// logs `subsystem request for sftp by user testuser failed, subsystem not
-/// found`, and the client keeps the connection open with the dial still
-/// suspended — past this suite's five-minute limit, which cannot end it,
-/// because the wait is an `EventLoopFuture` inside Citadel's `openSFTP` that
-/// does not answer cancellation. So nothing here awaits such a dial. Each one
-/// runs in an unstructured task, and the test waits for whichever comes
-/// first: the dial returning, or the server's own log counting one more SFTP
-/// refusal. A dial left suspended that way is abandoned — it holds one
-/// idle connection to this container until the test process exits, and
-/// blocks no thread while it waits.
+/// **A tab's dial against this server used to never return** (measured
+/// 2026-09-17): sshd logs `subsystem request for sftp by user testuser
+/// failed, subsystem not found`, and Citadel's `openSFTP` waited on a version
+/// reply that never came, in an `EventLoopFuture` that does not answer
+/// cancellation — past this suite's five-minute limit. `SFTPStartBound` now
+/// ends that dial with `SFTPStartError.noResponse` once its connect timeout
+/// has passed, and the control case below awaits it directly.
+///
+/// The FORWARDING cases still race their dial against the server's refusal
+/// log line rather than await it: a forwarding never reaches that bound, so
+/// a forwarding that regressed into asking for SFTP would have no timer of
+/// its own to end it. Such a dial runs in an unstructured task, and the test
+/// waits for whichever comes first: the dial returning, or the server's own
+/// log counting one more SFTP refusal.
 ///
 /// The target inside the container is a fixed PRIVILEGED port, `998`, for
 /// the reason `TunnelRigITests.aFailedConnectionIsCountedWhileTheForwardStaysUp`
@@ -83,8 +85,9 @@ struct ForwardingWithoutSFTPITests {
     /// The first wait also ends on a failure, a reconnect, or an SFTP refusal
     /// in the server's log, so a dial that cannot connect is a red with its
     /// reason rather than a wait only the time limit ends. On that red the
-    /// runner is NOT stopped: `stop()` awaits the run task, and the run task
-    /// is suspended inside the dial described in the suite's comment.
+    /// runner is NOT stopped: `stop()` awaits the run task, and a forwarding
+    /// dial that asked for SFTP would hold that task with no bound of its own
+    /// (see the suite's comment).
     @Test func aLocalForwardReachesActiveAndCarriesBytesFromInsideTheContainer() async throws {
         let knownHosts = throwawayDirectory("runner")
         defer { try? FileManager.default.removeItem(at: knownHosts) }
@@ -175,31 +178,36 @@ struct ForwardingWithoutSFTPITests {
     /// The control: a tab's dial against the same server, with the same
     /// credentials, asks for SFTP and the server refuses it — read from the
     /// server's own log, so the rig really has no SFTP and the cases above
-    /// measure what they claim. The dial must not have produced a file
-    /// system; whether it has returned an error by then or is still
-    /// suspended (see the suite's comment) is not what this pins.
-    @Test func aTabsDialAgainstTheSameServerIsRefusedSFTP() async throws {
+    /// measure what they claim. The dial is awaited: it ends with
+    /// `SFTPStartError.noResponse` once its connect timeout has passed.
+    ///
+    /// Five seconds rather than the thirty the other dials here carry, only
+    /// so the run does not sit out a longer bound; it is not asserted on.
+    @Test func aTabsDialAgainstTheSameServerEndsWithTheSFTPStartError() async throws {
         let knownHosts = throwawayDirectory("tab")
         defer { try? FileManager.default.removeItem(at: knownHosts) }
 
         let config = try SSHConnectionConfig(
             host: Self.host, port: Self.port, username: "testuser", auth: .password("testpass"))
-        let race = try await raceAgainstSFTPRefusal {
+        let refusalsBefore = try await sftpRefusals()
+        let raised: (any Error)?
+        do {
             let fileSystem = try await CitadelFileSystem.connect(
                 config: config,
-                connectTimeout: .seconds(30),
+                connectTimeout: .seconds(5),
                 knownHosts: KnownHostsStore(directory: knownHosts),
                 onUnknownHostKey: .asking { _ in true })
             await fileSystem.disconnect()
+            raised = nil
+        } catch {
+            raised = error
         }
 
-        #expect(race.refusedSFTP, "the server logged no SFTP refusal for a tab's dial")
-        if case .success? = race.outcome {
-            Issue.record("a tab's dial connected to a server that should have no SFTP")
-        }
-        if case .failure(let error)? = race.outcome {
-            #expect(!(error is HostKeyError))
-            #expect(error as? RemoteFSError != .authenticationFailed)
+        #expect(raised as? SFTPStartError == .noResponse)
+        // The server wrote its refusal before the dial's bound ran out; the
+        // log is read until it shows, not against a clock.
+        try await pollUntil("the server logs its SFTP refusal") {
+            (try? await sftpRefusals()).map { $0 > refusalsBefore } == true
         }
     }
 

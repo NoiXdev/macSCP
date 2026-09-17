@@ -144,13 +144,14 @@ public enum DialSupport {
     /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
     /// commonest SSH dial failures. Every enum arm below is an exhaustive
-    /// `switch` with no `default` — re-counted 2026-09-16: SIX of them, over
+    /// `switch` with no `default` — re-counted 2026-09-17: SEVEN of them, over
     /// `HostKeyError`, `TunnelFailure`, `TunnelRefusal`, `SSHKeyError`,
-    /// `AgentError` and `RemoteFSError` (four until the port-forwarding
-    /// plan's Task 5 added `TunnelFailure`, five until the technical-backlog
-    /// plan's Task 6 added `TunnelRefusal`) — so a case added to any of the
-    /// six fails to compile here until someone writes its sentence and names
-    /// its kind. `KeychainError`, a struct with no cases, is the one arm that
+    /// `AgentError`, `SFTPStartError` and `RemoteFSError` (four until the
+    /// port-forwarding plan's Task 5 added `TunnelFailure`, five until the
+    /// technical-backlog plan's Task 6 added `TunnelRefusal`, six until the
+    /// next-build plan's Task 1 added `SFTPStartError`) — so a case added to
+    /// any of the seven fails to compile here until someone writes its
+    /// sentence and names its kind. `KeychainError`, a struct with no cases, is the one arm that
     /// is not a switch.
     ///
     /// `RemoteFSError` is spelled out too, and this comment used to argue
@@ -365,6 +366,14 @@ public enum DialSupport {
                 // foreign error's description is printed by this module" is
                 // one rule rather than a judgement per error type.
                 return known(.agentMisbehaved)
+            }
+        case let error as SFTPStartError:
+            // A tab's dial, never a forwarding's — a forwarding does not
+            // open SFTP — so the kind is `.unknown`, like every error a
+            // forwarding does not produce.
+            switch error {
+            case .noResponse:
+                return (.unknown, "the server did not start the SFTP subsystem")
             }
         case let error as RemoteFSError:
             switch error {

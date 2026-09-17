@@ -71,6 +71,7 @@
 "core.connect.invalidPort %@" = "Ungültiger Port: %@.";
 "core.connect.authFailed" = "Anmeldung fehlgeschlagen — Benutzername oder Passwort prüfen.";
 "core.connect.connectionFailed %@" = "Verbindung fehlgeschlagen: %@";
+"core.connect.sftpUnavailable" = "Dieser Server hat SFTP nicht gestartet. Möglicherweise bietet er gar kein SFTP an.";
 "core.connect.keyNotFound %@" = "SSH-Key nicht gefunden: %@";
 "core.connect.keyPassphraseRequired" = "Der SSH-Key ist verschlüsselt — Passphrase angeben.";
 "core.connect.keyWrongPassphrase" = "Passphrase ist falsch.";

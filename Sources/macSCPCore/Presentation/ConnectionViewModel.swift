@@ -1067,6 +1067,10 @@ public final class ConnectionViewModel {
     /// help" oracle would make it a growing list of guesses instead of one
     /// stated rule. Nothing is lost either way — the surface that reads
     /// this still offers a manual retry in every case.
+    ///
+    /// `SFTPStartError.noResponse` (a server that never started SFTP) is
+    /// `.other` by the same rule: it is neither a host-key decision nor a
+    /// missing passphrase, and a person answering nothing changes it.
     static func failureKind(for error: Error) -> ConnectFailureKind {
         switch error {
         case is HostKeyError, is ServerCertificateError:
@@ -2309,6 +2313,11 @@ public final class ConnectionViewModel {
             return .failed(message: CoreL10n.string("core.certificate.rejected"), field: nil)
         case ServerCertificateError.trustStoreUnreadable:
             return .failed(message: CoreL10n.string("core.certificate.trustStoreUnreadable"), field: nil)
+        // The dial authenticated and asked for SFTP, and the server never
+        // answered (`SFTPStartBound`). No field: nothing in the form is
+        // wrong, and the credentials worked.
+        case SFTPStartError.noResponse:
+            return .failed(message: CoreL10n.string("core.connect.sftpUnavailable"), field: nil)
         default:
             return .failed(
                 message: String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)),

@@ -91,6 +91,12 @@ public enum CLIErrorMapping {
         // reads that code off the real session-store error.
         case is TunnelStoreError:
             return .connection
+        // The server accepted the connection and the login, then did not
+        // start the SFTP subsystem asked of it — a remote-side refusal.
+        case let error as SFTPStartError:
+            switch error {
+            case .noResponse: return .remote
+            }
         case let error as RemoteFSError:
             switch error {
             case .authenticationFailed, .jumpAuthenticationFailed:
@@ -240,6 +246,11 @@ public enum CLIErrorMapping {
             case .unreadable(let path):
                 return "Error: the forwarding list \(path) could not be read, "
                     + "so it was not changed; check the file"
+            }
+        case let error as SFTPStartError:
+            switch error {
+            case .noResponse:
+                return "Error: the server did not start SFTP; it may not offer SFTP at all"
             }
         case is PasswordCommandError:
             return "Error: --password-command failed: \(error)"
