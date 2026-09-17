@@ -47,9 +47,12 @@ final class SSHForwardingConnection: TunnelSSHConnection, @unchecked Sendable {
     ///
     /// Same parameters, same errors and the same TOFU verdicts as
     /// `CitadelFileSystem.connect` — both are `connectAuthenticated` — minus
-    /// the SFTP open, which is why the R-1 flag is never marked here: a
-    /// failure after authentication releases the dedicated group at once,
-    /// because no Citadel SFTP timer was ever scheduled on it.
+    /// the SFTP open, which is why the R-1 flag is never marked here. A
+    /// failed dial therefore releases the dedicated group at once, exactly as
+    /// a tab's dial that failed before `openSFTP` does — including with
+    /// Citadel's login timer still pending (`CitadelFileSystem
+    /// .citadelLoginTimer`), which that shared failure path does not wait
+    /// out for either caller.
     static func connect(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
@@ -72,15 +75,24 @@ final class SSHForwardingConnection: TunnelSSHConnection, @unchecked Sendable {
     /// measured returning in 0.051039125 s (`BoundedSFTPSession
     /// .closeBoundSeconds`' comment), so these closes stay plain awaits.
     ///
-    /// The group is shut down at once rather than after `CitadelFileSystem`'s
-    /// sixteen seconds: that delay outlives the 15-second timer Citadel's
-    /// `openSFTP` schedules, and nothing here ever called `openSFTP`. Not
-    /// measured with `.agent` auth on a forwarding.
+    /// The group is NOT shut down at once. Citadel schedules a 10-second
+    /// login timeout on the connection's event loop, once per hop, and never
+    /// cancels it (`CitadelFileSystem.citadelLoginTimer`), so a forwarding
+    /// stopped soon after its dial — a refused `-R` bind, a quick stop after
+    /// autostart — would cut that task off. The release waits the timer out,
+    /// detached, the way a tab's waits out `openSFTP`'s longer one; nothing
+    /// here called `openSFTP`, so the shorter wait is the one owed. Whether
+    /// the immediate shutdown did observable harm was NOT measurable
+    /// (2026-09-17: three agent-authenticated dials disconnected at once, no
+    /// NIO "Cannot schedule tasks" line in twelve seconds after), so
+    /// `SSHForwardingConnectionDisconnectGuardTests` pins the delay in the
+    /// source.
     func disconnect() async {
         try? await client.close()
         try? await jumpClient?.close()
         if let dedicatedGroup {
-            try? await dedicatedGroup.shutdownGracefully()
+            CitadelFileSystem.releaseAfterCitadelTimer(
+                dedicatedGroup, outliving: CitadelFileSystem.citadelLoginTimer)
         }
     }
 }

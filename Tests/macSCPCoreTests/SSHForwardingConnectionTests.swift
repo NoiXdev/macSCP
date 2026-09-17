@@ -98,6 +98,24 @@ struct SSHForwardingConnectionTests {
         #expect(try store.find(host: "127.0.0.1", port: server.port) == nil)
     }
 
+    /// `.refusing` — the decider autostart hands in — on the forwarding
+    /// path: an unknown key is `rejectedByUser`, nothing is remembered, and
+    /// no channel is ever requested.
+    @Test func anUnknownKeyUnderTheRefusingDeciderIsRejectedOnTheForwardingPath() async throws {
+        let server = try await RefusingSSHServer.start()
+        let directory = throwawayDirectory("refusing")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = KnownHostsStore(directory: directory)
+
+        let raised = await dialError(.forwarding, port: server.port, store: store, decider: .refusing)
+        let requests = server.channelRequests
+        await server.close()
+
+        #expect(raised as? HostKeyError == .rejectedByUser)
+        #expect(try store.find(host: "127.0.0.1", port: server.port) == nil)
+        #expect(requests == 0)
+    }
+
     /// The forwarding path authenticates and stops: the server that refuses
     /// every channel is asked for none, and the dial succeeds. The tab path
     /// against the same server asks for one — which is what proves the

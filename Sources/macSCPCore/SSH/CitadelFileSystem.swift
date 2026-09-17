@@ -245,10 +245,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     // the exact citation). Shutting the group down immediately
                     // here would race that timer exactly like `disconnect()`
                     // used to, so defer it the same way.
-                    Task.detached {  // outlive Citadel's uncancelled 15s openSFTP timer (SFTPClient.swift:535)
-                        try? await Task.sleep(for: .seconds(16))
-                        try? await dedicatedGroup.shutdownGracefully()
-                    }
+                    releaseAfterCitadelTimer(dedicatedGroup, outliving: citadelOpenSFTPTimer)
                 } else {
                     // `openSFTP` was never reached (host-key rejection, auth
                     // failure, or a transport error during the SSH handshake
@@ -1398,10 +1395,37 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // 16-second sleep out of the caller's way. What bounds the call is
         // `BoundedSFTPSession.closeBoundSeconds`.
         if let dedicatedGroup {
-            Task.detached {  // outlive Citadel's uncancelled 15s openSFTP timer (SFTPClient.swift:535)
-                try? await Task.sleep(for: .seconds(16))
-                try? await dedicatedGroup.shutdownGracefully()
-            }
+            Self.releaseAfterCitadelTimer(dedicatedGroup, outliving: Self.citadelOpenSFTPTimer)
+        }
+    }
+
+    /// Citadel's `openSFTP` "no reply" timer: scheduled on the connection's
+    /// event loop the moment `openSFTP` is called, never cancelled
+    /// (`Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:535`).
+    static let citadelOpenSFTPTimer: Duration = .seconds(15)
+
+    /// Citadel's login timeout: `ClientHandshakeHandler.init` schedules it on
+    /// the connection's event loop once per hop, and never cancels it
+    /// (`Citadel/Sources/Citadel/ClientSession.swift:76-83`, created with
+    /// `.seconds(10)` at `:170-173`). Shorter than `citadelOpenSFTPTimer`, so
+    /// a tab's release, which outlives that one, outlives this one too.
+    static let citadelLoginTimer: Duration = .seconds(10)
+
+    /// Shuts `group` down one second after `timer` has elapsed, detached from
+    /// the caller, so a timer Citadel left pending on the group's event loop
+    /// fires on a live loop instead of being cut off by the shutdown — and so
+    /// the caller does not spend that wait itself.
+    ///
+    /// The tab path waits out `citadelOpenSFTPTimer` (sixteen seconds, the
+    /// number both of its release sites spelled before 2026-09-17); a
+    /// forwarding, which never calls `openSFTP`, waits out
+    /// `citadelLoginTimer`.
+    static func releaseAfterCitadelTimer(
+        _ group: MultiThreadedEventLoopGroup, outliving timer: Duration
+    ) {
+        Task.detached {
+            try? await Task.sleep(for: timer + .seconds(1))
+            try? await group.shutdownGracefully()
         }
     }
 }

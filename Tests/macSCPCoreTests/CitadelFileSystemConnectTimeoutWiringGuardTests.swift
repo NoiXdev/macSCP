@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards that every `SSHClient.connect(` call inside `CitadelFileSystem.swift`
@@ -66,6 +67,16 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
             .components(separatedBy: "\n")
     }
 
+    /// The forwarding path's own dial, which reaches the funnel above only
+    /// through `CitadelFileSystem.connectAuthenticated`.
+    private static let forwardingConnectionFile = repoRoot
+        .appendingPathComponent("Sources/macSCPCore/SSH/SSHForwardingConnection.swift")
+
+    /// The shared connect path. Both callers hand it their own
+    /// `connectTimeout`; a literal at either one would put that caller back
+    /// on a fixed wait while every dial through the other stayed configured.
+    private static let sharedPathCall = "connectAuthenticated("
+
     // MARK: - The guard
 
     @Test func everyDialForwardsTheCallersConnectTimeout() throws {
@@ -107,6 +118,34 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
             expected 2 `\(Self.funnelCall)` call sites (jump hop + target) in \
             CitadelFileSystem.swift, found \(hops) — re-anchor this guard.
             """)
+    }
+
+    /// Both callers of the shared connect path forward the caller's own
+    /// timeout: a tab's `CitadelFileSystem.connect` and a forwarding's
+    /// `SSHForwardingConnection.connect`. Read over the source with comments
+    /// and strings blanked, so a doc comment naming the call cannot stand in
+    /// for it. The count is the positive half: one call in each file, counted
+    /// 2026-09-17 with `grep -rn "connectAuthenticated(" Sources`.
+    @Test func bothCallersOfTheSharedConnectPathForwardTheCallersTimeout() throws {
+        for (file, name) in [
+            (Self.citadelFileSystemFile, "CitadelFileSystem.swift"),
+            (Self.forwardingConnectionFile, "SSHForwardingConnection.swift"),
+        ] {
+            let lines = try SwiftSource.blankingCommentsAndStrings(
+                try String(contentsOf: file, encoding: .utf8)
+            ).components(separatedBy: "\n")
+            let calls = Self.callStartLines(in: lines, calling: Self.sharedPathCall)
+            #expect(calls.count == 1, """
+                expected 1 `\(Self.sharedPathCall)` call in \(name), found \
+                \(calls) — re-anchor this guard.
+                """)
+            let violations = Self.callsNotForwardingConnectTimeout(
+                in: lines, calling: Self.sharedPathCall)
+            #expect(violations.isEmpty, """
+                `\(Self.sharedPathCall)` in \(name) at line(s) \(violations) does \
+                not pass its own `connectTimeout` parameter through.
+                """)
+        }
     }
 
     // MARK: - Scanner self-tests (synthetic source, so the scanner cannot
