@@ -177,9 +177,9 @@ struct SettingsView: View {
         // above, in all four languages — only the ceiling that used to pin
         // the window to exactly that size is gone. `MacSCPApp`'s `Settings`
         // scene carries the matching `.windowResizability(.contentMinSize)`,
-        // which is what makes a `minWidth`/`minHeight` frame here actually
-        // let the window grow rather than just relax which minimum SwiftUI
-        // enforces.
+        // which reads this minimum onto the window's `contentMinSize` —
+        // but, MEASURED, does NOT by itself make the window resizable; see
+        // the `WindowAccessor` block below, which is what actually does.
         .frame(minWidth: 680, minHeight: 620)
         // Frame autosave, so the size a resize is left at survives a
         // relaunch (same task). `WindowAccessor` calls back on every
@@ -190,7 +190,29 @@ struct SettingsView: View {
         // `ContentView.applyFrameAutosave(to:)` uses for the primary
         // window.
         .background(WindowAccessor { window in
-            guard let window, window.frameAutosaveName != Self.frameAutosaveName else { return }
+            guard let window else { return }
+            // Fix round 1 (measured 2026-09-17, reviewer's scratch app
+            // reproducing this exact pattern — a `minWidth`/`minHeight`
+            // root plus `MacSCPApp`'s `.windowResizability(.contentMinSize)`
+            // on the `Settings` scene, with the Settings window opened
+            // through the real "Settings…" menu item): a SwiftUI `Settings`
+            // scene's window does NOT become resizable from that alone.
+            // Read back `resizable == false`, `styleMask == 32771` (titled
+            // + closable + fullSizeContentView, no `.resizable`), while
+            // `contentMinSize` WAS already honoured (680×620) — the frame
+            // minimum above reached the window, the ability to drag its
+            // edge did not. Inserting `.resizable` here flipped it to
+            // `resizable == true`, `styleMask == 32779`,
+            // `contentMinSize == (680, 620)`. Do not remove this as
+            // redundant with `.windowResizability` — it is the only thing
+            // that actually makes the window draggable; only-when-missing
+            // so an ordinary body update (`WindowAccessor` calls back on
+            // every one) does not re-insert what is already there.
+            if !window.styleMask.contains(.resizable) {
+                window.styleMask.insert(.resizable)
+            }
+            window.contentMinSize = NSSize(width: 680, height: 620)
+            guard window.frameAutosaveName != Self.frameAutosaveName else { return }
             window.setFrameAutosaveName(Self.frameAutosaveName)
         })
     }

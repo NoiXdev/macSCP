@@ -1046,15 +1046,18 @@ struct MacSCPApp: App {
                          launchLanguage: launchLanguage, settingsBridge: settingsBridge)
                 .tint(DesignTokens.remoteBlue)
         }
-        // Lets the Settings window grow past `SettingsView`'s 680×620 floor
-        // (next build of 2026-09-17, Task 4) instead of the fixed size a
-        // `Settings` scene renders at by default. `.contentMinSize` reads
-        // the minimum from the content's own `.frame(minWidth:minHeight:)`
-        // — `SettingsView.body` — rather than a second copy of the number
-        // here. Available since macOS 13 (`WindowResizability`'s own
-        // availability), well under this project's macOS 15 floor, and
-        // applies to `Scene` generally, `Settings` included — there is no
-        // narrower, Settings-specific opt-out.
+        // Reads `contentMinSize` from the content's own
+        // `.frame(minWidth:minHeight:)` — `SettingsView.body` — rather than
+        // a second copy of the number here (next build of 2026-09-17,
+        // Task 4). Available since macOS 13, well under this project's
+        // macOS 15 floor. Kept even though it does NOT by itself make the
+        // window resizable — MEASURED (fix round 1, 2026-09-17): a
+        // `Settings` scene's window stayed `resizable == false` with only
+        // this modifier and a min-frame root. `SettingsView`'s
+        // `WindowAccessor` is what actually makes the window resizable
+        // (inserts `.resizable` into the `NSWindow`'s `styleMask`); this
+        // modifier still sets `contentMinSize` correctly on its own; see
+        // that block for the measurement's numbers.
         .windowResizability(.contentMinSize)
 
         // The menu-bar status item is an AppKit `NSStatusItem` driven by

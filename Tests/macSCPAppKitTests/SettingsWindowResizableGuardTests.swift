@@ -72,7 +72,7 @@ struct SettingsWindowResizableGuardTests {
     /// code follows the scene instead of balancing the scene's own body. So
     /// this balances from the brace already consumed (`depth` starts at 1),
     /// and returns everything after the matching close.
-    private static func textAfterSettingsScene(window: Int = 800) throws -> Substring {
+    private static func textAfterSettingsScene(window: Int = 1200) throws -> Substring {
         let code = try strict(appFile)
         guard let declarationRange = code.range(of: "Settings {") else {
             throw ScanError.declarationNotFound("Settings {")
@@ -162,6 +162,45 @@ struct SettingsWindowResizableGuardTests {
             the Settings window's autosave wiring pulled in the main window's suspend/resume dance \
             (ContentView.frameAutosaveSuspended) — the task brief asks for the simple case: set the \
             name once, when the window first appears
+            """)
+    }
+
+    // MARK: - The window is ACTUALLY resizable (fix round 1)
+
+    /// Fix round 1 (2026-09-17): the reviewer's scratch app, reproducing
+    /// this exact pattern — a `minWidth`/`minHeight` root plus
+    /// `.windowResizability(.contentMinSize)` on the `Settings` scene, the
+    /// window opened through the real "Settings…" menu item — measured
+    /// `resizable == false`, `styleMask == 32771` (titled + closable +
+    /// fullSizeContentView, no `.resizable`). SwiftUI's own resizability
+    /// modifier does NOT flip that bit for a `Settings` scene; only
+    /// inserting `.resizable` into the `NSWindow`'s `styleMask` directly
+    /// does (measured: `styleMask == 32779`, `resizable == true` once
+    /// added). So this checks the ACTUAL mechanism, not the SwiftUI one
+    /// `theSettingsSceneIsResizableWithAMinimumContentSize` above already
+    /// covers (and which is kept, but is not sufficient by itself).
+    @Test func theWindowAccessorForcesResizableStyleMaskAndContentMinSize() throws {
+        let body = try Self.settingsViewRootBody()
+        #expect(
+            body.contains("styleMask.contains(.resizable)"),
+            """
+            SettingsView's WindowAccessor no longer guards on whether .resizable is already \
+            in styleMask — re-anchor this guard
+            """)
+        #expect(
+            body.contains("styleMask.insert(.resizable)"),
+            """
+            SettingsView's WindowAccessor no longer inserts .resizable into styleMask — the \
+            Settings window reads out resizable == false despite .windowResizability(.contentMinSize) \
+            on the Settings scene (measured 2026-09-17, reviewer's scratch app): SwiftUI's own \
+            modifier does not do this for a Settings scene
+            """)
+        #expect(
+            body.contains("contentMinSize = "),
+            """
+            SettingsView's WindowAccessor no longer sets window.contentMinSize — a Settings-scene \
+            window made resizable through styleMask needs its own contentMinSize, the SwiftUI frame \
+            minimum reaching the window is not enough on its own
             """)
     }
 }
