@@ -7,16 +7,18 @@ import Foundation
 /// anything is dialled, while it is dialled, and after. Recounted 2026-09-06
 /// with `grep -rn "TunnelCarriers\." Sources/`, THREE call sites hold it —
 /// `TunnelConnection.connect`, which throws `refusalError`'s value
-/// (`TunnelConnection.swift:82` since 2026-09-16), `SessionRowTunnelMenuPlan.build`, which
+/// (`TunnelConnection.swift:87`, retaken 2026-09-17), `SessionRowTunnelMenuPlan.build`, which
 /// hides the session row's forwarding submenu when there is one
 /// (`SessionSidebar.swift:185`), and
 /// `TunnelTargetOptions.requireItCanCarryAForwarding`, which is `tunnels
 /// add`'s refusal before anything is written
-/// (`Sources/MacSCPCLI/TunnelsCommand.swift:263`). The third one had been
+/// (`Sources/MacSCPCLI/TunnelsCommand.swift:265`). The third one had been
 /// named here as planned rather than present; it arrived with the `tunnels`
 /// subcommand on the same day, and its line number here said 252 until
 /// 2026-09-07, when the same grep was run again: still three call sites,
 /// the first two still on the lines named above, the third on 263.
+/// Retaken 2026-09-17 with the same grep: still three call sites, the
+/// first now on 87, the second unchanged, the third on 265.
 ///
 /// The sidebar's was a second copy of the three predicates until 2026-09-06,
 /// and the copy was silent rather than merely redundant: with

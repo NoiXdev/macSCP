@@ -650,10 +650,17 @@ known gap, its own BACKLOG row) — so it does not retire the drop rule
 below; it changes what "the hop has no passphrase" meant. Both jump
 predicates, `sessionServesAJumpHop`/`setServesAJumpHop`, **remain in
 place as defence in depth**: they still gate the slot-drop decision (a)
-makes, and now also gate a new save guard
-(`jumpUsesStoredManagedPassphrase`, `SessionListViewModel.swift:587`)
-that stops the fallback's resolved value from being written back into
-the jump's own slot on save. Neither predicate was retired by the
+makes, and nothing else. Their only callers are those two slot drops in
+`Sources/MacSCPAppKit/ContentView.swift` — `convertedKeyImported(_:for:)`
+at `:2665` and `repointLoginSet(_:)` at `:2741` (counted 2026-09-17 with
+`grep -rn "sessionServesAJumpHop\|setServesAJumpHop" Sources/`: those two
+call sites beside the two declarations, comment lines dropped). The save
+guard Task 5 added (`jumpUsesStoredManagedPassphrase`,
+`SessionListViewModel.swift:587`), which stops the fallback's resolved
+value from being written back into the jump's own slot on save, calls
+neither predicate: it asks `SessionSecretPolicy.usesStoredManagedPassphrase`.
+(This paragraph first said the predicates also gated that guard;
+corrected 2026-09-17 at the plan's final review.) Neither predicate was retired by the
 fallback landing, contrary to what "The durable fix... would retire both
 jump predicates" in the BACKLOG row that prompted this task implied.
 

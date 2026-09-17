@@ -66,9 +66,11 @@ extension SOCKS5ReplyCode {
     /// TunnelFailure\." Sources/`: EIGHT throw sites — `TunnelConnection
     /// .swift:100`, `LocalForwardListener.swift:196` and `:222`,
     /// `RemoteForward.swift:133`, `:287` and `:321`,
-    /// `SSHForwardingConnection.swift:119` and `:228` (every line number in
+    /// `SSHForwardingConnection.swift:131` and `:240` (every line number in
     /// this paragraph retaken 2026-09-17, when the forwarding code moved out
-    /// of `CitadelFileSystem.swift`; no count changed). ELEVEN on 2026-09-06;
+    /// of `CitadelFileSystem.swift`, and the three in
+    /// `SSHForwardingConnection.swift` retaken again later that day, after an
+    /// edit there moved them; no count changed). ELEVEN on 2026-09-06;
     /// NINE on 2026-09-16 once `TunnelConnection`'s refusal and
     /// `TunnelManager`'s deleted session began throwing `TunnelRefusal`;
     /// EIGHT once the refused remote bind began throwing
@@ -81,7 +83,7 @@ extension SOCKS5ReplyCode {
     /// sentence — finds FIVE helpers that RETURN one:
     /// `LocalForwardListener.acceptFailure` (`:375`) and `.bindFailure`
     /// (`:381`), `RemoteForward.startFailure` (`:344`) and `.pairFailure`
-    /// (`:349`), and `SSHForwardingConnection.remoteBindFailure` (`:256`). And
+    /// (`:349`), and `SSHForwardingConnection.remoteBindFailure` (`:268`). And
     /// subtracting the throw sites from `grep -rn "TunnelFailure\." Sources/`
     /// (comment lines dropped) leaves THREE inline constructions:
     /// `RemoteForward.swift:156` and `:172`, which resolve a failure into the

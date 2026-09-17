@@ -1,6 +1,6 @@
 # Technical backlog of 2026-09-16 — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Close the open technical rows of `docs/BACKLOG.md` recorded between 2026-09-04 and 2026-09-16, with the four design choices the maintainer made on 2026-09-16.
 
