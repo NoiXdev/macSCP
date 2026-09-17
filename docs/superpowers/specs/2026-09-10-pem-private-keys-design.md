@@ -637,6 +637,26 @@ and `:2961` put `resolved…secret ?? ""` into `form.jumpPassword`, and
 `ManagedKeyPassphrase.resolve` sits anywhere on that path, so a jump
 hop's own slot is the only place its passphrase can come from.
 
+**Corrected 2026-09-17** by the technical-backlog plan's Task 5
+(`561fc589`): the paragraph above is no longer true as written, and is
+kept only as the record of why gate 2 below exists. A jump hop whose
+login is a private key and whose own/set/referenced slot is now EMPTY
+falls back to the managed key's passphrase too, through
+`LoginResolver.fallingBackToManagedKeyPassphrase(_:keys:secrets:)`,
+reached by `SessionListViewModel.resolvedJumpLogin(for:)`,
+`resolvedJump(for:)` and `fillJumpForm`. The fallback only fires when
+the slot is empty — a stale value already sitting there still wins (a
+known gap, its own BACKLOG row) — so it does not retire the drop rule
+below; it changes what "the hop has no passphrase" meant. Both jump
+predicates, `sessionServesAJumpHop`/`setServesAJumpHop`, **remain in
+place as defence in depth**: they still gate the slot-drop decision (a)
+makes, and now also gate a new save guard
+(`jumpUsesStoredManagedPassphrase`, `SessionListViewModel.swift:587`)
+that stops the fallback's resolved value from being written back into
+the jump's own slot on save. Neither predicate was retired by the
+fallback landing, contrary to what "The durable fix... would retire both
+jump predicates" in the BACKLOG row that prompted this task implied.
+
 The rule as built (`d8db692c`, Task 2 fix round 1): a slot — the
 session's own, or a set's — is dropped only when BOTH hold:
 

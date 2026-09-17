@@ -79,12 +79,17 @@ public struct TunnelProfile: Codable, Hashable, Identifiable, Sendable {
 public enum TunnelState: Sendable, Equatable {
     case stopped
     case connecting
-    case active(connections: Int)
+    case active(connections: Int, failedConnections: Int = 0, lastFailure: TunnelFailureKind? = nil)
     case reconnecting(attempt: Int)
-    case failed(reason: String)     // the mapped reason, never a secret
+    case failed(TunnelFailureKind)  // typed, never a secret or a raw error description
     case needsConfirmation          // autostart met an unknown host key or a missing secret
 }
 ```
+
+Updated 2026-09-17 by the technical-backlog plan's Tasks 6 and 7 (see "Changes
+2026-09-17" below): `failed` carries a `TunnelFailureKind`, not a free-text
+reason, and `active` carries a per-connection failure count and the last
+failure's kind, both reset by the next successful connection.
 
 `TunnelStore` writes `tunnels.json` beside `sessions-v2.json` — ids,
 names, hosts, ports, flags; never a secret. Deleting a session deletes
@@ -206,30 +211,14 @@ its profiles (the store is told; pinned).
 - SOCKS5 without authentication, CONNECT only (no BIND, no UDP).
 - A local port in use fails the start with the port in the reason.
 - **The SOCKS5 handshake has no timeout** (recorded 2026-09-06 by the
-  final review; a Task 3 hand-off that never reached Task 5's brief). A
-  client that connects to a `-D` port and then stalls mid-greeting holds
-  an accepted socket and a task parked on `SOCKS5RequestBox.value()`
-  until the tunnel's `stop()`, and nothing caps how many such clients
-  there may be. **Accepted for now: `ssh -D` behaves the same way**, so
-  this is not a regression against the tool the feature imitates, and
-  the port is a loopback bind by default. The fix shape, when it is
-  wanted: a per-handshake deadline that closes the socket and resolves
-  the box with a failure, plus a cap on how many handshakes may be
-  parked at once. Written down as a row in `docs/BACKLOG.md` (Security
-  and testability).
+  final review; a Task 3 hand-off that never reached Task 5's brief).
+  **Closed 2026-09-17** by the technical-backlog plan's Task 3 — see
+  "Changes 2026-09-17" below for the shape that shipped.
 - **A failure reason reaches the user in English, on four localized
   surfaces** (recorded 2026-09-06 by the final review).
-  `TunnelState.failed(reason:)` carries the sentence
-  `DialSupport.reason(for:)` rendered — English by construction, and by
-  design a paste artifact of the audited log line — and the App shows it
-  verbatim in the profiles sheet's state column, the autostart sheet's
-  state column, the Dock menu's tooltip and the sidebar glyph's tooltip.
-  It is not fixable at the App layer as the state is written: the case
-  identity is discarded when the sentence is rendered, so there is
-  nothing left to map through `L10n`. The fix shape is a typed failure
-  on the state (the case and its data, not its prose), mapped at the App
-  layer — a Core change, recorded as a row in `docs/BACKLOG.md`
-  (Interface).
+  **Closed 2026-09-17** by the technical-backlog plan's Task 6 — see
+  "Changes 2026-09-17" below for the shape that shipped, and its own
+  residual limit (local-bind errno/detail text still lost in the App).
 
 ## What the tests pin
 
@@ -251,3 +240,195 @@ its profiles (the store is told; pinned).
   Dock badge derived from a pure `DockBadgePlan`, the quit chain's
   `stopAll` before the windows; no view is rendered — the dev build is
   the sight check.
+
+## Changes 2026-09-17
+
+Five follow-ups landed through
+`docs/superpowers/plans/2026-09-16-technical-backlog.md` (ledger:
+`.superpowers/sdd/2026-09-16-technical-backlog/progress.md`). Two close
+this design's own "Limits, stated" bullets above (the SOCKS5 timeout,
+the English-only failure reason); the other three extend the runtime
+this design describes beyond what it originally limited (the
+connection-failure counter, the SFTP-less connect, the store refusal).
+What shipped, task by task; the residual gaps each left are their own
+rows in `docs/BACKLOG.md`, not repeated here.
+
+### Typed failure (Task 6, `ab4a2c4c`, `8c9289a5`)
+
+`TunnelState.failed`/`TunnelEvent.failed` carry a new
+`public enum TunnelFailureKind` (`Sources/macSCPCore/Tunnels/
+TunnelFailureKind.swift`) instead of a free-text `reason: String`. A kind
+carries the data its sentence needs — a host, a path, an algorithm name,
+a session name, a `ConnectionKind`, a port — and never a secret, a
+fingerprint or a foreign error's raw text. `DialSupport.classify(_:)` is
+the one switch both `DialSupport.reason(for:)` (the English sentence, the
+log and CLI keep it byte-identical to before) and the new
+`DialSupport.failureKind(for:)` read from, so the two can never disagree.
+
+The App maps each kind through `L10n` in `en`/`de`/`fr`/`pl`
+(`TunnelProfilesSheet.failureKey(_:)`/`failureLabel(_:)`), read by all
+four surfaces (the profiles sheet, the autostart sheet, the Dock menu's
+tooltip, the sidebar glyph's tooltip) that used to show the English
+sentence verbatim. A guard pins that no label renders `String(describing:
+)` and that every `TunnelFailureKind.Name` resolves a catalogue key.
+
+`TunnelFailure.connectFailed(reason:)`'s three carrier refusals (a
+session using a login set, a session using a jump host, a non-SSH
+session) and the App's "connection no longer exists" case were not
+representable as a kind without re-parsing prose, so they became a new
+typed `public enum TunnelRefusal: Error`, thrown by `TunnelConnection
+.connect` and `TunnelManager.liveRunner` in place of
+`TunnelFailure.connectFailed`. `TunnelCarriers.refusal(for:) -> String?`
+keeps its old signature and exact sentences, read from the refusal's own
+kind, so `tunnels add` and the sidebar's existing refusal text are
+unchanged.
+
+Fix round 1 (`8c9289a5`) added three more kinds so the App would not lose
+detail the log always had: `remotePortZeroRefused`,
+`remoteBindRefused(needsGatewayPorts: Bool)` and
+`remoteForwardUnanswered`. **This is what makes the "Limits, stated"
+bullets on `0.0.0.0`/`GatewayPorts` and on a refused port `0` true again
+for the App, not only for the log and the CLI**: a non-loopback remote
+bind refusal now shows the GatewayPorts hint (translated,
+`tunnel.failure.remoteBindRefused.gatewayPorts`) and a port-`0` refusal
+names itself (`tunnel.failure.remotePortZeroRefused`), on all four
+surfaces, exactly as those two bullets already promised for the log line
+they were originally written against.
+
+One opaque case, not in the port-forwarding plan's own scope but closed
+in the same commit: a `KeychainError` from the forwarding's secret chain
+used to fall to `(error as NSError).localizedDescription` — "The
+operation couldn't be completed. (macSCPCore.KeychainError error 1.)".
+It now maps to `.keychainUnreadable`, "the keychain could not be read",
+translated like every other kind.
+
+**Residual, its own BACKLOG row:** a local bind failure other than
+port-in-use (e.g. `EADDRNOTAVAIL`, a permission error) still collapses to
+a plain "could not start listening" sentence in the App; the log and CLI
+keep the full errno/detail text through the mechanism below.
+
+### The connection-failure counter in `.active` (Task 7, `b9ee7d22`, `bc639257`)
+
+`TunnelState.active` gained two fields with defaults, so every existing
+construction and comparison still compiles:
+
+```swift
+case active(connections: Int, failedConnections: Int = 0, lastFailure: TunnelFailureKind? = nil)
+```
+
+**What counts:** a `direct-tcpip`/`forwarded-tcpip` channel or SOCKS5
+CONNECT that fails after the destination is known — a refused connect, a
+channel-open failure, a pipe failure. **What does not count:** a SOCKS5
+client that never completed its handshake (no destination was ever
+named, so there is nothing to attribute the failure to) and, since fix
+round 1, a SOCKS5 client that disconnects before it can read the success
+reply (`LocalForwardListener.accepted`'s `catch where replying`) — that
+is the client's own failure, not the forwarding's, by the maintainer's
+ruling. A success (`TunnelConnectionObserver.opened`) resets both fields
+to `0`/`nil`; entering `.active` from `.connecting`/`.reconnecting`
+(including after a reconnect) also starts at `0`/`nil`. No new lifecycle
+state — an all-failing forwarding is still `.active`, by the same
+"Log + Zähler im Status" decision.
+
+Each failure writes one `.debug` `tunnel` line, `tunnel <name> connection
+failed port=<bound> <kind.sentence>` — no `reason=`, no client address,
+no destination. The App shows "Active · %lld connections failed"
+(stringsdict, four languages, `pl` one/few/many/other) once
+`failedConnections > 0`, and a new `stateTooltip(_:)` carries the
+translated last failure on all four state surfaces.
+
+**Residuals, their own BACKLOG rows:** a stopped attempt's buffered
+reports still publish intermediate `.active` states while they drain
+(only the *next* attempt is protected, by an awaited reader in
+`releaseCurrent()`); a stop race in `RemoteForward.swift` reports the
+same "forward has been stopped" event as a connection failure in one of
+its two occurrences and not the other; `SOCKS5Handshake.succeed`'s own
+`removeHandler` failure is folded into, and so hidden by, the
+client-disconnect exemption above; a forwarding failing every connection
+still shows a green glyph and badge, by design.
+
+### The SOCKS5 limits (Task 3, `86135e0a`, `db432037`)
+
+`SOCKS5Listener` carries a 30 s handshake deadline
+(`socks5HandshakeDeadline`) and a cap of 64 parked handshakes
+(`socks5ParkedHandshakeLimit`), both named constants with their reasoning
+in a comment (a SOCKS greeting plus CONNECT is a few dozen bytes; `ssh
+-D` has neither limit, so these are this app's own; loopback bind by
+default). A client that stalls mid-handshake is closed and its
+`SOCKS5RequestBox` resolved with `SOCKS5HandshakeError.deadlineExpired`
+once the deadline fires; a connection beyond the cap is refused at once
+(socket closed, no box ever parked) with `tooManyParkedHandshakes`.
+`SOCKS5RequestBox.value()` now carries the same `withTaskCancellationHandler`
+`OpenPortBox` (`RemoteForward.swift`) already had. A refused or
+timed-out handshake writes one `.debug` `tunnel` line naming only the
+local port — never client data. Neither failure reaches the tunnel's
+`onFailure`/the counter above: a client's own SOCKS5 failure is still not
+a tunnel failure, unchanged from before this task.
+
+### The SFTP-less connect (Task 8, `c479fd37`, `f0d9f4ff`, `feb0a55e`)
+
+`CitadelFileSystem.connect` was factored into a shared
+`connectAuthenticated(config:connectTimeout:knownHosts:onUnknownHostKey:
+establish:)` that holds everything TOFU-relevant in one place — agent
+handling, the dedicated event-loop group, `connectWithTOFURetries` (the
+mismatch hard stop, the accept-retry path, the known-hosts upsert) and
+`attemptConnect` (jump hop, both hops through the same registered
+algorithms, authentication). `establish` runs inside `attemptConnect`
+exactly where the SFTP open used to sit, so a failure inside it is still
+mapped the same way as before.
+
+A new internal `SSHForwardingConnection` (`Sources/macSCPCore/SSH/
+SSHForwardingConnection.swift`) calls `connectAuthenticated` with a step
+that never opens the SFTP subsystem, and now owns the forwarding-only
+surface that used to live on `CitadelFileSystem`
+(`openDirectTCPIP`, `withRemotePortForward`, the remote-bind failure
+mapping). `TunnelConnection.connect` uses it; tabs still go through
+`CitadelFileSystem.connect`, unchanged, and still open SFTP.
+
+A new rig service, `sshd-nosftp` (`127.0.0.1:2236`, SFTP subsystem
+disabled via a custom-cont-init hook that comments out the image's
+`Subsystem sftp` line — a config-fragment override could not remove it,
+because sshd keeps the FIRST `Subsystem sftp` directive it sees and the
+image's own comes after any `Include`), measures the new path: a
+forwarding dial connects and carries bytes with no SFTP request ever
+sent; `CitadelFileSystem.connect` against the same server is refused SFTP
+by the server (visible in its log).
+
+**Residual, found while measuring, its own BACKLOG rows:** a tab dial
+against a server without the SFTP subsystem does not fail, it HANGS —
+`openSFTP` waits on the server's version reply with no timer of its own,
+past the connect timeout, and Cancel leaks the connection rather than
+ending it; and a dial that fails partway (not the success path, which
+this task's fix round 1 already covers) can still release its
+agent-auth event-loop group while Citadel's 10 s login timer is pending.
+
+### The store refusal (Task 2, `f31212b3`)
+
+`TunnelStore.upsert`/`delete(id:)`/`deleteAll(for:)` now go through a
+private `writableFile()` that switches on the same `decode()`
+`readProfiles()` already used, and throw a new
+`TunnelStoreError.unreadable(path:)` on a present-but-undecodable
+`tunnels.json` instead of silently treating it as empty and overwriting
+it — the file is left byte-identical. The lenient readers (the sidebar
+glyph, autostart) are unchanged: they still read an unreadable file as
+empty, which is what makes the app usable while a `tunnels.json` is
+being repaired by hand.
+
+The App surfaces the throw through a new catalogue key
+(`tunnel.store.unreadable`, four languages) on the profiles sheet's save
+and delete paths. The CLI maps it to `CLIExitCode.connection` (13, the
+same code an unreadable session store already returns) and a message
+naming the file and "could not be read". `sessions rm` does **not**
+block on a `deleteAll` refusal — a session nobody could delete until the
+file is fixed by hand was judged worse than a stale row — it warns to
+stderr naming the file, still removes the session, and exits 0.
+
+**Residuals, their own BACKLOG rows:** `TunnelManager.save`/`remove`
+still stop a profile's runner *before* the store write, so a refused
+write over an unreadable file still stops a tunnel that was in fact
+untouched on disk; orphan rows of a session deleted while the store was
+unreadable resurface as stopped, invisible rows once the file is
+repaired; `sessions rm`'s prompt/`--verbose` output say "0 forwardings"
+rather than "unknown" for a session whose count could not be read; and
+exit code 13 is documented (`CLIExitCode.swift:22`) as a transport
+failure but is now also returned for a store failure, which is not one.
