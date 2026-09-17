@@ -1009,14 +1009,15 @@ extension ContentView {
     /// `NSWindow.didEndLiveResizeNotification` for THIS window: the user let
     /// go of the window's edge, so the size it has now is a size the user
     /// chose. Persisted when `MainWindowSizePlan.persistsLiveResize` says so
-    /// — the connected primary window with its autosave writing — so the
-    /// size a relaunch's connect grows to follows the drag, not only the
-    /// last shrink. A live resize ends once per drag, so this is one
+    /// — the primary window showing a connected browser, not in full
+    /// screen, with its autosave writing — so the size a relaunch's connect
+    /// grows to follows the drag, not only the last shrink. A live resize ends once per drag, so this is one
     /// settings.json write per drag, not one per mouse point.
     func handleWindowDidEndLiveResize(_ notification: Notification) {
         guard let resized = notification.object as? NSWindow, resized === window else { return }
         if MainWindowSizePlan.persistsLiveResize(
-            isPrimaryWindow: isPrimaryWindow, isPristine: isPristine,
+            isPrimaryWindow: isPrimaryWindow, isActiveTabConnected: activeTab.isConnected,
+            isFullScreen: resized.styleMask.contains(.fullScreen),
             frameAutosaveSuspended: frameAutosaveSuspended) {
             settingsStore.mainWindowBrowserSize = resized.frame.size
         }
@@ -2079,6 +2080,7 @@ extension ContentView {
               let shrink = MainWindowSizePlan.shrink(
                 current: window.frame.size, isPristine: isPristine,
                 isPrimaryWindow: isPrimaryWindow,
+                isFullScreen: window.styleMask.contains(.fullScreen),
                 frameAutosaveSuspended: frameAutosaveSuspended)
         else { return }
         lastBrowserSize = shrink.browserSize
@@ -2098,10 +2100,15 @@ extension ContentView {
     /// window's frame autosave, resumes it.
     ///
     /// The grown frame is saved under the name BEFORE the name is set again
-    /// (`NSWindow.saveFrame(usingName:)`), so whatever AppKit does when a
-    /// window receives an autosave name that already has a frame stored
-    /// under it, the stored frame is the one the window has now — not the
-    /// one from before the shrink, at the position the window had then.
+    /// (`NSWindow.saveFrame(usingName:)`), so the frame AppKit applies when
+    /// a window receives an autosave name that already has a frame stored
+    /// under it is the one the window has now — not the one from before the
+    /// shrink. That keeps the size but not the display: AppKit places the
+    /// applied frame relative to `NSScreen.main` (measured by the Task 3
+    /// reviewer), so a window connected on one display while another app
+    /// had focus on the other jumped there. The frame is therefore captured
+    /// before the name is set and put back, unanimated, if it moved
+    /// (fix round 1; `MainWindowSizePlan.frameToRestore`).
     func growToBrowserSize() {
         guard let window else { return }
         let remembered = MainWindowSizePlan.rememberedBrowserSize(
@@ -2114,8 +2121,13 @@ extension ContentView {
         if MainWindowSizePlan.resumesFrameAutosave(
             isPrimaryWindow: isPrimaryWindow, frameAutosaveSuspended: frameAutosaveSuspended) {
             window.saveFrame(usingName: Self.primaryFrameAutosaveName)
+            let beforeResume = window.frame
             frameAutosaveSuspended = false
             applyFrameAutosave(to: window)
+            if let restored = MainWindowSizePlan.frameToRestore(
+                beforeResume: beforeResume, afterResume: window.frame) {
+                window.setFrame(restored, display: true, animate: false)
+            }
         }
     }
 }

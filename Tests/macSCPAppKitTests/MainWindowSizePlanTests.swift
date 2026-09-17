@@ -80,10 +80,10 @@ struct MainWindowSizePlanTests {
 
     @Test func onlyAPristineWindowLargerThanTheFormShrinks() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: false, isPrimaryWindow: true,
+            current: Self.browser, isPristine: false, isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false) == nil)
         #expect(MainWindowSizePlan.shrink(
-            current: Self.form, isPristine: true, isPrimaryWindow: true,
+            current: Self.form, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false) == nil)
     }
 
@@ -92,7 +92,7 @@ struct MainWindowSizePlanTests {
     /// form size is never written as the window's frame.
     @Test func thePrimaryWindowPersistsItsBrowserSizeAndSuspendsTheAutosave() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: true, isPrimaryWindow: true,
+            current: Self.browser, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false)
             == .init(browserSize: Self.browser, persistsBrowserSize: true, suspendsFrameAutosave: true))
     }
@@ -103,14 +103,14 @@ struct MainWindowSizePlanTests {
     @Test func aSecondShrinkWhileSuspendedPersistsNothing() {
         let draggedForm = CGSize(width: 800, height: 500)
         #expect(MainWindowSizePlan.shrink(
-            current: draggedForm, isPristine: true, isPrimaryWindow: true,
+            current: draggedForm, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: true)
             == .init(browserSize: draggedForm, persistsBrowserSize: false, suspendsFrameAutosave: true))
     }
 
     @Test func aSecondaryWindowShrinksWithoutPersistingOrSuspending() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: true, isPrimaryWindow: false,
+            current: Self.browser, isPristine: true, isPrimaryWindow: false, isFullScreen: false,
             frameAutosaveSuspended: false)
             == .init(browserSize: Self.browser, persistsBrowserSize: false, suspendsFrameAutosave: false))
     }
@@ -129,17 +129,53 @@ struct MainWindowSizePlanTests {
     }
 
     /// A drag of the window's edge is the size a user chose — recorded only
-    /// for the primary window, only while it shows a browser, and only while
-    /// the autosave is writing too, so the two never disagree.
+    /// for the primary window, only while its active tab shows a connected
+    /// browser (fix round 1: not merely "not pristine", which two unconnected
+    /// form tabs also are), never in full screen, and only while the autosave
+    /// is writing too, so the two never disagree.
     @Test func onlyAConnectedPrimaryWindowWithItsAutosaveOnRecordsALiveResize() {
         #expect(MainWindowSizePlan.persistsLiveResize(
-            isPrimaryWindow: true, isPristine: false, frameAutosaveSuspended: false))
+            isPrimaryWindow: true, isActiveTabConnected: true, isFullScreen: false,
+            frameAutosaveSuspended: false))
         #expect(!MainWindowSizePlan.persistsLiveResize(
-            isPrimaryWindow: true, isPristine: true, frameAutosaveSuspended: false))
+            isPrimaryWindow: true, isActiveTabConnected: false, isFullScreen: false,
+            frameAutosaveSuspended: false))
         #expect(!MainWindowSizePlan.persistsLiveResize(
-            isPrimaryWindow: true, isPristine: false, frameAutosaveSuspended: true))
+            isPrimaryWindow: true, isActiveTabConnected: true, isFullScreen: false,
+            frameAutosaveSuspended: true))
         #expect(!MainWindowSizePlan.persistsLiveResize(
-            isPrimaryWindow: false, isPristine: false, frameAutosaveSuspended: false))
+            isPrimaryWindow: false, isActiveTabConnected: true, isFullScreen: false,
+            frameAutosaveSuspended: false))
+    }
+
+    /// Full screen (fix round 1): a Split View divider drag can end a live
+    /// resize, and its size is the screen's, not one the user chose.
+    @Test func aLiveResizeInFullScreenIsNotRecorded() {
+        #expect(!MainWindowSizePlan.persistsLiveResize(
+            isPrimaryWindow: true, isActiveTabConnected: true, isFullScreen: true,
+            frameAutosaveSuspended: false))
+    }
+
+    /// Full screen (fix round 1): a disconnect there still shrinks the way it
+    /// always did, but the full-screen size is not persisted as the browser
+    /// size.
+    @Test func aShrinkInFullScreenPersistsNothing() {
+        #expect(MainWindowSizePlan.shrink(
+            current: Self.browser, isPristine: true, isPrimaryWindow: true, isFullScreen: true,
+            frameAutosaveSuspended: false)
+            == .init(browserSize: Self.browser, persistsBrowserSize: false, suspendsFrameAutosave: true))
+    }
+
+    /// Re-setting the autosave name applies the stored frame at once, placed
+    /// on `NSScreen.main` rather than on the window's own screen (measured by
+    /// the Task 3 reviewer): a window on one display jumped to the other.
+    /// The frame the window had before the name was set wins back.
+    @Test func aFrameMovedByResumingTheAutosaveIsRestored() {
+        let before = CGRect(x: 100, y: 200, width: 1400, height: 900)
+        let movedToMain = CGRect(x: 1540, y: 200, width: 1400, height: 900)
+        #expect(MainWindowSizePlan.frameToRestore(beforeResume: before, afterResume: movedToMain)
+            == before)
+        #expect(MainWindowSizePlan.frameToRestore(beforeResume: before, afterResume: before) == nil)
     }
 
     // MARK: - Walks: what quit stores, what a relaunch connects to
@@ -161,7 +197,7 @@ struct MainWindowSizePlanTests {
         /// What `ContentView.shrinkIfPristine()` does, in its order.
         mutating func disconnectLastTab() {
             guard let shrink = MainWindowSizePlan.shrink(
-                current: frame, isPristine: true, isPrimaryWindow: true,
+                current: frame, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
                 frameAutosaveSuspended: suspended)
             else { return }
             if shrink.persistsBrowserSize { persisted = shrink.browserSize }
@@ -187,7 +223,8 @@ struct MainWindowSizePlanTests {
         mutating func userResize(to size: CGSize) {
             resize(to: size)
             if MainWindowSizePlan.persistsLiveResize(
-                isPrimaryWindow: true, isPristine: false, frameAutosaveSuspended: suspended) {
+                isPrimaryWindow: true, isActiveTabConnected: true, isFullScreen: false,
+                frameAutosaveSuspended: suspended) {
                 persisted = size
             }
         }
@@ -289,6 +326,15 @@ struct MainWindowSizePlanTests {
         let resume = try #require(Self.offset(of: "applyFrameAutosave(", in: grow))
         #expect(resize < save, "the grown frame must be the one saved before the autosave resumes")
         #expect(save < resume, "the frame is saved before the name is set again")
+        // Fix round 1: the frame is captured before the name is set again
+        // and put back after it, through the plan, without animation.
+        let capture = try #require(Self.offset(of: "= window.frame", in: grow))
+        let decide = try #require(Self.offset(of: "MainWindowSizePlan.frameToRestore(", in: grow))
+        let restore = try #require(Self.offset(of: "window.setFrame(", in: grow))
+        #expect(save < capture && capture < resume,
+            "the frame must be captured after the save and before the name is set again")
+        #expect(resume < decide && decide < restore,
+            "the restore must be decided and applied after the name is set again")
         let contentView = try Self.code(of: Self.contentViewFile)
         #expect(contentView.contains("growToBrowserSize()"),
             "ContentView.swift's connect path no longer calls growToBrowserSize()")
@@ -322,6 +368,54 @@ struct MainWindowSizePlanTests {
         let detail = try Self.code(of: Self.detailFile)
         #expect(detail.contains("NSWindow.didEndLiveResizeNotification"))
         #expect(detail.contains("handleWindowDidEndLiveResize"))
+    }
+
+    /// The primary-window property's name, read from its declaration rather
+    /// than spelled: `var <name>: Bool { seed == nil }`.
+    private static func primaryWindowProperty() throws -> String {
+        let source = try code(of: contentViewFile)
+        let pattern = try NSRegularExpression(pattern: #"var (\w+): Bool \{ seed == nil \}"#)
+        let match = try #require(pattern.firstMatch(
+            in: source, range: NSRange(source.startIndex..., in: source)), """
+                ContentView.swift no longer declares the primary-window property as \
+                `var …: Bool { seed == nil }` — re-anchor this guard.
+                """)
+        let name = try #require(Range(match.range(at: 1), in: source))
+        return String(source[name])
+    }
+
+    /// Fix round 1: every `isPrimaryWindow:` argument in the three executing
+    /// bodies passes the real property. A hard-coded `true` there made a
+    /// secondary window's drag write the saved size with every value test
+    /// still green. Positive (the label appears the expected number of
+    /// times, each followed by the property) beside negative (no literal).
+    /// Full screen is read from the window in the two saving paths.
+    @Test func thePlanIsAskedAboutTheRealWindow() throws {
+        let property = try Self.primaryWindowProperty()
+        let bodies: [(anchor: String, labels: Int)] = [
+            ("func shrinkIfPristine() {", 1),
+            ("func growToBrowserSize() {", 2),
+            ("func handleWindowDidEndLiveResize(_ notification: Notification) {", 1),
+        ]
+        let literal = try NSRegularExpression(pattern: #"isPrimaryWindow:\s*(true|false)\b"#)
+        for (anchor, labels) in bodies {
+            let body = try Self.body(of: anchor, in: Self.lifecycleFile)
+            let passed = body.components(separatedBy: "isPrimaryWindow: \(property)").count - 1
+            let spelled = body.components(separatedBy: "isPrimaryWindow:").count - 1
+            let literals = literal.numberOfMatches(
+                in: body, range: NSRange(body.startIndex..., in: body))
+            #expect(spelled == labels, "\(anchor): \(spelled) isPrimaryWindow: labels")
+            #expect(passed == labels, "\(anchor): \(passed) of \(labels) pass \(property)")
+            #expect(literals == 0, "\(anchor) hard-codes isPrimaryWindow:")
+        }
+        for anchor in [
+            "func shrinkIfPristine() {",
+            "func handleWindowDidEndLiveResize(_ notification: Notification) {",
+        ] {
+            let body = try Self.body(of: anchor, in: Self.lifecycleFile)
+            #expect(body.contains("isFullScreen:") && body.contains("styleMask.contains(.fullScreen)"),
+                "\(anchor) no longer tells the plan whether the window is in full screen")
+        }
     }
 
     /// The negatives, each with its positive beside it: the persisted size

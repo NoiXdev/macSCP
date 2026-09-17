@@ -21,11 +21,12 @@ import Foundation
 /// 1. The autosave is suspended for the shrink (the name is set to the
 ///    empty string before the window is resized) and resumed by the next
 ///    connect of that window, which saves the grown frame under the name
-///    first. So the autosave only ever holds a frame the window had while it
-///    was not shrunk to the form.
+///    first and puts the frame back if setting the name moved the window.
+///    So the autosave only ever holds a frame the window had while it was
+///    not shrunk to the form.
 /// 2. The browser size is persisted in `SettingsStore.mainWindowBrowserSize`
 ///    — at the shrink, and whenever the user finishes dragging the connected
-///    window's edge — and a connect of the primary window grows to it. That
+///    window's edge, never in full screen — and a connect of the primary window grows to it. That
 ///    covers the launch that did not come back at the autosaved frame, and
 ///    it is the size the in-memory value used to be for one run only.
 ///
@@ -87,15 +88,18 @@ enum MainWindowSizePlan {
     ///
     /// An already-suspended primary window was already shrunk once and not
     /// connected since, so what it measures now is a form window the user
-    /// dragged larger — not a browser size, and not persisted.
+    /// dragged larger — not a browser size, and not persisted. Nor is a
+    /// size measured in full screen (fix round 1): that is the screen's
+    /// size, not one the user chose for the window.
     static func shrink(
-        current: CGSize, isPristine: Bool, isPrimaryWindow: Bool, frameAutosaveSuspended: Bool
+        current: CGSize, isPristine: Bool, isPrimaryWindow: Bool, isFullScreen: Bool,
+        frameAutosaveSuspended: Bool
     ) -> Shrink? {
         guard isPristine, current.width > formSize.width || current.height > formSize.height
         else { return nil }
         return Shrink(
             browserSize: current,
-            persistsBrowserSize: isPrimaryWindow && !frameAutosaveSuspended,
+            persistsBrowserSize: isPrimaryWindow && !frameAutosaveSuspended && !isFullScreen,
             suspendsFrameAutosave: isPrimaryWindow)
     }
 
@@ -112,12 +116,30 @@ enum MainWindowSizePlan {
     }
 
     /// Whether the size a user finished dragging the window to is persisted:
-    /// the primary window, showing a browser, with its autosave writing —
-    /// the same moments the autosave keeps the frame, so the persisted size
-    /// and the autosaved one do not come apart.
+    /// the primary window, its active tab showing a connected browser, not
+    /// in full screen, with its autosave writing.
+    ///
+    /// "Connected", not "not pristine" (fix round 1): two unconnected form
+    /// tabs are not pristine either, and a drag there measures a form
+    /// window. It is the fact the grow path answers to — a connect is what
+    /// grows the window. Full screen is excluded because a Split View
+    /// divider drag can end a live resize at a size the screen chose.
     static func persistsLiveResize(
-        isPrimaryWindow: Bool, isPristine: Bool, frameAutosaveSuspended: Bool
+        isPrimaryWindow: Bool, isActiveTabConnected: Bool, isFullScreen: Bool,
+        frameAutosaveSuspended: Bool
     ) -> Bool {
-        isPrimaryWindow && !isPristine && !frameAutosaveSuspended
+        isPrimaryWindow && isActiveTabConnected && !isFullScreen && !frameAutosaveSuspended
+    }
+
+    /// The frame to put the window back at after its autosave name was set
+    /// again, or `nil` when setting it left the window where it was.
+    ///
+    /// Measured by the Task 3 reviewer: setting a name that has a frame
+    /// stored under it applies that frame at once, placed relative to
+    /// `NSScreen.main` rather than the window's own screen — a window on the
+    /// built-in display jumped to the external one. Saving the frame first
+    /// keeps the SIZE; only putting the frame back keeps the DISPLAY.
+    static func frameToRestore(beforeResume: CGRect, afterResume: CGRect) -> CGRect? {
+        beforeResume == afterResume ? nil : beforeResume
     }
 }
