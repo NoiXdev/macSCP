@@ -1407,6 +1407,309 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
+    // MARK: - Two live connections through jumps (jump-and-groups plan, Task 2)
+
+    /// The two connections one case of the jump matrix opens.
+    ///
+    /// The rig has two servers, and each can be a jump host for the other:
+    /// `macscp-test-sshd` at 127.0.0.1:2222 (service name `sshd` inside the
+    /// Docker network) and `macscp-test-sshd-2` at 127.0.0.1:2223 (service
+    /// name `sshd2`). A target reached THROUGH a jump is named by its service
+    /// name and the container's internal port, 2222, as `jumpConnectListsOverHop`
+    /// above explains.
+    enum JumpPair: String, CaseIterable, Sendable, CustomTestStringConvertible {
+        /// Two tabs of one saved session: `sshd2` through `sshd`, twice.
+        case sameSessionTwice
+        /// Two different sessions through one jump: `sshd2` and `sshd`
+        /// itself, both through `sshd`.
+        case twoSessionsThroughOneJump
+        /// The jump host opened as a session of its own, then a session
+        /// through it.
+        case jumpHostDirectlyThenThroughIt
+        /// The reverse order of the case above.
+        case throughTheJumpThenJumpHostDirectly
+        /// `sameSessionTwice`, with both dials started before either ends.
+        case sameSessionTwiceDialledConcurrently
+        /// `sshd2` through `sshd`, and `sshd` through `sshd2`.
+        case twoDifferentJumpsAtOnce
+
+        var testDescription: String { rawValue }
+
+        var dialsConcurrently: Bool { self == .sameSessionTwiceDialledConcurrently }
+
+        /// Both configurations. The TARGET hop always logs in by password;
+        /// `jumpAuth` is what the jump hop uses, and also what a direct
+        /// connection to the jump host uses, since that connection is the
+        /// jump's own session.
+        func configs(
+            jumpAuth: SSHConnectionConfig.AuthMethod
+        ) throws -> (first: SSHConnectionConfig, second: SSHConnectionConfig) {
+            let firstJump = SSHConnectionConfig.Jump(
+                host: "127.0.0.1", port: 2222, username: "testuser", auth: jumpAuth)
+            let secondJump = SSHConnectionConfig.Jump(
+                host: "127.0.0.1", port: 2223, username: "testuser", auth: jumpAuth)
+            func through(_ jump: SSHConnectionConfig.Jump, to service: String) throws -> SSHConnectionConfig {
+                try SSHConnectionConfig(
+                    host: service, port: 2222, username: "testuser",
+                    auth: .password("testpass"), jump: jump)
+            }
+            let jumpHostDirectly = try SSHConnectionConfig(
+                host: "127.0.0.1", port: 2222, username: "testuser", auth: jumpAuth)
+            switch self {
+            case .sameSessionTwice, .sameSessionTwiceDialledConcurrently:
+                return (try through(firstJump, to: "sshd2"), try through(firstJump, to: "sshd2"))
+            case .twoSessionsThroughOneJump:
+                return (try through(firstJump, to: "sshd2"), try through(firstJump, to: "sshd"))
+            case .jumpHostDirectlyThenThroughIt:
+                return (jumpHostDirectly, try through(firstJump, to: "sshd2"))
+            case .throughTheJumpThenJumpHostDirectly:
+                return (try through(firstJump, to: "sshd2"), jumpHostDirectly)
+            case .twoDifferentJumpsAtOnce:
+                return (try through(firstJump, to: "sshd2"), try through(secondJump, to: "sshd"))
+            }
+        }
+    }
+
+    /// How the jump hop logs in.
+    ///
+    /// Password and private-key connections run on the shared
+    /// `MultiThreadedEventLoopGroup.singleton`; an agent connection gets its
+    /// own single-threaded group (`CitadelFileSystem.connectAuthenticated`).
+    /// The key row is here because the maintainer's report left open which
+    /// login the jump uses, and a key login shares the event loops the
+    /// password rows share, by a different path through `connectHop`.
+    enum JumpHopAuth: String, CaseIterable, Sendable, CustomTestStringConvertible {
+        case password
+        case privateKey
+        case agent
+
+        var testDescription: String { rawValue }
+    }
+
+    /// A step of a jump case that failed, named so the report says WHICH
+    /// connection stopped answering and at which point, not only how.
+    struct JumpStepFailure: Error, CustomStringConvertible {
+        let step: String
+        let underlying: any Error
+        var description: String { "\(step): \(underlying)" }
+    }
+
+    /// A PTY shell held open on one connection for the whole case — the
+    /// terminal a tab keeps — together with the one iterator its output is
+    /// read through (`RemoteShell.output` has exactly one consumer).
+    struct HeldShell {
+        let shell: any RemoteShell
+        private var output: AsyncThrowingStream<[UInt8], any Error>.AsyncIterator
+
+        static func open(on connection: CitadelFileSystem) async throws -> HeldShell {
+            let shell = try await connection.openShell(terminal: "xterm-256color", cols: 80, rows: 24)
+            return HeldShell(shell: shell, output: shell.output.makeAsyncIterator())
+        }
+
+        private init(
+            shell: any RemoteShell, output: AsyncThrowingStream<[UInt8], any Error>.AsyncIterator
+        ) {
+            self.shell = shell
+            self.output = output
+        }
+
+        /// Sends an `echo` whose answer the shell has to compute, and reads
+        /// until the answer arrives. The typed line carries `$((6*7))`, the
+        /// answer carries `42`, so the PTY's echo of the input never matches.
+        ///
+        /// No timeout of its own, for the reason `CitadelShellIntegrationTests
+        /// .collectUntil` gives: the read ends when the answer arrives, when
+        /// the stream ends without it, or when the test's `.timeLimit`
+        /// cancels it — and a cancelled read finishes the stream, so it lands
+        /// on the `throw` below with the partial text.
+        mutating func answers(tag: String) async throws {
+            try await shell.send(Array("echo MACSCP_JUMP_\(tag)_$((6*7))\n".utf8))
+            let marker = "MACSCP_JUMP_\(tag)_42"
+            var collected = ""
+            while let chunk = try await output.next() {
+                collected += String(decoding: chunk, as: UTF8.self)
+                if collected.contains(marker) { return }
+            }
+            throw RemoteFSError.protocolError(reason: "marker \(marker) not found in: \(collected)")
+        }
+    }
+
+    /// A known-hosts store holding the rig's own host keys, read out of the
+    /// containers — so the matrix dials with `HostKeyDecider.refusing` and no
+    /// accepting decider exists anywhere in it. An unrecorded key refuses the
+    /// dial (`rejectedByUser`), a different one is a hard stop (`mismatch`);
+    /// either fails the case loudly.
+    ///
+    /// Ed25519, because both servers offer all three types the image
+    /// generates and every client here negotiates Ed25519 (see the host-key
+    /// services' comment in `docker/test-server/compose.yml`). Each server is
+    /// recorded under both names it is reached by: its published port on
+    /// 127.0.0.1, and its service name on the internal port 2222.
+    private func rigKnownHosts(in directory: URL) async throws -> KnownHostsStore {
+        let store = KnownHostsStore(directory: directory)
+        let servers: [(container: String, names: [(host: String, port: Int)])] = [
+            ("macscp-test-sshd", [("127.0.0.1", 2222), ("sshd", 2222)]),
+            ("macscp-test-sshd-2", [("127.0.0.1", 2223), ("sshd2", 2222)]),
+        ]
+        for server in servers {
+            let result = try await SubprocessRunner.run(
+                URL(fileURLWithPath: "/usr/local/bin/docker"),
+                arguments: ["exec", server.container, "cat", "/config/ssh_host_keys/ssh_host_ed25519_key.pub"])
+            #expect(result.status == 0, "reading \(server.container)'s host key: \(result.stderrText)")
+            let fields = result.stdoutText.split(separator: " ", omittingEmptySubsequences: true)
+            guard fields.count >= 2, fields[0] == "ssh-ed25519" else {
+                throw RemoteFSError.protocolError(
+                    reason: "\(server.container) host key unreadable: \(result.stdoutText)")
+            }
+            for name in server.names {
+                try store.upsert(KnownHostKey(
+                    host: name.host, port: name.port,
+                    keyType: String(fields[0]), publicKeyBase64: String(fields[1])))
+            }
+        }
+        return store
+    }
+
+    /// One connection of the matrix: the refusing decider over the rig's
+    /// recorded keys, and no retry — a dial that fails is a finding here,
+    /// not throttling to cushion.
+    private func dialJumpPairConnection(
+        _ config: SSHConnectionConfig, knownHosts: KnownHostsStore, step: String
+    ) async throws -> CitadelFileSystem {
+        do {
+            return try await CitadelFileSystem.connect(
+                config: config, connectTimeout: .seconds(30), knownHosts: knownHosts,
+                onUnknownHostKey: .refusing)
+        } catch {
+            throw JumpStepFailure(step: step, underlying: error)
+        }
+    }
+
+    /// Proves one connection answers on every kind of channel a tab uses:
+    /// a listing and `realpath` over its SFTP channel, the PTY shell held
+    /// open since the connection was dialled, and a fresh PTY shell opened
+    /// and closed now.
+    private func proveAnswers(
+        _ connection: CitadelFileSystem, held: inout HeldShell, step: String
+    ) async throws {
+        do {
+            let listing = try await connection.list(path: "/")
+            #expect(!listing.isEmpty, "\(step): listing of / was empty")
+            let home = try await connection.homeDirectoryPath()
+            #expect(home == "/config", "\(step): realpath(.) was \(home)")
+            try await held.answers(tag: step)
+            var fresh = try await HeldShell.open(on: connection)
+            try await fresh.answers(tag: "\(step)_fresh")
+            await fresh.shell.close()
+        } catch {
+            throw JumpStepFailure(step: step, underlying: error)
+        }
+    }
+
+    /// The maintainer's report of 2026-09-18: after connecting through a
+    /// jump, opening a second session over the same jump did not open, and
+    /// the first connection dropped. The first half is the App's detail pane
+    /// (Task 1); this is the second half, at the connection layer, over
+    /// every pairing of two live connections the rig can build with a jump
+    /// in it, for each way the jump hop logs in.
+    ///
+    /// Each case proves connection 1, opens connection 2 and proves it,
+    /// proves 1 again with 2 open, closes 2, and proves 1 once more — except
+    /// that `sameSessionTwiceDialledConcurrently` runs both dials first and
+    /// then proves in the same order. Every ordering is an `await`; nothing
+    /// sleeps. What this cannot see is a drop that arrives LATER than the
+    /// last proof — that would need a wait, and a wait is exactly what this
+    /// suite does not write.
+    ///
+    /// `.timeLimit` is a hang bound only: a case dials at most four hops
+    /// (two connections of two hops each), each bounded by the 30 s connect
+    /// timeout, and every read ends when its answer arrives.
+    @Test(.timeLimit(.minutes(5)), arguments: JumpPair.allCases, JumpHopAuth.allCases)
+    func twoLiveConnectionsThroughOneJumpStayIndependent(
+        pair: JumpPair, jumpAuth: JumpHopAuth
+    ) async throws {
+        let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-jump-pair-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: khDir) }
+        let store = try await rigKnownHosts(in: khDir)
+
+        switch jumpAuth {
+        case .password:
+            let (first, second) = try pair.configs(jumpAuth: .password("testpass"))
+            try await runJumpPair(pair, first: first, second: second, knownHosts: store)
+        case .privateKey, .agent:
+            // One runtime key, authorized on both servers: the second server
+            // is a jump host of its own in `twoDifferentJumpsAtOnce`.
+            let (keyDir, keyPath) = try await makeInstalledKey(type: "ed25519")
+            defer { try? FileManager.default.removeItem(at: keyDir) }
+            let publicKeyLine = try String(contentsOfFile: keyPath + ".pub", encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            try await installAuthorizedKey(publicKeyLine: publicKeyLine, container: "macscp-test-sshd-2")
+            if jumpAuth == .privateKey {
+                let (first, second) = try pair.configs(
+                    jumpAuth: .privateKey(keyPath: keyPath, passphrase: nil))
+                try await runJumpPair(pair, first: first, second: second, knownHosts: store)
+            } else {
+                // A spawned agent, never the maintainer's: `withAgentEnv`
+                // points SSH_AUTH_SOCK at it for the case and restores it.
+                let agent = try await spawnAgent()
+                defer { killAgent(agent) }
+                try await addKey(atPath: keyPath, to: agent)
+                let (first, second) = try pair.configs(jumpAuth: .agent)
+                try await withAgentEnv(agent) {
+                    try await runJumpPair(pair, first: first, second: second, knownHosts: store)
+                }
+            }
+        }
+    }
+
+    private func runJumpPair(
+        _ pair: JumpPair, first firstConfig: SSHConnectionConfig,
+        second secondConfig: SSHConnectionConfig, knownHosts: KnownHostsStore
+    ) async throws {
+        let first: CitadelFileSystem
+        var pending: CitadelFileSystem?
+        if pair.dialsConcurrently {
+            async let firstDial = dialJumpPairConnection(
+                firstConfig, knownHosts: knownHosts, step: "dial_first")
+            async let secondDial = dialJumpPairConnection(
+                secondConfig, knownHosts: knownHosts, step: "dial_second")
+            (first, pending) = try await (firstDial, secondDial)
+        } else {
+            first = try await dialJumpPairConnection(firstConfig, knownHosts: knownHosts, step: "dial_first")
+        }
+        var firstShell: HeldShell?
+        var secondShell: HeldShell?
+        var second: CitadelFileSystem?
+        do {
+            firstShell = try await HeldShell.open(on: first)
+            try await proveAnswers(first, held: &firstShell!, step: "first_alone")
+
+            second = if let pending { pending } else {
+                try await dialJumpPairConnection(secondConfig, knownHosts: knownHosts, step: "dial_second")
+            }
+            pending = nil
+            secondShell = try await HeldShell.open(on: second!)
+            try await proveAnswers(second!, held: &secondShell!, step: "second")
+            try await proveAnswers(first, held: &firstShell!, step: "first_beside_second")
+
+            await secondShell?.shell.close()
+            secondShell = nil
+            await second?.disconnect()
+            second = nil
+            try await proveAnswers(first, held: &firstShell!, step: "first_after_second_closed")
+
+            await firstShell?.shell.close()
+            await first.disconnect()
+        } catch {
+            await secondShell?.shell.close()
+            await (second ?? pending)?.disconnect()
+            await firstShell?.shell.close()
+            await first.disconnect()
+            throw error
+        }
+    }
+
     // MARK: - M11a/T4: jump host referencing a saved session
 
     /// The M11a happy path proven at the rig level: a bastion session is

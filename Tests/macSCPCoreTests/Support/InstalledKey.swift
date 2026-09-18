@@ -76,7 +76,7 @@ func makeInstalledKey(
     }
 }
 
-/// Appends one public key line to the rig sshd's `authorized_keys`, with the
+/// Appends one public key line to a rig sshd's `authorized_keys`, with the
 /// modes and ownership that container's sshd requires.
 ///
 /// Extracted from `makeInstalledKey` on 2026-09-11, when the producer cells
@@ -85,13 +85,20 @@ func makeInstalledKey(
 /// Ed25519 PKCS#8 file whose public line is computed from the seed. The body
 /// is unchanged by the move; only the source of the line differs.
 ///
+/// `container` defaults to the rig's first server, `macscp-test-sshd`, where
+/// every caller installed its key until 2026-09-18. The jump matrix in
+/// `CitadelFileSystemIntegrationTests` passes `macscp-test-sshd-2` as well,
+/// because one of its cases uses the second server as a jump host of its own.
+///
 /// Note: authorized_keys grows across runs on a long-lived container —
 /// acceptable for the test rig.
-func installAuthorizedKey(publicKeyLine: String) async throws {
+func installAuthorizedKey(
+    publicKeyLine: String, container: String = "macscp-test-sshd"
+) async throws {
     let result = try await SubprocessRunner.run(
         URL(fileURLWithPath: "/usr/local/bin/docker"),
         arguments: [
-            "exec", "macscp-test-sshd", "sh", "-c",
+            "exec", container, "sh", "-c",
             "mkdir -p /config/.ssh && echo '\(publicKeyLine)' >> /config/.ssh/authorized_keys"
                 + " && chmod 700 /config/.ssh && chmod 600 /config/.ssh/authorized_keys"
                 + " && chown -R 1000:1000 /config/.ssh",
