@@ -12,9 +12,13 @@ import Testing
 /// `LivenessProbeWiringGuardTests`/`LivenessDotWiringGuardTests`; see
 /// either's doc comment for the same idiom).
 ///
-/// 1. The connecting-vs-form choice comes from `ConnectionSurfacePlan
-///    .surface(` — not a condition reimplemented inline, which could
-///    silently drift from `ConnectionSurfacePlanTests`' pinned cases.
+/// 1. The connecting-vs-form choice comes from `detailSurface(for: tab)` —
+///    `DetailSurfacePlan.surface`, which composes `ConnectionSurfacePlan
+///    .surface` (jump-and-groups plan, Task 1) — not a condition
+///    reimplemented inline, which could silently drift from
+///    `ConnectionSurfacePlanTests`' and `DetailSurfacePlanTests`' pinned
+///    cases. That the resolver reaches both plans is
+///    `DetailSurfaceWiringGuardTests`' claim, not this suite's.
 /// 2. Cancel calls BOTH `cancelConnecting()` (releases `ConnectionViewModel
 ///    .state`, and moves Core's own attempt token, without waiting on the
 ///    dial) and `teardown(` (the ONE teardown path the brief requires,
@@ -65,8 +69,9 @@ struct ConnectingAttemptWiringGuardTests {
     private static let detailFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-    /// Anchors the `if ConnectionSurfacePlan.surface(...) == .connecting`
-    /// branch and its `ConnectingAttemptView(onCancel:)`, unique in the file
+    /// Anchors the `let surface = detailSurface(for: tab)` read, the
+    /// `if surface == .connecting` branch after it and its
+    /// `ConnectingAttemptView(onCancel:)`, unique in the file
     /// (checked by `theSurfaceAnchorAppearsExactlyOnceInTheRealFile`).
     private static let surfaceAnchor = "// Connecting surface branch (connection-liveness plan, Task 6)"
 
@@ -76,12 +81,13 @@ struct ConnectingAttemptWiringGuardTests {
 
     // MARK: - The three guarded claims, run against the real file
 
-    @Test func theBranchAsksConnectionSurfacePlan() throws {
+    @Test func theBranchAsksTheDetailSurfacePlan() throws {
         let body = try Self.strippedBody(after: Self.surfaceAnchor)
-        #expect(body.contains("ConnectionSurfacePlan.surface("), """
-            the connecting-vs-form branch no longer calls `ConnectionSurfacePlan.surface(` — \
-            a condition reimplemented inline here could drift from the pinned cases in \
-            `ConnectionSurfacePlanTests` without either suite noticing.
+        #expect(body.contains("let surface = detailSurface(for: tab)"), """
+            the connecting-vs-form branch no longer reads `detailSurface(for: tab)` — a \
+            condition reimplemented inline here could drift from the pinned cases in \
+            `ConnectionSurfacePlanTests` and `DetailSurfacePlanTests` without either suite \
+            noticing.
             """)
     }
 
@@ -240,9 +246,10 @@ struct ConnectingAttemptWiringGuardTests {
     /// The block's text: everything from right after `anchor` through the
     /// balanced-brace close of the first `{` found after it — INCLUDING the
     /// header text before that opening brace, not just what sits inside the
-    /// braces (the surface anchor sits before an `if`'s CONDITION,
-    /// `ConnectionSurfacePlan.surface(...)`, which lives in the header, not
-    /// the body — a scanner that dropped the header could never see it).
+    /// braces (the surface anchor sits before the read the `if` switches
+    /// on, `let surface = detailSurface(for: tab)`, which lives in the
+    /// header, not the body — a scanner that dropped the header could never
+    /// see it).
     /// Throws rather than returning `nil` so a missing anchor or an
     /// unbalanced file fails the calling test loudly, not as a silently-
     /// empty string that would make every `contains` check in the calling

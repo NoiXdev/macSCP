@@ -368,6 +368,25 @@ extension ContentView {
         )
     }
 
+    /// What `tab`'s detail pane shows while it has no session
+    /// (jump-and-groups plan, Task 1): `DetailSurfacePlan.surface`'s answer,
+    /// with the facts it decides on read off the tab and the window here,
+    /// and nowhere else.
+    ///
+    /// A function of its own, not an expression in `detail`, so a test can
+    /// ask it about a real `ContentView` — the view body is where this
+    /// answer is switched on, never where it is decided.
+    /// `DetailSurfaceWiringGuardTests` holds the view to that.
+    func detailSurface(for tab: SessionTab) -> DetailSurface {
+        let form = tab.connectionViewModel
+        return DetailSurfacePlan.surface(
+            liveness: tab.liveness,
+            hostKeyPromptPending: form.hostKeyPrompt != nil,
+            connectAttemptFailed: tab.connectFailure != nil,
+            formState: form.state, failureKind: form.lastFailureKind,
+            formMode: form.mode, overviewSession: overviewSession(for: tab))
+    }
+
     @ViewBuilder
     var detail: some View {
         let tab = activeTab
@@ -704,10 +723,16 @@ extension ContentView {
                 .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 // The single "no session yet" surface (connection-liveness
-                // plan, Task 6): `ConnectionSurfacePlan.surface` decides
-                // between the ordinary form and "Connecting…" — see that
-                // type's own doc comment for why a pending host-key prompt
-                // forces the form back regardless of `tab.liveness`. `Group`
+                // plan, Task 6): `detailSurface(for:)` — which is
+                // `DetailSurfacePlan.surface` over this tab's facts
+                // (jump-and-groups plan, Task 1) — decides between
+                // "Connecting…", the lost and failed surfaces, the session
+                // overview and the ordinary form, and every branch below
+                // only switches on that answer. See `ConnectionSurfacePlan`'s
+                // own doc comment for why a pending host-key prompt forces
+                // the form back regardless of `tab.liveness`, and
+                // `DetailSurfacePlan`'s for why it also keeps the overview
+                // off the form in that case. `Group`
                 // keeps the plaintext-confirmation dialog below attached to
                 // BOTH branches: the connector closure in `ContentView
                 // .makeTab` can raise that confirmation WHILE `.connecting`
@@ -717,10 +742,7 @@ extension ContentView {
                 // reachable only from the form branch.
                 Group {
                     // Connecting surface branch (connection-liveness plan, Task 6)
-                    let surface = ConnectionSurfacePlan.surface(
-                        for: tab.liveness,
-                        hostKeyPromptPending: tab.connectionViewModel.hostKeyPrompt != nil,
-                        connectAttemptFailed: tab.connectFailure != nil)
+                    let surface = detailSurface(for: tab)
                     if surface == .connecting {
                         ConnectingAttemptView(onCancel: {
                             // Best-effort on the dial itself (see
@@ -818,34 +840,29 @@ extension ContentView {
                     // form — read-only, with the window's own Connect, Edit
                     // and Diagnose handed over as values.
                     //
-                    // Ordered AFTER the three surfaces above and gated on
-                    // `mode == .new`, which is the whole of its condition:
+                    // WHEN it is shown is `DetailSurfacePlan.surface`'s
+                    // answer and nothing of this branch's own (jump-and-
+                    // groups plan, Task 1). The condition used to be written
+                    // here — a selection and a `.new` form — and it was
+                    // checked before the form, which is where TOFU's trust
+                    // card and the text of every failure a person must read
+                    // live. A sidebar connect always selects its row first,
+                    // so a new host's card sat under this overview and the
+                    // dial waited for an answer nobody could see: the
+                    // maintainer's "second session through the same jump
+                    // returns to the session info". The plan's doc comment
+                    // states the rule now; `DetailSurfaceWiringGuardTests`
+                    // holds this branch to reading it.
                     //
-                    // * a connecting, lost or failed tab is describing an
-                    //   ATTEMPT, and an overview of the session it was
-                    //   attempting would replace an explanation with a
-                    //   description;
-                    // * `.edit` means the form is holding a draft of some
-                    //   session, and a click that replaced it with an
-                    //   overview would drop that draft out of sight. Today's
-                    //   behaviour is that pointing at rows while editing
-                    //   only moves the highlight, and this keeps it. Every
-                    //   edit route ends at `ConnectionViewModel
-                    //   .beginEditing`, so reading the form's own mode covers
-                    //   them all rather than one clearing rule per entry.
-                    //
-                    // Per tab FIRST, then the window's (Detachable Tabs
-                    // plan, Task 5 fix round 1). `overviewSession` alone is
-                    // the window's — one sidebar, one selection, and a
-                    // second unconnected tab shows the same overview, which
-                    // is what matches where the sidebar is. A RESTORED
-                    // window breaks that tie: its N tabs were each pointed
-                    // at a different session, so `overviewSession(for:)`
-                    // reads the tab's own restored pointer ahead of the
-                    // sidebar's and falls back to it for every tab that has
-                    // none — which is every tab made any other way.
-                    else if let stored = overviewSession(for: tab),
-                            tab.connectionViewModel.mode == .new {
+                    // WHICH session it describes is `overviewSession(for:)`'s
+                    // answer, handed through the plan: per tab FIRST, then
+                    // the window's (Detachable Tabs plan, Task 5 fix round
+                    // 1). The window's selection alone would give every
+                    // unconnected tab the same overview, which matches
+                    // where the one sidebar is; a RESTORED window's tabs
+                    // were each pointed at a different session, so the
+                    // tab's own restored pointer is read ahead of it.
+                    else if case .overview(let stored) = surface {
                         // Resolved on the main actor, where the two lists
                         // live, and handed down as names — see
                         // `SessionOverviewNames` for why the model takes
@@ -1426,7 +1443,10 @@ enum LivenessProbeRace {
 /// `lost` case to without touching this type's call site in
 /// `ContentView.detail`, and which the failed-connect surface plan's Task 3
 /// added `failed` to — that one DID change the call site, which now passes
-/// a third fact (see `ConnectionSurfacePlan.surface`). Named per the design
+/// a third fact (see `ConnectionSurfacePlan.surface`). The jump-and-groups
+/// plan's Task 1 moved that call site out of the view body and into
+/// `DetailSurfacePlan.surface`, which composes this answer with the
+/// session overview's. Named per the design
 /// spec's own framing
 /// (`docs/superpowers/specs/2026-08-21-connection-state-design.md` §4):
 /// one and the same tab area for connecting, connected and lost.
@@ -1446,7 +1466,10 @@ enum ConnectionAttemptSurface: Equatable {
 }
 
 /// Decides `ConnectionAttemptSurface` from the facts `ContentView
-/// .detail` already has in hand — pulled out as a plain function so
+/// .detail` already has in hand — handed over through
+/// `ContentView.detailSurface(for:)` and `DetailSurfacePlan.surface`, this
+/// function's one caller (counted with `grep` on 2026-09-18) — pulled out
+/// as a plain function so
 /// `Tests/macSCPAppKitTests/` can exercise every combination directly,
 /// rather than the decision living inline in a view body this project has
 /// no way to render (the same move `LivenessDotPlan`, Task 5, made for the

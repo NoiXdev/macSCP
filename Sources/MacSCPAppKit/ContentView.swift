@@ -235,6 +235,21 @@ struct ContentView: View {
     /// The managed-key store those same paths read alongside `secretStore`
     /// above — same reasoning, same fix.
     let managedKeyStore: ManagedKeyStore
+    /// Where the sidebar start's tab rule gets a FRESH tab from
+    /// (jump-and-groups plan, Task 1) — `nil` in production, which means
+    /// the window's own `makeTab()` with the real connector; see
+    /// `makeSidebarTab()`.
+    ///
+    /// A test seam, and only that: `init`'s `sidebarTabFactory:` defaults
+    /// to `nil`, and the window's one production construction in
+    /// `MacSCPApp` passes nothing (`DetailSurfaceWiringGuardTests` checks
+    /// that it keeps passing nothing). It exists so `JumpTwoTabsTests` can
+    /// drive the real `connectFromSidebar` → `startWithoutAsking` path with
+    /// tabs whose connectors it controls, instead of re-spelling the tab
+    /// rule beside it. A plain `let`, for the reason `secretStore` above is
+    /// one: a test cannot reassign a property after construction and have
+    /// it take.
+    let sidebarTabFactory: (@MainActor () -> SessionTab)?
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
     /// bridge, title, edit error, reconnect flag) now lives per tab in
@@ -798,9 +813,11 @@ struct ContentView: View {
         managedKeyStore: ManagedKeyStore? = nil,
         seed: WindowSeed? = nil,
         restorationLaunch: WindowRestorationLaunch? = nil,
-        errorNotifier: ErrorNotifier? = nil
+        errorNotifier: ErrorNotifier? = nil,
+        sidebarTabFactory: (@MainActor () -> SessionTab)? = nil
     ) {
         self.errorNotifier = errorNotifier ?? ErrorNotifier.silent()
+        self.sidebarTabFactory = sidebarTabFactory
         self.seed = seed
         // No restoration STORE here (Task 5 fix round 1): a window neither
         // reads nor writes `windows.json`. It is read once in
@@ -887,9 +904,10 @@ struct ContentView: View {
         //   resolved stores the rest of the view uses, not second ones
         //   built here.
         // - `auditStore:` is a required `ContentView.init` parameter, so it
-        //   is whatever the caller passed; all 32 constructions under
-        //   `Tests/` (counted in the pass that writes this) pass one built
-        //   on a directory the test itself made.
+        //   is whatever the caller passed; every `ContentView(` under
+        //   `Tests/` passes one built on a directory the test itself made
+        //   — nine constructions, counted with `grep` on 2026-09-18 in the
+        //   pass that added `JumpTwoTabsTests`.
         //
         // The way to close the residual is to make the two hardwired stores
         // parameters as well, so that omitting them cannot compile. Until
@@ -2174,12 +2192,19 @@ struct ContentView: View {
         _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil
     ) {
         let target = tabsModel.sidebarConnectTarget(
-            activeTabIsConnected: activeTab.isConnected, makeTab: makeTab)
+            activeTabIsConnected: activeTab.isConnected, makeTab: makeSidebarTab)
         if let pendingSnippet, !target.isReconnecting {
             target.pendingSnippetRun = SessionTab.PendingSnippetRun(
                 snippet: pendingSnippet, storedSessionID: stored.id)
         }
         connect(in: target, stored: stored, paneVisibility: paneVisibility)
+    }
+
+    /// The fresh tab `startWithoutAsking`'s tab rule asks for: the window's
+    /// own `makeTab()` — the real connector — unless a test handed
+    /// `init` a `sidebarTabFactory`.
+    func makeSidebarTab() -> SessionTab {
+        sidebarTabFactory?() ?? makeTab()
     }
 
     /// "Go to Existing Tab" — the whole of that choice.
