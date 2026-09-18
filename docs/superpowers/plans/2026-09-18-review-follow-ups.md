@@ -25,11 +25,11 @@
 
 **Rows:** "A SOCKS5 reply write's own handler-removal failure is no longer reported"; "A stop race in `RemoteForward.swift` reports the same stop inconsistently, and a reconnect can show a transient failure count"; "A per-connection failure logged while a forward is torn down prints `port=-`".
 
-- [ ] SOCKS5: in `LocalForwardListener.accepted`'s `catch where replying` branch, tell the confirm write's failure (the client's, not reported — the maintainer's ruling) apart from `SOCKS5Handshake.succeed`'s own `removeHandler` failure (internal, reported through `onFailure`). Failing tests first: a removal failure is reported once; a confirm-write failure still is not.
-- [ ] `RemoteForward.swift`: both "the forward has been stopped" stop races are treated the same — a stop is never a connection failure. Test each race through the existing seams; neither calls `onConnectionFailure`.
-- [ ] Transient count: a connection failure caused by the SSH connection dropping mid-flight must not show "N connections failed" before `.reconnecting`. Decide from the report stream's order what the runner can know (read `TunnelRunner`'s report handling); state the rule in the report. Test: a drop with an in-flight connection goes straight to `.reconnecting` with no intermediate failure count.
-- [ ] `TunnelRunner`: the per-connection failure `debug` line reads the port captured when the forward started (as the `active` line does), so a report drained during `releaseCurrent()` logs the real port. Test through the log seam.
-- [ ] Whole suite, zero warnings. Commit `fix(tunnels): a stop is never a connection failure, and a drained report logs its port`.
+- [x] SOCKS5: in `LocalForwardListener.accepted`'s `catch where replying` branch, tell the confirm write's failure (the client's, not reported — the maintainer's ruling) apart from `SOCKS5Handshake.succeed`'s own `removeHandler` failure (internal, reported through `onFailure`). Failing tests first: a removal failure is reported once; a confirm-write failure still is not.
+- [x] `RemoteForward.swift`: both "the forward has been stopped" stop races are treated the same — a stop is never a connection failure. Test each race through the existing seams; neither calls `onConnectionFailure`.
+- [x] Transient count: a connection failure caused by the SSH connection dropping mid-flight must not show "N connections failed" before `.reconnecting`. Decide from the report stream's order what the runner can know (read `TunnelRunner`'s report handling); state the rule in the report. Test: a drop with an in-flight connection goes straight to `.reconnecting` with no intermediate failure count.
+- [x] `TunnelRunner`: the per-connection failure `debug` line reads the port captured when the forward started (as the `active` line does), so a report drained during `releaseCurrent()` logs the real port. Test through the log seam.
+- [x] Whole suite, zero warnings. Commit `fix(tunnels): a stop is never a connection failure, and a drained report logs its port`.
 
 ---
 
@@ -37,10 +37,10 @@
 
 **Row:** "`tunnels start --json` falls back to the kind's generic sentence when the runner holds no reason".
 
-- [ ] Measure first: which production paths reach `.failed` without a `failureReason` (read `TunnelRunner`'s writes of the state and the reason). Write the answer, with file:line, into the report.
-- [ ] The `failed` JSON object gains a key `"reasonIsGeneric"` (Bool, always present on a `failed` line): `true` when `reason` fell back to `kind.sentence`. `reason` keeps its current value (scripts read it). The text line is unchanged. Tests: a runner with a reason → `false`; without → `true`; the key set of the `failed` object is pinned.
-- [ ] If the measurement finds no production path to a reasonless `.failed`, add a test that pins that for the runner paths read, beside the JSON change.
-- [ ] Update the CLI's `--json` documentation where the `failed` object's keys are listed (grep `docs/` and the CLI help text for the key list). Whole suite, zero warnings. Commit `feat(cli): a failed tunnel line marks a generic reason`.
+- [x] Measure first: which production paths reach `.failed` without a `failureReason` (read `TunnelRunner`'s writes of the state and the reason). Write the answer, with file:line, into the report.
+- [x] The `failed` JSON object gains a key `"reasonIsGeneric"` (Bool, always present on a `failed` line): `true` when `reason` fell back to `kind.sentence`. `reason` keeps its current value (scripts read it). The text line is unchanged. Tests: a runner with a reason → `false`; without → `true`; the key set of the `failed` object is pinned.
+- [x] If the measurement finds no production path to a reasonless `.failed`, add a test that pins that for the runner paths read, beside the JSON change.
+- [x] Update the CLI's `--json` documentation where the `failed` object's keys are listed (grep `docs/` and the CLI help text for the key list). Whole suite, zero warnings. Commit `feat(cli): a failed tunnel line marks a generic reason`.
 
 ---
 
@@ -48,10 +48,10 @@
 
 **Row:** "A forwarding's local-bind failure message loses its errno/detail text on non-loopback and non-port-in-use failures".
 
-- [ ] Measure which errors SwiftNIO throws for a local bind to an address this Mac does not have (`EADDRNOTAVAIL`) and to a refused port, on loopback-only tests (bind to a TEST-NET address such as 192.0.2.1 for the first; read, do not guess, what the second produces on macOS 15 without root — if it succeeds, say so and drop that case).
-- [ ] Map each measured cause to its own `TunnelFailure` case (as `portInUse` is mapped from `EADDRINUSE` in `LocalForwardListener`), with a `TunnelFailureKind` and a translated fixed sentence on the App's four surfaces (the ones the row names; read how `portInUse`'s sentence reaches them). The log and the CLI keep the full detail text as today.
-- [ ] Tests: each measured errno maps to its case; the App sentence for each comes from its catalogue key in all four languages (parity suites); an unknown errno still yields `bindFailed`.
-- [ ] Leave the native-speaker review of the `de`/`fr`/`pl` strings open in the row (it is not something an implementer can close). Whole suite, zero warnings. Commit `fix(tunnels): a local bind failure names its cause in the app`.
+- [x] Measure which errors SwiftNIO throws for a local bind to an address this Mac does not have (`EADDRNOTAVAIL`) and to a refused port, on loopback-only tests (bind to a TEST-NET address such as 192.0.2.1 for the first; read, do not guess, what the second produces on macOS 15 without root — if it succeeds, say so and drop that case).
+- [x] Map each measured cause to its own `TunnelFailure` case (as `portInUse` is mapped from `EADDRINUSE` in `LocalForwardListener`), with a `TunnelFailureKind` and a translated fixed sentence on the App's four surfaces (the ones the row names; read how `portInUse`'s sentence reaches them). The log and the CLI keep the full detail text as today.
+- [x] Tests: each measured errno maps to its case; the App sentence for each comes from its catalogue key in all four languages (parity suites); an unknown errno still yields `bindFailed`.
+- [x] Leave the native-speaker review of the `de`/`fr`/`pl` strings open in the row (it is not something an implementer can close). Whole suite, zero warnings. Commit `fix(tunnels): a local bind failure names its cause in the app`.
 
 ---
 
@@ -59,10 +59,10 @@
 
 **Row:** "A dial that fails partway shuts the agent-auth group down while Citadel's login timer may still be pending".
 
-- [ ] Read `CitadelFileSystem.releaseAfterCitadelTimer`, its success-path callers (`CitadelFileSystem.swift`, `SSHForwardingConnection.swift`) and every failure path that shuts a dedicated event-loop group down today (grep `shutdownGracefully` in `Sources/macSCPCore/SSH`). List them in the report with file:line.
-- [ ] Route every failure-path shutdown of a group that a Citadel handshake ran on through `releaseAfterCitadelTimer` (host-key rejection, auth failure, cancellation), for tabs and forwardings alike.
-- [ ] Tests: through the release seam (inject the release function or observe it with a spy), a host-key rejection and an auth failure each release through the delayed path, never an immediate shutdown; a source guard pins that no `shutdownGracefully` on a dial group remains outside `releaseAfterCitadelTimer` in those files (positive check: the function exists and is called on each listed path).
-- [ ] Whole suite plus the gated SSH suites (`MACSCP_ITEST=1`, rig from the main checkout), zero warnings. Commit `fix(connect): a failed dial releases its event loop only after Citadel's login timer`.
+- [x] Read `CitadelFileSystem.releaseAfterCitadelTimer`, its success-path callers (`CitadelFileSystem.swift`, `SSHForwardingConnection.swift`) and every failure path that shuts a dedicated event-loop group down today (grep `shutdownGracefully` in `Sources/macSCPCore/SSH`). List them in the report with file:line.
+- [x] Route every failure-path shutdown of a group that a Citadel handshake ran on through `releaseAfterCitadelTimer` (host-key rejection, auth failure, cancellation), for tabs and forwardings alike.
+- [x] Tests: through the release seam (inject the release function or observe it with a spy), a host-key rejection and an auth failure each release through the delayed path, never an immediate shutdown; a source guard pins that no `shutdownGracefully` on a dial group remains outside `releaseAfterCitadelTimer` in those files (positive check: the function exists and is called on each listed path).
+- [x] Whole suite plus the gated SSH suites (`MACSCP_ITEST=1`, rig from the main checkout), zero warnings. Commit `fix(connect): a failed dial releases its event loop only after Citadel's login timer`.
 
 ---
 
@@ -70,10 +70,10 @@
 
 **Row:** "An SFTP open started in the background on the forwarding path would go unnoticed, its error never caught".
 
-- [ ] Measure first why `theForwardingPathOpensNoChannelWhereTheTabPathOpensOne` misses the review's probe B (an `openSFTP` started in a background task): plant it, run the test, record the outcome and the reason (likely the channel count is read before the request reaches the fake server). Revert with `cmp`.
-- [ ] Rebuild the check so it reads after an ordering point, not after a race: e.g. disconnect the forwarding connection and await the fake server's observation of the connection close — any channel request sent before the close has been processed by then, because SSH messages on one connection are ordered. Then assert zero SFTP subsystem requests. No sleeps, no wall-clock ceiling.
-- [ ] Prove sensitivity by repetition: probe B red in 10 of 10 runs of the rebuilt test (record the count), and the unmodified tree green.
-- [ ] Whole suite, zero warnings. Commit `test(forwarding): the no-SFTP pin reads after the connection has closed`.
+- [x] Measure first why `theForwardingPathOpensNoChannelWhereTheTabPathOpensOne` misses the review's probe B (an `openSFTP` started in a background task): plant it, run the test, record the outcome and the reason (likely the channel count is read before the request reaches the fake server). Revert with `cmp`.
+- [x] Rebuild the check so it reads after an ordering point, not after a race: e.g. disconnect the forwarding connection and await the fake server's observation of the connection close — any channel request sent before the close has been processed by then, because SSH messages on one connection are ordered. Then assert zero SFTP subsystem requests. No sleeps, no wall-clock ceiling.
+- [x] Prove sensitivity by repetition: probe B red in 10 of 10 runs of the rebuilt test (record the count), and the unmodified tree green.
+- [x] Whole suite, zero warnings. Commit `test(forwarding): the no-SFTP pin reads after the connection has closed`.
 
 ---
 
@@ -81,10 +81,10 @@
 
 **Row:** "A corrupt `managed_keys.json` surfaces only as a missing passphrase".
 
-- [ ] Keep the deliberate behaviour: an unreadable store still answers nil, so sessions whose key it does not manage are not stopped.
-- [ ] Add: the source records that the store was unreadable (no key material, no file content — only the fact and the decode error's type name) in the diagnostic log once per read, and a connection that then fails for a missing passphrase of a MANAGED key says the key store could not be read — a new catalogue key (e.g. `core.connect.managedKeyStoreUnreadable`, four languages) on the App surface, a fixed `DialSupport.reason` sentence, and the CLI's error line. Read how the current missing-passphrase failure travels to find where the fact can join it; state the path in the report.
-- [ ] Tests: a corrupt store file plus a managed encrypted key → the failure names the store; the same corrupt store with an unmanaged key → unchanged behaviour; no test message or log line contains the file's content (named-constant rule from `CLAUDE.md`).
-- [ ] Whole suite, zero warnings. Commit `fix(keys): a connection that fails on an unreadable key store says so`.
+- [x] Keep the deliberate behaviour: an unreadable store still answers nil, so sessions whose key it does not manage are not stopped.
+- [x] Add: the source records that the store was unreadable (no key material, no file content — only the fact and the decode error's type name) in the diagnostic log once per read, and a connection that then fails for a missing passphrase of a MANAGED key says the key store could not be read — a new catalogue key (e.g. `core.connect.managedKeyStoreUnreadable`, four languages) on the App surface, a fixed `DialSupport.reason` sentence, and the CLI's error line. Read how the current missing-passphrase failure travels to find where the fact can join it; state the path in the report.
+- [x] Tests: a corrupt store file plus a managed encrypted key → the failure names the store; the same corrupt store with an unmanaged key → unchanged behaviour; no test message or log line contains the file's content (named-constant rule from `CLAUDE.md`).
+- [x] Whole suite, zero warnings. Commit `fix(keys): a connection that fails on an unreadable key store says so`.
 
 ---
 
@@ -92,9 +92,9 @@
 
 **Row:** "The login-set repoint question's session/jump count is captured when the dialog opens".
 
-- [ ] The dialog's plural count (`connection.convertKey.repoint.message %lld %@`, `ContentView+Sheets.swift`) is read from the current sessions at render time, as the title already re-reads the set's current name; the request no longer carries a captured count (or carries only what cannot be re-read — state which).
-- [ ] Tests: a pure function over the current sessions gives the count; a guard pins that the message formats that function's result, not a stored field (positive check beside the negative one).
-- [ ] Whole suite, zero warnings. Commit `fix(login-sets): the repoint question counts at the moment it is shown`.
+- [x] The dialog's plural count (`connection.convertKey.repoint.message %lld %@`, `ContentView+Sheets.swift`) is read from the current sessions at render time, as the title already re-reads the set's current name; the request no longer carries a captured count (or carries only what cannot be re-read — state which).
+- [x] Tests: a pure function over the current sessions gives the count; a guard pins that the message formats that function's result, not a stored field (positive check beside the negative one).
+- [x] Whole suite, zero warnings. Commit `fix(login-sets): the repoint question counts at the moment it is shown`.
 
 ---
 
@@ -102,11 +102,11 @@
 
 **Row:** "Task 6's review deferred minors: terminal copy on select / paste on right click".
 
-- [ ] Paste on right click fires from the real right mouse button (`rightMouseDown(with:)`, and Control-click through `mouseDown` if SwiftTerm swallows it — read SwiftTerm's `MacTerminalView` and state what reaches which method), not from `menu(for:)`; `menu(for:)` keeps returning the snippet menu (Option-right-click while paste is on) and never pastes, so a synthetic menu request (VoiceOver's "show menu") opens the menu instead of pasting. Tests through `TerminalRightClickPlan` and a guard on the hooks.
-- [ ] The copy-pasteboard reassignment guard also scans the terminal view's own file and derives the file name instead of spelling it.
-- [ ] The right-click tests release their named pasteboards (`releaseGlobally()`).
-- [ ] Copy on select builds the selection text only when a selection gesture ended with a changed selection, not on every click (keep the existing "changed selection" rule and its test).
-- [ ] Whole suite, zero warnings. Commit `fix(terminal): right-click paste follows the real mouse button`.
+- [x] Paste on right click fires from the real right mouse button (`rightMouseDown(with:)`, and Control-click through `mouseDown` if SwiftTerm swallows it — read SwiftTerm's `MacTerminalView` and state what reaches which method), not from `menu(for:)`; `menu(for:)` keeps returning the snippet menu (Option-right-click while paste is on) and never pastes, so a synthetic menu request (VoiceOver's "show menu") opens the menu instead of pasting. Tests through `TerminalRightClickPlan` and a guard on the hooks.
+- [x] The copy-pasteboard reassignment guard also scans the terminal view's own file and derives the file name instead of spelling it.
+- [x] The right-click tests release their named pasteboards (`releaseGlobally()`).
+- [x] Copy on select builds the selection text only when a selection gesture ended with a changed selection, not on every click (keep the existing "changed selection" rule and its test).
+- [x] Whole suite, zero warnings. Commit `fix(terminal): right-click paste follows the real mouse button`.
 
 ---
 
@@ -114,16 +114,16 @@
 
 **Rows:** "Task 5's review deferred minor: a duplicated dialog scanner"; "[Polish: terminal resize, transfer cancel and paths]" (the four comment/string strippers in `Tests/macSCPAppKitTests`).
 
-- [ ] Count the strippers and dialog scanners in `Tests/macSCPAppKitTests` and `Tests/macSCPCoreTests` (grep for functions that remove or blank comments and string literals, and for the confirmation-dialog span scanners); list them with file:line in the report.
-- [ ] Converge the App test target on `SwiftSource.blankingCommentsAndStrings` / `blankingComments` (the App-side `SwiftSourceStripping.swift`), and the dialog guards on one scanner. The Core test target's older `stripCommentsAndStrings` stays unless it can move without widening this task — say which, and why.
-- [ ] Every converted guard keeps its sensitivity: re-run each converted guard's own probe (or plant one per guard) and record red → revert (`cmp`) → green. A guard whose probe goes green after conversion is a regression, not a simplification.
-- [ ] Whole suite, zero warnings. Commit `test(guards): the app guards read source through one scanner`.
+- [x] Count the strippers and dialog scanners in `Tests/macSCPAppKitTests` and `Tests/macSCPCoreTests` (grep for functions that remove or blank comments and string literals, and for the confirmation-dialog span scanners); list them with file:line in the report.
+- [x] Converge the App test target on `SwiftSource.blankingCommentsAndStrings` / `blankingComments` (the App-side `SwiftSourceStripping.swift`), and the dialog guards on one scanner. The Core test target's older `stripCommentsAndStrings` stays unless it can move without widening this task — say which, and why.
+- [x] Every converted guard keeps its sensitivity: re-run each converted guard's own probe (or plant one per guard) and record red → revert (`cmp`) → green. A guard whose probe goes green after conversion is a regression, not a simplification.
+- [x] Whole suite, zero warnings. Commit `test(guards): the app guards read source through one scanner`.
 
 ---
 
 ### Task 10: Closeout
 
-- [ ] `docs/BACKLOG.md`: each row named above → Done 2026-09-18 with its commits (the file's convention: the row's text stays, a **Done** sentence is appended); new rows for anything the tasks recorded as open; the sight checks this plan adds join the grouped sight-check row. This plan's `- [ ]` step boxes ticked (not the header line). Commit `docs(backlog): the review follow-ups of 2026-09-18 are recorded`.
+- [x] `docs/BACKLOG.md`: each row named above → Done 2026-09-18 with its commits (the file's convention: the row's text stays, a **Done** sentence is appended); new rows for anything the tasks recorded as open; the sight checks this plan adds join the grouped sight-check row. This plan's `- [ ]` step boxes ticked (not the header line). Commit `docs(backlog): the review follow-ups of 2026-09-18 are recorded`.
 
 ## Self-review
 
