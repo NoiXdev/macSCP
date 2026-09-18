@@ -60,82 +60,64 @@ struct TerminalMousePlanTests {
     // MARK: - Copy on select
 
     struct CopyRow: Sendable, CustomTestStringConvertible {
-        let atStart: String?
-        let atEnd: String?
-        let toggled: Bool
+        let enabled: Bool
+        let changed: Bool
+        let selection: String?
         let expected: String?
+        /// Whether the plan builds the selection text at all. Building it
+        /// walks the buffer, so it happens only for a gesture that changed
+        /// the selection with the setting on — not on every click.
+        let reads: Bool
 
         var testDescription: String {
-            "start=\(atStart.debugDescription) end=\(atEnd.debugDescription) toggled=\(toggled) → \(expected.debugDescription)"
+            "enabled=\(enabled) changed=\(changed) selection=\(selection.debugDescription) → \(expected.debugDescription), reads=\(reads)"
         }
     }
 
-    /// The enabled half. Start values: none, empty, "ls". End values: none,
-    /// empty, the same "ls", a different "ls -la".
     static let copyTable: [CopyRow] = [
-        // No selection at the end: nothing to copy, whatever came before.
-        CopyRow(atStart: nil, atEnd: nil, toggled: false, expected: nil),
-        CopyRow(atStart: nil, atEnd: nil, toggled: true, expected: nil),
-        CopyRow(atStart: "", atEnd: nil, toggled: false, expected: nil),
-        CopyRow(atStart: "", atEnd: nil, toggled: true, expected: nil),
-        CopyRow(atStart: "ls", atEnd: nil, toggled: false, expected: nil),
-        // A plain click that clears an existing selection.
-        CopyRow(atStart: "ls", atEnd: nil, toggled: true, expected: nil),
-        // An empty selection is never copied — it would only wipe the
-        // clipboard.
-        CopyRow(atStart: nil, atEnd: "", toggled: false, expected: nil),
-        CopyRow(atStart: nil, atEnd: "", toggled: true, expected: nil),
-        CopyRow(atStart: "", atEnd: "", toggled: false, expected: nil),
-        CopyRow(atStart: "", atEnd: "", toggled: true, expected: nil),
-        CopyRow(atStart: "ls", atEnd: "", toggled: false, expected: nil),
-        CopyRow(atStart: "ls", atEnd: "", toggled: true, expected: nil),
-        // A new selection where there was none (drag, double or triple click).
-        CopyRow(atStart: nil, atEnd: "ls", toggled: false, expected: "ls"),
-        CopyRow(atStart: nil, atEnd: "ls", toggled: true, expected: "ls"),
-        // The same text before and after with no toggle: the gesture did not
-        // select anything (a click the remote application took for mouse
-        // reporting). Copying here would put a stale selection back over
-        // whatever the user copied since.
-        CopyRow(atStart: "ls", atEnd: "ls", toggled: false, expected: nil),
-        // The same text, but the selection went away and came back during
-        // the gesture: a fresh selection that happens to match.
-        CopyRow(atStart: "ls", atEnd: "ls", toggled: true, expected: "ls"),
-        // A changed selection (shift-click extend, a new drag).
-        CopyRow(atStart: "", atEnd: "ls", toggled: false, expected: "ls"),
-        CopyRow(atStart: "", atEnd: "ls", toggled: true, expected: "ls"),
-        CopyRow(atStart: nil, atEnd: "ls -la", toggled: false, expected: "ls -la"),
-        CopyRow(atStart: nil, atEnd: "ls -la", toggled: true, expected: "ls -la"),
-        CopyRow(atStart: "", atEnd: "ls -la", toggled: false, expected: "ls -la"),
-        CopyRow(atStart: "", atEnd: "ls -la", toggled: true, expected: "ls -la"),
-        CopyRow(atStart: "ls", atEnd: "ls -la", toggled: false, expected: "ls -la"),
-        CopyRow(atStart: "ls", atEnd: "ls -la", toggled: true, expected: "ls -la"),
+        // Setting off: nothing copied, and the selection never read.
+        CopyRow(enabled: false, changed: false, selection: nil, expected: nil, reads: false),
+        CopyRow(enabled: false, changed: false, selection: "", expected: nil, reads: false),
+        CopyRow(enabled: false, changed: false, selection: "ls", expected: nil, reads: false),
+        CopyRow(enabled: false, changed: true, selection: nil, expected: nil, reads: false),
+        CopyRow(enabled: false, changed: true, selection: "", expected: nil, reads: false),
+        CopyRow(enabled: false, changed: true, selection: "ls", expected: nil, reads: false),
+        // Setting on, the gesture changed nothing (a click the remote
+        // application took for mouse reporting, or a click with no
+        // selection anywhere): the old selection, if there is one, is not
+        // copied again over whatever the user copied since, and it is not
+        // even read.
+        CopyRow(enabled: true, changed: false, selection: nil, expected: nil, reads: false),
+        CopyRow(enabled: true, changed: false, selection: "", expected: nil, reads: false),
+        CopyRow(enabled: true, changed: false, selection: "ls", expected: nil, reads: false),
+        // Setting on, the gesture changed the selection: read it. Gone (a
+        // plain click that cleared it) or empty (a drag that never left its
+        // first cell) copies nothing — it would only wipe the clipboard.
+        CopyRow(enabled: true, changed: true, selection: nil, expected: nil, reads: true),
+        CopyRow(enabled: true, changed: true, selection: "", expected: nil, reads: true),
+        CopyRow(enabled: true, changed: true, selection: "ls", expected: "ls", reads: true),
     ]
 
     @Test("The copy table holds every combination exactly once")
     func theCopyTableIsComplete() {
-        struct Key: Hashable { let start: String?; let end: String?; let toggled: Bool }
-        let keys = Set(Self.copyTable.map { Key(start: $0.atStart, end: $0.atEnd, toggled: $0.toggled) })
-        // start ∈ {nil, "", "ls"} × end ∈ {nil, "", "ls", "ls -la"} × toggled ∈ {false, true}
-        #expect(Self.copyTable.count == 24)
-        #expect(keys.count == 24)
+        struct Key: Hashable { let enabled: Bool; let changed: Bool; let selection: String? }
+        let keys = Set(Self.copyTable.map { Key(enabled: $0.enabled, changed: $0.changed, selection: $0.selection) })
+        // enabled × changed × selection ∈ {nil, "", "ls"}
+        #expect(Self.copyTable.count == 12)
+        #expect(keys.count == 12)
     }
 
-    @Test("Copy on select, enabled", arguments: copyTable)
-    func copyOnSelectEnabled(_ row: CopyRow) {
-        #expect(TerminalCopyOnSelectPlan.textToCopy(
-            enabled: true,
-            selectionAtGestureStart: row.atStart,
-            selectionAtGestureEnd: row.atEnd,
-            selectionToggledDuringGesture: row.toggled) == row.expected)
-    }
-
-    /// The disabled half: every row of the enabled table, nothing copied.
-    @Test("Copy on select, disabled, copies nothing", arguments: copyTable)
-    func copyOnSelectDisabled(_ row: CopyRow) {
-        #expect(TerminalCopyOnSelectPlan.textToCopy(
-            enabled: false,
-            selectionAtGestureStart: row.atStart,
-            selectionAtGestureEnd: row.atEnd,
-            selectionToggledDuringGesture: row.toggled) == nil)
+    @Test("Copy on select", arguments: copyTable)
+    func copyOnSelect(_ row: CopyRow) {
+        var reads = 0
+        let copied = TerminalCopyOnSelectPlan.textToCopy(
+            enabled: row.enabled,
+            selectionChangedDuringGesture: row.changed,
+            selection: {
+                reads += 1
+                return row.selection
+            })
+        #expect(copied == row.expected)
+        #expect(reads == (row.reads ? 1 : 0))
     }
 }

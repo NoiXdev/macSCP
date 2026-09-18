@@ -109,8 +109,9 @@ struct SSHTerminalView: NSViewRepresentable {
 
     /// Builds the right-click menu for `model` and attaches it, recording on
     /// the coordinator which model it was built from. Whether a right click
-    /// opens it is `MacSCPTerminalView.menu(for:)`'s decision: with paste on
-    /// right click on, it opens on Option-right-click instead.
+    /// opens it is `MacSCPTerminalView`'s decision (`rightMouseDown(with:)`
+    /// and, for a control-click, `menu(for:)`): with paste on right click
+    /// on, it opens on Option-right-click instead.
     @MainActor
     private static func attachSnippetMenu(
         to terminal: TerminalView, model: SnippetMenuModel, coordinator: Coordinator
@@ -143,8 +144,8 @@ struct SSHTerminalView: NSViewRepresentable {
     /// menu attached the surface behaves exactly as it did before this
     /// existed, which for the right mouse button is: nothing at all — unless
     /// paste on right click is on, in which case it pastes
-    /// (`MacSCPTerminalView.menu(for:)`, which overrides the lookup this
-    /// comment measures on SwiftTerm's own class).
+    /// (`MacSCPTerminalView.rightMouseDown(with:)`, which overrides the
+    /// right click this comment measures on SwiftTerm's own class).
     @MainActor
     static func snippetContextMenu(
         model: SnippetMenuModel, action: @escaping (Snippet, Bool) -> Void

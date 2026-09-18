@@ -7,34 +7,65 @@ import Testing
 @testable import MacSCPAppKit
 
 /// Drives a real `MacSCPTerminalView` with real mouse events (next build of
-/// 2026-09-17, Task 6): what a right click does under each setting, and
-/// what the end of a selection gesture puts on the pasteboard.
+/// 2026-09-17, Task 6; the hooks moved on 2026-09-18, review follow-ups
+/// Task 8): what a right click and a control-click do under each setting,
+/// and what the end of a selection gesture puts on the pasteboard.
 ///
-/// No window, no event loop: `menu(for:)`, `mouseDown(with:)`,
-/// `mouseDragged(with:)` and `mouseUp(with:)` are called directly, the way
-/// `TerminalContextMenuTests` asks for the menu of a right-mouse-down. The
-/// last hop — AppKit delivering a click and popping a menu up — is not
-/// covered here and is a sight check.
+/// No event loop: `rightMouseDown(with:)`, `menu(for:)`, `mouseDown(with:)`,
+/// `mouseDragged(with:)` and `mouseUp(with:)` are called directly, in the
+/// order `NSWindow` calls them. That order was measured on 2026-09-18 by
+/// sending synthetic events through `NSWindow.sendEvent(_:)` to an
+/// invisible, off-screen window that was not key, its view accepting the
+/// first mouse (Task 8's report): a right click reaches
+/// `rightMouseDown(with:)`, and `NSView`'s implementation of it asks
+/// `menu(for:)`; a control-click asks `menu(for:)` FIRST and reaches
+/// `mouseDown(with:)` only when that answered `nil`. The last hop — a real
+/// key window and a menu popping up on screen — is a sight check.
 ///
 /// The pasteboard is a private, uniquely named one per test, never
 /// `NSPasteboard.general`: a test must not overwrite the clipboard of the
-/// person running it. Paste is recorded by overriding `paste(_:)` rather
-/// than performed, for the same reason — a real paste reads the general
-/// pasteboard.
+/// person running it, and `withTerminal` releases it on every exit. Paste
+/// is recorded by overriding `paste(_:)` rather than performed, for the
+/// same reason — a real paste reads the general pasteboard.
 @Suite("Terminal mouse behaviour", .serialized)
 @MainActor
 struct TerminalMouseBehaviourTests {
 
     final class PasteRecordingTerminal: MacSCPTerminalView {
         var pastes = 0
+        /// Every answer `MacSCPTerminalView.menu(for:)` gave, in order.
+        var menuAnswers: [NSMenu?] = []
         override func paste(_ sender: Any) { pastes += 1 }
+        /// Records what the production class answers, then gives `NSView`
+        /// nothing to show: a menu popping up needs a window and a modal
+        /// tracking loop, neither of which a test may start.
+        override func menu(for event: NSEvent) -> NSMenu? {
+            menuAnswers.append(super.menu(for: event))
+            return nil
+        }
     }
 
-    private func makeTerminal() -> (PasteRecordingTerminal, NSPasteboard) {
+    /// Records every byte the view sends toward the host.
+    final class SentBytes: NSObject, TerminalViewDelegate {
+        var bytes: [UInt8] = []
+        func send(source: TerminalView, data: ArraySlice<UInt8>) { bytes.append(contentsOf: data) }
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func scrolled(source: TerminalView, position: Double) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+
+    /// A terminal writing to a private pasteboard, released on every exit
+    /// of `body` — a thrown `#require` included.
+    private func withTerminal(
+        _ body: (PasteRecordingTerminal, NSPasteboard) throws -> Void
+    ) rethrows {
         let terminal = PasteRecordingTerminal(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("macSCP.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
         terminal.copyPasteboard = pasteboard
-        return (terminal, pasteboard)
+        try body(terminal, pasteboard)
     }
 
     private func snippetMenu() -> NSMenu {
@@ -79,87 +110,186 @@ struct TerminalMouseBehaviourTests {
         terminal.mouseUp(with: try mouse(.leftMouseUp, x: p.x, y: p.y, clickCount: 1))
     }
 
+    /// A right click the way `NSWindow` delivers it.
+    private func rightClick(_ terminal: TerminalView, modifiers: NSEvent.ModifierFlags = []) throws {
+        terminal.rightMouseDown(with: try mouse(.rightMouseDown, x: 10, y: 10, modifiers: modifiers))
+        terminal.rightMouseUp(with: try mouse(.rightMouseUp, x: 10, y: 10, modifiers: modifiers))
+    }
+
+    /// A control-click the way `NSWindow` delivers it (measured, see the
+    /// suite comment): the menu lookup first, and the click itself only
+    /// when the lookup came back empty. Returns whether the click reached
+    /// `mouseDown(with:)`.
+    @discardableResult
+    private func controlClick(
+        _ terminal: PasteRecordingTerminal, modifiers: NSEvent.ModifierFlags = [], x: CGFloat = 10
+    ) throws -> Bool {
+        let p = topRow(terminal, x: x)
+        let down = try mouse(.leftMouseDown, x: p.x, y: p.y, modifiers: modifiers.union(.control))
+        _ = terminal.menu(for: down)
+        guard terminal.menuAnswers.last == .some(nil) else { return false }
+        terminal.mouseDown(with: down)
+        terminal.mouseUp(with: try mouse(.leftMouseUp, x: p.x, y: p.y, modifiers: modifiers.union(.control)))
+        return true
+    }
+
     private static let sentinel = "clipboard before the gesture"
 
     // MARK: - Right click
 
-    @Test("Paste on right click on: a right click pastes and opens no menu")
+    @Test("Paste on right click on: a right click pastes and asks for no menu")
     func rightClickPastesWhenTheSettingIsOn() throws {
-        let (terminal, _) = makeTerminal()
-        terminal.menu = snippetMenu()
-        terminal.pasteOnRightClick = true
-        let resolved = terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10))
-        #expect(resolved == nil)
-        #expect(terminal.pastes == 1)
+        try withTerminal { terminal, _ in
+            terminal.menu = snippetMenu()
+            terminal.pasteOnRightClick = true
+            try rightClick(terminal)
+            #expect(terminal.pastes == 1)
+            #expect(terminal.menuAnswers.isEmpty, "the paste must not go through the menu lookup")
+        }
     }
 
     @Test("Paste on right click on, no snippets: a right click still pastes")
     func rightClickPastesWithoutSnippets() throws {
-        let (terminal, _) = makeTerminal()
-        terminal.pasteOnRightClick = true
-        #expect(terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10)) == nil)
-        #expect(terminal.pastes == 1)
+        try withTerminal { terminal, _ in
+            terminal.pasteOnRightClick = true
+            try rightClick(terminal)
+            #expect(terminal.pastes == 1)
+            #expect(terminal.menuAnswers.isEmpty)
+        }
     }
 
     @Test("Paste on right click on: Option-right-click opens the snippet menu")
     func optionRightClickOpensTheSnippetMenu() throws {
-        let (terminal, _) = makeTerminal()
-        let menu = snippetMenu()
-        terminal.menu = menu
-        terminal.pasteOnRightClick = true
-        let resolved = terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10, modifiers: .option))
-        #expect(resolved === menu)
-        #expect(terminal.pastes == 0)
+        try withTerminal { terminal, _ in
+            let menu = snippetMenu()
+            terminal.menu = menu
+            terminal.pasteOnRightClick = true
+            try rightClick(terminal, modifiers: .option)
+            #expect(terminal.menuAnswers == [menu])
+            #expect(terminal.pastes == 0)
+        }
     }
 
     @Test("Paste on right click on, no snippets: Option-right-click does nothing")
     func optionRightClickWithoutSnippetsDoesNothing() throws {
-        let (terminal, _) = makeTerminal()
-        terminal.pasteOnRightClick = true
-        #expect(terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10, modifiers: .option)) == nil)
-        #expect(terminal.pastes == 0)
+        try withTerminal { terminal, _ in
+            terminal.pasteOnRightClick = true
+            try rightClick(terminal, modifiers: .option)
+            #expect(terminal.menuAnswers == [nil])
+            #expect(terminal.pastes == 0)
+        }
     }
 
     @Test("Paste on right click off: right click and Option-right-click open the snippet menu")
     func settingOffKeepsTheSnippetMenu() throws {
-        let (terminal, _) = makeTerminal()
-        let menu = snippetMenu()
-        terminal.menu = menu
-        #expect(terminal.pasteOnRightClick == false, "the view starts with the setting off")
-        #expect(terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10)) === menu)
-        #expect(terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10, modifiers: .option)) === menu)
-        #expect(terminal.pastes == 0)
+        try withTerminal { terminal, _ in
+            let menu = snippetMenu()
+            terminal.menu = menu
+            #expect(terminal.pasteOnRightClick == false, "the view starts with the setting off")
+            try rightClick(terminal)
+            try rightClick(terminal, modifiers: .option)
+            #expect(terminal.menuAnswers == [menu, menu])
+            #expect(terminal.pastes == 0)
+        }
     }
 
-    /// Control-click is the right click of a one-button mouse. If AppKit
-    /// asks for its menu, the event is a left-mouse-down carrying
-    /// `.control`; whether it asks at all on this view — SwiftTerm's own
-    /// `mouseDown(with:)` does not call `super` — is not measured here and
-    /// is a sight check.
-    @Test("Paste on right click on: a control-click pastes too")
+    /// A menu request that is not a real right mouse button — VoiceOver's
+    /// "show menu", or anything else asking `menu(for:)` directly — opens
+    /// the menu. Only the mouse button pastes.
+    @Test("Paste on right click on: a menu request for a right click opens the menu and never pastes")
+    func aMenuRequestNeverPastes() throws {
+        try withTerminal { terminal, _ in
+            let menu = snippetMenu()
+            terminal.menu = menu
+            terminal.pasteOnRightClick = true
+            _ = terminal.menu(for: try mouse(.rightMouseDown, x: 10, y: 10))
+            let key = try #require(NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false,
+                keyCode: 0))
+            _ = terminal.menu(for: key)
+            #expect(terminal.menuAnswers == [menu, menu])
+            #expect(terminal.pastes == 0)
+        }
+    }
+
+    /// Control-click is the right click of a one-button mouse. AppKit asks
+    /// `menu(for:)` before it delivers the click, and shows whatever comes
+    /// back INSTEAD of calling `mouseDown(with:)` (measured). So the lookup
+    /// declines, and the click pastes where it lands.
+    @Test("Paste on right click on: a control-click pastes from the click, not from the menu lookup")
     func controlClickPastes() throws {
-        let (terminal, _) = makeTerminal()
-        terminal.menu = snippetMenu()
-        terminal.pasteOnRightClick = true
-        #expect(terminal.menu(for: try mouse(.leftMouseDown, x: 10, y: 10, modifiers: .control)) == nil)
-        #expect(terminal.pastes == 1)
+        try withTerminal { terminal, _ in
+            terminal.menu = snippetMenu()
+            terminal.pasteOnRightClick = true
+            let p = topRow(terminal)
+            let down = try mouse(.leftMouseDown, x: p.x, y: p.y, modifiers: .control)
+            _ = terminal.menu(for: down)
+            // Read before the click: the lookup alone neither pastes nor
+            // offers a menu that AppKit would show in the click's place.
+            #expect(terminal.menuAnswers == [nil])
+            #expect(terminal.pastes == 0)
+            terminal.mouseDown(with: down)
+            terminal.mouseUp(with: try mouse(.leftMouseUp, x: p.x, y: p.y, modifiers: .control))
+            #expect(terminal.pastes == 1)
+        }
     }
 
-    /// `menu(for:)` takes any event. Only a mouse click pastes; a menu
-    /// request carrying anything else gets the menu as before, so no
-    /// caller other than a click can trigger a paste through this hook.
-    @Test("Paste on right click on: a menu request that is not a click does not paste")
-    func aMenuRequestThatIsNotAClickDoesNotPaste() throws {
-        let (terminal, _) = makeTerminal()
-        let menu = snippetMenu()
-        terminal.menu = menu
-        terminal.pasteOnRightClick = true
-        let key = try #require(NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
-            context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false,
-            keyCode: 0))
-        #expect(terminal.menu(for: key) === menu)
-        #expect(terminal.pastes == 0)
+    @Test("Paste on right click on: Option-control-click opens the snippet menu")
+    func optionControlClickOpensTheSnippetMenu() throws {
+        try withTerminal { terminal, _ in
+            let menu = snippetMenu()
+            terminal.menu = menu
+            terminal.pasteOnRightClick = true
+            let reachedTheClick = try controlClick(terminal, modifiers: .option)
+            #expect(reachedTheClick == false, "AppKit shows the menu instead")
+            #expect(terminal.menuAnswers == [menu])
+            #expect(terminal.pastes == 0)
+        }
+    }
+
+    @Test("Paste on right click off: a control-click opens the snippet menu")
+    func controlClickWithTheSettingOffOpensTheSnippetMenu() throws {
+        try withTerminal { terminal, _ in
+            let menu = snippetMenu()
+            terminal.menu = menu
+            let reachedTheClick = try controlClick(terminal)
+            #expect(reachedTheClick == false, "AppKit shows the menu instead")
+            #expect(terminal.menuAnswers == [menu])
+            #expect(terminal.pastes == 0)
+        }
+    }
+
+    /// The control-click that pastes is consumed whole: a remote
+    /// application that asked for mouse reports sees neither its press nor
+    /// its release, and the click does not end a copy-on-select gesture.
+    @Test("Paste on right click on: a control-click paste is neither reported nor copied")
+    func aControlClickPasteIsConsumedWhole() throws {
+        try withTerminal { terminal, pasteboard in
+            let sent = SentBytes()
+            terminal.terminalDelegate = sent
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            terminal.pasteOnRightClick = true
+            // A selection made just before, so a stale "changed" mark would
+            // have something to copy again.
+            try doubleClick(terminal)
+            #expect(pasteboard.string(forType: .string) == "hello")
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            terminal.feed(text: "\u{1b}[?1000h")
+            sent.bytes = []
+            // Positive first: a plain click IS reported once mouse
+            // reporting is on, so the empty report below means something.
+            try click(terminal)
+            #expect(!sent.bytes.isEmpty)
+            sent.bytes = []
+            let reachedTheClick = try controlClick(terminal)
+            #expect(reachedTheClick)
+            #expect(terminal.pastes == 1)
+            #expect(sent.bytes.isEmpty, "the control-click was reported to the host: \(sent.bytes)")
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
     }
 
     /// The right-click paste is SwiftTerm's own `paste(_:)` — the action ⌘V
@@ -187,33 +317,33 @@ struct TerminalMouseBehaviourTests {
 
     @Test("Copy on select on: a double click copies the word")
     func doubleClickCopiesTheWord() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        terminal.feed(text: "hello world")
-        terminal.copyOnSelect = true
-        try doubleClick(terminal)
-        #expect(terminal.getSelection() == "hello")
-        #expect(pasteboard.string(forType: .string) == "hello")
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            try doubleClick(terminal)
+            #expect(terminal.getSelection() == "hello")
+            #expect(pasteboard.string(forType: .string) == "hello")
+        }
     }
 
     @Test("Copy on select on: a drag copies what it selected")
     func dragCopiesTheSelection() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        terminal.feed(text: "hello world")
-        terminal.copyOnSelect = true
-        let start = topRow(terminal)
-        let end = topRow(terminal, x: terminal.frame.width - 1)
-        // A drag's first event only anchors the selection where it lands
-        // (SwiftTerm starts it there), so the gesture is two drag events:
-        // one on the start cell, one on the end.
-        terminal.mouseDown(with: try mouse(.leftMouseDown, x: start.x, y: start.y))
-        terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: start.x, y: start.y))
-        terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: end.x, y: end.y))
-        terminal.mouseUp(with: try mouse(.leftMouseUp, x: end.x, y: end.y))
-        let selected = try #require(terminal.getSelection())
-        #expect(selected.hasPrefix("hello world"))
-        #expect(pasteboard.string(forType: .string) == selected)
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            let start = topRow(terminal)
+            let end = topRow(terminal, x: terminal.frame.width - 1)
+            // A drag's first event only anchors the selection where it lands
+            // (SwiftTerm starts it there), so the gesture is two drag events:
+            // one on the start cell, one on the end.
+            terminal.mouseDown(with: try mouse(.leftMouseDown, x: start.x, y: start.y))
+            terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: start.x, y: start.y))
+            terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: end.x, y: end.y))
+            terminal.mouseUp(with: try mouse(.leftMouseUp, x: end.x, y: end.y))
+            let selected = try #require(terminal.getSelection())
+            #expect(selected.hasPrefix("hello world"))
+            #expect(pasteboard.string(forType: .string) == selected)
+        }
     }
 
     /// Measured while writing this suite: a drag that has not left its
@@ -221,46 +351,46 @@ struct TerminalMouseBehaviourTests {
     /// would wipe the clipboard with nothing.
     @Test("Copy on select on: a drag that selected nothing leaves the clipboard alone")
     func anEmptyDragCopiesNothing() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        terminal.feed(text: "hello world")
-        terminal.copyOnSelect = true
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        let start = topRow(terminal)
-        terminal.mouseDown(with: try mouse(.leftMouseDown, x: start.x, y: start.y))
-        terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: start.x, y: start.y))
-        terminal.mouseUp(with: try mouse(.leftMouseUp, x: start.x, y: start.y))
-        // Positive first: there IS a selection, and it is empty.
-        #expect(terminal.getSelection() == "")
-        #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            let start = topRow(terminal)
+            terminal.mouseDown(with: try mouse(.leftMouseDown, x: start.x, y: start.y))
+            terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: start.x, y: start.y))
+            terminal.mouseUp(with: try mouse(.leftMouseUp, x: start.x, y: start.y))
+            // Positive first: there IS a selection, and it is empty.
+            #expect(terminal.getSelection() == "")
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
     }
 
     @Test("Copy on select off: a double click selects but copies nothing")
     func settingOffCopiesNothing() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        terminal.feed(text: "hello world")
-        try doubleClick(terminal)
-        #expect(terminal.getSelection() == "hello")
-        #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        try withTerminal { terminal, pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            terminal.feed(text: "hello world")
+            try doubleClick(terminal)
+            #expect(terminal.getSelection() == "hello")
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
     }
 
     @Test("Copy on select on: a plain click that clears the selection copies nothing")
     func aPlainClickCopiesNothing() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        terminal.feed(text: "hello world")
-        try doubleClick(terminal)
-        #expect(terminal.selectionActive, "there is a selection for the click to clear")
-        terminal.copyOnSelect = true
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        try click(terminal)
-        #expect(terminal.selectionActive == false)
-        #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            try doubleClick(terminal)
+            #expect(terminal.selectionActive, "there is a selection for the click to clear")
+            terminal.copyOnSelect = true
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            try click(terminal)
+            #expect(terminal.selectionActive == false)
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
     }
 
     /// A remote application that asked for mouse reports takes the click;
@@ -268,24 +398,24 @@ struct TerminalMouseBehaviourTests {
     /// mouse-up would put stale text over whatever the user copied since.
     @Test("Copy on select on: a click taken by mouse reporting does not re-copy an old selection")
     func aReportedClickDoesNotRecopyAStaleSelection() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        // Mouse reporting on first: output clears a selection, so the escape
-        // sequence cannot come after the double click. Shift bypasses mouse
-        // reporting, which is how a user selects under it at all.
-        terminal.feed(text: "hello world\u{1b}[?1000h")
-        let p = topRow(terminal)
-        terminal.mouseDown(with: try mouse(
-            .leftMouseDown, x: p.x, y: p.y, clickCount: 2, modifiers: .shift))
-        terminal.mouseUp(with: try mouse(
-            .leftMouseUp, x: p.x, y: p.y, clickCount: 2, modifiers: .shift))
-        terminal.copyOnSelect = true
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        try click(terminal)
-        // Positive first: the old selection is still there to be copied.
-        #expect(terminal.getSelection() == "hello")
-        #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        try withTerminal { terminal, pasteboard in
+            // Mouse reporting on first: output clears a selection, so the escape
+            // sequence cannot come after the double click. Shift bypasses mouse
+            // reporting, which is how a user selects under it at all.
+            terminal.feed(text: "hello world\u{1b}[?1000h")
+            let p = topRow(terminal)
+            terminal.mouseDown(with: try mouse(
+                .leftMouseDown, x: p.x, y: p.y, clickCount: 2, modifiers: .shift))
+            terminal.mouseUp(with: try mouse(
+                .leftMouseUp, x: p.x, y: p.y, clickCount: 2, modifiers: .shift))
+            terminal.copyOnSelect = true
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            try click(terminal)
+            // Positive first: the old selection is still there to be copied.
+            #expect(terminal.getSelection() == "hello")
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
     }
 
     private func drag(_ terminal: TerminalView, toX endX: CGFloat) throws {
@@ -298,35 +428,83 @@ struct TerminalMouseBehaviourTests {
     }
 
     /// A new drag over exactly the text already selected starts and ends
-    /// with the same text; only the selection turning off and on again in
-    /// between tells it apart from a click that selected nothing.
+    /// with the same text; only SwiftTerm reporting the selection changed
+    /// in between tells it apart from a click that selected nothing.
     @Test("Copy on select on: dragging over the same text again copies it again")
     func redraggingTheSameTextCopiesAgain() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
-        terminal.feed(text: "hello world")
-        terminal.copyOnSelect = true
-        try drag(terminal, toX: terminal.frame.width - 1)
-        let first = try #require(terminal.getSelection())
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        try drag(terminal, toX: terminal.frame.width - 1)
-        // Positive first: the second drag selected the same, non-empty text.
-        #expect(!first.isEmpty)
-        #expect(terminal.getSelection() == first)
-        #expect(pasteboard.string(forType: .string) == first)
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            try drag(terminal, toX: terminal.frame.width - 1)
+            let first = try #require(terminal.getSelection())
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            try drag(terminal, toX: terminal.frame.width - 1)
+            // Positive first: the second drag selected the same, non-empty text.
+            #expect(!first.isEmpty)
+            #expect(terminal.getSelection() == first)
+            #expect(pasteboard.string(forType: .string) == first)
+        }
     }
 
     @Test("Copy on select on: double-clicking the same word again copies it again")
     func reselectingTheSameWordCopiesAgain() throws {
-        let (terminal, pasteboard) = makeTerminal()
-        defer { pasteboard.releaseGlobally() }
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            terminal.copyOnSelect = true
+            try doubleClick(terminal)
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            try doubleClick(terminal)
+            #expect(pasteboard.string(forType: .string) == "hello")
+        }
+    }
+
+    /// A shift-click extends an active selection without turning it off or
+    /// on. It still counts as a change: SwiftTerm reports every mutation of
+    /// the selection, not only a toggle (pinned by the next test).
+    @Test("Copy on select on: a shift-click that extends the selection copies the extended text")
+    func aShiftClickExtensionCopies() throws {
+        try withTerminal { terminal, pasteboard in
+            terminal.feed(text: "hello world")
+            try doubleClick(terminal)
+            terminal.copyOnSelect = true
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            let p = topRow(terminal, x: terminal.frame.width - 1)
+            terminal.mouseDown(with: try mouse(.leftMouseDown, x: p.x, y: p.y, modifiers: .shift))
+            terminal.mouseUp(with: try mouse(.leftMouseUp, x: p.x, y: p.y, modifiers: .shift))
+            let extended = try #require(terminal.getSelection())
+            // Positive first: the shift-click really did extend the word.
+            #expect(extended.hasPrefix("hello world"))
+            #expect(pasteboard.string(forType: .string) == extended)
+        }
+    }
+
+    final class ChangeCountingTerminal: MacSCPTerminalView {
+        var changes = 0
+        override func selectionChanged(source: Terminal) {
+            changes += 1
+            super.selectionChanged(source: source)
+        }
+    }
+
+    /// What copy on select counts on: SwiftTerm calls
+    /// `selectionChanged(source:)` when an ACTIVE selection is extended,
+    /// not only when it turns on or off. A SwiftTerm bump that stops doing
+    /// so turns this red before it silently stops copying extensions.
+    @Test("SwiftTerm reports an extension of an active selection, not only a toggle")
+    func swiftTermReportsAnExtension() throws {
+        let terminal = ChangeCountingTerminal(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         terminal.feed(text: "hello world")
-        terminal.copyOnSelect = true
-        try doubleClick(terminal)
-        pasteboard.clearContents()
-        pasteboard.setString(Self.sentinel, forType: .string)
-        try doubleClick(terminal)
-        #expect(pasteboard.string(forType: .string) == "hello")
+        let start = topRow(terminal)
+        let end = topRow(terminal, x: terminal.frame.width - 1)
+        terminal.mouseDown(with: try mouse(.leftMouseDown, x: start.x, y: start.y))
+        terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: start.x, y: start.y))
+        #expect(terminal.selectionActive, "the first drag event starts the selection")
+        let before = terminal.changes
+        terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: end.x, y: end.y))
+        #expect(terminal.selectionActive)
+        #expect(terminal.changes > before)
     }
 }

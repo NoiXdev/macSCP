@@ -28,24 +28,25 @@ enum TerminalRightClickPlan: Equatable, Sendable {
 ///
 /// Two conditions beyond the setting itself:
 ///
+/// - The gesture must have changed the selection — SwiftTerm reported a
+///   change while it ran (`TerminalView.selectionChanged(source:)`, which
+///   SwiftTerm calls for every mutation, an extension included). A click
+///   that a remote application takes for mouse reporting leaves an older
+///   selection on screen untouched; copying that again at mouse-up would
+///   put stale text over whatever the user copied since. Only then is the
+///   selection text built at all: `selection` walks the buffer, and a plain
+///   click that changed nothing has no reason to pay for it.
 /// - The selection must be non-empty. A drag that has not left its first
 ///   cell leaves an active selection with empty text (measured in
 ///   `TerminalMouseBehaviourTests`); copying it would wipe the clipboard.
-/// - The gesture must have changed the selection: its text differs from
-///   the start of the gesture, or the selection went away and came back
-///   during it. A click that a remote application takes for mouse
-///   reporting leaves an older selection on screen untouched; copying that
-///   again at mouse-up would put stale text over whatever the user copied
-///   since.
 enum TerminalCopyOnSelectPlan {
     static func textToCopy(
         enabled: Bool,
-        selectionAtGestureStart: String?,
-        selectionAtGestureEnd: String?,
-        selectionToggledDuringGesture: Bool
+        selectionChangedDuringGesture: Bool,
+        selection: () -> String?
     ) -> String? {
-        guard enabled, let text = selectionAtGestureEnd, !text.isEmpty else { return nil }
-        guard selectionToggledDuringGesture || selectionAtGestureStart != text else { return nil }
+        guard enabled, selectionChangedDuringGesture else { return nil }
+        guard let text = selection(), !text.isEmpty else { return nil }
         return text
     }
 }
