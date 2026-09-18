@@ -195,6 +195,114 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
             """)
     }
 
+    /// Every top-level argument of `argumentList` (as `callArgumentLists`
+    /// returns one call's paren-balanced contents) — split on commas that
+    /// sit at paren/bracket depth 0, so a nested call's own comma
+    /// (`foo(a, b)`) never splits its PARENT argument list. One entry per
+    /// argument, each still carrying its own leading whitespace/label,
+    /// trimmed only by the caller.
+    private static func topLevelArguments(in argumentList: String) -> [String] {
+        var depth = 0
+        var current = ""
+        var results: [String] = []
+        for c in argumentList {
+            switch c {
+            case "(", "[":
+                depth += 1
+                current.append(c)
+            case ")", "]":
+                depth -= 1
+                current.append(c)
+            case "," where depth == 0:
+                results.append(current)
+                current = ""
+            default:
+                current.append(c)
+            }
+        }
+        let last = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !last.isEmpty { results.append(current) }
+        return results
+    }
+
+    /// The trimmed value bound to `label:` in `argumentList`, or `nil` if
+    /// no top-level argument carries that label at all.
+    private static func value(labeled label: String, in argumentList: String) -> String? {
+        for argument in Self.topLevelArguments(in: argumentList) {
+            let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("\(label):") else { continue }
+            return String(trimmed.dropFirst(label.count + 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    /// Every zero-argument, `URL`-returning `private func` declared in
+    /// `strippedText`, matched on the literal substring `"() -> URL"` and
+    /// walked backward to the identifier immediately before its `(` —
+    /// found in source rather than spelled here, so a rename of this
+    /// suite's own temp-directory factory cannot silently stop this guard
+    /// from tracking it (CLAUDE.md, "a guard that spells a symbol it could
+    /// read instead is waiting for a rename").
+    private static func zeroArgumentURLFactoryNames(in strippedText: String) -> [String] {
+        let suffix = "() -> URL"
+        var names: [String] = []
+        var searchStart = strippedText.startIndex
+        while let range = strippedText.range(
+            of: suffix, range: searchStart..<strippedText.endIndex)
+        {
+            var nameStart = range.lowerBound
+            while nameStart > strippedText.startIndex {
+                let prev = strippedText.index(before: nameStart)
+                guard strippedText[prev].isLetter || strippedText[prev].isNumber
+                    || strippedText[prev] == "_"
+                else { break }
+                nameStart = prev
+            }
+            if nameStart < range.lowerBound {
+                names.append(String(strippedText[nameStart..<range.lowerBound]))
+            }
+            searchStart = range.upperBound
+        }
+        return names
+    }
+
+    /// Every local name bound as `let <name> = <helperName>()` or
+    /// `var <name> = <helperName>()` anywhere in `strippedText` — the set
+    /// of identifiers a `directory:` argument can safely name, because each
+    /// one is traceable back to a fresh call of the suite's own
+    /// temp-directory factory rather than to anything else (in particular,
+    /// never to `DiagnosticLog.defaultDirectory`, which no such binding
+    /// could ever produce).
+    private static func identifiers(assignedFromCallTo helperName: String, in strippedText: String)
+        -> Set<String>
+    {
+        let suffix = "= \(helperName)()"
+        var identifiers: Set<String> = []
+        var searchStart = strippedText.startIndex
+        while let range = strippedText.range(
+            of: suffix, range: searchStart..<strippedText.endIndex)
+        {
+            var i = range.lowerBound
+            while i > strippedText.startIndex, strippedText[strippedText.index(before: i)] == " " {
+                i = strippedText.index(before: i)
+            }
+            var nameStart = i
+            while nameStart > strippedText.startIndex {
+                let prev = strippedText.index(before: nameStart)
+                guard strippedText[prev].isLetter || strippedText[prev].isNumber
+                    || strippedText[prev] == "_"
+                else { break }
+                nameStart = prev
+            }
+            if nameStart < i {
+                identifiers.insert(String(strippedText[nameStart..<i]))
+            }
+            searchStart = range.upperBound
+        }
+        return identifiers
+    }
+
     /// `configure`'s own `directory:` parameter defaults to
     /// `DiagnosticLog.defaultDirectory` — the maintainer's REAL
     /// `~/Library/Logs/macSCP` — so a call in this suite that names only
@@ -217,11 +325,21 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
     /// "The maintainer's real diagnostic log folder holds lines shaped like
     /// test fixtures").
     ///
-    /// So: every `DiagnosticLog.shared.configure(...)` call in the one file
-    /// allowed to make one, including every cleanup call, names an explicit
-    /// `directory:` — never the real default, not even for an instant.
-    @Test("every DiagnosticLog.shared.configure( call in the shared-sink suite names an explicit directory")
-    func everyConfigureCallNamesAnExplicitDirectory() throws {
+    /// **Round 1 fix (review):** an earlier version of this test checked
+    /// only that the `directory:` LABEL was present
+    /// (`!$0.contains("directory:")`) — a call spelled
+    /// `directory: DiagnosticLog.defaultDirectory` would have satisfied
+    /// it while reopening exactly the bug this guard exists to close. This
+    /// version checks the argument's VALUE instead: every `directory:`
+    /// value must be either a direct call to this file's own temp-directory
+    /// factory, or a local identifier this file itself bound from one —
+    /// both found in source (`zeroArgumentURLFactoryNames`,
+    /// `identifiers(assignedFromCallTo:in:)`), never hardcoded here, so a
+    /// rename of that helper cannot make this guard stop tracking it.
+    @Test(
+        "every DiagnosticLog.shared.configure( call in the shared-sink suite passes a directory traced to its own temp-directory helper"
+    )
+    func everyConfigureCallPassesATracedTempDirectory() throws {
         guard
             let file = Self.swiftFiles(under: Self.testsRoot).first(where: {
                 $0.lastPathComponent == Self.allowedFileName
@@ -232,26 +350,58 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
         }
         let raw = try String(contentsOf: file, encoding: .utf8)
         let stripped = try SwiftSource.blankingCommentsAndStrings(raw)
-        let calls = Self.callArgumentLists(of: "DiagnosticLog.shared.configure(", in: stripped)
 
-        // Positive beside the negative below (CLAUDE.md, "Guards that name
-        // what they watch"): a renamed or vanished call site would
-        // otherwise satisfy the negative by finding nothing to check.
+        // Positive: the file's own temp-directory factory, found rather
+        // than spelled — without exactly one, this scan cannot tell a safe
+        // directory: value from an unsafe one, so it fails outright rather
+        // than guessing which helper (or none) to trust.
+        let helperNames = Self.zeroArgumentURLFactoryNames(in: stripped)
+        guard helperNames.count == 1, let helperName = helperNames.first else {
+            Issue.record("""
+                expected exactly one zero-argument, URL-returning private helper (this \
+                suite's own temp-directory factory) in \(Self.allowedFileName) — found \
+                \(helperNames.count): \(helperNames.sorted())
+                """)
+            return
+        }
+
+        let tracedIdentifiers = Self.identifiers(assignedFromCallTo: helperName, in: stripped)
+        // Positive beside the negative below: a helper nobody actually
+        // calls would make every downstream directory: value "untraced"
+        // vacuously, satisfying the negative by finding nothing safe at
+        // all rather than by finding real safety.
+        #expect(!tracedIdentifiers.isEmpty, """
+            found no `let <name> = \(helperName)()` (or `var`) binding in \
+            \(Self.allowedFileName) — expected at least one, since every configure( call's \
+            directory: is supposed to name a fresh \(helperName)() result
+            """)
+
+        let calls = Self.callArgumentLists(of: "DiagnosticLog.shared.configure(", in: stripped)
         #expect(calls.count >= 12, """
             found only \(calls.count) DiagnosticLog.shared.configure( call(s) in \
             \(Self.allowedFileName) — expected at least 12
             """)
 
-        let missingDirectory = calls.filter { !$0.contains("directory:") }
-        #expect(missingDirectory.isEmpty, """
-            \(missingDirectory.count) of \(calls.count) DiagnosticLog.shared.configure( \
-            calls in \(Self.allowedFileName) omit an explicit directory: argument — \
-            configure's own directory parameter defaults to DiagnosticLog.defaultDirectory, \
-            the maintainer's real ~/Library/Logs/macSCP, so a call that omits it (even a \
-            cleanup call(level: .off)) points the process-wide singleton at the real log \
-            folder for as long as nothing else reconfigures it, and a concurrently running \
-            suite's own DiagnosticLog.shared.log(...) call can land a line there before the \
-            next configure(...) call moves the singleton to a temp directory again.
+        let directCall = "\(helperName)()"
+        var unsafe: [String] = []
+        for call in calls {
+            guard let value = Self.value(labeled: "directory", in: call) else {
+                unsafe.append("<missing directory:>")
+                continue
+            }
+            guard value != directCall, !tracedIdentifiers.contains(value) else { continue }
+            unsafe.append(value)
+        }
+
+        #expect(unsafe.isEmpty, """
+            \(unsafe.count) of \(calls.count) DiagnosticLog.shared.configure( calls in \
+            \(Self.allowedFileName) pass a directory: value not traced back to \
+            \(helperName)() — configure's own directory parameter defaults to \
+            DiagnosticLog.defaultDirectory, the maintainer's real ~/Library/Logs/macSCP, so \
+            a value that is not a fresh \(helperName)() result (or an identifier bound from \
+            one) — spelling DiagnosticLog.defaultDirectory explicitly included — can point \
+            the process-wide singleton at the real log folder for as long as nothing else \
+            reconfigures it. Offending value(s): \(unsafe.sorted())
             """)
     }
 }
