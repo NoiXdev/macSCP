@@ -134,9 +134,10 @@ struct TabRegistrationWiringGuardTests {
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    /// Every `ContentView` file, so a sixth one added later is scanned
-    /// without anyone remembering to add it here. Counted 2026-09-05: seven
-    /// files match, of which three contain a tab-admitting call site today
+    /// Every `ContentView` file, so one added later is scanned without
+    /// anyone remembering to add it here. Recounted 2026-09-18, after the
+    /// jump-and-groups plan's Task 3 added `+TabTitle`: eight files match,
+    /// of which three contain a tab-admitting call site today
     /// (`ContentView.swift`, `+Lifecycle`, `+Detail`).
     private static func contentViewFiles() throws -> [(name: String, source: String)] {
         let directory = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
@@ -159,17 +160,17 @@ struct TabRegistrationWiringGuardTests {
     /// empty would satisfy the negative below perfectly.
     @Test func theWindowsFilesAreTheOnesBeingScanned() throws {
         let files = try Self.contentViewFiles()
-        #expect(files.count == 7, "expected 7 ContentView*.swift files, found \(files.count)")
+        #expect(files.count == 8, "expected 8 ContentView*.swift files, found \(files.count)")
         #expect(files.contains { $0.name == "ContentView.swift" })
         #expect(files.contains { $0.name == "ContentView+Lifecycle.swift" })
         #expect(files.contains { $0.name == "ContentView+Detail.swift" })
         // Every one of them really is an extension on the window's view —
         // a directory listing that had drifted onto some other family of
         // files would satisfy the negative below without reading a line of
-        // `ContentView`. Not `tabsModel`: four of the seven never mention
-        // it (counted 2026-09-05 — `+Diagnostics`, `+ExportImport`,
-        // `+Sheets` have none, `+Transfers` has one), which says nothing
-        // about whether they could add a tab.
+        // `ContentView`. Not `tabsModel`: four of the eight never mention
+        // it (recounted 2026-09-18 — `+Diagnostics`, `+ExportImport`,
+        // `+Sheets` and `+TabTitle` have none; `+Transfers` has one), which
+        // says nothing about whether they could add a tab.
         #expect(files.allSatisfy {
             $0.source.contains("extension ContentView") || $0.source.contains("struct ContentView")
         })

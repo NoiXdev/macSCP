@@ -9,6 +9,12 @@ struct TabStripView: View {
     let onActivate: (UUID) -> Void
     let onClose: (SessionTab) -> Void
     let onAdd: () -> Void
+    /// What one tab is titled (jump-and-groups plan, Task 3). Asked, not
+    /// decided, like `menuEntries` below: the strip knows neither the form
+    /// a tab holds nor the overview the window shows, and the answer is
+    /// `ContentView.tabTitle(for:)`'s — the same one the window title
+    /// draws.
+    let title: (SessionTab) -> TabTitle
     /// Which entries one tab's context menu offers. Asked, not decided:
     /// the strip has no idea what an entry means or when it applies, and
     /// it cannot supply the facts wrongly either, because it supplies
@@ -65,6 +71,7 @@ struct TabStripView: View {
                     ForEach(tabs) { tab in
                         TabItemView(
                             tab: tab,
+                            title: title(tab),
                             isActive: tab.id == activeTabID,
                             dragOrigin: dragOrigin,
                             onActivate: { onActivate(tab.id) },
@@ -419,6 +426,9 @@ enum TabMenuEntryTitle {
 
 private struct TabItemView: View {
     let tab: SessionTab
+    /// This tab's title, as the strip was told it — drawn, never re-read
+    /// off the tab.
+    let title: TabTitle
     let isActive: Bool
     /// The strip's shared note of which tab a drag is carrying — written by
     /// this item's own `dragPayload()`, read when a drop is targeted here.
@@ -613,7 +623,7 @@ private struct TabItemView: View {
             case .download: dot(DesignTokens.remoteBlue, pulse: true)
             case .attention: dot(.red, pulse: false)
             }
-            Text(tab.displayTitle)
+            Text(title.tabLabel)
                 .font(.system(size: 12, weight: isActive ? .semibold : .regular))
                 .italic(!tab.isConnected)
                 .lineLimit(1)

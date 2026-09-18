@@ -273,7 +273,9 @@ extension ContentView {
                 ? MainWindowSizePlan.formSize.width : MainWindowSizePlan.browserFloor.width,
             minHeight: MainWindowSizePlan.formSize.height)
         .tint(DesignTokens.remoteBlue)
-        .navigationTitle(activeTab.titleName.map { "macSCP — \($0)" } ?? "macSCP")
+        // The active tab's title — the same answer its label in the tab
+        // strip draws (`tabTitle(for:)`, jump-and-groups plan, Task 3).
+        .navigationTitle(tabTitle(for: activeTab).windowTitle)
         .background(WindowAccessor {
             window = $0
             // Frame memory for the primary window only (Detachable Tabs
@@ -352,6 +354,7 @@ extension ContentView {
             onActivate: { activate($0) },
             onClose: { requestClose($0) },
             onAdd: { addTabRegistering(makeTab()) },
+            title: { tabTitle(for: $0) },
             menuEntries: { tabMenuEntries(for: $0) },
             onMenuEntry: { tab, entry in handleTabMenuEntry(entry, for: tab) },
             // A tab whose drag ended where nothing accepted it takes the
@@ -2522,8 +2525,11 @@ private struct ConnectingAttemptView: View {
 /// beyond what `SnippetMenuItems`/`SnippetMenuModel` already own: which
 /// snippets the search narrows the list to — `TerminalSnippetSearch`, below.
 private struct TerminalPanelHeader: View {
-    /// The active tab's display name (`SessionTab.displayTitle`) — the same
-    /// text the window title and tab strip already show for this tab.
+    /// The active tab's display name (`SessionTab.displayTitle`). This
+    /// panel exists only on a connected tab, and for a connected tab that
+    /// is the name the tab strip and the window title show too:
+    /// `TabTitlePlan.title` answers a connected tab with `titleName` before
+    /// any other rule.
     let hostTitle: String
     /// The window's saved snippets, in store order — the same list
     /// `MacSCPApp`'s Terminal menu (Task 6) and `SessionSidebar`'s row

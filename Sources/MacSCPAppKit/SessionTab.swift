@@ -157,8 +157,10 @@ final class SessionTab: Identifiable {
             session?.showsFiles = newValue
         }
     }
-    /// Display name while connected (stored session name or "user@host") —
-    /// drives the window title of the ACTIVE tab and the tab's own label.
+    /// Display name while connected (stored session name or "user@host").
+    /// The tab strip and the window title read it through
+    /// `ContentView.tabTitle(for:)`, where it is the first rule of
+    /// `TabTitlePlan.title`; `displayTitle` below reads it directly.
     var titleName: String?
     /// Transient error from a failed "open in editor" attempt (M5e/T4) —
     /// cleared on the next successful open or dismissed via its close button.
@@ -416,8 +418,22 @@ final class SessionTab: Identifiable {
     ///   caller of that function is leaving this connection on purpose.
     var pendingSnippetRun: PendingSnippetRun?
 
+    /// "Connected or not": the connected name, or "New Connection". The
+    /// tab strip and the window title no longer read this — they draw
+    /// `ContentView.tabTitle(for:)`, which also names a tab that is
+    /// dialing, editing or showing a session's overview. It stays for the
+    /// seven reads outside those two, counted 2026-09-18: four with no
+    /// window state to hand that plan (`MenuBarController`'s two, the
+    /// status menu's item title and attributed title; `CrossSessionTargets
+    /// .targets`; the audit sink in `ContentView.attachAuditRecorder`,
+    /// which resolves through `TabRegistry` and captures nothing of the
+    /// window), two that only ever see a connected tab (the terminal panel
+    /// header, `ContentView.saveAsSession(from:)`), and
+    /// `ContentView.showDiagnostics(for:)`'s `.tab` case, which can see an
+    /// unconnected one. Rendered through `TabTitle`, so the fallback is
+    /// spelled once.
     var displayTitle: String {
-        titleName ?? L10n.string("tabs.newConnection", "New Connection")
+        (titleName.map(TabTitle.named) ?? .newConnection).tabLabel
     }
 
     /// Wires the tab-owned queue on construction: shared limiter, initial
