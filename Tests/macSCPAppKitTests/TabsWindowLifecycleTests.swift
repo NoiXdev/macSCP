@@ -1282,10 +1282,16 @@ struct TabsWindowLifecycleTests {
             SettingsView.swift no longer declares "macSCP.settings" as the \
             Settings window's autosave name — re-anchor this guard.
             """)
-        #expect(primaryName != settingsName, """
+        // The real properties, not the literals matched above (CLAUDE.md
+        // "A guard that spells a symbol it could read instead is waiting
+        // for a rename"): comparing two string literals declared in this
+        // test can never fail, however the two source files actually
+        // agree or disagree. `@testable import` gives this suite both
+        // static properties directly.
+        #expect(ContentView.primaryFrameAutosaveName != SettingsView.frameAutosaveName, """
             the primary window and the Settings window would autosave under \
-            the same name — this compares two string literals above, so a \
-            failure here means one of them was edited to match the other.
+            the same name — this compares the two real static properties, \
+            so a failure here means one was edited to match the other.
             """)
     }
 

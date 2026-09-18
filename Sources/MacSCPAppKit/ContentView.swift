@@ -238,9 +238,8 @@ struct ContentView: View {
     /// Window-scoped tab collection (M8a/T3). Everything that used to be
     /// window-wide session state (connection form, session, queue, conflict
     /// bridge, title, edit error, reconnect flag) now lives per tab in
-    /// `SessionTab`; only `window`, `lastBrowserSize`,
-    /// `frameAutosaveSuspended`, `importedHosts`, `sessionListViewModel` and
-    /// the two injected stores stay window-wide.
+    /// `SessionTab`; what stays declared on the window itself is session
+    /// state that used to be per window, not per tab.
     @State var tabsModel: TabsViewModel<SessionTab>
     @State var importedHosts: [SSHConfigHost] = []
     /// The full, unfiltered `~/.ssh/config` parse (M11f/T2) — read from disk

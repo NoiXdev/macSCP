@@ -84,6 +84,19 @@ struct SettingsView: View {
     /// resolves, is the whole mechanism.
     static let frameAutosaveName = "macSCP.settings"
 
+    /// The Settings window's minimum size (next build of 2026-09-17,
+    /// Task 4; final review Minor 6): one constant for both the SwiftUI
+    /// floor (`.frame(minWidth:minHeight:)` in `body`, below) and the
+    /// AppKit floor (`window.contentMinSize` in the `WindowAccessor`
+    /// closure, below) — so the two cannot come to disagree the way two
+    /// separately spelled `680`/`620` pairs could, which would leave a
+    /// window whose AppKit minimum sits below its SwiftUI minimum
+    /// clipping content instead of stopping the drag. 680 gives the
+    /// sidebar its fixed 180pt plus ~500pt for the widest detail content;
+    /// 620 is reached by "View", the tallest section — both measured, see
+    /// the `.frame` call site's own comment for the detail.
+    static let minimumSize = CGSize(width: 680, height: 620)
+
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
     /// instance the app menu's "Check for Updates…" item drives, threaded
@@ -180,7 +193,7 @@ struct SettingsView: View {
         // which reads this minimum onto the window's `contentMinSize` —
         // but, MEASURED, does NOT by itself make the window resizable; see
         // the `WindowAccessor` block below, which is what actually does.
-        .frame(minWidth: 680, minHeight: 620)
+        .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         // Frame autosave, so the size a resize is left at survives a
         // relaunch (same task). `WindowAccessor` calls back on every
         // ordinary body update, not only the first resolve — the identity
@@ -211,7 +224,8 @@ struct SettingsView: View {
             if !window.styleMask.contains(.resizable) {
                 window.styleMask.insert(.resizable)
             }
-            window.contentMinSize = NSSize(width: 680, height: 620)
+            window.contentMinSize = NSSize(
+                width: Self.minimumSize.width, height: Self.minimumSize.height)
             guard window.frameAutosaveName != Self.frameAutosaveName else { return }
             window.setFrameAutosaveName(Self.frameAutosaveName)
         })

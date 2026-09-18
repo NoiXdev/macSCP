@@ -42,6 +42,34 @@ struct SettingsWindowResizableGuardTests {
     private enum ScanError: Error {
         case declarationNotFound(String)
         case unbalancedBraces(String)
+        case unbalancedParens(String)
+    }
+
+    /// Everything between `anchor`'s own trailing `(` and its matching `)`,
+    /// by plain paren counting — the parenthesis analogue of
+    /// `TabsWindowLifecycleTests.body(after:in:)`, which only balances
+    /// `{`/`}` and so cannot bound a call like `NSSize(...)` that has none.
+    /// `nil` on a missing anchor or unbalanced parens, so a guard built on
+    /// this fails closed when the call it names moves, the same as the
+    /// brace version.
+    private static func parenBody(after anchor: String, in source: String) throws -> String {
+        guard let range = source.range(of: anchor) else {
+            throw ScanError.declarationNotFound(anchor)
+        }
+        var depth = 1
+        var index = range.upperBound
+        let start = index
+        while index < source.endIndex {
+            switch source[index] {
+            case "(": depth += 1
+            case ")":
+                depth -= 1
+                if depth == 0 { return String(source[start..<index]) }
+            default: break
+            }
+            index = source.index(after: index)
+        }
+        throw ScanError.unbalancedParens(anchor)
     }
 
     private static func strict(_ file: URL) throws -> String {
@@ -118,10 +146,24 @@ struct SettingsWindowResizableGuardTests {
     // MARK: - The root carries a minimum, not a fixed size
 
     @Test func theRootUsesAMinimumFrameAndNoFixedFrameRemains() throws {
+        let source = try Self.strict(Self.settingsViewFile)
         let body = try Self.settingsViewRootBody()
+        // Positive: one shared constant (final review Minor 6), declared
+        // exactly once, rather than 680×620 spelled twice — the min-frame
+        // call below and `contentMinSize` in the WindowAccessor closure
+        // must both read it, not carry their own copy of the numbers.
         #expect(
-            body.contains(".frame(minWidth: 680, minHeight: 620)"),
-            "SettingsView's root no longer declares the 680×620 minimum — re-anchor this guard")
+            source.contains("static let minimumSize = CGSize(width: 680, height: 620)"),
+            "SettingsView no longer declares a single minimumSize constant — re-anchor this guard")
+        #expect(
+            body.contains(".frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)"),
+            "SettingsView's root no longer sizes its minimum frame off Self.minimumSize — re-anchor this guard")
+        // Negative beside the positive above: the frame call itself carries
+        // no digit literal of its own — a hardcoded 680/620 pair reappearing
+        // here is the second copy Minor 6 asked to be removed.
+        #expect(
+            !body.contains(".frame(minWidth: 680") && !body.contains("minHeight: 620)"),
+            "SettingsView's root frame spells 680/620 again instead of reading Self.minimumSize")
         #expect(
             !body.contains(".frame(width:"),
             "a fixed-width .frame(width:…) is back on SettingsView's root — the window cannot resize below it")
@@ -202,5 +244,27 @@ struct SettingsWindowResizableGuardTests {
             window made resizable through styleMask needs its own contentMinSize, the SwiftUI frame \
             minimum reaching the window is not enough on its own
             """)
+        // The assignment through to its own closing paren, whatever the
+        // line-wrapping — found by the anchor every shape of this call
+        // shares ("window.contentMinSize = NSSize(") and paren-balanced
+        // from there (`parenBody(after:in:)`, above), so reformatting the
+        // call does not break this guard the way an exact multi-line
+        // string match would.
+        let assignment = try Self.parenBody(after: "window.contentMinSize = NSSize(", in: body)
+        // Positive: contentMinSize reads the same Self.minimumSize the root
+        // frame uses (final review Minor 6) — one constant, not a second
+        // 680×620 literal pair that could drift from the first.
+        #expect(
+            assignment.contains("Self.minimumSize.width") && assignment.contains("Self.minimumSize.height"),
+            """
+            SettingsView's WindowAccessor no longer builds contentMinSize from Self.minimumSize — \
+            re-anchor this guard on wherever it reads the shared constant now
+            """)
+        // Negative beside the positive above: contentMinSize itself carries
+        // no digit literal — a hardcoded 680/620 NSSize reappearing here is
+        // the second copy Minor 6 asked to be removed.
+        #expect(
+            !assignment.contains("680") && !assignment.contains("620"),
+            "SettingsView's WindowAccessor spells 680/620 again instead of reading Self.minimumSize")
     }
 }
