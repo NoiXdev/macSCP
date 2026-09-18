@@ -43,10 +43,14 @@ public enum TunnelStateLine {
     ///   - reason: the English sentence of a `failed` state's failure
     ///     (`TunnelRunner.failureReason`), or `nil` to use the kind's own
     ///     sentence (`TunnelFailureKind.sentence`). Read only for `failed`.
-    ///     The JSON form also marks whether the resolved sentence IS the
-    ///     kind's own — `reasonIsGeneric` — so a script can tell a
-    ///     `TunnelFailure` payload's detail from a summary with nothing
-    ///     more to offer.
+    ///     The JSON form also carries `reasonIsGeneric`, which is `true`
+    ///     exactly when this is `nil` — the runner held no sentence and the
+    ///     line fell back to the kind's summary — and `false` whenever the
+    ///     runner supplied one, even one whose text equals the kind's
+    ///     sentence (coordinator ruling, 2026-09-18). A runner sentence is
+    ///     the failure's own: for `portInUse`, `bindAddressUnavailable` and
+    ///     `bindPermissionDenied` it IS the kind's sentence, and it names the
+    ///     port, or the address and the errno.
     ///   - json: one JSON object instead of one column line. The two carry
     ///     the same facts; only `failed`'s reason differs in placement,
     ///     since the text form puts that sentence on stderr (where a person
@@ -91,16 +95,18 @@ public enum TunnelStateLine {
         case .reconnecting(let attempt):
             object["attempt"] = attempt
         case .failed(let kind):
-            let resolvedReason = reason ?? kind.sentence
-            object["reason"] = resolvedReason
-            // `true` whenever the line carries nothing beyond the kind's own
-            // summary — whether because no reason was given at all, or
-            // because the one given (`TunnelRunner`'s loss-without-reconnects
-            // path writes `lastFailureReason = kind.sentence` on purpose) is
-            // that summary word for word. A script that wants the detail a
-            // free-text `TunnelFailure` payload carries reads this before
-            // deciding whether `reason` has any to offer.
-            object["reasonIsGeneric"] = resolvedReason == kind.sentence
+            // The fallback is decided here, where it happens, and the flag
+            // records that decision — never a comparison of the two strings
+            // afterwards, which read a runner sentence that equals the
+            // kind's (a port in use, an address this machine lacks) as a
+            // summary with nothing more to offer.
+            if let reason {
+                object["reason"] = reason
+                object["reasonIsGeneric"] = false
+            } else {
+                object["reason"] = kind.sentence
+                object["reasonIsGeneric"] = true
+            }
         }
         // `.sortedKeys` so the line a script diffs is stable run to run;
         // JSON objects are unordered, so nothing about the shape depends on

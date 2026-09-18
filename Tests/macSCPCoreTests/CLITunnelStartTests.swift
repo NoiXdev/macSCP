@@ -109,8 +109,8 @@ struct CLITunnelStartRenderingTests {
 
     /// The runner's own sentence, where it has one, is the `reason` — the
     /// log's text, fuller than the kind's summary for a free-text failure —
-    /// and `reasonIsGeneric` says so: `false`, since this sentence is not
-    /// the kind's own.
+    /// and `reasonIsGeneric` says so: `false`, since the runner supplied it
+    /// and the line did not fall back to the kind's own.
     @Test func theJSONReasonIsTheRunnersSentenceWhenGiven() throws {
         let line = TunnelStateLine.render(
             .failed(.bindFailed), port: nil, reason: "the server did not answer", json: true)
@@ -131,19 +131,40 @@ struct CLITunnelStartRenderingTests {
                     state: "failed", reason: "the connection failed", reasonIsGeneric: true))
     }
 
-    /// A reason the runner gave that happens to equal the kind's own
-    /// sentence word for word — `TunnelRunner`'s loss-without-reconnects
-    /// path writes exactly this (`lastFailureReason = kind.sentence`,
-    /// `TunnelRunner.swift`'s `.lost` arm) — is generic too: the flag
-    /// answers whether the text carries anything beyond the kind, not
-    /// whether the runner supplied a value at all.
-    @Test func theJSONReasonIsGenericWhenTheGivenReasonMatchesTheKindsSentence() throws {
+    /// A reason the runner gave is specific even when its text equals the
+    /// kind's own sentence word for word — `TunnelRunner`'s
+    /// loss-without-reconnects path writes exactly this
+    /// (`lastFailureReason = kind.sentence`, `TunnelRunner.swift`'s `.lost`
+    /// arm). The flag answers whether the line FELL BACK to the kind's
+    /// sentence because the runner held none, not whether two strings
+    /// happen to match (coordinator ruling, 2026-09-18, Task 3 fix round 1;
+    /// until then this test pinned `true`).
+    @Test func aRunnerReasonIsSpecificEvenWhenItEqualsTheKindsSentence() throws {
         let line = TunnelStateLine.render(
             .failed(.connectionLost), port: nil, reason: "connection lost", json: true)
         #expect(
             try TunnelStateJSONLine.decode(line)
                 == TunnelStateJSONLine(
-                    state: "failed", reason: "connection lost", reasonIsGeneric: true))
+                    state: "failed", reason: "connection lost", reasonIsGeneric: false))
+    }
+
+    /// The three local-bind causes with a case of their own, rendered as
+    /// the runner renders them: the reason is `DialSupport.reason(for:)` of
+    /// the failure (`TunnelRunner.swift`'s `.failed` arm), which for these
+    /// three IS the kind's sentence — and names the port, or the address and
+    /// the errno. A runner reason, so `false`.
+    @Test(arguments: [
+        TunnelFailure.bindAddressUnavailable(address: "192.0.2.1"),
+        .bindPermissionDenied(port: 80),
+        .portInUse(port: 8080),
+    ])
+    func aLocalBindCauseWithARunnerReasonIsNotGeneric(_ failure: TunnelFailure) throws {
+        let kind = DialSupport.failureKind(for: failure)
+        let reason = DialSupport.reason(for: failure)
+        let line = TunnelStateLine.render(.failed(kind), port: nil, reason: reason, json: true)
+        #expect(
+            try TunnelStateJSONLine.decode(line)
+                == TunnelStateJSONLine(state: "failed", reason: reason, reasonIsGeneric: false))
     }
 
     /// The `failed` object's key set, pinned: `state`, `reason` and

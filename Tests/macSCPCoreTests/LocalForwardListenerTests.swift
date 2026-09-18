@@ -96,11 +96,13 @@ struct LocalForwardListenerTests {
     }
 
     /// A port the system does not let this process bind is reported as
-    /// that, with the port. Measured 2026-09-18 on macOS 26.6.2 as a user
-    /// that is not root: `127.0.0.1` port 80 throws `IOError` errno 13
-    /// (`EACCES`), while `0.0.0.0` port 81 binds — so this binds loopback,
-    /// never the wildcard. As root the bind succeeds, so the test does not
-    /// run there.
+    /// that, with the port. Measured 2026-09-18 on macOS 26.6.2 — NOT on
+    /// macOS 15, which CI runs — as a user that is not root: a bind to
+    /// `127.0.0.1` port 1, the one this test makes, maps to
+    /// `bindPermissionDenied(port: 1)`, i.e. `IOError` errno 13 (`EACCES`).
+    /// The same probe found `0.0.0.0` port 81 binding, so this binds
+    /// loopback, never the wildcard. Skipped as root, which was not
+    /// measured and is not expected to be refused.
     @Test(.enabled(if: geteuid() != 0, "root may bind a port below 1024"))
     func bindingAPrivilegedLoopbackPortWithoutThePrivilegeIsReportedAsDenied() async throws {
         let listener = LocalForwardListener()
