@@ -4,10 +4,20 @@ import macSCPCore
 /// The question "Convert key…" asks when the failed attempt's stored session
 /// takes its login from a LOGIN SET (maintainer decision 1 of 2026-09-16).
 ///
-/// Everything the confirmation needs is captured when the import finishes,
+/// Only what cannot be re-read when the dialog is answered is captured here,
 /// for the reason `ImportKeyTarget` captures its tab: the dialog is answered
-/// later, and the active tab, the set list and the usage count can all have
-/// moved by then.
+/// later, and the active tab, the set list and the set's dependents can all
+/// have moved by then. The tab, the converted key and its resolved path are
+/// the outcome of the conversion itself — there is nothing "current" to
+/// re-read them from. The set's NAME and how many sessions depend on it are
+/// both re-read fresh instead, at render time, the same way and for the same
+/// reason: `LoginSetRepointPlan.currentName(of:in:)` for the title
+/// (technical backlog of 2026-09-16, Task 5), and
+/// `SessionListViewModel.dependentSessionCount(of:)`, called directly from
+/// the message closure, for the count (technical follow-ups of 2026-09-18,
+/// Task 7) — a session added or removed as a dependent of the set while the
+/// question is open is reflected before the user answers, not only the
+/// set's name.
 struct LoginSetRepointRequest: Identifiable, Equatable {
     let id = UUID()
     /// The tab whose failed attempt the conversion was for — the one
@@ -18,12 +28,12 @@ struct LoginSetRepointRequest: Identifiable, Equatable {
     /// The converted key's file, already resolved in the window's own
     /// `managedKeyStore`.
     let keyPath: String
+    /// The set as it stood when the conversion finished — read fresh by
+    /// `id` through `currentName(of:in:)` and `dependentSessionCount(of:)`
+    /// wherever the dialog needs its current name or dependent count; this
+    /// copy is the fallback `currentName(of:in:)` uses only once the set is
+    /// gone, and the `id` every fresh read keys off.
     let set: LoginSet
-    /// How many sessions depend on the set — bound to it, or jumping with it
-    /// directly or through a session bound to it
-    /// (`SessionListViewModel.sessionsDependingOn(setID:)`) — read when the
-    /// request is made.
-    let usageCount: Int
 
     /// Identity, not value: two requests are the same presentation or none.
     /// `SessionTab` is a reference type with no equality of its own, so
@@ -48,8 +58,6 @@ enum LoginSetRepointPlan {
     /// session that HAS a set, and answers nil with the attempt-only route —
     /// the route every set-bound session took before this question existed.
     ///
-    /// `usageCount` is called once, for the set the request names, and only
-    /// when a request is made.
     /// The set `id` names as it stands in `sets` NOW, or nil when it is gone
     /// or no longer an SSH private-key set (Task 2 fix round 1) — the re-read
     /// `ContentView.repointLoginSet(_:)` makes at confirm time, because the
@@ -76,12 +84,11 @@ enum LoginSetRepointPlan {
     }
 
     static func request(
-        session: StoredSession?, sets: [LoginSet], usageCount: (UUID) -> Int,
+        session: StoredSession?, sets: [LoginSet],
         key: ManagedKey, keyPath: String, tab: SessionTab
     ) -> LoginSetRepointRequest? {
         guard let setID = session?.loginSetID, let set = currentSet(id: setID, in: sets)
         else { return nil }
-        return LoginSetRepointRequest(
-            tab: tab, key: key, keyPath: keyPath, set: set, usageCount: usageCount(set.id))
+        return LoginSetRepointRequest(tab: tab, key: key, keyPath: keyPath, set: set)
     }
 }

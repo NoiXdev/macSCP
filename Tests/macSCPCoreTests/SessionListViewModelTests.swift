@@ -200,6 +200,35 @@ struct SessionListViewModelTests {
         #expect(vm.usageCount(of: setID) == 3, "usageCount(of:) changed its population")
     }
 
+    /// `dependentSessionCount(of:)` is a pure read of the CURRENT `sessions`
+    /// array, not a value fixed at some earlier point (technical follow-ups
+    /// of 2026-09-18, Task 7) — the property the login-set repoint
+    /// question's message relies on to count at the moment it is shown
+    /// rather than at the moment it was first asked. Two more reads on the
+    /// same view model, after two more session-store changes, with no new
+    /// `SessionListViewModel` built in between.
+    @Test func dependentSessionCountReadsTheSessionsAsTheyStandAtEachCall() throws {
+        let setID = UUID()
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let direct = ssh("direct", loginSetID: setID)
+        try plant([direct], in: vm, dir: dir)
+        #expect(vm.dependentSessionCount(of: setID) == 1)
+
+        let addedDependent = ssh("added-meanwhile", loginSetID: setID)
+        try plant([direct, addedDependent], in: vm, dir: dir)
+        #expect(vm.dependentSessionCount(of: setID) == 2, """
+            a session bound to the set after the first read was not counted — the count came \
+            from a value fixed at the first call rather than a fresh read of `sessions`.
+            """)
+
+        _ = vm.delete(direct)
+        #expect(vm.dependentSessionCount(of: setID) == 1, """
+            a session removed after the second read was still counted — the count did not drop \
+            back down, which is the same staleness in the other direction.
+            """)
+    }
+
     @Test func aSetServesNoJumpHopForUnrelatedShapes() throws {
         let setID = UUID()
         let (vm, _, dir) = makeVM()

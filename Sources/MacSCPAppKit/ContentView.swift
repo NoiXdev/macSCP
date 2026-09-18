@@ -2617,7 +2617,9 @@ struct ContentView: View {
     ///   hard stop it is, and this surface still adds no second dial site.
     /// * A stored session bound to a LOGIN SET is ASKED (maintainer decision
     ///   1 of 2026-09-16): `LoginSetRepointPlan.request` builds the question
-    ///   — the set, how many sessions use it, the converted key — and
+    ///   — the set and the converted key; how many sessions depend on the
+    ///   set is read fresh when the dialog draws, not captured here
+    ///   (technical follow-ups of 2026-09-18, Task 7) — and
     ///   `setRepointRequest` presents it. "Update login set" is
     ///   `repointLoginSet(_:)`; "This attempt only", the cancel button Escape
     ///   presses, is `convertForThisAttemptOnly(_:keyPath:)`. A set the question does
@@ -2700,13 +2702,16 @@ struct ContentView: View {
             }
             retryConnect(tab)
         } else if stored != nil {
-            // The count is read now, with the request, so the dialog names
-            // the number of sessions that depended on the set when it was
-            // asked — directly or through a jump hop
-            // (`SessionListViewModel.sessionsDependingOn(setID:)`).
+            // The request carries the set only by `id` (technical
+            // follow-ups of 2026-09-18, Task 7): the dialog's message reads
+            // `sessionListViewModel.dependentSessionCount(of:)` itself, at
+            // render time, so it names the number of sessions that depend on
+            // the set WHEN THE QUESTION IS SHOWN — directly or through a
+            // jump hop — not the number captured here when the conversion
+            // finished, which a session added or removed meanwhile would
+            // make stale before the user ever answers.
             if let request = LoginSetRepointPlan.request(
                 session: stored, sets: sessionListViewModel.loginSets,
-                usageCount: { sessionListViewModel.dependentSessionCount(of: $0) },
                 key: key, keyPath: path, tab: tab)
             {
                 setRepointRequest = request

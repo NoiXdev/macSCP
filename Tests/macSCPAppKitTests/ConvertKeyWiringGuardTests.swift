@@ -43,8 +43,7 @@ import Testing
 /// 5. The import sheet converts on the way in instead of copying bytes.
 /// 6. A session bound to a login set is ASKED whether to update the set
 ///    (`LoginSetRepointPlan.request(`, `setRepointRequest`) rather than
-///    routed to the attempt-only path in silence, with the count of the
-///    set's dependents (`dependentSessionCount(of:`, not `usageCount(of:`).
+///    routed to the attempt-only path in silence.
 /// 7. Updating the set re-reads it (`LoginSetRepointPlan.currentSet(`),
 ///    writes it through `saveLoginSet(`, drops the SET's slot only inside a
 ///    branch that `hasStoredPassphrase(`'s positive answer and
@@ -57,8 +56,10 @@ import Testing
 ///    (`dismissConnectFailure(`) and writes no set.
 /// 9. The window presents that question as a `.confirmationDialog(` bound to
 ///    `setRepointRequest`, titled with the set's name as it stands now
-///    (`LoginSetRepointPlan.currentName(`, never the captured `.set.name`),
-///    opened only once the conversion sheet has closed
+///    (`LoginSetRepointPlan.currentName(`, never the captured `.set.name`)
+///    and counting the set's dependents as they stand now too
+///    (`dependentSessionCount(of:`, never a captured `usageCount`), opened
+///    only once the conversion sheet has closed
 ///    and disarmed when a new conversion starts, whose "Update login set"
 ///    button alone reaches claim 7 and whose cancel-role "This attempt only"
 ///    button alone reaches claim 8, whose `isPresented:` setter runs neither,
@@ -442,21 +443,15 @@ struct ConvertKeyWiringGuardTests {
     /// the state the dialog in claim 9 is bound to. Either alone passes over
     /// a handler that builds the request and drops it, or one that assigns
     /// the state from something the plan never decided.
+    ///
+    /// The set's dependent count is NOT read here any more (technical
+    /// follow-ups of 2026-09-18, Task 7) — `LoginSetRepointPlan.request(`
+    /// no longer takes a count at all, and claim 9's message check is where
+    /// `dependentSessionCount(of:` and the absence of a captured `usageCount`
+    /// are pinned, over the message closure that reads it fresh each time
+    /// the dialog draws.
     @Test func aSetBoundSessionIsAskedWhetherToUpdateTheSet() throws {
         let body = try Self.strippedBody(after: "func convertedKeyImported(", in: Self.contentViewFile)
-        // The count the question shows is every session that depends on the
-        // set, jump hops through a set-bound session included — the
-        // population its wording names (Task 5 fix round 1). `usageCount(of:`
-        // counts only direct and own-mode-jump bindings.
-        #expect(body.contains("dependentSessionCount(of:"), """
-            `convertedKeyImported(_:for:)` no longer counts the set's dependents through \
-            `dependentSessionCount(of:` — the question's "directly or as their jump host" \
-            then names a population the number does not count.
-            """)
-        #expect(!body.contains("usageCount(of:"), """
-            `convertedKeyImported(_:for:)` counts through `usageCount(of:`, which misses \
-            sessions whose jump goes through a session bound to the set.
-            """)
         #expect(body.contains("LoginSetRepointPlan.request("), """
             `convertedKeyImported(_:for:)` no longer consults `LoginSetRepointPlan.request(` — \
             a session bound to a login set is then converted for one attempt without being \
@@ -689,6 +684,23 @@ struct ConvertKeyWiringGuardTests {
         #expect(!dialog.arguments.contains(".set.name"), """
             the login-set question's title reads the set name captured with the request \
             (`.set.name`) instead of the fresh read.
+            """)
+        // The message counts the set's dependents as they stand NOW
+        // (technical follow-ups of 2026-09-18, Task 7), the same live read
+        // the title makes for the name: the positive names the pure
+        // function over the current sessions
+        // (`SessionListViewModel.dependentSessionCount(of:)`), the negative
+        // a count captured with the request, over the message closure alone
+        // — the title's own arguments are read above and must not leak a
+        // stray match into this check.
+        #expect(dialog.message.contains("dependentSessionCount(of:"), """
+            the login-set question's message no longer reads `dependentSessionCount(of:` — a \
+            session added or removed as a dependent of the set while the question is open is \
+            not reflected before the user answers.
+            """)
+        #expect(!dialog.message.contains("usageCount"), """
+            the login-set question's message reads a count captured with the request \
+            (`usageCount`) instead of the fresh read.
             """)
         #expect(dialog.arguments.contains("setRepointDialogArmed"), """
             the login-set question's presentation no longer waits for `setRepointDialogArmed` \

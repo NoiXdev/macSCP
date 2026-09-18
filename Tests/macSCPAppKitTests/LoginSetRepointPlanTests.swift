@@ -42,10 +42,10 @@ struct LoginSetRepointPlanTests {
     }
 
     private func request(
-        session: StoredSession?, sets: [LoginSet], usageCount: @escaping (UUID) -> Int = { _ in 1 }
+        session: StoredSession?, sets: [LoginSet]
     ) -> LoginSetRepointRequest? {
         LoginSetRepointPlan.request(
-            session: session, sets: sets, usageCount: usageCount,
+            session: session, sets: sets,
             key: makeKey(), keyPath: Self.keyPath, tab: makeTab())
     }
 
@@ -83,18 +83,10 @@ struct LoginSetRepointPlanTests {
     @Test func anSSHPrivateKeySetAsksWithEverythingTheDialogNeeds() throws {
         let other = LoginSet(name: "other", username: "x", authKind: .privateKey, keyPath: "/other")
         let set = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
-        var askedFor: [UUID] = []
-        let made = try #require(request(
-            session: session(boundTo: set.id), sets: [other, set],
-            usageCount: { id in
-                askedFor.append(id)
-                return 3
-            }))
+        let made = try #require(request(session: session(boundTo: set.id), sets: [other, set]))
         #expect(made.set == set)
         #expect(made.key.name == "converted")
         #expect(made.keyPath == Self.keyPath)
-        #expect(made.usageCount == 3)
-        #expect(askedFor == [set.id])
     }
 
     /// The tab the request carries is the one handed in — the tab captured
@@ -103,7 +95,7 @@ struct LoginSetRepointPlanTests {
         let set = LoginSet(name: "team", username: "u", authKind: .privateKey, keyPath: "/old")
         let tab = makeTab()
         let made = try #require(LoginSetRepointPlan.request(
-            session: session(boundTo: set.id), sets: [set], usageCount: { _ in 1 },
+            session: session(boundTo: set.id), sets: [set],
             key: makeKey(), keyPath: Self.keyPath, tab: tab))
         #expect(made.tab === tab)
     }

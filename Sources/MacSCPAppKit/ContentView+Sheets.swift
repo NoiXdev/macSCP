@@ -210,7 +210,13 @@ extension ContentView {
         // role, so Escape gives that answer. The `isPresented:` setter only
         // clears state and runs no handler (Task 2 fix round 1). The title
         // names the set as it stands now, through the plan's fresh read
-        // (technical backlog of 2026-09-16, Task 5).
+        // (technical backlog of 2026-09-16, Task 5), and the message counts
+        // the set's dependents the same way — read fresh, at the moment the
+        // dialog draws, through `sessionListViewModel.dependentSessionCount(
+        // of:)`, not a count captured with the request (technical
+        // follow-ups of 2026-09-18, Task 7): a session added or removed as a
+        // dependent of the set while the question is open is reflected
+        // before the user answers.
         .confirmationDialog(
             String(
                 format: L10n.string(
@@ -244,7 +250,7 @@ extension ContentView {
                 format: L10n.string(
                     "connection.convertKey.repoint.message %lld %@",
                     "This login set is used by %1$lld sessions, directly or as their jump host. Its key will point to the converted key “%2$@” for all of them."),
-                request.usageCount, request.key.name))
+                sessionListViewModel.dependentSessionCount(of: request.set.id), request.key.name))
         }
         // The window's ONE forwarding sheet (fix round 1): the profile
         // table, or the unknown-host-key question, whichever
