@@ -320,6 +320,7 @@
 "sidebar.noGroup" = "Aucun groupe";
 "sidebar.newGroup" = "Nouveau groupe…";
 "sidebar.newGroup.title" = "Nouveau groupe";
+"sidebar.newGroup.title.inFolder %@" = "Nouveau groupe dans « %@ »";
 "sidebar.newGroup.placeholder" = "Nom du groupe";
 "sidebar.newGroup.create" = "Créer";
 "sidebar.group.sortByName" = "Trier par nom";

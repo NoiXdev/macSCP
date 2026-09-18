@@ -109,6 +109,67 @@ struct SidebarNewGroupInFolderWiringGuardTests {
             """)
     }
 
+    // MARK: - A nested create expands the folder it landed in (fix round 1)
+
+    /// The maintainer's fix-round-1 ruling: a group created inside a
+    /// collapsed folder must not vanish the instant it is named. Scoped to
+    /// `commitNewGroup()`'s own body, so a call planted in the WRONG
+    /// function (say, a disclosure toggle elsewhere in the file) cannot
+    /// satisfy this.
+    @Test func commitNewGroupExpandsTheParentChainAfterCreating() throws {
+        let code = try Self.code()
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private func commitNewGroup()", in: code)
+        #expect(body.contains("GroupTree.selfAndAncestors("), """
+            commitNewGroup()'s body in \(Self.sidebarPath) no longer calls \
+            GroupTree.selfAndAncestors( — a group created inside a collapsed folder is invisible \
+            again until the user manually expands that folder, the exact gap fix round 1 exists \
+            to close.
+            """)
+        #expect(body.contains("collapsedGroups.subtract("), """
+            commitNewGroup()'s body no longer writes collapsedGroups.subtract( — even if the \
+            parent chain is still computed, nothing opens the folders it names, so the new \
+            group stays hidden behind a closed disclosure triangle.
+            """)
+    }
+
+    // MARK: - The alert's title reads the plan (fix round 1)
+
+    /// Bounded to the ARGUMENT LIST of the `.alert(...)` call — the text
+    /// between `.alert(` and `isPresented:` — deliberately not
+    /// `declarationBody`, which would balance braces from the trailing
+    /// closure's `{` and miss the title argument sitting before it
+    /// entirely.
+    private static func alertTitleArgument(in code: String) throws -> String {
+        let start = try #require(code.range(of: ".alert("), """
+            \(Self.sidebarPath) no longer calls .alert( — the "New group" alert, if it still \
+            exists at all, is built some other way this scan does not read.
+            """)
+        let end = try #require(
+            code.range(of: "isPresented:", range: start.upperBound..<code.endIndex), """
+                no isPresented: found after .alert( in \(Self.sidebarPath) — either the alert's \
+                shape changed, or this scan is reading the wrong .alert( call entirely.
+                """)
+        return String(code[start.upperBound..<end.lowerBound])
+    }
+
+    @Test func theNewGroupAlertsTitleReadsThePlan() throws {
+        let code = try Self.code()
+        let titleArgument = try Self.alertTitleArgument(in: code)
+        #expect(titleArgument.contains("SidebarNewGroupAlertPlan.title("), """
+            the "New group" alert's title argument in \(Self.sidebarPath) no longer calls \
+            SidebarNewGroupAlertPlan.title( — it fell back to a fixed title (or some other \
+            construction), so a group created inside a folder no longer says which folder it is \
+            landing in.
+            """)
+        #expect(titleArgument.contains("parentID:") && titleArgument.contains("groups:"), """
+            SidebarNewGroupAlertPlan.title(...) is no longer called with both parentID: and \
+            groups: in \(Self.sidebarPath) — without both the plan cannot look the folder's name \
+            up, and would either always show the plain title or crash resolving an argument that \
+            no longer exists.
+            """)
+    }
+
     // MARK: - The scanner reacts (self-test over a synthetic source)
 
     /// The exact violation `theGroupRowsFactoryWiresNewGroupToTheParentTakingCall`

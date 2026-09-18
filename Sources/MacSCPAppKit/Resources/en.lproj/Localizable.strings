@@ -316,6 +316,7 @@
 "sidebar.noGroup" = "No group";
 "sidebar.newGroup" = "New group…";
 "sidebar.newGroup.title" = "New group";
+"sidebar.newGroup.title.inFolder %@" = "New group in “%@”";
 "sidebar.newGroup.placeholder" = "Group name";
 "sidebar.newGroup.create" = "Create";
 "sidebar.group.sortByName" = "Sort by Name";

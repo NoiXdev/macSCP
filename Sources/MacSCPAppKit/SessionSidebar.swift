@@ -626,7 +626,7 @@ struct SessionSidebar: View {
                 .allowsHitTesting(false)
         }
         .alert(
-            L10n.string("sidebar.newGroup.title", "New group"),
+            SidebarNewGroupAlertPlan.title(parentID: pendingNewGroupParentID, groups: viewModel.groups),
             isPresented: $isShowingNewGroupAlert
         ) {
             TextField(L10n.string("sidebar.newGroup.placeholder", "Group name"), text: $newGroupName)
@@ -1180,6 +1180,17 @@ struct SessionSidebar: View {
         if let session = sessionPendingGroupMove {
             viewModel.move(.session(session.id), intoGroup: group.id)
         }
+        // A group created inside a collapsed folder must not vanish the
+        // instant it is named (maintainer's fix-round-1 ruling, Task 4):
+        // open that folder and every folder above it, the same chain
+        // `SidebarVisibility` already opens for a search match
+        // (`GroupTree.selfAndAncestors`), by removing them from the
+        // remembered collapse set — the same write the disclosure triangle
+        // itself makes (`expansion(of:expandsFolders:)` below). No rename:
+        // the name was already taken by the alert, as at the top level.
+        if let parentID = pendingNewGroupParentID {
+            collapsedGroups.subtract(GroupTree.selfAndAncestors(of: parentID, in: viewModel.groups))
+        }
     }
 
     // MARK: - Drag & drop
@@ -1337,11 +1348,14 @@ private struct SidebarGroupRow: View {
         } isTargeted: { isDropTargeted = $0 }
         .contextMenu {
             Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }
-            // Directly under Rename — the same placement the session row's
-            // "Move to…" submenu already gives its own "New group…" entry
-            // (see that row's context menu below), so both routes to
-            // creating a group sit in the same place in their respective
-            // menus.
+            // Directly under Rename, ahead of Export/Sort/Move/Dissolve:
+            // creating a group is a row of its own here, not tucked inside
+            // "Move to…" the way a session's own "New group…" entry is (see
+            // that row's context menu below, where it sits last inside the
+            // "Move to" submenu, after a Divider) — a folder's own menu has
+            // no "Move to…" submenu to nest it in when the folder is a lone
+            // top-level one (see the empty-target-list gate below), so this
+            // entry cannot depend on one existing.
             Button(L10n.string("sidebar.newGroup", "New group…")) { onNewGroup() }
             Button(L10n.string("export.menu.group", "Export Group…")) { onExport() }
             // Offered only where it can do something — see

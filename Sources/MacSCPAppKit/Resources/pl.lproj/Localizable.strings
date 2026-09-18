@@ -319,6 +319,7 @@
 "sidebar.noGroup" = "Bez grupy";
 "sidebar.newGroup" = "Nowa grupa…";
 "sidebar.newGroup.title" = "Nowa grupa";
+"sidebar.newGroup.title.inFolder %@" = "Nowa grupa w „%@”";
 "sidebar.newGroup.placeholder" = "Nazwa grupy";
 "sidebar.newGroup.create" = "Utwórz";
 "sidebar.group.sortByName" = "Sortuj według nazwy";
