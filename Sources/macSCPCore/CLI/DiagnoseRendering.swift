@@ -52,8 +52,10 @@ public enum DiagnoseRendering {
     /// `id`, padded with spaces to width 14 — wide enough for every id of a
     /// direct walk (`DiagnosticStepID`'s five, and the `jump.` ids of a walk
     /// through a jump host) with room for a contribution's own, without
-    /// truncating one that runs longer. The two `target.` ids do run longer
-    /// (`target.tcpViaJump` 17, `target.dialViaJump` 18, counted 2026-09-18)
+    /// truncating one that runs longer. The five `target.` ids do run longer
+    /// (`target.tcpViaJump` 17, `target.resolveOnJump` 20,
+    /// `target.icmpFromJump` 19, `target.dialViaJump` 18,
+    /// `target.traceFromJump` 20, counted 2026-09-18 with Task 7's three)
     /// and print whole, pushing their own row's outcome right; widening the
     /// column for them would move every row of every direct walk too.
     private static let idColumnWidth = 14

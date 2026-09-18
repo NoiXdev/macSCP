@@ -1152,6 +1152,9 @@
 "diagnostics.step.jump.trace" = "Host pośredniczący: trasa";
 "diagnostics.step.target.tcpViaJump" = "Cel przez host pośredniczący: próba połączenia";
 "diagnostics.step.target.dialViaJump" = "Cel przez host pośredniczący: połączenie SSH";
+"diagnostics.step.target.resolveOnJump" = "Cel przez host pośredniczący: rozwiązywanie nazwy";
+"diagnostics.step.target.icmpFromJump" = "Cel przez host pośredniczący: ping";
+"diagnostics.step.target.traceFromJump" = "Cel przez host pośredniczący: trasa";
 "diagnostics.contribution.s3Access" = "Uprawnienia klucza";
 "diagnostics.contribution.webdavClaims" = "Deklaracje serwera";
 // Tabela przeskoków kroku trasy (2026-09-03): cztery nagłówki kolumn rysowane przez panel. Komórki są pomiarem z rdzenia i nigdy nie są tłumaczone.
@@ -1185,6 +1188,16 @@
 "diagnostics.reason.noJumpSecret" = "Dla hosta pośredniczącego nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";
 "diagnostics.reason.jumpForwardingProhibited" = "Host pośredniczący nie przekazuje połączeń dla tego loginu.";
 "diagnostics.reason.jumpCouldNotConnect" = "Host pośredniczący nie mógł połączyć się z celem — nazwa nie jest tam rozwiązywana albo nic nie przyjmuje połączeń na tym porcie.";
+"diagnostics.reason.jumpProbeHostRefused" = "Adres celu nie jest ani zwykłą nazwą hosta, ani adresem IP, więc nic z nim nie zostało uruchomione na hoście pośredniczącym.";
+"diagnostics.reason.jumpExecRefused" = "Host pośredniczący nie uruchomił polecenia — być może pozwala tylko na przekazywanie połączeń.";
+"diagnostics.reason.jumpHasNoGetent" = "Na hoście pośredniczącym nie ma getent.";
+"diagnostics.reason.jumpHasNoPing" = "Na hoście pośredniczącym nie ma ping.";
+"diagnostics.reason.jumpHasNoTraceTool" = "Na hoście pośredniczącym nie ma ani traceroute, ani tracepath.";
+"diagnostics.reason.jumpResolveUnreadable" = "getent na hoście pośredniczącym nie dał odpowiedzi, którą to sprawdzenie potrafi odczytać.";
+"diagnostics.reason.jumpPingUnreadable" = "ping na hoście pośredniczącym nie dał odpowiedzi, którą to sprawdzenie potrafi odczytać.";
+"diagnostics.reason.jumpTraceUnreadable" = "Żadne narzędzie do śledzenia trasy na hoście pośredniczącym nie dało odpowiedzi, którą to sprawdzenie potrafi odczytać.";
+"diagnostics.reason.jumpCouldNotResolve" = "Host pośredniczący nie mógł rozwiązać nazwy celu.";
+"diagnostics.reason.targetIsAnAddress" = "Cel jest podany przez adres IP, więc nie ma nazwy do rozwiązania.";
 
 /* Import z innego programu — Cyberduck (2026-09-03). Pozycja menu, arkusz
    podglądu, dwa przełączniki i wybór grupy, a także nazwy pól, z których

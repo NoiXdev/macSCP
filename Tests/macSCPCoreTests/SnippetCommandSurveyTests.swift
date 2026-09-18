@@ -905,7 +905,10 @@ struct SnippetCommandSurveyTests {
     /// shell-completion line quotes by the same rule as every other command
     /// this app shows; `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)`
     /// quotes the key path into the `ssh-keygen -p -f …` command line the
-    /// same way).
+    /// same way). `JumpProbes` (2026-09-18) does the same with a target host
+    /// for the diagnosis's commands on a jump host, after checking that host
+    /// scalar by scalar (`JumpProbeHost`); its `Character` use is in reading
+    /// the tools' OUTPUT back, which no shell reads.
     private static let shellCallerFileNames = [
         "SSHConnectionConfig.swift",
         "SSHCommandBuilder.swift",
@@ -913,6 +916,7 @@ struct SnippetCommandSurveyTests {
         "ShellCompletionRecipe.swift",
         "FileChecksum.swift",
         "SSHKeyConverter.swift",
+        "JumpProbes.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {

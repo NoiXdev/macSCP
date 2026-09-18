@@ -63,6 +63,41 @@ public enum DiagnosticReason {
     /// nothing accepted on the port.
     static let jumpCouldNotConnect = "the jump host could not connect to the target"
 
+    /// The target's host, as the session names it, is not something a
+    /// command on the jump host may be handed: neither a host name made of
+    /// RFC 1123 labels nor an IP literal (`JumpProbeHost`). Nothing was run —
+    /// the check comes before any channel opens — so the row is about this
+    /// session's text, not about the target.
+    static let jumpProbeHostRefused =
+        "the target's host is not a plain host name or IP address, so nothing was run with it on the jump host"
+    /// The jump host did not run a probe's command: it refused the channel
+    /// or the `exec` request, or the connection failed under it. A bastion
+    /// that allows forwarding and nothing else is ordinary.
+    static let jumpExecRefused = "the jump host did not run the command"
+    /// The shell on the jump host could not find the tool a probe names
+    /// (exit status 127). One sentence per tool, so each renders under its
+    /// own key.
+    static let jumpHasNoGetent = "the jump host has no getent"
+    static let jumpHasNoPing = "the jump host has no ping"
+    /// Neither of the two trace tools `target.traceFromJump` tries is there.
+    static let jumpHasNoTraceTool = "the jump host has neither traceroute nor tracepath"
+    /// The tool ran and what it printed is not an answer the probe can read
+    /// — a tool that was not permitted, a forced command answering in its
+    /// place, a format this diagnosis does not know. The exit status is in
+    /// the row's detail.
+    static let jumpResolveUnreadable = "the jump host's getent gave no answer this diagnosis can read"
+    static let jumpPingUnreadable = "the jump host's ping gave no answer this diagnosis can read"
+    static let jumpTraceUnreadable =
+        "no trace tool on the jump host gave an answer this diagnosis can read"
+    /// `getent` on the jump host answered that the name is not known there
+    /// (exit status 2) — a finding about the target's name as the jump host
+    /// sees it, and so `failed`.
+    static let jumpCouldNotResolve = "the jump host could not resolve the target's name"
+    /// `target.resolveOnJump` for a target named by an IP literal: there is
+    /// no name to resolve, and a reverse lookup that found no name would
+    /// read as a failure nobody had.
+    static let targetIsAnAddress = "the target is an IP address, so there is no name to resolve"
+
     /// A refusal with any other reason code. Composed, like
     /// `traceHopUnreachable`, so it carries no catalogue key and the panel
     /// shows it as measured.
@@ -196,6 +231,16 @@ public enum DiagnosticReason {
         noJumpSecret: "diagnostics.reason.noJumpSecret",
         jumpForwardingProhibited: "diagnostics.reason.jumpForwardingProhibited",
         jumpCouldNotConnect: "diagnostics.reason.jumpCouldNotConnect",
+        jumpProbeHostRefused: "diagnostics.reason.jumpProbeHostRefused",
+        jumpExecRefused: "diagnostics.reason.jumpExecRefused",
+        jumpHasNoGetent: "diagnostics.reason.jumpHasNoGetent",
+        jumpHasNoPing: "diagnostics.reason.jumpHasNoPing",
+        jumpHasNoTraceTool: "diagnostics.reason.jumpHasNoTraceTool",
+        jumpResolveUnreadable: "diagnostics.reason.jumpResolveUnreadable",
+        jumpPingUnreadable: "diagnostics.reason.jumpPingUnreadable",
+        jumpTraceUnreadable: "diagnostics.reason.jumpTraceUnreadable",
+        jumpCouldNotResolve: "diagnostics.reason.jumpCouldNotResolve",
+        targetIsAnAddress: "diagnostics.reason.targetIsAnAddress",
         ICMPEcho.noIPv6RouteReason: "diagnostics.reason.noIPv6Route",
         NetworkTrace.ipv6UnmeasuredReason: "diagnostics.reason.ipv6TraceUnmeasured",
         NetworkTrace.notIPv4Reason: "diagnostics.reason.traceNeedsIPv4",

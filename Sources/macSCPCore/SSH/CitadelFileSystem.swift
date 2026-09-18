@@ -1543,10 +1543,6 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     /// refuses output of more than one line, so on any far side that writes
     /// a word of its own — a banner, a shell complaining about a locale —
     /// merging the two streams would report "no checksum" for every file.
-    /// Citadel offers this as `executeCommand(_:mergeStreams:)`, whose
-    /// default is not to merge; the stream API is used instead so that the
-    /// separation is a `case` in plain sight rather than a defaulted
-    /// argument nobody has to pass.
     ///
     /// `CitadelShell` is the other command path on this connection and was
     /// read before this was written: it is not the one to reuse here. It
@@ -1555,9 +1551,16 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     /// what is written to it, and carries no exit status, so its output is
     /// the shell's screen rather than a command's answer.
     ///
-    /// A non-zero exit throws (Citadel finishes the stream with
-    /// `CommandFailed`), which is what makes the presence probe's answer a
-    /// simple "did this throw".
+    /// A non-zero exit throws, which is what makes the presence probe's
+    /// answer a simple "did this throw".
+    ///
+    /// The collecting itself — standard output only, bounded, the exit status
+    /// read off Citadel's `CommandFailed` — is `SSHClient
+    /// .collectingStandardOutput(of:limit:)` below, shared with the
+    /// diagnosis's exec probes on a jump host
+    /// (`SSHForwardingConnection.standardOutput(of:)`). What stays here is
+    /// what is the checksum's own: the bound, the error an overrun is
+    /// reported as, and a non-zero exit turned into a throw.
     ///
     /// What the bound above this does NOT do, said plainly because
     /// `BoundedClose` abandons rather than stops: when `ChecksumBounds`
@@ -1567,31 +1570,89 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     /// already in trouble — the same trade `BoundedSFTPSession.closeBounded`
     /// makes, and the reason the run bound is minutes rather than seconds.
     func standardOutput(of line: ChecksumCommandLine) async throws -> String {
-        var collected = ByteBuffer()
+        let output: RemoteCommandOutput
         do {
-            for try await chunk in try await client.executeCommandStream(line.text) {
+            output = try await client.collectingStandardOutput(
+                of: line.text, limit: Self.maxStandardOutputBytes)
+        } catch is RemoteCommandOutputTooLarge {
+            throw RemoteFSError.protocolError(
+                reason: "checksum output past \(Self.maxStandardOutputBytes) bytes")
+        }
+        guard output.exitStatus == 0 else {
+            // Translated here, at the one place this file's exec plumbing
+            // meets `RemoteChecksumRun`'s channel-agnostic classifier
+            // (`ChecksumCommandExitFailure`'s own doc comment) — everything
+            // above this channel stays free of Citadel's error types.
+            throw ChecksumCommandExitFailure(exitCode: output.exitStatus)
+        }
+        return output.standardOutput
+    }
+}
+
+/// What one `exec` request answered: its standard output, and the exit
+/// status the far side reported — `0` when it reported none.
+struct RemoteCommandOutput: Sendable, Equatable {
+    let standardOutput: String
+    let exitStatus: Int
+}
+
+/// Standard output ran past the bound the caller set. Nothing of it is kept.
+struct RemoteCommandOutputTooLarge: Error, Equatable {
+    let limit: Int
+}
+
+extension SSHClient {
+    /// Runs `command` as one SSH `exec` request — a child channel of its own,
+    /// beside whatever else this connection carries — and collects its
+    /// STANDARD OUTPUT and exit status.
+    ///
+    /// The one exec plumbing this module has, and two callers use it: the
+    /// checksum channel (`CitadelFileSystem.standardOutput(of:)`) and the
+    /// diagnosis's probes on a jump host (`SSHForwardingConnection
+    /// .standardOutput(of:)`). Counted when the second arrived, 2026-09-18.
+    ///
+    /// **Standard error is dropped, never merged.** Both callers parse what
+    /// comes back: a checksum reader refuses more than one line, and a far
+    /// side that writes a word of its own — a banner, a shell complaining
+    /// about a locale, `command not found` — would otherwise turn every answer
+    /// into an unreadable one. Citadel offers this as `executeCommand(_:
+    /// mergeStreams:)`, whose default is not to merge; the stream API is used
+    /// instead so that the separation is a `case` in plain sight rather than
+    /// a defaulted argument nobody has to pass. The exit status is what
+    /// survives of a failure — POSIX shells report "not found" as 127
+    /// whatever their wording.
+    ///
+    /// **A non-zero exit does not throw here.** Citadel finishes the stream
+    /// with `CommandFailed` once the channel closes on one, AFTER every chunk
+    /// of output — so the output is kept and handed back beside the status. A
+    /// `ping` that heard nothing exits 1 and still prints its statistics.
+    ///
+    /// Throws `RemoteCommandOutputTooLarge` once standard output would pass
+    /// `limit` bytes, and whatever the channel throws otherwise — the far
+    /// side refusing the channel or the `exec` request, a transport that
+    /// dropped.
+    func collectingStandardOutput(of command: String, limit: Int) async throws
+        -> RemoteCommandOutput
+    {
+        var collected = ByteBuffer()
+        var exitStatus = 0
+        do {
+            for try await chunk in try await executeCommandStream(command) {
                 switch chunk {
                 case .stderr:
                     continue
                 case .stdout(let buffer):
-                    guard
-                        collected.readableBytes + buffer.readableBytes
-                            <= Self.maxStandardOutputBytes
-                    else {
-                        throw RemoteFSError.protocolError(
-                            reason: "checksum output past \(Self.maxStandardOutputBytes) bytes")
+                    guard collected.readableBytes + buffer.readableBytes <= limit else {
+                        throw RemoteCommandOutputTooLarge(limit: limit)
                     }
                     collected.writeImmutableBuffer(buffer)
                 }
             }
         } catch let failure as SSHClient.CommandFailed {
-            // Translated here, at the one place this file's Citadel-specific
-            // error meets `RemoteChecksumRun`'s channel-agnostic classifier
-            // (`ChecksumCommandExitFailure`'s own doc comment) — everything
-            // above this channel stays free of Citadel's error types.
-            throw ChecksumCommandExitFailure(exitCode: failure.exitCode)
+            exitStatus = failure.exitCode
         }
-        return String(buffer: collected)
+        return RemoteCommandOutput(
+            standardOutput: String(buffer: collected), exitStatus: exitStatus)
     }
 }
 

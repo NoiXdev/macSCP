@@ -22,6 +22,9 @@ import Testing
     .serialized
 )
 struct ConnectionDiagnosticsJumpRigTests {
+    /// Every jump step, the channel and the dial through the jump are ok.
+    /// The trace ON the jump host is the one row that is not, and
+    /// `theProbesOnTheJumpHostAnswerWhatTheRigCarries` says why.
     @Test func everyJumpStepAndTheChannelThroughItAreOk() async throws {
         let (directory, knownHosts) = try await Self.rigStore()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -33,17 +36,85 @@ struct ConnectionDiagnosticsJumpRigTests {
         #expect(report.steps.map(\.id) == [
             DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpTCP, DiagnosticStepID.jumpICMP,
             DiagnosticStepID.jumpDial, DiagnosticStepID.jumpTrace,
-            DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetDialViaJump,
+            DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetResolveOnJump,
+            DiagnosticStepID.targetICMPFromJump, DiagnosticStepID.targetDialViaJump,
+            DiagnosticStepID.targetTraceFromJump,
         ])
-        for step in report.steps {
+        for step in report.steps where step.id != DiagnosticStepID.targetTraceFromJump {
             #expect(step.outcome == .ok, "\(step.id): \(step.outcome.label) — \(step.detail)")
         }
         #expect(report.jump == Endpoint(host: "127.0.0.1", port: 2222))
     }
 
+    /// The three probes run ON the jump host, asserted against what the rig
+    /// image carries — read on 2026-09-18 with `command -v`, one tool at a
+    /// time (BusyBox `sh` answers a multi-name `command -v` for the first
+    /// name only), and confirmed over a real SSH `exec` as `testuser`:
+    ///
+    /// - `getent` (musl-utils): there, answers `sshd2`'s address → ok.
+    /// - `ping` (BusyBox): there, and allowed for `testuser` → ok, 3 of 3.
+    /// - `traceroute` (BusyBox): there, and NOT allowed — it needs a raw
+    ///   socket (`socket(AF_INET,3,1): Operation not permitted`, exit 1,
+    ///   nothing on standard output); `tracepath`: not there (exit 127). So
+    ///   the trace is `unavailable`, naming both attempts.
+    ///
+    /// If the rig image changes what it carries, this is the case that says
+    /// so — which is what it is for.
+    @Test func theProbesOnTheJumpHostAnswerWhatTheRigCarries() async throws {
+        let (directory, knownHosts) = try await Self.rigStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let report = await Self.diagnostics(
+            target: "sshd2", port: 2222, knownHosts: knownHosts
+        ).run()
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.outcome == .ok, "\(resolve.outcome.label)")
+        // The address is Docker's to assign; that the jump host answered
+        // with one IPv4 address is the measurement.
+        #expect(resolve.detail.hasPrefix("IPv4 "), "\(resolve.detail)")
+        #expect(!resolve.detail.contains(","), "\(resolve.detail)")
+
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .ok, "\(ping.outcome.label) — \(ping.detail)")
+        #expect(ping.detail.contains(" 3/3 replies, min "), "\(ping.detail)")
+
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.outcome == .unavailable(DiagnosticReason.jumpTraceUnreadable), """
+            \(trace.outcome.label) — \(trace.detail)
+            """)
+        #expect(trace.detail == "traceroute exited with status 1; tracepath exited with status 127")
+    }
+
+    /// A name the jump host does not know: its `getent` says so (exit 2), a
+    /// finding about the target — and the jump host's BusyBox `ping`, handed
+    /// a name it cannot resolve, prints nothing on standard output, which is
+    /// no answer.
+    @Test func aNameTheJumpHostDoesNotKnowIsReportedByItsResolve() async throws {
+        let (directory, knownHosts) = try await Self.rigStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let report = await Self.diagnostics(
+            target: "nosuchhost.invalid", port: 2222, knownHosts: knownHosts
+        ).run(scope: .ping)
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.outcome == .failed(DiagnosticReason.jumpCouldNotResolve), """
+            \(resolve.outcome.label) — \(resolve.detail)
+            """)
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .unavailable(DiagnosticReason.jumpPingUnreadable), """
+            \(ping.outcome.label) — \(ping.detail)
+            """)
+    }
+
     /// The same target without its jump: this Mac cannot even resolve it.
-    /// The positive half of the case above — the rows there are `ok` because
-    /// the walk went through the jump, not because `sshd2` answers from here.
+    /// The positive half of `everyJumpStepAndTheChannelThroughItAreOk` — the
+    /// rows there are `ok` because the walk went through the jump, not
+    /// because `sshd2` answers from here.
     @Test func withoutItsJumpTheTargetDoesNotResolveFromHere() async throws {
         var values = Self.targetValues(host: "sshd2", port: 2222)
         values[SSHField.authKind] = StoredSession.AuthKind.password.rawValue

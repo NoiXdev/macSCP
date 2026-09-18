@@ -1149,6 +1149,9 @@
 "diagnostics.step.jump.trace" = "Jump host: route";
 "diagnostics.step.target.tcpViaJump" = "Target via the jump host: connection attempt";
 "diagnostics.step.target.dialViaJump" = "Target via the jump host: SSH connect";
+"diagnostics.step.target.resolveOnJump" = "Target via the jump host: name resolution";
+"diagnostics.step.target.icmpFromJump" = "Target via the jump host: ping";
+"diagnostics.step.target.traceFromJump" = "Target via the jump host: route";
 "diagnostics.contribution.s3Access" = "Key access level";
 "diagnostics.contribution.webdavClaims" = "Server claims";
 // The route step's hop table (2026-09-03): the four column headers the panel draws. The cells are Core's own measurement and are never translated.
@@ -1182,6 +1185,16 @@
 "diagnostics.reason.noJumpSecret" = "No credential is saved for the jump host. Save one, then run the check again.";
 "diagnostics.reason.jumpForwardingProhibited" = "The jump host does not forward connections for this login.";
 "diagnostics.reason.jumpCouldNotConnect" = "The jump host could not connect to the target — the name does not resolve there, or nothing accepts on the port.";
+"diagnostics.reason.jumpProbeHostRefused" = "The target’s address is neither a plain host name nor an IP address, so nothing was run with it on the jump host.";
+"diagnostics.reason.jumpExecRefused" = "The jump host did not run the command — it may allow forwarding and nothing else.";
+"diagnostics.reason.jumpHasNoGetent" = "The jump host has no getent.";
+"diagnostics.reason.jumpHasNoPing" = "The jump host has no ping.";
+"diagnostics.reason.jumpHasNoTraceTool" = "The jump host has neither traceroute nor tracepath.";
+"diagnostics.reason.jumpResolveUnreadable" = "The jump host’s getent gave no answer this check can read.";
+"diagnostics.reason.jumpPingUnreadable" = "The jump host’s ping gave no answer this check can read.";
+"diagnostics.reason.jumpTraceUnreadable" = "No route tool on the jump host gave an answer this check can read.";
+"diagnostics.reason.jumpCouldNotResolve" = "The jump host could not resolve the target’s name.";
+"diagnostics.reason.targetIsAnAddress" = "The target is named by its IP address, so there is no name to resolve.";
 
 /* Import from another program — Cyberduck (2026-09-03). The menu entry, the
    preview sheet, the two switches and the group picker, plus the field names

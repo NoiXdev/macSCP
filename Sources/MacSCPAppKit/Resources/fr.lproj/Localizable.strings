@@ -1153,6 +1153,9 @@
 "diagnostics.step.jump.trace" = "Hôte relais : itinéraire";
 "diagnostics.step.target.tcpViaJump" = "Cible via l’hôte relais : tentative de connexion";
 "diagnostics.step.target.dialViaJump" = "Cible via l’hôte relais : connexion SSH";
+"diagnostics.step.target.resolveOnJump" = "Cible via l’hôte relais : résolution du nom";
+"diagnostics.step.target.icmpFromJump" = "Cible via l’hôte relais : ping";
+"diagnostics.step.target.traceFromJump" = "Cible via l’hôte relais : itinéraire";
 "diagnostics.contribution.s3Access" = "Droits de la clé";
 "diagnostics.contribution.webdavClaims" = "Déclarations du serveur";
 // Tableau des sauts de l’étape d’itinéraire (2026-09-03) : les quatre en-têtes de colonne dessinés par le panneau. Les cellules sont la mesure du cœur et ne sont jamais traduites.
@@ -1186,6 +1189,16 @@
 "diagnostics.reason.noJumpSecret" = "Aucun identifiant n’est enregistré pour l’hôte relais. Enregistrez-en un, puis relancez la vérification.";
 "diagnostics.reason.jumpForwardingProhibited" = "L’hôte relais ne transfère pas de connexions pour cet identifiant.";
 "diagnostics.reason.jumpCouldNotConnect" = "L’hôte relais n’a pas pu joindre la cible — le nom n’y est pas résolu, ou rien n’accepte de connexion sur le port.";
+"diagnostics.reason.jumpProbeHostRefused" = "L’adresse de la cible n’est ni un simple nom d’hôte ni une adresse IP ; rien n’a donc été exécuté avec elle sur l’hôte relais.";
+"diagnostics.reason.jumpExecRefused" = "L’hôte relais n’a pas exécuté la commande — il n’autorise peut-être que le transfert.";
+"diagnostics.reason.jumpHasNoGetent" = "L’hôte relais n’a pas getent.";
+"diagnostics.reason.jumpHasNoPing" = "L’hôte relais n’a pas ping.";
+"diagnostics.reason.jumpHasNoTraceTool" = "L’hôte relais n’a ni traceroute ni tracepath.";
+"diagnostics.reason.jumpResolveUnreadable" = "getent sur l’hôte relais n’a donné aucune réponse que cette vérification sache lire.";
+"diagnostics.reason.jumpPingUnreadable" = "ping sur l’hôte relais n’a donné aucune réponse que cette vérification sache lire.";
+"diagnostics.reason.jumpTraceUnreadable" = "Aucun outil d’itinéraire sur l’hôte relais n’a donné de réponse que cette vérification sache lire.";
+"diagnostics.reason.jumpCouldNotResolve" = "L’hôte relais n’a pas pu résoudre le nom de la cible.";
+"diagnostics.reason.targetIsAnAddress" = "La cible est désignée par son adresse IP ; il n’y a donc aucun nom à résoudre.";
 
 /* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de
    menu, la feuille d’aperçu, les deux interrupteurs et le sélecteur de

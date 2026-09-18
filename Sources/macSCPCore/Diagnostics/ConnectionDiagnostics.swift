@@ -17,7 +17,9 @@ import Foundation
 /// jump's. And a scope that runs any `target.` step also dials the jump
 /// (`ConnectionDiagnostics.needsJumpConnection(_:)`), because every one of
 /// them is measured over that connection — so `.ping` there runs
-/// `jump.dial` beside `target.tcpViaJump`.
+/// `jump.dial` beside `target.tcpViaJump`, and `.trace` runs it beside
+/// `target.traceFromJump` (since 2026-09-18, when the trace ON the jump host
+/// joined the target half). Both therefore look up the jump's secret.
 ///
 /// `rawValue` is the stable spelling the App builds its catalogue keys from
 /// (`diagnostics.scope.<rawValue>`), which is why the cases are named for
@@ -60,9 +62,10 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     ///
     /// The SESSION's secret, through the source the runner was handed. A
     /// walk through a jump host also looks the jump's own secret up when it
-    /// dials the jump — under `.ping` too — but through the jump's lookup
-    /// (`DiagnosticJump`), not through that source, so this answer and what
-    /// `--verbose` reports about the source are unchanged by it.
+    /// dials the jump — under `.ping` and `.trace` too — but through the
+    /// jump's lookup (`DiagnosticJump`), not through that source, so this
+    /// answer and what `--verbose` reports about the source are unchanged by
+    /// it.
     ///
     /// Public because the CLI asks it and `runs(_:)`/`OptionalStep` are
     /// internal: `macscp-cli diagnose --verbose` reports which secret source
@@ -446,12 +449,19 @@ public actor ConnectionDiagnostics {
     /// The steps measured THROUGH the jump connection, in the order they run
     /// once the jump has been reached — the target half of a jump walk.
     ///
-    /// The hook for adding one (Task 7 of the 2026-09-18 plan puts the three
-    /// exec probes that run ON the jump in here): an entry in this list, and
-    /// a requirement on `DiagnosticJumpConnection` if it needs one. Its phase
-    /// decides which scope runs it, and the jump connection is opened
-    /// whenever any entry in scope needs it (`needsJumpConnection(_:)`).
-    static let targetHalf: [DiagnosticJumpStep] = [.tcpViaJump, .dialViaJump]
+    /// Adding one is an entry in this list, and a requirement on
+    /// `DiagnosticJumpConnection` if it needs one. Its phase decides which
+    /// scope runs it, its budget which deadline it races (`bounded(_:_:_:)`),
+    /// and the jump connection is opened whenever any entry in scope needs it
+    /// (`needsJumpConnection(_:)`).
+    ///
+    /// The channel first, then the jump host's own resolve and ping of the
+    /// target (`JumpProbes.swift`), then the dial through the jump, then the
+    /// trace from the jump host — the slowest and least likely to change a
+    /// verdict, last, as the direct walk orders its own trace.
+    static let targetHalf: [DiagnosticJumpStep] = [
+        .tcpViaJump, .resolveOnJump, .icmpFromJump, .dialViaJump, .traceFromJump,
+    ]
 
     /// Whether `scope` runs a step that needs the jump connection open: the
     /// jump's own dial, or any step of the target half.
@@ -460,8 +470,10 @@ public actor ConnectionDiagnostics {
     /// there" is asked of a target behind a bastion, and a channel needs an
     /// authenticated connection to be opened on. The `jump.dial` row then
     /// says the connection was made, rather than a ping opening one nobody
-    /// sees. `.trace` alone opens none: the jump's trace is measured from
-    /// this Mac.
+    /// sees. And `.trace` opens it as well: `target.traceFromJump` runs its
+    /// command on the jump host over it, so a trace-only walk now dials the
+    /// jump host and reads its secret, where until 2026-09-18 it measured the
+    /// jump's trace from this Mac and opened nothing.
     static func needsJumpConnection(_ scope: DiagnosticScope) -> Bool {
         scope.runs(.dial) || targetHalf.contains { scope.runs($0.phase) }
     }
@@ -648,14 +660,17 @@ public actor ConnectionDiagnostics {
         return step
     }
 
-    /// Runs one step of the target half, held to the step budget from
-    /// outside exactly as `bounded(_:_:)` holds a contribution.
+    /// Runs one step of the target half, held from outside to the budget the
+    /// step names (`DiagnosticJumpStep.budget`) exactly as `bounded(_:_:)`
+    /// holds a contribution to the step budget: the step budget for one
+    /// probe, the trace budget for `target.traceFromJump`.
     private func bounded(
         _ step: DiagnosticJumpStep, _ context: DiagnosticJumpStep.Context,
         _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
         let timer = await Self.starting(step.id, announcedTo: observer)
-        let finished = await DetachedProbe.run(timeout: stepTimeout) {
+        let budget = step.budget.duration(step: stepTimeout, trace: traceTimeout)
+        let finished = await DetachedProbe.run(timeout: budget) {
             await step.measure(context, timer)
         }
         return finished ?? timer.finish(.timedOut, "")

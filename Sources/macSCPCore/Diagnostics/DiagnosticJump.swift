@@ -225,11 +225,11 @@ extension DiagnosticJump {
 /// `SSHForwardingConnection`, the connection a port forwarding is carried
 /// over — authenticated, with no child channel opened on it.
 ///
-/// **The hook for the exec probes that follow** (Task 7 of the 2026-09-18
-/// plan: resolve, ping and trace run ON the jump): each is one more
-/// requirement here and one more entry in `ConnectionDiagnostics
-/// .targetHalf`. Nothing else in the walk has to move — the connection is
-/// already open for the whole target half and closed after it.
+/// Two things are asked of it besides closing: a channel to the target
+/// (`target.tcpViaJump`), and a probe command run ON the jump host
+/// (`target.resolveOnJump`, `target.icmpFromJump`, `target.traceFromJump`,
+/// `JumpProbes.swift`). The connection is open for the whole target half
+/// and closed after it.
 protocol DiagnosticJumpConnection: Sendable {
     /// Opens one `direct-tcpip` channel to `host:port` as the jump host
     /// reaches it, and closes it again. Throws `DirectTCPIPRejection` when
@@ -238,6 +238,16 @@ protocol DiagnosticJumpConnection: Sendable {
     /// not connect to (`DirectTCPIPRefusal`) — and the transport's own error
     /// for anything else.
     func probeDirectTCPIP(host: String, port: Int) async throws
+
+    /// Runs `command` on the jump host as one `exec` request and hands back
+    /// its standard output and exit status; standard error is dropped.
+    /// Throws `RemoteCommandOutputTooLarge` past
+    /// `JumpProbeCommand.maxStandardOutputBytes`, and the channel's own error
+    /// when the jump host refuses the channel or the request.
+    ///
+    /// A `JumpProbeCommand` and never a `String`, so a fake that records
+    /// what it was asked records exactly what production would have sent.
+    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput
 
     /// Ends the connection. Awaited: the walk returns only once it is gone.
     func disconnect() async
@@ -290,6 +300,10 @@ extension SSHForwardingConnection: DiagnosticJumpConnection {
         }
         try? await channel.close()
     }
+
+    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+        try await standardOutput(of: command)
+    }
 }
 
 // MARK: - The steps measured through the jump
@@ -317,10 +331,46 @@ struct DiagnosticJumpStep: Sendable {
         let dialer: DiagnosticJumpDialer
     }
 
+    /// Which of the walk's two budgets a step is raced against.
+    ///
+    /// Every step of the target half used to race `stepTimeout` (5 s), and
+    /// the trace's own budget never reached this half at all — so a trace
+    /// run on the jump host, which may walk up to thirty hops at a second
+    /// each, would have been cut off a few silent hops in, for the reason
+    /// the jump's own trace once was (`ConnectionDiagnostics.init`'s note on
+    /// `traceTimeout`).
+    enum Budget: Sendable, Equatable {
+        /// `stepTimeout`: one probe, one answer.
+        case step
+        /// `traceTimeout`: a hop-by-hop walk.
+        case trace
+
+        /// The duration this budget names, out of the walk's two.
+        func duration(step: Duration, trace: Duration) -> Duration {
+            switch self {
+            case .step: return step
+            case .trace: return trace
+            }
+        }
+    }
+
     let id: String
     /// Which scope phase runs this step (`DiagnosticScope.runs(_:)`).
     let phase: DiagnosticScope.OptionalStep
+    /// Which budget the walk races this step against
+    /// (`ConnectionDiagnostics.bounded(_:_:_:)`).
+    let budget: Budget
     let measure: @Sendable (Context, DiagnosticStepTimer) async -> DiagnosticStep
+
+    init(
+        id: String, phase: DiagnosticScope.OptionalStep, budget: Budget = .step,
+        measure: @escaping @Sendable (Context, DiagnosticStepTimer) async -> DiagnosticStep
+    ) {
+        self.id = id
+        self.phase = phase
+        self.budget = budget
+        self.measure = measure
+    }
 
     /// A `direct-tcpip` channel to the target, opened over the jump
     /// connection and closed again: the jump's name resolution of the target,

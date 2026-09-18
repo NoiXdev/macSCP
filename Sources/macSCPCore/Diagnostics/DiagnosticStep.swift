@@ -104,7 +104,13 @@ public enum DiagnosticStepID {
     public static let jumpDial = "jump.dial"
     public static let jumpTrace = "jump.trace"
     public static let targetTCPViaJump = "target.tcpViaJump"
+    /// The three measured ON the jump host, by a command run there over the
+    /// jump connection (`JumpProbes.swift`): its name resolution of the
+    /// target, its ping and its trace.
+    public static let targetResolveOnJump = "target.resolveOnJump"
+    public static let targetICMPFromJump = "target.icmpFromJump"
     public static let targetDialViaJump = "target.dialViaJump"
+    public static let targetTraceFromJump = "target.traceFromJump"
 
     /// The catalogue key a step id renders under, DERIVED rather than spelled
     /// beside each id: a renamed id takes its key with it, instead of leaving

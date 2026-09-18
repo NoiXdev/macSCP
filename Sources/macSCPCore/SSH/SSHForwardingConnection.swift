@@ -143,6 +143,27 @@ extension SSHForwardingConnection {
         }
     }
 
+    /// Runs one of the diagnosis's probe commands on the far side as an
+    /// `exec` request over this connection, and hands back its standard
+    /// output and exit status.
+    ///
+    /// For `target.resolveOnJump`, `target.icmpFromJump` and
+    /// `target.traceFromJump` (`DiagnosticJumpConnection.run(_:)`), which
+    /// measure the target FROM the jump host this connection is logged in
+    /// to. Here, beside `directTCPIPChannel`, because the `SSHClient` is
+    /// private to this class; the exec plumbing itself is the one the
+    /// checksum channel uses (`SSHClient.collectingStandardOutput(of:limit:)`),
+    /// not a second copy of it.
+    ///
+    /// Takes a `JumpProbeCommand`, not a `String`: the only lines that type
+    /// can hold are the probes' own, built around a target host that was
+    /// validated and quoted before the channel opens. "Run this text on the
+    /// jump host" is not an expression this module can form.
+    func standardOutput(of command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+        try await client.collectingStandardOutput(
+            of: command.text, limit: JumpProbeCommand.maxStandardOutputBytes)
+    }
+
     /// Registers the one handler called when this connection's transport
     /// drops — the signal a `TunnelRunner` turns into a reconnect.
     ///

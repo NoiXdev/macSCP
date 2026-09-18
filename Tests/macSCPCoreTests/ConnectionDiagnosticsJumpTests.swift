@@ -33,8 +33,14 @@ struct ConnectionDiagnosticsJumpTests {
     private static let everyJumpStep = [
         DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpTCP, DiagnosticStepID.jumpICMP,
         DiagnosticStepID.jumpDial, DiagnosticStepID.jumpTrace,
-        DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetDialViaJump,
+        DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetResolveOnJump,
+        DiagnosticStepID.targetICMPFromJump, DiagnosticStepID.targetDialViaJump,
+        DiagnosticStepID.targetTraceFromJump,
     ]
+
+    /// The target's host as each probe on the jump host hands it over: one
+    /// single-quoted argument.
+    private static let quotedTarget = "'\(targetHost)'"
 
     // MARK: - The order
 
@@ -51,15 +57,19 @@ struct ConnectionDiagnosticsJumpTests {
                 onStep: { step in log.record("row \(step.id)") }))
 
         #expect(report.steps.map(\.id) == Self.everyJumpStep)
-        #expect(report.steps.map(\.outcome) == Array(repeating: .ok, count: 7), """
+        #expect(report.steps.map(\.outcome) == Array(repeating: .ok, count: 10), """
             \(report.plainText())
             """)
-        // The channel was opened to the TARGET, over the jump connection, and
-        // the target's dial carried the jump.
+        // The channel was opened to the TARGET, over the jump connection; the
+        // three probes ran ON the jump host, each naming the target once,
+        // quoted; and the target's dial carried the jump.
         #expect(rig.events == [
             "connect 127.0.0.1:\(listener.port)",
             "probe \(Self.targetHost):\(Self.targetPort)",
+            "exec getent hosts \(Self.quotedTarget)",
+            "exec ping -c 3 \(Self.quotedTarget)",
             "dialTarget \(Self.targetHost):\(Self.targetPort) via 127.0.0.1:\(listener.port)",
+            "exec traceroute -n -q 1 -w 1 \(Self.quotedTarget)",
             "disconnect",
         ])
         // Every step announced itself before its row, the jump's as much as
@@ -97,9 +107,15 @@ struct ConnectionDiagnosticsJumpTests {
             expected = [
                 DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpTCP, DiagnosticStepID.jumpICMP,
                 DiagnosticStepID.jumpDial, DiagnosticStepID.targetTCPViaJump,
+                DiagnosticStepID.targetResolveOnJump, DiagnosticStepID.targetICMPFromJump,
             ]
         case .trace:
-            expected = [DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpTrace]
+            // The trace from the jump host runs over the jump connection, so
+            // `.trace` dials the jump too.
+            expected = [
+                DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpDial,
+                DiagnosticStepID.jumpTrace, DiagnosticStepID.targetTraceFromJump,
+            ]
         case .dial:
             expected = [
                 DiagnosticStepID.jumpResolve, DiagnosticStepID.jumpDial,
@@ -176,7 +192,9 @@ struct ConnectionDiagnosticsJumpTests {
 
         let targetSteps = report.steps.filter { $0.id.hasPrefix("target.") }
         #expect(targetSteps.map(\.id) == [
-            DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetDialViaJump,
+            DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetResolveOnJump,
+            DiagnosticStepID.targetICMPFromJump, DiagnosticStepID.targetDialViaJump,
+            DiagnosticStepID.targetTraceFromJump,
         ], "\(failure): \(report.steps.map(\.id))")
         for step in targetSteps {
             #expect(step.outcome == .skipped(DiagnosticReason.jumpNotReached), """
@@ -185,6 +203,7 @@ struct ConnectionDiagnosticsJumpTests {
         }
         // Nothing went through a jump that was not reached.
         #expect(rig.count("probe") == 0)
+        #expect(rig.count("exec") == 0)
         #expect(rig.count("dialTarget") == 0)
         #expect(rig.count("disconnect") == rig.count("connect"), "\(failure): \(rig.events)")
 
@@ -256,8 +275,8 @@ struct ConnectionDiagnosticsJumpTests {
         // a defect heal").
         let closedBeforeReturn = rig.count("disconnect")
         #expect(closedBeforeReturn == 1, "\(rig.events)")
-        #expect(report.completion == .cancelled(afterSteps: 6))
-        #expect(report.steps.map(\.id) == Array(Self.everyJumpStep.prefix(6)))
+        #expect(report.completion == .cancelled(afterSteps: 8))
+        #expect(report.steps.map(\.id) == Array(Self.everyJumpStep.prefix(8)))
     }
 
     /// The jump's dial loses its deadline, and its connection arrives after
@@ -290,6 +309,290 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(await rig.disconnected.wait() == .signalled)
         #expect(rig.count("disconnect") == 1)
         #expect(rig.count("dialTarget") == 0)
+    }
+
+    // MARK: - The probes run on the jump host
+
+    /// A jump host that runs no command — it refuses the channel or the
+    /// `exec` request, as a bastion that only forwards does — leaves each of
+    /// the three probes `unavailable`, and never `failed`: nothing was learnt
+    /// about the target. The channel and the dial through the jump are
+    /// measured as ever, and the trace does not try its second tool on a
+    /// host that runs none.
+    @Test func aProbeTheJumpHostWillNotRunIsUnavailableNeverAFailure() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        for tool in JumpProbeCommand.Tool.allCases {
+            rig.answer(tool, with: .failure(RemoteFSError.connectionFailed(reason: "refused")))
+        }
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run()
+
+        #expect(Self.outcomes(of: report) == [
+            DiagnosticStepID.targetTCPViaJump: .ok,
+            DiagnosticStepID.targetResolveOnJump: .unavailable(DiagnosticReason.jumpExecRefused),
+            DiagnosticStepID.targetICMPFromJump: .unavailable(DiagnosticReason.jumpExecRefused),
+            DiagnosticStepID.targetDialViaJump: .ok,
+            DiagnosticStepID.targetTraceFromJump: .unavailable(DiagnosticReason.jumpExecRefused),
+        ])
+        #expect(rig.count("exec") == 3, "\(rig.events)")
+        #expect(rig.events.last == "disconnect")
+    }
+
+    /// Exit status 127 is the shell saying it found no such tool. The trace
+    /// tries `tracepath` after `traceroute`, and names neither's absence
+    /// until both are gone.
+    @Test func aToolTheJumpHostDoesNotHaveIsUnavailable() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        for tool in JumpProbeCommand.Tool.allCases {
+            rig.answer(tool, with: .output(RemoteCommandOutput(standardOutput: "", exitStatus: 127)))
+        }
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run()
+
+        #expect(Self.outcomes(of: report) == [
+            DiagnosticStepID.targetTCPViaJump: .ok,
+            DiagnosticStepID.targetResolveOnJump: .unavailable(DiagnosticReason.jumpHasNoGetent),
+            DiagnosticStepID.targetICMPFromJump: .unavailable(DiagnosticReason.jumpHasNoPing),
+            DiagnosticStepID.targetDialViaJump: .ok,
+            DiagnosticStepID.targetTraceFromJump:
+                .unavailable(DiagnosticReason.jumpHasNoTraceTool),
+        ])
+        #expect(rig.events.contains("exec tracepath -n \(Self.quotedTarget)"), "\(rig.events)")
+    }
+
+    /// The rig's own answer (`JumpProbeSamples`): BusyBox `traceroute` is
+    /// there but not permitted for the login, and there is no `tracepath`.
+    /// Unavailable, naming the exit status of each attempt in the detail.
+    @Test func aTraceNeitherToolCouldAnswerIsUnavailableNamingBoth() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.traceroute, with: .output(JumpProbeSamples.rigTracerouteAsTestuserOverSSH))
+        rig.answer(.tracepath, with: .output(JumpProbeSamples.rigTracepathOverSSH))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .trace)
+
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.outcome == .unavailable(DiagnosticReason.jumpTraceUnreadable))
+        #expect(trace.detail == "traceroute exited with status 1; tracepath exited with status 127")
+        #expect(trace.table == nil)
+    }
+
+    /// `traceroute` missing, `tracepath` there: the trace is `tracepath`'s,
+    /// and the row says which tool measured it.
+    @Test func tracepathIsTriedWhenTracerouteIsMissing() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.traceroute, with: .output(RemoteCommandOutput(standardOutput: "", exitStatus: 127)))
+        rig.answer(.tracepath, with: .output(JumpProbeSamples.constructedTracepathReached))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .trace)
+
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.outcome == .ok, "\(trace.outcome.label)")
+        #expect(trace.detail == "measured with tracepath")
+        #expect(trace.table?.rows.count == 3)
+    }
+
+    /// Output that is not the tool's answer — a forced command's banner here,
+    /// carrying a URL with userinfo and a secret — is `unavailable`, and none
+    /// of it reaches the report: the probes keep addresses and numbers they
+    /// read, never the jump host's words.
+    @Test func outputThatDoesNotParseIsUnavailableAndNeverCopied() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        let secret = Self.jumpSecret
+        let banner = RemoteCommandOutput(
+            standardOutput: "Restricted. See https://ops:\(secret)@wiki.invalid/bastion\n",
+            exitStatus: 0)
+        for tool in JumpProbeCommand.Tool.allCases { rig.answer(tool, with: .output(banner)) }
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run()
+
+        #expect(Self.outcomes(of: report) == [
+            DiagnosticStepID.targetTCPViaJump: .ok,
+            DiagnosticStepID.targetResolveOnJump:
+                .unavailable(DiagnosticReason.jumpResolveUnreadable),
+            DiagnosticStepID.targetICMPFromJump: .unavailable(DiagnosticReason.jumpPingUnreadable),
+            DiagnosticStepID.targetDialViaJump: .ok,
+            DiagnosticStepID.targetTraceFromJump:
+                .unavailable(DiagnosticReason.jumpTraceUnreadable),
+        ])
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.detail == "getent exited with status 0")
+        let inPlainText = report.plainText().contains(secret)
+        let inMarkdown = report.markdown().contains(secret)
+        let bannerCopied = report.plainText().contains("wiki.invalid")
+        #expect(inPlainText == false)
+        #expect(inMarkdown == false)
+        #expect(bannerCopied == false)
+    }
+
+    /// An answer past the byte bound is no answer — unreadable, not refused:
+    /// the jump host did run the command.
+    @Test func anAnswerPastTheBoundIsUnreadable() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(
+            .ping,
+            with: .failure(RemoteCommandOutputTooLarge(limit: JumpProbeCommand.maxStandardOutputBytes)))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .unavailable(DiagnosticReason.jumpPingUnreadable))
+    }
+
+    /// A target host that is neither a host name nor an IP literal is refused
+    /// before any channel opens: the three probes say so, no command reaches
+    /// the jump host, and the steps that hand the host to no shell — the
+    /// channel and the dial — run as ever.
+    @Test(arguments: [
+        "target.invalid;id", "$(id)", "`id`", "a'b", "a b", "-oProxyCommand=id", "a|b",
+    ])
+    func aHostileTargetHostIsRefusedBeforeAnyCommandRuns(host: String) async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        var values = Self.targetValues()
+        values[SSHField.host] = host
+
+        let report = await Self.diagnostics(
+            jump: Self.agentJump(port: listener.port), rig: rig, values: values
+        ).run()
+
+        for id in [
+            DiagnosticStepID.targetResolveOnJump, DiagnosticStepID.targetICMPFromJump,
+            DiagnosticStepID.targetTraceFromJump,
+        ] {
+            let step = try #require(report.steps.first { $0.id == id })
+            #expect(step.outcome == .unavailable(DiagnosticReason.jumpProbeHostRefused), """
+                \(host.debugDescription): \(id) came back \(step.outcome)
+                """)
+        }
+        #expect(rig.count("exec") == 0, "\(rig.events)")
+        #expect(rig.count("probe") == 1)
+    }
+
+    /// `getent` exit status 2 is the jump host saying the name is not known
+    /// there: a finding about the target, and the one probe answer that is
+    /// `failed`.
+    @Test func aNameTheJumpHostCannotResolveIsAFinding() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.getent, with: .output(JumpProbeSamples.rigGetentMissing))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.outcome == .failed(DiagnosticReason.jumpCouldNotResolve))
+    }
+
+    /// The rows an ordinary answer produces, read from the rig's recorded
+    /// output: the address the jump host resolved, and the ping's summary in
+    /// the words the local echo's row uses.
+    @Test func theProbesRowsCarryWhatTheToolsMeasured() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run()
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.detail == "IPv4 172.20.0.2")
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.detail == "172.20.0.2 3/3 replies, min 0.0 ms, avg 0.2 ms, max 0.4 ms")
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.detail == "measured with traceroute")
+        #expect(trace.table?.rows == [
+            ["1", "172.20.0.2", "0.0 ms", DiagnosticTraceColumn.destination]
+        ])
+    }
+
+    /// Silence is `timedOut`, as the local echo reports it: a firewall that
+    /// drops ICMP says nothing about whether the target serves.
+    @Test func aPingThatHeardNothingIsTimedOut() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.ping, with: .output(JumpProbeSamples.rigPingSilent))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .timedOut)
+        #expect(ping.detail == "192.0.2.1 0/3 replies")
+    }
+
+    /// A target named by an address has no name to resolve on the jump host;
+    /// the ping and the trace still run, with the address quoted.
+    @Test func aTargetNamedByAnAddressHasNoNameToResolveThere() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        var values = Self.targetValues()
+        values[SSHField.host] = "10.0.0.5"
+
+        let report = await Self.diagnostics(
+            jump: Self.agentJump(port: listener.port), rig: rig, values: values
+        ).run()
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.outcome == .skipped(DiagnosticReason.targetIsAnAddress))
+        #expect(rig.count("exec getent") == 0)
+        #expect(rig.events.contains("exec ping -c 3 '10.0.0.5'"), "\(rig.events)")
+        #expect(rig.events.contains("exec traceroute -n -q 1 -w 1 '10.0.0.5'"), "\(rig.events)")
+    }
+
+    /// The trace from the jump host is raced against the TRACE budget, not
+    /// the step budget: its command is still running after the step budget
+    /// has run out, and its answer is the row.
+    ///
+    /// A floor, not a ceiling (CLAUDE.md, "A wall-clock ceiling in a test
+    /// measures the runner"): the answer is released no sooner than a second
+    /// past the step budget, and nothing asserts how long anything took. A
+    /// walk that raced the step budget comes back `timedOut` before the
+    /// release; a slow machine can only make that race later, which makes
+    /// this case green where it should be red — never red where it should
+    /// be green. `.timeLimit` is a hang bound only.
+    @Test(.timeLimit(.minutes(1)))
+    func theTraceFromTheJumpIsRacedAgainstTheTraceBudget() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        let release = AsyncSignal()
+        defer { release.signal() }
+        rig.park(.traceroute, until: release)
+        let stepBudget = Duration.seconds(2)
+        let diagnostics = ConnectionDiagnostics(
+            descriptor: Self.descriptor(dial: Self.okDial()), values: Self.targetValues(),
+            secrets: nil, jump: Self.agentJump(port: listener.port), jumpDialer: rig.dialer,
+            stepTimeout: stepBudget, traceTimeout: .seconds(50), appVersion: "test")
+
+        let run = Task { await diagnostics.run(scope: .trace) }
+        #expect(await rig.execParked.wait() == .signalled)
+        try await Task.sleep(for: stepBudget + .seconds(1))
+        release.signal()
+        let report = await run.value
+
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.outcome == .ok, "\(trace.outcome.label)")
     }
 
     // MARK: - The dial carries the jump
@@ -618,14 +921,21 @@ struct ConnectionDiagnosticsJumpTests {
 
     private static func diagnostics(
         jump: DiagnosticJump, rig: JumpRig, contribution: Ticker? = nil,
-        stepTimeout: Duration = .seconds(5)
+        values: FieldValues = targetValues(), stepTimeout: Duration = .seconds(5)
     ) -> ConnectionDiagnostics {
         ConnectionDiagnostics(
             descriptor: descriptor(
                 dial: okDial(),
                 diagnostics: contribution.map { [recordingContribution(ticker: $0)] } ?? []),
-            values: targetValues(), secrets: nil, jump: jump, jumpDialer: rig.dialer,
+            values: values, secrets: nil, jump: jump, jumpDialer: rig.dialer,
             stepTimeout: stepTimeout, appVersion: "test")
+    }
+
+    /// Each `target.` row's outcome, by id.
+    private static func outcomes(of report: DiagnosticReport) -> [String: DiagnosticOutcome] {
+        Dictionary(
+            uniqueKeysWithValues: report.steps.filter { $0.id.hasPrefix("target.") }
+                .map { ($0.id, $0.outcome) })
     }
 
     /// SSH's own endpoint, and a dial and contributions the case chooses. A
@@ -676,6 +986,23 @@ final class JumpRig: Sendable {
         var probeError: (any Error)?
         var jumpDialPark: AsyncSignal?
         var targetDialPark: AsyncSignal?
+        /// What each probe command answers. By default, what the rig's own
+        /// tools printed (`JumpProbeSamples`) — `traceroute` as root, the
+        /// one answer that is ok — so a walk that asks for nothing else
+        /// comes back all ok.
+        var execAnswers: [JumpProbeCommand.Tool: ExecAnswer] = [
+            .getent: .output(JumpProbeSamples.rigGetentOverSSH),
+            .ping: .output(JumpProbeSamples.rigPingOverSSH),
+            .traceroute: .output(JumpProbeSamples.rigTracerouteToSshd2),
+            .tracepath: .output(JumpProbeSamples.rigTracepathOverSSH),
+        ]
+        var execParks: [JumpProbeCommand.Tool: AsyncSignal] = [:]
+    }
+
+    /// How a probe command is answered.
+    enum ExecAnswer {
+        case output(RemoteCommandOutput)
+        case failure(any Error)
     }
 
     private let state = Mutex(State())
@@ -684,6 +1011,8 @@ final class JumpRig: Sendable {
     let targetDialEntered = AsyncSignal()
     /// Raised when a connection this rig handed out is closed.
     let disconnected = AsyncSignal()
+    /// Raised when a probe command the case parked has been entered.
+    let execParked = AsyncSignal()
 
     var events: [String] { state.withLock { $0.events } }
     var targetDialJumps: [String] { state.withLock { $0.targetDialJumps } }
@@ -705,6 +1034,29 @@ final class JumpRig: Sendable {
     func record(_ event: String) { state.withLock { $0.events.append(event) } }
 
     func parkJumpDial(until signal: AsyncSignal) { state.withLock { $0.jumpDialPark = signal } }
+
+    func answer(_ tool: JumpProbeCommand.Tool, with answer: ExecAnswer) {
+        state.withLock { $0.execAnswers[tool] = answer }
+    }
+
+    func park(_ tool: JumpProbeCommand.Tool, until signal: AsyncSignal) {
+        state.withLock { $0.execParks[tool] = signal }
+    }
+
+    /// What the fake connection's `run(_:)` does: records the command line
+    /// exactly as production would send it, then answers.
+    func exec(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+        record("exec \(command.text)")
+        if let park = state.withLock({ $0.execParks[command.tool] }) {
+            execParked.signal()
+            _ = await park.wait()
+        }
+        switch state.withLock({ $0.execAnswers[command.tool] }) {
+        case .output(let output): return output
+        case .failure(let failure): throw failure
+        case nil: return RemoteCommandOutput(standardOutput: "", exitStatus: 127)
+        }
+    }
     func parkTargetDial(until signal: AsyncSignal) { state.withLock { $0.targetDialPark = signal } }
 
     var dialer: DiagnosticJumpDialer {
@@ -737,6 +1089,10 @@ private struct FakeJumpConnection: DiagnosticJumpConnection {
     func probeDirectTCPIP(host: String, port: Int) async throws {
         rig.record("probe \(host):\(port)")
         if let error = rig.probeError { throw error }
+    }
+
+    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+        try await rig.exec(command)
     }
 
     func disconnect() async {

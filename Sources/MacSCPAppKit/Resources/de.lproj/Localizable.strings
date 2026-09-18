@@ -1150,6 +1150,9 @@
 "diagnostics.step.jump.trace" = "Jump-Host: Route";
 "diagnostics.step.target.tcpViaJump" = "Ziel über den Jump-Host: Verbindungsversuch";
 "diagnostics.step.target.dialViaJump" = "Ziel über den Jump-Host: SSH-Verbindung";
+"diagnostics.step.target.resolveOnJump" = "Ziel über den Jump-Host: Namensauflösung";
+"diagnostics.step.target.icmpFromJump" = "Ziel über den Jump-Host: Ping";
+"diagnostics.step.target.traceFromJump" = "Ziel über den Jump-Host: Route";
 "diagnostics.contribution.s3Access" = "Zugriffsrechte des Schlüssels";
 "diagnostics.contribution.webdavClaims" = "Angaben des Servers";
 // Hop-Tabelle des Routenschritts (2026-09-03): die vier Spaltenüberschriften, die das Panel zeichnet. Die Zellen sind die Messung aus Core und werden nie übersetzt.
@@ -1183,6 +1186,16 @@
 "diagnostics.reason.noJumpSecret" = "Für den Jump-Host sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";
 "diagnostics.reason.jumpForwardingProhibited" = "Der Jump-Host leitet für diese Anmeldung keine Verbindungen weiter.";
 "diagnostics.reason.jumpCouldNotConnect" = "Der Jump-Host konnte das Ziel nicht erreichen — der Name löst sich dort nicht auf, oder auf dem Port nimmt niemand an.";
+"diagnostics.reason.jumpProbeHostRefused" = "Die Adresse des Ziels ist weder ein einfacher Hostname noch eine IP-Adresse, deshalb wurde damit auf dem Jump-Host nichts ausgeführt.";
+"diagnostics.reason.jumpExecRefused" = "Der Jump-Host hat den Befehl nicht ausgeführt — vielleicht erlaubt er nur Weiterleitungen.";
+"diagnostics.reason.jumpHasNoGetent" = "Auf dem Jump-Host gibt es kein getent.";
+"diagnostics.reason.jumpHasNoPing" = "Auf dem Jump-Host gibt es kein ping.";
+"diagnostics.reason.jumpHasNoTraceTool" = "Auf dem Jump-Host gibt es weder traceroute noch tracepath.";
+"diagnostics.reason.jumpResolveUnreadable" = "getent auf dem Jump-Host lieferte keine Antwort, die diese Prüfung lesen kann.";
+"diagnostics.reason.jumpPingUnreadable" = "ping auf dem Jump-Host lieferte keine Antwort, die diese Prüfung lesen kann.";
+"diagnostics.reason.jumpTraceUnreadable" = "Kein Routenwerkzeug auf dem Jump-Host lieferte eine Antwort, die diese Prüfung lesen kann.";
+"diagnostics.reason.jumpCouldNotResolve" = "Der Jump-Host konnte den Namen des Ziels nicht auflösen.";
+"diagnostics.reason.targetIsAnAddress" = "Das Ziel ist über seine IP-Adresse angegeben, es gibt also keinen Namen aufzulösen.";
 
 /* Import aus einem anderen Programm — Cyberduck (2026-09-03). Menüeintrag,
    Vorschau-Sheet, die beiden Schalter und die Gruppenauswahl, dazu die
