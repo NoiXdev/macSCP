@@ -763,6 +763,12 @@ struct MacSCPApp: App {
     /// What this launch still has to restore. Filled in `init` from the
     /// file, handed out once per half — see `WindowRestorationLaunch`.
     @State private var restorationLaunch: WindowRestorationLaunch
+    /// The live macOS notifier (next build of 2026-09-17, Task 7 fix round
+    /// 1): built here and nowhere else, handed to every window and
+    /// installed on `TunnelManager.shared` in `init`. Anything built
+    /// without it is silent — `ErrorNotificationWiringGuardTests
+    /// .theLiveNotifierIsBuiltAndInjectedOnlyInMacSCPApp`.
+    private let errorNotifier: ErrorNotifier
 
     /// AppKit menu-bar status item (M11n, re-landed). Retained for the app's
     /// lifetime; reads `menuBarModel` and shows/hides itself from
@@ -871,6 +877,21 @@ struct MacSCPApp: App {
         _settingsStore = State(initialValue: store)
         _menuBarModel = State(initialValue: model)
         menuBarController = MenuBarController(model: model, settingsStore: store)
+
+        // Notifications (Task 7 fix round 1). Here, in `init`, because
+        // `applicationDidFinishLaunching(_:)` is where the first forwarding
+        // can start, and its failure must already have somewhere to go. The
+        // forwarding reads the switch from this app's one `SettingsStore`,
+        // the instance the Settings window writes.
+        let notifier = ErrorNotifier(
+            poster: UserNotificationCenterPoster(), appIsActive: { NSApp?.isActive ?? false })
+        errorNotifier = notifier
+        TunnelManager.shared.notifyForwardingFailed = { name in
+            notifier.notify(
+                .forwardingFailed, name: name,
+                enabled: store.notificationsEnabled,
+                windowIsKey: nil)
+        }
     }
 
     /// `CFBundleShortVersionString`/`CFBundleVersion` off `Bundle.main`, read
@@ -982,7 +1003,7 @@ struct MacSCPApp: App {
             settingsStore: settingsStore, bandwidthLimiter: bandwidthLimiter,
             auditStore: auditStore, settingsBridge: settingsBridge, updateModel: updateModel,
             menuBarModel: menuBarModel, seed: seed,
-            restorationLaunch: restorationLaunch)
+            restorationLaunch: restorationLaunch, errorNotifier: errorNotifier)
             // Diagnostic log (Diagnostic Log plan, Task 2): the General
             // settings pane's picker writes `settingsStore
             // .diagnosticLogLevel` directly (`SettingsView.swift`), so

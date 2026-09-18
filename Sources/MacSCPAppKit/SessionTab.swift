@@ -230,13 +230,14 @@ final class SessionTab: Identifiable {
     /// finding 2).
     var seenFailureCount = 0
 
-    /// The value of `transferQueue.failureCountExcludingConnectionLoss` the
-    /// last "transfer failed" notification check has answered for (next
-    /// build of 2026-09-17, Task 7) — see
+    /// This tab's "transfer failed" notification state (next build of
+    /// 2026-09-17, Task 7; a latch since fix round 1): the failures it has
+    /// answered for, and whether a posted notification is still unseen —
+    /// see `ErrorNotificationPlan.TransferFailureLatch` and
     /// `ContentView.notifyTransferFailures()`. On the tab rather than on a
     /// window, so a tab that moves to another window does not notify again
     /// about failures it already had.
-    var notifiedTransferFailureCount = 0
+    var transferFailureLatch = ErrorNotificationPlan.TransferFailureLatch()
 
     var isConnected: Bool { session != nil }
 

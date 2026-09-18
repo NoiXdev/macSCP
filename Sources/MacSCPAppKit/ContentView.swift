@@ -168,8 +168,10 @@ struct ContentView: View {
     /// parallelism, M5c/T5 bandwidth limits).
     let settingsStore: SettingsStore
     /// Posts the macOS notifications for a lost connection and a failed
-    /// transfer (next build of 2026-09-17, Task 7). `ErrorNotifier.shared`
-    /// unless a test hands one in; it holds no state of this window.
+    /// transfer (next build of 2026-09-17, Task 7). `MacSCPApp` hands in the
+    /// live one; built without one, a window is silent
+    /// (`ErrorNotifier.silent()`, fix round 1). It holds no state of this
+    /// window.
     let errorNotifier: ErrorNotifier
     /// App-global bandwidth ceilings (M8a/T2), created once in `MacSCPApp`.
     /// Every tab's queue resolves its throttle from this one instance, so
@@ -799,7 +801,7 @@ struct ContentView: View {
         restorationLaunch: WindowRestorationLaunch? = nil,
         errorNotifier: ErrorNotifier? = nil
     ) {
-        self.errorNotifier = errorNotifier ?? ErrorNotifier.shared
+        self.errorNotifier = errorNotifier ?? ErrorNotifier.silent()
         self.seed = seed
         // No restoration STORE here (Task 5 fix round 1): a window neither
         // reads nor writes `windows.json`. It is read once in
@@ -3506,11 +3508,12 @@ extension ContentView {
         return sessionListViewModel.sessions.first { $0.id == id }?.name
     }
 
-    /// Posts one "transfer failed" notification per tab whose queue has
-    /// failed since the last check, and moves the tab's watermark up whether
-    /// or not anything was posted — a failure seen while the setting was
-    /// off, or while the window was key, has been answered for and is not
-    /// posted later.
+    /// Posts a "transfer failed" notification for a tab whose queue has
+    /// failed since the last check — at most one per tab until this window
+    /// next becomes key (`TransferFailureLatch`, fix round 1). Every check
+    /// answers for the failures it saw whether or not anything was posted:
+    /// a failure seen while the setting was off, while the window was key,
+    /// or while the latch held is not posted later.
     ///
     /// Reads `failureCountExcludingConnectionLoss`, not `totalFailureCount`:
     /// the items a drop marks failed are the drop's, and
@@ -3520,17 +3523,24 @@ extension ContentView {
     /// .userRequested)`, a conflict prompt dismissed).
     func notifyTransferFailures() {
         for tab in tabsModel.tabs {
-            let failures = tab.transferQueue.failureCountExcludingConnectionLoss
-            let notifiedThrough = tab.notifiedTransferFailureCount
-            tab.notifiedTransferFailureCount = max(failures, notifiedThrough)
-            guard ErrorNotificationPlan.isNewTransferFailure(
-                failureCount: failures, notifiedThrough: notifiedThrough)
+            guard tab.transferFailureLatch.takeFailures(
+                count: tab.transferQueue.failureCountExcludingConnectionLoss)
             else { continue }
-            errorNotifier.notify(
+            let posted = errorNotifier.notify(
                 .transferFailed,
                 name: notificationName(forStoredSession: tab.activeStoredSessionID),
                 enabled: settingsStore.notificationsEnabled,
                 windowIsKey: notificationWindowIsKey)
+            if posted { tab.transferFailureLatch.notificationPosted() }
+        }
+    }
+
+    /// This window became key: the user has seen its tabs, so each tab's
+    /// "transfer failed" latch is released (fix round 1). Called from the
+    /// `controlActiveState` observer in `body`.
+    func transferNotificationWindowBecameKey() {
+        for tab in tabsModel.tabs {
+            tab.transferFailureLatch.windowBecameKey()
         }
     }
 }

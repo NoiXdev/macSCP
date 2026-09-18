@@ -219,11 +219,15 @@ extension ContentView {
         // empty until the first activation.
         .onChange(of: controlActiveState, initial: true) { _, _ in
             publishToMenuBarIfKey()
+            // The "transfer failed" latch (next build of 2026-09-17, Task 7
+            // fix round 1): this window becoming key is the user seeing it.
+            if controlActiveState == .key { transferNotificationWindowBecameKey() }
         }
         // "Transfer failed" notifications (next build of 2026-09-17, Task
         // 7): any tab's failure count moving — including a tab arriving
-        // from another window — runs the check; each tab's own watermark
-        // keeps it from posting twice. See `notifyTransferFailures()`.
+        // from another window — runs the check; each tab's own latch keeps
+        // it to one notification until this window is next key (fix round
+        // 1). See `notifyTransferFailures()`.
         .onChange(of: transferFailureCounts) { _, _ in
             notifyTransferFailures()
         }

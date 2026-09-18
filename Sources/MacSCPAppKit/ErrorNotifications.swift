@@ -70,15 +70,42 @@ enum ErrorNotificationPlan {
         return true
     }
 
-    /// Whether a tab's transfer queue has failures nobody has been notified
-    /// about yet. `failureCount` is the queue's
-    /// `failureCountExcludingConnectionLoss`, which only grows;
-    /// `notifiedThrough` is the tab's own watermark
-    /// (`SessionTab.notifiedTransferFailureCount`), which travels with the
-    /// tab when it moves to another window. Several failures seen at once
-    /// are one notification.
-    static func isNewTransferFailure(failureCount: Int, notifiedThrough: Int) -> Bool {
-        failureCount > notifiedThrough
+    /// One tab's "transfer failed" state (fix round 1, the maintainer's
+    /// ruling): **at most one notification per tab until that tab's window
+    /// next becomes key.** A folder transfer's items fail across many
+    /// updates, and a count-only watermark posted once per update that saw
+    /// a higher count — a burst of banners for one folder.
+    ///
+    /// Lives on the tab (`SessionTab.transferFailureLatch`), so it travels
+    /// with a tab that moves to another window.
+    struct TransferFailureLatch: Equatable {
+        /// The queue's `failureCountExcludingConnectionLoss` this tab has
+        /// answered for. Only grows.
+        private(set) var answeredThrough = 0
+        /// A notification was posted and the window has not been key since.
+        private(set) var isHeld = false
+
+        /// Takes the queue's current failure count, and says whether to ask
+        /// the notifier: there are failures not answered for yet, and no
+        /// notification is still unseen. The failures are answered for
+        /// either way, so a release never replays them.
+        mutating func takeFailures(count: Int) -> Bool {
+            let isNew = count > answeredThrough
+            answeredThrough = max(answeredThrough, count)
+            return isNew && !isHeld
+        }
+
+        /// The notifier did post: hold until the window becomes key. A check
+        /// that did not post (the setting off, the window key) holds
+        /// nothing — nobody was told anything.
+        mutating func notificationPosted() {
+            isHeld = true
+        }
+
+        /// The tab's window became key: the user has seen it.
+        mutating func windowBecameKey() {
+            isHeld = false
+        }
     }
 
     /// The notification's text: the event's catalogue title, and a body
@@ -98,17 +125,23 @@ enum ErrorNotificationPlan {
     }
 }
 
-/// Asks the plan and posts what it says. One per process: it holds no
-/// connection, tab or window state (a tab's watermark lives on the tab, a
-/// forwarding's previous state in `TunnelManager`), only the poster and the
-/// way to read whether the app is frontmost.
+/// Asks the plan and posts what it says. It holds no connection, tab or
+/// window state (a tab's latch lives on the tab, a forwarding's previous
+/// state in `TunnelManager`), only the poster and the way to read whether
+/// the app is frontmost.
+///
+/// **The live one is built once, in `MacSCPApp`, and handed in** — to
+/// every window's `ContentView` and to `TunnelManager.shared` (fix round
+/// 1). Anything built without one gets `silent()`, so no test reaches
+/// `UNUserNotificationCenter` by leaving an argument out.
 @MainActor
 final class ErrorNotifier {
-    static let shared = ErrorNotifier(
-        poster: UserNotificationCenterPoster(),
-        appIsActive: { NSApp?.isActive ?? false })
+    /// A notifier that decides as the live one does and shows nothing.
+    static func silent() -> ErrorNotifier {
+        ErrorNotifier(poster: SilentNotificationPoster(), appIsActive: { false })
+    }
 
-    private let poster: any UserNotificationPosting
+    let poster: any UserNotificationPosting
     private let appIsActive: @MainActor () -> Bool
 
     init(poster: any UserNotificationPosting, appIsActive: @escaping @MainActor () -> Bool) {
@@ -119,13 +152,26 @@ final class ErrorNotifier {
     /// `enabled` is the "Notifications" setting as the caller's own store
     /// reads it; `windowIsKey` is the owning window's `isKeyWindow`, or
     /// `nil` for an event no window owns.
-    func notify(_ event: ErrorNotificationEvent, name: String?, enabled: Bool, windowIsKey: Bool?) {
+    ///
+    /// Returns whether it posted, which is what a tab's
+    /// `TransferFailureLatch` holds on.
+    @discardableResult
+    func notify(
+        _ event: ErrorNotificationEvent, name: String?, enabled: Bool, windowIsKey: Bool?
+    ) -> Bool {
         guard ErrorNotificationPlan.shouldPost(
             enabled: enabled, appIsActive: appIsActive(), windowIsKey: windowIsKey)
-        else { return }
+        else { return false }
         let text = ErrorNotificationPlan.text(for: event, name: name)
         poster.post(title: text.title, body: text.body)
+        return true
     }
+}
+
+/// Posts nothing. `ErrorNotifier.silent()`'s poster.
+@MainActor
+final class SilentNotificationPoster: UserNotificationPosting {
+    func post(title: String, body: String) {}
 }
 
 /// The live poster over `UNUserNotificationCenter`. Thin on purpose: every
@@ -144,9 +190,9 @@ final class ErrorNotifier {
 ///
 /// The `swift test` process is one of those, measured 2026-09-18 with a
 /// throwaway test: its `Bundle.main` is SwiftPM's `swiftpm-testing-helper`,
-/// with a nil identifier, and `NSApp` is nil. The existing tests that drive
-/// a give-up on a `ContentView` built without a notifier reach this poster
-/// through `ErrorNotifier.shared` and stop at this check. `swift run` itself
+/// with a nil identifier, and `NSApp` is nil. No test relies on that since
+/// fix round 1: a `ContentView` or `TunnelManager` built without a notifier
+/// is silent, and only `MacSCPApp` builds this poster. `swift run` itself
 /// was not measured.
 ///
 /// **Authorization is asked at the first post, not at launch.** The first
@@ -157,9 +203,20 @@ final class ErrorNotifier {
 @MainActor
 final class UserNotificationCenterPoster: UserNotificationPosting {
     private var hasRequestedAuthorization = false
+    /// Kept here because the center holds its delegate weakly.
+    private var presenter: ForegroundNotificationPresenter?
 
     func post(title: String, body: String) {
         guard Bundle.main.bundleIdentifier != nil else { return }
+        // Fix round 1: without a delegate answering `willPresent`, macOS
+        // shows nothing while this app is frontmost — and the plan posts for
+        // a background window of the frontmost app. Installed at the first
+        // post, after the bundle check, before authorization is asked.
+        if presenter == nil {
+            let installed = ForegroundNotificationPresenter()
+            presenter = installed
+            UNUserNotificationCenter.current().delegate = installed
+        }
         let deliver: @Sendable () -> Void = {
             let content = UNMutableNotificationContent()
             content.title = title
@@ -173,9 +230,41 @@ final class UserNotificationCenterPoster: UserNotificationPosting {
             return
         }
         hasRequestedAuthorization = true
+        // `@Sendable` spelled out: the answer arrives on a queue of the
+        // framework's, and without it Swift could infer this closure
+        // main-actor isolated from the class and trap there. A `@Sendable`
+        // closure is accepted whether or not the SDK imports the parameter
+        // as `@Sendable`.
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-            granted, _ in
+            @Sendable granted, _ in
             if granted { deliver() }
         }
+    }
+}
+
+/// Answers macOS's question "this app is frontmost — show its notification
+/// anyway?" with a banner and a place in Notification Centre. Whether to
+/// post at all is `ErrorNotificationPlan.shouldPost`'s decision, made
+/// before anything reaches the center; this only keeps macOS from muting
+/// what was decided (fix round 1).
+///
+/// Not main-actor isolated: the protocol carries no isolation in the SDK
+/// headers, and the framework calls it on a queue of its own. It holds no
+/// state. The completion handler is declared WITHOUT `@Sendable` on
+/// purpose — measured 2026-09-18 with a scratch `swiftc -swift-version 6`
+/// (6.4): a plain witness satisfies an `@objc optional` requirement whose
+/// handler is `@Sendable`, while a `@Sendable` witness for a plain
+/// requirement is an error. The plain spelling fits either import.
+/// `ErrorNotificationTests.thePresenterShowsBannersWhileTheAppIsFrontmost`
+/// asks the runtime whether it answers the selector.
+final class ForegroundNotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
+    static let presentationOptions: UNNotificationPresentationOptions = [.banner, .list]
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler(Self.presentationOptions)
     }
 }

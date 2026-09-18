@@ -72,26 +72,17 @@ final class TunnelManager {
     static let shared = TunnelManager(
         store: TunnelStore(directory: SessionStore.defaultDirectory),
         makeRunner: { profile in TunnelManager.liveRunner(for: profile) },
-        sessionIDs: { TunnelManager.liveSessionIDs() },
-        notifyForwardingFailed: { name in
-            // A store read at the moment of the failure: `SettingsStore`
-            // persists on every set, so a fresh one reads the switch as the
-            // user last left it, and no window's instance has to reach this
-            // app-wide type.
-            ErrorNotifier.shared.notify(
-                .forwardingFailed, name: name,
-                enabled: SettingsStore(directory: SettingsStore.defaultDirectory)
-                    .notificationsEnabled,
-                windowIsKey: nil)
-        })
+        sessionIDs: { TunnelManager.liveSessionIDs() })
 
     @ObservationIgnored private let store: TunnelStore
     @ObservationIgnored private let makeRunner: RunnerFactory
     @ObservationIgnored private let sessionIDs: SessionIDReader
     /// Told a forwarding's NAME when its mirrored state enters `.failed`
-    /// (next build of 2026-09-17, Task 7) — see `runner(for:)`. `shared`
-    /// posts the notification; tests record the names.
-    @ObservationIgnored private let notifyForwardingFailed: @MainActor (_ name: String) -> Void
+    /// (next build of 2026-09-17, Task 7) — see `runner(for:)`. Silent until
+    /// `MacSCPApp.init` installs the live notifier on `shared` (fix round 1),
+    /// which it does before `applicationDidFinishLaunching` starts any
+    /// forwarding; tests pass a recorder to `init`.
+    @ObservationIgnored var notifyForwardingFailed: @MainActor (_ name: String) -> Void
     @ObservationIgnored private var runners: [UUID: any TunnelRunning] = [:]
     /// One mirror task per RUNNER, keyed by that runner's generation — not
     /// by the profile, which is what round 1 keyed it by. Two runners for

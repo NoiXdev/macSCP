@@ -452,9 +452,10 @@ struct ReconnectWiringGuardTests {
     /// transport either: `UserNotifications` is `UNUserNotificationCenter`,
     /// the macOS notifications for a lost connection, a failed transfer and
     /// a failed forwarding. It hands text to the system and opens no
-    /// connection; its whole use is `UserNotificationCenterPoster` in
-    /// `ErrorNotifications.swift`, which `ErrorNotificationWiringGuardTests`
-    /// pins as the only file that names `UNUserNotificationCenter`.
+    /// connection; its whole use is in `ErrorNotifications.swift`
+    /// (`UserNotificationCenterPoster` and, since fix round 1, its
+    /// foreground presenter), which `ErrorNotificationWiringGuardTests` pins
+    /// as the only file that names `UNUserNotificationCenter`.
     private static let permittedImports: Set<String> = [
         "AppKit", "Carbon", "Combine", "CoreTransferable", "Foundation", "MacSCPAppKit",
         "Observation", "ServiceManagement", "SwiftTerm", "SwiftUI",

@@ -26,6 +26,8 @@ struct ErrorNotificationWiringGuardTests {
     private static let detailFile = "Sources/MacSCPAppKit/ContentView+Detail.swift"
     private static let tunnelManagerFile = "Sources/MacSCPAppKit/TunnelManager.swift"
     private static let settingsViewFile = "Sources/MacSCPAppKit/SettingsView.swift"
+    private static let appFile = "Sources/MacSCPAppKit/MacSCPApp.swift"
+    private static let contentViewFile = "Sources/MacSCPAppKit/ContentView.swift"
 
     private static let keys = [
         "notifications.connectionLost.title",
@@ -97,6 +99,25 @@ struct ErrorNotificationWiringGuardTests {
             }
             result.append(String(characters[start..<max(start, cursor - 1)]))
             index = cursor
+        }
+        return result
+    }
+
+    /// Like `callArguments(_:in:)`, for a call to a TYPE named `name`: only
+    /// where the name is not the tail of a longer identifier or a member
+    /// access (`LostConnectionView(` is not a call to `View(`).
+    private static func typeCallArguments(_ name: String, in source: String) -> [String] {
+        let needle = name + "("
+        var result: [String] = []
+        var searchStart = source.startIndex
+        while let found = source.range(of: needle, range: searchStart..<source.endIndex) {
+            searchStart = found.upperBound
+            if found.lowerBound > source.startIndex {
+                let before = source[source.index(before: found.lowerBound)]
+                if before.isLetter || before.isNumber || before == "_" || before == "." { continue }
+            }
+            let tail = String(source[found.lowerBound...])
+            if let arguments = callArguments(needle, in: tail).first { result.append(arguments) }
         }
         return result
     }
@@ -184,7 +205,7 @@ struct ErrorNotificationWiringGuardTests {
         let events = [
             (".connectionLost", Self.lifecycleFile),
             (".transferFailed", "Sources/MacSCPAppKit/ContentView.swift"),
-            (".forwardingFailed", Self.tunnelManagerFile),
+            (".forwardingFailed", Self.appFile),
         ]
         for (event, file) in events {
             let matching = calls.filter { $0.arguments.hasPrefix(event + ",") }
@@ -195,6 +216,14 @@ struct ErrorNotificationWiringGuardTests {
             #expect(call.arguments.contains("name:"))
             #expect(call.arguments.contains("enabled:"))
             #expect(call.arguments.contains("windowIsKey:"))
+            // The gate is the setting as read, never a literal: the text
+            // between `enabled:` and `, windowIsKey:` ends in the property.
+            let afterEnabled = call.arguments.components(separatedBy: "enabled:").last ?? ""
+            let enabled = (afterEnabled.components(separatedBy: ", windowIsKey:").first ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            #expect(
+                enabled.hasSuffix(".notificationsEnabled"),
+                "\(call.file): notify(…) gates on `\(enabled)`, not the setting")
             // Negative, beside the positives above.
             for forbidden in Self.forbiddenInArguments {
                 #expect(
@@ -261,12 +290,26 @@ struct ErrorNotificationWiringGuardTests {
         #expect(counts.contains("failureCountExcludingConnectionLoss"))
         #expect(counts.contains("totalFailureCount") == false)
         let notify = try Self.body(of: "func notifyTransferFailures()", in: content)
-        #expect(notify.contains("ErrorNotificationPlan.isNewTransferFailure("))
+        #expect(notify.contains("tab.transferFailureLatch.takeFailures("))
+        #expect(notify.contains("tab.transferFailureLatch.notificationPosted()"))
         #expect(notify.contains("failureCountExcludingConnectionLoss"))
         #expect(notify.contains("totalFailureCount") == false)
         #expect(notify.contains("windowIsKey: notificationWindowIsKey"))
         let key = try Self.body(of: "var notificationWindowIsKey: Bool", in: content)
         #expect(key.filter { !$0.isWhitespace } == "window?.isKeyWindow??false")
+
+        // The latch is released when this window becomes key, and only then
+        // (fix round 1: the user has seen the window).
+        let release = try Self.body(of: "func transferNotificationWindowBecameKey()", in: content)
+        #expect(release.contains("tab.transferFailureLatch.windowBecameKey()"))
+        let keyObserver = try Self.body(
+            of: ".onChange(of: controlActiveState, initial: true)", in: lifecycle)
+        #expect(Self.collapsingWhitespace(keyObserver)
+            .contains("if controlActiveState == .key { transferNotificationWindowBecameKey() }"))
+        let releaseCalls = try Self.allAppCode()
+            .map { Self.count("transferNotificationWindowBecameKey()", in: $0.code) }
+            .reduce(0, +)
+        #expect(releaseCalls == 2)   // the declaration and that one call
     }
 
     /// The notification rule's `isKeyWindow` read lives in `ContentView.swift`,
@@ -313,10 +356,72 @@ struct ErrorNotificationWiringGuardTests {
         let firstCenter = try #require(post.range(of: "UNUserNotificationCenter"))
         #expect(bundleCheck.lowerBound < firstCenter.lowerBound)
         #expect(post.contains("requestAuthorization("))
+
+        // Fix round 1: the foreground presenter is installed after the
+        // bundle check and before authorization is asked, and it is kept —
+        // the center holds its delegate weakly.
+        let delegateSet = try #require(post.range(of: ".delegate = "))
+        let authorization = try #require(post.range(of: "requestAuthorization("))
+        #expect(bundleCheck.lowerBound < delegateSet.lowerBound)
+        #expect(delegateSet.lowerBound < authorization.lowerBound)
+        #expect(post.contains("private var presenter: ForegroundNotificationPresenter?"))
+        #expect(Self.count(".delegate = ", in: code) == 1)
+        let presenter = try Self.body(
+            of: "final class ForegroundNotificationPresenter", in: code)
+        #expect(presenter.contains("willPresent notification: UNNotification"))
+        #expect(presenter.contains("completionHandler(Self.presentationOptions)"))
         // Positive beside the file-wide negatives above: the center really
         // is used here, and nowhere else in this file.
         #expect(Self.count("UNUserNotificationCenter.current()", in: code)
             == Self.count("UNUserNotificationCenter.current()", in: post))
+    }
+
+    // MARK: - Who holds the live notifier
+
+    /// The live poster is built in `MacSCPApp` and nowhere else, and it
+    /// reaches the windows and the forwardings only by being handed in: a
+    /// `ContentView` or a `TunnelManager` built without one is silent, so
+    /// no test reaches `UNUserNotificationCenter` by omission (fix round 1).
+    @Test func theLiveNotifierIsBuiltAndInjectedOnlyInMacSCPApp() throws {
+        let files = try Self.allAppCode()
+        let app = try Self.views(Self.appFile).code
+
+        // Positive: the one construction is in `MacSCPApp`.
+        #expect(Self.count("UserNotificationCenterPoster(", in: app) == 1)
+        // Negative, beside it: nowhere else.
+        for (file, code) in files where file != Self.appFile {
+            #expect(Self.count("UserNotificationCenterPoster(", in: code) == 0, "\(file)")
+        }
+
+        // Every `ContentView(` in the App target hands a notifier in.
+        var windows: [(file: String, arguments: String)] = []
+        for (file, code) in files {
+            for arguments in Self.typeCallArguments("ContentView", in: code) {
+                windows.append((file, Self.collapsingWhitespace(arguments)))
+            }
+        }
+        #expect(windows.count == 1, "ContentView( in \(windows.map(\.file))")
+        for window in windows {
+            #expect(window.file == Self.appFile)
+            #expect(window.arguments.contains("errorNotifier: errorNotifier"))
+        }
+
+        // The forwarding hook is installed from `MacSCPApp`, once, and the
+        // manager's own `shared` builds none.
+        let installs = files.map {
+            Self.count("TunnelManager.shared.notifyForwardingFailed = ", in: $0.code)
+        }.reduce(0, +)
+        #expect(installs == 1)
+        #expect(Self.count("TunnelManager.shared.notifyForwardingFailed = ", in: app) == 1)
+        let manager = try Self.views(Self.tunnelManagerFile).code
+        let shared = try #require(Self.typeCallArguments("TunnelManager", in: manager).first)
+        #expect(shared.contains("makeRunner:"))
+        #expect(shared.contains("notifyForwardingFailed") == false)
+        #expect(shared.contains("ErrorNotifier") == false)
+
+        // A window's default is the silent notifier.
+        let content = try Self.views(Self.contentViewFile).code
+        #expect(content.contains("self.errorNotifier = errorNotifier ?? ErrorNotifier.silent()"))
     }
 
     // MARK: - Settings
