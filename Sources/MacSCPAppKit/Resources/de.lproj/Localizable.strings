@@ -1184,6 +1184,7 @@
 "diagnostics.reason.jumpUnresolvable" = "Der Jump-Host ließ sich aus den Einstellungen dieser Verbindung nicht ermitteln — die Verbindung oder Anmeldung, auf die er verweist, gibt es vielleicht nicht mehr.";
 "diagnostics.reason.jumpNotReached" = "Nicht gemessen: Der Jump-Host wurde nicht erreicht.";
 "diagnostics.reason.noJumpSecret" = "Für den Jump-Host sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";
+"diagnostics.reason.managedKeyStoreUnreadable" = "Die Passphrase des Schlüssels konnte nicht nachgeschlagen werden: Die Liste der verwalteten Schlüssel (managed_keys.json) konnte nicht gelesen werden. Prüfe die Datei und starte die Prüfung erneut.";
 "diagnostics.reason.jumpForwardingProhibited" = "Der Jump-Host leitet für diese Anmeldung keine Verbindungen weiter.";
 "diagnostics.reason.jumpCouldNotConnect" = "Der Jump-Host konnte das Ziel nicht erreichen — der Name löst sich dort nicht auf, oder auf dem Port nimmt niemand an.";
 "diagnostics.reason.jumpProbeHostRefused" = "Die Adresse des Ziels ist weder ein einfacher Hostname noch eine IP-Adresse, deshalb wurde damit auf dem Jump-Host nichts ausgeführt.";
@@ -1313,6 +1314,7 @@
 "tunnel.failure.keyUnparsable" = "Die Schlüsseldatei konnte nicht gelesen werden";
 "tunnel.failure.keyTypeNotLoadable %@" = "Schlüssel vom Typ %@ werden nicht unterstützt";
 "tunnel.failure.keyPEMNotReadable" = "Der PEM-Schlüssel nutzt eine Funktion, die nicht unterstützt wird";
+"tunnel.failure.managedKeyStoreUnreadable" = "Der Schlüssel braucht eine Passphrase, aber die Liste der verwalteten Schlüssel (managed_keys.json) konnte nicht gelesen werden";
 "tunnel.failure.agentUnavailable" = "Kein SSH-Agent hat geantwortet";
 "tunnel.failure.agentHasNoIdentities" = "Der SSH-Agent enthält keine Schlüssel";
 "tunnel.failure.agentHasNoUsableIdentity" = "Der SSH-Agent enthält keinen Schlüssel eines unterstützten Typs";

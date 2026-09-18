@@ -5,12 +5,16 @@ import Testing
 
 @testable import macSCPCore
 
-/// The twelve tests that MUST touch `DiagnosticLog.shared`, because the
+/// The thirteen tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
-/// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
+/// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner`,
+/// `ManagedKeyPassphraseSecretSource` — logs
 /// through that exact singleton and cannot be pointed at a private instance
 /// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
-/// Twelve counted 2026-09-18 (review follow-ups, Task 1, which added the
+/// Thirteen counted 2026-09-18 (review follow-ups, Task 6, which added the
+/// unreadable-key-store test; fourteen `@Test` attributes in the file,
+/// counted with `grep` in the same pass); twelve earlier that day (Task 1,
+/// which added the
 /// drained-failure port test); eleven on 2026-09-16 (technical backlog,
 /// Task 4, which added the
 /// clock-driven `entry slow` test) — ten on 2026-09-06, in Task 5's fix
@@ -877,5 +881,42 @@ struct DiagnosticLogSharedSinkTests {
         #expect(
             contents.contains(
                 "[info] tunnel tunnel \(profile.name) failed reason=port 8080 is already in use"))
+    }
+
+    /// `ManagedKeyPassphraseSecretSource` writes one `error` line per read
+    /// that finds `managed_keys.json` unreadable (review follow-ups of
+    /// 2026-09-18, Task 6): the fact and the decode error's TYPE name,
+    /// nothing read from the file.
+    ///
+    /// Counted as "at least one line per read", not "exactly": the source
+    /// logs through the process-wide sink, and another suite reading a
+    /// corrupt store of its own while this test holds the level at `.error`
+    /// writes the same line into this file. Such a line can only ADD to the
+    /// count, so the floor still tells a line per read apart from a line per
+    /// source or none at all. That no line carries the file's content is
+    /// computed as a `Bool` first (CLAUDE.md, "A value a test must not leak
+    /// has two exits").
+    @Test("ManagedKeyPassphraseSecretSource logs an unreadable key store per read, without its content")
+    func managedKeyLinkLogsAnUnreadableStorePerReadWithoutItsContent() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
+        let store = try CorruptManagedKeyStoreRig()
+        defer { store.tearDown() }
+        let source = store.managedLink(keyPath: store.managedKeyPath)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(level: .error, directory: logDirectory, now: { fixedNow })
+        _ = try source.secret(for: UUID())
+        _ = try source.secret(for: UUID())
+        await DiagnosticLog.shared.flush()
+
+        let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+        let line = "[error] app managed_keys.json unreadable (DecodingError); "
+            + "answering as if no key were managed"
+        let lines = contents.split(separator: "\n").filter { $0.hasSuffix(line) }
+        #expect(lines.count >= 2, "\(lines.count) line(s) for two reads")
+        let contentLeaks = contents.contains(CorruptManagedKeyStoreRig.storeContent)
+        #expect(contentLeaks == false)
     }
 }

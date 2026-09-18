@@ -256,6 +256,11 @@ public struct ChainedSecretSource: SecretSource {
         self.answered = AnsweredLabel()
     }
 
+    /// The links, in order — for
+    /// `ManagedKeyPassphraseSecretSource.unreadableStoreHidAKey(in:)`, which
+    /// has to see the managed-key link through the chain a diagnosis holds.
+    var links: [any SecretSource] { sources }
+
     /// The answering source's label after a hit, `"none"` before one —
     /// `"none"` reads as a state no source has reached yet, not as the name
     /// of a source nobody wrote.

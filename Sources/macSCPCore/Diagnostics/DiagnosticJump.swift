@@ -430,7 +430,9 @@ struct DiagnosticJumpStep: Sendable {
         switch DialSupport.dialSecret(
             usesAgent: context.values[SSHField.authKind]
                 == StoredSession.AuthKind.agent.rawValue,
-            missing: DiagnosticReason.noSecret, context.diagnostic.secret)
+            missing: DialSupport.missingSecretReason(
+                DiagnosticReason.noSecret, secrets: context.diagnostic.secrets),
+            context.diagnostic.secret)
         {
         case .secret(let secret): targetSecret = secret
         case .unanswered(let outcome): return timer.finish(outcome, "")

@@ -25,9 +25,13 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **44** as
-/// of 2026-09-16 — recounted by running exactly that command and summing its
-/// per-file numbers, and it is two more than the 42 this paragraph carried,
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **45** as
+/// of 2026-09-18 — recounted by running exactly that command and summing its
+/// per-file numbers. 45 is one more than 44 because Task 6 of the review
+/// follow-ups of 2026-09-18 added one call in
+/// `ManagedKeyPassphraseSecretSource.secret(for:)` (the line written when
+/// `managed_keys.json` cannot be read). 44 was two more than the 42 this
+/// paragraph carried,
 /// because Task 3 of the technical backlog of 2026-09-16 added two calls in
 /// `SOCKS5Handshake.negotiate(on:limits:)` (the lines written when a SOCKS5
 /// handshake is refused over the parked-handshake cap, and when one times
@@ -45,9 +49,11 @@ import Testing
 /// do NOT count the same thing, and the difference is two: the grep counts
 /// the literal text wherever it appears, INCLUDING inside a doc comment —
 /// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
-/// — while this scan blanks comments first and sees 42 real calls (40 before
+/// — while this scan blanks comments first and sees 43 real calls on
+/// 2026-09-18, one more for the same call, measured the way the 42 was (42
+/// on 2026-09-16, 40 before
 /// Task 3's two calls and 39 before Task 2's, all 2026-09-16; each recounted
-/// that day with this file's own `callSites(in:file:)` — the 42 by
+/// that day with this file's own `callSites(in:file:)` — the 43 and the 42 by
 /// temporarily raising this file's `direct.count` floor until it failed and
 /// reading the count from its message). Both numbers are stated because
 /// either one alone is a claim somebody will later check with the other's

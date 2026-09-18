@@ -1187,6 +1187,7 @@
 "diagnostics.reason.jumpUnresolvable" = "L’hôte relais n’a pas pu être déterminé à partir des réglages de cette connexion — la connexion ou l’identifiant auquel il renvoie n’existe peut-être plus.";
 "diagnostics.reason.jumpNotReached" = "Non mesuré : l’hôte relais n’a pas été atteint.";
 "diagnostics.reason.noJumpSecret" = "Aucun identifiant n’est enregistré pour l’hôte relais. Enregistrez-en un, puis relancez la vérification.";
+"diagnostics.reason.managedKeyStoreUnreadable" = "La phrase secrète de la clé n’a pas pu être recherchée : la liste des clés gérées (managed_keys.json) n’a pas pu être lue. Vérifiez le fichier, puis relancez la vérification.";
 "diagnostics.reason.jumpForwardingProhibited" = "L’hôte relais ne transfère pas de connexions pour cet identifiant.";
 "diagnostics.reason.jumpCouldNotConnect" = "L’hôte relais n’a pas pu joindre la cible — le nom n’y est pas résolu, ou rien n’accepte de connexion sur le port.";
 "diagnostics.reason.jumpProbeHostRefused" = "L’adresse de la cible n’est ni un simple nom d’hôte ni une adresse IP ; rien n’a donc été exécuté avec elle sur l’hôte relais.";
@@ -1316,6 +1317,7 @@
 "tunnel.failure.keyUnparsable" = "Le fichier de clé n’a pas pu être lu";
 "tunnel.failure.keyTypeNotLoadable %@" = "Les clés de type %@ ne sont pas prises en charge";
 "tunnel.failure.keyPEMNotReadable" = "La clé PEM utilise une fonctionnalité non prise en charge";
+"tunnel.failure.managedKeyStoreUnreadable" = "La clé exige une phrase secrète, mais la liste des clés gérées (managed_keys.json) n’a pas pu être lue";
 "tunnel.failure.agentUnavailable" = "Aucun agent SSH n’a répondu";
 "tunnel.failure.agentHasNoIdentities" = "L’agent SSH ne contient aucune clé";
 "tunnel.failure.agentHasNoUsableIdentity" = "L’agent SSH ne contient aucune clé d’un type pris en charge";

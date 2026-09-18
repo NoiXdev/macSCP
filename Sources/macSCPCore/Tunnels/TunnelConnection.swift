@@ -101,10 +101,18 @@ public enum TunnelConnection {
                 reason: "session \(session.name) built a non-SSH connection although "
                     + "its kind says a forwarding can be carried")
         }
-        return try await SSHForwardingConnection.connect(
-            config: ssh,
-            connectTimeout: .seconds(Int64(connectTimeoutSeconds)),
-            knownHosts: knownHosts,
-            onUnknownHostKey: decider)
+        do {
+            return try await SSHForwardingConnection.connect(
+                config: ssh,
+                connectTimeout: .seconds(Int64(connectTimeoutSeconds)),
+                knownHosts: knownHosts,
+                onUnknownHostKey: decider)
+        } catch {
+            // A key that needed a passphrase the chain could not supply
+            // because `managed_keys.json` would not read is named as that,
+            // not as a missing passphrase — the chain's managed-key link is
+            // the one that saw it.
+            throw ManagedKeyPassphraseSecretSource.namingUnreadableStore(error, in: secrets)
+        }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A managed key's own passphrase slot, as a `SecretSource`.
 ///
@@ -27,6 +28,9 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
     private let keyPath: String
     private let keys: ManagedKeyStore
     private let secrets: any SecretStore
+    /// What the last read saw of the store; shared by every copy of this
+    /// value, since `secret(for:)` is non-mutating.
+    private let lastRead = LastStoreRead()
 
     public init(keyPath: String, keys: ManagedKeyStore, secrets: any SecretStore) {
         self.keyPath = keyPath
@@ -48,6 +52,16 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
     /// the store is decoded whole before the path can be matched, and a throw
     /// there stopped sessions whose key it does not manage.
     ///
+    /// That nil is not silent any more (review follow-ups of 2026-09-18,
+    /// Task 6). Each read that finds the store unreadable writes one
+    /// diagnostic-log line — the fact and the decode error's TYPE name,
+    /// never the error's description, which for a `DecodingError` quotes
+    /// from the file (measured 2026-09-18 on a non-JSON store: "Unexpected
+    /// character 'c' around line 1, column 1.") — and records whether the
+    /// store hid THIS
+    /// key (`unreadableStoreHidItsKey`), for the dial that fails afterwards
+    /// to say so (`namingUnreadableStore(_:in:)`).
+    ///
     /// `hasPassphrase` is a fast path, as in `ManagedKeyPassphrase.resolve`:
     /// an unencrypted key's slot is never read, so no consent prompt is
     /// raised for a passphrase that does not exist.
@@ -57,9 +71,81 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
         let key: ManagedKey?
         // An unreadable key store must not stop sessions whose key it does not
         // manage; the Keychain read below still throws.
-        do { key = try keys.key(forPath: keyPath) } catch { return nil }
+        do {
+            key = try keys.key(forPath: keyPath)
+            lastRead.hidTheKey.withLock { $0 = false }
+        } catch {
+            lastRead.hidTheKey.withLock { $0 = keys.isInKeyDirectory(keyPath) }
+            DiagnosticLog.shared.log(
+                .error, "app",
+                "managed_keys.json unreadable (\(String(describing: type(of: error)))); "
+                    + "answering as if no key were managed")
+            return nil
+        }
         guard let key, key.hasPassphrase else { return nil }
         guard let stored = try secrets.password(for: key.id), !stored.isEmpty else { return nil }
         return stored
     }
+
+    /// Whether this source's LAST read found `managed_keys.json` unreadable
+    /// while its key path lies in the store's key directory — a key the
+    /// store would have managed, whose passphrase slot therefore could not
+    /// be found. False before the first read, after a read that could read
+    /// the store, and for a key anywhere else: the store being unreadable
+    /// costs such a key nothing, because it could never have held it.
+    ///
+    /// Whether the key is ENCRYPTED is not known here — the store that says
+    /// so is the one that could not be read. That is answered by the dial,
+    /// which is why the fact only renames the dial's own
+    /// `passphraseRequired`.
+    public var unreadableStoreHidItsKey: Bool {
+        lastRead.hidTheKey.withLock { $0 }
+    }
+
+    /// `error`, or `SSHKeyError.managedKeyStoreUnreadable` when `error` is
+    /// the dial's `passphraseRequired` and a managed-key link in `sources`
+    /// saw the store hide its key on its last read.
+    ///
+    /// The join between the fact and the failure. The chain is walked
+    /// BEFORE the dial (`SecretResolver`, `ChainedSecretSource`), and a dial
+    /// that fails for a missing passphrase got none from any link — so the
+    /// managed-key link, the last one, was asked, and what it recorded is
+    /// about this dial. Called where a chain and its dial meet:
+    /// `TunnelConnection.connect` (a forwarding, in the App and from
+    /// `tunnels start`) and the command line's `connect(to:options:)`.
+    ///
+    /// Every other error comes back as it was, and so does
+    /// `passphraseRequired` for a chain without such a link or one whose
+    /// link could read the store.
+    public static func namingUnreadableStore(
+        _ error: any Error, in sources: [any SecretSource]
+    ) -> any Error {
+        guard case .passphraseRequired? = error as? SSHKeyError,
+            unreadableStoreHidAKey(in: sources)
+        else { return error }
+        return SSHKeyError.managedKeyStoreUnreadable
+    }
+
+    /// Whether any managed-key link in `sources` — directly, or inside a
+    /// `ChainedSecretSource`, the shape a diagnosis holds its chain in —
+    /// recorded that the store hid its key.
+    static func unreadableStoreHidAKey(in sources: [any SecretSource]) -> Bool {
+        sources.contains { source in
+            if let link = source as? ManagedKeyPassphraseSecretSource {
+                return link.unreadableStoreHidItsKey
+            }
+            if let chain = source as? ChainedSecretSource {
+                return unreadableStoreHidAKey(in: chain.links)
+            }
+            return false
+        }
+    }
+}
+
+/// The reference-type box behind `unreadableStoreHidItsKey`: a struct's own
+/// stored property cannot record anything from inside the non-mutating
+/// `secret(for:)`, the reason `ChainedSecretSource` keeps its answer in a
+/// box too. A `Mutex`, so the class is plainly `Sendable`.
+private final class LastStoreRead: Sendable {
+    let hidTheKey = Mutex(false)
 }

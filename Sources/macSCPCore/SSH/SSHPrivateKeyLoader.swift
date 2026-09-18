@@ -23,6 +23,16 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     /// substring of the file (see `PEMReadFailure`), because it reaches a
     /// user-visible message and the command the failure surface offers.
     case pemNotReadable(PEMReadFailure)
+    /// The key needed a passphrase, and the one place it could have come
+    /// from could not be looked at: the key lies in the managed key
+    /// directory, and `managed_keys.json` could not be read.
+    ///
+    /// Never thrown by this loader, which only knows that no passphrase
+    /// came: it is `passphraseRequired` renamed after the dial, by
+    /// `ManagedKeyPassphraseSecretSource.namingUnreadableStore(_:in:)`, from
+    /// what the secret chain's managed-key link saw when it was asked. No
+    /// payload: the finding is the store, and the store has one name.
+    case managedKeyStoreUnreadable
 }
 
 /// Loads private SSH keys — ed25519, RSA and ECDSA on all three NIST

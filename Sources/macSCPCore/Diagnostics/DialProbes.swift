@@ -52,7 +52,9 @@ extension DiagnosticContribution {
         let usesAgent = values[SSHField.authKind] == StoredSession.AuthKind.agent.rawValue
         let secret: String
         switch DialSupport.dialSecret(
-            usesAgent: usesAgent, missing: DiagnosticReason.noSecret, context.secret)
+            usesAgent: usesAgent,
+            missing: DialSupport.missingSecretReason(DiagnosticReason.noSecret, secrets: context.secrets),
+            context.secret)
         {
         case .secret(let resolved):
             secret = resolved
@@ -347,6 +349,8 @@ public enum DialSupport {
                 // this function states is fixed sentences with no payload,
                 // and the connect form is where the feature gets named.
                 return known(.keyPEMNotReadable)
+            case .managedKeyStoreUnreadable:
+                return known(.managedKeyStoreUnreadable)
             }
         case let error as AgentError:
             switch error {
@@ -441,18 +445,46 @@ public enum DialSupport {
     /// Deliberately not the source's own error text on that last path: a
     /// failing vault's message is the one place a wrapper could hand back
     /// something it read.
+    ///
+    /// `missing` is an autoclosure, evaluated only after the lookup answered
+    /// nothing, so a reason that depends on what the lookup saw
+    /// (`missingSecretReason(_:secrets:)`) reads it after the fact.
     static func dialSecret(
-        usesAgent: Bool, missing: String, _ lookup: () throws -> String?
+        usesAgent: Bool, missing: @autoclosure () -> String, _ lookup: () throws -> String?
     ) -> DialSecret {
         guard !usesAgent else { return .secret("") }
         do {
             guard let resolved = try lookup(), !resolved.isEmpty else {
-                return .unanswered(.skipped(missing))
+                return .unanswered(.skipped(missing()))
             }
             return .secret(resolved)
         } catch {
             return .unanswered(.unavailable(DiagnosticReason.secretSourceFailed))
         }
+    }
+
+    /// `missing`, or `DiagnosticReason.managedKeyStoreUnreadable` when the
+    /// managed-key link of `secrets` found `managed_keys.json` unreadable for
+    /// a key in the managed key directory on its last read — the reason the
+    /// lookup came back empty, where there is one to name.
+    ///
+    /// Read AFTER the lookup: `dialSecret(usesAgent:missing:_:)` takes
+    /// `missing` as an autoclosure and evaluates it only once the lookup has
+    /// answered nothing, and the link records what it saw during that
+    /// lookup. Evaluated first, this would read the record of a previous
+    /// diagnosis, or none.
+    ///
+    /// For the TARGET's lookup only — `DiagnosticContribution.sshConnect`
+    /// and `DiagnosticJumpStep.dialViaJump`, two call sites, counted
+    /// 2026-09-18. A jump's secret is not looked up through a managed-key
+    /// link: `DiagnosticJump.stored` resolves it with `LoginResolver
+    /// .fallingBackToManagedKeyPassphrase`, whose store read is a `try?`
+    /// and records nothing, so `noJumpSecret` has no fact to name.
+    static func missingSecretReason(_ missing: String, secrets: (any SecretSource)?) -> String {
+        guard let secrets,
+            ManagedKeyPassphraseSecretSource.unreadableStoreHidAKey(in: [secrets])
+        else { return missing }
+        return DiagnosticReason.managedKeyStoreUnreadable
     }
 
     /// The step budget as whole seconds, for the connect timeout SSH takes.

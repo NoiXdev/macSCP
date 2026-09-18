@@ -22,7 +22,9 @@ import Foundation
 /// - `connection`: the transport failed before authentication — DNS, TCP,
 ///   TLS. Also the code for a store on this machine that could not be used:
 ///   an unreadable forwarding list (`TunnelStoreError.unreadable`, mapped
-///   here on purpose) and, through `CLIErrorMapping`'s fallback arm, an
+///   here on purpose), an unreadable managed key store that cost a key its
+///   passphrase (`SSHKeyError.managedKeyStoreUnreadable`, mapped here on
+///   purpose) and, through `CLIErrorMapping`'s fallback arm, an
 ///   unreadable session store or a store write the file system refused. No
 ///   separate code exists for that case, and none was added: renumbering or
 ///   inserting one would change what an existing script branches on.

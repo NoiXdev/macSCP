@@ -1183,6 +1183,7 @@
 "diagnostics.reason.jumpUnresolvable" = "The jump host could not be read from this connection's settings — the connection or login it names may be gone.";
 "diagnostics.reason.jumpNotReached" = "Not measured: the jump host was not reached.";
 "diagnostics.reason.noJumpSecret" = "No credential is saved for the jump host. Save one, then run the check again.";
+"diagnostics.reason.managedKeyStoreUnreadable" = "The key's passphrase could not be looked up: the list of managed keys (managed_keys.json) could not be read. Check the file, then run the check again.";
 "diagnostics.reason.jumpForwardingProhibited" = "The jump host does not forward connections for this login.";
 "diagnostics.reason.jumpCouldNotConnect" = "The jump host could not connect to the target — the name does not resolve there, or nothing accepts on the port.";
 "diagnostics.reason.jumpProbeHostRefused" = "The target’s address is neither a plain host name nor an IP address, so nothing was run with it on the jump host.";
@@ -1311,6 +1312,7 @@
 "tunnel.failure.keyUnparsable" = "The key file could not be read";
 "tunnel.failure.keyTypeNotLoadable %@" = "Keys of type %@ are not supported";
 "tunnel.failure.keyPEMNotReadable" = "The PEM key uses a feature that is not supported";
+"tunnel.failure.managedKeyStoreUnreadable" = "The key needs a passphrase, but the list of managed keys (managed_keys.json) could not be read";
 "tunnel.failure.agentUnavailable" = "No SSH agent answered";
 "tunnel.failure.agentHasNoIdentities" = "The SSH agent holds no keys";
 "tunnel.failure.agentHasNoUsableIdentity" = "The SSH agent holds no key of a supported type";

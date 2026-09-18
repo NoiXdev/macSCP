@@ -34,6 +34,7 @@ import macSCPCore
         case .keyUnparsable: return .keyUnparsable
         case .keyTypeNotLoadable: return .keyTypeNotLoadable(algorithm: "ssh-test")
         case .keyPEMNotReadable: return .keyPEMNotReadable
+        case .managedKeyStoreUnreadable: return .managedKeyStoreUnreadable
         case .agentUnavailable: return .agentUnavailable
         case .agentHasNoIdentities: return .agentHasNoIdentities
         case .agentHasNoUsableIdentity: return .agentHasNoUsableIdentity

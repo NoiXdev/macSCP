@@ -1056,6 +1056,42 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(rig.count("connect") == 0, "\(rig.events)")
     }
 
+    // MARK: - An unreadable managed key store (review follow-ups, Task 6)
+
+    /// The target's dial through the jump looks the TARGET's secret up
+    /// through the same chain as the session's own dial, so a key in the
+    /// managed key directory behind an unreadable `managed_keys.json` is
+    /// named the same way — before anything is dialled. A key outside that
+    /// directory over the same store still reads as no secret at all.
+    @Test(arguments: [true, false])
+    func theTargetsDialThroughTheJumpNamesAnUnreadableKeyStore(managed: Bool) async throws {
+        let store = try CorruptManagedKeyStoreRig()
+        defer { store.tearDown() }
+        let keyPath = managed ? store.managedKeyPath : store.unmanagedKeyPath
+        var values = Self.targetValues()
+        values[SSHField.authKind] = StoredSession.AuthKind.privateKey.rawValue
+        values[SSHField.keyPath] = keyPath
+        let rig = JumpRig()
+        let context = DiagnosticJumpStep.Context(
+            connection: FakeJumpConnection(rig: rig), jump: Self.agentJump(port: 1),
+            target: Endpoint(host: Self.targetHost, port: Self.targetPort), values: values,
+            diagnostic: DiagnosticContext(
+                secrets: ChainedSecretSource(store.chain(keyPath: keyPath)), sessionID: UUID(),
+                timeout: .seconds(5)),
+            dialer: rig.dialer, budget: .seconds(5), transcript: JumpProbeTranscript())
+
+        let row = await DiagnosticJumpStep.dialViaJump.measure(
+            context,
+            DiagnosticStepTimer(
+                id: DiagnosticStepID.targetDialViaJump, titleKey: "diagnostics.step.probe"))
+
+        #expect(
+            row.outcome
+                == .skipped(
+                    managed ? DiagnosticReason.managedKeyStoreUnreadable : DiagnosticReason.noSecret))
+        #expect(rig.count("dialTarget") == 0, "\(rig.events)")
+    }
+
     // MARK: - The report names both halves
 
     @Test func theReportNamesTheJumpInBothRenderingsAndTheJSON() throws {

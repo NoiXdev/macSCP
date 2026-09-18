@@ -36,6 +36,14 @@ public enum DiagnosticReason {
     /// The secret source itself failed. Deliberately not the source's own
     /// error text — see `DialSupport.dialSecret`.
     static let secretSourceFailed = "the secret source failed"
+    /// The dial needs a credential, the secret chain had none, and its
+    /// managed-key link found `managed_keys.json` unreadable for a key that
+    /// lies in the managed key directory — `noSecret`, with the reason the
+    /// chain came back empty. Only the session's own dial reports it: a
+    /// jump's secret is not looked up through that link (see
+    /// `DialSupport.missingSecretReason(_:secrets:)`).
+    static let managedKeyStoreUnreadable =
+        "the managed key store (managed_keys.json) could not be read, so the key's passphrase was not looked up"
     /// The S3 dial has no endpoint URL to probe.
     static let noEndpoint = "this session names no endpoint"
     /// The WebDAV dial has no base URL to probe.
@@ -224,6 +232,7 @@ public enum DiagnosticReason {
         nothingToProbe: "diagnostics.reason.nothingResolvedToProbe",
         noSecret: "diagnostics.reason.noSecret",
         secretSourceFailed: "diagnostics.reason.secretSourceFailed",
+        managedKeyStoreUnreadable: "diagnostics.reason.managedKeyStoreUnreadable",
         noEndpoint: "diagnostics.reason.noEndpoint",
         noServerURL: "diagnostics.reason.noServerURL",
         jumpUnresolvable: "diagnostics.reason.jumpUnresolvable",

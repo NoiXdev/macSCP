@@ -610,6 +610,7 @@ struct TunnelProfilesSheet: View {
         case .keyUnparsable: return "tunnel.failure.keyUnparsable"
         case .keyTypeNotLoadable: return "tunnel.failure.keyTypeNotLoadable %@"
         case .keyPEMNotReadable: return "tunnel.failure.keyPEMNotReadable"
+        case .managedKeyStoreUnreadable: return "tunnel.failure.managedKeyStoreUnreadable"
         case .agentUnavailable: return "tunnel.failure.agentUnavailable"
         case .agentHasNoIdentities: return "tunnel.failure.agentHasNoIdentities"
         case .agentHasNoUsableIdentity: return "tunnel.failure.agentHasNoUsableIdentity"
@@ -665,6 +666,9 @@ struct TunnelProfilesSheet: View {
             return String(format: L10n.string(key, "Keys of type %@ are not supported"), algorithm)
         case .keyPEMNotReadable:
             return L10n.string(key, "The PEM key uses a feature that is not supported")
+        case .managedKeyStoreUnreadable:
+            return L10n.string(
+                key, "The key needs a passphrase, but the list of managed keys (managed_keys.json) could not be read")
         case .agentUnavailable:
             return L10n.string(key, "No SSH agent answered")
         case .agentHasNoIdentities:

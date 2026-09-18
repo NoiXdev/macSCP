@@ -115,6 +115,20 @@ public struct ManagedKeyStore: Sendable {
         }
     }
 
+    /// Whether `path` names a file directly inside `keyDirectory` — the one
+    /// place a key this store manages can live (`privateKeyURL(for:)`).
+    ///
+    /// Answered from the path alone, without reading `managed_keys.json`:
+    /// it is the question that is still answerable when the store is not.
+    /// `ManagedKeyPassphraseSecretSource` asks it after an unreadable store,
+    /// to tell a key the store would have managed from one it never could.
+    /// Resolved the way `key(forPath:)` resolves, so the two agree on what
+    /// a path names.
+    public func isInKeyDirectory(_ path: String) -> Bool {
+        URL(fileURLWithPath: Self.resolved(path)).deletingLastPathComponent()
+            .standardizedFileURL.path == keyDirectory.standardizedFileURL.path
+    }
+
     private static func resolved(_ path: String) -> String {
         URL(fileURLWithPath: NSString(string: path).expandingTildeInPath).standardizedFileURL.path
     }

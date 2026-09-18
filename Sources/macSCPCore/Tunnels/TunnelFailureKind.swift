@@ -42,6 +42,10 @@ public enum TunnelFailureKind: Sendable, Equatable {
     case keyTypeNotLoadable(algorithm: String)
     /// A PEM key uses a feature this app does not read.
     case keyPEMNotReadable
+    /// The key is encrypted, it lies in the managed key directory, and the
+    /// managed key store (`managed_keys.json`) could not be read to find
+    /// its passphrase.
+    case managedKeyStoreUnreadable
     /// No ssh-agent answered.
     case agentUnavailable
     /// The ssh-agent holds no identities.
@@ -111,7 +115,7 @@ public enum TunnelFailureKind: Sendable, Equatable {
     public enum Name: String, CaseIterable, Sendable {
         case hostKeyMismatch, hostKeyNotAccepted, authenticationFailed
         case keyFileNotFound, keyPassphraseRequired, keyPassphraseRejected, keyUnparsable
-        case keyTypeNotLoadable, keyPEMNotReadable
+        case keyTypeNotLoadable, keyPEMNotReadable, managedKeyStoreUnreadable
         case agentUnavailable, agentHasNoIdentities, agentHasNoUsableIdentity
         case agentRefusedEveryIdentity, agentMisbehaved
         case keychainUnreadable, connectionFailed, serverAnswerUnusable
@@ -133,6 +137,7 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case .keyUnparsable: return .keyUnparsable
         case .keyTypeNotLoadable: return .keyTypeNotLoadable
         case .keyPEMNotReadable: return .keyPEMNotReadable
+        case .managedKeyStoreUnreadable: return .managedKeyStoreUnreadable
         case .agentUnavailable: return .agentUnavailable
         case .agentHasNoIdentities: return .agentHasNoIdentities
         case .agentHasNoUsableIdentity: return .agentHasNoUsableIdentity
@@ -192,6 +197,11 @@ public enum TunnelFailureKind: Sendable, Equatable {
             return "this app cannot load a key of type \(algorithm)"
         case .keyPEMNotReadable:
             return "the key is a PEM file with a feature this app does not read"
+        case .managedKeyStoreUnreadable:
+            // Names the file and nothing read from it: the finding is that
+            // the store could not be read, not what it holds.
+            return "the key is encrypted, and its passphrase was not looked up "
+                + "because the managed key store (managed_keys.json) could not be read"
         case .agentUnavailable:
             return "no ssh-agent answered on SSH_AUTH_SOCK"
         case .agentHasNoIdentities:

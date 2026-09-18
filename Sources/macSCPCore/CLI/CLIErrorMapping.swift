@@ -91,6 +91,13 @@ public enum CLIErrorMapping {
         // reads that code off the real session-store error.
         case is TunnelStoreError:
             return .connection
+        // The key store on this machine could not be read (review
+        // follow-ups of 2026-09-18, Task 6): a store that could not be used,
+        // which `CLIExitCode.connection` covers — and the code the same
+        // failure exited with through `default` while it still read as a
+        // missing passphrase, so no script's branch moves.
+        case SSHKeyError.managedKeyStoreUnreadable:
+            return .connection
         // The server accepted the connection and the login, then did not
         // start the SFTP subsystem asked of it — a remote-side refusal.
         case let error as SFTPStartError:
@@ -252,6 +259,10 @@ public enum CLIErrorMapping {
             case .noResponse:
                 return "Error: the server did not start SFTP; it may not offer SFTP at all"
             }
+        // The log's sentence, not a second spelling of it: it names the file
+        // and nothing read from it.
+        case SSHKeyError.managedKeyStoreUnreadable:
+            return "Error: " + DialSupport.reason(for: error)
         case is PasswordCommandError:
             return "Error: --password-command failed: \(error)"
         case is KeychainError:
