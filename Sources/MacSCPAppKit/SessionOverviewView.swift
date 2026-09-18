@@ -10,6 +10,12 @@ import macSCPCore
 /// ids cannot be resolved one way at the detail pane and another way
 /// somewhere else later.
 ///
+/// The group is named by its full path ("Work / Prod"), the label every
+/// group picker gives it, read from the same builder
+/// (`GroupPickerEntries.build(groups:)`) rather than composed here: two
+/// folders named "Prod" under different parents are told apart only by
+/// where they sit (final review of the jump-and-groups plan, T5-6).
+///
 /// An id that names nothing comes back as `nil`, never as the first entry of
 /// the list: a group deleted out from under a session must drop the row, not
 /// mislabel it. `SessionOverviewModel` omits a fact whose name is `nil` OR
@@ -18,8 +24,11 @@ enum SessionOverviewNames {
     static func resolve(
         for session: StoredSession, groups: [StoredGroup], loginSets: [LoginSet]
     ) -> (group: String?, loginSet: String?) {
-        (group: groups.first { $0.id == session.groupID }?.name,
-         loginSet: loginSets.first { $0.id == session.loginSetID }?.name)
+        let groupPath = session.groupID.flatMap { groupID in
+            GroupPickerEntries.build(groups: groups).first { $0.id == groupID }?.path
+        }
+        return (group: groupPath,
+                loginSet: loginSets.first { $0.id == session.loginSetID }?.name)
     }
 }
 

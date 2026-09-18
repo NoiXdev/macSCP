@@ -896,7 +896,6 @@ extension ContentView {
                         // space below the content.
                         ConnectionFormView(
                             viewModel: tab.connectionViewModel,
-                            groups: sessionListViewModel.groups,
                             sessionList: sessionListViewModel,
                             resolveLoginSetForSubmit: {
                                 let form = tab.connectionViewModel

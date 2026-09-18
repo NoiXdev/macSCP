@@ -42,6 +42,25 @@ struct SessionOverviewNamesTests {
         #expect(names.loginSet == nil)
     }
 
+    /// A nested group is shown by its full path, the label every group
+    /// picker gives it (final review, T5-6), read from the same builder
+    /// rather than composed here. Two "Prod" folders under different parents
+    /// are told apart only this way — so both are in the fixture, and the
+    /// one the id names must come back with its own parent.
+    @Test func aNestedGroupIsShownByItsPathFromTheSharedBuilder() {
+        let work = StoredGroup(name: "Work", position: 0)
+        let home = StoredGroup(name: "Home", position: 1)
+        let homeProd = StoredGroup(name: "Prod", parentID: home.id, position: 0)
+        let workProd = StoredGroup(name: "Prod", parentID: work.id, position: 0)
+        let groups = [work, home, homeProd, workProd]
+        let names = SessionOverviewNames.resolve(
+            for: Self.session(groupID: workProd.id, loginSetID: nil),
+            groups: groups, loginSets: [])
+        let builderPath = GroupPickerEntries.build(groups: groups).first { $0.id == workProd.id }?.path
+        #expect(names.group == "Work / Prod")
+        #expect(names.group == builderPath)
+    }
+
     @Test func theLoginSetNameComesFromTheIdAndNotFromTheOrder() {
         let first = Self.loginSet("Work laptop")
         let wanted = Self.loginSet("Backup account")

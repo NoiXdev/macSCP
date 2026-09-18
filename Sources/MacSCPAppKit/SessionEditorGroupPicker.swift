@@ -22,8 +22,11 @@ import macSCPCore
 /// afterwards are `SessionEditorNewGroupPlan`'s, tested there.
 struct SessionEditorGroupPicker: View {
     @Bindable var viewModel: ConnectionViewModel
-    /// `ConnectionFormView.groups` — the session list's groups.
-    let groups: [StoredGroup]
+    /// The one list the picker reads: its rows, the prompt's title and the
+    /// group `SessionEditorNewGroupPlan.commit` creates all come from
+    /// `sessionList.groups`. It used to take the rows as a separate `groups`
+    /// parameter, which agreed with the other two only because its one
+    /// caller passed the same list twice (final review, T5-1).
     let sessionList: SessionListViewModel
     /// The picker's accessibility label; the form row draws the visible one.
     let label: String
@@ -35,7 +38,7 @@ struct SessionEditorGroupPicker: View {
         HStack(spacing: 8) {
             Picker(label, selection: $viewModel.selectedGroupID) {
                 Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
-                ForEach(GroupPickerEntries.build(groups: groups)) { entry in
+                ForEach(GroupPickerEntries.build(groups: sessionList.groups)) { entry in
                     Text(entry.path).tag(UUID?.some(entry.id))
                 }
             }
@@ -50,8 +53,9 @@ struct SessionEditorGroupPicker: View {
                 "Creates a group inside the chosen one, or at the top level when no group is chosen"))
         }
         // The group is created the moment Create is pressed — inside the
-        // group the picker shows, at the top level for "No group" — and the
-        // picker then shows it. It stays created if the editor is cancelled
+        // group the picker shows, at the top level for "No group", and
+        // refused like the sidebar's when that group no longer exists — and
+        // the picker then shows it. It stays created if the editor is cancelled
         // afterwards, as a group made from the sidebar does (decided in
         // Task 5's brief).
         .alert(

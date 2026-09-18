@@ -31,26 +31,6 @@ struct SessionEditorNewGroupPlanTests {
         })
     }
 
-    // MARK: - Where it lands
-
-    @Test func withNoGroupChosenTheNewGroupLandsAtTheTopLevel() {
-        let work = StoredGroup(name: "Work")
-        #expect(SessionEditorNewGroupPlan.parentID(forSelection: nil, groups: [work]) == nil)
-    }
-
-    @Test func withAGroupChosenTheNewGroupLandsInsideIt() {
-        let work = StoredGroup(name: "Work")
-        #expect(SessionEditorNewGroupPlan.parentID(forSelection: work.id, groups: [work]) == work.id)
-    }
-
-    /// A selection naming no group — deleted from the sidebar while the
-    /// editor was open — is what the picker cannot show either: top level,
-    /// rather than a create the store would refuse for its missing parent.
-    @Test func aChosenGroupThatNoLongerExistsLandsAtTheTopLevel() {
-        let work = StoredGroup(name: "Work")
-        #expect(SessionEditorNewGroupPlan.parentID(forSelection: UUID(), groups: [work]) == nil)
-    }
-
     // MARK: - The prompt's title
 
     @Test func thePromptIsTitledLikeTheSidebarsForTheSameParent() {
@@ -66,7 +46,7 @@ struct SessionEditorNewGroupPlanTests {
                 == SidebarNewGroupAlertPlan.title(parentID: nil, groups: [work]))
     }
 
-    // MARK: - Commit: created, nested, and selected
+    // MARK: - Commit: where it lands, and what the picker shows after
 
     @Test func committingAtTheTopLevelCreatesTheGroupAndSelectsIt() throws {
         let directory = Self.makeDirectory()
@@ -114,6 +94,40 @@ struct SessionEditorNewGroupPlanTests {
         #expect(created == nil)
         #expect(sessionList.groups.map(\.id) == [work.id])
         #expect(form.selectedGroupID == work.id)
+    }
+
+    /// A chosen group that no longer exists — deleted from the sidebar while
+    /// the editor was open — is REFUSED, with the typed error the sidebar's
+    /// own "New group…" gets for the same stale parent
+    /// (`CreateGroupParentMissing`, through `errorMessage`), rather than
+    /// lifted to the top level the user did not ask for (final review, M11).
+    /// The picker keeps what it showed.
+    @Test func aChosenGroupThatNoLongerExistsIsRefusedLikeTheSidebar() throws {
+        let directory = Self.makeDirectory()
+        let sidebarDirectory = Self.makeDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: sidebarDirectory)
+        }
+        let sessionList = Self.makeSessionList(in: directory)
+        let work = try #require(sessionList.createGroup(named: "Work"))
+        let form = Self.makeForm()
+        let vanished = UUID()
+        form.selectedGroupID = vanished
+
+        let created = SessionEditorNewGroupPlan.commit(name: "Prod", form: form, sessionList: sessionList)
+
+        #expect(created == nil)
+        #expect(sessionList.groups.map(\.id) == [work.id])
+        #expect(form.selectedGroupID == vanished)
+        let parentMissing = String(
+            format: CoreL10n.string("core.session.groupSaveFailed %@"),
+            CoreL10n.string("core.session.groupParentMissing"))
+        #expect(sessionList.errorMessage == parentMissing)
+        // The sidebar's route, asked about the same stale parent.
+        let sidebarList = Self.makeSessionList(in: sidebarDirectory)
+        #expect(sidebarList.createGroup(named: "Prod", inGroup: vanished) == nil)
+        #expect(sessionList.errorMessage == sidebarList.errorMessage)
     }
 
     // MARK: - Catalogue

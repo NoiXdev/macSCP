@@ -3,17 +3,14 @@ import macSCPCore
 
 struct ConnectionFormView: View {
     @Bindable var viewModel: ConnectionViewModel
-    /// Groups offered by the group picker (edit mode, and new mode once
-    /// `shouldSaveSession` is on) — passed in by `ContentView` from
-    /// `SessionListViewModel.groups`.
-    var groups: [StoredGroup] = []
-    /// Full view model (M10b/T3), not just an array like `groups` above:
+    /// Full view model (M10b/T3), not an array of its lists: the group
+    /// picker reads its `groups` (`SessionEditorGroupPicker`), and
     /// the three-way login block needs `loginSets` for its picker AND
     /// `suggestedSetName(forLabel:)` for the "save as new set" name
     /// prompt AND — since "Manage logins…" opens the SAME sheet locally
     /// (mockup section 4C, TOFU-footnote pattern) — a live reference so
     /// edits made there are immediately visible everywhere else this
-    /// instance is shared (the sidebar, this very picker), unlike
+    /// instance is shared (the sidebar, the login picker), unlike
     /// `KnownHostsSheet`'s throwaway store instance.
     let sessionList: SessionListViewModel
     /// Called right before `connect()`/`validateForEditSave()` whenever the
@@ -490,7 +487,7 @@ struct ConnectionFormView: View {
                                 let groupLabel = L10n.string("connection.field.group", "Group")
                                 FormRow(label: groupLabel) {
                                     SessionEditorGroupPicker(
-                                        viewModel: viewModel, groups: groups,
+                                        viewModel: viewModel,
                                         sessionList: sessionList, label: groupLabel)
                                 }
                             }
