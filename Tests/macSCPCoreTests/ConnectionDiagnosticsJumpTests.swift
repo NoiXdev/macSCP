@@ -658,6 +658,33 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(ping.detail == "ping exited with status 2")
     }
 
+    /// The step hands its reader the hop limit its own command carried (fix
+    /// round 2): a header-less walk (BSD's header goes to standard error)
+    /// that stops on an answered hop at `-m 17` is the hop limit, not an
+    /// arrival at the target. CONSTRUCTED in the recorded BSD row shape.
+    @Test func aHeaderlessTraceAtTheCommandsHopLimitIsNotAnArrival() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        let maxHops = JumpProbeCommand.tracerouteMaxHops(budget: .seconds(20))
+        let rows = (1...maxHops).map { " \($0)  10.9.\($0).1  0.4\($0) ms" }
+        rig.answer(
+            .traceroute,
+            with: .output(
+                RemoteCommandOutput(
+                    standardOutput: rows.joined(separator: "\n") + "\n", exitStatus: 0)))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .trace)
+
+        #expect(rig.events.contains(
+            "exec traceroute -n -q 1 -w 1 -m \(maxHops) \(Self.quotedTarget)"), "\(rig.events)")
+        let trace = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
+        #expect(trace.detail == "measured with traceroute; "
+            + DiagnosticReason.traceHopLimitReached(afterHop: maxHops))
+        #expect(trace.table?.rows.last?.last == DiagnosticTraceColumn.answered)
+    }
+
     /// A step its budget cuts off reports what it had collected: the race
     /// hands the step's own `cut` the step's transcript. Deterministic
     /// because the transcript is filled HERE, before the race, by a step
@@ -671,15 +698,25 @@ struct ConnectionDiagnosticsJumpTests {
         let context = Self.stepContext(rig: rig, budget: .milliseconds(100))
         let template: DiagnosticJumpStep
         switch kind {
-        case .trace:
+        case .tracepath:
+            // `tracepath` runs without `-m`: a walk that neither arrived nor
+            // said it ran out of hops stopped LOOKING.
             template = .traceFromJump
-            context.transcript.begin(.traceroute)
+            context.transcript.begin(.tracepath)
             context.transcript.append(Array("""
-                traceroute to 10.0.0.5 (10.0.0.5), 17 hops max, 60 byte packets
-                 1  10.0.0.1  0.412 ms
-                 2  *
+                 1?: [LOCALHOST]                      pmtu 1500
+                 1:  10.0.0.1                                              0.402ms
+                 2:  no reply
 
                 """.utf8))
+        case .traceroute:
+            // Header-less, as BSD prints it. Under this 100 ms budget the
+            // command would have carried `-m 1` (`tracerouteMaxHops`), and
+            // the cut reads that same limit: hop 1 is the limit, not the
+            // target (fix round 2).
+            template = .traceFromJump
+            context.transcript.begin(.traceroute)
+            context.transcript.append(Array(" 1  10.0.0.1  0.412 ms\n".utf8))
         case .ping:
             template = .icmpFromJump
             context.transcript.begin(.ping)
@@ -701,11 +738,18 @@ struct ConnectionDiagnosticsJumpTests {
             timer: DiagnosticStepTimer(id: template.id, titleKey: "diagnostics.step.probe"))
 
         switch kind {
-        case .trace:
+        case .tracepath:
             #expect(row.outcome == .ok, "\(row.outcome.label)")
-            #expect(row.detail == "measured with traceroute; "
+            #expect(row.detail == "measured with tracepath; "
                 + DiagnosticReason.traceStoppedByBudget(afterHop: 2))
             #expect(row.table?.rows.count == 2)
+        case .traceroute:
+            #expect(JumpProbeCommand.tracerouteMaxHops(budget: context.budget) == 1)
+            #expect(row.detail == "measured with traceroute; "
+                + DiagnosticReason.traceHopLimitReached(afterHop: 1))
+            #expect(row.table?.rows == [
+                ["1", "10.0.0.1", "0.4 ms", DiagnosticTraceColumn.answered]
+            ])
         case .ping:
             #expect(row.outcome == .ok, "\(row.outcome.label)")
             #expect(row.detail.hasPrefix("10.0.0.5 1 replies before the step's budget ran out"),
@@ -714,7 +758,7 @@ struct ConnectionDiagnosticsJumpTests {
     }
 
     enum CutStep: String, CaseIterable, CustomTestStringConvertible {
-        case trace, ping
+        case tracepath, traceroute, ping
         var testDescription: String { rawValue }
     }
 

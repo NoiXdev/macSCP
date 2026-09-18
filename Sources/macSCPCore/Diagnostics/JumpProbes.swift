@@ -234,8 +234,13 @@ struct JumpProbeCommand: Sendable, Equatable {
     /// one second per hop is its worst case where hops are probed one after
     /// another (BusyBox, BSD), so the whole seconds of the budget less three
     /// — the exec round trip, the tool's own name lookup, and the last hop's
-    /// second — and never more than traceroute's own default of 30
-    /// (`NetworkTrace.defaultMaxHops`). 17 inside the default 20 s budget.
+    /// second — and never more than 30, the local trace's own limit
+    /// (`NetworkTrace.defaultMaxHops`; also the Linux and BusyBox tools'
+    /// default, where BSD's is 64). 17 inside the default 20 s budget.
+    ///
+    /// The one source of the limit: the command is built with it, and the
+    /// reader is handed the same value (`JumpProbeReading.traceroute(_:target:
+    /// maxHops:completion:)`) — no reader assumes any tool's default.
     static func tracerouteMaxHops(budget: Duration) -> Int {
         min(NetworkTrace.defaultMaxHops, max(1, Int(budget.seconds) - 3))
     }
@@ -423,11 +428,20 @@ enum JumpProbeReading {
     /// - A row with an annotation is destination-unreachable with that code.
     /// - The last row, when it answered with no annotation, is where the
     ///   tool stopped because it ARRIVED — `traceroute` ends at the
-    ///   destination, an unreachable, or its hop limit — unless the header
-    ///   says that row is the hop limit and not the destination. So it
+    ///   destination, an unreachable, or its hop limit — unless that row
+    ///   sits at the hop limit and is not the named destination. So it
     ///   becomes the destination's port-unreachable, and the destination is
     ///   the header's address, or that row's when there is no header.
     /// - A last row at the hop limit ends the walk `.hopLimit`.
+    ///
+    /// **The hop limit is `maxHops`, the one the command was built with**
+    /// (fix round 2) — never an assumed default, and never the header's
+    /// count, which is only there on some systems. BSD writes the header to
+    /// standard error, which is dropped, so a header-less walk at the
+    /// probe's `-m 17` used to be read against an assumed 30: its answered
+    /// seventeenth hop read as arriving, and a router was reported as the
+    /// target. A last row at `maxHops` that is not the literal target or the
+    /// header's address is the hop limit.
     /// - Anything else — a walk that stopped at a silent hop short of the
     ///   limit, hop numbers out of order, a row that is not a row — is no
     ///   answer.
@@ -440,7 +454,7 @@ enum JumpProbeReading {
     /// destination, which says so itself. A walk the budget `cut` ends
     /// `.budget`, with the rows it had.
     static func traceroute(
-        _ output: String, target: JumpProbeHost, completion: JumpProbeCompletion
+        _ output: String, target: JumpProbeHost, maxHops: Int, completion: JumpProbeCompletion
     ) -> NetworkTraceOutcome? {
         var header: (destination: String, maxHops: Int)?
         var rows: [TraceRow] = []
@@ -457,7 +471,7 @@ enum JumpProbeReading {
         }
         return walk(
             rows, destination: header?.destination ?? literal(target),
-            maxHops: header?.maxHops ?? NetworkTrace.defaultMaxHops, completion: completion,
+            maxHops: maxHops, completion: completion,
             arrivedWithoutAnnotation: { row, maxHops, destination in
                 row.address == destination
                     || (completion == .exited(0) && row.ttl < maxHops)
@@ -501,7 +515,9 @@ enum JumpProbeReading {
         }
         return walk(
             rows, destination: reached ?? literal(target),
-            maxHops: ranOutOfHops ? (rows.last?.ttl ?? 0) : NetworkTrace.defaultMaxHops,
+            // Its hop limit only when it SAID it ran out: `tracepath` is run
+            // without `-m`, and no default of its is assumed here.
+            maxHops: ranOutOfHops ? (rows.last?.ttl ?? 0) : Int.max,
             completion: completion,
             arrivedWithoutAnnotation: { row, _, destination in row.address == destination })
     }
@@ -843,7 +859,9 @@ extension DiagnosticJumpStep {
             guard let (tool, printed) = context.transcript.current,
                 let host = JumpProbeHost(context.target.host),
                 let outcome = JumpProbeRun.readTrace(
-                    printed, by: tool, target: host, completion: .cut)
+                    printed, by: tool, target: host,
+                    maxHops: JumpProbeCommand.tracerouteMaxHops(budget: context.budget),
+                    completion: .cut)
             else { return timer.finish(.timedOut, "") }
             return JumpProbeRun.traceRow(outcome, by: tool, timer: timer)
         }
@@ -868,7 +886,7 @@ extension DiagnosticJumpStep {
                 return timer.finish(.unavailable(DiagnosticReason.jumpExecRefused), detail)
             }
             if let outcome = JumpProbeRun.readTrace(
-                output.standardOutput, by: command.tool, target: host,
+                output.standardOutput, by: command.tool, target: host, maxHops: maxHops,
                 completion: .exited(output.exitStatus))
             {
                 return JumpProbeRun.traceRow(outcome, by: command.tool, timer: timer)
@@ -948,11 +966,12 @@ private enum JumpProbeRun {
     /// is not a trace tool.
     static func readTrace(
         _ output: String, by tool: JumpProbeCommand.Tool, target: JumpProbeHost,
-        completion: JumpProbeCompletion
+        maxHops: Int, completion: JumpProbeCompletion
     ) -> NetworkTraceOutcome? {
         switch tool {
         case .traceroute:
-            return JumpProbeReading.traceroute(output, target: target, completion: completion)
+            return JumpProbeReading.traceroute(
+                output, target: target, maxHops: maxHops, completion: completion)
         case .tracepath:
             return JumpProbeReading.tracepath(output, target: target, completion: completion)
         case .getent, .ping:

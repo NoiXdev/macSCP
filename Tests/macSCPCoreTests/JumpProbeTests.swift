@@ -275,7 +275,7 @@ struct JumpProbeTests {
         let outcome = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.rigTracerouteToSshd2.standardOutput, target: host,
-                completion: .exited(0)))
+                maxHops: 30, completion: .exited(0)))
         #expect(
             outcome
                 == .measured(
@@ -301,7 +301,7 @@ struct JumpProbeTests {
         let outcome = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.rigTracerouteSilentTail.standardOutput, target: host,
-                completion: .exited(0)))
+                maxHops: 4, completion: .exited(0)))
         #expect(
             outcome
                 == .measured(
@@ -328,7 +328,7 @@ struct JumpProbeTests {
         let outcome = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.macOSTracerouteLoopback.standardOutput, target: host,
-                completion: .exited(0)))
+                maxHops: 64, completion: .exited(0)))
         #expect(outcome.reachedDestination)
         #expect(
             ConnectionDiagnostics.traceTable(outcome)?.rows == [
@@ -341,7 +341,7 @@ struct JumpProbeTests {
         let outcome = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.constructedTracerouteTwoHops.standardOutput, target: host,
-                completion: .exited(0)))
+                maxHops: 30, completion: .exited(0)))
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
         #expect(
             ConnectionDiagnostics.traceTable(outcome)?.rows == [
@@ -357,7 +357,7 @@ struct JumpProbeTests {
         let outcome = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.constructedTracerouteProhibited.standardOutput, target: host,
-                completion: .exited(0)))
+                maxHops: 30, completion: .exited(0)))
         #expect(
             ConnectionDiagnostics.traceOutcome(outcome)
                 == .failed(DiagnosticReason.traceHopUnreachable(code: 13, hop: 2)))
@@ -374,7 +374,56 @@ struct JumpProbeTests {
     ])
     func tracerouteOutputThatIsNotAWalkIsNotRead(output: String) throws {
         let host = try #require(JumpProbeHost("target.invalid"))
-        #expect(JumpProbeReading.traceroute(output, target: host, completion: .exited(0)) == nil)
+        #expect(
+            JumpProbeReading.traceroute(output, target: host, maxHops: 30, completion: .exited(0))
+                == nil)
+    }
+
+    /// A header-less walk — BSD's `traceroute` writes its header to standard
+    /// error, which is dropped — that stops at the hop limit the probe
+    /// passed, on a hop that answered (fix round 2). Until then the reader
+    /// assumed a limit of 30 when there was no header, so a walk cut at the
+    /// probe's `-m 17` read as arriving at hop 17: `ok` for a name target,
+    /// the router taken for the target. The limit is now the one the
+    /// command was built with, and a last row at it that is not the literal
+    /// target is `.hopLimit`.
+    ///
+    /// CONSTRUCTED, in the recorded BSD row shape (`macOSTracerouteLoopback`):
+    /// seventeen routers, one per hop.
+    @Test(arguments: ["target.invalid", "10.0.0.5"])
+    func aHeaderlessWalkAtTheProbesHopLimitIsTheHopLimit(target: String) throws {
+        let host = try #require(JumpProbeHost(target))
+        let maxHops = JumpProbeCommand.tracerouteMaxHops(budget: .seconds(20))
+        let rows = (1...maxHops).map { " \($0)  10.9.\($0).1  0.4\($0) ms" }
+        let output = rows.joined(separator: "\n") + "\n"
+
+        let outcome = try #require(
+            JumpProbeReading.traceroute(
+                output, target: host, maxHops: maxHops, completion: .exited(0)))
+
+        #expect(outcome.ending == .hopLimit)
+        #expect(outcome.reachedDestination == false)
+        #expect(ConnectionDiagnostics.traceTable(outcome)?.rows.last?.last
+            == DiagnosticTraceColumn.answered)
+        #expect(
+            ConnectionDiagnostics.traceDetail(outcome)
+                == DiagnosticReason.traceHopLimitReached(afterHop: maxHops))
+    }
+
+    /// The same header-less shape, reaching a target named by its address
+    /// before the limit: arrived, and `ok`. CONSTRUCTED as above.
+    @Test func aHeaderlessWalkThatReachesTheLiteralTargetArrived() throws {
+        let host = try #require(JumpProbeHost("10.0.0.5"))
+        let output = " 1  10.0.0.1  0.412 ms\n 2  10.0.0.5  0.930 ms\n"
+
+        let outcome = try #require(
+            JumpProbeReading.traceroute(
+                output, target: host,
+                maxHops: JumpProbeCommand.tracerouteMaxHops(budget: .seconds(20)),
+                completion: .exited(0)))
+
+        #expect(outcome.reachedDestination)
+        #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
     }
 
     /// A traceroute that did not exit 0 did not arrive (fix round 1):
@@ -387,11 +436,11 @@ struct JumpProbeTests {
         #expect(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.macOSTracerouteLoopback.standardOutput, target: host,
-                completion: .exited(1)) == nil)
+                maxHops: 64, completion: .exited(1)) == nil)
         let named = try #require(
             JumpProbeReading.traceroute(
                 JumpProbeSamples.constructedTracerouteTwoHops.standardOutput, target: host,
-                completion: .exited(1)))
+                maxHops: 30, completion: .exited(1)))
         #expect(named.reachedDestination)
     }
 
@@ -408,7 +457,7 @@ struct JumpProbeTests {
              3
             """
         let outcome = try #require(
-            JumpProbeReading.traceroute(cut, target: host, completion: .cut))
+            JumpProbeReading.traceroute(cut, target: host, maxHops: 17, completion: .cut))
         #expect(outcome.hops.map(\.ttl) == [1, 2])
         #expect(outcome.ending == .budget)
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
@@ -441,6 +490,24 @@ struct JumpProbeTests {
                     ],
                     destination: "10.0.0.5", ending: .answered))
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
+    }
+
+    /// `tracepath` runs without `-m`, so no hop limit of its is assumed
+    /// (fix round 2): thirty answered hops with neither `reached` nor
+    /// `Too many hops` is a walk that did not say how it ended — no answer,
+    /// not the limit of some default. CONSTRUCTED.
+    @Test func aTracepathIsHeldToNoAssumedHopLimit() throws {
+        let host = try #require(JumpProbeHost("target.invalid"))
+        let rows = (1...NetworkTrace.defaultMaxHops).map {
+            " \($0):  10.9.\($0).1                                  0.4\($0)ms"
+        }
+        let output = rows.joined(separator: "\n") + "\n"
+        #expect(
+            JumpProbeReading.tracepath(output, target: host, completion: .exited(0)) == nil)
+        let said = try #require(
+            JumpProbeReading.tracepath(
+                output + "     Too many hops: pmtu 1500\n", target: host, completion: .exited(0)))
+        #expect(said.ending == .hopLimit)
     }
 
     @Test func aTracepathCutByTheBudgetKeepsItsHops() throws {
