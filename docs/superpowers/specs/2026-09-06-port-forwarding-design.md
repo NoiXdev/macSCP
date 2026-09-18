@@ -423,12 +423,62 @@ block on a `deleteAll` refusal — a session nobody could delete until the
 file is fixed by hand was judged worse than a stale row — it warns to
 stderr naming the file, still removes the session, and exits 0.
 
-**Residuals, their own BACKLOG rows:** `TunnelManager.save`/`remove`
-still stop a profile's runner *before* the store write, so a refused
-write over an unreadable file still stops a tunnel that was in fact
-untouched on disk; orphan rows of a session deleted while the store was
-unreadable resurface as stopped, invisible rows once the file is
-repaired; `sessions rm`'s prompt/`--verbose` output say "0 forwardings"
-rather than "unknown" for a session whose count could not be read; and
-exit code 13 is documented (`CLIExitCode.swift:22`) as a transport
-failure but is now also returned for a store failure, which is not one.
+**Residuals, closed the same day** — see "The store refusal's residuals
+closed" below, from the technical-backlog plan's sibling, the next-build
+plan.
+
+### The store refusal's residuals closed (Task 2, `208c1f32`, `8bd29c25`, `5fc4f876`, `ece85285`, `cf5f2f20`, `c043c8f1`, `d1243789`)
+
+The four residuals the subsection above left open, all closed the same
+day by the next-build plan's Task 2 (ledger:
+`.superpowers/sdd/2026-09-17-next-build/progress.md`).
+
+`TunnelManager.save`/`remove` used to call `discardRunner` **before** the
+store write; a refused write over an unreadable `tunnels.json` therefore
+stopped a profile's running tunnel although nothing on disk had actually
+changed. The write now comes first (`208c1f32`); only a write that
+succeeded stops the runner.
+
+Orphan rows — a session deleted while the store was unreadable — used to
+resurface as stopped rows once the file was repaired, because the
+session filter ran only in the activation reconcile. `8bd29c25` added it
+there; `5fc4f876` found the same gap in `init` and `reload()` (behind
+`save`, `remove`, `startAutoStart` and `reloadAutoStartProfiles`) and
+replaced all of it with one private `listed(_:known:)`, used by every
+read. Because `reload()` itself stops nothing, the reconcile now also
+discards any runner it does not list, so an orphan's runner cannot
+outlive its row; `ece85285` closed a further window where `remove(_:)`
+kept a row listed while its `discardRunner` was parked, letting a menu
+start in that gap pass `start()`'s guard for a row about to disappear.
+
+`sessions rm`'s prompt and `--verbose` output used to say "0
+forwardings" for a session whose count could not be read, rather than
+saying the count is unknown. `cf5f2f20` reads the count through
+`readProfiles()` instead of the lenient reader, reports an unreadable
+count as unknown (`SessionRemovalWording.swift`), and the summary no
+longer claims those forwardings were deleted. A same-day sibling fix,
+outside this residual list but in the same commit sequence
+(`d94f962d`), rewords the deletion QUESTION itself: it used to promise
+"and an unknown number of forwardings" for a session whose forwarding
+count could not be read, though the removal leaves those forwardings in
+the file; it now asks about the session alone and says the forwardings
+will stay in the forwarding list.
+
+Exit code 13 was documented (`CLIExitCode.swift:22`) as a transport
+failure only; `c043c8f1` names an unreadable forwarding list, and an
+unreadable or unwritable session store, in the same doc bullet, with no
+code change.
+
+`TunnelRunner` gained a related, not-a-residual fix in the same task: a
+report that reaches the runner once `stop()` has begun is now dropped
+instead of applied as an intermediate `.active` state and log line
+(`9a96e1c9`) — closing the "buffered connection reports" residual under
+"The connection-failure counter in `.active`" above.
+
+**Newly pinned by test only, no behaviour change** (`d1243789`):
+`forgetEverything(for:)`'s "rows leave the mirror before any await"
+ordering, previously asserted only after the call had returned; and
+`sessions rm` over a `tunnels.json` that decodes but cannot be written,
+which still aborts the removal (exit 13, session and file untouched) —
+the behaviour the doc comment already stated, now with a case that
+plants it.
