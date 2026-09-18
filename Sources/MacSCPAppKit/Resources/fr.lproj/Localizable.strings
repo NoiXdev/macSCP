@@ -330,6 +330,7 @@
 "connection.editTitle" = "Modifier la session";
 "connection.field.password.unchanged" = "inchangé";
 "connection.field.group" = "Groupe";
+"connection.field.group.new.help" = "Crée un groupe dans celui choisi, ou au niveau supérieur si aucun groupe n’est choisi";
 "connection.saveAndConnect" = "Enregistrer et se connecter";
 
 /* Commandes de menu (M7a/T4) */

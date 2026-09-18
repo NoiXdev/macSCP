@@ -111,7 +111,7 @@ enum StoreEditing {
     /// worse answer than exit 64.
     static func groupPathSegments(_ path: String) throws -> [String] {
         let segments = path
-            .components(separatedBy: " / ")
+            .components(separatedBy: SessionCatalog.groupPathSeparator)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         guard !segments.contains(where: \.isEmpty) else {
             throw ValidationError(#"--group has an empty segment; write the path as "A / B""#)

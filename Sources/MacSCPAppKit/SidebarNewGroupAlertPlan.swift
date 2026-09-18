@@ -10,10 +10,13 @@ import macSCPCore
 /// A plain function over plain values, the same reason `TabTitlePlan`
 /// exists as a free-standing type: nothing in this project can render a
 /// view in a test, so this decision has to live somewhere a test can reach
-/// it directly. `SessionSidebar`'s `.alert(...)` is the one caller.
+/// it directly. Two callers: `SessionSidebar`'s `.alert(...)`, and
+/// `SessionEditorNewGroupPlan.title(forSelection:groups:)`, which titles the
+/// session editor's own "New group…" prompt the same way (Task 5).
 enum SidebarNewGroupAlertPlan {
-    /// `parentID` is `SessionSidebar`'s `pendingNewGroupParentID`; `groups`
-    /// is `viewModel.groups`.
+    /// `parentID` is where the group will land — `SessionSidebar`'s
+    /// `pendingNewGroupParentID`, or the editor's chosen group; `groups` is
+    /// the session list's `groups`.
     ///
     /// `nil`, or a `parentID` naming no group in `groups` — a stale id from
     /// a folder that vanished between the menu click and the alert

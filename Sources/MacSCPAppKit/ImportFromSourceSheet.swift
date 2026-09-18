@@ -239,7 +239,7 @@ struct ImportFromSourceSheet: View {
     }
 
     private func groupLabel(_ choice: ImportFromSourceViewModel.GroupChoice) -> String {
-        guard let name = model.groupName(for: choice) else {
+        guard let name = model.groupPath(for: choice) else {
             return L10n.string("import.cyberduck.group.none", "No group")
         }
         if case .create = choice {

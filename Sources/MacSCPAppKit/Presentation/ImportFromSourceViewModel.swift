@@ -126,15 +126,18 @@ final class ImportFromSourceViewModel: Identifiable {
         case create(String)
     }
 
-    /// What the picker offers: no group, every group on record, and — only
-    /// when no group of that name exists yet — a new one named after the
-    /// source.
+    /// What the picker offers: no group, every group on record in the
+    /// sidebar's depth-first order (`GroupPickerEntries`), and — only when no
+    /// group of that name exists yet — a new one named after the source.
     private(set) var groupChoices: [GroupChoice] = []
 
     // MARK: - What it plans against
 
     private let sessions: [StoredSession]
     private let groups: [StoredGroup]
+    /// `groups` as every group picker lists them: depth-first, each with
+    /// its path. Built once, since `groups` never changes after `init`.
+    private let groupEntries: [GroupPickerEntries.Entry]
 
     /// Rows the user ticked or unticked by hand, so a re-plan can put them
     /// back. Without it, flipping the labels switch would silently undo
@@ -144,6 +147,7 @@ final class ImportFromSourceViewModel: Identifiable {
     init(sessions: [StoredSession], groups: [StoredGroup]) {
         self.sessions = sessions
         self.groups = groups
+        self.groupEntries = GroupPickerEntries.build(groups: groups)
     }
 
     // MARK: - Loading
@@ -174,7 +178,7 @@ final class ImportFromSourceViewModel: Identifiable {
         // catalog entry still names itself instead of naming this file's
         // guess about it.
         sourceName = L10n.string(Source.displayNameKey, Source.id.capitalized)
-        groupChoices = Self.choices(named: sourceName, in: groups)
+        groupChoices = Self.choices(named: sourceName, in: groups, entries: groupEntries)
         groupChoice = Self.defaultChoice(named: sourceName, in: groups)
         rebuildSwitches()
 
@@ -233,11 +237,11 @@ final class ImportFromSourceViewModel: Identifiable {
         groups.first { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }
     }
 
-    private static func choices(named name: String, in groups: [StoredGroup]) -> [GroupChoice] {
+    private static func choices(
+        named name: String, in groups: [StoredGroup], entries: [GroupPickerEntries.Entry]
+    ) -> [GroupChoice] {
         var choices: [GroupChoice] = [.ungrouped]
-        choices.append(contentsOf: groups
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            .map { .existing($0.id) })
+        choices.append(contentsOf: entries.map { .existing($0.id) })
         if existingGroup(named: name, in: groups) == nil {
             choices.append(.create(name))
         }
@@ -254,11 +258,13 @@ final class ImportFromSourceViewModel: Identifiable {
         return .create(name)
     }
 
-    /// The name of a chosen group, for the picker's own labels.
-    func groupName(for choice: GroupChoice) -> String? {
+    /// Where a chosen group sits, for the picker's own labels: an existing
+    /// group's path ("Work / Prod"), the name of the one to create (which
+    /// lands at the top level, so its name is its path), `nil` for none.
+    func groupPath(for choice: GroupChoice) -> String? {
         switch choice {
         case .ungrouped: return nil
-        case .existing(let id): return groups.first { $0.id == id }?.name
+        case .existing(let id): return groupEntries.first { $0.id == id }?.path
         case .create(let name): return name
         }
     }

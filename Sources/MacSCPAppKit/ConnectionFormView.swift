@@ -489,16 +489,9 @@ struct ConnectionFormView: View {
 
                                 let groupLabel = L10n.string("connection.field.group", "Group")
                                 FormRow(label: groupLabel) {
-                                    Picker(
-                                        groupLabel,
-                                        selection: $viewModel.selectedGroupID
-                                    ) {
-                                        Text(L10n.string("sidebar.noGroup", "No group")).tag(UUID?.none)
-                                        ForEach(groups) { group in
-                                            Text(group.name).tag(UUID?.some(group.id))
-                                        }
-                                    }
-                                    .labelsHidden()
+                                    SessionEditorGroupPicker(
+                                        viewModel: viewModel, groups: groups,
+                                        sessionList: sessionList, label: groupLabel)
                                 }
                             }
                         }

@@ -340,6 +340,25 @@ struct ImportFromSourceViewModelTests {
         #expect(model.groupChoices.contains(.create(existing.name)) == false)
     }
 
+    /// The existing groups come in the sidebar's depth-first order, each
+    /// labelled with where it sits (jump-and-groups plan, Task 5) — not
+    /// alphabetically by bare name, which put "Prod" under "Home" beside
+    /// "Work" with nothing to say whose it was.
+    @Test func existingGroupsAreOfferedInTreeOrderLabelledWithTheirPath() async {
+        let work = StoredGroup(name: "Work", position: 0)
+        let prod = StoredGroup(name: "Prod", parentID: work.id, position: 0)
+        let archive = StoredGroup(name: "Archive", position: 1)
+        let model = await loadedModel(groups: [archive, prod, work])
+
+        let existing = model.groupChoices.filter {
+            if case .existing = $0 { return true } else { return false }
+        }
+        #expect(existing == [.existing(work.id), .existing(prod.id), .existing(archive.id)])
+        #expect(existing.map { model.groupPath(for: $0) } == ["Work", "Work / Prod", "Archive"])
+        #expect(model.groupPath(for: .ungrouped) == nil)
+        #expect(model.groupPath(for: .create("Fake")) == "Fake")
+    }
+
     // MARK: - The payload
 
     @Test func thePayloadCarriesOnlyTheTickedRows() async {

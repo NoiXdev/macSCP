@@ -327,6 +327,7 @@
 "connection.editTitle" = "Session bearbeiten";
 "connection.field.password.unchanged" = "unverändert";
 "connection.field.group" = "Gruppe";
+"connection.field.group.new.help" = "Legt eine Gruppe in der gewählten an, oder auf oberster Ebene, wenn keine Gruppe gewählt ist";
 "connection.saveAndConnect" = "Speichern & verbinden";
 
 /* Menü-Befehle (M7a/T4) */

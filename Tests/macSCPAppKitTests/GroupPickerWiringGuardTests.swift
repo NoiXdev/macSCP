@@ -1,0 +1,210 @@
+import Foundation
+import MacSCPTestSupport
+import Testing
+@testable import MacSCPAppKit
+@testable import macSCPCore
+
+/// Every place that chooses a group reads `GroupPickerEntries.build` and
+/// labels a group with its path (jump-and-groups plan, Task 5, closing the
+/// Interface row of 2026-09-18: "Group pickers should show the tree,
+/// everywhere a group is chosen"). None of these views can be rendered in a
+/// test, so this is a SOURCE-TEXT scan, comments and string literals blanked
+/// (`SwiftSource.blankingCommentsAndStrings`), the stripper this target's
+/// other wiring guards share.
+///
+/// The places, counted with `grep -n` on 2026-09-18 — four choosers, read
+/// from three spots in the App target:
+///
+/// | Place                               | Reads the builder in                          |
+/// |-------------------------------------|-----------------------------------------------|
+/// | Session editor's group picker       | `SessionEditorGroupPicker.swift`, its `body`  |
+/// | Session row "Move to"               | `SessionSidebar.swift`, `moveToMenuItems`     |
+/// | Folder row "Move to"                | the same `moveToMenuItems`                    |
+/// | "Import from Cyberduck" group choice | `ImportFromSourceViewModel.swift`, its `init` |
+///
+/// Both rows calling `moveToMenuItems` is `SidebarMoveToWiringGuardTests`'
+/// claim; this suite does not restate it. That the editor's group row draws
+/// `SessionEditorGroupPicker` is this suite's, since the picker moved out of
+/// `ConnectionFormView.swift` with this task.
+///
+/// ## The negative checks have positive partners
+///
+/// CLAUDE.md, "Guards that name what they watch". Each "no longer labels a
+/// group by its bare name" check reads a span a positive check on the same
+/// span proves still holds the builder, so a span that moved or emptied
+/// fails loudly instead of reading as satisfied. And the reader count is
+/// itself positive: a whole-map equality, so a reader that vanished and one
+/// that appeared are both red.
+@Suite("Group picker wiring")
+struct GroupPickerWiringGuardTests {
+    /// `#filePath` is
+    /// `<repoRoot>/Tests/macSCPAppKitTests/GroupPickerWiringGuardTests.swift`.
+    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    private static let appDirectory = "Sources/MacSCPAppKit"
+    private static let formPath = "Sources/MacSCPAppKit/ConnectionFormView.swift"
+    private static let pickerPath = "Sources/MacSCPAppKit/SessionEditorGroupPicker.swift"
+    private static let sidebarPath = "Sources/MacSCPAppKit/SessionSidebar.swift"
+    private static let importPath = "Sources/MacSCPAppKit/Presentation/ImportFromSourceViewModel.swift"
+    private static let orderingPath = "Sources/macSCPCore/Sessions/SidebarOrdering.swift"
+
+    /// The call, derived from the type rather than spelled, so a rename of
+    /// the type moves this guard with it.
+    private static let builderCall = "\(GroupPickerEntries.self).build("
+
+    private static func raw(_ path: String) throws -> String {
+        try String(contentsOf: repoRoot.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    private static func code(_ path: String) throws -> String {
+        try SwiftSource.blankingCommentsAndStrings(try raw(path))
+    }
+
+    private static func codeKeepingLiterals(_ path: String) throws -> String {
+        try SwiftSource.blankingComments(try raw(path))
+    }
+
+    // MARK: - Who reads the builder
+
+    /// Every `.swift` file under `Sources/MacSCPAppKit`, by its path from the
+    /// repo root, mapped to how often its CODE calls the builder. Files that
+    /// never call it are left out, so the map names the readers only.
+    private static func appReaders() throws -> [String: Int] {
+        let root = repoRoot.appendingPathComponent(appDirectory)
+        let enumerator = try #require(
+            FileManager.default.enumerator(atPath: root.path(percentEncoded: false)))
+        var readers: [String: Int] = [:]
+        var scanned = 0
+        while let relative = enumerator.nextObject() as? String {
+            guard relative.hasSuffix(".swift") else { continue }
+            scanned += 1
+            let path = "\(appDirectory)/\(relative)"
+            let count = TransferQueueBarCancelGuardTests.occurrenceCount(
+                of: builderCall, in: try code(path))
+            if count > 0 { readers[path] = count }
+        }
+        // The walk itself is a claim: a scan that read no files would find
+        // no readers and could only disagree with the map below by accident.
+        #expect(scanned > 100, "only \(scanned) Swift file(s) scanned under \(appDirectory)")
+        return readers
+    }
+
+    @Test func theBuilderIsReadExactlyByTheListedPlaces() throws {
+        let readers = try Self.appReaders()
+        let expected = [Self.pickerPath: 1, Self.sidebarPath: 1, Self.importPath: 1]
+        #expect(readers == expected, """
+            \(Self.builderCall) is called from \(readers.sorted { $0.key < $1.key }) in the App \
+            target, expected \(expected.sorted { $0.key < $1.key }) — the session editor's \
+            picker, moveToMenuItems (both rows' "Move to"), and the Cyberduck import. A place \
+            missing reads a flat list again; a new place is a group chooser this suite and \
+            the report's table do not account for.
+            """)
+    }
+
+    /// The Core half of "Move to": the targets themselves come from
+    /// `SidebarOrdering.moveTargets`, which reads the builder too — so the
+    /// ids a submenu offers and the paths it labels them with are one list.
+    @Test func moveTargetsReadsTheBuilder() throws {
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "public static func moveTargets(", in: try Self.code(Self.orderingPath))
+        #expect(body.contains(Self.builderCall), """
+            SidebarOrdering.moveTargets no longer calls \(Self.builderCall) — the "Move to" \
+            targets and the labels moveToMenuItems gives them come from two lists again.
+            """)
+    }
+
+    // MARK: - Each place labels a group with its path
+
+    /// The form's group row draws the picker view — the positive half that
+    /// keeps the checks on that view's body from reading a view nobody shows.
+    @Test func theEditorsGroupRowDrawsThePickerView() throws {
+        let row = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "FormRow(label: groupLabel)", in: try Self.code(Self.formPath))
+        #expect(row.contains("\(SessionEditorGroupPicker.self)("), """
+            The group FormRow in \(Self.formPath) no longer draws \(SessionEditorGroupPicker.self) \
+            — the editor's group choice is not the tree-labelled picker with its "New group…".
+            """)
+    }
+
+    @Test func theEditorsGroupPickerListsTheBuilderByPath() throws {
+        let body = try Self.pickerBody()
+        #expect(body.contains(Self.builderCall), """
+            \(Self.pickerPath)'s body no longer reads \(Self.builderCall).
+            """)
+        #expect(body.contains(".path)"), """
+            \(Self.pickerPath)'s body no longer labels an entry with its path.
+            """)
+        #expect(!body.contains("ForEach(groups)"), """
+            \(Self.pickerPath)'s body lists `groups` directly again — store order, bare \
+            names, the flat list this task retired.
+            """)
+    }
+
+    private static func pickerBodyRange() throws -> Range<Int> {
+        try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "var body: some View", in: try code(pickerPath))
+    }
+
+    private static func pickerBody() throws -> String {
+        TransferQueueBarCancelGuardTests.slice(try pickerBodyRange(), of: try code(pickerPath))
+    }
+
+    @Test func theMoveToEntriesAreLabelledByPath() throws {
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "private func moveToMenuItems(", in: try Self.code(Self.sidebarPath))
+        #expect(body.contains(Self.builderCall), """
+            moveToMenuItems in \(Self.sidebarPath) no longer reads \(Self.builderCall).
+            """)
+        #expect(body.contains(".path)"), """
+            moveToMenuItems no longer labels a target with its path.
+            """)
+        #expect(!body.contains("group.name"), """
+            moveToMenuItems labels a target with its bare name again.
+            """)
+    }
+
+    @Test func theImportsGroupChoicesComeFromTheBuilderAndShowAPath() throws {
+        let code = try Self.code(Self.importPath)
+        let initBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "init(sessions: [StoredSession], groups: [StoredGroup])", in: code)
+        #expect(initBody.contains(Self.builderCall), """
+            ImportFromSourceViewModel's init no longer reads \(Self.builderCall).
+            """)
+        let labelBody = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "func groupPath(for choice: GroupChoice)", in: code)
+        #expect(labelBody.contains(".path"), """
+            ImportFromSourceViewModel.groupPath(for:) no longer answers an existing group's \
+            path.
+            """)
+    }
+
+    // MARK: - The editor's "New group…"
+
+    @Test func theEditorOffersNewGroupBesideThePicker() throws {
+        let range = try Self.pickerBodyRange()
+        let bodyWithLiterals = TransferQueueBarCancelGuardTests.slice(
+            range, of: try Self.codeKeepingLiterals(Self.pickerPath))
+        #expect(bodyWithLiterals.contains("Button(L10n.string(\"sidebar.newGroup\""), """
+            \(Self.pickerPath)'s body no longer offers a button reading the sidebar.newGroup \
+            key — the wording every other "New group…" entry uses.
+            """)
+        #expect(try Self.pickerBody().contains("isShowingNewGroupPrompt = true"), """
+            \(Self.pickerPath)'s "New group…" button no longer opens the name prompt.
+            """)
+    }
+
+    @Test func theEditorsPromptCreatesAndTitlesThroughThePlan() throws {
+        let body = try Self.pickerBody()
+        let plan = "\(SessionEditorNewGroupPlan.self)"
+        #expect(TransferQueueBarCancelGuardTests.occurrenceCount(of: "\(plan).commit(", in: body) == 1, """
+            \(Self.pickerPath)'s body does not call \(plan).commit( exactly once — the prompt's \
+            Create button no longer creates the group and selects it through the tested plan.
+            """)
+        #expect(TransferQueueBarCancelGuardTests.occurrenceCount(of: "\(plan).title(", in: body) == 1, """
+            \(Self.pickerPath)'s body does not call \(plan).title( exactly once — the prompt no \
+            longer names the folder the group lands in.
+            """)
+    }
+}

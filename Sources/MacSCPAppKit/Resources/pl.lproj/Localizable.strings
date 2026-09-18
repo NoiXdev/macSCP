@@ -329,6 +329,7 @@
 "connection.editTitle" = "Edytuj sesję";
 "connection.field.password.unchanged" = "bez zmian";
 "connection.field.group" = "Grupa";
+"connection.field.group.new.help" = "Tworzy grupę wewnątrz wybranej lub na najwyższym poziomie, gdy żadna grupa nie jest wybrana";
 "connection.saveAndConnect" = "Zapisz i połącz";
 
 /* Polecenia menu (M7a/T4) */

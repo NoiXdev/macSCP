@@ -44,6 +44,12 @@ public struct SessionCatalog: Sendable {
         public let target: String
     }
 
+    /// What `Row.groupPath` joins a group's ancestry with. Named once so the
+    /// app's group pickers (`GroupPickerEntries`) and the CLI's `--group`
+    /// parser (`StoreEditing.groupPathSegments`) print and read the very
+    /// string this catalog prints, rather than three spellings of it.
+    public static let groupPathSeparator = " / "
+
     private let sessions: [StoredSession]
     private let groups: [StoredGroup]
 
@@ -162,7 +168,7 @@ public struct SessionCatalog: Sendable {
         Row(
             name: session.name,
             kind: session.kind,
-            groupPath: ancestry.joined(separator: " / "),
+            groupPath: ancestry.joined(separator: Self.groupPathSeparator),
             tags: session.tags,
             target: target(for: session))
     }

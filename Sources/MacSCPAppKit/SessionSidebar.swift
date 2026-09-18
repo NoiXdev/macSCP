@@ -1234,18 +1234,31 @@ struct SessionSidebar: View {
 /// common, and a shared `@ViewBuilder` here is what lets both submenus read
 /// the identical entries instead of two hand-written `ForEach`s that could
 /// disagree about what a target looks like.
+///
+/// Each group is labelled with its path ("Work / Prod"), flat, in the
+/// sidebar's depth-first order — not nested submenus (jump-and-groups plan,
+/// Task 5). A nested menu would have to draw a folder that is not itself a
+/// target (the item's current parent) as a submenu only, and a folder that
+/// IS a target and also has children as both an entry and a submenu; the
+/// path reads the same in this menu as in the editor's and the import's
+/// pickers, which cannot nest at all.
 @MainActor
 @ViewBuilder
 private func moveToMenuItems(
     for item: SidebarItem, currentParentID: UUID?, groups: [StoredGroup],
     onMove: @escaping (UUID?) -> Void
 ) -> some View {
+    // Labels only: which ids are offered is `moveTargets`' answer, which
+    // reads this same builder.
+    let paths = Dictionary(
+        GroupPickerEntries.build(groups: groups).map { ($0.id, $0.path) },
+        uniquingKeysWith: { first, _ in first })
     ForEach(
         SidebarOrdering.moveTargets(for: item, currentParentID: currentParentID, in: groups),
         id: \.self
     ) { target in
-        if let groupID = target, let group = groups.first(where: { $0.id == groupID }) {
-            Button(group.name) { onMove(groupID) }
+        if let groupID = target, let path = paths[groupID] {
+            Button(path) { onMove(groupID) }
         } else {
             Button(L10n.string("sidebar.moveTo.root", "Top level")) { onMove(nil) }
         }
