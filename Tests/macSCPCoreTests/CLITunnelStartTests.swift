@@ -95,7 +95,8 @@ struct CLITunnelStartRenderingTests {
         ),
         (
             TunnelState.failed(.connectionFailed),
-            TunnelStateJSONLine(state: "failed", reason: "the connection failed")
+            TunnelStateJSONLine(
+                state: "failed", reason: "the connection failed", reasonIsGeneric: true)
         ),
         (TunnelState.needsConfirmation, TunnelStateJSONLine(state: "needsConfirmation")),
     ])
@@ -107,13 +108,52 @@ struct CLITunnelStartRenderingTests {
     }
 
     /// The runner's own sentence, where it has one, is the `reason` — the
-    /// log's text, fuller than the kind's summary for a free-text failure.
+    /// log's text, fuller than the kind's summary for a free-text failure —
+    /// and `reasonIsGeneric` says so: `false`, since this sentence is not
+    /// the kind's own.
     @Test func theJSONReasonIsTheRunnersSentenceWhenGiven() throws {
         let line = TunnelStateLine.render(
             .failed(.bindFailed), port: nil, reason: "the server did not answer", json: true)
         #expect(
             try TunnelStateJSONLine.decode(line)
-                == TunnelStateJSONLine(state: "failed", reason: "the server did not answer"))
+                == TunnelStateJSONLine(
+                    state: "failed", reason: "the server did not answer", reasonIsGeneric: false))
+    }
+
+    /// No reason from the runner: the line falls back to the kind's own
+    /// sentence and marks it generic, so a script reading `reason` alone
+    /// cannot mistake it for detail the runner actually had.
+    @Test func theJSONReasonIsGenericWhenNoneIsGiven() throws {
+        let line = TunnelStateLine.render(.failed(.connectionFailed), port: nil, json: true)
+        #expect(
+            try TunnelStateJSONLine.decode(line)
+                == TunnelStateJSONLine(
+                    state: "failed", reason: "the connection failed", reasonIsGeneric: true))
+    }
+
+    /// A reason the runner gave that happens to equal the kind's own
+    /// sentence word for word — `TunnelRunner`'s loss-without-reconnects
+    /// path writes exactly this (`lastFailureReason = kind.sentence`,
+    /// `TunnelRunner.swift`'s `.lost` arm) — is generic too: the flag
+    /// answers whether the text carries anything beyond the kind, not
+    /// whether the runner supplied a value at all.
+    @Test func theJSONReasonIsGenericWhenTheGivenReasonMatchesTheKindsSentence() throws {
+        let line = TunnelStateLine.render(
+            .failed(.connectionLost), port: nil, reason: "connection lost", json: true)
+        #expect(
+            try TunnelStateJSONLine.decode(line)
+                == TunnelStateJSONLine(
+                    state: "failed", reason: "connection lost", reasonIsGeneric: true))
+    }
+
+    /// The `failed` object's key set, pinned: `state`, `reason` and
+    /// `reasonIsGeneric`, nothing else — a script that reads any other key
+    /// off it has a wrong assumption, not a missing feature.
+    @Test func theFailedObjectsKeySetIsPinned() throws {
+        let line = TunnelStateLine.render(.failed(.connectionFailed), port: nil, json: true)
+        let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+        #expect(object?.isEmpty == false, "decoded no object at all")
+        #expect(Set(object?.keys.map { $0 } ?? []) == ["state", "reason", "reasonIsGeneric"])
     }
 
     /// A connection the forward could not carry is news the runner
@@ -161,17 +201,19 @@ struct TunnelStateJSONLine: Decodable, Equatable {
     var attempt: Int?
     var port: Int?
     var reason: String?
+    var reasonIsGeneric: Bool?
     var failedConnections: Int?
 
     init(
         state: String, connections: Int? = nil, attempt: Int? = nil, port: Int? = nil,
-        reason: String? = nil, failedConnections: Int? = nil
+        reason: String? = nil, reasonIsGeneric: Bool? = nil, failedConnections: Int? = nil
     ) {
         self.state = state
         self.connections = connections
         self.attempt = attempt
         self.port = port
         self.reason = reason
+        self.reasonIsGeneric = reasonIsGeneric
         self.failedConnections = failedConnections
     }
 

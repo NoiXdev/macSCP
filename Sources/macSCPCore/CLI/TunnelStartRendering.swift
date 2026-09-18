@@ -43,11 +43,15 @@ public enum TunnelStateLine {
     ///   - reason: the English sentence of a `failed` state's failure
     ///     (`TunnelRunner.failureReason`), or `nil` to use the kind's own
     ///     sentence (`TunnelFailureKind.sentence`). Read only for `failed`.
+    ///     The JSON form also marks whether the resolved sentence IS the
+    ///     kind's own — `reasonIsGeneric` — so a script can tell a
+    ///     `TunnelFailure` payload's detail from a summary with nothing
+    ///     more to offer.
     ///   - json: one JSON object instead of one column line. The two carry
     ///     the same facts; only `failed`'s reason differs in placement,
     ///     since the text form puts that sentence on stderr (where a person
     ///     reads it) and the JSON form carries it in the object (where a
-    ///     script does).
+    ///     script does) alongside `reasonIsGeneric`.
     public static func render(
         _ state: TunnelState, port: Int? = nil, reason: String? = nil, json: Bool
     ) -> String {
@@ -87,7 +91,16 @@ public enum TunnelStateLine {
         case .reconnecting(let attempt):
             object["attempt"] = attempt
         case .failed(let kind):
-            object["reason"] = reason ?? kind.sentence
+            let resolvedReason = reason ?? kind.sentence
+            object["reason"] = resolvedReason
+            // `true` whenever the line carries nothing beyond the kind's own
+            // summary — whether because no reason was given at all, or
+            // because the one given (`TunnelRunner`'s loss-without-reconnects
+            // path writes `lastFailureReason = kind.sentence` on purpose) is
+            // that summary word for word. A script that wants the detail a
+            // free-text `TunnelFailure` payload carries reads this before
+            // deciding whether `reason` has any to offer.
+            object["reasonIsGeneric"] = resolvedReason == kind.sentence
         }
         // `.sortedKeys` so the line a script diffs is stable run to run;
         // JSON objects are unordered, so nothing about the shape depends on

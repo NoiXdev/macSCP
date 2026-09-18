@@ -280,7 +280,14 @@ struct CLITunnelForegroundRunTests {
     }
 
     /// A `failed` whose runner has no sentence to give — its state already
-    /// moved on by the time the loop asks — says the kind's own English.
+    /// moved on by the time the loop asks — says the kind's own English, and
+    /// the JSON line marks that sentence generic: this scripted `reason:
+    /// nil` is exactly what `TunnelForegroundRun.swift`'s `if case .failed =
+    /// state { reason = await runner.failureReason }` produces on the race
+    /// its own comment describes (Task 2 of the review-follow-ups plan
+    /// measured this as the one production path to a reasonless `.failed`
+    /// — `TunnelRunner` itself never leaves one, per
+    /// `TunnelRunnerTests.aFailedStateAlwaysCarriesAFailureReason`).
     @Test func aFailureWithoutARunnerSentenceSaysTheKindsOwn() async throws {
         let tunnel = ScriptedForegroundTunnel(boundPort: 8080)
         let out = ForegroundOutputCollector()
@@ -295,7 +302,10 @@ struct CLITunnelForegroundRunTests {
 
         #expect(try await run.result() == .connection)
         #expect(out.notes == ["Error: port 8080 is already in use"])
-        #expect(out.lines.last == #"{"reason":"port 8080 is already in use","state":"failed"}"#)
+        #expect(
+            out.lines.last
+                == #"{"reason":"port 8080 is already in use","reasonIsGeneric":true,"state":"failed"}"#
+        )
     }
 
     /// `drive` stops the tunnel before it returns, whatever the tunnel did

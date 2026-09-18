@@ -600,6 +600,41 @@ struct TunnelRunnerTests {
         #expect(connections.made[0].disconnectCount == 1)
     }
 
+    /// Neither production path to `.failed` leaves the reason unset: a
+    /// first-attempt dial failure sets `lastFailureReason` to
+    /// `DialSupport.reason(for:)`'s mapped sentence in the same actor step
+    /// as `apply(.failed(…))` (`TunnelRunner.swift`, the `run(decider:id:)`
+    /// `.failed` arm), and a loss on a profile that does not reconnect sets
+    /// it to the kind's own sentence in the `.lost` arm's fallthrough. Task
+    /// 2 of the review-follow-ups plan measured both and found no third
+    /// path; this pins that measurement so a future one that skips the
+    /// assignment goes red here rather than only in `TunnelStateLine`'s
+    /// `reason ?? kind.sentence` fallback, which would silently print the
+    /// kind's sentence and hide the gap.
+    @Test func aFailedStateAlwaysCarriesAFailureReason() async throws {
+        let dialFailureConnections = TunnelFakeConnections()
+        dialFailureConnections.failAttempts(
+            [1], with: TunnelFailure.connectFailed(reason: "no route"))
+        let dialFailureRunner = TunnelRunner(
+            profile: localProfile(reconnects: true), connect: dialFailureConnections.connect,
+            runtimes: TunnelFakeRuntimes(boundPort: 8080), sleeper: TunnelRecordedSleeper().sleep)
+        let dialFailureStates = TunnelStateCollector(dialFailureRunner.states)
+        await dialFailureRunner.start(decider: .asking { _ in true })
+        try await dialFailureStates.waitForFailure()
+        #expect(await dialFailureRunner.failureReason != nil)
+
+        let lossConnections = TunnelFakeConnections()
+        let lossRunner = TunnelRunner(
+            profile: localProfile(reconnects: false), connect: lossConnections.connect,
+            runtimes: TunnelFakeRuntimes(boundPort: 8080), sleeper: TunnelRecordedSleeper().sleep)
+        let lossStates = TunnelStateCollector(lossRunner.states)
+        await lossRunner.start(decider: .asking { _ in true })
+        try await lossStates.waitFor(.active(connections: 0))
+        lossConnections.made[0].drop()
+        try await lossStates.waitFor(.failed(.connectionLost))
+        #expect(await lossRunner.failureReason != nil)
+    }
+
     /// A forward that ends on its own AFTER the server confirmed it — the
     /// remote-forward shape Task 4 handed off as reporting to nobody — is a
     /// connection loss like any other.
