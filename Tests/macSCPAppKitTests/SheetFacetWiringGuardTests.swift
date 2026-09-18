@@ -81,6 +81,14 @@ struct SheetFacetWiringGuardTests {
     /// inside the window — both of which the callers turn into a failure,
     /// so a window that is too small fails loudly instead of matching
     /// nothing and reading as satisfied.
+    ///
+    /// The window counts characters of the BLANKED source. Since
+    /// 2026-09-18 comments are blanked in place (`SwiftSource.blankingComments`)
+    /// rather than cut off at the end of their line, so a comment between
+    /// the marker and `Self.<name>` now uses up window width it did not
+    /// before — a trailing or doc comment there can push the function name
+    /// out of the 200 characters. That fails loudly, through the callers'
+    /// `!= nil` checks, never as a silent pass.
     static func mappingFunction(after marker: String, in source: String, window: Int = 200)
         -> String?
     {

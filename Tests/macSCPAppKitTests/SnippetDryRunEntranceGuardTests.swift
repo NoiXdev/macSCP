@@ -185,7 +185,7 @@ struct SnippetDryRunEntranceGuardTests {
         let files = ["SnippetDryRunSheet.swift", "SnippetsPresentation.swift"]
         var keys: Set<String> = []
         for file in files {
-            keys.formUnion(try Self.localizationKeys(in: Self.strippedSource(named: file)))
+            keys.formUnion(try Self.localizationKeys(inFileNamed: file))
         }
         #expect(!keys.isEmpty, "no `L10n.string(` keys found — re-anchor this guard")
 
@@ -297,6 +297,30 @@ struct SnippetDryRunEntranceGuardTests {
                 == ["snippets.dryRun.form.refused", "snippets.dryRun.sendAnyway"])
     }
 
+    /// A marker inside a string literal — here two interpolated
+    /// `L10n.string(` calls sharing one literal — is refused, not read.
+    /// The strict view blanks a literal's whole range, interpolations
+    /// included, so balancing such a marker there runs past the literal and
+    /// swallows the second call: the key scan returned `snippets.a` alone
+    /// and the four-catalogue check never saw `snippets.b` (task 9 review,
+    /// finding 1). Refusing names the site instead of losing a key.
+    @Test func theScanRefusesAMarkerInsideAStringLiteral() throws {
+        let source = """
+            struct Fake {
+                var both: String { "\\(L10n.string("snippets.a", "A")) – \\(L10n.string("snippets.b", "B"))" }
+            }
+            """
+        #expect(throws: SnippetSourceScan.MarkerInsideALiteral.self) {
+            try SnippetSourceScan.localizationKeys(in: source)
+        }
+        // The refusal names the site: the literal's own line.
+        do {
+            _ = try SnippetSourceScan.localizationKeys(in: source)
+        } catch let refused as SnippetSourceScan.MarkerInsideALiteral {
+            #expect(refused.line == 2 && refused.marker == "L10n.string(")
+        }
+    }
+
     // MARK: - Reading the tree
 
     private static func appSourceFiles() throws -> [URL] {
@@ -314,8 +338,13 @@ struct SnippetDryRunEntranceGuardTests {
     }
 
     private static func calls(to marker: String, inFileAt url: URL) throws -> [String] {
-        try SnippetSourceScan.calls(
-            to: marker, in: try String(contentsOf: url, encoding: .utf8))
+        let source = try String(contentsOf: url, encoding: .utf8)
+        do {
+            return try SnippetSourceScan.calls(to: marker, in: source)
+        } catch var refused as SnippetSourceScan.MarkerInsideALiteral {
+            refused.file = url.lastPathComponent
+            throw refused
+        }
     }
 
     private static func allCalls(to marker: String) throws -> [String] {
@@ -330,8 +359,13 @@ struct SnippetDryRunEntranceGuardTests {
         return found
     }
 
-    private static func localizationKeys(in source: String) throws -> Set<String> {
-        Set(try SnippetSourceScan.localizationKeys(in: source))
+    private static func localizationKeys(inFileNamed name: String) throws -> Set<String> {
+        do {
+            return Set(try SnippetSourceScan.localizationKeys(in: strippedSource(named: name)))
+        } catch var refused as SnippetSourceScan.MarkerInsideALiteral {
+            refused.file = name
+            throw refused
+        }
     }
 }
 
@@ -349,14 +383,38 @@ enum SnippetSourceScan {
     /// addresses the same character in the other.
     struct ViewsDisagree: Error {}
 
+    /// A marker sits inside a string literal: plain literal text, or an
+    /// interpolation. Thrown rather than read, naming the site.
+    struct MarkerInsideALiteral: Error, CustomStringConvertible {
+        let marker: String
+        let line: Int
+        var file: String?
+        var description: String {
+            "`\(marker)` sits inside a string literal at \(file ?? "<source>"):\(line) — "
+                + "SnippetSourceScan cannot bound a call there, so it refuses the file rather "
+                + "than read a span that may swallow the calls after it"
+        }
+    }
+
     /// Every WHOLE call to `marker` in `source`, comments blanked first.
     ///
     /// `marker` ends in its opening parenthesis; each result runs from the
     /// start of the marker to the `)` that closes it, however many lines
-    /// away that is. The marker is looked for in the comment-only view, so
-    /// a marker a string literal carries is still found, as it was before
-    /// the conversion; the balance is counted in the strict view, so
-    /// parentheses inside string literals do not count.
+    /// away that is. The marker is looked for in the comment-only view and
+    /// the balance is counted in the strict view, so parentheses inside
+    /// string literals do not count.
+    ///
+    /// A marker found inside a string literal throws `MarkerInsideALiteral`
+    /// (task 9 fix round 1). The strict view blanks a literal's whole range,
+    /// interpolations included, so a balance started there runs past the
+    /// literal's end and `i = j` skips every later marker in it — two
+    /// interpolated `L10n.string(` calls in one literal read as one key.
+    /// Refusing is chosen over a literal-aware walk because that walk would
+    /// be a second hand-rolled Swift literal parser beside `SwiftSource`,
+    /// the duplication this scanner was converged away from, and because no
+    /// App source carries such a marker today (`git grep -F
+    /// '\(L10n.string(' -- Sources`: 0, 2026-09-19) — a refusal costs
+    /// nothing until one appears, and then it names the site.
     static func calls(to marker: String, in source: String) throws -> [String] {
         let text = Array(try SwiftSource.blankingComments(source))
         let code = Array(try SwiftSource.blankingCommentsAndStrings(source))
@@ -369,6 +427,12 @@ enum SnippetSourceScan {
             guard Array(text[i..<(i + needle.count)]) == needle else {
                 i += 1
                 continue
+            }
+            // Blank in the strict view but not in the comment-only one:
+            // the marker is inside a literal, not code.
+            guard code[i] == text[i] else {
+                let line = text[..<i].filter { $0 == "\n" }.count + 1
+                throw MarkerInsideALiteral(marker: marker, line: line)
             }
             var depth = 1
             var j = i + needle.count

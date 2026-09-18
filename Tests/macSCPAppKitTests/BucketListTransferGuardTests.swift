@@ -27,10 +27,13 @@ import macSCPCore
 ///    here as "the panes hand it over", since the two menus' own use of it
 ///    is Core's.
 ///
-/// Every check is POSITIVE — it requires a name to be present. A
-/// `!contains` here would start matching nothing the moment a symbol was
-/// renamed and read exactly like a check that is satisfied (CLAUDE.md,
-/// "Guards that name what they watch").
+/// Most checks are POSITIVE — they require a name to be present. The
+/// negative ones are the two "a pane does not build its OWN scope" checks
+/// in `bothPanesHandTheirTableTheOtherPanesScope`, and each sits beside a
+/// positive over the same brace-matched closure body, under a count that
+/// must be exactly 2 — because a `!contains` alone starts matching nothing
+/// the moment a symbol is renamed and reads exactly like a check that is
+/// satisfied (CLAUDE.md, "Guards that name what they watch").
 @Suite("Bucket-list transfer wiring")
 struct BucketListTransferGuardTests {
     /// `#filePath` is
@@ -57,19 +60,29 @@ struct BucketListTransferGuardTests {
     /// comments too").
     ///
     /// BOTH comment kinds (review m-3): `ContentView+Detail.swift` has an
-    /// inline `set: { _ in /* … */ }`, where a line comment cannot go. Read
-    /// through the strict view, `SwiftSource.blankingCommentsAndStrings`,
-    /// since every scan below looks for code: string literals are blanked
-    /// too, so a `//` inside one (`ContentView+Detail.swift` carries an
-    /// `http://` and an `https://`) is neither a comment nor a match.
+    /// inline `set: { _ in /* … */ }`, where a line comment cannot go.
+    /// Read through `SwiftSource.blankingComments`: comments blanked,
+    /// string literals KEPT. Not the strict view, which blanks a literal's
+    /// interpolations too — the two negatives in
+    /// `bothPanesHandTheirTableTheOtherPanesScope` must still see a
+    /// `session.local.` read written inside `"\(…)"` (task 9 fix round 1:
+    /// planted in the local pane's closure, that read was green under the
+    /// strict view and is red here). Both comment strippers this suite used
+    /// before 2026-09-18 kept literals too.
     ///
-    /// Until 2026-09-18 this suite chained its own block-comment stripper
-    /// into the sheet suites' line-comment one; both went for the shared
-    /// stripper, which blanks in place rather than removing, so the region
-    /// windows below count a blanked comment's width where they used to
-    /// count one space.
+    /// The shared stripper blanks in place rather than removing, so the
+    /// region windows below count a blanked comment's width where the old
+    /// strippers counted one space (a block comment) or nothing (a line
+    /// comment's tail). A long comment inside a window can push the gate
+    /// out of it — a loud false red, never a silent pass.
     private static func strippedSource(_ url: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
+        try stripped(try String(contentsOf: url, encoding: .utf8))
+    }
+
+    /// The one view every scan in this suite reads, so the self-tests below
+    /// measure the mode the scans use rather than a neighbour of it.
+    private static func stripped(_ text: String) throws -> String {
+        try SwiftSource.blankingComments(text)
     }
 
     /// The stripper does what the scans below assume, measured on a fixture
@@ -86,7 +99,7 @@ struct BucketListTransferGuardTests {
             let real = \(Self.dropGate)
             """
 
-        let stripped = try SwiftSource.blankingCommentsAndStrings(planted)
+        let stripped = try Self.stripped(planted)
 
         #expect(stripped.contains("let real = \(Self.dropGate)"))
         #expect(!stripped.contains("or it used to"))
@@ -95,11 +108,15 @@ struct BucketListTransferGuardTests {
         #expect(stripped.components(separatedBy: Self.dropGate).count - 1 == 1)
     }
 
-    /// …and it did so on the REAL files: after stripping, no comment marker
-    /// of either kind is left. The shared stripper throws on an
-    /// unterminated `/*` rather than leaving it, so this reads as the
-    /// positive half of that: a block-comment form it did not know would
-    /// show up here.
+    /// …and it does so on the REAL files. A line comment and a block
+    /// comment, each quoting the anchor a scan depends on, are appended to
+    /// each scanned file; after stripping, the anchor occurs exactly as
+    /// often as in the stripped file alone, so both planted quotes were
+    /// blanked in that file's own parse. (Until fix round 1 this test
+    /// asserted no `/*` and no `//` survived in the strict view — which the
+    /// strict view can never contain, since the shared stripper throws on an
+    /// unterminated comment or literal and blanks every literal; the two
+    /// checks could not fire.)
     ///
     /// The positive anchor beside it: the stripped text still carries a
     /// token each scan depends on, so this cannot be passing over an empty
@@ -112,14 +129,15 @@ struct BucketListTransferGuardTests {
             (Self.tableSourceFile, "BrowserContextMenu.entries("),
         ]
         for (url, anchor) in files {
-            let stripped = try Self.strippedSource(url)
-            #expect(!stripped.contains("/*"), """
-                \(url.lastPathComponent) still contains "/*" after stripping — \
-                an unterminated or unrecognized block comment, which every \
-                scan in this suite would then read as wiring.
-                """)
-            #expect(!stripped.contains("//"), """
-                \(url.lastPathComponent) still contains "//" after stripping.
+            let raw = try String(contentsOf: url, encoding: .utf8)
+            let stripped = try Self.stripped(raw)
+            let planted = try Self.stripped(raw + "\n// \(anchor)\n/* \(anchor) */\n")
+            let alone = stripped.components(separatedBy: anchor).count - 1
+            let withQuotes = planted.components(separatedBy: anchor).count - 1
+            #expect(withQuotes == alone, """
+                \(url.lastPathComponent): a comment quoting "\(anchor)" survived the \
+                stripper (\(withQuotes) occurrences, \(alone) without the quotes) — every \
+                scan in this suite would then read that prose as wiring.
                 """)
             #expect(stripped.contains(anchor), """
                 \(url.lastPathComponent) lost "\(anchor)" to the stripper — \
