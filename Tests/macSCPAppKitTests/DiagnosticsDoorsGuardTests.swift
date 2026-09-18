@@ -1959,8 +1959,8 @@ struct DiagnosticsDoorsGuardTests {
                 // Dots are part of an id: the steps of a session behind a
                 // jump host are `jump.resolve`, `target.tcpViaJump` and so on
                 // (2026-09-18). While this read `[A-Za-z0-9_]+` it saw none
-                // of the seven, and their catalogue keys stood in en.lproj as
-                // keys nothing spells.
+                // of the dotted ids, and their catalogue keys stood in
+                // en.lproj as keys nothing spells.
                 let ids = matches(of: #"static let \w+ = "([A-Za-z0-9_.]+)""#, in: body)
                 for prefix in prefixes {
                     for id in ids { keys.insert(prefix + id) }

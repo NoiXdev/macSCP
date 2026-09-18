@@ -57,7 +57,19 @@ struct ConnectionDiagnosticsJumpTests {
                 onStep: { step in log.record("row \(step.id)") }))
 
         #expect(report.steps.map(\.id) == Self.everyJumpStep)
-        #expect(report.steps.map(\.outcome) == Array(repeating: .ok, count: 10), """
+        // No row failed — and nothing stronger. The jump's resolve, TCP
+        // ping, echo and trace are REAL probes against loopback, each raced
+        // against its budget; on the three-core CI runner, whose idle stalls
+        // have been measured at 14.67 s, "ok within the budget" is a
+        // wall-clock ceiling (CLAUDE.md, "A wall-clock ceiling in a test
+        // measures the runner"; final review, T6-2). The injected rows are
+        // raced against the same budgets, so they are held to the same
+        // floor. What each one DID is the event log below.
+        let failed = report.steps.filter {
+            if case .failed = $0.outcome { return true }
+            return false
+        }
+        #expect(failed.isEmpty, """
             \(report.plainText())
             """)
         // The channel was opened to the TARGET, over the jump connection; the
