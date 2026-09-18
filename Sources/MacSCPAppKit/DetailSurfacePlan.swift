@@ -39,8 +39,22 @@ enum DetailSurfacePlan {
     /// overview of the session it was attempting would replace an
     /// explanation with a description.
     ///
-    /// Only where that answer is the form may the overview stand in for
-    /// it, and only when nothing on the form is waiting for a person:
+    /// One exception to that order (fix round 1): a `.connecting` answer
+    /// while `unacknowledgedFailure` is set, on a tab not describing a
+    /// dropped connection, is `.form`. That combination is the one update
+    /// in which `ConnectAttemptLivenessMirror` has not caught up — the
+    /// failure (and, for a rejected key, the cleared prompt) is already
+    /// written, `tab.liveness` still reads `.connecting` until the mirror's
+    /// change handler runs. Answering `.connecting` there drops the form
+    /// that was showing the trust card, and it comes back one update later
+    /// already failed. A NEW attempt cannot produce it: `connect()` moves
+    /// the state to `.connecting`, and the marker reads `nil` whenever the
+    /// state is not `.failed`. On a tab describing a dropped connection the
+    /// mirror sends the failure to the lost surface instead, so the lag
+    /// keeps its old answer there rather than flashing the form.
+    ///
+    /// Only where the answer is the form may the overview stand in for it,
+    /// and only when nothing on the form is waiting for a person:
     ///
     /// * no host-key prompt is pending. The trust card is rendered inside
     ///   the form and nowhere else, and the dial is suspended on it; an
@@ -51,8 +65,11 @@ enum DetailSurfacePlan {
     ///   answers `.form` for a pending prompt; this repeats the fact here
     ///   because `.form` alone does not say WHY, and the overview may only
     ///   replace a form that is idle.
-    /// * the form holds no failure a person must read
-    ///   (`formHoldsTextAPersonMustRead`);
+    /// * no failure is unacknowledged (`ConnectionViewModel
+    ///   .unacknowledgedFailure`, whose doc comment says which failures set
+    ///   it and why `.other` does not). Its text is on the form, raised by
+    ///   `FormFailureAlertPlan`; once the person dismisses it the overview
+    ///   returns, so a read failure does not keep the tab on the form.
     /// * `formMode` is `.new` — an `.edit` form holds a draft of some
     ///   session, and an overview would drop it out of sight. Every edit
     ///   route ends at `ConnectionViewModel.beginEditing`, so the form's
@@ -61,56 +78,21 @@ enum DetailSurfacePlan {
     ///   restored pointer or the window's sidebar selection).
     static func surface(
         liveness: ConnectionLiveness?, hostKeyPromptPending: Bool, connectAttemptFailed: Bool,
-        formState: ConnectionViewModel.State, failureKind: ConnectFailureKind?,
+        describesLostConnection: Bool, unacknowledgedFailure: Bool,
         formMode: ConnectionViewModel.FormMode, overviewSession: StoredSession?
     ) -> DetailSurface {
         switch ConnectionSurfacePlan.surface(
             for: liveness, hostKeyPromptPending: hostKeyPromptPending,
             connectAttemptFailed: connectAttemptFailed)
         {
-        case .connecting: return .connecting
+        case .connecting:
+            return unacknowledgedFailure && !describesLostConnection ? .form : .connecting
         case .lost: return .lost
         case .failed: return .failed
         case .form:
-            guard let overviewSession, formMode == .new, !hostKeyPromptPending,
-                  !formHoldsTextAPersonMustRead(formState: formState, failureKind: failureKind)
+            guard let overviewSession, formMode == .new, !hostKeyPromptPending, !unacknowledgedFailure
             else { return .form }
             return .overview(overviewSession)
         }
-    }
-
-    /// Whether the form's `.failed` state is text nobody has read yet.
-    ///
-    /// Every verdict except `.other`. `.needsPerson` is, by
-    /// `ConnectFailureKind`'s own definition, an attempt stopped at
-    /// something only a person can answer — a rejected or changed host key,
-    /// a missing or wrong key passphrase — and it is also the verdict of
-    /// every refusal decided before the dial (a login set or jump session
-    /// that no longer resolves, a schema violation, a `fillForm` throw),
-    /// which `ConnectionViewModel.showFailure` and the form's own
-    /// validation publish as `.needsPerson` by construction.
-    /// On a tab with no dropped connection to describe,
-    /// `ConnectAttemptLivenessPlan.write` sends all of these to the form
-    /// (`.clear`) precisely because the form is where their text is shown.
-    ///
-    /// `.other` is the one verdict with a surface of its own: a dial that
-    /// failed on the wire is described by the failed-connect surface (or,
-    /// on a tab whose connection dropped, the lost surface), which
-    /// `ConnectionSurfacePlan` answers before the form is considered. Its
-    /// text reaches the form only after the person has left that surface —
-    /// "Edit" clears `connectFailure` — so it has been read, and holding
-    /// the overview back for it would change what that surface's own exit
-    /// has always led to.
-    ///
-    /// A `.failed` state with NO verdict counts as unread. `fail(_:kind:)`
-    /// is the only writer of `.failed` and always writes one, so the
-    /// combination does not arise from the view model; this plan takes
-    /// plain values, and the direction to err in is showing a failure
-    /// rather than covering it.
-    static func formHoldsTextAPersonMustRead(
-        formState: ConnectionViewModel.State, failureKind: ConnectFailureKind?
-    ) -> Bool {
-        guard case .failed = formState else { return false }
-        return failureKind != .other
     }
 }

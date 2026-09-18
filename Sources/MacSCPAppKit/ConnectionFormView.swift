@@ -118,6 +118,11 @@ struct ConnectionFormView: View {
     /// from `viewModel.state` so dismissing the alert keeps the `.failed`
     /// state (and with it the red field highlight) intact.
     @State private var alertMessage: String?
+    /// The failure the alert above is showing, handed back on dismissal so
+    /// the view model stops asking for it to be raised
+    /// (`ConnectionViewModel.acknowledgeFailure`). `nil` for a failure with
+    /// nothing to acknowledge — see `FormFailureAlert`.
+    @State private var alertFailureID: UUID?
     /// Drives the TOFU prompt's "Manage known hosts…" footnote (M10a/T2).
     /// Local `@State` sheet with its own `KnownHostsStore` instance, rather
     /// than a callback bubbled up to `ContentView` — `ConnectionFormView`
@@ -376,6 +381,13 @@ struct ConnectionFormView: View {
         }
     }
 
+    /// Puts `alert` on screen, or leaves the alert as it is for `nil`.
+    private func present(_ alert: FormFailureAlert?) {
+        guard let alert else { return }
+        alertMessage = alert.message
+        alertFailureID = alert.failureID
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // While the host-key prompt is pending, the form is hidden
@@ -511,8 +523,10 @@ struct ConnectionFormView: View {
                             guard resolveLoginSetForSubmit() else { return }
                             if let session = viewModel.validateForEditSave() {
                                 onSaveEdited(session, editedSecret)
-                            } else if case .failed(let message, _) = viewModel.state {
-                                alertMessage = message
+                            } else {
+                                present(FormFailureAlertPlan.onChange(
+                                    to: viewModel.state,
+                                    unacknowledgedFailure: viewModel.unacknowledgedFailure))
                             }
                         }
                         .buttonStyle(.polished)
@@ -522,8 +536,10 @@ struct ConnectionFormView: View {
                             if let session = viewModel.validateForEditSave() {
                                 onSaveEdited(session, editedSecret)
                                 onConnectEdited(session)
-                            } else if case .failed(let message, _) = viewModel.state {
-                                alertMessage = message
+                            } else {
+                                present(FormFailureAlertPlan.onChange(
+                                    to: viewModel.state,
+                                    unacknowledgedFailure: viewModel.unacknowledgedFailure))
                             }
                         }
                         .keyboardShortcut(.defaultAction)
@@ -543,8 +559,10 @@ struct ConnectionFormView: View {
                                 guard resolveLoginSetForSubmit() else { return }
                                 if viewModel.validateForNewSave() {
                                     onSaveNew()
-                                } else if case .failed(let message, _) = viewModel.state {
-                                    alertMessage = message
+                                } else {
+                                    present(FormFailureAlertPlan.onChange(
+                                        to: viewModel.state,
+                                        unacknowledgedFailure: viewModel.unacknowledgedFailure))
                                 }
                             }
                             .buttonStyle(.polished)
@@ -616,7 +634,15 @@ struct ConnectionFormView: View {
             L10n.string("connection.error.title", "Connection failed"),
             isPresented: Binding(
                 get: { alertMessage != nil },
-                set: { if !$0 { alertMessage = nil } }
+                // Any way out of the alert — either button — is the person
+                // having seen the text, so the failure is acknowledged here
+                // and the form will not raise it again on its next mount.
+                set: { isPresented in
+                    guard !isPresented else { return }
+                    if let alertFailureID { viewModel.acknowledgeFailure(alertFailureID) }
+                    alertMessage = nil
+                    alertFailureID = nil
+                }
             )
         ) {
             // Ahead of OK, because it is the one thing this dialog can
@@ -656,9 +682,20 @@ struct ConnectionFormView: View {
         // missing) through the same alert the Connect/Save buttons already
         // populate inline — one mechanism for both origins.
         .onChange(of: viewModel.state) { _, newState in
-            if case .failed(let message, _) = newState {
-                alertMessage = message
-            }
+            present(FormFailureAlertPlan.onChange(
+                to: newState, unacknowledgedFailure: viewModel.unacknowledgedFailure))
+        }
+        // A form that MOUNTS into a failure nobody has read yet raises it
+        // (jump-and-groups plan, Task 1, fix round 1). The change handler
+        // above never sees a change it was not mounted for, and every path
+        // that sends such a failure here mounts the form already failed: a
+        // pre-dial refusal replacing the session overview, a missing
+        // passphrase replacing "Connecting…". Only while the
+        // failure is unacknowledged — see `FormFailureAlertPlan` for why that
+        // keeps a tab switch or "Edit" from raising it again.
+        .onAppear {
+            present(FormFailureAlertPlan.onAppear(
+                state: viewModel.state, unacknowledgedFailure: viewModel.unacknowledgedFailure))
         }
         // Picking a managed key fills the key path (M17/T5). The schema can
         // declare the picker but not its EFFECT: the option ids are key ids,

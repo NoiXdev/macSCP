@@ -383,7 +383,8 @@ extension ContentView {
             liveness: tab.liveness,
             hostKeyPromptPending: form.hostKeyPrompt != nil,
             connectAttemptFailed: tab.connectFailure != nil,
-            formState: form.state, failureKind: form.lastFailureKind,
+            describesLostConnection: tab.lostConnection != nil,
+            unacknowledgedFailure: form.unacknowledgedFailure != nil,
             formMode: form.mode, overviewSession: overviewSession(for: tab))
     }
 
@@ -1468,8 +1469,9 @@ enum ConnectionAttemptSurface: Equatable {
 /// Decides `ConnectionAttemptSurface` from the facts `ContentView
 /// .detail` already has in hand — handed over through
 /// `ContentView.detailSurface(for:)` and `DetailSurfacePlan.surface`, this
-/// function's one caller (counted with `grep` on 2026-09-18) — pulled out
-/// as a plain function so
+/// function's one production caller (counted with `grep` over `Sources/`
+/// on 2026-09-18; `ConnectionSurfacePlanTests` and `ReconnectPathTests`
+/// call it directly as well) — pulled out as a plain function so
 /// `Tests/macSCPAppKitTests/` can exercise every combination directly,
 /// rather than the decision living inline in a view body this project has
 /// no way to render (the same move `LivenessDotPlan`, Task 5, made for the

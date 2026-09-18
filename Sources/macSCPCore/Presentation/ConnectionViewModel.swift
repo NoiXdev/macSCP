@@ -528,6 +528,48 @@ public final class ConnectionViewModel {
     /// text, and a mismatched host key (a hard stop with no field at all)
     /// would be indistinguishable from an ordinary network failure.
     public private(set) var lastFailureKind: ConnectFailureKind?
+    /// The failure a person must read and has not dismissed yet, as an id
+    /// the dismissal hands back (jump-and-groups plan, Task 1, fix round
+    /// 1) — `nil` when there is none.
+    ///
+    /// Why it exists: the connection form shows a failure's text only in an
+    /// alert, and an alert raised by a state CHANGE is never raised for a
+    /// form that mounts into a state that is already `.failed`. The App's
+    /// paths to the form do exactly that: a refusal before the dial
+    /// replaces the session overview, and a missing passphrase replaces
+    /// "Connecting…". This marker
+    /// outlives the mount, so the form can raise the text when it appears
+    /// and stop raising it once the person has dismissed it.
+    ///
+    /// Written by `fail(_:kind:)` — the only writer of `.failed` — for
+    /// every verdict except `.other`. `.needsPerson` is by definition a
+    /// failure only a person can answer, and every pre-dial refusal carries
+    /// it. `.other` is a dial that failed on the wire, and the
+    /// failed-connect surface describes it; marking it would re-raise that
+    /// text on the form after the person left the surface through "Edit".
+    ///
+    /// Cleared three ways, and only the first is a write: the person
+    /// dismissing it (`acknowledgeFailure(_:)`); and, by construction, any
+    /// state that is not `.failed` — the next attempt (`.connecting`) or an
+    /// edit (`.idle`) — because this reads `nil` whenever `state` is not
+    /// `.failed`. That is what keeps a stale marker from outliving the
+    /// failure it names without a clearing line at every state write.
+    public var unacknowledgedFailure: UUID? {
+        guard case .failed = state else { return nil }
+        return pendingFailureAcknowledgement
+    }
+
+    /// `unacknowledgedFailure`'s storage; read only through it.
+    private var pendingFailureAcknowledgement: UUID?
+
+    /// The person dismissed the text of the failure `id` names.
+    ///
+    /// By id, so an alert still on screen for an earlier failure cannot
+    /// acknowledge a newer one it never showed.
+    public func acknowledgeFailure(_ id: UUID) {
+        guard pendingFailureAcknowledgement == id else { return }
+        pendingFailureAcknowledgement = nil
+    }
     /// Why the most recent DIAL failed, as the one fixed sentence this
     /// project stores for that error (session overview plan, Task 2).
     ///
@@ -1042,9 +1084,18 @@ public final class ConnectionViewModel {
     /// `state = newState` outside its window. It said so loudly rather than
     /// passing — which is the behaviour that made keeping the line the
     /// cheaper answer than widening the guard around it.
+    ///
+    /// The failure marker (`unacknowledgedFailure`, fix round 1 of the
+    /// jump-and-groups plan's Task 1) is written here, before `state`, so a
+    /// handler observing `state` reads the marker of the failure it is
+    /// seeing. With it the body fills that guard's window exactly: the
+    /// signature and the next four lines, `state = newState` last. A fifth
+    /// statement belongs outside this function, as `lastFailureReason`'s
+    /// and `lastFailureRemedy`'s writes already are.
     private func fail(_ newState: State, kind: ConnectFailureKind = .needsPerson, origin: UUID? = nil) {
         lastFailureKind = kind
         attemptOrigin = origin
+        pendingFailureAcknowledgement = kind == .other ? nil : UUID()
         state = newState
     }
 

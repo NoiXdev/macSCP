@@ -39,12 +39,20 @@ import Testing
 ///   `restoredSessionID`, which feeds the same `overviewSession(for:)`, is
 ///   set instead;
 /// * `ConnectAttemptLivenessMirror`'s write, applied from
-///   `ConnectAttemptLivenessPlan.write`'s real answer.
+///   `ConnectAttemptLivenessPlan.write`'s real answer — and applied only
+///   AFTER the surface has been read in the update before it, because that
+///   lagging update is where a failure used to lose its form (fix round 1);
+/// * the person dismissing the form's alert, as
+///   `ConnectionViewModel.acknowledgeFailure` with the id the alert
+///   carries. What the alert would say is `FormFailureAlertPlan`'s answer
+///   on the same state.
 ///
 /// **Isolation.** The same three `ContentView.init` seams as
 /// `AlreadyOpenSessionTests`, pointed at a temporary directory and an
 /// in-memory secret store. No real host names: every target is under
 /// `.invalid`, and the refused jump is `127.0.0.1:1`, which refuses at once.
+/// That case makes a real loopback TCP dial on purpose; a machine with a
+/// listener on port 1 would change its verdict.
 @Suite("Two tabs through one jump", .timeLimit(.minutes(1)))
 @MainActor
 struct JumpTwoTabsTests {
@@ -264,10 +272,75 @@ struct JumpTwoTabsTests {
 
         second.connectionViewModel.resolveHostKeyPrompt(trust: false)
         try await pollUntil("the rejected attempt ends") { failed(second) }
-        mirror(second)
 
-        #expect(second.connectionViewModel.lastFailureKind == .needsPerson)
+        // The lagging update, read BEFORE the mirror runs (review, fix
+        // round 1): the prompt is gone and the failure is written, but
+        // `tab.liveness` still reads `.connecting`. Answering `.connecting`
+        // here drops the form, and it comes back already failed.
+        let laggingLiveness = second.liveness
+        let laggingSurface = view.detailSurface(for: second)
+        let form = second.connectionViewModel
+        let raisedOnChange = FormFailureAlertPlan.onChange(
+            to: form.state, unacknowledgedFailure: form.unacknowledgedFailure)
+        let raisedOnMount = FormFailureAlertPlan.onAppear(
+            state: form.state, unacknowledgedFailure: form.unacknowledgedFailure)
+        #expect(laggingLiveness == .connecting, "the lag this case exists for was not reproduced")
+        #expect(form.hostKeyPrompt == nil)
+        #expect(form.lastFailureKind == .needsPerson)
+        #expect(laggingSurface == .form, "the form is dropped for one update and returns already failed")
+        #expect(raisedOnChange != nil, "the mounted form does not raise the rejection")
+        #expect(raisedOnMount != nil, "a remounted form would not raise the rejection")
+
+        mirror(second)
         #expect(view.detailSurface(for: second) == .form, "the rejection's text is on the form, under the overview")
+
+        // Stands in for the person dismissing the alert: the overview of
+        // the selected row comes back.
+        let alertID = try #require(raisedOnMount?.failureID)
+        form.acknowledgeFailure(alertID)
+        #expect(view.detailSurface(for: second) == .overview(b))
+        #expect(first.isConnected)
+        #expect(await fs1.disconnects == 0)
+    }
+
+    // MARK: - A refusal before the dial
+
+    /// A second session whose login set no longer resolves: `fillForm`
+    /// refuses before anything is dialled. The new tab must show the form
+    /// with the refusal's text, not the overview and not a silent form.
+    @Test func aPreDialRefusalOnTheSecondTabShowsItsText() async throws {
+        let workDir = makeTempDirectory("jump-predial-refusal")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let fs1 = DisconnectCountingFileSystem()
+        let first = makeTab { _, _ in fs1 }
+        let second = makeTab { _, _ in
+            Issue.record("the dial must never be reached — the fill refuses first")
+            throw CancellationError()
+        }
+        let supply = TabSupply([second])
+        let (view, cleanup) = makeContentView(storeDirectory: workDir, sidebarTabFactory: { supply.next() })
+        defer { cleanup() }
+        installFirstTab(first, in: view)
+        let a = viaJump("A", target: "a.invalid")
+        var b = viaJump("B", target: "b.invalid")
+        b.loginSetID = UUID()   // no such set in the isolated store
+
+        #expect(view.connectFromSidebar(a) == nil)
+        try await pollUntil("the first tab connects") { first.isConnected }
+        #expect(view.connectFromSidebar(b) == nil)
+        #expect(view.activeTab === second)
+        try await pollUntil("the refusal is written") { failed(second) }
+        try select(b, on: second, in: view, directory: workDir)
+
+        // Read before the mirror, as the window would first see it.
+        let form = second.connectionViewModel
+        #expect(form.lastFailureKind == .needsPerson)
+        #expect(view.detailSurface(for: second) == .form, "the refusal sits under the overview")
+        let raised = FormFailureAlertPlan.onAppear(
+            state: form.state, unacknowledgedFailure: form.unacknowledgedFailure)
+        #expect(raised?.message.isEmpty == false, "the form mounts into the refusal and shows no text")
+        mirror(second)
+        #expect(view.detailSurface(for: second) == .form)
         #expect(first.isConnected)
         #expect(await fs1.disconnects == 0)
     }

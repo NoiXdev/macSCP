@@ -17,10 +17,17 @@ import Testing
 /// the same jump returns to the session info": the target behind the jump
 /// was new, its host key unknown, and the card sat under the overview.
 ///
-/// No view is rendered here; what these prove is the mapping. That the view
+/// Fix round 1: the failure half is decided on
+/// `ConnectionViewModel.unacknowledgedFailure` rather than on the form's
+/// state and verdict. The failure cases below therefore produce their
+/// marker through a real `ConnectionViewModel` and hand the plan what the
+/// window's resolver hands it, so the chain from the failure to the
+/// surface is what is checked, not a hand-written Bool. That the form then
+/// raises the text is `FormFailureAlertPlanTests`' claim; that the view
 /// switches on this answer and on nothing else is
-/// `DetailSurfaceWiringGuardTests`' claim.
-@Suite("Detail surface plan")
+/// `DetailSurfaceWiringGuardTests`'.
+@Suite("Detail surface plan", .timeLimit(.minutes(1)))
+@MainActor
 struct DetailSurfacePlanTests {
     private static let selected = StoredSession(
         name: "selected", kind: .ssh,
@@ -32,15 +39,35 @@ struct DetailSurfacePlanTests {
         liveness: ConnectionLiveness? = nil,
         hostKeyPromptPending: Bool = false,
         connectAttemptFailed: Bool = false,
-        formState: ConnectionViewModel.State = .idle,
-        failureKind: ConnectFailureKind? = nil,
+        describesLostConnection: Bool = false,
+        unacknowledgedFailure: Bool = false,
         formMode: ConnectionViewModel.FormMode = .new,
         overviewSession: StoredSession? = selected
     ) -> DetailSurface {
         DetailSurfacePlan.surface(
             liveness: liveness, hostKeyPromptPending: hostKeyPromptPending,
-            connectAttemptFailed: connectAttemptFailed, formState: formState,
-            failureKind: failureKind, formMode: formMode, overviewSession: overviewSession)
+            connectAttemptFailed: connectAttemptFailed,
+            describesLostConnection: describesLostConnection,
+            unacknowledgedFailure: unacknowledgedFailure,
+            formMode: formMode, overviewSession: overviewSession)
+    }
+
+    /// The form's facts as `ContentView.detailSurface(for:)` reads them.
+    private static func surface(of form: ConnectionViewModel, liveness: ConnectionLiveness? = nil) -> DetailSurface {
+        surface(
+            liveness: liveness, hostKeyPromptPending: form.hostKeyPrompt != nil,
+            unacknowledgedFailure: form.unacknowledgedFailure != nil, formMode: form.mode)
+    }
+
+    private static func form(
+        _ connector: @escaping ConnectionViewModel.Connector = { _, _ in throw CancellationError() }
+    ) -> ConnectionViewModel {
+        let form = ConnectionViewModel(connector: connector)
+        form.host = "target.invalid"
+        form.port = "22"
+        form.username = "tim"
+        form.password = "secret-value"
+        return form
     }
 
     // MARK: - What the overview must never cover
@@ -56,43 +83,86 @@ struct DetailSurfacePlanTests {
         #expect(Self.surface(liveness: liveness, hostKeyPromptPending: true) == .form)
     }
 
-    /// A rejected or changed host key, a missing or wrong key passphrase:
-    /// the attempt stopped at a question only a person can answer, and the
-    /// text saying so is on the form.
-    @Test func aNeedsPersonFailureShowsTheFormNotTheOverview() {
-        #expect(Self.surface(
-            formState: .failed(message: "stopped", field: nil), failureKind: .needsPerson) == .form)
+    /// A rejected host key, a missing key passphrase: the attempt stopped at
+    /// a question only a person can answer, and the text saying so is on
+    /// the form.
+    @Test func aNeedsPersonFailureShowsTheFormNotTheOverview() async {
+        let rejected = Self.form { _, _ in throw HostKeyError.rejectedByUser }
+        _ = await rejected.connect()
+        #expect(rejected.lastFailureKind == .needsPerson)
+        #expect(Self.surface(of: rejected) == .form)
+
+        let passphrase = Self.form { _, _ in throw SSHKeyError.passphraseRequired }
+        _ = await passphrase.connect()
+        #expect(passphrase.lastFailureKind == .needsPerson)
+        #expect(Self.surface(of: passphrase) == .form)
     }
 
-    /// A refusal decided before any dial — a login set that no longer
-    /// resolves, a jump whose source session is gone, a schema violation.
-    /// `showFailure` and the form's own validation publish these as
-    /// `.needsPerson` by construction, usually with a field to outline; the
-    /// verdict-less spelling is covered too, because a `.failed` form with
-    /// no verdict is not one this plan may assume was already read.
-    @Test(arguments: [ConnectFailureKind?.some(.needsPerson), nil])
-    func aPreDialRefusalShowsTheFormNotTheOverview(kind: ConnectFailureKind?) {
-        #expect(Self.surface(
-            formState: .failed(message: "refused", field: .jumpSession), failureKind: kind) == .form)
+    /// A refusal decided before any dial: the form's own validation, and
+    /// the App's refusal through `showFailure` (a login set or jump session
+    /// that no longer resolves, a `fillForm` throw).
+    @Test func aPreDialRefusalShowsTheFormNotTheOverview() async {
+        let validation = Self.form()
+        validation.host = ""
+        _ = await validation.connect()
+        #expect(Self.surface(of: validation) == .form)
+
+        let appRefusal = Self.form()
+        appRefusal.showFailure(message: "refused")
+        #expect(Self.surface(of: appRefusal) == .form)
     }
 
-    // MARK: - The positive partner
+    /// The one update in which the mirror has not yet caught up: the
+    /// failure and the cleared prompt arrive together, while `tab.liveness`
+    /// still reads `.connecting`. Answering `.connecting` here would drop
+    /// the form, and it would come back already failed. Read BEFORE the
+    /// mirror runs, which is the whole point of this case.
+    @Test func aHostKeyRejectWithLivenessStillConnectingShowsTheForm() async {
+        let form = Self.form { _, _ in throw HostKeyError.rejectedByUser }
+        _ = await form.connect()
+        #expect(form.hostKeyPrompt == nil)
+        #expect(Self.surface(of: form, liveness: .connecting) == .form)
+    }
 
-    /// Without this the three checks above would pass over a plan that had
+    /// On a tab describing a dropped connection the mirror sends the same
+    /// failure to the lost surface, so the lag keeps its old answer rather
+    /// than flashing the form for one update.
+    @Test func aLaggingConnectingOnALostTabStaysConnecting() {
+        #expect(Self.surface(
+            liveness: .connecting, describesLostConnection: true, unacknowledgedFailure: true)
+            == .connecting)
+    }
+
+    // MARK: - The positive partners
+
+    /// Without this the checks above would pass over a plan that had
     /// stopped offering the overview at all.
     @Test func anIdleUnconnectedTabWithASelectionShowsTheOverview() {
         #expect(Self.surface() == .overview(Self.selected))
+    }
+
+    /// Once the person has dismissed the text, the overview comes back —
+    /// the form does not stay on a failure that has been read, and clicking
+    /// another row shows that row again.
+    @Test func dismissingTheFailureBringsTheOverviewBack() throws {
+        let form = Self.form()
+        form.showFailure(message: "refused")
+        #expect(Self.surface(of: form) == .form)
+        let id = try #require(form.unacknowledgedFailure)
+        form.acknowledgeFailure(id)
+        #expect(Self.surface(of: form) == .overview(Self.selected))
     }
 
     // MARK: - Everything else is as it was
 
     /// A dial that failed on the wire has its own surface; once the person
     /// has left it ("Edit" clears `connectFailure`), its text has been read
-    /// and the form's `.failed` state no longer holds the overview back.
-    @Test func anOtherFailureAlreadyShownElsewhereDoesNotHoldTheOverviewBack() {
-        #expect(Self.surface(
-            formState: .failed(message: "refused", field: nil), failureKind: .other)
-            == .overview(Self.selected))
+    /// and nothing holds the overview back.
+    @Test func aWireFailureAlreadyShownElsewhereDoesNotHoldTheOverviewBack() async {
+        let form = Self.form { _, _ in throw RemoteFSError.connectionFailed(reason: "unreachable") }
+        _ = await form.connect()
+        #expect(form.lastFailureKind == .other)
+        #expect(Self.surface(of: form) == .overview(Self.selected))
     }
 
     @Test func anEditingFormIsNeverReplacedByTheOverview() {
