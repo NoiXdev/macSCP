@@ -69,6 +69,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = "terminalCursorBlink"
         static let terminalCopyOnSelect = "terminalCopyOnSelect"
         static let terminalPasteOnRightClick = "terminalPasteOnRightClick"
+        static let notificationsEnabled = "notificationsEnabled"
         static let updateCheckEnabled = "updateCheckEnabled"
         static let lastUpdateCheck = "lastUpdateCheck"
         static let terminalTarget = "terminalTarget"
@@ -105,6 +106,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = true
         static let terminalCopyOnSelect = false
         static let terminalPasteOnRightClick = false
+        static let notificationsEnabled = true
         static let updateCheckEnabled = true
         static let menuBarEnabled = true
         static let presignedDefaultExpiry = PresignedExpiry.oneHour
@@ -315,6 +317,20 @@ public final class SettingsStore {
     public var terminalPasteOnRightClick: Bool {
         get { boolValue(for: Keys.terminalPasteOnRightClick, default: Defaults.terminalPasteOnRightClick) }
         set { setBool(newValue, for: Keys.terminalPasteOnRightClick) }
+    }
+
+    /// Whether macSCP posts a macOS notification when a connection is lost,
+    /// a transfer fails or a port forwarding fails (next build of
+    /// 2026-09-17, Task 7). One switch for all three. Default ON: the
+    /// maintainer asked for the notifications (2026-09-16), and macOS still
+    /// asks the user for permission at the first one.
+    ///
+    /// Core stores the flag and knows nothing else about it: when a
+    /// notification is posted, and what it says, are App-layer decisions
+    /// (`ErrorNotificationPlan`).
+    public var notificationsEnabled: Bool {
+        get { boolValue(for: Keys.notificationsEnabled, default: Defaults.notificationsEnabled) }
+        set { setBool(newValue, for: Keys.notificationsEnabled) }
     }
 
     /// Automatic once-a-day update check at startup (M11b). Default ON;

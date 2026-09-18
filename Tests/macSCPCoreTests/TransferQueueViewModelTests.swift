@@ -647,6 +647,75 @@ struct TransferQueueViewModelTests {
         #expect(vm.isActive == false)
     }
 
+    /// Next build of 2026-09-17, Task 7: the items a drop marks `.failed`
+    /// count in `totalFailureCount` (the attention dot wants them) but NOT
+    /// in `failureCountExcludingConnectionLoss`, which is what the "transfer
+    /// failed" notification reads — the drop already raises its own
+    /// "connection lost" notification, and one event is one notification.
+    /// A user's cancel counts in neither: it is `.cancelled`, not `.failed`.
+    @Test func aConnectionLossSweepIsNotCountedAsATransferFailure() async throws {
+        let content = Data("c".utf8)
+        let started1 = TestSignal()
+        let gate1 = TestSignal()   // never fired; the drop must release it anyway
+        let started3 = TestSignal()
+        let gate3 = TestSignal()   // never fired; the user's cancel releases it
+        let source = QueueTestFS(reads: [
+            "/1.txt": .init(content: content, started: started1, gate: gate1),
+            "/2.txt": .init(content: content),
+            "/3.txt": .init(content: content, started: started3, gate: gate3),
+            "/4.txt": .init(content: content),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+        vm.enqueue(
+            fileName: "1.txt", direction: .upload,
+            source: source, sourcePath: "/1.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        vm.enqueue(
+            fileName: "2.txt", direction: .upload,
+            source: source, sourcePath: "/2.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        try await started1.wait()
+        await waitUntil { vm.items.count == 2 && vm.items[1].status == .queued }
+
+        await vm.cancelAll(reason: .connectionLost)
+        await waitUntil { vm.items.allSatisfy { $0.status.isTerminal } }
+
+        // Precondition: the sweep really marked both items failed.
+        #expect(vm.totalFailureCount == 2)
+        #expect(vm.failureCountExcludingConnectionLoss == 0)
+
+        // A user's cancel of a running and a queued item: `.cancelled`.
+        vm.enqueue(
+            fileName: "3.txt", direction: .upload,
+            source: source, sourcePath: "/3.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        vm.enqueue(
+            fileName: "4.txt", direction: .upload,
+            source: source, sourcePath: "/4.txt",
+            destination: destination, destinationDirectory: "/ziel",
+            onCompleted: nil)
+        try await started3.wait()
+        await vm.cancelAll(reason: .userRequested)
+        await waitUntil { vm.items.allSatisfy { $0.status.isTerminal } }
+        #expect(vm.items.suffix(2).allSatisfy { $0.status == .cancelled })
+        #expect(vm.totalFailureCount == 2)
+        #expect(vm.failureCountExcludingConnectionLoss == 0)
+
+        // And a real failure afterwards is counted by both.
+        _ = try? await vm.enqueueAndWait(
+            fileName: "missing.txt", direction: .download,
+            source: QueueTestFS(reads: [:]), sourcePath: "/missing.txt",
+            destination: destination, destinationDirectory: "/ziel")
+        #expect(vm.totalFailureCount == 3)
+        #expect(vm.failureCountExcludingConnectionLoss == 1)
+    }
+
     // MARK: - 8
 
     @Test func clearCompletedRemovesOnlyDone() async throws {
@@ -2892,11 +2961,15 @@ struct TransferQueueViewModelTests {
             Issue.record("setup: item should be .failed, was \(vm.items[0].status)")
         }
         #expect(vm.totalFailureCount == 1)
+        // A failure of the transfer itself is one the notification counter
+        // sees too (next build of 2026-09-17, Task 7).
+        #expect(vm.failureCountExcludingConnectionLoss == 1)
 
         vm.clearCompleted()
 
         #expect(vm.items.isEmpty)              // the failed item WAS swept…
         #expect(vm.totalFailureCount == 1)     // …but the monotonic count survives
+        #expect(vm.failureCountExcludingConnectionLoss == 1)
     }
 
     // MARK: - 45 (M8a T5 review, finding 2)

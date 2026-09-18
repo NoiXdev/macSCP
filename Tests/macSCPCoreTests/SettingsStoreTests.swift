@@ -607,6 +607,28 @@ struct SettingsStoreTests {
         #expect(afterPaste.terminalPasteOnRightClick == true)
     }
 
+    // MARK: - Notifications (next build of 2026-09-17, Task 7)
+
+    /// One switch gates all three notifications, and it starts ON: the
+    /// maintainer asked for the notifications, so a settings file that
+    /// predates the key gets them.
+    @Test func notificationsDefaultOn() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.notificationsEnabled == true)
+    }
+
+    @Test func notificationsRoundtripBothWays() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.notificationsEnabled = false
+        #expect(SettingsStore(directory: dir).notificationsEnabled == false)
+        store.notificationsEnabled = true
+        #expect(SettingsStore(directory: dir).notificationsEnabled == true)
+    }
+
     // MARK: - Update check (M11b Task 2)
 
     @Test func updateCheckDefaultsToEnabledWithNoLastCheck() {

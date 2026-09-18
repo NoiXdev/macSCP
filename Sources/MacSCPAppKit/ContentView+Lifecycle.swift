@@ -220,6 +220,13 @@ extension ContentView {
         .onChange(of: controlActiveState, initial: true) { _, _ in
             publishToMenuBarIfKey()
         }
+        // "Transfer failed" notifications (next build of 2026-09-17, Task
+        // 7): any tab's failure count moving — including a tab arriving
+        // from another window — runs the check; each tab's own watermark
+        // keeps it from posting twice. See `notifyTransferFailures()`.
+        .onChange(of: transferFailureCounts) { _, _ in
+            notifyTransferFailures()
+        }
     }
 
     // MARK: - Tab lifecycle
@@ -514,6 +521,17 @@ extension ContentView {
         tab.lostConnection = LostConnection(
             reason: .probeGaveUp, storedSessionID: storedSessionID)
         tab.liveness = .lost
+        // The lost-connection notification (next build of 2026-09-17, Task
+        // 7). Posted here because this is the function that OPENS a lost
+        // episode; a failed reconnect from the lost surface writes `.lost`
+        // again through `ConnectAttemptLivenessMirror`, which is the same
+        // episode and does not notify. The name is the stored session's,
+        // read through the id captured before `teardown` cleared it.
+        errorNotifier.notify(
+            .connectionLost,
+            name: notificationName(forStoredSession: storedSessionID),
+            enabled: settingsStore.notificationsEnabled,
+            windowIsKey: notificationWindowIsKey)
     }
 
     /// Activates a tab (strip click) and resets its attention indicator —

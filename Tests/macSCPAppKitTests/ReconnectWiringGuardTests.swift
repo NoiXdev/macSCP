@@ -447,10 +447,18 @@ struct ReconnectWiringGuardTests {
     ///   used to read whether THIS launch was a login launch. The alternative
     ///   was spelling their four-character codes as literals here, which is
     ///   the second copy of a name this project's rules exist to prevent.
+    ///
+    /// One more on 2026-09-17, by Task 7 of the next-build plan, and not a
+    /// transport either: `UserNotifications` is `UNUserNotificationCenter`,
+    /// the macOS notifications for a lost connection, a failed transfer and
+    /// a failed forwarding. It hands text to the system and opens no
+    /// connection; its whole use is `UserNotificationCenterPoster` in
+    /// `ErrorNotifications.swift`, which `ErrorNotificationWiringGuardTests`
+    /// pins as the only file that names `UNUserNotificationCenter`.
     private static let permittedImports: Set<String> = [
         "AppKit", "Carbon", "Combine", "CoreTransferable", "Foundation", "MacSCPAppKit",
         "Observation", "ServiceManagement", "SwiftTerm", "SwiftUI",
-        "UniformTypeIdentifiers", "macSCPCore", "os",
+        "UniformTypeIdentifiers", "UserNotifications", "macSCPCore", "os",
     ]
 
     private struct SanctionedSite {

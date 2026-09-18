@@ -72,11 +72,26 @@ final class TunnelManager {
     static let shared = TunnelManager(
         store: TunnelStore(directory: SessionStore.defaultDirectory),
         makeRunner: { profile in TunnelManager.liveRunner(for: profile) },
-        sessionIDs: { TunnelManager.liveSessionIDs() })
+        sessionIDs: { TunnelManager.liveSessionIDs() },
+        notifyForwardingFailed: { name in
+            // A store read at the moment of the failure: `SettingsStore`
+            // persists on every set, so a fresh one reads the switch as the
+            // user last left it, and no window's instance has to reach this
+            // app-wide type.
+            ErrorNotifier.shared.notify(
+                .forwardingFailed, name: name,
+                enabled: SettingsStore(directory: SettingsStore.defaultDirectory)
+                    .notificationsEnabled,
+                windowIsKey: nil)
+        })
 
     @ObservationIgnored private let store: TunnelStore
     @ObservationIgnored private let makeRunner: RunnerFactory
     @ObservationIgnored private let sessionIDs: SessionIDReader
+    /// Told a forwarding's NAME when its mirrored state enters `.failed`
+    /// (next build of 2026-09-17, Task 7) — see `runner(for:)`. `shared`
+    /// posts the notification; tests record the names.
+    @ObservationIgnored private let notifyForwardingFailed: @MainActor (_ name: String) -> Void
     @ObservationIgnored private var runners: [UUID: any TunnelRunning] = [:]
     /// One mirror task per RUNNER, keyed by that runner's generation — not
     /// by the profile, which is what round 1 keyed it by. Two runners for
@@ -109,11 +124,13 @@ final class TunnelManager {
 
     init(
         store: TunnelStore, makeRunner: @escaping RunnerFactory,
-        sessionIDs: @escaping SessionIDReader
+        sessionIDs: @escaping SessionIDReader,
+        notifyForwardingFailed: @escaping @MainActor (_ name: String) -> Void = { _ in }
     ) {
         self.store = store
         self.makeRunner = makeRunner
         self.sessionIDs = sessionIDs
+        self.notifyForwardingFailed = notifyForwardingFailed
         allProfiles = Self.listed(store.allProfiles(), known: sessionIDs())
     }
 
@@ -750,7 +767,14 @@ final class TunnelManager {
             for await state in created.states {
                 guard let self else { return }
                 guard generations[profile.id] == mine else { return }
+                let previous = states[profile.id]
                 states[profile.id] = state
+                // Only the transition INTO `.failed` notifies; a failure
+                // followed by another failure is the same event.
+                if ErrorNotificationPlan.entersFailure(from: previous, to: state) {
+                    notifyForwardingFailed(
+                        allProfiles.first { $0.id == profile.id }?.name ?? profile.name)
+                }
             }
         }
         return created

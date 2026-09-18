@@ -167,6 +167,10 @@ struct ContentView: View {
     /// queue at tab creation and kept in sync via `.onChange` (M5c/T4 queue
     /// parallelism, M5c/T5 bandwidth limits).
     let settingsStore: SettingsStore
+    /// Posts the macOS notifications for a lost connection and a failed
+    /// transfer (next build of 2026-09-17, Task 7). `ErrorNotifier.shared`
+    /// unless a test hands one in; it holds no state of this window.
+    let errorNotifier: ErrorNotifier
     /// App-global bandwidth ceilings (M8a/T2), created once in `MacSCPApp`.
     /// Every tab's queue resolves its throttle from this one instance, so
     /// limits apply in aggregate across tabs (M8a/T3).
@@ -792,8 +796,10 @@ struct ContentView: View {
         secretStore: (any SecretStore)? = nil,
         managedKeyStore: ManagedKeyStore? = nil,
         seed: WindowSeed? = nil,
-        restorationLaunch: WindowRestorationLaunch? = nil
+        restorationLaunch: WindowRestorationLaunch? = nil,
+        errorNotifier: ErrorNotifier? = nil
     ) {
+        self.errorNotifier = errorNotifier ?? ErrorNotifier.shared
         self.seed = seed
         // No restoration STORE here (Task 5 fix round 1): a window neither
         // reads nor writes `windows.json`. It is read once in
@@ -3465,6 +3471,66 @@ struct ContentView: View {
                 reason)
         } catch {
             externalTerminalErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - Notifications (next build of 2026-09-17, Task 7)
+
+extension ContentView {
+    /// Every tab's count of transfer failures that were not a drop's sweep,
+    /// in tab order — the `Equatable` value `body`'s `.onChange` watches to
+    /// run `notifyTransferFailures()`. A typed property rather than an
+    /// inline `.map`, for the same type-checker reason `tabIDs` is one.
+    var transferFailureCounts: [Int] {
+        tabsModel.tabs.map(\.transferQueue.failureCountExcludingConnectionLoss)
+    }
+
+    /// Whether this window is the key window, for the notification rule
+    /// only (`ErrorNotificationPlan.shouldPost`): a notification about a tab
+    /// in the window the user is typing into is one they are already
+    /// looking at. It decides nothing about which window a menu acts on —
+    /// that is the focused value's job, and `TabsWindowLifecycleTests
+    /// .nothingReAsksWhichWindowIsKey` keeps key-window reads out of the
+    /// files that route menus.
+    var notificationWindowIsKey: Bool {
+        window?.isKeyWindow ?? false
+    }
+
+    /// The name a notification may carry for a tab: its stored session's
+    /// name, or `nil` for a connection that is not a stored session. Never
+    /// the tab's title, which for an unsaved connection spells the user and
+    /// the host.
+    func notificationName(forStoredSession id: UUID?) -> String? {
+        guard let id else { return nil }
+        return sessionListViewModel.sessions.first { $0.id == id }?.name
+    }
+
+    /// Posts one "transfer failed" notification per tab whose queue has
+    /// failed since the last check, and moves the tab's watermark up whether
+    /// or not anything was posted — a failure seen while the setting was
+    /// off, or while the window was key, has been answered for and is not
+    /// posted later.
+    ///
+    /// Reads `failureCountExcludingConnectionLoss`, not `totalFailureCount`:
+    /// the items a drop marks failed are the drop's, and
+    /// `handleLivenessGiveUp(_:)` notifies about the drop. A cancelled item
+    /// is `.cancelled` and counts in neither
+    /// (`TransferQueueViewModel.cancel(itemID:)`, `cancelAll(reason:
+    /// .userRequested)`, a conflict prompt dismissed).
+    func notifyTransferFailures() {
+        for tab in tabsModel.tabs {
+            let failures = tab.transferQueue.failureCountExcludingConnectionLoss
+            let notifiedThrough = tab.notifiedTransferFailureCount
+            tab.notifiedTransferFailureCount = max(failures, notifiedThrough)
+            guard ErrorNotificationPlan.isNewTransferFailure(
+                failureCount: failures, notifiedThrough: notifiedThrough)
+            else { continue }
+            errorNotifier.notify(
+                .transferFailed,
+                name: notificationName(forStoredSession: tab.activeStoredSessionID),
+                enabled: settingsStore.notificationsEnabled,
+                windowIsKey: notificationWindowIsKey)
         }
     }
 }

@@ -327,6 +327,22 @@ private struct GeneralSettingsSection: View {
                     isOn: $store.menuBarEnabled)
             }
 
+            // Notifications (next build of 2026-09-17, Task 7): one switch
+            // for all three macOS notifications — a lost connection, a
+            // failed transfer, a failed port forwarding.
+            Section {
+                Toggle(
+                    L10n.string("settings.general.notifications", "Notifications"),
+                    isOn: $store.notificationsEnabled)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.notifications.footer",
+                    "A macOS notification when a connection is lost, a transfer fails or a "
+                        + "port forwarding fails. Shown only while macSCP is in the background "
+                        + "or the window concerned is not in front."))
+                    .foregroundStyle(.secondary)
+            }
+
             // Forwardings at launch (port-forwarding plan, Task 7): the
             // second of the two routes into the autostart overlay, beside
             // the Window menu's own entry. Both open the same sheet; this

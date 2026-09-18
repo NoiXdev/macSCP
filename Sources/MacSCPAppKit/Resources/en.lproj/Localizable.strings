@@ -5,6 +5,8 @@
 "settings.general.tagFilter.footer" = "Tags stay assignable while editing a connection.";
 "settings.general.restoreWindows" = "Restore windows at launch";
 "settings.general.restoreWindows.footer" = "Windows and their tabs come back as they were, disconnected. Nothing connects until you do.";
+"settings.general.notifications" = "Notifications";
+"settings.general.notifications.footer" = "A macOS notification when a connection is lost, a transfer fails or a port forwarding fails. Shown only while macSCP is in the background or the window concerned is not in front.";
 "settings.appearance.sidebarCompact" = "Compact sidebar";
 "settings.general.showHiddenHint" = "Applies to both panes. Shortcut: ⌘⇧.";
 "settings.general.autoRefresh" = "Auto-refresh remote view";
@@ -1346,3 +1348,9 @@
 "tunnel.autostart.empty" = "No forwarding is set to start on its own.";
 "tunnel.autostart.footer" = "\"At launch\" starts a forwarding every time macSCP opens. \"At login\" starts one only when macOS itself opened macSCP at login. Neither ever asks a question: a connection whose host key is not known yet waits until you connect it once by hand. macSCP cannot always tell whether macOS started it as a login item; if a forwarding does not start by itself, start it once from the menu.";
 "settings.general.tunnelAutostart.footer" = "Which port forwardings macSCP opens by itself, and whether macOS opens macSCP at login.";
+
+/* Notifications (next build of 2026-09-17, Task 7) */
+"notifications.connectionLost.title" = "Connection lost";
+"notifications.transferFailed.title" = "Transfer failed";
+"notifications.forwardingFailed.title" = "Port forwarding failed";
+"notifications.body.unsavedConnection" = "Unsaved connection";

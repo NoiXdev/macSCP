@@ -354,6 +354,23 @@ public final class TransferQueueViewModel {
     /// repeated `setStatus` call for an already-terminal item.
     public private(set) var totalFailureCount = 0
 
+    /// The same count as `totalFailureCount`, less the items a
+    /// connection-loss sweep marked `.failed` (next build of 2026-09-17,
+    /// Task 7) — the count the App's "transfer failed" notification reads.
+    ///
+    /// Those items are `cancelAll(reason: .connectionLost)`'s: the queued and
+    /// resolving ones it marks itself, and the running ones `process` marks
+    /// from `connectionLossReasons`. The drop is one event, and it already
+    /// raises its own "connection lost" notification; counting the transfers
+    /// it swept as failures of their own would say it once per item as well.
+    /// They still count in `totalFailureCount`, whose attention dot wants
+    /// them (see `cancelAll(reason:)`).
+    ///
+    /// A cancel by the user is `.cancelled`, never `.failed`, and counts in
+    /// neither. Incremented at `setStatus`'s choke point, on the same
+    /// non-terminal → `.failed` transition as `totalFailureCount`.
+    public private(set) var failureCountExcludingConnectionLoss = 0
+
     /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
     /// ad-hoc/unstored sessions). Called EXACTLY once per item, at the same
     /// `wasTerminal` choke point in `setStatus` where `totalFailureCount`
@@ -773,7 +790,9 @@ public final class TransferQueueViewModel {
         let queued = order
         order.removeAll()
         for id in queued {
-            setStatus(id, connectionLostReason.map { .failed($0) } ?? .cancelled)
+            setStatus(
+                id, connectionLostReason.map { .failed($0) } ?? .cancelled,
+                causedByConnectionLoss: connectionLostReason != nil)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
@@ -786,7 +805,9 @@ public final class TransferQueueViewModel {
         let resolving = resolvingJobIDs
         resolvingJobIDs.removeAll()
         for id in resolving {
-            setStatus(id, connectionLostReason.map { .failed($0) } ?? .cancelled)
+            setStatus(
+                id, connectionLostReason.map { .failed($0) } ?? .cancelled,
+                causedByConnectionLoss: connectionLostReason != nil)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
@@ -1111,7 +1132,7 @@ public final class TransferQueueViewModel {
             // (`cancelAll(reason: .userRequested)`, or a tree `cancelGroup`)
             // never touches it, so those still land on `.cancelled` below.
             if let reason = connectionLossReasons.removeValue(forKey: jobID) {
-                setStatus(jobID, .failed(reason))
+                setStatus(jobID, .failed(reason), causedByConnectionLoss: true)
             } else {
                 setStatus(jobID, .cancelled)
             }
@@ -1452,7 +1473,11 @@ public final class TransferQueueViewModel {
         items[index].destinationPath = RemotePath.join(directory, name)
     }
 
-    private func setStatus(_ id: UUID, _ status: Item.Status) {
+    /// `causedByConnectionLoss` is `true` only where a connection-loss sweep
+    /// marks an item — see `failureCountExcludingConnectionLoss`.
+    private func setStatus(
+        _ id: UUID, _ status: Item.Status, causedByConnectionLoss: Bool = false
+    ) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let wasTerminal = items[index].status.isTerminal
         items[index].status = status
@@ -1465,7 +1490,10 @@ public final class TransferQueueViewModel {
             // is already terminal (`wasTerminal == true`) can never
             // double-count even if `setStatus` were ever called again with
             // the same `.failed` status.
-            if case .failed = status { totalFailureCount += 1 }
+            if case .failed = status {
+                totalFailureCount += 1
+                if !causedByConnectionLoss { failureCountExcludingConnectionLoss += 1 }
+            }
             groupItemBecameTerminal(id, status: status)
             auditSink?(items[index])
         }

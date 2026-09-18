@@ -7,6 +7,8 @@
 "settings.general.tagFilter.footer" = "Les tags restent assignables lors de la modification d'une connexion.";
 "settings.general.restoreWindows" = "Restaurer les fenêtres au démarrage";
 "settings.general.restoreWindows.footer" = "Les fenêtres et leurs onglets reviennent tels quels, sans connexion. Rien ne se connecte tant que vous ne le faites pas.";
+"settings.general.notifications" = "Notifications";
+"settings.general.notifications.footer" = "Une notification macOS lorsqu'une connexion est perdue, qu'un transfert échoue ou qu'une redirection de port échoue. Affichée uniquement lorsque macSCP est en arrière-plan ou que la fenêtre concernée n'est pas au premier plan.";
 "settings.appearance.sidebarCompact" = "Barre latérale compacte";
 "settings.general.showHiddenHint" = "S'applique aux deux volets. Raccourci : ⌘⇧.";
 "settings.general.autoRefresh" = "Actualisation automatique de la vue distante";
@@ -1351,3 +1353,9 @@
 "tunnel.autostart.empty" = "Aucune redirection ne démarre d’elle-même.";
 "tunnel.autostart.footer" = "« Au démarrage » lance une redirection chaque fois que macSCP s’ouvre. « À l’ouverture de session » n’en lance une que si macOS a lui-même ouvert macSCP à l’ouverture de session. Ni l’une ni l’autre ne pose de question : une connexion dont la clé d’hôte est encore inconnue attend que vous la connectiez une fois à la main. macSCP ne peut pas toujours savoir si macOS l’a lancé comme élément d’ouverture ; si une redirection ne démarre pas d’elle-même, lancez-la une fois depuis le menu.";
 "settings.general.tunnelAutostart.footer" = "Quelles redirections de port macSCP ouvre de lui-même, et si macOS ouvre macSCP à l’ouverture de session.";
+
+/* Notifications (next build of 2026-09-17, Task 7) */
+"notifications.connectionLost.title" = "Connexion perdue";
+"notifications.transferFailed.title" = "Échec du transfert";
+"notifications.forwardingFailed.title" = "Échec de la redirection de port";
+"notifications.body.unsavedConnection" = "Connexion non enregistrée";

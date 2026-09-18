@@ -5,6 +5,8 @@
 "settings.general.tagFilter.footer" = "Tags bleiben beim Bearbeiten einer Verbindung zuweisbar.";
 "settings.general.restoreWindows" = "Fenster beim Start wiederherstellen";
 "settings.general.restoreWindows.footer" = "Fenster und Tabs kommen so zurück, wie sie waren, ohne Verbindung. Verbunden wird erst, wenn du es tust.";
+"settings.general.notifications" = "Mitteilungen";
+"settings.general.notifications.footer" = "Eine macOS-Mitteilung, wenn eine Verbindung abbricht, eine Übertragung fehlschlägt oder eine Portweiterleitung ausfällt. Nur solange macSCP im Hintergrund ist oder du das betroffene Fenster nicht vorne hast.";
 "settings.appearance.sidebarCompact" = "Kompakte Seitenleiste";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
@@ -1348,3 +1350,9 @@
 "tunnel.autostart.empty" = "Keine Weiterleitung startet von selbst.";
 "tunnel.autostart.footer" = "„Beim Start“ startet eine Weiterleitung jedes Mal, wenn macSCP geöffnet wird. „Bei der Anmeldung“ startet eine nur dann, wenn macOS macSCP selbst bei der Anmeldung geöffnet hat. Beide fragen nie nach: Eine Verbindung, deren Hostschlüssel noch unbekannt ist, wartet, bis du sie einmal von Hand verbindest. macSCP kann nicht immer erkennen, ob macOS es als Anmeldeobjekt gestartet hat; wenn eine Weiterleitung nicht von selbst startet, starte sie einmal über das Menü.";
 "settings.general.tunnelAutostart.footer" = "Welche Portweiterleitungen macSCP von selbst öffnet und ob macOS macSCP bei der Anmeldung öffnet.";
+
+/* Notifications (next build of 2026-09-17, Task 7) */
+"notifications.connectionLost.title" = "Verbindung verloren";
+"notifications.transferFailed.title" = "Übertragung fehlgeschlagen";
+"notifications.forwardingFailed.title" = "Portweiterleitung fehlgeschlagen";
+"notifications.body.unsavedConnection" = "Nicht gespeicherte Verbindung";
