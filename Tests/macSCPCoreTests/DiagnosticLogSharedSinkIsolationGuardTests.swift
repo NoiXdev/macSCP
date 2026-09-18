@@ -92,6 +92,41 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
         return String(chars[start..<(i - 1)])
     }
 
+    /// Every paren-balanced argument list following an occurrence of
+    /// `marker` (which must end in `"("`) in `strippedText` — one entry per
+    /// call site, in source order, reusing `suiteAttributeArguments`'s own
+    /// depth-counting shape against an arbitrary call rather than an
+    /// attribute. A call whose parens never balance is skipped, the same
+    /// as that function does, rather than guessed at.
+    private static func callArgumentLists(of marker: String, in strippedText: String) -> [String] {
+        let chars = Array(strippedText)
+        let markerChars = Array(marker)
+        guard !markerChars.isEmpty, chars.count >= markerChars.count else { return [] }
+        var results: [String] = []
+        var i = 0
+        while i <= chars.count - markerChars.count {
+            guard Array(chars[i..<(i + markerChars.count)]) == markerChars else {
+                i += 1
+                continue
+            }
+            var j = i + markerChars.count
+            let start = j
+            var depth = 1
+            while j < chars.count, depth > 0 {
+                if chars[j] == "(" { depth += 1 }
+                if chars[j] == ")" { depth -= 1 }
+                j += 1
+            }
+            guard depth == 0 else {
+                i += 1
+                continue
+            }
+            results.append(String(chars[start..<(j - 1)]))
+            i = j
+        }
+        return results
+    }
+
     // The comment/string blanking this guard scans over used to be a
     // private copy here (`stripCommentsAndStrings`/`closesRawString`,
     // adapted from `TabContextMenuWiringGuardTests`' own raw-string-aware
@@ -157,6 +192,66 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
             \(Self.allowedFileName)'s @Suite must carry .serialized — it is the one file \
             left free to touch the process-wide singleton, and its tests must not race \
             each other on it
+            """)
+    }
+
+    /// `configure`'s own `directory:` parameter defaults to
+    /// `DiagnosticLog.defaultDirectory` — the maintainer's REAL
+    /// `~/Library/Logs/macSCP` — so a call in this suite that names only
+    /// `level:` (typically its own cleanup, `configure(level: .off)`) points
+    /// the process-wide singleton at the real log folder for as long as
+    /// nothing else reconfigures it. `TunnelRunner`/`TransferEngine`/
+    /// `LocalFileSystem`/`ConnectionViewModel`/`RemoteBrowserViewModel` log
+    /// through `DiagnosticLog.shared` unconditionally from production code,
+    /// and this suite's twelve tests run WHILE dozens of other suites
+    /// (`TunnelRunnerTests`, `TunnelStoreTests`, `TransferEngineTests`, …)
+    /// exercise those same paths concurrently, uncoordinated with this
+    /// `.serialized` suite's own configure/defer cycle: `DiagnosticLog.log`
+    /// checks `state.level` and appends the formatted line to
+    /// `state.buffer` in two SEPARATE lock acquisitions, so a line admitted
+    /// under one directory can still be appended — and later drained —
+    /// under whatever directory a `configure(...)` call in between left
+    /// live. Found by observing test-shaped lines (`path=/ziel/…`, a tunnel
+    /// named `web-<hex>`) accumulate in the real
+    /// `~/Library/Logs/macSCP/macSCP-<date>.log` files (docs/BACKLOG.md,
+    /// "The maintainer's real diagnostic log folder holds lines shaped like
+    /// test fixtures").
+    ///
+    /// So: every `DiagnosticLog.shared.configure(...)` call in the one file
+    /// allowed to make one, including every cleanup call, names an explicit
+    /// `directory:` — never the real default, not even for an instant.
+    @Test("every DiagnosticLog.shared.configure( call in the shared-sink suite names an explicit directory")
+    func everyConfigureCallNamesAnExplicitDirectory() throws {
+        guard
+            let file = Self.swiftFiles(under: Self.testsRoot).first(where: {
+                $0.lastPathComponent == Self.allowedFileName
+            })
+        else {
+            Issue.record("\(Self.allowedFileName) was not found under Tests/")
+            return
+        }
+        let raw = try String(contentsOf: file, encoding: .utf8)
+        let stripped = try SwiftSource.blankingCommentsAndStrings(raw)
+        let calls = Self.callArgumentLists(of: "DiagnosticLog.shared.configure(", in: stripped)
+
+        // Positive beside the negative below (CLAUDE.md, "Guards that name
+        // what they watch"): a renamed or vanished call site would
+        // otherwise satisfy the negative by finding nothing to check.
+        #expect(calls.count >= 12, """
+            found only \(calls.count) DiagnosticLog.shared.configure( call(s) in \
+            \(Self.allowedFileName) — expected at least 12
+            """)
+
+        let missingDirectory = calls.filter { !$0.contains("directory:") }
+        #expect(missingDirectory.isEmpty, """
+            \(missingDirectory.count) of \(calls.count) DiagnosticLog.shared.configure( \
+            calls in \(Self.allowedFileName) omit an explicit directory: argument — \
+            configure's own directory parameter defaults to DiagnosticLog.defaultDirectory, \
+            the maintainer's real ~/Library/Logs/macSCP, so a call that omits it (even a \
+            cleanup call(level: .off)) points the process-wide singleton at the real log \
+            folder for as long as nothing else reconfigures it, and a concurrently running \
+            suite's own DiagnosticLog.shared.log(...) call can land a line there before the \
+            next configure(...) call moves the singleton to a temp directory again.
             """)
     }
 }

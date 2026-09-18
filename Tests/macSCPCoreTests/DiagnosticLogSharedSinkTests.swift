@@ -139,7 +139,7 @@ struct DiagnosticLogSharedSinkTests {
     func localFileSystemListWritesStartAndDoneWithoutAnEntrySlowLine() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
@@ -218,7 +218,7 @@ struct DiagnosticLogSharedSinkTests {
     func localFileSystemMetadataWritesAnEntrySlowLineWhenTheClockSaysSlow() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
@@ -306,7 +306,7 @@ struct DiagnosticLogSharedSinkTests {
     func metadataSupervisorLogsAStillPendingLineForAPermanentlyStuckEntry() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
@@ -370,7 +370,7 @@ struct DiagnosticLogSharedSinkTests {
     func metadataLogsAnEntrySlowLineOnReturnForAnEntryThatCameBackLate() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let listedDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: listedDirectory) }
@@ -416,7 +416,7 @@ struct DiagnosticLogSharedSinkTests {
     func transferEngineWritesStartAndDoneLines() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let content = Data("hallo".utf8)
         let source = MockRemoteFileSystem(
@@ -455,7 +455,7 @@ struct DiagnosticLogSharedSinkTests {
     func connectionViewModelWritesConnectStartAndDoneLines() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
         vm.host = "example.com"
@@ -498,7 +498,7 @@ struct DiagnosticLogSharedSinkTests {
         let leakingReason = "Invalid S3 endpoint: https://\(secret)"
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let fs = MockRemoteFileSystem(tree: [:])
         await fs.setListFailure(RemoteFSError.connectionFailed(reason: leakingReason))
@@ -563,7 +563,7 @@ struct DiagnosticLogSharedSinkTests {
         let secret = "AKIAEXAMPLE:hunter2"
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
         vm.kind = .s3
@@ -609,7 +609,7 @@ struct DiagnosticLogSharedSinkTests {
     func tunnelRunnerWritesItsLifecycleLines() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let profile = TunnelProfile(
             sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
@@ -690,7 +690,7 @@ struct DiagnosticLogSharedSinkTests {
     func tunnelRunnerLogsADrainedFailureWithItsPort() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let profile = TunnelProfile(
             sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
@@ -768,7 +768,7 @@ struct DiagnosticLogSharedSinkTests {
     func tunnelRunnerFailedLineCarriesAMappedReason() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let expectedFingerprint = "SHA256:aaa"
         let presentedFingerprint = "SHA256:bbb"
@@ -853,7 +853,7 @@ struct DiagnosticLogSharedSinkTests {
     func tunnelRunnerFailedLineNamesAPortInUse() async throws {
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
-        defer { DiagnosticLog.shared.configure(level: .off) }
+        defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let profile = TunnelProfile(
             sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
