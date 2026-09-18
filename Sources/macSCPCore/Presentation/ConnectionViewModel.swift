@@ -592,9 +592,10 @@ public final class ConnectionViewModel {
     /// Written in `connect()` alone — cleared at the head of every attempt
     /// and set in its `catch`. Deliberately NOT inside `fail(_:kind:)`:
     /// `ConnectionViewModelSourceGuardTests.theOneFailureWriterSetsTheVerdictFirst`
-    /// reads the five normalized lines that follow that function's
-    /// signature, and a sixth line in its body would push `state = newState`
-    /// out of the window that guard reads.
+    /// reads five normalized lines starting at that function's signature —
+    /// the signature and the four lines after it — and the body already
+    /// fills them, so a fifth statement would push `state = newState` out of
+    /// the window that guard reads.
     public private(set) var lastFailureReason: String?
 
     /// What macSCP can OFFER to do about the most recent dial failure, or
@@ -611,9 +612,10 @@ public final class ConnectionViewModel {
     /// property's own write. Deliberately NOT inside `fail(_:kind:)`, and
     /// for the reason spelled there:
     /// `ConnectionViewModelSourceGuardTests.theOneFailureWriterSetsTheVerdictFirst`
-    /// reads the five normalized lines that follow that function's
-    /// signature, so a sixth line in its body would push `state = newState`
-    /// out of the window the guard reads.
+    /// reads five normalized lines starting at that function's signature —
+    /// the signature and the four lines after it — and the body already
+    /// fills them, so a fifth statement would push `state = newState` out of
+    /// the window the guard reads.
     public private(set) var lastFailureRemedy: ConnectFailureRemedy?
 
     /// Identifies whichever `connect()` call is currently allowed to write

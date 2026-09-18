@@ -310,11 +310,18 @@ public enum ChecksumCommandForm: String, Sendable, Equatable, CaseIterable {
 ///
 /// That is why the type exists at all. `ChecksumCommandChannel`, the seam
 /// that actually runs something on a connection, takes THIS and not a
-/// `String`: "run this arbitrary text over there" is not an expression the
-/// package can form, in a test double no less than in production. A
+/// `String`: so on THIS path — the checksum seam, in a test double no less
+/// than in production — no other text can reach the far side. A
 /// convention would have said the same thing and bought nothing — the same
 /// argument `FileChecksum` makes for its private init and
 /// `BoundedSFTPSession` makes for the unbounded close.
+///
+/// The module as a whole can run other text:
+/// `SSHClient.collectingStandardOutput(of:limit:onStandardOutput:)`, the
+/// plumbing underneath this seam, is internal and takes any `String`, and
+/// the jump diagnosis's `SSHForwardingConnection.standardOutput(of:into:)`
+/// is its other caller; Citadel's public `executeCommandStream(_:)`, which
+/// that plumbing wraps, takes any `String` too.
 public struct ChecksumCommandLine: Sendable, Equatable {
     /// The line as the far side's shell will see it.
     public let text: String

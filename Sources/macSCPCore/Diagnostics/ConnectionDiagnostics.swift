@@ -30,9 +30,13 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     /// contributions.
     case complete
     /// Is anything there: the resolve, the TCP connection attempt and the
-    /// ICMP echo.
+    /// ICMP echo. Behind a jump host it also dials the jump and reads the
+    /// jump's secret, because the target's TCP attempt and echo are asked
+    /// over that connection (`ConnectionDiagnostics.needsJumpConnection(_:)`).
     case ping
-    /// Where does the path stop: the resolve and the network trace.
+    /// Where does the path stop: the resolve and the network trace. Behind a
+    /// jump host it too dials the jump and reads the jump's secret, because
+    /// the target's trace runs as a command on the jump host.
     case trace
     /// Does the protocol get in: the resolve and the backend's own dial.
     case dial
