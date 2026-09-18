@@ -38,8 +38,13 @@ step id, outcome, duration, the technical detail line; the trace's table
 prints under its row as hop rows. `--json` prints one object per step
 (`id`, `outcome`, `reason` where the outcome carries one, `durationMs`,
 `detail`, and `hops` for the trace) and one final object for the
-report (`completion`, `endpoint`, `steps`), in the JSON-lines shape every
-other `--json` in this CLI already uses.
+report (`completion`, `endpoint`, `jump`, `steps`), in the JSON-lines
+shape every other `--json` in this CLI already uses. **`jump` was added
+2026-09-18** (`docs/superpowers/plans/2026-09-18-jump-and-groups.md`,
+Task 6, `e5dfc755`): `{host, port}` or `null`, the same shape as
+`endpoint`, naming the jump the session dials through — a step's own
+`id` (`jump.` or `target.`) says which half of the walk it belongs to.
+`completion`, `endpoint` and `steps` keep their names and shapes.
 
 ## Exit codes
 

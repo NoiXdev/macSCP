@@ -61,7 +61,9 @@ Scheduled after the diagnostics leak-route fix (backlog row
       /// One JSON object per step, keys: id, outcome, reason (absent for ok/timedOut),
       /// durationMs, detail, hops (trace only: [{hop, address, rttMs}]).
       public static func jsonObject(for step: DiagnosticStep) -> [String: Any]
-      /// The final object: completion ("complete" | "running" | "cancelled"), endpoint (or null), steps.
+      /// The final object: completion ("complete" | "running" | "cancelled"), endpoint (or null),
+      /// jump (or null, {host, port} — ADDED 2026-09-18 by Task 6 of
+      /// docs/superpowers/plans/2026-09-18-jump-and-groups.md, `e5dfc755`), steps.
       public static func jsonSummary(for report: DiagnosticReport) -> [String: Any]
       /// 0 for ok/skipped/unavailable everywhere; .diagnosis when any step failed or timed out.
       public static func exitCode(for report: DiagnosticReport) -> CLIExitCode
