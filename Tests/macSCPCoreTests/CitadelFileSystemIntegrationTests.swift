@@ -1534,6 +1534,38 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
+    /// Every connection one jump case dialled, and which of them it has
+    /// disconnected. `CitadelFileSystem` has no deinit cleanup, so a
+    /// connection a case drops on the floor stays authenticated against the
+    /// rig for the rest of the run; the test asserts on every exit — green
+    /// or thrown — that nothing was left open.
+    ///
+    /// Strong references, compared with `===`, rather than identifiers: an
+    /// `ObjectIdentifier` of a released connection can be handed to the next
+    /// one, and would then count a live connection as closed.
+    final class JumpPairLedger: @unchecked Sendable {
+        private let lock = NSLock()
+        private var dialled: [CitadelFileSystem] = []
+        private var disconnected: [CitadelFileSystem] = []
+
+        func recordDial(_ connection: CitadelFileSystem) {
+            lock.withLock { dialled.append(connection) }
+        }
+
+        func disconnect(_ connection: CitadelFileSystem) async {
+            await connection.disconnect()
+            lock.withLock { disconnected.append(connection) }
+        }
+
+        var dialledCount: Int { lock.withLock { dialled.count } }
+
+        var leftOpenCount: Int {
+            lock.withLock {
+                dialled.filter { candidate in !disconnected.contains { $0 === candidate } }.count
+            }
+        }
+    }
+
     /// A known-hosts store holding the rig's own host keys, read out of the
     /// containers — so the matrix dials with `HostKeyDecider.refusing` and no
     /// accepting decider exists anywhere in it. An unrecorded key refuses the
@@ -1574,14 +1606,33 @@ struct CitadelFileSystemIntegrationTests {
     /// recorded keys, and no retry — a dial that fails is a finding here,
     /// not throttling to cushion.
     private func dialJumpPairConnection(
-        _ config: SSHConnectionConfig, knownHosts: KnownHostsStore, step: String
+        _ config: SSHConnectionConfig, knownHosts: KnownHostsStore, step: String,
+        ledger: JumpPairLedger
     ) async throws -> CitadelFileSystem {
         do {
-            return try await CitadelFileSystem.connect(
+            let connection = try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: knownHosts,
                 onUnknownHostKey: .refusing)
+            ledger.recordDial(connection)
+            return connection
         } catch {
             throw JumpStepFailure(step: step, underlying: error)
+        }
+    }
+
+    /// `dialJumpPairConnection` as a value rather than a throw, for the
+    /// concurrent pairing: both dials have to be awaited to the end, so a
+    /// connection one of them opened can be disconnected when the other
+    /// failed.
+    private func jumpPairDialOutcome(
+        _ config: SSHConnectionConfig, knownHosts: KnownHostsStore, step: String,
+        ledger: JumpPairLedger
+    ) async -> Result<CitadelFileSystem, any Error> {
+        do {
+            return .success(try await dialJumpPairConnection(
+                config, knownHosts: knownHosts, step: step, ledger: ledger))
+        } catch {
+            return .failure(error)
         }
     }
 
@@ -1663,30 +1714,75 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
+    /// Runs one case's steps, then accounts for every connection they
+    /// dialled — on the thrown path as well as the green one, so a failing
+    /// case cannot hide a connection it left open behind its own failure.
+    /// The positive check beside the negative one: a case that dialled
+    /// nothing has nothing to leave open, and would pass the second check
+    /// for that reason alone.
     private func runJumpPair(
         _ pair: JumpPair, first firstConfig: SSHConnectionConfig,
         second secondConfig: SSHConnectionConfig, knownHosts: KnownHostsStore
     ) async throws {
+        let ledger = JumpPairLedger()
+        let outcome: Result<Void, any Error>
+        do {
+            try await runJumpPairSteps(
+                pair, first: firstConfig, second: secondConfig, knownHosts: knownHosts, ledger: ledger)
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
+        }
+        let dialled = ledger.dialledCount
+        let leftOpen = ledger.leftOpenCount
+        #expect(dialled > 0, "the case dialled no connection")
+        #expect(leftOpen == 0, "\(leftOpen) of \(dialled) dialled connections were never disconnected")
+        try outcome.get()
+    }
+
+    private func runJumpPairSteps(
+        _ pair: JumpPair, first firstConfig: SSHConnectionConfig,
+        second secondConfig: SSHConnectionConfig, knownHosts: KnownHostsStore,
+        ledger: JumpPairLedger
+    ) async throws {
         let first: CitadelFileSystem
         var pending: CitadelFileSystem?
         if pair.dialsConcurrently {
-            async let firstDial = dialJumpPairConnection(
-                firstConfig, knownHosts: knownHosts, step: "dial_first")
-            async let secondDial = dialJumpPairConnection(
-                secondConfig, knownHosts: knownHosts, step: "dial_second")
-            (first, pending) = try await (firstDial, secondDial)
+            // Each dial's outcome is awaited whole, never `try await` over
+            // the pair: that form throws at the first failure it meets and
+            // drops the other dial's connection unbound, still logged in.
+            async let firstDial = jumpPairDialOutcome(
+                firstConfig, knownHosts: knownHosts, step: "dial_first", ledger: ledger)
+            async let secondDial = jumpPairDialOutcome(
+                secondConfig, knownHosts: knownHosts, step: "dial_second", ledger: ledger)
+            switch await (firstDial, secondDial) {
+            case let (.success(firstConnection), .success(secondConnection)):
+                first = firstConnection
+                pending = secondConnection
+            case let (.success(survivor), .failure(error)), let (.failure(error), .success(survivor)):
+                await ledger.disconnect(survivor)
+                throw error
+            case let (.failure(error), .failure):
+                throw error
+            }
         } else {
-            first = try await dialJumpPairConnection(firstConfig, knownHosts: knownHosts, step: "dial_first")
+            first = try await dialJumpPairConnection(
+                firstConfig, knownHosts: knownHosts, step: "dial_first", ledger: ledger)
         }
         var firstShell: HeldShell?
         var secondShell: HeldShell?
         var second: CitadelFileSystem?
         do {
             firstShell = try await HeldShell.open(on: first)
-            try await proveAnswers(first, held: &firstShell!, step: "first_alone")
+            // In the concurrent pairing connection 2 is already dialled here,
+            // so the step does not claim connection 1 is alone.
+            try await proveAnswers(
+                first, held: &firstShell!,
+                step: pair.dialsConcurrently ? "first_with_second_dialled" : "first_alone")
 
             second = if let pending { pending } else {
-                try await dialJumpPairConnection(secondConfig, knownHosts: knownHosts, step: "dial_second")
+                try await dialJumpPairConnection(
+                    secondConfig, knownHosts: knownHosts, step: "dial_second", ledger: ledger)
             }
             pending = nil
             secondShell = try await HeldShell.open(on: second!)
@@ -1695,17 +1791,17 @@ struct CitadelFileSystemIntegrationTests {
 
             await secondShell?.shell.close()
             secondShell = nil
-            await second?.disconnect()
+            if let second { await ledger.disconnect(second) }
             second = nil
             try await proveAnswers(first, held: &firstShell!, step: "first_after_second_closed")
 
             await firstShell?.shell.close()
-            await first.disconnect()
+            await ledger.disconnect(first)
         } catch {
             await secondShell?.shell.close()
-            await (second ?? pending)?.disconnect()
+            if let survivor = second ?? pending { await ledger.disconnect(survivor) }
             await firstShell?.shell.close()
-            await first.disconnect()
+            await ledger.disconnect(first)
             throw error
         }
     }
