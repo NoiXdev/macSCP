@@ -20,7 +20,8 @@ class MacSCPTerminalView: TerminalView {
     /// Whether SwiftTerm reported a selection change since the current
     /// mouse gesture began.
     private var selectionChangedDuringGesture = false
-    /// Set when a control-click pasted, so its mouse-up is consumed too.
+    /// Set when a control-click pasted, so its drags and its mouse-up are
+    /// consumed too.
     private var controlClickPasted = false
 
     // MARK: - Right click
@@ -92,6 +93,17 @@ class MacSCPTerminalView: TerminalView {
             return
         }
         super.mouseDown(with: event)
+    }
+
+    /// The movement of a control-click that pasted goes no further either.
+    /// Under button-event tracking (`?1002h`, `?1003h`) SwiftTerm reports a
+    /// drag as button 1 held and moving; with the press and the release
+    /// both consumed, the application would see a button that never comes
+    /// up. With mouse reporting off, it would start a selection under the
+    /// paste.
+    override func mouseDragged(with event: NSEvent) {
+        if controlClickPasted { return }
+        super.mouseDragged(with: event)
     }
 
     /// SwiftTerm calls this for every change of the selection: turning it

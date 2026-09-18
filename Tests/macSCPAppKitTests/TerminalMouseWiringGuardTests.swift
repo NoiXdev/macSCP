@@ -10,7 +10,8 @@ import Testing
 /// binding the toggles, and the shape of the two overrides that act on
 /// them — which, since review follow-ups Task 8 (2026-09-18), are three
 /// for the right click: `rightMouseDown(with:)`, `menu(for:)` and
-/// `mouseDown(with:)`.
+/// `mouseDown(with:)`. `mouseDragged(with:)` and `mouseUp(with:)` then
+/// consume the rest of a control-click that pasted.
 ///
 /// Structural claims read the source with comments AND string literals
 /// blanked (`SwiftSource.blankingCommentsAndStrings`); catalogue-key claims
@@ -43,6 +44,7 @@ struct TerminalMouseWiringGuardTests {
     private static let decisionHelper = "private func rightClickAction(for event: NSEvent) -> TerminalRightClickPlan"
     private static let controlClickTest = "private static func isControlClick(_ event: NSEvent) -> Bool"
     private static let mouseUpOverride = "override func mouseUp(with event: NSEvent)"
+    private static let mouseDraggedOverride = "override func mouseDragged(with event: NSEvent)"
     private static let settingsTab = "private struct TerminalSettingsTab: View"
 
     private static let keys = [
@@ -106,6 +108,21 @@ struct TerminalMouseWiringGuardTests {
         try Self.expectNoDirectWrite(in: body)
         // Copy on select reads no selection when a click starts.
         #expect(!body.contains("getSelection("))
+    }
+
+    /// A control-click that pasted is consumed whole: its movement and its
+    /// release stop at the flag `mouseDown(with:)` sets, and every other
+    /// gesture still reaches SwiftTerm.
+    @Test func aPastingControlClickIsConsumedAfterThePress() throws {
+        let code = try Self.views(Self.terminalViewFile).code
+        let down = try Self.body(of: Self.mouseDownOverride, in: code)
+        #expect(down.contains("controlClickPasted = true"))
+        for hook in [Self.mouseDraggedOverride, Self.mouseUpOverride] {
+            let body = try Self.body(of: hook, in: code)
+            let consumed = try #require(body.range(of: "if controlClickPasted {"), "\(hook)")
+            let forwarded = try #require(body.range(of: "super."), "\(hook)")
+            #expect(consumed.upperBound <= forwarded.lowerBound, "\(hook) must check the flag before SwiftTerm")
+        }
     }
 
     /// The menu lookup never pastes — a menu request with no mouse button

@@ -121,15 +121,27 @@ struct TerminalMouseBehaviourTests {
     /// when the lookup came back empty. Returns whether the click reached
     /// `mouseDown(with:)`.
     @discardableResult
+    ///
+    /// `dragToX`, when given, moves the pointer to another cell while the
+    /// button is down — a trackpad control-click routinely moves a pixel —
+    /// and `afterPress` runs between the press and that movement.
     private func controlClick(
-        _ terminal: PasteRecordingTerminal, modifiers: NSEvent.ModifierFlags = [], x: CGFloat = 10
+        _ terminal: PasteRecordingTerminal, modifiers: NSEvent.ModifierFlags = [], x: CGFloat = 10,
+        dragToX: CGFloat? = nil, afterPress: () -> Void = {}
     ) throws -> Bool {
         let p = topRow(terminal, x: x)
         let down = try mouse(.leftMouseDown, x: p.x, y: p.y, modifiers: modifiers.union(.control))
         _ = terminal.menu(for: down)
         guard terminal.menuAnswers.last == .some(nil) else { return false }
         terminal.mouseDown(with: down)
-        terminal.mouseUp(with: try mouse(.leftMouseUp, x: p.x, y: p.y, modifiers: modifiers.union(.control)))
+        afterPress()
+        var upX = p.x
+        if let dragToX {
+            terminal.mouseDragged(with: try mouse(
+                .leftMouseDragged, x: dragToX, y: p.y, modifiers: modifiers.union(.control)))
+            upX = dragToX
+        }
+        terminal.mouseUp(with: try mouse(.leftMouseUp, x: upX, y: p.y, modifiers: modifiers.union(.control)))
         return true
     }
 
@@ -288,6 +300,74 @@ struct TerminalMouseBehaviourTests {
             #expect(reachedTheClick)
             #expect(terminal.pastes == 1)
             #expect(sent.bytes.isEmpty, "the control-click was reported to the host: \(sent.bytes)")
+            #expect(pasteboard.string(forType: .string) == Self.sentinel)
+        }
+    }
+
+    /// Button-event tracking (`?1002h`, tmux's mode) reports movement while
+    /// a button is down. A control-click that pastes must not leak a drag
+    /// report either: the application would see button 1 held, and the
+    /// release that ends it is consumed (review of `7152f620`, Important 1).
+    @Test("Paste on right click on: a control-click paste that moves sends no mouse report at all")
+    func aControlClickPasteThatMovesIsNotReported() throws {
+        try withTerminal { terminal, _ in
+            let sent = SentBytes()
+            terminal.terminalDelegate = sent
+            terminal.feed(text: "hello world\u{1b}[?1002h")
+            let far = topRow(terminal, x: 60).x
+
+            // Positive controls first: the same movement IS reported when
+            // nothing pastes — a plain press with the switch on…
+            terminal.pasteOnRightClick = true
+            let p = topRow(terminal)
+            terminal.mouseDown(with: try mouse(.leftMouseDown, x: p.x, y: p.y))
+            sent.bytes = []
+            terminal.mouseDragged(with: try mouse(.leftMouseDragged, x: far, y: p.y))
+            #expect(!sent.bytes.isEmpty, "a plain drag under ?1002h is reported")
+            terminal.mouseUp(with: try mouse(.leftMouseUp, x: far, y: p.y))
+
+            // …and a control-click with the switch off, which reaches
+            // SwiftTerm as a plain click (no snippets, so no menu).
+            terminal.pasteOnRightClick = false
+            let reachedOff = try controlClick(terminal, dragToX: far, afterPress: { sent.bytes = [] })
+            let movedWhileHeld = sent.bytes
+            #expect(reachedOff)
+            #expect(terminal.pastes == 0)
+            #expect(!movedWhileHeld.isEmpty, "a control-click drag with the switch off is reported")
+
+            // The paste: nothing at all reaches the host.
+            terminal.pasteOnRightClick = true
+            sent.bytes = []
+            let reachedOn = try controlClick(terminal, dragToX: far)
+            #expect(reachedOn)
+            #expect(terminal.pastes == 1)
+            #expect(sent.bytes.isEmpty, "the pasting control-click was reported to the host: \(sent.bytes)")
+        }
+    }
+
+    /// Both switches off and no snippets: exactly the surface before the
+    /// settings existed. A right click answers no menu and pastes nothing;
+    /// a control-click is SwiftTerm's plain click (it clears a selection).
+    @Test("Both switches off, no snippets: a right click does nothing and a control-click is a plain click")
+    func bothSwitchesOffWithoutSnippets() throws {
+        try withTerminal { terminal, pasteboard in
+            #expect(terminal.pasteOnRightClick == false)
+            #expect(terminal.copyOnSelect == false)
+            #expect(terminal.menu == nil)
+            terminal.feed(text: "hello world")
+            try rightClick(terminal)
+            #expect(terminal.menuAnswers == [nil])
+            #expect(terminal.pastes == 0)
+
+            try doubleClick(terminal)
+            #expect(terminal.selectionActive, "there is a selection for the click to clear")
+            pasteboard.clearContents()
+            pasteboard.setString(Self.sentinel, forType: .string)
+            let reached = try controlClick(terminal)
+            #expect(reached, "no menu, so AppKit delivers the click")
+            #expect(terminal.menuAnswers == [nil, nil])
+            #expect(terminal.selectionActive == false, "SwiftTerm's mouseDown took it as a plain click")
+            #expect(terminal.pastes == 0)
             #expect(pasteboard.string(forType: .string) == Self.sentinel)
         }
     }
