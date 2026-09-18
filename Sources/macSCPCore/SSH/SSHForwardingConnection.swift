@@ -48,11 +48,10 @@ final class SSHForwardingConnection: TunnelSSHConnection, @unchecked Sendable {
     /// Same parameters, same errors and the same TOFU verdicts as
     /// `CitadelFileSystem.connect` — both are `connectAuthenticated` — minus
     /// the SFTP open, which is why the R-1 flag is never marked here. A
-    /// failed dial therefore releases the dedicated group at once, exactly as
-    /// a tab's dial that failed before `openSFTP` does — including with
-    /// Citadel's login timer still pending (`CitadelFileSystem
-    /// .citadelLoginTimer`), which that shared failure path does not wait
-    /// out for either caller.
+    /// failed dial therefore releases the dedicated group after Citadel's
+    /// login timer (`CitadelFileSystem.citadelLoginTimer`), exactly as a
+    /// tab's dial that failed before `openSFTP` does: that shared failure
+    /// path waits it out for either caller.
     static func connect(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,

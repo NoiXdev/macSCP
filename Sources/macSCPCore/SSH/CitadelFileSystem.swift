@@ -185,10 +185,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// used to be written: whatever it throws closes the client (and the
     /// jump client) and is mapped like any other connect error. It gets the
     /// R-1 flag and has to mark it BEFORE it calls `openSFTP`, because that
-    /// flag is what decides whether a failure releases the dedicated group
-    /// at once or only after Citadel's uncancelled 15-second timer; a step
-    /// that never opens SFTP never marks it, and its failures release the
-    /// group at once.
+    /// flag is what decides which of Citadel's uncancelled timers a failure
+    /// waits out before releasing the dedicated group: `openSFTP`'s
+    /// 15-second one, or — for a step that never opens SFTP, and for every
+    /// failure before `establish` runs — the 10-second login timer. A
+    /// failure never releases the group at once.
     static func connectAuthenticated<Connection>(
         config: SSHConnectionConfig,
         connectTimeout: TimeAmount,
@@ -229,7 +230,7 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         // R-1: tracks whether THIS call ever reached `openSFTP` (through
         // `BoundedSFTPSession.open(on:)`) on `dedicatedGroup` before failing
         // — see the flag type's doc comment and the `catch` below for why
-        // that gates immediate vs. deferred shutdown.
+        // that picks which of Citadel's timers a failure waits out.
         let sftpOpenAttempted = SFTPOpenAttemptFlag()
         do {
             let result = try await connectWithTOFURetries(
@@ -249,27 +250,29 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             await jumpAgent?.close()
             await targetAgent?.close()
             // No connection survived to take ownership — the group
-            // would otherwise leak its thread, so it must be released here.
+            // would otherwise leak its thread, so it must be released here,
+            // and never at once: a timer Citadel does not cancel may still
+            // be pending on its loop.
+            //
+            // R-1: when this attempt got as far as calling `openSFTP` on
+            // `dedicatedGroup` (e.g. `openSFTP` itself timed out, or
+            // `SFTPStartBound`'s deadline closed the client), Citadel
+            // scheduled its 15s "no reply" timer the moment `openSFTP` was
+            // called, win or lose (see `disconnect()`'s comment for the
+            // exact citation), so the release outlives that one.
+            //
+            // Otherwise — a host-key rejection, an auth failure, a
+            // cancellation, a transport error during the handshake — the
+            // login timer every hop's handshake schedules
+            // (`citadelLoginTimer`) may still be pending, so the release
+            // outlives that one instead. Where the dial failed before any
+            // handshake began there is nothing to outlive, and the wait only
+            // keeps an idle thread a little longer.
             if let dedicatedGroup {
-                if sftpOpenAttempted.attempted {
-                    // R-1: this attempt got as far as calling `openSFTP`
-                    // on `dedicatedGroup` before failing (e.g. `openSFTP` itself
-                    // timed out, or `SFTPStartBound`'s deadline closed the
-                    // client) — Citadel already scheduled its uncancelled 15s
-                    // "no reply" timer on this group's loop the moment `openSFTP`
-                    // was called, win or lose (see `disconnect()`'s comment for
-                    // the exact citation). Shutting the group down immediately
-                    // here would race that timer exactly like `disconnect()`
-                    // used to, so defer it the same way.
-                    releaseAfterCitadelTimer(dedicatedGroup, outliving: citadelOpenSFTPTimer)
-                } else {
-                    // `openSFTP` was never reached (host-key rejection, auth
-                    // failure, or a transport error during the SSH handshake
-                    // itself) — Citadel's timer was never scheduled on this
-                    // group, so there's nothing to outlive; shutting down
-                    // immediately is correct and avoids leaking the thread.
-                    try? await dedicatedGroup.shutdownGracefully()
-                }
+                releaseAfterCitadelTimer(
+                    dedicatedGroup,
+                    outliving: sftpOpenAttempted.attempted
+                        ? citadelOpenSFTPTimer : citadelLoginTimer)
             }
             throw error
         }
@@ -1431,18 +1434,37 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// a tab's release, which outlives that one, outlives this one too.
     static let citadelLoginTimer: Duration = .seconds(10)
 
+    /// Test seam: sees every call of `releaseAfterCitadelTimer` made inside
+    /// the structured task tree that binds it — the group handed over and
+    /// the timer it is to outlive.
+    ///
+    /// A `@TaskLocal` for the reason `AgentClientFactory` gives: parallel
+    /// tests never share it. It only observes: the delayed release runs as
+    /// it would without it, so a test that binds it leaks no thread and
+    /// changes nothing it measures.
+    enum GroupReleaseObserver {
+        @TaskLocal static var observe:
+            (@Sendable (MultiThreadedEventLoopGroup, Duration) -> Void)?
+    }
+
     /// Shuts `group` down one second after `timer` has elapsed, detached from
     /// the caller, so a timer Citadel left pending on the group's event loop
     /// fires on a live loop instead of being cut off by the shutdown — and so
     /// the caller does not spend that wait itself.
     ///
-    /// The tab path waits out `citadelOpenSFTPTimer` (sixteen seconds, the
-    /// number both of its release sites spelled before 2026-09-17); a
-    /// forwarding, which never calls `openSFTP`, waits out
-    /// `citadelLoginTimer`.
+    /// A tab's `disconnect()` waits out `citadelOpenSFTPTimer` (sixteen
+    /// seconds, the number both of the tab's release sites spelled before
+    /// 2026-09-17); a forwarding's `disconnect()`, which never follows an
+    /// `openSFTP`, waits out `citadelLoginTimer`. A failed dial,
+    /// `connectAuthenticated`'s clean-up for tabs and forwardings alike,
+    /// waits out the first when it got as far as `openSFTP` and the second
+    /// otherwise. Those three are the only callers, and nothing else in
+    /// this file or `SSHForwardingConnection.swift` shuts a dedicated group
+    /// down (`DialGroupReleaseGuardTests`).
     static func releaseAfterCitadelTimer(
         _ group: MultiThreadedEventLoopGroup, outliving timer: Duration
     ) {
+        GroupReleaseObserver.observe?(group, timer)
         Task.detached {
             try? await Task.sleep(for: timer + .seconds(1))
             try? await group.shutdownGracefully()
