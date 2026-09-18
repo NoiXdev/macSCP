@@ -36,9 +36,8 @@ extension DiagnosticContribution {
             secret = resolved
         } catch {
             // Deliberately not the source's own error text, for the reason
-            // `DiagnosticContribution.sshConnect` gives: a failing vault's
-            // message is the one place a wrapper could hand back something it
-            // read.
+            // `DialSupport.dialSecret` gives: a failing vault's message is the
+            // one place a wrapper could hand back something it read.
             return timer.finish(.unavailable(DiagnosticReason.secretSourceFailed), "")
         }
         let config: S3ConnectionConfig

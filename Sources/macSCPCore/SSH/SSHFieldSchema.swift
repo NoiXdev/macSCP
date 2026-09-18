@@ -244,22 +244,8 @@ public enum SSHFieldSchema {
             }
         }
 
-        let auth: SSHConnectionConfig.AuthMethod
-        switch values[SSHField.authKind] {
-        case StoredSession.AuthKind.privateKey.rawValue:
-            // An unencrypted key has no passphrase — an empty secret must
-            // stay nil rather than become an empty one.
-            auth = .privateKey(
-                keyPath: values[SSHField.keyPath]
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                passphrase: secret.isEmpty ? nil : secret)
-        case StoredSession.AuthKind.agent.rawValue:
-            // Agent auth carries no secret: an empty one must not become an
-            // empty password, which a server would reject confusingly.
-            auth = .agent
-        default:
-            auth = .password(secret)
-        }
+        let auth = authMethod(
+            kind: values[SSHField.authKind], keyPath: values[SSHField.keyPath], secret: secret)
         return .ssh(try SSHConnectionConfig(
             host: values[SSHField.host].trimmingCharacters(in: .whitespacesAndNewlines),
             // Trimmed like every other field here: a padded port used to fall
@@ -274,6 +260,33 @@ public enum SSHFieldSchema {
             username: values[SSHField.username]
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             auth: auth))
+    }
+
+    /// One login's auth method: what an auth kind, a key path and the one
+    /// resolved secret mean together.
+    ///
+    /// Split out of `makeConfig` so the diagnosis's jump hop
+    /// (`DiagnosticJump`) builds its login with the same mapping the target
+    /// does, rather than a second switch over the same three kinds. `kind` is
+    /// the raw value, the way the form stores it; anything that is not
+    /// private-key or agent is a password, as it always was here.
+    static func authMethod(
+        kind: String, keyPath: String, secret: String
+    ) -> SSHConnectionConfig.AuthMethod {
+        switch kind {
+        case StoredSession.AuthKind.privateKey.rawValue:
+            // An unencrypted key has no passphrase — an empty secret must
+            // stay nil rather than become an empty one.
+            return .privateKey(
+                keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
+                passphrase: secret.isEmpty ? nil : secret)
+        case StoredSession.AuthKind.agent.rawValue:
+            // Agent auth carries no secret: an empty one must not become an
+            // empty password, which a server would reject confusingly.
+            return .agent
+        default:
+            return .password(secret)
+        }
     }
 
     /// User name and host — what identifies an SSH connection to a human.

@@ -8,8 +8,9 @@ import macSCPCore
 /// failed-connect surface), the session context menu, and the connect-error
 /// dialog — and all of them land here. One entry rather than one per door,
 /// because what a door has to get right is not the button: it is WHERE the
-/// secret is resolved from, WHICH backend's descriptor answers, and which
-/// field values the probes read. A second entry beside this one would be a
+/// secret is resolved from, WHICH backend's descriptor answers, which field
+/// values the probes read, and which jump host — if any — the target is
+/// reached through. A second entry beside this one would be a
 /// second place for that to drift, and `DiagnosticsDoorsGuardTests` derives
 /// this function by finding the only one that builds a `DiagnosticsTarget` —
 /// so a second one makes the derivation ambiguous and the guard fail rather
@@ -23,8 +24,8 @@ extension ContentView {
     ///
     /// A tab carries the form the user actually dialled with — including a
     /// password typed but never saved — while a sidebar row carries only what
-    /// was stored. Both collapse to the same three facts below, which is why
-    /// the entry takes this and not two overloads.
+    /// was stored. Both collapse to the same facts below, which is why the
+    /// entry takes this and not two overloads.
     enum DiagnosticsSource {
         case tab(SessionTab)
         case stored(StoredSession)
@@ -46,11 +47,20 @@ extension ContentView {
             let stored = sessionListViewModel.sessions.first {
                 $0.id == tab.activeStoredSessionID
             }
+            // The form's jump — where and who, as the tab dialled — with the
+            // secret looked up through the stored session behind the tab,
+            // the same way the target's is (`DiagnosticJump.form`).
             target = DiagnosticsTarget(
                 name: tab.displayTitle,
                 kind: tab.connectionViewModel.kind,
                 values: tab.connectionViewModel.values,
-                sessionID: stored?.secretSlot ?? tab.activeStoredSessionID)
+                sessionID: stored?.secretSlot ?? tab.activeStoredSessionID,
+                jump: tab.connectionViewModel.kind == .ssh
+                    ? DiagnosticJump.form(
+                        tab.connectionViewModel.values,
+                        isEnabled: tab.connectionViewModel.jumpEnabled,
+                        stored: stored.flatMap(sessionListViewModel.diagnosticJump(for:)))
+                    : nil)
         case .stored(let stored):
             let descriptor = BackendDescriptor.descriptor(for: stored.kind)
             // `editBaseline` then `sessionValues`, the same pair
@@ -65,7 +75,8 @@ extension ContentView {
                 name: stored.name,
                 kind: stored.kind,
                 values: values,
-                sessionID: stored.secretSlot)
+                sessionID: stored.secretSlot,
+                jump: sessionListViewModel.diagnosticJump(for: stored))
         }
         diagnostics.present(
             DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets(for: target)),

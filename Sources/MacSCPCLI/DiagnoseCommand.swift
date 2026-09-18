@@ -11,7 +11,9 @@ import macSCPCore
 /// resolved for. A stored session names a Keychain slot, so its dial and its
 /// contributions authenticate exactly as a connect would; a bare `--host`
 /// names none, so those two steps report `skipped` and the universal half —
-/// resolve, TCP, ICMP, trace — is what gets measured.
+/// resolve, TCP, ICMP, trace — is what gets measured. A stored session with a
+/// jump host is walked through it (`ConnectionDiagnostics`): the `jump.` rows,
+/// then the `target.` rows as the jump reaches the server.
 ///
 /// This command decides nothing about what a row SAYS: every word printed
 /// comes from `DiagnoseRendering`, which carries Core's own text through
@@ -28,7 +30,10 @@ struct DiagnoseCommand: AsyncParsableCommand {
             dial. Pass --host instead to point at a machine no session was \
             saved for: nothing resolves a secret for it, so the dial and the \
             server's own claims come back skipped and the universal steps \
-            are what you get. Rows print as each step finishes. The exit \
+            are what you get. A session saved with a jump host is measured \
+            through it: the jump host's rows (jump.*) come first, then the \
+            server as the jump host reaches it (target.*). Rows print as \
+            each step finishes. The exit \
             code is 0 while every step came back ok, skipped or unavailable, \
             and 16 as soon as one failed or timed out, so a script can \
             branch on the path being broken without reading a row.
@@ -111,7 +116,8 @@ struct DiagnoseCommand: AsyncParsableCommand {
             descriptor: target.descriptor,
             values: target.values,
             secrets: target.secrets,
-            sessionID: target.sessionID)
+            sessionID: target.sessionID,
+            jump: target.jump)
         // No `appVersion`: this binary reports none. It has no bundle to
         // read `CFBundleShortVersionString` from (the App's `SettingsView`
         // does that, and Core deliberately does not), and no `version:` in
@@ -134,7 +140,9 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // asked, `label` is honestly "none".
         //
         // And only for a scope that ASKED. `--scope ping` and `--scope
-        // trace` resolve no secret at all, so the chain is still on "none"
+        // trace` resolve no secret through this chain (a session behind a
+        // jump host looks the JUMP's up under `ping`, through its own
+        // lookup, never this chain), so the chain is still on "none"
         // when they finish — a line that reads as "this session has no
         // credential" when it means "nothing looked". `resolvesASecret` is
         // Core's own answer (`DiagnosticScope`), not a list of scopes
@@ -166,7 +174,8 @@ struct DiagnoseCommand: AsyncParsableCommand {
                 descriptor: descriptor,
                 values: descriptor.endpointValues(host: host, port: port),
                 secrets: nil,
-                sessionID: nil)
+                sessionID: nil,
+                jump: nil)
         }
 
         let (stored, sources) = try resolveSession(sessionReference, options: options)
@@ -183,7 +192,30 @@ struct DiagnoseCommand: AsyncParsableCommand {
             descriptor: descriptor,
             values: values,
             secrets: ChainedSecretSource(sources),
-            sessionID: stored.secretSlot)
+            sessionID: stored.secretSlot,
+            jump: try jump(of: stored))
+    }
+
+    /// A stored session's jump host, resolved as the app's connect resolves
+    /// it (`DiagnosticJump.stored`) — or `nil` for a session without one,
+    /// which reads neither the login sets nor the other sessions.
+    ///
+    /// The jump's secret is the Keychain slot the app writes for it, read
+    /// the same read-only way the target's is, with the managed key's slot
+    /// behind it. `--password-command` and `MACSCP_PASSWORD` answer the
+    /// TARGET's secret only: each names one secret, and a command that
+    /// printed the target's password would otherwise be sent to the bastion
+    /// too. A store that cannot be read is thrown, the way `resolveSession`
+    /// throws for the session store.
+    private func jump(of stored: StoredSession) throws -> DiagnosticJump? {
+        guard stored.jump != nil else { return nil }
+        let directory = SessionStore.defaultDirectory
+        return DiagnosticJump.stored(
+            for: stored,
+            sets: try LoginSetStore(directory: directory).all(),
+            sessions: try SessionStore(directory: directory).all(),
+            secrets: KeychainSecretStore(),
+            keys: ManagedKeyStore(directory: directory))
     }
 
     /// The session argument as a reference.
@@ -220,6 +252,9 @@ struct DiagnoseCommand: AsyncParsableCommand {
         /// `--verbose` can read `label` off it once the run is over.
         let secrets: ChainedSecretSource?
         let sessionID: UUID?
+        /// The jump host a stored session dials through; never set for
+        /// `--host`, which names one machine and no way to it.
+        let jump: DiagnosticJump?
     }
 }
 

@@ -49,9 +49,13 @@ public enum DiagnoseRendering {
         }
     }
 
-    /// `id`, padded with spaces to width 14 — wide enough for every id the
-    /// runner writes itself (`DiagnosticStepID`) with room for a
-    /// contribution's own, without truncating one that runs longer.
+    /// `id`, padded with spaces to width 14 — wide enough for every id of a
+    /// direct walk (`DiagnosticStepID`'s five, and the `jump.` ids of a walk
+    /// through a jump host) with room for a contribution's own, without
+    /// truncating one that runs longer. The two `target.` ids do run longer
+    /// (`target.tcpViaJump` 17, `target.dialViaJump` 18, counted 2026-09-18)
+    /// and print whole, pushing their own row's outcome right; widening the
+    /// column for them would move every row of every direct walk too.
     private static let idColumnWidth = 14
     /// `word(_:)`'s longest case, `"unavailable"`, sets the width; nothing is
     /// truncated if a future case's word runs longer.
@@ -194,19 +198,27 @@ public enum DiagnoseRendering {
     }
 
     /// The final object: `completion`, `endpoint` (`{host, port}` or
-    /// `null`), `steps` (one `jsonObject(for:)` per step, in order).
+    /// `null`), `jump` (the same shape, `null` for a session without a jump
+    /// host), `steps` (one `jsonObject(for:)` per step, in order).
+    ///
+    /// `jump` was ADDED on 2026-09-18 beside the three keys this object
+    /// always had, which keep their names and shapes: a script reading
+    /// `endpoint` still reads the target. Which half a step belongs to is in
+    /// its `id` (`jump.` or `target.`), the one field every row already has.
     public static func jsonSummary(for report: DiagnosticReport) -> [String: Any] {
-        let endpointField: Any
-        if let endpoint = report.endpoint {
-            endpointField = ["host": endpoint.host, "port": endpoint.port]
-        } else {
-            endpointField = NSNull()
-        }
         return [
             "completion": completionKey(report.completion),
-            "endpoint": endpointField,
+            "endpoint": jsonEndpoint(report.endpoint),
+            "jump": jsonEndpoint(report.jump),
             "steps": report.steps.map(jsonObject(for:)),
         ]
+    }
+
+    /// `{host, port}`, or `null` — one shape for both endpoints the summary
+    /// names.
+    private static func jsonEndpoint(_ endpoint: Endpoint?) -> Any {
+        guard let endpoint else { return NSNull() }
+        return ["host": endpoint.host, "port": endpoint.port]
     }
 
     /// The one line that says a walk did not finish, or `nil` for one that

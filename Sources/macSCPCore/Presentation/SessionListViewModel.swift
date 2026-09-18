@@ -1438,6 +1438,17 @@ public final class SessionListViewModel {
         return resolved
     }
 
+    /// A stored session's jump as a diagnosis dials it, or `nil` for a
+    /// session without one (`DiagnosticJump.stored`): the same two calls
+    /// `resolvedJump(for:)` makes — the resolver, then the managed key's
+    /// fallback — over this model's own login sets, sessions, Keychain and
+    /// managed keys. Reads no Keychain item until the jump's dial asks for
+    /// its secret.
+    public func diagnosticJump(for session: StoredSession) -> DiagnosticJump? {
+        DiagnosticJump.stored(
+            for: session, sets: loginSets, sessions: sessions, secrets: secrets, keys: keys)
+    }
+
     /// Whether an export may count a login with no secret of its own as
     /// covered: an SSH private-key login whose managed key's own Keychain slot
     /// holds the passphrase (technical backlog of 2026-09-16, Task 5). Such a
@@ -2215,9 +2226,10 @@ public final class SessionListViewModel {
 
 /// A `SecretStore` that holds nothing and is never written: every read answers
 /// `nil`, every write throws. Handed to a resolver whose secret the caller does
-/// not want (`SessionListViewModel.resolvedJumpEndpoint(for:)`), so the
-/// Keychain is not touched.
-private struct NoSecretsStore: SecretStore {
+/// not want, so the Keychain is not touched — two callers, counted 2026-09-18:
+/// `SessionListViewModel.resolvedJumpEndpoint(for:)` and
+/// `DiagnosticJump.stored(for:sets:sessions:secrets:keys:)`.
+struct NoSecretsStore: SecretStore {
     struct WriteRefused: Error {}
 
     func savePassword(_ password: String, for sessionID: UUID) throws { throw WriteRefused() }

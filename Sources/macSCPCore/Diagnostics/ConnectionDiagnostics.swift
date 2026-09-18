@@ -11,6 +11,14 @@ import Foundation
 /// step probes an ADDRESS, so a scope that skipped the lookup would have
 /// nothing to point at.
 ///
+/// **Through a jump host** each scope covers both halves: the jump's own
+/// steps under the phase they share with a direct walk, and each `target.`
+/// step under its own phase (`DiagnosticJumpStep.phase`). The resolve is the
+/// jump's. And a scope that runs any `target.` step also dials the jump
+/// (`ConnectionDiagnostics.needsJumpConnection(_:)`), because every one of
+/// them is measured over that connection — so `.ping` there runs
+/// `jump.dial` beside `target.tcpViaJump`.
+///
 /// `rawValue` is the stable spelling the App builds its catalogue keys from
 /// (`diagnostics.scope.<rawValue>`), which is why the cases are named for
 /// what the user picks rather than for the step ids they expand into.
@@ -49,6 +57,12 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     /// the contributions, the two that authenticate. Derived from
     /// `runs(_:)`, so a scope added to this enum answers by construction
     /// rather than by being remembered here.
+    ///
+    /// The SESSION's secret, through the source the runner was handed. A
+    /// walk through a jump host also looks the jump's own secret up when it
+    /// dials the jump — under `.ping` too — but through the jump's lookup
+    /// (`DiagnosticJump`), not through that source, so this answer and what
+    /// `--verbose` reports about the source are unchanged by it.
     ///
     /// Public because the CLI asks it and `runs(_:)`/`OptionalStep` are
     /// internal: `macscp-cli diagnose --verbose` reports which secret source
@@ -165,7 +179,9 @@ public struct DiagnosticRunObserver: Sendable {
 /// address, the backend's own dial, an IPv4 network trace, and then whatever
 /// the backend contributes — or the subset of those a `DiagnosticScope`
 /// names, which is what a caller who wants one probe and not the whole walk
-/// passes to `run(scope:observer:)`. Nothing here asks which protocol it is
+/// passes to `run(scope:observer:)`. A session behind a jump host is walked
+/// through it instead — the jump first, then the target as the jump reaches
+/// it (`DiagnosticJump`, `targetHalf`). Nothing here asks which protocol it is
 /// looking at — the endpoint, the dial and the contributions all arrive through
 /// `BackendDescriptor`, which is what keeps a fourth backend from having to
 /// be mentioned in this file at all.
@@ -189,6 +205,8 @@ public actor ConnectionDiagnostics {
     private let stepTimeout: Duration
     private let traceTimeout: Duration
     private let appVersion: String
+    private let jump: DiagnosticJump?
+    private let jumpDialer: DiagnosticJumpDialer
 
     /// - Parameters:
     ///   - secrets: where a contribution's credential comes from — the same
@@ -214,11 +232,37 @@ public actor ConnectionDiagnostics {
     ///     `--version` of its own. Nothing it prints carries the value —
     ///     only `DiagnosticReport.plainText()` and `markdown()` do, and the
     ///     CLI prints neither.
+    ///   - jump: the jump host this session dials through, or `nil` for one
+    ///     that dials its target directly. With one, the walk checks the jump
+    ///     first and reaches the target through it (`run(scope:observer:)`);
+    ///     without one, it is the walk it always was.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,
         secrets: (any SecretSource)?,
         sessionID: UUID? = nil,
+        jump: DiagnosticJump? = nil,
+        stepTimeout: Duration = .seconds(5),
+        traceTimeout: Duration = .seconds(20),
+        appVersion: String = "unknown"
+    ) {
+        self.init(
+            descriptor: descriptor, values: values, secrets: secrets, sessionID: sessionID,
+            jump: jump,
+            jumpDialer: .live(knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory)),
+            stepTimeout: stepTimeout, traceTimeout: traceTimeout, appVersion: appVersion)
+    }
+
+    /// The same, with the jump's two dials injected — the suite's seam
+    /// (`DiagnosticJumpDialer`). The public initializer hands the real ones,
+    /// over the known-hosts store the app's own connect reads.
+    init(
+        descriptor: BackendDescriptor,
+        values: FieldValues,
+        secrets: (any SecretSource)?,
+        sessionID: UUID? = nil,
+        jump: DiagnosticJump?,
+        jumpDialer: DiagnosticJumpDialer,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -227,6 +271,8 @@ public actor ConnectionDiagnostics {
         self.values = values
         self.secrets = secrets
         self.sessionID = sessionID
+        self.jump = jump
+        self.jumpDialer = jumpDialer
         self.stepTimeout = stepTimeout
         self.traceTimeout = traceTimeout
         self.appVersion = appVersion
@@ -279,7 +325,13 @@ public actor ConnectionDiagnostics {
     /// like a resolve that had hung (maintainer's finding on the dev build,
     /// 2026-09-04). Every step announces itself here — the resolve, the TCP
     /// ping, the echo, the trace and, through `bounded(_:_:)`, the dial and
-    /// each contribution.
+    /// each contribution; on a walk through a jump host, the `jump.` steps
+    /// and every `target.` step too, measured or skipped.
+    ///
+    /// **A session behind a jump host** (`jump` non-nil) is walked through it
+    /// (`walkThroughJump`): the jump first, from this Mac, then the target as
+    /// the jump reaches it, then the contributions. A session without one is
+    /// the walk below, unchanged.
     public func run(
         scope: DiagnosticScope = .complete, observer: DiagnosticRunObserver
     ) async -> DiagnosticReport {
@@ -306,51 +358,18 @@ public actor ConnectionDiagnostics {
                 endpoint: nil, steps: [step], appVersion: appVersion, scope: scope)
         }
 
-        var steps: [DiagnosticStep] = []
-        /// The report as it stands, labelled with how the walk ended.
-        ///
-        /// The label has NO default, and that is the whole point of its
-        /// shape. This helper used to take none and always produce a complete
-        /// report, so the twelve cancellation returns below handed back a
-        /// cut-short measurement that claimed, at the type level, to be a
-        /// finished one — and `DiagnosticReport.Completion`'s marker, which
-        /// exists precisely so a pasted partial cannot be read as "these
-        /// steps were measured and found absent", never appeared on the one
-        /// path a user reaches with the Cancel button. A required argument is
-        /// what makes the next return site decide instead of inherit.
-        func report(_ completion: DiagnosticReport.Completion) -> DiagnosticReport {
-            DiagnosticReport(
-                endpoint: endpoint, steps: steps, appVersion: appVersion,
-                completion: completion, scope: scope)
-        }
-        /// What every cancellation guard below returns.
-        ///
-        /// The count is read here rather than derived from `Task.isCancelled`
-        /// inside `report(_:)`: a cancellation that arrives after the last
-        /// step has been appended — while the walk is on its way to its
-        /// natural return — would make a finished measurement label itself
-        /// cancelled, which is the same misreading in the other direction.
-        /// Where the walk stopped is known at the site that stops it.
-        func cancelled() -> DiagnosticReport {
-            report(.cancelled(afterSteps: steps.count))
-        }
-        /// Hands a finished step to the observer and gives it back, so the
-        /// publish and the append read as one expression at every site.
-        ///
-        /// Shaped as "publish, then return" rather than as a function that
-        /// appends: a nested function capturing `steps` and awaiting inside it
-        /// is sending a mutable local across a suspension, which Swift 6
-        /// refuses — correctly, since the observer it awaits is `@Sendable`
-        /// and could be anything.
-        func published(_ step: DiagnosticStep) async -> DiagnosticStep {
-            await observer.onStep(step)
-            return step
+        if let jump {
+            return await runThroughJump(jump, to: endpoint, scope: scope, observer: observer)
         }
 
-        guard !Task.isCancelled else { return cancelled() }
+        var walk = Walk(
+            endpoint: endpoint, jump: nil, appVersion: appVersion, scope: scope,
+            observer: observer)
+
+        guard !Task.isCancelled else { return walk.cancelled() }
         let (resolveStep, addresses) = await resolve(endpoint, observer)
-        guard !Task.isCancelled else { return cancelled() }
-        steps.append(await published(resolveStep))
+        guard !Task.isCancelled else { return walk.cancelled() }
+        await walk.append(resolveStep)
 
         // A step outside the scope produces NO row, rather than a `skipped`
         // one. `skipped` already means "asked for, and could not be measured"
@@ -360,24 +379,24 @@ public actor ConnectionDiagnostics {
         // a text somebody pastes into an issue. What the report says instead
         // is which scope it was: one line, once, in the header.
         if scope.runs(.tcp) {
-            guard !Task.isCancelled else { return cancelled() }
+            guard !Task.isCancelled else { return walk.cancelled() }
             let tcpStep = await ping(addresses, port: endpoint.port, observer)
-            guard !Task.isCancelled else { return cancelled() }
-            steps.append(await published(tcpStep))
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(tcpStep)
         }
 
         if scope.runs(.icmp) {
-            guard !Task.isCancelled else { return cancelled() }
+            guard !Task.isCancelled else { return walk.cancelled() }
             let icmpStep = await echo(addresses, observer)
-            guard !Task.isCancelled else { return cancelled() }
-            steps.append(await published(icmpStep))
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(icmpStep)
         }
 
         if scope.runs(.dial), let dial = descriptor.dial {
-            guard !Task.isCancelled else { return cancelled() }
+            guard !Task.isCancelled else { return walk.cancelled() }
             let step = await bounded(dial, observer)
-            guard !Task.isCancelled else { return cancelled() }
-            steps.append(await published(step))
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
         }
 
         // After the dial and before the contributions, and now that IS what
@@ -392,29 +411,259 @@ public actor ConnectionDiagnostics {
         // asserting the negation of the other; this round made the claim true
         // rather than deleting it.
         if scope.runs(.trace) {
-            guard !Task.isCancelled else { return cancelled() }
+            guard !Task.isCancelled else { return walk.cancelled() }
             let traceStep = await trace(addresses, observer)
-            guard !Task.isCancelled else { return cancelled() }
-            steps.append(await published(traceStep))
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(traceStep)
         }
 
+        return await contributions(scope, observer, into: &walk)
+    }
+
+    /// The backend's contributions, when the scope asks for them, and the
+    /// walk's natural end — shared by the direct walk and the one through a
+    /// jump, which both finish here.
+    private func contributions(
+        _ scope: DiagnosticScope, _ observer: DiagnosticRunObserver, into walk: inout Walk
+    ) async -> DiagnosticReport {
         if scope.runs(.contributions) {
             for contribution in descriptor.diagnostics {
-                guard !Task.isCancelled else { return cancelled() }
+                guard !Task.isCancelled else { return walk.cancelled() }
                 let step = await bounded(contribution, observer)
-                guard !Task.isCancelled else { return cancelled() }
-                steps.append(await published(step))
+                guard !Task.isCancelled else { return walk.cancelled() }
+                await walk.append(step)
             }
         }
-        return report(.complete)
+        return walk.report(.complete)
+    }
+
+    // MARK: - Through a jump host
+
+    /// The steps measured THROUGH the jump connection, in the order they run
+    /// once the jump has been reached — the target half of a jump walk.
+    ///
+    /// The hook for adding one (Task 7 of the 2026-09-18 plan puts the three
+    /// exec probes that run ON the jump in here): an entry in this list, and
+    /// a requirement on `DiagnosticJumpConnection` if it needs one. Its phase
+    /// decides which scope runs it, and the jump connection is opened
+    /// whenever any entry in scope needs it (`needsJumpConnection(_:)`).
+    static let targetHalf: [DiagnosticJumpStep] = [.tcpViaJump, .dialViaJump]
+
+    /// Whether `scope` runs a step that needs the jump connection open: the
+    /// jump's own dial, or any step of the target half.
+    ///
+    /// So `.ping` opens it too — `target.tcpViaJump` is how "is anything
+    /// there" is asked of a target behind a bastion, and a channel needs an
+    /// authenticated connection to be opened on. The `jump.dial` row then
+    /// says the connection was made, rather than a ping opening one nobody
+    /// sees. `.trace` alone opens none: the jump's trace is measured from
+    /// this Mac.
+    static func needsJumpConnection(_ scope: DiagnosticScope) -> Bool {
+        scope.runs(.dial) || targetHalf.contains { scope.runs($0.phase) }
+    }
+
+    /// The walk of a session behind a jump host, and the one place its jump
+    /// connection is closed.
+    ///
+    /// Every way out of `walkThroughJump` — the natural end, each
+    /// cancellation, a jump that was never reached — comes back here, and the
+    /// connection is closed before the report is handed back: a diagnosis
+    /// that left a login open on the bastion would be the one probe that
+    /// changes what it measures.
+    private func runThroughJump(
+        _ jump: DiagnosticJump, to endpoint: Endpoint, scope: DiagnosticScope,
+        observer: DiagnosticRunObserver
+    ) async -> DiagnosticReport {
+        let held = HeldJumpConnection()
+        let report = await walkThroughJump(
+            jump, to: endpoint, scope: scope, observer: observer, holding: held)
+        await held.release()?.disconnect()
+        return report
+    }
+
+    /// The jump first, from this Mac — its resolve, TCP ping, echo, dial and
+    /// trace — then the target through it (`targetHalf`), then the backend's
+    /// contributions.
+    ///
+    /// **When the target half is skipped.** If any jump step up to and
+    /// including its dial FAILED, or the dial opened no connection (it was
+    /// skipped for a missing secret, timed out, or was never asked for), every
+    /// target step in scope is `skipped` naming the jump
+    /// (`DiagnosticReason.jumpNotReached`). `failed` only: an echo that heard
+    /// nothing is `timedOut`, and a firewall that drops ICMP says nothing
+    /// about whether the bastion forwards. The jump's trace runs after its
+    /// dial and before the target half, and does not count — it is measured
+    /// from this Mac, and a router that refuses a probe is not a bastion that
+    /// refuses a login.
+    private func walkThroughJump(
+        _ jump: DiagnosticJump, to endpoint: Endpoint, scope: DiagnosticScope,
+        observer: DiagnosticRunObserver, holding held: HeldJumpConnection
+    ) async -> DiagnosticReport {
+        var walk = Walk(
+            endpoint: endpoint, jump: jump.endpoint, appVersion: appVersion, scope: scope,
+            observer: observer)
+
+        guard let jumpEndpoint = jump.endpoint else {
+            // The `noHost` row's counterpart, and unannounced for the same
+            // reason: nothing is measured, so no start is captioned. The
+            // target half still reports itself, so the reader sees the
+            // target was not measured rather than finding its rows missing.
+            let step = Self.timer(for: DiagnosticStepID.jumpResolve)
+                .finish(.unavailable(DiagnosticReason.jumpUnresolvable), "")
+            await walk.append(step)
+            return await skippingTargetHalf(scope, observer, into: &walk)
+        }
+
+        guard !Task.isCancelled else { return walk.cancelled() }
+        let (resolveStep, addresses) = await resolve(
+            jumpEndpoint, as: DiagnosticStepID.jumpResolve, observer)
+        guard !Task.isCancelled else { return walk.cancelled() }
+        await walk.append(resolveStep)
+
+        if scope.runs(.tcp) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let step = await ping(
+                addresses, port: jumpEndpoint.port, as: DiagnosticStepID.jumpTCP, observer)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
+        }
+
+        if scope.runs(.icmp) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let step = await echo(addresses, as: DiagnosticStepID.jumpICMP, observer)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
+        }
+
+        if Self.needsJumpConnection(scope) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let step = await dialJump(jump, observer, holding: held)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
+        }
+        let reached =
+            held.connection != nil
+            && !walk.steps.contains { step in
+                if case .failed = step.outcome { return true } else { return false }
+            }
+
+        if scope.runs(.trace) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let step = await trace(addresses, as: DiagnosticStepID.jumpTrace, observer)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
+        }
+
+        guard reached, let connection = held.connection else {
+            return await skippingTargetHalf(scope, observer, into: &walk)
+        }
+        let context = DiagnosticJumpStep.Context(
+            connection: connection, jump: jump, target: endpoint, values: values,
+            diagnostic: DiagnosticContext(
+                secrets: secrets, sessionID: sessionID, timeout: stepTimeout),
+            dialer: jumpDialer)
+        for step in Self.targetHalf where scope.runs(step.phase) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let row = await bounded(step, context, observer)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(row)
+        }
+        return await contributions(scope, observer, into: &walk)
+    }
+
+    /// Every target step in scope as `skipped`, naming the jump, then the
+    /// contributions. Each skipped row announces itself first, the way a ping
+    /// with no address to probe does: the step was asked for, and the row
+    /// says why it could not be measured.
+    private func skippingTargetHalf(
+        _ scope: DiagnosticScope, _ observer: DiagnosticRunObserver, into walk: inout Walk
+    ) async -> DiagnosticReport {
+        for step in Self.targetHalf where scope.runs(step.phase) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let timer = await Self.starting(step.id, announcedTo: observer)
+            await walk.append(timer.finish(.skipped(DiagnosticReason.jumpNotReached), ""))
+        }
+        return await contributions(scope, observer, into: &walk)
+    }
+
+    /// `jump.dial`: the jump's transport, host key and login, and the
+    /// connection it opens handed to `held` for the target half.
+    ///
+    /// Raced against the step budget by `DetachedProbe`, like every dial
+    /// here — and so, unlike them, it has to deal with a connection that
+    /// arrives AFTER the deadline: the probe is abandoned, not stopped, and a
+    /// transport that finishes its connect anyway would leave a login open on
+    /// the bastion with nobody holding it. `JumpHandoff` is the one place the
+    /// connection changes hands; whichever side comes second closes it.
+    private func dialJump(
+        _ jump: DiagnosticJump, _ observer: DiagnosticRunObserver,
+        holding held: HeldJumpConnection
+    ) async -> DiagnosticStep {
+        let timer = await Self.starting(DiagnosticStepID.jumpDial, announcedTo: observer)
+        let secret: String
+        switch DialSupport.dialSecret(
+            usesAgent: jump.login.authKind == .agent, missing: DiagnosticReason.noJumpSecret,
+            jump.secret)
+        {
+        case .secret(let resolved): secret = resolved
+        case .unanswered(let outcome): return timer.finish(outcome, "")
+        }
+        let config: SSHConnectionConfig
+        do {
+            config = try jump.jumpConfig(secret: secret)
+        } catch {
+            return timer.finish(.failed(DialSupport.reason(for: error)), "")
+        }
+        let handoff = JumpHandoff()
+        let dialer = jumpDialer
+        let seconds = DialSupport.connectSeconds(stepTimeout)
+        let finished = await DetachedProbe.run(timeout: stepTimeout) {
+            do {
+                let connection = try await dialer.connectJump(config, seconds)
+                guard handoff.offer(connection) else {
+                    await connection.disconnect()
+                    return timer.finish(.timedOut, "")
+                }
+                return timer.finish(.ok, "transport, host key and authentication")
+            } catch {
+                return timer.finish(.failed(DialSupport.reason(for: error)), "")
+            }
+        }
+        // Closes the handoff: an offer after this line is refused, and the
+        // probe closes what it brought.
+        let connection = handoff.take()
+        let step = finished ?? timer.finish(.timedOut, "")
+        guard step.outcome == .ok, let connection else {
+            // A connection that won the race by a hair while its row did not
+            // — the deadline or a cancellation landed between the offer and
+            // the answer — is not one the walk may use.
+            await connection?.disconnect()
+            return step
+        }
+        held.connection = connection
+        return step
+    }
+
+    /// Runs one step of the target half, held to the step budget from
+    /// outside exactly as `bounded(_:_:)` holds a contribution.
+    private func bounded(
+        _ step: DiagnosticJumpStep, _ context: DiagnosticJumpStep.Context,
+        _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticStep {
+        let timer = await Self.starting(step.id, announcedTo: observer)
+        let finished = await DetachedProbe.run(timeout: stepTimeout) {
+            await step.measure(context, timer)
+        }
+        return finished ?? timer.finish(.timedOut, "")
     }
 
     // MARK: - The universal steps
 
     private func resolve(
-        _ endpoint: Endpoint, _ observer: DiagnosticRunObserver
+        _ endpoint: Endpoint, as id: String = DiagnosticStepID.resolve,
+        _ observer: DiagnosticRunObserver
     ) async -> (DiagnosticStep, [ResolvedAddress]) {
-        let timer = await Self.starting(DiagnosticStepID.resolve, announcedTo: observer)
+        let timer = await Self.starting(id, announcedTo: observer)
         let outcome = await HostResolver.resolve(
             host: endpoint.host, port: endpoint.port, timeout: stepTimeout)
         switch outcome {
@@ -431,9 +680,10 @@ public actor ConnectionDiagnostics {
     }
 
     private func ping(
-        _ addresses: [ResolvedAddress], port: Int, _ observer: DiagnosticRunObserver
+        _ addresses: [ResolvedAddress], port: Int, as id: String = DiagnosticStepID.tcp,
+        _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
-        let timer = await Self.starting(DiagnosticStepID.tcp, announcedTo: observer)
+        let timer = await Self.starting(id, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -475,9 +725,10 @@ public actor ConnectionDiagnostics {
     /// not have — the same reasoning the TCP step's "first acceptance wins"
     /// rule rests on. What silence gets is `timedOut`, the deadline's answer.
     private func echo(
-        _ addresses: [ResolvedAddress], _ observer: DiagnosticRunObserver
+        _ addresses: [ResolvedAddress], as id: String = DiagnosticStepID.icmp,
+        _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
-        let timer = await Self.starting(DiagnosticStepID.icmp, announcedTo: observer)
+        let timer = await Self.starting(id, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -516,9 +767,10 @@ public actor ConnectionDiagnostics {
     /// The walk runs against `traceTimeout`, not `stepTimeout`: see the
     /// initializer's note.
     private func trace(
-        _ addresses: [ResolvedAddress], _ observer: DiagnosticRunObserver
+        _ addresses: [ResolvedAddress], as id: String = DiagnosticStepID.trace,
+        _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
-        let timer = await Self.starting(DiagnosticStepID.trace, announcedTo: observer)
+        let timer = await Self.starting(id, announcedTo: observer)
         guard !addresses.isEmpty else {
             return timer.finish(.skipped(DiagnosticReason.nothingToProbe), "")
         }
@@ -731,10 +983,13 @@ public actor ConnectionDiagnostics {
 
     /// A universal step's timer, with its start announced first.
     ///
-    /// The announcement is made HERE rather than at the four call sites in
-    /// `run(scope:observer:)`, so the id is spelled once per step: a start
-    /// announced beside the call and a timer built inside the step would be
-    /// two copies of one name, drifting the moment either moved.
+    /// The announcement is made HERE rather than at each of its seven call
+    /// sites (counted 2026-09-18: `resolve`, `ping`, `echo` and `trace`, each
+    /// for both walks' ids; `dialJump`; the target half's
+    /// `bounded(_:_:_:)`; `skippingTargetHalf`), so the id is spelled once
+    /// per step: a start announced beside the call and a timer built inside
+    /// the step would be two copies of one name, drifting the moment either
+    /// moved.
     ///
     /// Announced BEFORE the timer is constructed, because the timer reads both
     /// clocks at construction — an observer that took a millisecond would
@@ -749,5 +1004,116 @@ public actor ConnectionDiagnostics {
 
     private static func timer(for id: String) -> DiagnosticStepTimer {
         DiagnosticStepTimer(id: id, titleKey: DiagnosticStepID.titleKey(for: id))
+    }
+}
+
+/// The rows a walk has measured so far, and the report they make.
+///
+/// One value both walks — the direct one and the one through a jump — carry,
+/// so the rules below are stated once for every return site either has.
+private struct Walk {
+    let endpoint: Endpoint
+    let jump: Endpoint?
+    let appVersion: String
+    let scope: DiagnosticScope
+    let observer: DiagnosticRunObserver
+    private(set) var steps: [DiagnosticStep] = []
+
+    init(
+        endpoint: Endpoint, jump: Endpoint?, appVersion: String, scope: DiagnosticScope,
+        observer: DiagnosticRunObserver
+    ) {
+        self.endpoint = endpoint
+        self.jump = jump
+        self.appVersion = appVersion
+        self.scope = scope
+        self.observer = observer
+    }
+
+    /// Hands a finished step to the observer, then keeps it — the publish
+    /// and the append as one call at every site, in that order, so the
+    /// observer is told about a row before the next step starts.
+    mutating func append(_ step: DiagnosticStep) async {
+        await observer.onStep(step)
+        steps.append(step)
+    }
+
+    /// The report as it stands, labelled with how the walk ended.
+    ///
+    /// The label has NO default, and that is the whole point of its shape.
+    /// This helper used to take none and always produce a complete report,
+    /// so every cancellation return handed back a cut-short measurement that
+    /// claimed, at the type level, to be a finished one — and
+    /// `DiagnosticReport.Completion`'s marker, which exists precisely so a
+    /// pasted partial cannot be read as "these steps were measured and found
+    /// absent", never appeared on the one path a user reaches with the Cancel
+    /// button. A required argument is what makes the next return site decide
+    /// instead of inherit.
+    func report(_ completion: DiagnosticReport.Completion) -> DiagnosticReport {
+        DiagnosticReport(
+            endpoint: endpoint, jump: jump, steps: steps, appVersion: appVersion,
+            completion: completion, scope: scope)
+    }
+
+    /// What every cancellation guard returns.
+    ///
+    /// The count is read here rather than derived from `Task.isCancelled`
+    /// inside `report(_:)`: a cancellation that arrives after the last step
+    /// has been appended — while the walk is on its way to its natural return
+    /// — would make a finished measurement label itself cancelled, which is
+    /// the same misreading in the other direction. Where the walk stopped is
+    /// known at the site that stops it.
+    func cancelled() -> DiagnosticReport {
+        report(.cancelled(afterSteps: steps.count))
+    }
+}
+
+/// The jump connection a walk holds open for its target half — set by
+/// `jump.dial`, closed by `runThroughJump` on every way out.
+///
+/// A class, so the walk and its dial share one without threading an `inout`
+/// through every return site. It never leaves the actor: it is made, filled
+/// and emptied inside one `run`, and has no `async` member that would carry
+/// it off the actor to be awaited — the connection is taken out first, and
+/// the connection is what gets awaited.
+private final class HeldJumpConnection {
+    var connection: (any DiagnosticJumpConnection)?
+
+    /// The connection, and nothing held after this.
+    func release() -> (any DiagnosticJumpConnection)? {
+        defer { connection = nil }
+        return connection
+    }
+}
+
+/// Where the jump's dial hands its connection over, and where a late one is
+/// turned away.
+///
+/// The probe OFFERS what it connected; the walk TAKES once the race is over.
+/// Whichever comes second decides: an offer after the take is refused, and
+/// the probe closes the connection itself — the walk has moved on and will
+/// never close it.
+private final class JumpHandoff: @unchecked Sendable {
+    private let lock = NSLock()
+    private var offered: (any DiagnosticJumpConnection)?
+    private var isTaken = false
+
+    /// `false` when the walk already took — the caller must close
+    /// `connection` itself.
+    func offer(_ connection: any DiagnosticJumpConnection) -> Bool {
+        lock.withLock {
+            guard !isTaken else { return false }
+            offered = connection
+            return true
+        }
+    }
+
+    /// Whatever was offered so far, and no more offers after this.
+    func take() -> (any DiagnosticJumpConnection)? {
+        lock.withLock {
+            isTaken = true
+            defer { offered = nil }
+            return offered
+        }
     }
 }

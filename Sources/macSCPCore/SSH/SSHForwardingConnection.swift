@@ -120,15 +120,26 @@ extension SSHForwardingConnection {
     /// originator, and it names no port it is not actually listening on.
     public func openDirectTCPIP(host: String, port: Int) async throws -> Channel {
         do {
-            let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
-            return try await client.createDirectTCPIPChannel(
-                using: SSHChannelType.DirectTCPIP(
-                    targetHost: host, targetPort: port, originatorAddress: originator)
-            ) { channel in
-                channel.setOption(ChannelOptions.autoRead, value: false)
-            }
+            return try await directTCPIPChannel(host: host, port: port)
         } catch {
             throw TunnelFailure.channelOpenFailed(reason: DialSupport.reason(for: error))
+        }
+    }
+
+    /// The channel open itself, throwing the transport's error as it came.
+    ///
+    /// Split out of `openDirectTCPIP` for the diagnosis's `target.tcpViaJump`
+    /// (`DiagnosticJumpConnection.probeDirectTCPIP`), which has to read the
+    /// refusal's reason code — prohibited or connect-failed — and
+    /// `DialSupport.reason(for:)`'s sentence, which a forwarding wraps the
+    /// error in, no longer carries it (`DirectTCPIPRefusal`).
+    func directTCPIPChannel(host: String, port: Int) async throws -> Channel {
+        let originator = try SocketAddress(ipAddress: "127.0.0.1", port: 0)
+        return try await client.createDirectTCPIPChannel(
+            using: SSHChannelType.DirectTCPIP(
+                targetHost: host, targetPort: port, originatorAddress: originator)
+        ) { channel in
+            channel.setOption(ChannelOptions.autoRead, value: false)
         }
     }
 
@@ -279,6 +290,43 @@ extension SSHForwardingConnection {
         let loopback = ["127.0.0.1", "::1", "localhost"]
         return .remoteBindRefused(
             reason: DialSupport.reason(for: error), needsGatewayPorts: !loopback.contains(bind))
+    }
+}
+
+/// A `direct-tcpip` channel open the far side refused, with the reason code
+/// it gave (RFC 4254 §5.1) — what the diagnosis's `target.tcpViaJump` reads
+/// to tell a jump host that does not forward (1, administratively
+/// prohibited) from one that could not reach the target (2, connect failed).
+///
+/// NIOSSH carries the code only inside its error's description:
+/// `NIOSSHError.channelSetupRejected(reasonCode:reason:)` is internal to it
+/// and prints `Reason: <code> <server text>`. So the code is READ out of
+/// that text, here in the SSH layer and nowhere else, and nothing else is
+/// kept — the server's own words never leave `init?(_:)`.
+struct DirectTCPIPRejection: Error, Equatable {
+    static let administrativelyProhibited: UInt32 = 1
+    static let connectFailed: UInt32 = 2
+
+    let reasonCode: UInt32
+
+    init(reasonCode: UInt32) {
+        self.reasonCode = reasonCode
+    }
+
+    /// The rejection `error` is, or `nil` for any other error.
+    init?(_ error: any Error) {
+        guard let error = error as? NIOSSHError, error.type == .channelSetupRejected,
+            let code = Self.reasonCode(inDescription: String(describing: error))
+        else { return nil }
+        self.init(reasonCode: code)
+    }
+
+    /// The code out of NIOSSH's description, split out so the parse is
+    /// tested without a server that refuses.
+    static func reasonCode(inDescription description: String) -> UInt32? {
+        guard let marker = description.range(of: "Reason: ") else { return nil }
+        let digits = description[marker.upperBound...].prefix { $0.isNumber }
+        return UInt32(digits)
     }
 }
 

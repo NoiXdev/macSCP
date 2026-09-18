@@ -50,19 +50,14 @@ extension DiagnosticContribution {
         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.sshConnect"
     ) { values, context, timer in
         let usesAgent = values[SSHField.authKind] == StoredSession.AuthKind.agent.rawValue
-        var secret = ""
-        if !usesAgent {
-            do {
-                guard let resolved = try context.secret(), !resolved.isEmpty else {
-                    return timer.finish(.skipped(DiagnosticReason.noSecret), "")
-                }
-                secret = resolved
-            } catch {
-                // Deliberately not the source's own error text: a failing
-                // vault's message is the one place a wrapper could hand back
-                // something it read.
-                return timer.finish(.unavailable(DiagnosticReason.secretSourceFailed), "")
-            }
+        let secret: String
+        switch DialSupport.dialSecret(
+            usesAgent: usesAgent, missing: DiagnosticReason.noSecret, context.secret)
+        {
+        case .secret(let resolved):
+            secret = resolved
+        case .unanswered(let outcome):
+            return timer.finish(outcome, "")
         }
         let config: ConnectionConfig
         do {
@@ -121,9 +116,9 @@ extension DiagnosticContribution {
     }
 }
 
-/// The three things the dials above do the same way: turn an error into one
-/// printable line, hand a transport the step's budget, and send one
-/// credential-free HTTP request.
+/// What the dials above do the same way: turn an error into one printable
+/// line, look an SSH login's secret up, hand a transport the step's budget,
+/// and send one credential-free HTTP request.
 public enum DialSupport {
     /// A short, technical reason for a step's `failed` outcome.
     ///
@@ -420,6 +415,39 @@ public enum DialSupport {
             }
         default:
             return (.unknown, (error as NSError).localizedDescription)
+        }
+    }
+
+    /// What an SSH dial authenticates with, or the outcome its row reports
+    /// when there is nothing to authenticate with.
+    enum DialSecret {
+        /// The secret — empty for agent auth, which carries none.
+        case secret(String)
+        /// `skipped` when the lookup found nothing, `unavailable` when the
+        /// lookup itself failed.
+        case unanswered(DiagnosticOutcome)
+    }
+
+    /// The one rule every diagnosis dial of an SSH login looks its secret up
+    /// by — the session's own dial (`DiagnosticContribution.sshConnect`) and
+    /// both logins of a dial through a jump host (`DiagnosticJumpStep`):
+    /// agent auth asks nothing, an empty answer is `skipped` with `missing`
+    /// as the reason, and a lookup that throws is `unavailable`.
+    ///
+    /// Deliberately not the source's own error text on that last path: a
+    /// failing vault's message is the one place a wrapper could hand back
+    /// something it read.
+    static func dialSecret(
+        usesAgent: Bool, missing: String, _ lookup: () throws -> String?
+    ) -> DialSecret {
+        guard !usesAgent else { return .secret("") }
+        do {
+            guard let resolved = try lookup(), !resolved.isEmpty else {
+                return .unanswered(.skipped(missing))
+            }
+            return .secret(resolved)
+        } catch {
+            return .unanswered(.unavailable(DiagnosticReason.secretSourceFailed))
         }
     }
 

@@ -32,6 +32,11 @@ struct DiagnosticsTarget: Identifiable {
     /// login set's where one owns the credential. `nil` for a connection that
     /// was never saved, and the dial step reports that as `skipped`.
     let sessionID: UUID?
+    /// The jump host this connection dials through, or `nil` for one that
+    /// dials its target directly. Taken at the moment of asking like the rest
+    /// of this value, and carrying no secret: the jump's is looked up when
+    /// its dial asks (`DiagnosticJump`).
+    var jump: DiagnosticJump? = nil
 }
 
 /// The panel's half of the diagnosis: it starts one, cancels one, holds the
@@ -92,6 +97,13 @@ final class DiagnosticsViewModel: Identifiable {
     /// screen, and a header needs an endpoint. `nil` for a session that names
     /// no host, where there is nothing coherent to put in that line.
     let endpoint: Endpoint?
+
+    /// The jump host the diagnosis reaches `endpoint` through, known before
+    /// the first probe runs for the same reason `endpoint` is: the header
+    /// names it, and a report copied mid-walk carries it
+    /// (`copyableReport`). `nil` for a connection without a jump, and for one
+    /// whose jump could not be read — the walk's first row says that.
+    let jumpEndpoint: Endpoint?
 
     /// Every step measured by the run in flight, or by the last one — in the
     /// order they finished, appended as each one arrives.
@@ -188,12 +200,14 @@ final class DiagnosticsViewModel: Identifiable {
     init(
         name: String,
         endpoint: Endpoint? = nil,
+        jumpEndpoint: Endpoint? = nil,
         appVersion: String = DiagnosticsViewModel.bundleVersion,
         runner: @escaping Runner,
         copy: @escaping (String) -> Void = DiagnosticsViewModel.writeToPasteboard
     ) {
         self.name = name
         self.endpoint = endpoint
+        self.jumpEndpoint = jumpEndpoint
         self.appVersion = appVersion
         self.runner = runner
         self.copy = copy
@@ -210,13 +224,14 @@ final class DiagnosticsViewModel: Identifiable {
         let version = Self.bundleVersion
         let diagnostics = ConnectionDiagnostics(
             descriptor: descriptor, values: target.values, secrets: secrets,
-            sessionID: target.sessionID, appVersion: version)
+            sessionID: target.sessionID, jump: target.jump, appVersion: version)
         self.init(
             name: target.name,
             // The same answer Core's first line computes, from the same
             // descriptor — asked here so the panel can name the endpoint, and
             // copy a partial report, before the walk has returned anything.
             endpoint: descriptor.endpoint(target.values),
+            jumpEndpoint: target.jump?.endpoint,
             appVersion: version,
             runner: { scope, observer in
                 await diagnostics.run(scope: scope, observer: observer)
@@ -355,8 +370,8 @@ final class DiagnosticsViewModel: Identifiable {
         if let report { return report }
         guard !steps.isEmpty, let endpoint else { return nil }
         return DiagnosticReport(
-            endpoint: endpoint, steps: steps, appVersion: appVersion, completion: .running,
-            scope: walkingScope)
+            endpoint: endpoint, jump: jumpEndpoint, steps: steps, appVersion: appVersion,
+            completion: .running, scope: walkingScope)
     }
 
     func copyPlainText() {

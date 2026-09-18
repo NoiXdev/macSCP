@@ -104,6 +104,19 @@ struct DiagnosticsPanel: View {
                     .foregroundStyle(DesignTokens.inkTertiary)
                     .textSelection(.enabled)
             }
+            // The jump the rows' first half measures, under the endpoint the
+            // second half reaches through it — the header names both halves
+            // the way the `jump.` and `target.` rows below do.
+            if let jump = model.jumpEndpoint {
+                Text(
+                    String(
+                        format: L10n.string("diagnostics.viaJump", "through the jump host %@"),
+                        jump.text)
+                )
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(DesignTokens.inkTertiary)
+                .textSelection(.enabled)
+            }
         }
     }
 

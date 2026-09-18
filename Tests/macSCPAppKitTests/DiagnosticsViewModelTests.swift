@@ -672,6 +672,34 @@ struct DiagnosticsViewModelTests {
         await model.runTask?.value
     }
 
+    /// A session behind a jump host: the jump is known before the walk
+    /// starts, like the endpoint, and a report copied while the walk goes on
+    /// names it — the pasted `jump.` rows would otherwise belong to a
+    /// machine the header never mentions.
+    @Test func copyingMidRunNamesTheJumpHost() async {
+        let emitted = [Self.step(id: DiagnosticStepID.jumpResolve, detail: "A 127.0.0.1")]
+        let clipboard = Clipboard()
+        let model = DiagnosticsViewModel(
+            name: "Test session", endpoint: Endpoint(host: "example.test", port: 22),
+            jumpEndpoint: Endpoint(host: "bastion.test", port: 2222), appVersion: "0.0.0-test",
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            copy: { [clipboard] text in clipboard.write(text) })
+        model.run()
+        await Self.yieldUntil("the row arrives") { model.steps.count == emitted.count }
+
+        model.copyPlainText()
+        let copied = clipboard.written.first ?? ""
+        #expect(copied.contains("Jump host: bastion.test:2222"), "\(copied)")
+        #expect(copied.contains("Endpoint: example.test:22"), "\(copied)")
+
+        model.cancel()
+        await model.runTask?.value
+    }
+
     /// …and a finished report says nothing of the kind.
     @Test func copyingAFinishedRunCarriesNoPartialMarker() async {
         let clipboard = Clipboard()

@@ -1577,7 +1577,11 @@ struct CitadelFileSystemIntegrationTests {
     /// services' comment in `docker/test-server/compose.yml`). Each server is
     /// recorded under both names it is reached by: its published port on
     /// 127.0.0.1, and its service name on the internal port 2222.
-    private func rigKnownHosts(in directory: URL) async throws -> KnownHostsStore {
+    ///
+    /// Static and internal since the jump diagnosis's rig case
+    /// (`ConnectionDiagnosticsJumpRigTests`) dials the same two servers under
+    /// the same refusing decider.
+    static func rigKnownHosts(in directory: URL) async throws -> KnownHostsStore {
         let store = KnownHostsStore(directory: directory)
         let servers: [(container: String, names: [(host: String, port: Int)])] = [
             ("macscp-test-sshd", [("127.0.0.1", 2222), ("sshd", 2222)]),
@@ -1682,7 +1686,7 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-jump-pair-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = try await rigKnownHosts(in: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
 
         switch jumpAuth {
         case .password:

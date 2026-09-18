@@ -1123,6 +1123,7 @@
 "diagnostics.menu" = "Diagnostiquer…";
 "diagnostics.menuHelp" = "Vérifier cette connexion et copier un rapport";
 "diagnostics.title" = "Diagnostic de connexion";
+"diagnostics.viaJump" = "via l’hôte relais %@";
 "diagnostics.idle" = "Rien n’a encore été mesuré. La vérification résout l’hôte, tente une connexion, envoie un ping, se connecte comme le ferait cette connexion et retrace l’itinéraire.";
 "diagnostics.running" = "Mesure en cours…";
 "diagnostics.running.step" = "%@ · mesure en cours…";
@@ -1145,6 +1146,13 @@
 "diagnostics.step.sshConnect" = "Connexion SSH";
 "diagnostics.step.s3Endpoint" = "Point de terminaison";
 "diagnostics.step.webdavOptions" = "Capacités du serveur";
+"diagnostics.step.jump.resolve" = "Hôte relais : résolution du nom";
+"diagnostics.step.jump.tcp" = "Hôte relais : tentative de connexion";
+"diagnostics.step.jump.icmp" = "Hôte relais : ping";
+"diagnostics.step.jump.dial" = "Hôte relais : connexion SSH";
+"diagnostics.step.jump.trace" = "Hôte relais : itinéraire";
+"diagnostics.step.target.tcpViaJump" = "Cible via l’hôte relais : tentative de connexion";
+"diagnostics.step.target.dialViaJump" = "Cible via l’hôte relais : connexion SSH";
 "diagnostics.contribution.s3Access" = "Droits de la clé";
 "diagnostics.contribution.webdavClaims" = "Déclarations du serveur";
 // Tableau des sauts de l’étape d’itinéraire (2026-09-03) : les quatre en-têtes de colonne dessinés par le panneau. Les cellules sont la mesure du cœur et ne sont jamais traduites.
@@ -1173,6 +1181,11 @@
 "diagnostics.reason.traceNeedsIPv4" = "La vérification d’itinéraire nécessite une adresse IPv4.";
 "diagnostics.reason.traceStoppedByBudget" = "La vérification d’itinéraire a atteint son propre budget de temps après le saut %@ — le chemin continue peut-être.";
 "diagnostics.reason.traceHopLimitReached" = "La vérification d’itinéraire a atteint sa propre limite de sauts après le saut %@ — le chemin continue peut-être.";
+"diagnostics.reason.jumpUnresolvable" = "L’hôte relais n’a pas pu être déterminé à partir des réglages de cette connexion — la connexion ou l’identifiant auquel il renvoie n’existe peut-être plus.";
+"diagnostics.reason.jumpNotReached" = "Non mesuré : l’hôte relais n’a pas été atteint.";
+"diagnostics.reason.noJumpSecret" = "Aucun identifiant n’est enregistré pour l’hôte relais. Enregistrez-en un, puis relancez la vérification.";
+"diagnostics.reason.jumpForwardingProhibited" = "L’hôte relais ne transfère pas de connexions pour cet identifiant.";
+"diagnostics.reason.jumpCouldNotConnect" = "L’hôte relais n’a pas pu joindre la cible — le nom n’y est pas résolu, ou rien n’accepte de connexion sur le port.";
 
 /* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de
    menu, la feuille d’aperçu, les deux interrupteurs et le sélecteur de

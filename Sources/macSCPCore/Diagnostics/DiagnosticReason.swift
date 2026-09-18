@@ -34,12 +34,41 @@ public enum DiagnosticReason {
     /// session.
     static let noSecret = "no secret available for this session"
     /// The secret source itself failed. Deliberately not the source's own
-    /// error text — see `DiagnosticContribution.sshConnect`.
+    /// error text — see `DialSupport.dialSecret`.
     static let secretSourceFailed = "the secret source failed"
     /// The S3 dial has no endpoint URL to probe.
     static let noEndpoint = "this session names no endpoint"
     /// The WebDAV dial has no base URL to probe.
     static let noServerURL = "this session names no server URL"
+
+    /// The session dials through a jump host, and where that jump is could
+    /// not be read: a saved connection it names is gone, a login set it names
+    /// is not an SSH login, or its host is empty. The jump's first row, and
+    /// nothing is reached through it.
+    static let jumpUnresolvable = "the jump host could not be read from this session"
+    /// Every step that goes THROUGH the jump, when the jump itself was not
+    /// reached — a jump step up to its dial failed, or the dial did not open
+    /// a connection. Names the jump, because the target was not measured at
+    /// all and a reader must not take the row for a finding about it.
+    static let jumpNotReached = "the jump host was not reached"
+    /// The jump's dial needs a credential and its own slot held none — the
+    /// jump's counterpart of `noSecret`, which names the session's.
+    static let noJumpSecret = "no secret available for the jump host"
+    /// `target.tcpViaJump`'s channel open was refused with reason code 1: the
+    /// jump host does not forward connections for this login at all
+    /// (`AllowTcpForwarding`, a `ForceCommand`, a restricted account).
+    static let jumpForwardingProhibited = "the jump host does not forward connections"
+    /// The same open refused with reason code 2: the jump host tried and
+    /// could not reach the target — its name did not resolve there, or
+    /// nothing accepted on the port.
+    static let jumpCouldNotConnect = "the jump host could not connect to the target"
+
+    /// A refusal with any other reason code. Composed, like
+    /// `traceHopUnreachable`, so it carries no catalogue key and the panel
+    /// shows it as measured.
+    static func jumpRefusedChannel(code: UInt32) -> String {
+        "the jump host refused the channel (code \(code))"
+    }
 
     /// The fixed half of the marker a trace's DETAIL line carries when the
     /// step's budget, and not the path, ended the walk.
@@ -162,6 +191,11 @@ public enum DiagnosticReason {
         secretSourceFailed: "diagnostics.reason.secretSourceFailed",
         noEndpoint: "diagnostics.reason.noEndpoint",
         noServerURL: "diagnostics.reason.noServerURL",
+        jumpUnresolvable: "diagnostics.reason.jumpUnresolvable",
+        jumpNotReached: "diagnostics.reason.jumpNotReached",
+        noJumpSecret: "diagnostics.reason.noJumpSecret",
+        jumpForwardingProhibited: "diagnostics.reason.jumpForwardingProhibited",
+        jumpCouldNotConnect: "diagnostics.reason.jumpCouldNotConnect",
         ICMPEcho.noIPv6RouteReason: "diagnostics.reason.noIPv6Route",
         NetworkTrace.ipv6UnmeasuredReason: "diagnostics.reason.ipv6TraceUnmeasured",
         NetworkTrace.notIPv4Reason: "diagnostics.reason.traceNeedsIPv4",

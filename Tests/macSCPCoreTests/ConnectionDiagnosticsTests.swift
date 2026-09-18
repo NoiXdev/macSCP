@@ -1883,7 +1883,10 @@ private final class Gate: @unchecked Sendable {
 
 /// A loopback TCP socket a test owns, for the two ends of the ping: one that
 /// listens (accepted) and one whose port was released (refused).
-private struct LoopbackSocket {
+///
+/// Internal rather than private since the jump cases
+/// (`ConnectionDiagnosticsJumpTests`) point a jump host at one.
+struct LoopbackSocket {
     let descriptor: Int32
     let port: Int
 

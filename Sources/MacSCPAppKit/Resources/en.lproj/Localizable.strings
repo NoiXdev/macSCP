@@ -1119,6 +1119,7 @@
 "diagnostics.menu" = "Diagnose…";
 "diagnostics.menuHelp" = "Check this connection and copy a report";
 "diagnostics.title" = "Connection diagnostics";
+"diagnostics.viaJump" = "through the jump host %@";
 "diagnostics.idle" = "Nothing has been measured yet. The check resolves the host, tries a connection, sends a ping, dials the way this connection would, and traces the route.";
 "diagnostics.running" = "Measuring…";
 "diagnostics.running.step" = "%@ — measuring…";
@@ -1141,6 +1142,13 @@
 "diagnostics.step.sshConnect" = "SSH connect";
 "diagnostics.step.s3Endpoint" = "Endpoint";
 "diagnostics.step.webdavOptions" = "Server capabilities";
+"diagnostics.step.jump.resolve" = "Jump host: name resolution";
+"diagnostics.step.jump.tcp" = "Jump host: connection attempt";
+"diagnostics.step.jump.icmp" = "Jump host: ping";
+"diagnostics.step.jump.dial" = "Jump host: SSH connect";
+"diagnostics.step.jump.trace" = "Jump host: route";
+"diagnostics.step.target.tcpViaJump" = "Target via the jump host: connection attempt";
+"diagnostics.step.target.dialViaJump" = "Target via the jump host: SSH connect";
 "diagnostics.contribution.s3Access" = "Key access level";
 "diagnostics.contribution.webdavClaims" = "Server claims";
 // The route step's hop table (2026-09-03): the four column headers the panel draws. The cells are Core's own measurement and are never translated.
@@ -1169,6 +1177,11 @@
 "diagnostics.reason.traceNeedsIPv4" = "The route check needs an IPv4 address.";
 "diagnostics.reason.traceStoppedByBudget" = "The route check stopped at its own time budget after hop %@ — the path may go further.";
 "diagnostics.reason.traceHopLimitReached" = "The route check reached its own hop limit after hop %@ — the path may go further.";
+"diagnostics.reason.jumpUnresolvable" = "The jump host could not be read from this connection's settings — the connection or login it names may be gone.";
+"diagnostics.reason.jumpNotReached" = "Not measured: the jump host was not reached.";
+"diagnostics.reason.noJumpSecret" = "No credential is saved for the jump host. Save one, then run the check again.";
+"diagnostics.reason.jumpForwardingProhibited" = "The jump host does not forward connections for this login.";
+"diagnostics.reason.jumpCouldNotConnect" = "The jump host could not connect to the target — the name does not resolve there, or nothing accepts on the port.";
 
 /* Import from another program — Cyberduck (2026-09-03). The menu entry, the
    preview sheet, the two switches and the group picker, plus the field names

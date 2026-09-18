@@ -27,6 +27,13 @@ public struct DiagnosticReport: Sendable, Equatable {
     /// measurement, and the one row the report does carry already says why
     /// the walk stopped.
     public let endpoint: Endpoint?
+    /// The jump host the walk reached the endpoint through, or `nil` for a
+    /// session that dials its target directly — and for one whose jump could
+    /// not be read, which the jump's first row says instead
+    /// (`DiagnosticReason.jumpUnresolvable`). Printed under the endpoint in
+    /// both renderings, so a pasted report names both halves its `jump.` and
+    /// `target.` rows belong to.
+    public let jump: Endpoint?
     public let steps: [DiagnosticStep]
     /// The build that measured this. Passed in by the App
     /// (`CFBundleShortVersionString`); Core never reads the bundle itself —
@@ -67,18 +74,20 @@ public struct DiagnosticReport: Sendable, Equatable {
 
     /// No redaction pass here, unlike `DiagnosticStep.init`, and that is a
     /// decision rather than an omission: besides the steps, this prints
-    /// `endpoint.text`, `appVersion`, and — for a scoped walk — the scope's
-    /// `rawValue`, which is one of a closed set of spellings this module
-    /// wrote and can carry nothing a user typed. An endpoint's host
+    /// `endpoint.text`, the jump's `text`, `appVersion`, and — for a scoped
+    /// walk — the scope's `rawValue`, which is one of a closed set of
+    /// spellings this module wrote and can carry nothing a user typed. An
+    /// endpoint's host — the jump's as much as the target's —
     /// comes either from `URL.host()` (which never carries userinfo) or from
     /// SSH's own host field, where an `alice@server.lan` a user typed is a
     /// user name and not a credential — and carries no `://` for
     /// `withoutUserinfo` to act on anyway.
     public init(
-        endpoint: Endpoint?, steps: [DiagnosticStep], appVersion: String,
+        endpoint: Endpoint?, jump: Endpoint? = nil, steps: [DiagnosticStep], appVersion: String,
         completion: Completion = .complete, scope: DiagnosticScope = .complete
     ) {
         self.endpoint = endpoint
+        self.jump = jump
         self.steps = steps
         self.appVersion = appVersion
         self.completion = completion
@@ -132,6 +141,7 @@ public struct DiagnosticReport: Sendable, Equatable {
     public func plainText() -> String {
         var lines = [Self.title]
         if let endpoint { lines.append("Endpoint: \(endpoint.text)") }
+        if let jump { lines.append("Jump host: \(jump.text)") }
         if let name = Self.scopeName(for: scope) { lines.append("Scope: \(name)") }
         lines.append("App version: \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append(marker) }
@@ -197,6 +207,7 @@ public struct DiagnosticReport: Sendable, Equatable {
     public func markdown() -> String {
         var lines = ["# \(Self.title)", ""]
         if let endpoint { lines.append("- **Endpoint:** `\(endpoint.text)`") }
+        if let jump { lines.append("- **Jump host:** `\(jump.text)`") }
         if let name = Self.scopeName(for: scope) { lines.append("- **Scope:** \(name)") }
         lines.append("- **App version:** \(appVersion)")
         if let marker = Self.marker(for: completion) { lines.append("- **\(marker)**") }

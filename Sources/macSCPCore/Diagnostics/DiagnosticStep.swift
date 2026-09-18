@@ -90,6 +90,22 @@ public enum DiagnosticStepID {
     public static let dial = "dial"
     public static let trace = "trace"
 
+    /// The steps of a session behind a jump host (`DiagnosticJump`): the jump
+    /// itself first, from this Mac, then the target as the jump reaches it.
+    ///
+    /// Two prefixes, `jump.` and `target.`, so the report, the command line's
+    /// rows and its JSON name which half a row belongs to in the one field
+    /// every renderer already prints — the id — and none of them grows a
+    /// column. A session without a jump never produces one of these; its
+    /// walk keeps the five ids above.
+    public static let jumpResolve = "jump.resolve"
+    public static let jumpTCP = "jump.tcp"
+    public static let jumpICMP = "jump.icmp"
+    public static let jumpDial = "jump.dial"
+    public static let jumpTrace = "jump.trace"
+    public static let targetTCPViaJump = "target.tcpViaJump"
+    public static let targetDialViaJump = "target.dialViaJump"
+
     /// The catalogue key a step id renders under, DERIVED rather than spelled
     /// beside each id: a renamed id takes its key with it, instead of leaving
     /// a key that resolves to nothing while the row keeps drawing.
