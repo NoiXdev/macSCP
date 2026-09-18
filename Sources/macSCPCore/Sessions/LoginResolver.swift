@@ -204,8 +204,15 @@ public enum LoginResolver {
         guard login.authKind == .privateKey else { return login }
         let keyPath = (login.keyPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyPath.isEmpty else { return login }
+        // The unreadable-store fact (`Resolution.unreadableStoreHidTheKey`)
+        // is dropped here, deliberately: `ResolvedLogin` has no field for it,
+        // three separate jump fills copy this login into a form, and the
+        // dial's `passphraseRequired` names no hop — a jump's fact would name
+        // the store for a target key it never hid. The target's fill names
+        // it (`ConnectionViewModel.fillManagedKeyPassphrase(store:secrets:)`).
         let resolved = ManagedKeyPassphrase.resolve(
-            keyPath: keyPath, typed: login.secret ?? "", store: keys, secrets: secrets)
+            keyPath: keyPath, typed: login.secret ?? "", store: keys, secrets: secrets
+        ).passphrase
         guard !resolved.isEmpty else { return login }
         var result = login
         result.secret = resolved

@@ -23,7 +23,7 @@ struct ManagedKeyPassphraseTests {
         let path = store.keyDirectory.appendingPathComponent("kf").path
 
         let effective = ManagedKeyPassphrase.resolve(
-            keyPath: path, typed: "", store: store, secrets: secrets)
+            keyPath: path, typed: "", store: store, secrets: secrets).passphrase
         #expect(effective == "stored-pp")
     }
 
@@ -39,14 +39,15 @@ struct ManagedKeyPassphraseTests {
         let path = store.keyDirectory.appendingPathComponent("kf").path
 
         #expect(ManagedKeyPassphrase.resolve(
-            keyPath: path, typed: "typed", store: store, secrets: secrets) == "typed")
+            keyPath: path, typed: "typed", store: store, secrets: secrets).passphrase == "typed")
     }
 
     @Test func foreignPathFallsBackToTyped() throws {
         let store = tempStore()
         let secrets = InMemorySecretStore()
         #expect(ManagedKeyPassphrase.resolve(
-            keyPath: "/Users/tim/.ssh/id_ed25519", typed: "", store: store, secrets: secrets) == "")
+            keyPath: "/Users/tim/.ssh/id_ed25519", typed: "", store: store, secrets: secrets
+        ).passphrase == "")
     }
 
     /// `hasPassphrase` means "the key file is encrypted". A key materialized
@@ -90,7 +91,8 @@ struct ManagedKeyPassphraseTests {
         // …and resolving still falls back to the typed value for the
         // slot-less key rather than inventing one.
         #expect(ManagedKeyPassphrase.resolve(
-            keyPath: path("without-slot"), typed: "", store: store, secrets: secrets) == "")
+            keyPath: path("without-slot"), typed: "", store: store, secrets: secrets
+        ).passphrase == "")
     }
 
     /// An empty string in the slot is not a stored passphrase: sessions and

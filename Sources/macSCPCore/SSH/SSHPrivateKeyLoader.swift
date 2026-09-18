@@ -28,10 +28,12 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     /// directory, and `managed_keys.json` could not be read.
     ///
     /// Never thrown by this loader, which only knows that no passphrase
-    /// came: it is `passphraseRequired` renamed after the dial, by
-    /// `ManagedKeyPassphraseSecretSource.namingUnreadableStore(_:in:)`, from
-    /// what the secret chain's managed-key link saw when it was asked. No
-    /// payload: the finding is the store, and the store has one name.
+    /// came: it is `passphraseRequired` renamed after the dial, in two
+    /// places — `ManagedKeyPassphraseSecretSource.namingUnreadableStore(_:in:)`
+    /// from what a secret chain's managed-key link saw (forwardings, the
+    /// command line), and `ConnectionViewModel`'s own `namingUnreadableStore`
+    /// from what the tab's fill saw (`fillManagedKeyPassphrase(store:secrets:)`).
+    /// No payload: the finding is the store, and the store has one name.
     case managedKeyStoreUnreadable
 }
 

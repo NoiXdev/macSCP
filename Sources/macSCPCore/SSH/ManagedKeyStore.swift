@@ -115,13 +115,41 @@ public struct ManagedKeyStore: Sendable {
         }
     }
 
+    /// What a lookup by path found, with an unreadable store answered as a
+    /// fact rather than thrown.
+    public enum PathLookup: Equatable, Sendable {
+        /// The store was read: the managed key at the path, or nil when the
+        /// store manages none there.
+        case read(ManagedKey?)
+        /// `managed_keys.json` is there and could not be read. `errorType` is
+        /// the error's TYPE name only — a `DecodingError`'s description quotes
+        /// from the file. `hidTheKey` is `isInKeyDirectory(path)`: whether
+        /// the path is one this store could have managed, so that the
+        /// unreadable store is what hid its passphrase.
+        case unreadable(errorType: String, hidTheKey: Bool)
+    }
+
+    /// `key(forPath:)`, with an unreadable store as `.unreadable` instead of
+    /// a throw — the one reading both the managed-key secret source
+    /// (`ManagedKeyPassphraseSecretSource`) and the form's fill
+    /// (`ManagedKeyPassphrase.resolve`) take, so the two answer the same
+    /// fact the same way.
+    public func lookUp(path: String) -> PathLookup {
+        do {
+            return .read(try key(forPath: path))
+        } catch {
+            return .unreadable(
+                errorType: String(describing: type(of: error)), hidTheKey: isInKeyDirectory(path))
+        }
+    }
+
     /// Whether `path` names a file directly inside `keyDirectory` — the one
     /// place a key this store manages can live (`privateKeyURL(for:)`).
     ///
     /// Answered from the path alone, without reading `managed_keys.json`:
     /// it is the question that is still answerable when the store is not.
-    /// `ManagedKeyPassphraseSecretSource` asks it after an unreadable store,
-    /// to tell a key the store would have managed from one it never could.
+    /// `lookUp(path:)` asks it after an unreadable store, to tell a key the
+    /// store would have managed from one it never could.
     /// Resolved the way `key(forPath:)` resolves, so the two agree on what
     /// a path names.
     public func isInKeyDirectory(_ path: String) -> Bool {

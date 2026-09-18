@@ -339,6 +339,58 @@ public final class ConnectionViewModel {
     /// when the auth kind is switched afterwards
     /// (`userSwitchClearsSecretButProgrammaticSetDoesNot`). S3's secret access
     /// key and WebDAV's password are one field each.
+    /// Fills the key passphrase from the managed key's own Keychain slot when
+    /// nothing was typed (M17), and records whether an unreadable
+    /// `managed_keys.json` hid that slot (review follow-ups of 2026-09-18,
+    /// Task 6 fix round 1).
+    ///
+    /// The tab's one fill, for both App call sites — `ContentView.fillForm`
+    /// and the form's Connect button, two, counted 2026-09-18 — so neither
+    /// can drop the fact. Private-key auth only; any other auth choice
+    /// clears the record.
+    ///
+    /// Nothing is blocked: the passphrase is still what was typed when the
+    /// store cannot be read. The record only changes what a dial that then
+    /// fails for a missing passphrase SAYS — see
+    /// `namingUnreadableStore(_:)`.
+    public func fillManagedKeyPassphrase(store: ManagedKeyStore, secrets: any SecretStore) {
+        guard authChoice == .privateKey else {
+            keyPathHiddenByUnreadableStore = nil
+            return
+        }
+        let path = keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolution = ManagedKeyPassphrase.resolve(
+            keyPath: path, typed: password, store: store, secrets: secrets)
+        password = resolution.passphrase
+        keyPathHiddenByUnreadableStore = resolution.unreadableStoreHidTheKey ? path : nil
+    }
+
+    /// The key path whose passphrase slot an unreadable key store hid at the
+    /// last `fillManagedKeyPassphrase(store:secrets:)`, or nil. A PATH rather
+    /// than a flag, so a form whose key path changed since is not told about
+    /// a store that never held its new key.
+    private var keyPathHiddenByUnreadableStore: String?
+
+    /// `error`, or `SSHKeyError.managedKeyStoreUnreadable` when it is the
+    /// dial's `passphraseRequired` for the key the last fill found hidden by
+    /// an unreadable store — the form's counterpart of
+    /// `ManagedKeyPassphraseSecretSource.namingUnreadableStore(_:in:)`, and
+    /// the same typed error, so the message, the failure kind and
+    /// `lastFailureReason` all come from it.
+    ///
+    /// The jump hop's key is not considered: its fill
+    /// (`LoginResolver.fallingBackToManagedKeyPassphrase`) keeps no record,
+    /// and `passphraseRequired` names no hop.
+    private func namingUnreadableStore(_ error: any Error) -> any Error {
+        guard case .passphraseRequired? = error as? SSHKeyError,
+            authChoice == .privateKey, password.isEmpty,
+            let hidden = keyPathHiddenByUnreadableStore,
+            hidden == keyPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        else { return error }
+        return SSHKeyError.managedKeyStoreUnreadable
+    }
+
+
     public func fillSecret(_ secret: String) {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         let namespace = descriptor.fieldNamespace
@@ -982,6 +1034,9 @@ public final class ConnectionViewModel {
         } catch {
             // Same attempt-scoped write as the success path above.
             guard currentAttempt == myAttempt else { return nil }
+            // A missing passphrase that an unreadable key store caused is
+            // named as that, before anything below reads the error.
+            let error = namingUnreadableStore(error)
             // The fixed sentence for this error, computed where the error
             // is — the only place it exists. See `lastFailureReason`.
             lastFailureReason = DialSupport.reason(for: error)
@@ -1110,7 +1165,8 @@ public final class ConnectionViewModel {
     /// past, a rejection was a person's answer, and an unreadable trust
     /// store means the question cannot even be asked) and a key passphrase
     /// macSCP does not have (`SSHKeyError.passphraseRequired` /
-    /// `.wrongPassphrase`).
+    /// `.wrongPassphrase`, and `.managedKeyStoreUnreadable`, which is
+    /// `passphraseRequired` with its cause named).
     ///
     /// Every other `SSHKeyError` case (`fileNotFound`, `unsupportedFormat`,
     /// and, since Task 1 of the key-formats plan, `typeNotLoadable` and
@@ -1128,7 +1184,8 @@ public final class ConnectionViewModel {
         switch error {
         case is HostKeyError, is ServerCertificateError:
             return .needsPerson
-        case SSHKeyError.passphraseRequired, SSHKeyError.wrongPassphrase:
+        case SSHKeyError.passphraseRequired, SSHKeyError.wrongPassphrase,
+            SSHKeyError.managedKeyStoreUnreadable:
             return .needsPerson
         default:
             return .other
@@ -2252,6 +2309,12 @@ public final class ConnectionViewModel {
                 field: Self.sshField(.passphrase))
         case SSHKeyError.wrongPassphrase:
             return .failed(message: CoreL10n.string("core.connect.keyWrongPassphrase"), field: Self.sshField(.passphrase))
+        // A missing passphrase whose slot an unreadable `managed_keys.json`
+        // hid: the passphrase row still, because typing it there connects.
+        case SSHKeyError.managedKeyStoreUnreadable:
+            return .failed(
+                message: CoreL10n.string("core.connect.managedKeyStoreUnreadable"),
+                field: Self.sshField(.passphrase))
         // `typeNotLoadable` (key formats plan, Task 1) and `pemNotReadable`
         // (PEM private keys plan, Task 3) carry only an algorithm name or a
         // refused feature -- no `path`, unlike `fileNotFound` above -- so the

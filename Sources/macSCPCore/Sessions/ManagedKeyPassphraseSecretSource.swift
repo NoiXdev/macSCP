@@ -66,20 +66,22 @@ public struct ManagedKeyPassphraseSecretSource: SecretSource {
     /// an unencrypted key's slot is never read, so no consent prompt is
     /// raised for a passphrase that does not exist.
     public func secret(for sessionID: UUID) throws -> String? {
-        // Not `ManagedKeyPassphrase.resolve`: its `try?` is what the App's
-        // form path relies on, and this source must not swallow the error.
+        // Not `ManagedKeyPassphrase.resolve`: its Keychain read is a `try?`,
+        // which the App's form path relies on, and this source must not
+        // swallow that error. The store is read the same way both do
+        // (`ManagedKeyStore.lookUp(path:)`).
         let key: ManagedKey?
         // An unreadable key store must not stop sessions whose key it does not
         // manage; the Keychain read below still throws.
-        do {
-            key = try keys.key(forPath: keyPath)
+        switch keys.lookUp(path: keyPath) {
+        case .read(let found):
+            key = found
             lastRead.hidTheKey.withLock { $0 = false }
-        } catch {
-            lastRead.hidTheKey.withLock { $0 = keys.isInKeyDirectory(keyPath) }
+        case .unreadable(let errorType, let hidTheKey):
+            lastRead.hidTheKey.withLock { $0 = hidTheKey }
             DiagnosticLog.shared.log(
                 .error, "app",
-                "managed_keys.json unreadable (\(String(describing: type(of: error)))); "
-                    + "answering as if no key were managed")
+                "managed_keys.json unreadable (\(errorType)); answering as if no key were managed")
             return nil
         }
         guard let key, key.hasPassphrase else { return nil }

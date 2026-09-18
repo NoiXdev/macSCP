@@ -2877,13 +2877,12 @@ struct ContentView: View {
             // private-key auth. Routed through the same two properties
             // `maybeCreateNewLoginSet(from:editedSession:)` and
             // `startSession`'s own `shouldSaveSession` branch already use.
-            if form.authChoice == .privateKey {
-                form.password = ManagedKeyPassphrase.resolve(
-                    keyPath: form.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                    typed: form.password,
-                    store: managedKeyStore,
-                    secrets: secretStore)
-            }
+            //
+            // Through the form's own fill, which also records whether an
+            // unreadable `managed_keys.json` hid the key, so a dial that then
+            // needs a passphrase names the store (review follow-ups of
+            // 2026-09-18, Task 6 fix round 1). It checks `authChoice` itself.
+            form.fillManagedKeyPassphrase(store: managedKeyStore, secrets: secretStore)
             form.loginMode = stored.loginSetID != nil ? .set : .manual
             form.selectedLoginSetID = stored.loginSetID
         } catch is LoginResolveError {

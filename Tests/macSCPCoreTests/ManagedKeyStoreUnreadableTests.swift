@@ -305,13 +305,15 @@ struct CorruptManagedKeyStoreRig {
             keyPath: keyPath)
     }
 
-    /// An encrypted ed25519 key at `path`, generated at run time.
+    /// An encrypted ed25519 key at `path`, generated at run time. A failed
+    /// `ssh-keygen` stops the test here, at its real cause, rather than
+    /// surfacing later as a missing key file.
     func writeEncryptedKey(at path: String) async throws {
         let result = try await SubprocessRunner.run(
             URL(fileURLWithPath: "/usr/bin/ssh-keygen"),
             arguments: [
                 "-t", "ed25519", "-f", path, "-N", Self.keyPassphrase, "-q", "-C", "macscp-test",
             ])
-        #expect(result.status == 0)
+        try #require(result.status == 0)
     }
 }

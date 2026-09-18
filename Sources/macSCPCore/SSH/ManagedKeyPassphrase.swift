@@ -11,15 +11,52 @@ import Foundation
 /// first key that is encrypted with NO slot (a login-set export without
 /// secrets, which is the default).
 public enum ManagedKeyPassphrase {
+    /// What `resolve` found: the passphrase to dial with, and whether an
+    /// unreadable key store hid the key's slot.
+    public struct Resolution: Equatable, Sendable {
+        /// The typed passphrase, the managed key's stored one, or the empty
+        /// typed value when neither answered.
+        public let passphrase: String
+        /// Nothing was typed, `managed_keys.json` could not be read, and
+        /// the key lies in the managed key directory — the same fact
+        /// `ManagedKeyPassphraseSecretSource.unreadableStoreHidItsKey`
+        /// records (`ManagedKeyStore.PathLookup.unreadable(hidTheKey:)`).
+        /// False for a key anywhere else: the store could never have held
+        /// it, and the fill goes on exactly as before.
+        public let unreadableStoreHidTheKey: Bool
+    }
+
+    /// The passphrase to dial `keyPath` with: what was typed, else the
+    /// managed key's stored one.
+    ///
+    /// The store is read through `ManagedKeyStore.lookUp(path:)`, not a
+    /// `try?` (review follow-ups of 2026-09-18, Task 6 fix round 1): an
+    /// unreadable `managed_keys.json` still resolves to the typed value, so
+    /// nothing is stopped, but it is reported
+    /// (`Resolution.unreadableStoreHidTheKey`) instead of reading exactly
+    /// like a key macSCP does not manage. A typed passphrase wins before the
+    /// store is looked at, as it always did.
+    ///
+    /// The Keychain read stays a `try?`: the form's fill falls back to what
+    /// was typed, and the person is at the form to type it.
     public static func resolve(
         keyPath: String, typed: String, store: ManagedKeyStore, secrets: any SecretStore
-    ) -> String {
-        if !typed.isEmpty { return typed }
-        // `hasPassphrase` is only a fast path here: an encrypted key with no
-        // slot simply falls through to the (empty) typed value, exactly as an
-        // unencrypted one does.
-        guard let key = try? store.key(forPath: keyPath), key.hasPassphrase else { return typed }
-        return (try? secrets.password(for: key.id)) ?? typed
+    ) -> Resolution {
+        if !typed.isEmpty { return Resolution(passphrase: typed, unreadableStoreHidTheKey: false) }
+        switch store.lookUp(path: keyPath) {
+        case .unreadable(_, let hidTheKey):
+            return Resolution(passphrase: typed, unreadableStoreHidTheKey: hidTheKey)
+        case .read(let key):
+            // `hasPassphrase` is only a fast path here: an encrypted key with
+            // no slot simply falls through to the (empty) typed value,
+            // exactly as an unencrypted one does.
+            guard let key, key.hasPassphrase else {
+                return Resolution(passphrase: typed, unreadableStoreHidTheKey: false)
+            }
+            return Resolution(
+                passphrase: (try? secrets.password(for: key.id)) ?? typed,
+                unreadableStoreHidTheKey: false)
+        }
     }
 
     /// Whether the managed key at `keyPath` has a Keychain slot of its own

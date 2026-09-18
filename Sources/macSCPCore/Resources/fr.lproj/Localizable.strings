@@ -76,6 +76,7 @@
 "core.connect.sftpUnavailable" = "Ce serveur n'a pas démarré SFTP. Il ne propose peut-être pas SFTP du tout.";
 "core.connect.keyNotFound %@" = "Clé SSH introuvable : %@";
 "core.connect.keyPassphraseRequired" = "La clé SSH est chiffrée — saisissez une phrase secrète.";
+"core.connect.managedKeyStoreUnreadable" = "La clé SSH est chiffrée, et sa phrase secrète enregistrée n’a pas pu être recherchée : la liste des clés gérées (managed_keys.json) n’a pas pu être lue. Saisissez la phrase secrète, ou vérifiez le fichier.";
 "core.connect.keyWrongPassphrase" = "La phrase secrète est incorrecte.";
 "core.connect.keyTypeNotLoadable %@" = "Il s'agit d'une clé %@. macSCP ouvre les clés ed25519, RSA et ECDSA à partir d'un fichier ; ce type n'en fait pas partie.";
 /* Le lecteur PEM nomme ce qui l'arrête (plan « PEM private keys », tâche 3).

@@ -563,14 +563,13 @@ struct ConnectionFormView: View {
                             guard resolveLoginSetForSubmit() else { return }
                             // M17: if this key is a managed key with a stored
                             // passphrase and none was typed, resolve it from the
-                            // Keychain so the user need not re-enter it.
-                            if viewModel.authChoice == .privateKey {
-                                viewModel.password = ManagedKeyPassphrase.resolve(
-                                    keyPath: viewModel.keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                                    typed: viewModel.password,
-                                    store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                                    secrets: KeychainSecretStore())
-                            }
+                            // Keychain so the user need not re-enter it. The
+                            // form's own fill also records whether an unreadable
+                            // `managed_keys.json` hid the key (Task 6 fix round
+                            // 1 of the review follow-ups of 2026-09-18).
+                            viewModel.fillManagedKeyPassphrase(
+                                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
+                                secrets: KeychainSecretStore())
                             // Captured HERE, synchronously, before dialing even
                             // starts — see `currentReconnectAttempt`'s own doc
                             // comment for why this timing (not "right before

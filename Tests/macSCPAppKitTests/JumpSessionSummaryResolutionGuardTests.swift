@@ -34,6 +34,10 @@ struct JumpSessionSummaryResolutionGuardTests {
     private static let summaryAnchor = "var jumpSessionSummary:"
     private static let fallbackCalls = [
         "withManagedKeyPassphrase(", "fallingBackToManagedKeyPassphrase(", "ManagedKeyPassphrase.resolve(",
+        // The form's own fill (Task 6 fix round 1 of the review follow-ups
+        // of 2026-09-18), declared on `ConnectionViewModel`, a file this
+        // derivation does not read — so named as a seed.
+        "fillManagedKeyPassphrase(",
     ]
 
     private enum ScanError: Error { case anchorNotFound, unbalancedBraces }

@@ -548,7 +548,7 @@ struct LoginSetExportImportTests {
         // Connect time still finds it, through the key's slot.
         #expect(ManagedKeyPassphrase.resolve(
             keyPath: imported.keyPath ?? "", typed: "", store: keysB,
-            secrets: secretsB) == "pp")
+            secrets: secretsB).passphrase == "pp")
     }
 
     /// The other side of that rule: when `materialize` did NOT take the
