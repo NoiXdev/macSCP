@@ -674,6 +674,36 @@ struct SessionListViewModelTests {
         #expect(vm.groups.count == 1)
     }
 
+    @Test func createGroupInsideAFolderSetsItsParent() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parent = vm.createGroup(named: "Parent")!
+        let child = vm.createGroup(named: "Child", inGroup: parent.id)
+        #expect(child?.parentID == parent.id)
+        #expect(vm.groups.map(\.name).sorted() == ["Child", "Parent"])
+    }
+
+    @Test func aNewSubgroupLandsAfterItsSiblings() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let parent = vm.createGroup(named: "Parent")!
+        let first = vm.createGroup(named: "First", inGroup: parent.id)!
+        let second = vm.createGroup(named: "Second", inGroup: parent.id)!
+        #expect(
+            SidebarOrdering.children(of: parent.id, in: .init(groups: vm.groups, sessions: vm.sessions))
+                == [.group(first.id), .group(second.id)])
+    }
+
+    @Test func createGroupUnderAMissingParentIsRefused() throws {
+        let (vm, _, dir) = makeVM()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bogusParent = UUID()
+        let group = vm.createGroup(named: "Orphan", inGroup: bogusParent)
+        #expect(group == nil)
+        #expect(vm.groups.isEmpty)
+        #expect(vm.errorMessage != nil)
+    }
+
     @Test func dissolveKeepsSessionsAndUngroupsThem() throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }

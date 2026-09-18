@@ -134,6 +134,7 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Gruppe konnte nicht gespeichert werden: %@";
+"core.session.groupParentMissing" = "der ausgewählte Ordner existiert nicht mehr";
 "core.session.groupMoveCycle" = "Ein Ordner kann nicht in sich selbst oder in einen seiner Unterordner verschoben werden.";
 
 /* Login sets (M10b/T2) */

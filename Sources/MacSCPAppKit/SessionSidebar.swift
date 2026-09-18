@@ -446,6 +446,12 @@ struct SessionSidebar: View {
     /// the session to move into the freshly created group. `nil` for the
     /// background/toolbar "New group…" entry, which only creates the group.
     @State private var sessionPendingGroupMove: StoredSession?
+    /// Set when "New group…" is triggered from a FOLDER's own context menu
+    /// (Task 4, jump-and-groups plan) — the folder the new group is nested
+    /// inside. `nil` for the background/toolbar and session "Move to…"
+    /// entries, which both create a top-level group, exactly as before this
+    /// task.
+    @State private var pendingNewGroupParentID: UUID?
 
     /// The sidebar's shared note of which row a drag is carrying — written
     /// by each row's own drag payload, read when a drop is targeted on
@@ -630,6 +636,7 @@ struct SessionSidebar: View {
             Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
                 newGroupName = ""
                 sessionPendingGroupMove = nil
+                pendingNewGroupParentID = nil
             }
         }
         .confirmationDialog(
@@ -874,6 +881,7 @@ struct SessionSidebar: View {
             onCancelRename: endRename,
             onExport: { onExport(.group(group)) },
             onSortByName: { viewModel.sortChildrenByName(of: group.id) },
+            onNewGroup: { beginNewGroup(forMoving: nil, inGroup: group.id) },
             onDissolve: { viewModel.dissolveGroup(group) },
             // The same call a drop onto another folder makes, so the menu
             // and the gesture put a folder in the same place.
@@ -1150,8 +1158,13 @@ struct SessionSidebar: View {
 
     // MARK: - New group
 
-    private func beginNewGroup(forMoving session: StoredSession?) {
+    /// `parentID` nests the new group inside an existing folder — the
+    /// folder-row menu's own "New group…" (Task 4, jump-and-groups plan).
+    /// `nil`, the default, is what the background/toolbar entry and a
+    /// session's "Move to…" submenu both still pass: a top-level group.
+    private func beginNewGroup(forMoving session: StoredSession?, inGroup parentID: UUID? = nil) {
         sessionPendingGroupMove = session
+        pendingNewGroupParentID = parentID
         newGroupName = ""
         isShowingNewGroupAlert = true
     }
@@ -1160,8 +1173,10 @@ struct SessionSidebar: View {
         defer {
             newGroupName = ""
             sessionPendingGroupMove = nil
+            pendingNewGroupParentID = nil
         }
-        guard let group = viewModel.createGroup(named: newGroupName) else { return }
+        guard let group = viewModel.createGroup(named: newGroupName, inGroup: pendingNewGroupParentID)
+        else { return }
         if let session = sessionPendingGroupMove {
             viewModel.move(.session(session.id), intoGroup: group.id)
         }
@@ -1264,6 +1279,11 @@ private struct SidebarGroupRow: View {
     let onCancelRename: () -> Void
     let onExport: () -> Void
     let onSortByName: () -> Void
+    /// "New group…" nested inside this folder (Task 4, jump-and-groups
+    /// plan) — `beginNewGroup(forMoving:inGroup:)` with this folder's id, the
+    /// parent-taking call, so the commit lands the new group here rather
+    /// than at the top level.
+    let onNewGroup: () -> Void
     let onDissolve: () -> Void
     /// "Move to…" (Sidebar Polish, Task 3) — the same call a drop onto
     /// another folder makes (`viewModel.move(.group(group.id),
@@ -1317,6 +1337,12 @@ private struct SidebarGroupRow: View {
         } isTargeted: { isDropTargeted = $0 }
         .contextMenu {
             Button(L10n.string("sidebar.rename", "Rename")) { onStartRename() }
+            // Directly under Rename — the same placement the session row's
+            // "Move to…" submenu already gives its own "New group…" entry
+            // (see that row's context menu below), so both routes to
+            // creating a group sit in the same place in their respective
+            // menus.
+            Button(L10n.string("sidebar.newGroup", "New group…")) { onNewGroup() }
             Button(L10n.string("export.menu.group", "Export Group…")) { onExport() }
             // Offered only where it can do something — see
             // `SidebarSortMenuPlan`; this project hides what cannot act

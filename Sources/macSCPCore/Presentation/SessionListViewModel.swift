@@ -12,6 +12,15 @@ private struct LoginMergeSecretConflict: Error, CustomStringConvertible {
     var description: String { CoreL10n.string("core.login.mergeConflictingSecrets") }
 }
 
+/// `createGroup(named:inGroup:)` refusing a `parentID` that names no group
+/// in the store. Thrown rather than branched, the same shape as
+/// `LoginMergeSecretConflict` above: `description` is what the enclosing
+/// `catch` interpolates into `core.session.groupSaveFailed %@`, so this is a
+/// localized sentence fragment rather than a type name.
+private struct CreateGroupParentMissing: Error, CustomStringConvertible {
+    var description: String { CoreL10n.string("core.session.groupParentMissing") }
+}
+
 /// A seam for a Core store that must react to a session going away without
 /// `SessionStore` or `SessionListViewModel` naming that store's concrete
 /// type. `SessionStore.delete(id:)` itself is a plain file write — no
@@ -742,13 +751,31 @@ public final class SessionListViewModel {
     }
 
     /// Creates a new group (trims whitespace; an empty result creates
-    /// nothing and returns `nil`).
+    /// nothing and returns `nil`), nested under `parentID` — `nil` for the
+    /// top level, which is the whole of what the original single-argument
+    /// call did and now defaults to, so every existing call site keeps
+    /// compiling unchanged.
+    ///
+    /// A `parentID` naming no group in the store is refused
+    /// (`CreateGroupParentMissing`, surfaced through `errorMessage` the same
+    /// way `applyMerge`'s `LoginMergeSecretConflict` is above) rather than
+    /// silently lifted to the top level: the caller asked for a specific
+    /// folder, and a folder that no longer exists is not a stand-in for "no
+    /// folder at all".
+    ///
+    /// Placed after its siblings — `SidebarOrdering.children(of:in:)`'s
+    /// count under `parentID` — never at `position: 0`, which would jump
+    /// every new group ahead of whatever the folder already holds.
     @discardableResult
-    public func createGroup(named name: String) -> StoredGroup? {
+    public func createGroup(named name: String, inGroup parentID: UUID? = nil) -> StoredGroup? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let group = StoredGroup(name: trimmed)
         do {
+            if let parentID, !groups.contains(where: { $0.id == parentID }) {
+                throw CreateGroupParentMissing()
+            }
+            let position = SidebarOrdering.children(of: parentID, in: tree).count
+            let group = StoredGroup(name: trimmed, parentID: parentID, position: position)
             try store.upsertGroup(group)
             reload()
             return group

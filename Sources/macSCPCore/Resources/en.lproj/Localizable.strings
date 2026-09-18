@@ -146,6 +146,7 @@
 
 /* Session groups (M5f/T2) */
 "core.session.groupSaveFailed %@" = "Could not save group: %@";
+"core.session.groupParentMissing" = "the selected folder no longer exists";
 "core.session.groupMoveCycle" = "A folder cannot be moved into itself or into one of its own sub-folders.";
 
 /* Login sets (M10b/T2) */
