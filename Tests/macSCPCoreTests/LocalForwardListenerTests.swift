@@ -79,6 +79,63 @@ struct LocalForwardListenerTests {
         await echo.stop()
     }
 
+    /// A bind address this machine does not have is reported as that, with
+    /// the address — not as the generic "could not start listening".
+    /// `192.0.2.1` is TEST-NET-1 (RFC 5737): never assigned to a real
+    /// interface, and a bind sends nothing on the wire. Measured 2026-09-18:
+    /// NIO throws `IOError` errno 49 (`EADDRNOTAVAIL`) for it.
+    @Test func bindingAnAddressThisMachineDoesNotHaveNamesTheAddress() async throws {
+        let listener = LocalForwardListener()
+        await #expect(throws: TunnelFailure.bindAddressUnavailable(address: "192.0.2.1")) {
+            _ = try await listener.start(
+                bind: "192.0.2.1", localPort: 0, host: "irrelevant.example", remotePort: 1,
+                directTCPIPFactory: { _, _ in throw TunnelFailure.alreadyStarted })
+        }
+        #expect(listener.boundPort == nil)
+        await listener.stop()
+    }
+
+    /// A port the system does not let this process bind is reported as
+    /// that, with the port. Measured 2026-09-18 on macOS 26.6.2 as a user
+    /// that is not root: `127.0.0.1` port 80 throws `IOError` errno 13
+    /// (`EACCES`), while `0.0.0.0` port 81 binds — so this binds loopback,
+    /// never the wildcard. As root the bind succeeds, so the test does not
+    /// run there.
+    @Test(.enabled(if: geteuid() != 0, "root may bind a port below 1024"))
+    func bindingAPrivilegedLoopbackPortWithoutThePrivilegeIsReportedAsDenied() async throws {
+        let listener = LocalForwardListener()
+        await #expect(throws: TunnelFailure.bindPermissionDenied(port: 1)) {
+            _ = try await listener.start(
+                bind: "127.0.0.1", localPort: 1, host: "irrelevant.example", remotePort: 1,
+                directTCPIPFactory: { _, _ in throw TunnelFailure.alreadyStarted })
+        }
+        #expect(listener.boundPort == nil)
+        await listener.stop()
+    }
+
+    /// The errno mapping itself, for errnos a loopback bind does not
+    /// produce on demand: the three a person can act on are cases of their
+    /// own, and any other errno — or an error that is no errno at all —
+    /// still yields `bindFailed` with the log's sentence for that error.
+    @Test func anErrnoWithoutACaseOfItsOwnStillYieldsBindFailed() {
+        func failure(_ errno: CInt) -> TunnelFailure {
+            LocalForwardListener.bindFailure(
+                IOError(errnoCode: errno, reason: "bind"), bind: "198.51.100.7", port: 4242)
+        }
+        #expect(failure(EADDRINUSE) == .portInUse(port: 4242))
+        #expect(failure(EADDRNOTAVAIL) == .bindAddressUnavailable(address: "198.51.100.7"))
+        #expect(failure(EACCES) == .bindPermissionDenied(port: 4242))
+
+        let other = IOError(errnoCode: EINVAL, reason: "bind")
+        #expect(
+            LocalForwardListener.bindFailure(other, bind: "127.0.0.1", port: 4242)
+                == .bindFailed(reason: DialSupport.reason(for: other)))
+        let notAnErrno = NSError(domain: "test.domain", code: 7)
+        #expect(
+            LocalForwardListener.bindFailure(notAnErrno, bind: "127.0.0.1", port: 4242)
+                == .bindFailed(reason: DialSupport.reason(for: notAnErrno)))
+    }
+
     /// `stop()` closes the server channel AND every pair it accepted, and
     /// returns only once they are gone — so the connected client sees its
     /// own channel close.

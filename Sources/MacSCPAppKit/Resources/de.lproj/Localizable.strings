@@ -1326,6 +1326,8 @@
 "tunnel.failure.sessionIsNotSSH %@" = "„%@“ ist keine SSH-Verbindung; Weiterleitungen brauchen SSH";
 "tunnel.failure.sessionMissing" = "Die Verbindung dieser Weiterleitung existiert nicht mehr";
 "tunnel.failure.portInUse %@" = "Port %@ ist bereits belegt";
+"tunnel.failure.bindAddressUnavailable %@" = "Dieser Mac hat keine Adresse %@";
+"tunnel.failure.bindPermissionDenied %@" = "Dieser Mac erlaubt nicht, an dieser Adresse auf Port %@ zu lauschen";
 "tunnel.failure.bindFailed" = "Die Weiterleitung konnte nicht auf Verbindungen lauschen";
 "tunnel.failure.channelOpenFailed" = "Der Server hat keinen Kanal für die Weiterleitung geöffnet";
 "tunnel.failure.connectFailed" = "Eine Verbindung für die Weiterleitung ist fehlgeschlagen";

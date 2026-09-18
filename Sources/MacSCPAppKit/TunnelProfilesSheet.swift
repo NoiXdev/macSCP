@@ -623,6 +623,8 @@ struct TunnelProfilesSheet: View {
         case .sessionIsNotSSH: return "tunnel.failure.sessionIsNotSSH %@"
         case .sessionMissing: return "tunnel.failure.sessionMissing"
         case .portInUse: return "tunnel.failure.portInUse %@"
+        case .bindAddressUnavailable: return "tunnel.failure.bindAddressUnavailable %@"
+        case .bindPermissionDenied: return "tunnel.failure.bindPermissionDenied %@"
         case .bindFailed: return "tunnel.failure.bindFailed"
         case .channelOpenFailed: return "tunnel.failure.channelOpenFailed"
         case .connectFailed: return "tunnel.failure.connectFailed"
@@ -696,6 +698,13 @@ struct TunnelProfilesSheet: View {
             return L10n.string(key, "The connection of this forwarding no longer exists")
         case .portInUse(let port):
             return String(format: L10n.string(key, "Port %@ is already in use"), String(port))
+        case .bindAddressUnavailable(let address):
+            return String(format: L10n.string(key, "This Mac has no address %@"), address)
+        case .bindPermissionDenied(let port):
+            return String(
+                format: L10n.string(
+                    key, "This Mac does not permit listening on port %@ at this address"),
+                String(port))
         case .bindFailed:
             return L10n.string(key, "The forwarding could not start listening")
         case .channelOpenFailed:

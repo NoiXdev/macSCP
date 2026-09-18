@@ -268,6 +268,10 @@ public enum DialSupport {
             switch error {
             case .portInUse(let port):
                 return known(.portInUse(port: port))
+            case .bindAddressUnavailable(let address):
+                return known(.bindAddressUnavailable(address: address))
+            case .bindPermissionDenied(let port):
+                return known(.bindPermissionDenied(port: port))
             case .bindFailed(let reason):
                 return (.bindFailed, reason)
             case .channelOpenFailed(let reason):

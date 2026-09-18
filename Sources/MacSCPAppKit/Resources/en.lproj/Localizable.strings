@@ -1324,6 +1324,8 @@
 "tunnel.failure.sessionIsNotSSH %@" = "“%@” is not an SSH connection; forwardings need SSH";
 "tunnel.failure.sessionMissing" = "The connection of this forwarding no longer exists";
 "tunnel.failure.portInUse %@" = "Port %@ is already in use";
+"tunnel.failure.bindAddressUnavailable %@" = "This Mac has no address %@";
+"tunnel.failure.bindPermissionDenied %@" = "This Mac does not permit listening on port %@ at this address";
 "tunnel.failure.bindFailed" = "The forwarding could not start listening";
 "tunnel.failure.channelOpenFailed" = "The server did not open a channel for the forwarding";
 "tunnel.failure.connectFailed" = "A connection for the forwarding failed";

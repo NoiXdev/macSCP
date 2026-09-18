@@ -48,6 +48,8 @@ import macSCPCore
             return .sessionIsNotSSH(session: "session-three", connectionKind: .webdav)
         case .sessionMissing: return .sessionMissing
         case .portInUse: return .portInUse(port: 48213)
+        case .bindAddressUnavailable: return .bindAddressUnavailable(address: "192.0.2.1")
+        case .bindPermissionDenied: return .bindPermissionDenied(port: 80)
         case .bindFailed: return .bindFailed
         case .channelOpenFailed: return .channelOpenFailed
         case .connectFailed: return .connectFailed
@@ -70,7 +72,8 @@ import macSCPCore
         case .sessionUsesLoginSet(let session), .sessionUsesJumpHost(let session),
             .sessionIsNotSSH(let session, _):
             return session
-        case .portInUse(let port): return String(port)
+        case .portInUse(let port), .bindPermissionDenied(let port): return String(port)
+        case .bindAddressUnavailable(let address): return address
         default: return nil
         }
     }
@@ -149,6 +152,37 @@ import macSCPCore
             #expect(hinted.contains("GatewayPorts"), "\(locale) does not name GatewayPorts")
             #expect(!unhinted.contains("GatewayPorts"), "\(locale) names GatewayPorts on loopback")
         }
+    }
+
+    /// A local bind failure names its cause in every language: the two
+    /// causes with a case of their own each have a translated sentence in
+    /// all four catalogues that shows the payload, and none of the three
+    /// translations is the English one or the generic "could not start
+    /// listening" sentence of its own language.
+    @Test(arguments: [
+        TunnelFailureKind.bindAddressUnavailable(address: "192.0.2.1"),
+        .bindPermissionDenied(port: 80),
+    ])
+    func aLocalBindCauseHasItsOwnSentenceInEveryLanguage(_ kind: TunnelFailureKind) throws {
+        let key = TunnelProfilesSheet.failureKey(kind)
+        let genericKey = TunnelProfilesSheet.failureKey(.bindFailed)
+        #expect(key != genericKey)
+        let resources = Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit/Resources")
+        var english: String?
+        for locale in ["en", "de", "fr", "pl"] {
+            let url = resources.appendingPathComponent("\(locale).lproj/Localizable.strings")
+            let catalogue = try #require(NSDictionary(contentsOf: url) as? [String: String])
+            let value = try #require(catalogue[key], "\(locale) has no \(key)")
+            let generic = try #require(catalogue[genericKey], "\(locale) has no \(genericKey)")
+            #expect(value.contains("%@"), "\(locale)'s \(key) shows no payload")
+            #expect(value != generic, "\(locale)'s \(key) is the generic sentence")
+            if locale == "en" {
+                english = value
+            } else {
+                #expect(value != english, "\(locale)'s \(key) is the English sentence")
+            }
+        }
+        #expect(english != nil)
     }
 
     /// Source: the two functions translate — they read `L10n` — and never

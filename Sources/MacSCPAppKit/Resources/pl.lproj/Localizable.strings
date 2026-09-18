@@ -1328,6 +1328,8 @@
 "tunnel.failure.sessionIsNotSSH %@" = "„%@” nie jest połączeniem SSH; przekierowania wymagają SSH";
 "tunnel.failure.sessionMissing" = "Połączenie tego przekierowania już nie istnieje";
 "tunnel.failure.portInUse %@" = "Port %@ jest już zajęty";
+"tunnel.failure.bindAddressUnavailable %@" = "Ten Mac nie ma adresu %@";
+"tunnel.failure.bindPermissionDenied %@" = "Ten Mac nie zezwala na nasłuchiwanie na porcie %@ pod tym adresem";
 "tunnel.failure.bindFailed" = "Przekierowanie nie mogło rozpocząć nasłuchiwania";
 "tunnel.failure.channelOpenFailed" = "Serwer nie otworzył kanału dla przekierowania";
 "tunnel.failure.connectFailed" = "Połączenie dla przekierowania nie powiodło się";

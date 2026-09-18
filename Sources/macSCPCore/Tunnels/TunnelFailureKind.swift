@@ -72,8 +72,13 @@ public enum TunnelFailureKind: Sendable, Equatable {
     case sessionMissing
     /// The local port the forward wants is taken.
     case portInUse(port: Int)
-    /// The forward could not start listening — locally, or on the server for
-    /// a remote forward whose failure has no case of its own below.
+    /// The local bind address is not an address of this machine.
+    case bindAddressUnavailable(address: String)
+    /// The system did not permit the local bind on this port.
+    case bindPermissionDenied(port: Int)
+    /// The forward could not start listening — locally for a cause neither
+    /// case above names, or on the server for a remote forward whose failure
+    /// has no case of its own below.
     case bindFailed
     /// The server could not open the channel for a forwarded connection.
     case channelOpenFailed
@@ -111,7 +116,8 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case agentRefusedEveryIdentity, agentMisbehaved
         case keychainUnreadable, connectionFailed, serverAnswerUnusable
         case sessionUsesLoginSet, sessionUsesJumpHost, sessionIsNotSSH, sessionMissing
-        case portInUse, bindFailed, channelOpenFailed, connectFailed, pumpFailed
+        case portInUse, bindAddressUnavailable, bindPermissionDenied, bindFailed
+        case channelOpenFailed, connectFailed, pumpFailed
         case alreadyStarted, remotePortZeroRefused, remoteBindRefused, remoteForwardUnanswered
         case connectionLost, unknown
     }
@@ -140,6 +146,8 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case .sessionIsNotSSH: return .sessionIsNotSSH
         case .sessionMissing: return .sessionMissing
         case .portInUse: return .portInUse
+        case .bindAddressUnavailable: return .bindAddressUnavailable
+        case .bindPermissionDenied: return .bindPermissionDenied
         case .bindFailed: return .bindFailed
         case .channelOpenFailed: return .channelOpenFailed
         case .connectFailed: return .connectFailed
@@ -215,6 +223,14 @@ public enum TunnelFailureKind: Sendable, Equatable {
             // The port is the whole finding: it is what the user has to free,
             // or change in the profile.
             return "port \(port) is already in use"
+        case .bindAddressUnavailable(let address):
+            // The errno's name is kept in the log's sentence: it is what the
+            // log said nothing of before the case existed (it read "The
+            // operation couldn’t be completed. (NIOCore.IOError error 1.)",
+            // measured 2026-09-18).
+            return "the bind address \(address) is not an address of this machine (EADDRNOTAVAIL)"
+        case .bindPermissionDenied(let port):
+            return "binding port \(port) was not permitted (EACCES)"
         case .bindFailed:
             return "the forward could not start listening"
         case .channelOpenFailed:

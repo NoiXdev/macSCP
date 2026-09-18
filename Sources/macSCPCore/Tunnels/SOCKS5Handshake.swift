@@ -56,7 +56,7 @@ extension SOCKS5ReplyCode {
     /// | `.channelOpenFailed` | `01` | `SSHForwardingConnection.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
     /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`, and since 2026-09-18 a `confirm` that fails for a reason of its own on a live connection (`SOCKS5HandshakeHandler.succeed`'s `removeHandler`); `reject` then writes nothing, the reply having gone out already. (Every failed `confirm` was a producer until 2026-09-17, and none was from then until 2026-09-18. A reply that does not reach the client — `ForwardReplyUndelivered` — is the client's failure, and the accept path closes that pair without calling `reject`; see `LocalForwardListener.accepted`.) |
     /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
-    /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
+    /// | `.portInUse`, `.bindAddressUnavailable`, `.bindPermissionDenied`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`SSHForwardingConnection.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
     ///
     /// So in production **`01` is what every refusal produces**, `05` is
@@ -64,14 +64,17 @@ extension SOCKS5ReplyCode {
     /// produced by nothing. Recounted 2026-09-17, after fix round 1 of the
     /// technical-backlog plan's Task 6, with `grep -rn "throw
     /// TunnelFailure\." Sources/`: EIGHT throw sites — `TunnelConnection
-    /// .swift:100`, `LocalForwardListener.swift:214` and `:240`,
+    /// .swift:100`, `LocalForwardListener.swift:227` and `:253`,
     /// `RemoteForward.swift:145`, `:308` and `:346`,
-    /// `SSHForwardingConnection.swift:131` and `:250` (every line number in
+    /// `SSHForwardingConnection.swift:125` and `:293` (every line number in
     /// this paragraph retaken 2026-09-17, when the forwarding code moved out
     /// of `CitadelFileSystem.swift`, and the three in
     /// `SSHForwardingConnection.swift` retaken again later that day, after an
     /// edit there moved them; and all of them again 2026-09-18, after Task 1
-    /// of the review follow-ups moved most of them; no count changed).
+    /// of the review follow-ups moved most of them; and again that evening,
+    /// when Task 3 added the two local-bind cases and found the three
+    /// `SSHForwardingConnection.swift` numbers stale as well; no count
+    /// changed).
     /// ELEVEN on 2026-09-06; NINE on 2026-09-16 once `TunnelConnection`'s
     /// refusal and `TunnelManager`'s deleted session began throwing
     /// `TunnelRefusal`;
@@ -83,9 +86,9 @@ extension SOCKS5ReplyCode {
     /// pattern also matches `DialSupport.failureKind(for:)`, whose return
     /// type is `TunnelFailureKind`, and a bare return type matches this very
     /// sentence — finds FIVE helpers that RETURN one:
-    /// `LocalForwardListener.acceptFailure` (`:393`) and `.bindFailure`
-    /// (`:399`), `RemoteForward.startFailure` (`:370`) and `.pairFailure`
-    /// (`:375`), and `SSHForwardingConnection.remoteBindFailure` (`:278`). And
+    /// `LocalForwardListener.acceptFailure` (`:406`) and `.bindFailure`
+    /// (`:417`), `RemoteForward.startFailure` (`:370`) and `.pairFailure`
+    /// (`:375`), and `SSHForwardingConnection.remoteBindFailure` (`:321`). And
     /// subtracting the throw sites from `grep -rn "TunnelFailure\." Sources/`
     /// (comment lines dropped) leaves THREE inline constructions:
     /// `RemoteForward.swift:169` and `:185`, which resolve a failure into the
@@ -136,10 +139,11 @@ extension SOCKS5ReplyCode {
             // tree raises it on this path (see the table above); the arm
             // exists for the one that will.
             self = .connectionRefused
-        case .portInUse, .bindFailed, .alreadyStarted, .remotePortZeroRefused,
-            .remoteBindRefused, .remoteForwardUnanswered:
-            // None of the six can reach a connected SOCKS client — the first
-            // three are raised by `start`, and the listener is already bound
+        case .portInUse, .bindAddressUnavailable, .bindPermissionDenied, .bindFailed,
+            .alreadyStarted, .remotePortZeroRefused, .remoteBindRefused,
+            .remoteForwardUnanswered:
+            // None of the eight can reach a connected SOCKS client — the
+            // first five are raised by `start`, and the listener is already bound
             // by the time anyone speaks to it; the last three are a remote
             // forward's start, which is not this listener at all — but a
             // failure enum is not the place for an unreachable arm to be

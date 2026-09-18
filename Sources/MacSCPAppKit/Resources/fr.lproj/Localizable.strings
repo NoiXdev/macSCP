@@ -1329,6 +1329,8 @@
 "tunnel.failure.sessionIsNotSSH %@" = "« %@ » n’est pas une connexion SSH ; les redirections exigent SSH";
 "tunnel.failure.sessionMissing" = "La connexion de cette redirection n’existe plus";
 "tunnel.failure.portInUse %@" = "Le port %@ est déjà utilisé";
+"tunnel.failure.bindAddressUnavailable %@" = "Ce Mac n’a pas d’adresse %@";
+"tunnel.failure.bindPermissionDenied %@" = "Ce Mac n’autorise pas l’écoute sur le port %@ à cette adresse";
 "tunnel.failure.bindFailed" = "La redirection n’a pas pu se mettre à l’écoute";
 "tunnel.failure.channelOpenFailed" = "Le serveur n’a pas ouvert de canal pour la redirection";
 "tunnel.failure.connectFailed" = "Une connexion pour la redirection a échoué";

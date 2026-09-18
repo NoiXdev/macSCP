@@ -8,9 +8,9 @@ import Testing
 /// the diagnostic LOG keeps.
 ///
 /// The sentences below are literals on purpose. Every one of them, except
-/// the Keychain's, is the text `reason(for:)` produced before the kind
-/// existed (BASE `9167f325`), so a row that goes red here is log-text churn
-/// — which this change was not allowed to cause.
+/// the Keychain's and the two local-bind causes', is the text `reason(for:)`
+/// produced before the kind existed (BASE `9167f325`), so a row that goes
+/// red here is log-text churn — which this change was not allowed to cause.
 @Suite struct TunnelFailureKindTests {
     struct Row: CustomTestStringConvertible, Sendable {
         let label: String
@@ -109,6 +109,18 @@ import Testing
         Row(
             label: "port in use", error: TunnelFailure.portInUse(port: 8080),
             kind: .portInUse(port: 8080), sentence: "port 8080 is already in use"),
+        // NEW sentences (2026-09-18): both were "The operation couldn’t be
+        // completed. (NIOCore.IOError error 1.)" as `bindFailed` before.
+        Row(
+            label: "bind address unavailable",
+            error: TunnelFailure.bindAddressUnavailable(address: "192.0.2.1"),
+            kind: .bindAddressUnavailable(address: "192.0.2.1"),
+            sentence:
+                "the bind address 192.0.2.1 is not an address of this machine (EADDRNOTAVAIL)"),
+        Row(
+            label: "bind permission denied", error: TunnelFailure.bindPermissionDenied(port: 80),
+            kind: .bindPermissionDenied(port: 80),
+            sentence: "binding port 80 was not permitted (EACCES)"),
         // The four free-text `TunnelFailure` cases: the kind drops the
         // payload, the log keeps it verbatim.
         Row(
@@ -205,7 +217,8 @@ import Testing
     /// The per-connection initialiser Task 7 reads is the same mapping.
     @Test func aTunnelFailureMapsThroughTheSameSwitch() {
         let failures: [TunnelFailure] = [
-            .portInUse(port: 1), .bindFailed(reason: "a"), .channelOpenFailed(reason: "b"),
+            .portInUse(port: 1), .bindAddressUnavailable(address: "192.0.2.1"),
+            .bindPermissionDenied(port: 80), .bindFailed(reason: "a"), .channelOpenFailed(reason: "b"),
             .connectFailed(reason: "c"), .pumpFailed(reason: "d"), .alreadyStarted,
             .remotePortZeroRefused, .remoteBindRefused(reason: "e", needsGatewayPorts: true),
             .remoteForwardUnanswered,
@@ -259,6 +272,8 @@ enum TunnelFailureKindSamples {
         case .sessionIsNotSSH: return .sessionIsNotSSH(session: "objects", connectionKind: .s3)
         case .sessionMissing: return .sessionMissing
         case .portInUse: return .portInUse(port: 8080)
+        case .bindAddressUnavailable: return .bindAddressUnavailable(address: "192.0.2.1")
+        case .bindPermissionDenied: return .bindPermissionDenied(port: 80)
         case .bindFailed: return .bindFailed
         case .channelOpenFailed: return .channelOpenFailed
         case .connectFailed: return .connectFailed

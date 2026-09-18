@@ -32,8 +32,21 @@ public enum TunnelFailure: Error, Sendable, Equatable {
     /// The local port a forward wants is taken. The port is carried because
     /// it is the one thing the user needs in order to free it.
     case portInUse(port: Int)
-    /// Any other failure to bind the local listener — a bind address that is
-    /// not on this machine, a privileged port without the privilege.
+    /// The bind address is not an address of this machine
+    /// (`EADDRNOTAVAIL`). The address is carried because it is the one
+    /// thing the user has to correct. Measured 2026-09-18: a bind to
+    /// `192.0.2.1` or `2001:db8::1` throws NIO's `IOError` with errno 49,
+    /// "Can't assign requested address".
+    case bindAddressUnavailable(address: String)
+    /// The system refused the bind itself (`EACCES`). Measured 2026-09-18
+    /// on macOS 26.6.2, not root: `127.0.0.1` port 80 and `::1` port 82
+    /// throw NIO's `IOError` with errno 13, "Permission denied", while
+    /// `0.0.0.0` port 81 binds. Not measured on macOS 15. The port is
+    /// carried because it is what the user changes.
+    case bindPermissionDenied(port: Int)
+    /// Any other failure to bind the local listener — an errno the two
+    /// cases above do not name, an error that is not an errno at all, or a
+    /// bound socket that reports no port.
     case bindFailed(reason: String)
     /// The channel through the SSH server could not be opened: the server
     /// refuses forwarding (`AllowTcpForwarding no`), or the destination
@@ -233,7 +246,7 @@ public final class LocalForwardListener: @unchecked Sendable {
         do {
             server = try await bootstrap.bind(host: bind, port: localPort).get()
         } catch {
-            throw Self.bindFailure(error, port: localPort)
+            throw Self.bindFailure(error, bind: bind, port: localPort)
         }
         guard let port = server.localAddress?.port else {
             server.close(promise: nil)
@@ -396,9 +409,19 @@ public final class LocalForwardListener: @unchecked Sendable {
         return afterOpen ? .pumpFailed(reason: reason) : .channelOpenFailed(reason: reason)
     }
 
-    private static func bindFailure(_ error: any Error, port: Int) -> TunnelFailure {
-        if let ioError = error as? IOError, ioError.errnoCode == EADDRINUSE {
-            return .portInUse(port: port)
+    /// What to report for a bind that failed: the three errnos a person
+    /// can act on as cases of their own, anything else as `bindFailed`.
+    ///
+    /// Module-internal rather than private so a test can hand it an errno no
+    /// loopback bind produces on demand.
+    static func bindFailure(_ error: any Error, bind: String, port: Int) -> TunnelFailure {
+        if let ioError = error as? IOError {
+            switch ioError.errnoCode {
+            case EADDRINUSE: return .portInUse(port: port)
+            case EADDRNOTAVAIL: return .bindAddressUnavailable(address: bind)
+            case EACCES: return .bindPermissionDenied(port: port)
+            default: break
+            }
         }
         return .bindFailed(reason: DialSupport.reason(for: error))
     }
