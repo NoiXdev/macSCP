@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the "Generate SSH Key" sheet's `keys.notConnectable` caption
@@ -27,8 +28,10 @@ struct GenerateKeyCaptionWiringGuardTests {
     private static let sheetSourceFile =
         repoRoot.appendingPathComponent("Sources/MacSCPAppKit/SSHKeysSheet.swift")
 
+    /// Comments only (`SwiftSource.blankingComments`): the scan below reads
+    /// the `"keys.notConnectable"` LITERAL, which the strict mode would blank.
     private static func strippedSource() throws -> String {
-        SheetFacetWiringGuardTests.strippingLineComments(
+        try SwiftSource.blankingComments(
             try String(contentsOf: sheetSourceFile, encoding: .utf8))
     }
 

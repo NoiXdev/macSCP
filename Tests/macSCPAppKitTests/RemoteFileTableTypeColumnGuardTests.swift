@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -42,19 +43,15 @@ struct RemoteFileTableTypeColumnGuardTests {
     private static let tableFile: URL = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/RemoteFileTableView.swift")
 
-    /// The table file's code with every `//` comment cut away — a comment
-    /// that quotes the code it describes is indistinguishable from that
-    /// code to a plain scan (measured elsewhere in this project's history;
-    /// this file writes long explanatory comments right beside the code it
-    /// scans, so the same trap applies here).
+    /// The table file's code with every comment blanked — a comment that
+    /// quotes the code it describes is indistinguishable from that code to a
+    /// plain scan (measured elsewhere in this project's history; this file
+    /// writes long explanatory comments right beside the code it scans, so
+    /// the same trap applies here). Comments only
+    /// (`SwiftSource.blankingComments`): the bucket-symbol check below reads
+    /// the `"archivebox"` literal, which the strict mode would blank.
     private static func code() throws -> String {
-        try String(contentsOf: tableFile, encoding: .utf8)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> Substring in
-                guard let comment = line.range(of: "//") else { return line }
-                return line[line.startIndex..<comment.lowerBound]
-            }
-            .joined(separator: "\n")
+        try SwiftSource.blankingComments(try String(contentsOf: tableFile, encoding: .utf8))
     }
 
     // MARK: - The Type cell

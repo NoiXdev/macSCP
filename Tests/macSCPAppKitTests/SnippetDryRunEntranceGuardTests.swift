@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Pins that the two entrances to a snippet dry run show the SAME value.
@@ -37,10 +38,14 @@ import Testing
 ///    project was satisfied by prose describing the code rather than the
 ///    code, and every doc comment in `ContentView.swift` and
 ///    `SnippetsSheet.swift` names these very symbols. So the source is
-///    stripped of `//` and `/* … */` comments before anything is looked
-///    for, string literals intact — `theScanIgnoresACallThatOnlyAppearsInAComment`
-///    and `theScanKeepsCodeAfterAStringThatLooksLikeAComment` hold both
-///    halves of that.
+///    read through `SwiftSource.blankingComments` — `//` and `/* … */`
+///    comments blanked, string literals intact — before anything is looked
+///    for, and a call's closing parenthesis is found in the strict view
+///    (`SwiftSource.blankingCommentsAndStrings`) at the same offsets, so a
+///    parenthesis inside a literal does not end it.
+///    `theScanIgnoresACallThatOnlyAppearsInAComment` and
+///    `theScanKeepsCodeAfterAStringThatLooksLikeAComment` hold both halves
+///    of that.
 @Suite("Snippet dry run entrance guard")
 struct SnippetDryRunEntranceGuardTests {
     /// `#filePath` is
@@ -205,7 +210,7 @@ struct SnippetDryRunEntranceGuardTests {
 
     /// Rule 3. Every doc comment in both entrance files names these
     /// symbols; a scan that read them would pass over a deleted call site.
-    @Test func theScanIgnoresACallThatOnlyAppearsInAComment() {
+    @Test func theScanIgnoresACallThatOnlyAppearsInAComment() throws {
         let source = """
             struct Fake {
                 /// Shows what `SnippetDryRun.describing(snippet, values: …)` would send.
@@ -216,12 +221,12 @@ struct SnippetDryRunEntranceGuardTests {
                 }
             }
             """
-        #expect(SnippetSourceScan.calls(to: Self.describeMarker, in: source).isEmpty)
+        #expect(try SnippetSourceScan.calls(to: Self.describeMarker, in: source).isEmpty)
     }
 
     /// The other half of rule 3: stripping comments must not eat code that
     /// merely follows a `//` inside a string literal.
-    @Test func theScanKeepsCodeAfterAStringThatLooksLikeAComment() {
+    @Test func theScanKeepsCodeAfterAStringThatLooksLikeAComment() throws {
         let source = """
             struct Fake {
                 let help = "https://example.invalid/snippets"
@@ -231,13 +236,13 @@ struct SnippetDryRunEntranceGuardTests {
                 }
             }
             """
-        #expect(SnippetSourceScan.calls(to: Self.describeMarker, in: source).count == 1)
+        #expect(try SnippetSourceScan.calls(to: Self.describeMarker, in: source).count == 1)
     }
 
     /// Rule 2, as a fixture. The offending argument is three lines below
     /// the marker: a line-based scan of the `describing(` line sees a clean
     /// call and reports success.
-    @Test func theScanReadsACallThatSpansLines() {
+    @Test func theScanReadsACallThatSpansLines() throws {
         let source = """
             struct Fake {
                 func test() {
@@ -249,7 +254,7 @@ struct SnippetDryRunEntranceGuardTests {
                 }
             }
             """
-        let calls = SnippetSourceScan.calls(to: Self.describeMarker, in: source)
+        let calls = try SnippetSourceScan.calls(to: Self.describeMarker, in: source)
         #expect(calls.count == 1)
         #expect(calls.first?.contains("SnippetSendPlanner.plan(") == true)
         #expect(calls.first?.hasSuffix("bracketedPaste: false)") == true)
@@ -257,14 +262,14 @@ struct SnippetDryRunEntranceGuardTests {
 
     /// And the call after it is still found — the balance walk must stop at
     /// the right parenthesis, not run to the end of the file.
-    @Test func theScanSeparatesTwoCallsInOneFile() {
+    @Test func theScanSeparatesTwoCallsInOneFile() throws {
         let source = """
             struct Fake {
                 func a() { _ = SnippetDryRun.describing(s, values: v, execute: true, bracketedPaste: (a || b)) }
                 func b() { _ = SnippetDryRun.describing(s, values: [:], execute: false, bracketedPaste: false) }
             }
             """
-        let calls = SnippetSourceScan.calls(to: Self.describeMarker, in: source)
+        let calls = try SnippetSourceScan.calls(to: Self.describeMarker, in: source)
         #expect(calls.count == 2)
         #expect(calls.first?.hasSuffix("(a || b))") == true)
         #expect(calls.last?.contains("values: [:]") == true)
@@ -280,7 +285,7 @@ struct SnippetDryRunEntranceGuardTests {
 
     /// The localization scan reads keys, not defaults — a default value
     /// containing a quote must not be mistaken for one.
-    @Test func theLocalizationScanReadsKeysAndNotDefaults() {
+    @Test func theLocalizationScanReadsKeysAndNotDefaults() throws {
         let source = """
             struct Fake {
                 var a: String { L10n.string("snippets.dryRun.form.refused", "Nothing would be sent.") }
@@ -288,7 +293,7 @@ struct SnippetDryRunEntranceGuardTests {
             }
             """
         #expect(
-            SnippetSourceScan.localizationKeys(in: source)
+            try SnippetSourceScan.localizationKeys(in: source)
                 == ["snippets.dryRun.form.refused", "snippets.dryRun.sendAnyway"])
     }
 
@@ -303,13 +308,13 @@ struct SnippetDryRunEntranceGuardTests {
     }
 
     private static func strippedSource(named name: String) throws -> String {
-        SnippetSourceScan.withoutComments(
+        try SwiftSource.blankingComments(
             try String(
                 contentsOf: appSourceDirectory.appendingPathComponent(name), encoding: .utf8))
     }
 
     private static func calls(to marker: String, inFileAt url: URL) throws -> [String] {
-        SnippetSourceScan.calls(
+        try SnippetSourceScan.calls(
             to: marker, in: try String(contentsOf: url, encoding: .utf8))
     }
 
@@ -326,7 +331,7 @@ struct SnippetDryRunEntranceGuardTests {
     }
 
     private static func localizationKeys(in source: String) throws -> Set<String> {
-        Set(SnippetSourceScan.localizationKeys(in: source))
+        Set(try SnippetSourceScan.localizationKeys(in: source))
     }
 }
 
@@ -335,142 +340,47 @@ struct SnippetDryRunEntranceGuardTests {
 /// Separate from the suite so its own fixtures above can drive it over
 /// synthetic sources, the same shape `SnippetVariablePromptWiringGuardTests`
 /// gives its line-based scanner.
+///
+/// Until 2026-09-18 it carried its own comment stripper and a second,
+/// string-skipping walk for the parenthesis balance; both are the shared
+/// `SwiftSource` now.
 enum SnippetSourceScan {
-    /// Where the walk currently is. `code` is the only state whose
-    /// characters survive `withoutComments`, and the two string states
-    /// exist so that a `//` inside a literal is not read as the start of a
-    /// comment.
-    private enum Position {
-        case code
-        case lineComment
-        case blockComment(depth: Int)
-        case string
-        case multilineString
-    }
+    /// The two views disagreed on length, so an offset in one no longer
+    /// addresses the same character in the other.
+    struct ViewsDisagree: Error {}
 
-    /// `source` with `//` line comments and (nesting) `/* … */` block
-    /// comments removed, string literals kept whole. Newlines are kept
-    /// wherever a comment was, so nothing else the caller might do to the
-    /// result depends on comments being short.
-    static func withoutComments(_ source: String) -> String {
-        var out = ""
-        var position = Position.code
-        let characters = Array(source)
-        var i = 0
-        while i < characters.count {
-            let c = characters[i]
-            func next(_ offset: Int) -> Character? {
-                i + offset < characters.count ? characters[i + offset] : nil
-            }
-            switch position {
-            case .code:
-                if c == "\"", next(1) == "\"", next(2) == "\"" {
-                    position = .multilineString
-                    out += "\"\"\""
-                    i += 3
-                    continue
-                }
-                if c == "\"" {
-                    position = .string
-                    out.append(c)
-                    i += 1
-                    continue
-                }
-                if c == "/", next(1) == "/" {
-                    position = .lineComment
-                    i += 2
-                    continue
-                }
-                if c == "/", next(1) == "*" {
-                    position = .blockComment(depth: 1)
-                    i += 2
-                    continue
-                }
-                out.append(c)
-                i += 1
-            case .lineComment:
-                if c == "\n" {
-                    position = .code
-                    out.append(c)
-                }
-                i += 1
-            case .blockComment(let depth):
-                if c == "/", next(1) == "*" {
-                    position = .blockComment(depth: depth + 1)
-                    i += 2
-                    continue
-                }
-                if c == "*", next(1) == "/" {
-                    position = depth == 1 ? .code : .blockComment(depth: depth - 1)
-                    i += 2
-                    continue
-                }
-                if c == "\n" { out.append(c) }
-                i += 1
-            case .string:
-                out.append(c)
-                if c == "\\" {
-                    if let escaped = next(1) { out.append(escaped) }
-                    i += 2
-                    continue
-                }
-                // A single-quoted Swift string cannot span a line, so a
-                // newline here is a source this scanner misread rather
-                // than a literal that continues — returning to `code` keeps
-                // one bad guess from swallowing the rest of the file.
-                if c == "\"" || c == "\n" { position = .code }
-                i += 1
-            case .multilineString:
-                if c == "\"", next(1) == "\"", next(2) == "\"" {
-                    position = .code
-                    out += "\"\"\""
-                    i += 3
-                    continue
-                }
-                out.append(c)
-                i += 1
-            }
-        }
-        return out
-    }
-
-    /// Every WHOLE call to `marker` in `source`, comments stripped first.
+    /// Every WHOLE call to `marker` in `source`, comments blanked first.
     ///
     /// `marker` ends in its opening parenthesis; each result runs from the
     /// start of the marker to the `)` that closes it, however many lines
-    /// away that is. Parentheses inside string literals do not count.
-    static func calls(to marker: String, in source: String) -> [String] {
-        let stripped = Array(withoutComments(source))
+    /// away that is. The marker is looked for in the comment-only view, so
+    /// a marker a string literal carries is still found, as it was before
+    /// the conversion; the balance is counted in the strict view, so
+    /// parentheses inside string literals do not count.
+    static func calls(to marker: String, in source: String) throws -> [String] {
+        let text = Array(try SwiftSource.blankingComments(source))
+        let code = Array(try SwiftSource.blankingCommentsAndStrings(source))
+        guard text.count == code.count else { throw ViewsDisagree() }
         let needle = Array(marker)
         guard !needle.isEmpty else { return [] }
         var results: [String] = []
         var i = 0
-        while i + needle.count <= stripped.count {
-            guard Array(stripped[i..<(i + needle.count)]) == needle else {
+        while i + needle.count <= text.count {
+            guard Array(text[i..<(i + needle.count)]) == needle else {
                 i += 1
                 continue
             }
             var depth = 1
             var j = i + needle.count
-            var inString = false
-            while j < stripped.count, depth > 0 {
-                let c = stripped[j]
-                if inString {
-                    if c == "\\" { j += 2; continue }
-                    if c == "\"" { inString = false }
-                } else if c == "\"" {
-                    inString = true
-                } else if c == "(" {
-                    depth += 1
-                } else if c == ")" {
-                    depth -= 1
-                }
+            while j < code.count, depth > 0 {
+                if code[j] == "(" { depth += 1 }
+                if code[j] == ")" { depth -= 1 }
                 j += 1
             }
             // An unbalanced call runs to the end of the source rather than
             // being dropped: a call the scanner cannot close is a call it
             // must still report, or a truncated file would read as clean.
-            results.append(String(stripped[i..<min(j, stripped.count)]))
+            results.append(String(text[i..<min(j, text.count)]))
             i = j
         }
         return results
@@ -478,8 +388,8 @@ enum SnippetSourceScan {
 
     /// The keys of every `L10n.string("…", …)` call in `source`, in order
     /// of appearance and without duplicates removed.
-    static func localizationKeys(in source: String) -> [String] {
-        calls(to: "L10n.string(", in: source).compactMap { call in
+    static func localizationKeys(in source: String) throws -> [String] {
+        try calls(to: "L10n.string(", in: source).compactMap { call in
             guard let openQuote = call.firstIndex(of: "\"") else { return nil }
             let afterOpen = call.index(after: openQuote)
             guard let closeQuote = call[afterOpen...].firstIndex(of: "\"") else { return nil }

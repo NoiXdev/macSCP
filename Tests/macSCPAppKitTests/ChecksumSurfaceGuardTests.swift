@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -31,7 +32,7 @@ struct ChecksumSurfaceGuardTests {
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    /// The file's CODE, with every `//` comment cut away.
+    /// The file's CODE, with every comment blanked.
     ///
     /// Stripping is not tidiness, it is the whole difference between a
     /// guard and a comment that runs. Measured: with the raw text, moving
@@ -41,21 +42,12 @@ struct ChecksumSurfaceGuardTests {
     /// check below therefore reads this, and every check below looks for a
     /// CALL (`Name(`) rather than a name.
     ///
-    /// Line comments only. Neither file scanned here holds a string literal
-    /// containing `//` (checked in the pass that writes this), and a block
-    /// comment in either would be stripped by nothing — so a `/* … */`
-    /// mentioning one of these names could still satisfy a check. The way
-    /// out of that is the call-shape requirement, not a second parser.
+    /// Every comment kind, through `SwiftSource.blankingComments` (since
+    /// 2026-09-18; before that, line comments only, so a `/* … */` naming one
+    /// of these views could still satisfy a check). String literals stay.
     private static func source(_ relativePath: String) throws -> String {
-        let raw = try String(
-            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
-        return raw
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> Substring in
-                guard let comment = line.range(of: "//") else { return line }
-                return line[line.startIndex..<comment.lowerBound]
-            }
-            .joined(separator: "\n")
+        try SwiftSource.blankingComments(try String(
+            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
     }
 
     private static let viewsPath = "Sources/MacSCPAppKit/ChecksumViews.swift"

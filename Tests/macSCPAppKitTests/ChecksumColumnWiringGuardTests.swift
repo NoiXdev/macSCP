@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -37,20 +38,16 @@ struct ChecksumColumnWiringGuardTests {
 
     private static let sourcesRoot = repoRoot.appendingPathComponent("Sources")
 
-    /// A file's CODE, with every `//` comment cut away — the difference
-    /// between a guard and a comment that runs (see
-    /// `ChecksumSurfaceGuardTests`, which was caught by exactly that).
-    /// This project writes long explanatory comments AND scans source, so a
-    /// prose sentence naming a call is indistinguishable from the call
-    /// unless the prose is removed first.
+    /// A file's CODE, with every comment blanked — the difference between
+    /// a guard and a comment that runs (see `ChecksumSurfaceGuardTests`,
+    /// which was caught by exactly that). This project writes long
+    /// explanatory comments AND scans source, so a prose sentence naming a
+    /// call is indistinguishable from the call unless the prose is removed
+    /// first. `SwiftSource.blankingComments`: line, doc and block comments
+    /// go, string literals stay (as they did under the per-line `//` cut
+    /// this replaced on 2026-09-18, which also cut a literal at its `//`).
     private static func code(at url: URL) throws -> String {
-        try String(contentsOf: url, encoding: .utf8)
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> Substring in
-                guard let comment = line.range(of: "//") else { return line }
-                return line[line.startIndex..<comment.lowerBound]
-            }
-            .joined(separator: "\n")
+        try SwiftSource.blankingComments(try String(contentsOf: url, encoding: .utf8))
     }
 
     /// Every `.swift` file under `Sources/`, found rather than listed.

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -72,10 +73,10 @@ import Testing
 ///
 /// Fail-closed: a reformat that renames one of the scanned functions, or
 /// that respells a checked call, reads as a missing wire rather than a
-/// compliant one. Comment
-/// lines are stripped before every scan, so a comment that MENTIONS the
-/// rule cannot stand in for a call to it — which is exactly what the
-/// stored-session fill carries.
+/// compliant one. Comments are blanked before every scan
+/// (`SwiftSource.blankingComments`, literals kept), so a comment that
+/// MENTIONS the rule cannot stand in for a call to it — which is exactly
+/// what the stored-session fill carries.
 @Suite("Session name prefill wiring guard")
 struct SessionNamePrefillWiringGuardTests {
     /// `#filePath` is
@@ -93,14 +94,13 @@ struct SessionNamePrefillWiringGuardTests {
     private static let lifecyclePath = "Sources/MacSCPAppKit/ContentView+Lifecycle.swift"
     private static let formPath = "Sources/MacSCPAppKit/ConnectionFormView.swift"
 
-    /// Drops whole-line comments. A comment naming the rule is not a call to
-    /// it, and one of the three functions guarded here deliberately explains
-    /// in prose why it does NOT step aside.
-    private static func withoutComments(_ source: String) -> String {
-        source
-            .components(separatedBy: "\n")
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            .joined(separator: "\n")
+    /// Blanks comments, keeping string literals and every line break. A
+    /// comment naming the rule is not a call to it, and one of the three
+    /// functions guarded here deliberately explains in prose why it does NOT
+    /// step aside. Until 2026-09-18 this dropped whole-line comments only,
+    /// so a trailing comment was still read as code.
+    private static func withoutComments(_ source: String) throws -> String {
+        try SwiftSource.blankingComments(source)
     }
 
     /// One long line per body: whitespace collapsed, so a check does not
@@ -114,8 +114,8 @@ struct SessionNamePrefillWiringGuardTests {
     /// The body of the function called `name`, from its declaration to the
     /// first line that is its own closing brace at member indentation —
     /// the delimiter this project's other wiring guards use.
-    private static func functionBody(_ name: String, in source: String) -> String? {
-        let lines = withoutComments(source).components(separatedBy: "\n")
+    private static func functionBody(_ name: String, in source: String) throws -> String? {
+        let lines = try withoutComments(source).components(separatedBy: "\n")
         guard let index = lines.firstIndex(where: { $0.contains("func \(name)(") })
         else { return nil }
         return collapsed(
@@ -321,7 +321,7 @@ struct SessionNamePrefillWiringGuardTests {
     /// both files rather than written down here.
     @Test func onlyTheInventedNamesAskTheRule() throws {
         let sources = try [Self.contentViewPath, Self.lifecyclePath].map {
-            Self.withoutComments(try Self.source($0))
+            try Self.withoutComments(try Self.source($0))
         }
         let asks = sources.reduce(0) {
             $0 + Self.occurrences(of: "SessionNameCollision.freeName(", in: $1)

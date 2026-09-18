@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -27,25 +28,19 @@ struct PermissionsSurfaceGuardTests {
     private static let sheetsPath = "Sources/MacSCPAppKit/BrowserSheets.swift"
     private static let tablePath = "Sources/MacSCPAppKit/RemoteFileTableView.swift"
 
-    /// The file's CODE, with every `//` line comment cut away, for the
-    /// reason `ChecksumSurfaceGuardTests.source(_:)` gives: this project's
-    /// comments quote the code they describe, and a scanner cannot tell
-    /// prose from a call.
+    /// The file's CODE, with every comment blanked, for the reason
+    /// `ChecksumSurfaceGuardTests.source(_:)` gives: this project's comments
+    /// quote the code they describe, and a scanner cannot tell prose from a
+    /// call. `SwiftSource.blankingComments`, string literals kept.
     ///
     /// `ContentView+Detail.swift` holds two string literals containing
     /// `//` (an `http://` and an `https://` in one sentence about a
-    /// plaintext password); the cut lands mid-literal there, and nothing
-    /// this suite looks for stands on those lines.
+    /// plaintext password). The per-line `//` cut this replaced on
+    /// 2026-09-18 landed mid-literal there; the shared stripper parses the
+    /// literal and leaves it whole.
     private static func source(_ relativePath: String) throws -> String {
-        let raw = try String(
-            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8)
-        return raw
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> Substring in
-                guard let comment = line.range(of: "//") else { return line }
-                return line[line.startIndex..<comment.lowerBound]
-            }
-            .joined(separator: "\n")
+        try SwiftSource.blankingComments(try String(
+            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
     }
 
     private static func occurrences(of needle: String, in text: String) -> Int {

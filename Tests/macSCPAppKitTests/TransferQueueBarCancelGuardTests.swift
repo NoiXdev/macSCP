@@ -42,9 +42,11 @@ import Testing
 ///   button is actually greyed out on screen, whether the row's cancel is
 ///   hit-testable, or what VoiceOver actually announces — only which
 ///   expression the source hands to each modifier.
-/// - The stripper is hand-rolled and refuses raw strings rather than
-///   guessing (`SwiftSourceStrippingTests`); a bar that grew one would fail
-///   this suite closed rather than be scanned wrongly.
+/// - The stripper is hand-rolled (the shared `SwiftSource`). It parses raw
+///   strings and extended regex literals, and throws on a literal or comment
+///   it cannot close rather than guessing (`SwiftSourceStrippingTests`); a
+///   bar that grew one would fail this suite closed rather than be scanned
+///   wrongly.
 /// - The required expressions are spelled out as literals here. That is a
 ///   second copy of `isActive`/`isCancellable`, and it is the copy that
 ///   would need updating on a rename — the checks are positive, so a rename

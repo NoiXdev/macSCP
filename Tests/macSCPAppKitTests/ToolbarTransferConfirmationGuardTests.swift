@@ -46,7 +46,7 @@ struct ToolbarTransferConfirmationGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Sheets.swift")
 
     private enum ScanError: Error {
-        case anchorNotFound, unbalanced, dialogNotFound
+        case anchorNotFound, unbalanced
     }
 
     // MARK: - 1-3. The buttons, the plan branch, the confirm action
@@ -214,7 +214,7 @@ struct ToolbarTransferConfirmationGuardTests {
     }
 
     @Test func theDialogScannerFailsClosedWhenNoDialogIsBound() {
-        #expect(throws: ScanError.self) {
+        #expect(throws: ConfirmationDialogScan.ScanError.self) {
             try Self.dialogViolations(Self.dialogFixture()
                 .replacingOccurrences(of: "toolbarTransferRequest", with: "otherRequest"))
         }
@@ -315,106 +315,69 @@ struct ToolbarTransferConfirmationGuardTests {
         return violations
     }
 
-    /// Claim 4 over `ContentView+Sheets.swift` (or a fixture of it).
+    /// Claim 4 over `ContentView+Sheets.swift` (or a fixture of it), read
+    /// through the target's one dialog scanner (`ConfirmationDialogScan`,
+    /// which `ConvertKeyWiringGuardTests` reads too). Throws when no dialog
+    /// is bound to `toolbarTransferRequest` or its shape cannot be read.
     private static func dialogViolations(_ source: String) throws -> [String] {
-        let strict = Array(try SwiftSource.blankingCommentsAndStrings(source))
-        let literal = Array(try SwiftSource.blankingComments(source))
-        guard strict.count == literal.count else { throw ScanError.dialogNotFound }
-        let opener = Array(".confirmationDialog(")
-        var start = 0
+        let dialog = try ConfirmationDialogScan.bound(to: "toolbarTransferRequest", in: source)
         var violations: [String] = []
-        while let found = Self.firstOffset(of: opener, in: strict, from: start) {
-            start = found + opener.count
-            let parenOpen = found + opener.count - 1
-            guard let parenClose = Self.closingOffset(from: parenOpen, in: strict, open: "(", close: ")")
-            else { throw ScanError.unbalanced }
-            let arguments = String(strict[parenOpen...parenClose])
-            guard arguments.contains("toolbarTransferRequest") else { continue }
-            guard let buttonsOpen = Self.firstOffset(of: ["{"], in: strict, from: parenClose),
-                  let buttonsClose = Self.closingOffset(from: buttonsOpen, in: strict, open: "{", close: "}"),
-                  let label = Self.firstOffset(of: Array("message:"), in: strict, from: buttonsClose),
-                  let messageOpen = Self.firstOffset(of: ["{"], in: strict, from: label),
-                  let messageClose = Self.closingOffset(from: messageOpen, in: strict, open: "{", close: "}"),
-                  let setLabel = Self.firstOffset(of: Array("set:"), in: strict, from: parenOpen),
-                  setLabel < parenClose,
-                  let setterOpen = Self.firstOffset(of: ["{"], in: strict, from: setLabel),
-                  let setterClose = Self.closingOffset(from: setterOpen, in: strict, open: "{", close: "}"),
-                  setterClose < parenClose
-            else { throw ScanError.dialogNotFound }
 
-            let squeezedArguments = Self.squeezed(arguments)
-            if !squeezedArguments.contains("presenting:toolbarTransferRequest") {
-                violations.append("the request does not reach the buttons through presenting:")
-            }
-            if !squeezedArguments.hasPrefix("(toolbarTransferRequest.map{ToolbarTransferPlan.title(") {
-                violations.append("the title is not ToolbarTransferPlan.title(")
-            }
-            let setter = String(strict[setterOpen...setterClose])
-            if !Self.squeezed(setter).contains("toolbarTransferRequest=nil") {
-                violations.append("the setter does not clear toolbarTransferRequest")
-            }
-            if setter.contains("confirmToolbarTransfer(") || setter.contains("transferSelection(") {
-                violations.append("the setter runs a transfer")
-            }
-
-            let buttons = String(strict[buttonsOpen...buttonsClose])
-            let transfers = Self.occurrences(of: "confirmToolbarTransfer(", in: buttons)
-            if transfers != 1 {
-                violations.append("confirmToolbarTransfer( occurs \(transfers) times in the buttons closure, not once")
-            }
-            if buttons.contains("transferSelection(") {
-                violations.append("a button calls transferSelection( directly")
-            }
-
-            var spans: [(arguments: String, literalArguments: String, action: String)] = []
-            var from = buttonsOpen
-            let token = Array("Button(")
-            while let hit = Self.firstOffset(of: token, in: strict, from: from), hit < buttonsClose {
-                let argsOpen = hit + token.count - 1
-                guard let argsClose = Self.closingOffset(from: argsOpen, in: strict, open: "(", close: ")"),
-                      let actionOpen = Self.firstOffset(of: ["{"], in: strict, from: argsClose),
-                      strict[(argsClose + 1)..<actionOpen].allSatisfy(\.isWhitespace),
-                      let actionClose = Self.closingOffset(from: actionOpen, in: strict, open: "{", close: "}")
-                else { throw ScanError.dialogNotFound }
-                spans.append((
-                    String(strict[argsOpen...argsClose]), String(literal[argsOpen...argsClose]),
-                    String(strict[actionOpen...actionClose])))
-                from = actionClose
-            }
-            if spans.count != 2 { violations.append("\(spans.count) buttons, not 2") }
-            let confirms = spans.filter { Self.squeezed($0.arguments).hasPrefix("(ToolbarTransferPlan.confirmLabel(") }
-            let cancels = spans.filter {
-                Self.squeezed($0.literalArguments).hasPrefix("(L10n.string(\"common.cancel\"")
-                    && $0.arguments.contains(".cancel")
-            }
-            if confirms.count != 1 { violations.append("\(confirms.count) confirm buttons, not 1") }
-            if cancels.count != 1 { violations.append("\(cancels.count) cancel-role Cancel buttons, not 1") }
-            for button in confirms {
-                if !Self.squeezed(button.action).contains("confirmToolbarTransfer(request)") {
-                    violations.append("the confirm button does not call confirmToolbarTransfer(request)")
-                }
-                if button.arguments.contains(".cancel") {
-                    violations.append("the confirm button carries the cancel role")
-                }
-            }
-            for button in cancels {
-                let rest = Self.squeezed(button.action)
-                    .replacingOccurrences(of: "toolbarTransferRequest=nil", with: "")
-                if rest != "{}" {
-                    violations.append("the cancel button does something besides clearing the request: \(button.action)")
-                }
-            }
-
-            let message = Self.squeezed(String(strict[messageOpen...messageClose]))
-            if !message.contains("Text(ToolbarTransferPlan.message(") {
-                violations.append("the message is not Text(ToolbarTransferPlan.message(")
-            }
-            if Self.occurrences(of: "Text(", in: message) != 1 {
-                violations.append("the message shows more than the plan's one text")
-            }
-            return violations
+        let squeezedArguments = Self.squeezed(dialog.arguments)
+        if !squeezedArguments.contains("presenting:toolbarTransferRequest") {
+            violations.append("the request does not reach the buttons through presenting:")
         }
-        throw ScanError.dialogNotFound
+        if !squeezedArguments.hasPrefix("(toolbarTransferRequest.map{ToolbarTransferPlan.title(") {
+            violations.append("the title is not ToolbarTransferPlan.title(")
+        }
+        if !Self.squeezed(dialog.setter).contains("toolbarTransferRequest=nil") {
+            violations.append("the setter does not clear toolbarTransferRequest")
+        }
+        if dialog.setter.contains("confirmToolbarTransfer(") || dialog.setter.contains("transferSelection(") {
+            violations.append("the setter runs a transfer")
+        }
+
+        let transfers = Self.occurrences(of: "confirmToolbarTransfer(", in: dialog.buttons)
+        if transfers != 1 {
+            violations.append("confirmToolbarTransfer( occurs \(transfers) times in the buttons closure, not once")
+        }
+        if dialog.buttons.contains("transferSelection(") {
+            violations.append("a button calls transferSelection( directly")
+        }
+
+        let spans = dialog.buttonSpans
+        if spans.count != 2 { violations.append("\(spans.count) buttons, not 2") }
+        let confirms = spans.filter { Self.squeezed($0.arguments).hasPrefix("(ToolbarTransferPlan.confirmLabel(") }
+        let cancels = spans.filter {
+            Self.squeezed($0.literalArguments).hasPrefix("(L10n.string(\"common.cancel\"")
+                && $0.arguments.contains(".cancel")
+        }
+        if confirms.count != 1 { violations.append("\(confirms.count) confirm buttons, not 1") }
+        if cancels.count != 1 { violations.append("\(cancels.count) cancel-role Cancel buttons, not 1") }
+        for button in confirms {
+            if !Self.squeezed(button.action).contains("confirmToolbarTransfer(request)") {
+                violations.append("the confirm button does not call confirmToolbarTransfer(request)")
+            }
+            if button.arguments.contains(".cancel") {
+                violations.append("the confirm button carries the cancel role")
+            }
+        }
+        for button in cancels {
+            let rest = Self.squeezed(button.action)
+                .replacingOccurrences(of: "toolbarTransferRequest=nil", with: "")
+            if rest != "{}" {
+                violations.append("the cancel button does something besides clearing the request: \(button.action)")
+            }
+        }
+
+        let message = Self.squeezed(dialog.message)
+        if !message.contains("Text(ToolbarTransferPlan.message(") {
+            violations.append("the message is not Text(ToolbarTransferPlan.message(")
+        }
+        if Self.occurrences(of: "Text(", in: message) != 1 {
+            violations.append("the message shows more than the plan's one text")
+        }
+        return violations
     }
 
     // MARK: - Scanner
@@ -432,32 +395,10 @@ struct ToolbarTransferConfirmationGuardTests {
     private static func body(after anchor: String, in strict: String) throws -> String {
         guard let anchorRange = strict.range(of: anchor) else { throw ScanError.anchorNotFound }
         let characters = Array(strict[anchorRange.lowerBound...])
-        guard let open = firstOffset(of: ["{"], in: characters, from: 0),
-              let close = closingOffset(from: open, in: characters, open: "{", close: "}")
+        guard let open = ConfirmationDialogScan.firstOffset(of: ["{"], in: characters, from: 0),
+              let close = ConfirmationDialogScan.closingOffset(
+                  from: open, in: characters, open: "{", close: "}")
         else { throw ScanError.unbalanced }
         return String(characters[0...close])
-    }
-
-    private static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
-        guard !token.isEmpty, text.count >= token.count, start <= text.count - token.count else { return nil }
-        for offset in start...(text.count - token.count)
-        where text[offset..<(offset + token.count)].elementsEqual(token) {
-            return offset
-        }
-        return nil
-    }
-
-    private static func closingOffset(
-        from open: Int, in text: [Character], open opener: Character, close closer: Character
-    ) -> Int? {
-        var depth = 0
-        for offset in open..<text.count {
-            if text[offset] == opener { depth += 1 }
-            if text[offset] == closer {
-                depth -= 1
-                if depth == 0 { return offset }
-            }
-        }
-        return nil
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -55,37 +56,20 @@ struct BucketListTransferGuardTests {
     /// the exact collision CLAUDE.md records ("Source-scanning guards read
     /// comments too").
     ///
-    /// BOTH comment kinds, unlike the sheet suites' helper (review m-3).
-    /// `SheetFacetWiringGuardTests.strippingLineComments` is safe there only
-    /// because `theScannedSheetsUseNoBlockComments` establishes those files
-    /// carry no other kind — a promise nobody made about these three, and
-    /// one that is FALSE: `ContentView+Detail.swift` has an inline
-    /// `set: { _ in /* … */ }`, where a line comment cannot go. So the
-    /// premise is not asserted here, it is removed: block comments are
-    /// stripped first, then line comments.
-    private static func strippedSource(_ url: URL) throws -> String {
-        SheetFacetWiringGuardTests.strippingLineComments(
-            strippingBlockComments(try String(contentsOf: url, encoding: .utf8)))
-    }
-
-    /// Replaces every `/* … */` with a single space, non-greedily, so a file
-    /// with two block comments does not lose everything between them.
-    /// Newlines inside a comment go with it — nothing here reads line by
-    /// line, unlike the sibling helper.
+    /// BOTH comment kinds (review m-3): `ContentView+Detail.swift` has an
+    /// inline `set: { _ in /* … */ }`, where a line comment cannot go. Read
+    /// through the strict view, `SwiftSource.blankingCommentsAndStrings`,
+    /// since every scan below looks for code: string literals are blanked
+    /// too, so a `//` inside one (`ContentView+Detail.swift` carries an
+    /// `http://` and an `https://`) is neither a comment nor a match.
     ///
-    /// An UNTERMINATED `/*` is left in place rather than eating the rest of
-    /// the file, and `theScannedSourcesAreFullyStripped` is what notices.
-    private static func strippingBlockComments(_ source: String) -> String {
-        var result = ""
-        var rest = Substring(source)
-        while let open = rest.range(of: "/*") {
-            guard let close = rest.range(of: "*/", range: open.upperBound..<rest.endIndex) else {
-                break
-            }
-            result += rest[rest.startIndex..<open.lowerBound] + " "
-            rest = rest[close.upperBound...]
-        }
-        return result + rest
+    /// Until 2026-09-18 this suite chained its own block-comment stripper
+    /// into the sheet suites' line-comment one; both went for the shared
+    /// stripper, which blanks in place rather than removing, so the region
+    /// windows below count a blanked comment's width where they used to
+    /// count one space.
+    private static func strippedSource(_ url: URL) throws -> String {
+        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
     }
 
     /// The stripper does what the scans below assume, measured on a fixture
@@ -95,15 +79,14 @@ struct BucketListTransferGuardTests {
     /// Both halves matter — that the quoted name is gone (or every scan can
     /// be satisfied by prose) and that the wiring survives (or every scan
     /// finds nothing and says the gate is missing).
-    @Test func theStripperRemovesQuotedProseAndKeepsWiring() {
+    @Test func theStripperRemovesQuotedProseAndKeepsWiring() throws {
         let planted = """
             /* the highlight reads \(Self.dropGate) here, or it used to */
             .strokeBorder(tint, lineWidth: isDropTargeted ? 2.5 : 0)
             let real = \(Self.dropGate)
             """
 
-        let stripped = SheetFacetWiringGuardTests.strippingLineComments(
-            Self.strippingBlockComments(planted))
+        let stripped = try SwiftSource.blankingCommentsAndStrings(planted)
 
         #expect(stripped.contains("let real = \(Self.dropGate)"))
         #expect(!stripped.contains("or it used to"))
@@ -113,9 +96,10 @@ struct BucketListTransferGuardTests {
     }
 
     /// …and it did so on the REAL files: after stripping, no comment marker
-    /// of either kind is left. An unterminated `/*` (which the stripper
-    /// deliberately leaves alone rather than swallowing the file) shows up
-    /// here, as does a block-comment form the stripper does not know.
+    /// of either kind is left. The shared stripper throws on an
+    /// unterminated `/*` rather than leaving it, so this reads as the
+    /// positive half of that: a block-comment form it did not know would
+    /// show up here.
     ///
     /// The positive anchor beside it: the stripped text still carries a
     /// token each scan depends on, so this cannot be passing over an empty

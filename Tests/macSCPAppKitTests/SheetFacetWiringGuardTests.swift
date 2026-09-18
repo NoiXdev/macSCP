@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// The facet quick filter is wired into the sheets that are supposed to have
@@ -17,19 +18,22 @@ import Testing
 ///
 /// ## What the scan reads, and what it does not
 ///
-/// Line comments are removed before anything is matched. That is not
-/// tidiness: `SheetFacetPicker.swift`'s own doc comment quotes
+/// Comments are blanked before anything is matched, through
+/// `SwiftSource.blankingComments` — line, doc and block comments alike.
+/// That is not tidiness: `SheetFacetPicker.swift`'s own doc comment quotes
 /// `searchText.isEmpty` while explaining why no sheet may decide emptiness
 /// from it, and a raw-text scan cannot tell that sentence from the code it
 /// describes. `strippedSource` is held to that by `theStripperRemovesA
-/// CommentThatQuotesTheForbiddenShape` below.
+/// CommentThatQuotesTheForbiddenShape` and its block-comment sibling below.
 ///
-/// String literals are NOT removed, and the checks are written so that this
-/// costs nothing: none of the matched shapes (`SheetFacetPicker(`,
-/// `.narrowing(`, `SheetListEmptyState(`, `searchText.isEmpty`) is something
-/// a user-facing string would contain. Block comments would defeat the
-/// stripper entirely, so `theScannedSheetsUseNoBlockComments` asserts there
-/// are none rather than assuming it.
+/// String literals are NOT blanked (the comment-only mode), and the checks
+/// are written so that this costs nothing: none of the matched shapes
+/// (`SheetFacetPicker(`, `.narrowing(`, `SheetListEmptyState(`,
+/// `searchText.isEmpty`) is something a user-facing string would contain.
+/// Until 2026-09-18 this suite carried its own line-comment stripper and a
+/// test asserting the scanned sheets held no block comment, because that
+/// stripper could not see one; the shared stripper parses both kinds, so the
+/// premise is gone rather than asserted.
 ///
 /// Known blind spots, stated rather than discovered later:
 /// - The scan proves the chaining is CALLED, not that its result is what the
@@ -69,24 +73,7 @@ struct SheetFacetWiringGuardTests {
 
     private static func strippedSource(_ fileName: String) throws -> String {
         let url = appSourceDirectory.appendingPathComponent(fileName)
-        return strippingLineComments(try String(contentsOf: url, encoding: .utf8))
-    }
-
-    /// Blanks everything from a `//` to the end of its line, keeping the line
-    /// breaks so the result still reads line by line.
-    ///
-    /// Only line comments, and only because `theScannedSheetsUseNoBlockComments`
-    /// establishes that these files have no other kind. A `//` inside a
-    /// string literal would blank the rest of that line too; that is a false
-    /// NEGATIVE (it can only hide a match, never invent one), and no string
-    /// in the scanned files contains one.
-    static func strippingLineComments(_ source: String) -> String {
-        source.components(separatedBy: "\n")
-            .map { line in
-                guard let commentStart = line.range(of: "//") else { return line }
-                return String(line[line.startIndex..<commentStart.lowerBound])
-            }
-            .joined(separator: "\n")
+        return try SwiftSource.blankingComments(try String(contentsOf: url, encoding: .utf8))
     }
 
     /// The first `Self.<name>` written within `window` characters after
@@ -116,7 +103,7 @@ struct SheetFacetWiringGuardTests {
             at: Self.appSourceDirectory, includingPropertiesForKeys: nil)
         var drawing: Set<String> = []
         for url in contents where url.pathExtension == "swift" {
-            let source = Self.strippingLineComments(
+            let source = try SwiftSource.blankingComments(
                 try String(contentsOf: url, encoding: .utf8))
             // The view's own definition is not a sheet drawing it.
             guard url.lastPathComponent != "SheetFacetPicker.swift" else { continue }
@@ -195,19 +182,8 @@ struct SheetFacetWiringGuardTests {
 
     // MARK: - What the scan rests on
 
-    @Test(arguments: SheetFacetWiringGuardTests.facetedSheets)
-    func theScannedSheetsUseNoBlockComments(fileName: String) throws {
-        let url = Self.appSourceDirectory.appendingPathComponent(fileName)
-        let raw = try String(contentsOf: url, encoding: .utf8)
-        #expect(!raw.contains("/*"), """
-            \(fileName) contains a block comment. This suite's stripper only removes `//` \
-            comments, so a block comment would be read as code — and a sentence quoting \
-            `searchText.isEmpty` would trip the check written to forbid the code.
-            """)
-    }
-
-    @Test func theStripperRemovesACommentThatQuotesTheForbiddenShape() {
-        let stripped = SheetFacetWiringGuardTests.strippingLineComments("""
+    @Test func theStripperRemovesACommentThatQuotesTheForbiddenShape() throws {
+        let stripped = try SwiftSource.blankingComments("""
             /// emptiness from `searchText.isEmpty` alone.
             let kept = narrowing.emptiness
             """)
@@ -215,8 +191,18 @@ struct SheetFacetWiringGuardTests {
         #expect(stripped.contains("narrowing.emptiness"))
     }
 
-    @Test func theStripperKeepsCodeThatPrecedesATrailingComment() {
-        let stripped = SheetFacetWiringGuardTests.strippingLineComments(
+    /// The case the old line-comment stripper could not see, and why this
+    /// suite used to forbid block comments in the sheets outright.
+    @Test func theStripperRemovesABlockCommentThatQuotesTheForbiddenShape() throws {
+        let stripped = try SwiftSource.blankingComments("""
+            let kept = narrowing.emptiness /* not searchText.isEmpty */
+            """)
+        #expect(!stripped.contains("searchText.isEmpty"))
+        #expect(stripped.contains("narrowing.emptiness"))
+    }
+
+    @Test func theStripperKeepsCodeThatPrecedesATrailingComment() throws {
+        let stripped = try SwiftSource.blankingComments(
             "let x = searchText.isEmpty // still code")
         #expect(stripped.contains("searchText.isEmpty"))
         #expect(!stripped.contains("still code"))

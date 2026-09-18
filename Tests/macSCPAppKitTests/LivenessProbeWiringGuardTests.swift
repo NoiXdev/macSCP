@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the shape of the liveness-probe loop in `ContentView+Detail.swift`
@@ -74,7 +75,7 @@ struct LivenessProbeWiringGuardTests {
     /// actions have to be named here.
     private static let probeCase = ".probe, .probeAgainNow"
 
-    private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces }
+    private enum ScanError: Error { case anchorNotFound, openBraceNotFound, unbalancedBraces, viewsDisagree }
 
     // MARK: - The five guarded claims, run against the real file
 
@@ -263,8 +264,8 @@ struct LivenessProbeWiringGuardTests {
     /// A raw-text scan cannot tell a real guard from a comment quoting it —
     /// this fixture has the real `guard settingsStore.keepAliveEnabled else`
     /// removed entirely and only a comment spelling that same text out.
-    /// `loopBody` has to strip `//` line comments from the body before the
-    /// claims run, or this fixture would read as if the guard were present.
+    /// `loopBody` has to blank comments in the body before the claims run,
+    /// or this fixture would read as if the guard were present.
     @Test func scannerFlagsAGuardWrittenOnlyAsAComment() throws {
         let source = """
             // Liveness probe (Task 4)
@@ -278,7 +279,7 @@ struct LivenessProbeWiringGuardTests {
         let body = try Self.loopBody(after: Self.anchor, in: source)
         #expect(!body.contains("guard settingsStore.keepAliveEnabled else"), """
             a comment quoting the real guard's text satisfied this check with \
-            the real guard removed — `loopBody` must strip line comments \
+            the real guard removed — `loopBody` must blank comments \
             before the claims run.
             """)
     }
@@ -434,53 +435,39 @@ struct LivenessProbeWiringGuardTests {
 
     /// The probe loop's body text: everything between the `while` block's
     /// own opening `{` (the first one found after `anchor`) and its
-    /// balanced-brace close, with `//` line comments stripped (see
-    /// `stripLineComments(from:)`). Throws rather than returning `nil` so a
+    /// balanced-brace close. Throws rather than returning `nil` so a
     /// missing anchor or an unbalanced file fails the calling test loudly,
     /// not as a silently-empty string that would make every `contains`
     /// check in the calling tests trivially false.
+    ///
+    /// Three views of one text, at one set of offsets (both `SwiftSource`
+    /// modes blank in place): the anchor is a `//` comment, so it is found
+    /// in the RAW source; the braces are counted in the strict view
+    /// (`blankingCommentsAndStrings`), where a brace inside a comment or a
+    /// literal cannot decide where the loop ends; and the body is returned
+    /// from the comment-only view (`blankingComments`), so a comment quoting
+    /// a claim's code — e.g. `// guard settingsStore.keepAliveEnabled else
+    /// { continue }` describing a guard that was actually deleted — cannot
+    /// satisfy it, while literals survive as they did under the
+    /// line-comment stripper this replaced on 2026-09-18.
     private static func loopBody(after anchor: String, in source: String) throws -> String {
         guard let anchorRange = source.range(of: anchor) else { throw ScanError.anchorNotFound }
-        let afterAnchor = source[anchorRange.upperBound...]
-        guard let openBraceIndex = afterAnchor.firstIndex(of: "{") else {
+        let code = Array(try SwiftSource.blankingCommentsAndStrings(source))
+        let text = Array(try SwiftSource.blankingComments(source))
+        guard code.count == text.count, code.count == source.count else { throw ScanError.viewsDisagree }
+        let afterAnchor = source.distance(from: source.startIndex, to: anchorRange.upperBound)
+        guard let openBrace = code[afterAnchor...].firstIndex(of: "{") else {
             throw ScanError.openBraceNotFound
         }
         var depth = 0
-        var index = openBraceIndex
-        while index < afterAnchor.endIndex {
-            let character = afterAnchor[index]
-            if character == "{" { depth += 1 }
-            if character == "}" {
+        for index in openBrace..<code.count {
+            if code[index] == "{" { depth += 1 }
+            if code[index] == "}" {
                 depth -= 1
-                if depth == 0 {
-                    let bodyStart = afterAnchor.index(after: openBraceIndex)
-                    return stripLineComments(from: String(afterAnchor[bodyStart..<index]))
-                }
+                if depth == 0 { return String(text[(openBrace + 1)..<index]) }
             }
-            index = afterAnchor.index(after: index)
         }
         throw ScanError.unbalancedBraces
-    }
-
-    /// Drops everything from the first `//` on each line to that line's end.
-    ///
-    /// Every claim below is a `contains`/`range(of:)` scan of raw text, so a
-    /// comment that quotes the very code a claim looks for — e.g. `// guard
-    /// settingsStore.keepAliveEnabled else { continue }` describing a guard
-    /// that was actually deleted — would satisfy the scan exactly as if the
-    /// real guard were still there. Stripping comments before the claims run
-    /// closes that: only executable text remains for them to match against.
-    /// No string-literal awareness, deliberately — this is a heuristic
-    /// source scan, not a parser, and none of the loop's own source (real
-    /// file or fixtures) puts `//` inside a string literal that a claim
-    /// needs to see.
-    private static func stripLineComments(from text: String) -> String {
-        text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { line -> Substring in
-                guard let commentRange = line.range(of: "//") else { return line }
-                return line[line.startIndex..<commentRange.lowerBound]
-            }
-            .joined(separator: "\n")
     }
 
     /// The text of one `case <marker>:` arm, from just after its colon up to

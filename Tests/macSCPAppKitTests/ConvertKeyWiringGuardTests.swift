@@ -84,7 +84,7 @@ struct ConvertKeyWiringGuardTests {
 
     private enum ScanError: Error {
         case anchorNotFound, openBraceNotFound, unbalancedBraces
-        case probeNotFound, probeNotBound, dialogNotFound
+        case probeNotFound, probeNotBound
     }
 
     // MARK: - 1. The sheet is presented
@@ -1085,7 +1085,7 @@ struct ConvertKeyWiringGuardTests {
     }
 
     @Test func theDialogScannerFailsClosedWhenNoDialogIsBound() {
-        #expect(throws: ScanError.self) {
+        #expect(throws: ConfirmationDialogScan.ScanError.self) {
             try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture()
                 .replacingOccurrences(of: "setRepointRequest", with: "otherRequest"))
         }
@@ -1437,39 +1437,6 @@ struct ConvertKeyWiringGuardTests {
         return false
     }
 
-    /// One `.confirmationDialog(` read out of a source file.
-    private struct Dialog {
-        /// The parenthesised argument list, strict view.
-        let arguments: String
-        /// The buttons closure, strict view.
-        let buttons: String
-        /// The `message:` closure, strict view.
-        let message: String
-        /// Every title, `Button(` or `Text(` in the dialog that does not open
-        /// straight into `L10n.string(` (directly or through
-        /// `String(format:`), as the strict text it opens into.
-        let unlocalizedTexts: [String]
-        /// How many texts were checked: the title plus every `Button(` and
-        /// `Text(`.
-        let textCount: Int
-        /// Every key literal an `L10n.string(` in the dialog names, in order.
-        let keys: [String]
-        /// The `isPresented:` binding's `set:` closure, strict view.
-        let setter: String
-        /// Each `Button(` in the buttons closure, in order.
-        let buttonSpans: [ButtonSpan]
-    }
-
-    /// One `Button(` of a dialog: the catalog key its label names, read from
-    /// the comment-only view, beside its argument list and trailing action,
-    /// read from the strict view — at the same offsets, which is what pairs
-    /// a key with its action.
-    private struct ButtonSpan {
-        let key: String?
-        let arguments: String
-        let action: String
-    }
-
     /// Everything the login-set question's wiring must satisfy, one sentence
     /// per broken property (Task 2 fix round 1). Empty means wired right.
     ///
@@ -1484,7 +1451,7 @@ struct ConvertKeyWiringGuardTests {
     /// `repointLoginSet(` exactly once in the whole buttons closure. Checking
     /// only the buttons named by key passed a third button with a key of its
     /// own that called the set rewrite.
-    private static func dialogViolations(_ dialog: Dialog) -> [String] {
+    private static func dialogViolations(_ dialog: ConfirmationDialogScan) -> [String] {
         var violations: [String] = []
         let confirm = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.confirm" }
         let attempt = dialog.buttonSpans.filter { $0.key == "connection.convertKey.repoint.thisAttempt" }
@@ -1540,127 +1507,11 @@ struct ConvertKeyWiringGuardTests {
         return violations
     }
 
-    /// The first `.confirmationDialog(` whose ARGUMENT LIST names `state`,
-    /// with its buttons and `message:` closures, read in the strict view for
-    /// code and in the comment-only view for key literals.
-    ///
-    /// Both views blank in place, so one offset addresses the same character
-    /// in each (`SwiftSource`'s own doc comment); the spans are balanced in
-    /// the strict view, where a brace or parenthesis inside a literal cannot
-    /// decide where they end. Throws when no dialog names `state` or when
-    /// the dialog's shape cannot be read, so a moved dialog is a loud
-    /// failure rather than an empty span that satisfies every negative.
-    private static func dialog(boundTo state: String, in source: String) throws -> Dialog {
-        let strict = Array(try SwiftSource.blankingCommentsAndStrings(source))
-        let literal = Array(try SwiftSource.blankingComments(source))
-        guard strict.count == literal.count else { throw ScanError.dialogNotFound }
-        let opener = Array(".confirmationDialog(")
-        var start = 0
-        while let found = firstOffset(of: opener, in: strict, from: start) {
-            start = found + opener.count
-            let parenOpen = found + opener.count - 1
-            guard let parenClose = closingOffset(from: parenOpen, in: strict, open: "(", close: ")")
-            else { throw ScanError.unbalancedBraces }
-            let arguments = String(strict[parenOpen...parenClose])
-            guard arguments.contains(state) else { continue }
-            guard let buttonsOpen = firstOffset(of: ["{"], in: strict, from: parenClose),
-                  let buttonsClose = closingOffset(from: buttonsOpen, in: strict, open: "{", close: "}"),
-                  let label = firstOffset(of: Array("message:"), in: strict, from: buttonsClose),
-                  let messageOpen = firstOffset(of: ["{"], in: strict, from: label),
-                  let messageClose = closingOffset(from: messageOpen, in: strict, open: "{", close: "}")
-            else { throw ScanError.dialogNotFound }
-
-            var textStarts = [parenOpen + 1]
-            for token in [Array("Button("), Array("Text(")] {
-                var from = parenOpen
-                while let hit = firstOffset(of: token, in: strict, from: from), hit < messageClose {
-                    textStarts.append(hit + token.count)
-                    from = hit + token.count
-                }
-            }
-            let unlocalized = textStarts.compactMap { offset -> String? in
-                let window = String(strict[offset..<min(offset + 120, strict.count)])
-                    .filter { !$0.isWhitespace }
-                let localized = window.hasPrefix("L10n.string(")
-                    || window.hasPrefix("String(format:L10n.string(")
-                return localized ? nil : String(window.prefix(40))
-            }
-            guard let setLabel = firstOffset(of: Array("set:"), in: strict, from: parenOpen),
-                  setLabel < parenClose,
-                  let setterOpen = firstOffset(of: ["{"], in: strict, from: setLabel),
-                  let setterClose = closingOffset(from: setterOpen, in: strict, open: "{", close: "}"),
-                  setterClose < parenClose
-            else { throw ScanError.dialogNotFound }
-
-            // Offsets pair the two views: both blank in place, so the key
-            // literal at an offset in `literal` belongs to the `Button(` at
-            // the same offset in `strict`.
-            var buttonSpans: [ButtonSpan] = []
-            var buttonFrom = buttonsOpen
-            let buttonToken = Array("Button(")
-            while let hit = firstOffset(of: buttonToken, in: strict, from: buttonFrom), hit < buttonsClose {
-                let argsOpen = hit + buttonToken.count - 1
-                guard let argsClose = closingOffset(from: argsOpen, in: strict, open: "(", close: ")"),
-                      let actionOpen = firstOffset(of: ["{"], in: strict, from: argsClose),
-                      strict[(argsClose + 1)..<actionOpen].allSatisfy(\.isWhitespace),
-                      let actionClose = closingOffset(from: actionOpen, in: strict, open: "{", close: "}")
-                else { throw ScanError.dialogNotFound }
-                let labelLiteral = String(literal[argsOpen...argsClose])
-                buttonSpans.append(ButtonSpan(
-                    key: Self.catalogKeys(in: labelLiteral).first,
-                    arguments: String(strict[argsOpen...argsClose]),
-                    action: String(strict[actionOpen...actionClose])))
-                buttonFrom = actionClose
-            }
-
-            let span = String(literal[parenOpen...messageClose])
-            let keys = Self.catalogKeys(in: span)
-            return Dialog(
-                arguments: arguments,
-                buttons: String(strict[buttonsOpen...buttonsClose]),
-                message: String(strict[messageOpen...messageClose]),
-                unlocalizedTexts: unlocalized,
-                textCount: textStarts.count,
-                keys: keys,
-                setter: String(strict[setterOpen...setterClose]),
-                buttonSpans: buttonSpans)
-        }
-        throw ScanError.dialogNotFound
-    }
-
-    /// Every key literal an `L10n.string(` in `text` names, in order.
-    /// Walked by hand rather than matched with a regex literal: the project's
-    /// source strippers read every test file, and a bare `/…/` literal
-    /// carrying a quote is what they cannot parse.
-    private static func catalogKeys(in text: String) -> [String] {
-        var keys: [String] = []
-        for piece in text.components(separatedBy: "L10n.string(").dropFirst() {
-            let rest = piece.drop(while: { $0.isWhitespace })
-            guard rest.first == "\"" else { continue }
-            keys.append(String(rest.dropFirst().prefix(while: { $0 != "\"" })))
-        }
-        return keys
-    }
-
-    private static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
-        guard !token.isEmpty, text.count >= token.count, start <= text.count - token.count else { return nil }
-        for offset in start...(text.count - token.count) where text[offset..<(offset + token.count)].elementsEqual(token) {
-            return offset
-        }
-        return nil
-    }
-
-    private static func closingOffset(
-        from open: Int, in text: [Character], open opener: Character, close closer: Character
-    ) -> Int? {
-        var depth = 0
-        for offset in open..<text.count {
-            if text[offset] == opener { depth += 1 }
-            if text[offset] == closer {
-                depth -= 1
-                if depth == 0 { return offset }
-            }
-        }
-        return nil
+    /// The login-set question: the first `.confirmationDialog(` whose
+    /// argument list names `state`, read by the target's one dialog scanner
+    /// (`ConfirmationDialogScan`, which `ToolbarTransferConfirmationGuardTests`
+    /// reads too).
+    private static func dialog(boundTo state: String, in source: String) throws -> ConfirmationDialogScan {
+        try ConfirmationDialogScan.bound(to: state, in: source)
     }
 }

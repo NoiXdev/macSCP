@@ -24,8 +24,10 @@ struct EndpointFootnoteWiringGuardTests {
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
+    /// Comments only (`SwiftSource.blankingComments`): several checks below
+    /// read catalog-key literals, which the strict mode would blank.
     private static func source(_ relativePath: String) throws -> String {
-        SheetFacetWiringGuardTests.strippingLineComments(
+        try SwiftSource.blankingComments(
             try String(
                 contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
     }
@@ -75,7 +77,7 @@ struct EndpointFootnoteWiringGuardTests {
     ///
     /// Balanced over `source` blanked by `SwiftSource.blankingCommentsAndStrings`
     /// (fix round 3, 2026-09-04), not over `source` itself: `source` here is
-    /// only `strippingLineComments`, so a `)` written inside a string
+    /// only `SwiftSource.blankingComments`, so a `)` written inside a string
     /// literal argument's own value — `footnote: describe(")")`, say —
     /// would be counted as a real close and truncate the list early, the
     /// same failure mode round 2 already fixed for a nested call. Positions

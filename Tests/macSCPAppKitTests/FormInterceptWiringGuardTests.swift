@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -28,9 +29,11 @@ struct FormInterceptWiringGuardTests {
         repoRoot.appendingPathComponent("Sources/MacSCPAppKit/ConnectionFormView.swift")
 
     /// Comments in that file name both commands in prose, so an unstripped
-    /// read would find the explanation and call it wiring.
+    /// read would find the explanation and call it wiring. Comments only
+    /// (`SwiftSource.blankingComments`): literals survive, as they did under
+    /// the line-comment stripper this replaced on 2026-09-18.
     private static func strippedSource() throws -> String {
-        SheetFacetWiringGuardTests.strippingLineComments(
+        try SwiftSource.blankingComments(
             try String(contentsOf: formSourceFile, encoding: .utf8))
     }
 
