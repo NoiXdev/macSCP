@@ -95,7 +95,7 @@ struct DialFailureGroupReleaseTests {
         }
         let timers = releases.timers
         #expect(timers.count == 1, "the group was not handed to the delayed release exactly once")
-        #expect(timers.allSatisfy { $0 >= CitadelFileSystem.citadelLoginTimer })
+        #expect(timers == [CitadelFileSystem.citadelLoginTimer])
     }
 
     private static func dialError(

@@ -390,7 +390,6 @@ public final class ConnectionViewModel {
         return SSHKeyError.managedKeyStoreUnreadable
     }
 
-
     public func fillSecret(_ secret: String) {
         let descriptor = BackendDescriptor.descriptor(for: kind)
         let namespace = descriptor.fieldNamespace

@@ -31,10 +31,12 @@ public protocol TunnelSSHConnection: RemoteForwardTransport {
     ///
     /// The runner asks it when a per-connection failure arrives, because
     /// the failure and the disconnect signal travel separately and in no
-    /// guaranteed order (see `TunnelRunner.connectionFailed(_:)`). A real
-    /// drop turns this `false` BEFORE anything the connection carried is
-    /// told: the SSH channel goes inactive first, and only then are its
-    /// child channels — and a channel still being opened — failed.
+    /// guaranteed order (see `TunnelRunner.connectionFailed(_:)`). Read from
+    /// the checked-out NIO/NIOSSH/Citadel sources, not measured against the
+    /// rig, and covering a transport close only: a real drop turns this
+    /// `false` BEFORE anything the connection carried is told — the SSH
+    /// channel goes inactive first, and only then are its child channels —
+    /// and a channel still being opened — failed.
     var isConnected: Bool { get }
 
     /// Opens one channel to `host:port` as the far side reaches it, with

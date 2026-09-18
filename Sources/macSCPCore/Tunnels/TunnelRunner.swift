@@ -597,8 +597,10 @@ public actor TunnelRunner {
     /// the two apart by order: the failure travels on the report stream,
     /// the drop on its own signal (Citadel fires it from a `Task` of its
     /// own), and either can arrive first. What it CAN know is whether the
-    /// connection is still up when the failure arrives — and a real drop
-    /// answers `false` before any failure it causes exists
+    /// connection is still up when the failure arrives. Read from the
+    /// checked-out NIO/NIOSSH/Citadel sources, not measured against the
+    /// rig, and covering a transport close only: a real drop answers
+    /// `false` before any failure it causes exists
     /// (`TunnelSSHConnection.isConnected`). A genuine failure that happens
     /// to be read after a drop is not counted either; the reconnect would
     /// have cleared it a moment later. No new state: the count simply does

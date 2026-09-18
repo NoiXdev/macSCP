@@ -290,13 +290,17 @@ public final class RemoteForward: @unchecked Sendable {
     /// different transports: NIOSSH answers the server from the throw, and a
     /// transport that is a plain socket learns nothing from it.
     ///
-    /// **A stop is never a connection failure.** Two places find the
-    /// forward already stopped — the inbound channel arriving after
-    /// `stop()`, and the local channel coming up after it — and both throw
-    /// (the server is still owed a refusal) without calling
+    /// **A stop is never a connection failure for these two races.** Two
+    /// places find the forward already stopped — the inbound channel
+    /// arriving after `stop()`, and the local channel coming up after it —
+    /// and both throw (the server is still owed a refusal) without calling
     /// `onConnectionFailure`. Until 2026-09-18 the second one threw from
     /// inside the pair's `do` and was counted as a failure while the first
     /// was not (`RemoteForwardTests.aStopWhileTheLocalTargetAnswersIsNotAFailure`).
+    /// A third window is covered by neither race: a stop landing after
+    /// `track(local)` succeeds but before `inbound.pipeline.addHandler`
+    /// completes below still reports `pumpFailed` if `addHandler` then
+    /// fails on the closed pipeline.
     private static func serve(
         _ inbound: Channel, localHost: String, localPort: Int,
         observer: TunnelConnectionObserver?,
@@ -337,9 +341,11 @@ public final class RemoteForward: @unchecked Sendable {
         }
         await localConnected?()
         // The second stop race, answered exactly like the first one above:
-        // outside the `do` below, whose `catch` reports, because a stop is
-        // never a connection failure — the user asked for the forward to be
-        // gone, and nothing about this connection failed.
+        // outside the `do` below, whose `catch` reports — for these two
+        // races a stop is never a connection failure, because the user
+        // asked for the forward to be gone and nothing about this
+        // connection failed. (The third window named in the doc comment
+        // above, between here and `addHandler` below, is not covered.)
         guard open.track(local) else {
             local.close(promise: nil)
             inbound.close(promise: nil)
