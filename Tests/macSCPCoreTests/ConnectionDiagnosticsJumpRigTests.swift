@@ -78,7 +78,10 @@ struct ConnectionDiagnosticsJumpRigTests {
 
         let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
         #expect(ping.outcome == .ok, "\(ping.outcome.label) — \(ping.detail)")
-        #expect(ping.detail.contains(" 3/3 replies, min "), "\(ping.detail)")
+        // BusyBox's `ping -w N` sends one request a second, N in all
+        // (measured for N = 3, 4 and 18 on the rig).
+        let sent = JumpProbeCommand.pingDeadlineSeconds(budget: Self.stepBudget)
+        #expect(ping.detail.contains(" \(sent)/\(sent) replies, min "), "\(ping.detail)")
 
         let trace = try #require(
             report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
@@ -86,6 +89,32 @@ struct ConnectionDiagnosticsJumpRigTests {
             \(trace.outcome.label) — \(trace.detail)
             """)
         #expect(trace.detail == "traceroute exited with status 1; tracepath exited with status 127")
+    }
+
+    /// A ping from the jump host to an address nothing holds in the rig's
+    /// Docker network (172.20.0.0/16; `172.20.255.254` is unassigned — read
+    /// with `docker network inspect` on 2026-09-18). Before fix round 1,
+    /// BusyBox's `ping -c 3` lingered 12.1 s there and the 5 s budget cut
+    /// it into a bare `timedOut`. With its deadline (`-w 3`, measured over
+    /// SSH three times at 3.08-3.11 s, each "3 packets transmitted, 0
+    /// packets received") it ends inside the budget and the row carries its
+    /// count. The outcome is `timedOut` all the same — silence, as the
+    /// local echo reports it — and the detail is what tells the two apart:
+    /// a budget cut carries none.
+    @Test func aPingToASilentAddressEndsByItsDeadlineWithItsCount() async throws {
+        let (directory, knownHosts) = try await Self.rigStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // The product's own step budget, 5 s, rather than this suite's 20 s:
+        // the budget the linger used to overrun.
+        let report = await Self.diagnostics(
+            target: "172.20.255.254", port: 2222, knownHosts: knownHosts,
+            stepTimeout: .seconds(5)
+        ).run(scope: .ping)
+
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .timedOut, "\(ping.outcome.label)")
+        #expect(ping.detail == "172.20.255.254 0/3 replies", "\(ping.detail)")
     }
 
     /// A name the jump host does not know: its `getent` says so (exit 2), a
@@ -186,8 +215,13 @@ struct ConnectionDiagnosticsJumpRigTests {
         return values
     }
 
+    /// The step budget these cases run with: wide, for dials on a loaded
+    /// machine.
+    private static let stepBudget = Duration.seconds(20)
+
     private static func diagnostics(
-        target host: String, port: Int, knownHosts: KnownHostsStore
+        target host: String, port: Int, knownHosts: KnownHostsStore,
+        stepTimeout: Duration = stepBudget
     ) -> ConnectionDiagnostics {
         ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: targetValues(host: host, port: port),
@@ -197,7 +231,7 @@ struct ConnectionDiagnosticsJumpRigTests {
                 login: .init(username: "testuser", authKind: .password, keyPath: nil),
                 secret: { RigSecretSource.password }),
             jumpDialer: .live(knownHosts: knownHosts),
-            stepTimeout: .seconds(20), appVersion: "test")
+            stepTimeout: stepTimeout, appVersion: "test")
     }
 }
 

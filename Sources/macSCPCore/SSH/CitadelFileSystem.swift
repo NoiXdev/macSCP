@@ -1556,9 +1556,9 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     ///
     /// The collecting itself — standard output only, bounded, the exit status
     /// read off Citadel's `CommandFailed` — is `SSHClient
-    /// .collectingStandardOutput(of:limit:)` below, shared with the
+    /// .collectingStandardOutput(of:limit:onStandardOutput:)` below, shared with the
     /// diagnosis's exec probes on a jump host
-    /// (`SSHForwardingConnection.standardOutput(of:)`). What stays here is
+    /// (`SSHForwardingConnection.standardOutput(of:into:)`). What stays here is
     /// what is the checksum's own: the bound, the error an overrun is
     /// reported as, and a non-zero exit turned into a throw.
     ///
@@ -1609,7 +1609,8 @@ extension SSHClient {
     /// The one exec plumbing this module has, and two callers use it: the
     /// checksum channel (`CitadelFileSystem.standardOutput(of:)`) and the
     /// diagnosis's probes on a jump host (`SSHForwardingConnection
-    /// .standardOutput(of:)`). Counted when the second arrived, 2026-09-18.
+    /// .standardOutput(of:into:)`). Counted when the second arrived,
+    /// 2026-09-18, and again in fix round 1: still these two.
     ///
     /// **Standard error is dropped, never merged.** Both callers parse what
     /// comes back: a checksum reader refuses more than one line, and a far
@@ -1631,9 +1632,16 @@ extension SSHClient {
     /// `limit` bytes, and whatever the channel throws otherwise — the far
     /// side refusing the channel or the `exec` request, a transport that
     /// dropped.
-    func collectingStandardOutput(of command: String, limit: Int) async throws
-        -> RemoteCommandOutput
-    {
+    ///
+    /// `onStandardOutput` is handed each chunk of standard output as it is
+    /// kept, before the command ends — for a caller whose deadline may
+    /// abandon this call and that still wants what arrived until then (the
+    /// jump-host probes' `JumpProbeTranscript`). A chunk past `limit` is not
+    /// handed over, as it is not kept.
+    func collectingStandardOutput(
+        of command: String, limit: Int,
+        onStandardOutput: (@Sendable (ByteBuffer) -> Void)? = nil
+    ) async throws -> RemoteCommandOutput {
         var collected = ByteBuffer()
         var exitStatus = 0
         do {
@@ -1646,6 +1654,7 @@ extension SSHClient {
                         throw RemoteCommandOutputTooLarge(limit: limit)
                     }
                     collected.writeImmutableBuffer(buffer)
+                    onStandardOutput?(buffer)
                 }
             }
         } catch let failure as SSHClient.CommandFailed {

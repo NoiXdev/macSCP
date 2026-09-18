@@ -53,6 +53,9 @@ struct JumpProbeTests {
         Array(repeating: String(repeating: "a", count: 63), count: 4).joined(separator: "."),
         // Not an address.
         "::1%lo0", "[::1]", "10.0.0.5;id", "1:2", "::1 ",
+        // A zone with any suffix, which Darwin's `inet_pton` accepts (review
+        // of 2026-09-18): only the character set refuses these.
+        "::1%$(id)", "::1%;id", "::1%a'b c",
     ])
     func anythingElseIsRefused(host: String) {
         #expect(JumpProbeHost(host) == nil, "accepted \(host.debugDescription)")
@@ -63,16 +66,23 @@ struct JumpProbeTests {
     @Test func eachProbeHandsTheHostOverAsOneSingleQuotedArgument() throws {
         let name = try #require(JumpProbeHost("target.invalid"))
         #expect(JumpProbeCommand.resolve(name).text == "getent hosts 'target.invalid'")
-        #expect(JumpProbeCommand.ping(name).text == "ping -c 3 'target.invalid'")
         #expect(
-            JumpProbeCommand.traceroute(name).text
-                == "traceroute -n -q 1 -w 1 'target.invalid'")
+            JumpProbeCommand.ping(name, deadlineSeconds: 3, flag: .w).text
+                == "ping -w 3 'target.invalid'")
+        #expect(
+            JumpProbeCommand.ping(name, deadlineSeconds: 3, flag: .t).text
+                == "ping -t 3 'target.invalid'")
+        #expect(
+            JumpProbeCommand.traceroute(name, maxHops: 17).text
+                == "traceroute -n -q 1 -w 1 -m 17 'target.invalid'")
         #expect(JumpProbeCommand.tracepath(name).text == "tracepath -n 'target.invalid'")
 
         let address = try #require(JumpProbeHost("2001:db8::5"))
-        #expect(JumpProbeCommand.ping(address).text == "ping -c 3 '2001:db8::5'")
+        #expect(
+            JumpProbeCommand.ping(address, deadlineSeconds: 3, flag: .w).text
+                == "ping -w 3 '2001:db8::5'")
         #expect(JumpProbeCommand.resolve(address).tool == .getent)
-        #expect(JumpProbeCommand.traceroute(address).tool == .traceroute)
+        #expect(JumpProbeCommand.traceroute(address, maxHops: 17).tool == .traceroute)
     }
 
     /// For every accepted host and every probe: the host is the last word,
@@ -83,11 +93,44 @@ struct JumpProbeTests {
         let accepted = try #require(JumpProbeHost(host))
         let quoted = PosixQuoting.singleQuoted(host)
         for command in [
-            JumpProbeCommand.resolve(accepted), .ping(accepted), .traceroute(accepted),
-            .tracepath(accepted),
+            JumpProbeCommand.resolve(accepted),
+            .ping(accepted, deadlineSeconds: 3, flag: .w),
+            .ping(accepted, deadlineSeconds: 3, flag: .t),
+            .traceroute(accepted, maxHops: 17), .tracepath(accepted),
         ] {
             #expect(command.text.hasSuffix(" " + quoted), "\(command.text)")
             #expect(command.text.filter { $0 == "'" }.count == 2, "\(command.text)")
+        }
+    }
+
+    // MARK: - Sized to the budget
+
+    /// The ping's deadline and the trace's hop limit, as pure functions of
+    /// the budget their step races (fix round 1): a ping that lost a packet
+    /// ends by its own deadline and prints its count, and a traceroute into
+    /// silence reaches its hop limit, each before the budget cuts it off.
+    @Test func thePingDeadlineAndTheTraceHopLimitAreSizedToTheBudget() {
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .seconds(5)) == 3)
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .seconds(20)) == 3)
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .seconds(4)) == 2)
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .milliseconds(5_900)) == 3)
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .seconds(2)) == 1)
+        #expect(JumpProbeCommand.pingDeadlineSeconds(budget: .seconds(1)) == 1)
+
+        #expect(JumpProbeCommand.tracerouteMaxHops(budget: .seconds(20)) == 17)
+        #expect(JumpProbeCommand.tracerouteMaxHops(budget: .seconds(5)) == 2)
+        #expect(JumpProbeCommand.tracerouteMaxHops(budget: .seconds(60)) == 30)
+        #expect(JumpProbeCommand.tracerouteMaxHops(budget: .seconds(1)) == 1)
+
+        // The property the numbers exist for: at one second a hop, the
+        // worst-case walk ends at least a second inside its budget, and the
+        // ping at least two.
+        for seconds in 4...40 {
+            let budget = Duration.seconds(seconds)
+            let walk = JumpProbeCommand.tracerouteMaxHops(budget: budget)
+            let ping = JumpProbeCommand.pingDeadlineSeconds(budget: budget)
+            #expect(Duration.seconds(walk) + .seconds(1) < budget, "\(seconds) s")
+            #expect(Duration.seconds(ping) + .seconds(2) <= budget, "\(seconds) s")
         }
     }
 
@@ -162,6 +205,59 @@ struct JumpProbeTests {
                     min: nil, average: nil, max: nil))
     }
 
+    /// A lost packet, in each of the three dialects: the count says so, and
+    /// the round trips are those of the replies that came.
+    @Test func aPingThatLostPacketsIsReadWithItsCount() {
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.busyBoxPingPartialLoss.standardOutput)
+                == JumpPingSummary(
+                    address: "172.17.0.5", sent: 5, received: 3,
+                    min: .nanoseconds(74_000), average: .nanoseconds(97_000),
+                    max: .nanoseconds(143_000)))
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.debianPingPartialLoss.standardOutput)
+                == JumpPingSummary(
+                    address: "172.17.0.5", sent: 5, received: 3,
+                    min: .nanoseconds(37_000), average: .nanoseconds(88_000),
+                    max: .nanoseconds(169_000)))
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.constructedBSDPingPartialLoss.standardOutput)
+                == JumpPingSummary(
+                    address: "10.0.0.5", sent: 3, received: 2,
+                    min: .nanoseconds(388_000), average: .nanoseconds(400_000),
+                    max: .nanoseconds(412_000)))
+        // Deadline runs that heard nothing, with an ICMP error counted in.
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.debianPingDeadlineUnreachable.standardOutput)
+                == JumpPingSummary(
+                    address: "172.17.255.254", sent: 4, received: 0,
+                    min: nil, average: nil, max: nil))
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.rigPingDeadlineSilentOverSSH.standardOutput)
+                == JumpPingSummary(
+                    address: "172.20.255.254", sent: 4, received: 0,
+                    min: nil, average: nil, max: nil))
+        #expect(
+            JumpProbeReading.ping(JumpProbeSamples.macOSPingTimeoutLoopback.standardOutput)?
+                .received == 4)
+    }
+
+    /// A ping the budget cut off before its statistics: the replies it had
+    /// printed, from the recorded BusyBox output cut after its second reply
+    /// and in the middle of its third.
+    @Test func aPingCutOffBeforeItsStatisticsIsReadByItsReplies() throws {
+        let cut = """
+            PING sshd2 (172.20.0.2): 56 data bytes
+            64 bytes from 172.20.0.2: seq=0 ttl=42 time=0.040 ms
+            64 bytes from 172.20.0.2: seq=1 ttl=42 time=0.407 ms
+            64 bytes from 172.20.0.2: seq=2 ttl=42 ti
+            """
+        let read = try #require(JumpProbeReading.pingReplies(inPartialOutput: cut))
+        #expect(read.address == "172.20.0.2")
+        #expect(read.replies == [.nanoseconds(40_000), .nanoseconds(407_000)])
+        #expect(JumpProbeReading.pingReplies(inPartialOutput: "Restricted.\n") == nil)
+    }
+
     @Test(arguments: [
         JumpProbeSamples.debianPingNoRoute.standardOutput,
         "",
@@ -178,7 +274,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("sshd2"))
         let outcome = try #require(
             JumpProbeReading.traceroute(
-                JumpProbeSamples.rigTracerouteToSshd2.standardOutput, target: host))
+                JumpProbeSamples.rigTracerouteToSshd2.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(
             outcome
                 == .measured(
@@ -203,7 +300,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("192.0.2.1"))
         let outcome = try #require(
             JumpProbeReading.traceroute(
-                JumpProbeSamples.rigTracerouteSilentTail.standardOutput, target: host))
+                JumpProbeSamples.rigTracerouteSilentTail.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(
             outcome
                 == .measured(
@@ -229,7 +327,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("target.invalid"))
         let outcome = try #require(
             JumpProbeReading.traceroute(
-                JumpProbeSamples.macOSTracerouteLoopback.standardOutput, target: host))
+                JumpProbeSamples.macOSTracerouteLoopback.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(outcome.reachedDestination)
         #expect(
             ConnectionDiagnostics.traceTable(outcome)?.rows == [
@@ -241,7 +340,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("target.invalid"))
         let outcome = try #require(
             JumpProbeReading.traceroute(
-                JumpProbeSamples.constructedTracerouteTwoHops.standardOutput, target: host))
+                JumpProbeSamples.constructedTracerouteTwoHops.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
         #expect(
             ConnectionDiagnostics.traceTable(outcome)?.rows == [
@@ -256,7 +356,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("target.invalid"))
         let outcome = try #require(
             JumpProbeReading.traceroute(
-                JumpProbeSamples.constructedTracerouteProhibited.standardOutput, target: host))
+                JumpProbeSamples.constructedTracerouteProhibited.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(
             ConnectionDiagnostics.traceOutcome(outcome)
                 == .failed(DiagnosticReason.traceHopUnreachable(code: 13, hop: 2)))
@@ -273,7 +374,47 @@ struct JumpProbeTests {
     ])
     func tracerouteOutputThatIsNotAWalkIsNotRead(output: String) throws {
         let host = try #require(JumpProbeHost("target.invalid"))
-        #expect(JumpProbeReading.traceroute(output, target: host) == nil)
+        #expect(JumpProbeReading.traceroute(output, target: host, completion: .exited(0)) == nil)
+    }
+
+    /// A traceroute that did not exit 0 did not arrive (fix round 1):
+    /// BusyBox's exits 1 when a send fails mid-walk, and the row it stopped
+    /// on is then a router, not the target. Without a header to name the
+    /// destination, such a walk is no answer; with one, a row that IS the
+    /// destination still says so itself.
+    @Test func aTracerouteThatDidNotExitZeroDidNotArrive() throws {
+        let host = try #require(JumpProbeHost("target.invalid"))
+        #expect(
+            JumpProbeReading.traceroute(
+                JumpProbeSamples.macOSTracerouteLoopback.standardOutput, target: host,
+                completion: .exited(1)) == nil)
+        let named = try #require(
+            JumpProbeReading.traceroute(
+                JumpProbeSamples.constructedTracerouteTwoHops.standardOutput, target: host,
+                completion: .exited(1)))
+        #expect(named.reachedDestination)
+    }
+
+    /// A traceroute the budget cut off: the hops it printed, the walk marked
+    /// as stopped by the budget, and a half-written last line left out.
+    /// Shaped on the rig's recorded silent tail (`rigTracerouteSilentTail`)
+    /// with a 17-hop limit, cut after hop 2 and inside hop 3.
+    @Test func aTracerouteCutByTheBudgetKeepsItsHops() throws {
+        let host = try #require(JumpProbeHost("192.0.2.1"))
+        let cut = """
+            traceroute to 192.0.2.1 (192.0.2.1), 17 hops max, 46 byte packets
+             1  172.20.0.1  0.004 ms
+             2  *
+             3
+            """
+        let outcome = try #require(
+            JumpProbeReading.traceroute(cut, target: host, completion: .cut))
+        #expect(outcome.hops.map(\.ttl) == [1, 2])
+        #expect(outcome.ending == .budget)
+        #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
+        #expect(
+            ConnectionDiagnostics.traceDetail(outcome)
+                == DiagnosticReason.traceStoppedByBudget(afterHop: 2))
     }
 
     // MARK: - Reading tracepath
@@ -282,7 +423,8 @@ struct JumpProbeTests {
         let host = try #require(JumpProbeHost("target.invalid"))
         let outcome = try #require(
             JumpProbeReading.tracepath(
-                JumpProbeSamples.constructedTracepathReached.standardOutput, target: host))
+                JumpProbeSamples.constructedTracepathReached.standardOutput, target: host,
+                completion: .exited(0)))
         #expect(
             outcome
                 == .measured(
@@ -301,6 +443,20 @@ struct JumpProbeTests {
         #expect(ConnectionDiagnostics.traceOutcome(outcome) == .ok)
     }
 
+    @Test func aTracepathCutByTheBudgetKeepsItsHops() throws {
+        let host = try #require(JumpProbeHost("target.invalid"))
+        let cut = """
+             1?: [LOCALHOST]                      pmtu 1500
+             1:  10.0.0.1                                              0.402ms
+             2:  no reply
+
+            """
+        let outcome = try #require(
+            JumpProbeReading.tracepath(cut, target: host, completion: .cut))
+        #expect(outcome.ending == .budget)
+        #expect(outcome.hops.count == 2)
+    }
+
     @Test(arguments: [
         JumpProbeSamples.rigTracepathOverSSH.standardOutput,
         "",
@@ -309,7 +465,7 @@ struct JumpProbeTests {
     ])
     func tracepathOutputThatIsNotAWalkIsNotRead(output: String) throws {
         let host = try #require(JumpProbeHost("target.invalid"))
-        #expect(JumpProbeReading.tracepath(output, target: host) == nil)
+        #expect(JumpProbeReading.tracepath(output, target: host, completion: .exited(0)) == nil)
     }
 
     // MARK: - The budgets

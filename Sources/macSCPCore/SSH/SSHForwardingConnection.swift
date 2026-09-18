@@ -148,20 +148,31 @@ extension SSHForwardingConnection {
     /// output and exit status.
     ///
     /// For `target.resolveOnJump`, `target.icmpFromJump` and
-    /// `target.traceFromJump` (`DiagnosticJumpConnection.run(_:)`), which
+    /// `target.traceFromJump` (`DiagnosticJumpConnection.run(_:into:)`), which
     /// measure the target FROM the jump host this connection is logged in
     /// to. Here, beside `directTCPIPChannel`, because the `SSHClient` is
     /// private to this class; the exec plumbing itself is the one the
-    /// checksum channel uses (`SSHClient.collectingStandardOutput(of:limit:)`),
+    /// checksum channel uses (`SSHClient.collectingStandardOutput(of:limit:onStandardOutput:)`),
     /// not a second copy of it.
     ///
     /// Takes a `JumpProbeCommand`, not a `String`: the only lines that type
     /// can hold are the probes' own, built around a target host that was
-    /// validated and quoted before the channel opens. "Run this text on the
-    /// jump host" is not an expression this module can form.
-    func standardOutput(of command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+    /// validated and quoted before the channel opens. So on THIS path — the
+    /// diagnosis's jump connection, `DiagnosticJumpConnection.run(_:into:)` —
+    /// no other text can reach the jump host. The module as a whole can:
+    /// `SSHClient.collectingStandardOutput(of:limit:onStandardOutput:)`, the
+    /// plumbing underneath, is internal and takes any `String`, and the
+    /// checksum channel is its other caller.
+    ///
+    /// Each chunk of standard output also goes into `transcript` as it
+    /// arrives, so a step its budget cuts off still has what the command
+    /// printed until then.
+    func standardOutput(
+        of command: JumpProbeCommand, into transcript: JumpProbeTranscript
+    ) async throws -> RemoteCommandOutput {
         try await client.collectingStandardOutput(
-            of: command.text, limit: JumpProbeCommand.maxStandardOutputBytes)
+            of: command.text, limit: JumpProbeCommand.maxStandardOutputBytes,
+            onStandardOutput: { transcript.append(Array($0.readableBytesView)) })
     }
 
     /// Registers the one handler called when this connection's transport

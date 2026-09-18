@@ -67,9 +67,9 @@ struct ConnectionDiagnosticsJumpTests {
             "connect 127.0.0.1:\(listener.port)",
             "probe \(Self.targetHost):\(Self.targetPort)",
             "exec getent hosts \(Self.quotedTarget)",
-            "exec ping -c 3 \(Self.quotedTarget)",
+            "exec ping -w 3 \(Self.quotedTarget)",
             "dialTarget \(Self.targetHost):\(Self.targetPort) via 127.0.0.1:\(listener.port)",
-            "exec traceroute -n -q 1 -w 1 \(Self.quotedTarget)",
+            "exec traceroute -n -q 1 -w 1 -m 17 \(Self.quotedTarget)",
             "disconnect",
         ])
         // Every step announced itself before its row, the jump's as much as
@@ -555,8 +555,8 @@ struct ConnectionDiagnosticsJumpTests {
             report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
         #expect(resolve.outcome == .skipped(DiagnosticReason.targetIsAnAddress))
         #expect(rig.count("exec getent") == 0)
-        #expect(rig.events.contains("exec ping -c 3 '10.0.0.5'"), "\(rig.events)")
-        #expect(rig.events.contains("exec traceroute -n -q 1 -w 1 '10.0.0.5'"), "\(rig.events)")
+        #expect(rig.events.contains("exec ping -w 3 '10.0.0.5'"), "\(rig.events)")
+        #expect(rig.events.contains("exec traceroute -n -q 1 -w 1 -m 17 '10.0.0.5'"), "\(rig.events)")
     }
 
     /// The trace from the jump host is raced against the TRACE budget, not
@@ -593,6 +593,143 @@ struct ConnectionDiagnosticsJumpTests {
         let trace = try #require(
             report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
         #expect(trace.outcome == .ok, "\(trace.outcome.label)")
+    }
+
+    // MARK: - Fix round 1: deadlines, and what a cut step keeps
+
+    /// A ping that lost packets reports them (fix round 1, the review's
+    /// Important finding): the deadline ends it inside the budget, and its
+    /// row is `ok` with the count, where it used to be a bare `timedOut`.
+    @Test func aPingThatLostAPacketReportsItsReplies() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.ping, with: .output(JumpProbeSamples.busyBoxPingPartialLoss))
+        // Like the real tools, this ping lingers past any budget when it is
+        // given no deadline — the 12.1 s measured on the rig, here forever.
+        let linger = AsyncSignal()
+        defer { linger.signal() }
+        rig.lingerWithoutADeadline(until: linger)
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .ok)
+        #expect(ping.detail == "172.17.0.5 3/5 replies, min 0.1 ms, avg 0.1 ms, max 0.1 ms")
+    }
+
+    /// `-w` first; `-t` only after `-w` came back as a usage error with
+    /// nothing printed — BSD's answer (`JumpProbeSamples.macOSPingUnknownOption`).
+    @Test func pingFallsBackToTheBSDDeadlineOnlyOnAUsageError() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.ping, with: [
+            .output(JumpProbeSamples.macOSPingUnknownOption),
+            .output(JumpProbeSamples.macOSPingTimeoutLoopback),
+        ])
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        #expect(rig.events.filter { $0.hasPrefix("exec ping") } == [
+            "exec ping -w 3 \(Self.quotedTarget)", "exec ping -t 3 \(Self.quotedTarget)",
+        ])
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .ok)
+        #expect(ping.detail.hasPrefix("127.0.0.1 4/4 replies"), "\(ping.detail)")
+    }
+
+    /// Any other failure is not a reason to try `-t` — which iputils and
+    /// BusyBox read as the TTL. iputils with no route exits 2 with nothing
+    /// printed (`debianPingNoRoute`): one attempt, unreadable.
+    @Test func pingDoesNotTryTheBSDDeadlineAfterAnyOtherFailure() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        let rig = JumpRig()
+        rig.answer(.ping, with: .output(JumpProbeSamples.debianPingNoRoute))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        #expect(rig.events.filter { $0.hasPrefix("exec ping") } == [
+            "exec ping -w 3 \(Self.quotedTarget)"
+        ])
+        let ping = try #require(report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .unavailable(DiagnosticReason.jumpPingUnreadable))
+        #expect(ping.detail == "ping exited with status 2")
+    }
+
+    /// A step its budget cuts off reports what it had collected: the race
+    /// hands the step's own `cut` the step's transcript. Deterministic
+    /// because the transcript is filled HERE, before the race, by a step
+    /// whose measurement never answers — so what is read does not depend on
+    /// whether the abandoned probe ever got a thread.
+    @Test(arguments: CutStep.allCases)
+    func aStepCutByItsBudgetReportsWhatItHadCollected(step kind: CutStep) async throws {
+        let rig = JumpRig()
+        let never = AsyncSignal()
+        defer { never.signal() }
+        let context = Self.stepContext(rig: rig, budget: .milliseconds(100))
+        let template: DiagnosticJumpStep
+        switch kind {
+        case .trace:
+            template = .traceFromJump
+            context.transcript.begin(.traceroute)
+            context.transcript.append(Array("""
+                traceroute to 10.0.0.5 (10.0.0.5), 17 hops max, 60 byte packets
+                 1  10.0.0.1  0.412 ms
+                 2  *
+
+                """.utf8))
+        case .ping:
+            template = .icmpFromJump
+            context.transcript.begin(.ping)
+            context.transcript.append(Array("""
+                PING 10.0.0.5 (10.0.0.5): 56 data bytes
+                64 bytes from 10.0.0.5: seq=0 ttl=64 time=0.412 ms
+
+                """.utf8))
+        }
+        let parked = DiagnosticJumpStep(
+            id: template.id, phase: template.phase, budget: template.budget, cut: template.cut
+        ) { _, timer in
+            _ = await never.wait()
+            return timer.finish(.failed("answered after all"), "")
+        }
+
+        let row = await ConnectionDiagnostics.race(
+            parked, context,
+            timer: DiagnosticStepTimer(id: template.id, titleKey: "diagnostics.step.probe"))
+
+        switch kind {
+        case .trace:
+            #expect(row.outcome == .ok, "\(row.outcome.label)")
+            #expect(row.detail == "measured with traceroute; "
+                + DiagnosticReason.traceStoppedByBudget(afterHop: 2))
+            #expect(row.table?.rows.count == 2)
+        case .ping:
+            #expect(row.outcome == .ok, "\(row.outcome.label)")
+            #expect(row.detail.hasPrefix("10.0.0.5 1 replies before the step's budget ran out"),
+                "\(row.detail)")
+        }
+    }
+
+    enum CutStep: String, CaseIterable, CustomTestStringConvertible {
+        case trace, ping
+        var testDescription: String { rawValue }
+    }
+
+    /// And the transcript the race reads is the one the step's commands
+    /// write: what the tool printed is there once the measurement ran.
+    @Test func aStepsCommandsWriteIntoItsTranscript() async throws {
+        let rig = JumpRig()
+        let context = Self.stepContext(rig: rig, budget: .seconds(20))
+
+        _ = await DiagnosticJumpStep.traceFromJump.measure(
+            context, DiagnosticStepTimer(id: "t", titleKey: "diagnostics.step.probe"))
+
+        let current = context.transcript.current
+        #expect(current?.tool == .traceroute)
+        #expect(current?.standardOutput == JumpProbeSamples.rigTracerouteToSshd2.standardOutput)
     }
 
     // MARK: - The dial carries the jump
@@ -931,6 +1068,16 @@ struct ConnectionDiagnosticsJumpTests {
             stepTimeout: stepTimeout, appVersion: "test")
     }
 
+    /// One target-half step's context over the fake connection, with its own
+    /// budget and an empty transcript.
+    private static func stepContext(rig: JumpRig, budget: Duration) -> DiagnosticJumpStep.Context {
+        DiagnosticJumpStep.Context(
+            connection: FakeJumpConnection(rig: rig), jump: agentJump(port: 1),
+            target: Endpoint(host: targetHost, port: targetPort), values: targetValues(),
+            diagnostic: DiagnosticContext(secrets: nil, sessionID: nil, timeout: .seconds(5)),
+            dialer: rig.dialer, budget: budget, transcript: JumpProbeTranscript())
+    }
+
     /// Each `target.` row's outcome, by id.
     private static func outcomes(of report: DiagnosticReport) -> [String: DiagnosticOutcome] {
         Dictionary(
@@ -990,13 +1137,15 @@ final class JumpRig: Sendable {
         /// tools printed (`JumpProbeSamples`) — `traceroute` as root, the
         /// one answer that is ok — so a walk that asks for nothing else
         /// comes back all ok.
-        var execAnswers: [JumpProbeCommand.Tool: ExecAnswer] = [
-            .getent: .output(JumpProbeSamples.rigGetentOverSSH),
-            .ping: .output(JumpProbeSamples.rigPingOverSSH),
-            .traceroute: .output(JumpProbeSamples.rigTracerouteToSshd2),
-            .tracepath: .output(JumpProbeSamples.rigTracepathOverSSH),
+        /// Consumed in order, the last one repeating.
+        var execAnswers: [JumpProbeCommand.Tool: [ExecAnswer]] = [
+            .getent: [.output(JumpProbeSamples.rigGetentOverSSH)],
+            .ping: [.output(JumpProbeSamples.rigPingOverSSH)],
+            .traceroute: [.output(JumpProbeSamples.rigTracerouteToSshd2)],
+            .tracepath: [.output(JumpProbeSamples.rigTracepathOverSSH)],
         ]
         var execParks: [JumpProbeCommand.Tool: AsyncSignal] = [:]
+        var linger: AsyncSignal?
     }
 
     /// How a probe command is answered.
@@ -1036,23 +1185,56 @@ final class JumpRig: Sendable {
     func parkJumpDial(until signal: AsyncSignal) { state.withLock { $0.jumpDialPark = signal } }
 
     func answer(_ tool: JumpProbeCommand.Tool, with answer: ExecAnswer) {
-        state.withLock { $0.execAnswers[tool] = answer }
+        state.withLock { $0.execAnswers[tool] = [answer] }
+    }
+
+    /// A `ping` given no deadline option (`-w`, `-t`) waits on `signal`
+    /// before it answers — the linger the real tools have after their last
+    /// request when an answer is missing.
+    func lingerWithoutADeadline(until signal: AsyncSignal) {
+        state.withLock { $0.linger = signal }
+    }
+
+    /// Answers in this order, one per command, the last repeating.
+    func answer(_ tool: JumpProbeCommand.Tool, with answers: [ExecAnswer]) {
+        state.withLock { $0.execAnswers[tool] = answers }
     }
 
     func park(_ tool: JumpProbeCommand.Tool, until signal: AsyncSignal) {
         state.withLock { $0.execParks[tool] = signal }
     }
 
-    /// What the fake connection's `run(_:)` does: records the command line
-    /// exactly as production would send it, then answers.
-    func exec(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
+    /// What the fake connection's `run(_:into:)` does: records the command
+    /// line exactly as production would send it, then answers — writing the
+    /// answer's standard output into the transcript first, as the real
+    /// plumbing does chunk by chunk.
+    func exec(
+        _ command: JumpProbeCommand, into transcript: JumpProbeTranscript
+    ) async throws -> RemoteCommandOutput {
         record("exec \(command.text)")
         if let park = state.withLock({ $0.execParks[command.tool] }) {
             execParked.signal()
             _ = await park.wait()
         }
-        switch state.withLock({ $0.execAnswers[command.tool] }) {
-        case .output(let output): return output
+        if command.tool == .ping, !command.text.contains(" -w "), !command.text.contains(" -t "),
+            let linger = state.withLock({ $0.linger })
+        {
+            _ = await linger.wait()
+        }
+        let answer: ExecAnswer? = state.withLock { state in
+            guard var queue = state.execAnswers[command.tool], let first = queue.first else {
+                return nil
+            }
+            if queue.count > 1 {
+                queue.removeFirst()
+                state.execAnswers[command.tool] = queue
+            }
+            return first
+        }
+        switch answer {
+        case .output(let output):
+            transcript.append(Array(output.standardOutput.utf8))
+            return output
         case .failure(let failure): throw failure
         case nil: return RemoteCommandOutput(standardOutput: "", exitStatus: 127)
         }
@@ -1091,8 +1273,10 @@ private struct FakeJumpConnection: DiagnosticJumpConnection {
         if let error = rig.probeError { throw error }
     }
 
-    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
-        try await rig.exec(command)
+    func run(
+        _ command: JumpProbeCommand, into transcript: JumpProbeTranscript
+    ) async throws -> RemoteCommandOutput {
+        try await rig.exec(command, into: transcript)
     }
 
     func disconnect() async {

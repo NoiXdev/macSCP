@@ -577,7 +577,7 @@ public actor ConnectionDiagnostics {
             connection: connection, jump: jump, target: endpoint, values: values,
             diagnostic: DiagnosticContext(
                 secrets: secrets, sessionID: sessionID, timeout: stepTimeout),
-            dialer: jumpDialer)
+            dialer: jumpDialer, budget: stepTimeout, transcript: JumpProbeTranscript())
         for step in Self.targetHalf where scope.runs(step.phase) {
             guard !Task.isCancelled else { return walk.cancelled() }
             let row = await bounded(step, context, observer)
@@ -670,10 +670,27 @@ public actor ConnectionDiagnostics {
     ) async -> DiagnosticStep {
         let timer = await Self.starting(step.id, announcedTo: observer)
         let budget = step.budget.duration(step: stepTimeout, trace: traceTimeout)
-        let finished = await DetachedProbe.run(timeout: budget) {
+        return await Self.race(step, context.forStep(budget: budget), timer: timer)
+    }
+
+    /// One target-half step against its budget (`context.budget`): its own
+    /// row when it finishes in time, otherwise what its `cut` makes of the
+    /// output it had collected — a trace cut short still reports the hops it
+    /// measured — or a plain `timedOut` for a step with nothing to salvage.
+    ///
+    /// Static, and handed the context rather than building it, so the suite
+    /// can race a step against a transcript it filled itself: the cut is
+    /// then read from known output whether or not the abandoned probe ever
+    /// got a thread (`aStepCutByItsBudgetReportsWhatItHadCollected`).
+    static func race(
+        _ step: DiagnosticJumpStep, _ context: DiagnosticJumpStep.Context,
+        timer: DiagnosticStepTimer
+    ) async -> DiagnosticStep {
+        let finished = await DetachedProbe.run(timeout: context.budget) {
             await step.measure(context, timer)
         }
-        return finished ?? timer.finish(.timedOut, "")
+        if let finished { return finished }
+        return step.cut?(context, timer) ?? timer.finish(.timedOut, "")
     }
 
     // MARK: - The universal steps

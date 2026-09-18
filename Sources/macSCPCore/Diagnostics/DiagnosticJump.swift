@@ -241,13 +241,16 @@ protocol DiagnosticJumpConnection: Sendable {
 
     /// Runs `command` on the jump host as one `exec` request and hands back
     /// its standard output and exit status; standard error is dropped.
-    /// Throws `RemoteCommandOutputTooLarge` past
+    /// Each chunk of standard output is also appended to `transcript` as it
+    /// arrives. Throws `RemoteCommandOutputTooLarge` past
     /// `JumpProbeCommand.maxStandardOutputBytes`, and the channel's own error
     /// when the jump host refuses the channel or the request.
     ///
     /// A `JumpProbeCommand` and never a `String`, so a fake that records
     /// what it was asked records exactly what production would have sent.
-    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput
+    func run(
+        _ command: JumpProbeCommand, into transcript: JumpProbeTranscript
+    ) async throws -> RemoteCommandOutput
 
     /// Ends the connection. Awaited: the walk returns only once it is gone.
     func disconnect() async
@@ -301,8 +304,10 @@ extension SSHForwardingConnection: DiagnosticJumpConnection {
         try? await channel.close()
     }
 
-    func run(_ command: JumpProbeCommand) async throws -> RemoteCommandOutput {
-        try await standardOutput(of: command)
+    func run(
+        _ command: JumpProbeCommand, into transcript: JumpProbeTranscript
+    ) async throws -> RemoteCommandOutput {
+        try await standardOutput(of: command, into: transcript)
     }
 }
 
@@ -329,6 +334,22 @@ struct DiagnosticJumpStep: Sendable {
         /// The target's secret source and the step budget.
         let diagnostic: DiagnosticContext
         let dialer: DiagnosticJumpDialer
+        /// The budget THIS step is raced against — its `Budget`, resolved —
+        /// for a step that sizes a command to it.
+        let budget: Duration
+        /// What this step's commands have printed so far. Fresh per step
+        /// (`forStep(budget:)`), and read by the step's `cut` when the
+        /// budget abandons it.
+        let transcript: JumpProbeTranscript
+
+        /// This context for one step: its own budget, and an empty
+        /// transcript.
+        func forStep(budget: Duration) -> Context {
+            Context(
+                connection: connection, jump: jump, target: target, values: values,
+                diagnostic: diagnostic, dialer: dialer, budget: budget,
+                transcript: JumpProbeTranscript())
+        }
     }
 
     /// Which of the walk's two budgets a step is raced against.
@@ -361,14 +382,20 @@ struct DiagnosticJumpStep: Sendable {
     /// (`ConnectionDiagnostics.bounded(_:_:_:)`).
     let budget: Budget
     let measure: @Sendable (Context, DiagnosticStepTimer) async -> DiagnosticStep
+    /// The row when the budget abandoned `measure`, read from what the step
+    /// had collected by then (`Context.transcript`) — or `nil` for a step
+    /// with nothing to salvage, whose row is then a plain `timedOut`.
+    let cut: (@Sendable (Context, DiagnosticStepTimer) -> DiagnosticStep)?
 
     init(
         id: String, phase: DiagnosticScope.OptionalStep, budget: Budget = .step,
+        cut: (@Sendable (Context, DiagnosticStepTimer) -> DiagnosticStep)? = nil,
         measure: @escaping @Sendable (Context, DiagnosticStepTimer) async -> DiagnosticStep
     ) {
         self.id = id
         self.phase = phase
         self.budget = budget
+        self.cut = cut
         self.measure = measure
     }
 

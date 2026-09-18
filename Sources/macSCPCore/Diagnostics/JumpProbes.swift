@@ -34,9 +34,13 @@ import Foundation
 /// constructible, so a `JumpProbeCommand` cannot be built around anything
 /// else.
 ///
-/// **The rule.** An IP literal is what `inet_pton(3)` accepts for its family
-/// — IPv4 dotted-quad only; IPv6 without a zone (`%lo0`) or brackets — and
-/// made only of the characters such a literal can hold. A host name is at
+/// **The rule.** An IP literal is text made ONLY of `0-9 a-f A-F : .` that
+/// `inet_pton(3)` then accepts for its family. The character set is the
+/// boundary, not `inet_pton`: Darwin's accepts an IPv6 zone with ANY suffix
+/// — `::1%$(id)`, `::1%;id` and `::1%a'b c` all return 1 (measured in the
+/// 2026-09-18 review of this file) — and only the set, which has no `%`,
+/// refuses them. The same check admits the addresses the readers below copy
+/// out of tool output, so it guards the report's rows too. A host name is at
 /// most 253 characters of dot-separated labels, each 1 to 63 ASCII letters,
 /// digits or hyphens, neither starting nor ending with a hyphen; no empty
 /// label, so no leading, trailing or doubled dot. Compared on Unicode scalars
@@ -108,12 +112,16 @@ struct JumpProbeHost: Sendable, Equatable {
 /// One command line a diagnosis is willing to have run on a jump host.
 ///
 /// The initializer is private, so the only values of this type in the whole
-/// package are the four below — a fixed tool, fixed options, and a
-/// `JumpProbeHost` as one single-quoted word. `DiagnosticJumpConnection
-/// .run(_:)` and `SSHForwardingConnection.standardOutput(of:)` take this and
-/// not a `String`, the argument `ChecksumCommandLine` makes for the checksum
-/// channel: "run this text on the jump host" is not an expression the
-/// package can form, in a test double no less than in production.
+/// package are the ones the factories below build — a fixed tool, fixed
+/// options with numbers this file computes, and a `JumpProbeHost` as one
+/// single-quoted word. `DiagnosticJumpConnection.run(_:into:)` and
+/// `SSHForwardingConnection.standardOutput(of:into:)` take this and not a
+/// `String`, the argument `ChecksumCommandLine` makes for the checksum
+/// channel: on the diagnosis's jump connection, no other text reaches the
+/// jump host, in a test double no less than in production. That is a claim
+/// about this path only — the exec plumbing underneath
+/// (`SSHClient.collectingStandardOutput(of:limit:onStandardOutput:)`) is
+/// internal and takes any `String`.
 struct JumpProbeCommand: Sendable, Equatable {
     /// Which tool the line runs — the name the row's detail uses for it.
     enum Tool: String, Sendable, Equatable, CaseIterable {
@@ -146,14 +154,61 @@ struct JumpProbeCommand: Sendable, Equatable {
         JumpProbeCommand(tool: .getent, options: ["hosts"], host: host)
     }
 
-    /// Three echo requests. No wait option: `-W` is milliseconds per packet
-    /// to BSD `ping` and seconds to BusyBox's (both read from their own help
-    /// on 2026-09-18; iputils' help says only "time to wait for response"),
-    /// so one value is wrong on one of them. A target that never answers is
-    /// held to the step budget instead, and silence is what the step reports
-    /// either way.
-    static func ping(_ host: JumpProbeHost) -> JumpProbeCommand {
-        JumpProbeCommand(tool: .ping, options: ["-c", "3"], host: host)
+    /// Which option gives `ping` its overall deadline.
+    ///
+    /// **Why a deadline at all** (fix round 1 of Task 7): without one, a
+    /// `ping -c 3` that heard fewer than three answers lingers about ten
+    /// seconds after its last request — measured on the rig: BusyBox's
+    /// `ping -c 3` to a silent address took 12.1 s — so its run overran the
+    /// 5 s step budget and a "2/3 replies" never reached the row, which
+    /// read as silence instead.
+    ///
+    /// **Why no count** beside it: BusyBox ignores `-w` once `-c` is given
+    /// (`ping -c 3 -w 4` took 12.1 s there as well; `ping -w 4` took 4.1 s).
+    /// A deadline alone makes iputils and BusyBox send one request a second
+    /// until it passes, then print their statistics — `-w 4` sent four.
+    enum PingDeadline: Sendable, Equatable {
+        /// `-w <seconds>`: iputils' and BusyBox's deadline (their own help,
+        /// read 2026-09-18). Tried first.
+        case w
+        /// `-t <seconds>`: BSD's "timeout, in seconds, before ping exits"
+        /// (macOS `ping(8)`). Tried only when `-w` was refused as a usage
+        /// error — never first, because to iputils and BusyBox `-t` is the
+        /// TTL, and `-t 3` would silently stop the requests three hops out.
+        case t
+    }
+
+    /// Echo requests until `deadlineSeconds` have passed
+    /// (`pingDeadlineSeconds(budget:)`), with the deadline option `flag`
+    /// names. No wait option (`-W`): it is milliseconds per packet to BSD
+    /// and seconds to BusyBox and iputils, so one value is wrong on one of
+    /// them.
+    static func ping(
+        _ host: JumpProbeHost, deadlineSeconds: Int, flag: PingDeadline
+    ) -> JumpProbeCommand {
+        let option = flag == .w ? "-w" : "-t"
+        return JumpProbeCommand(
+            tool: .ping, options: [option, String(deadlineSeconds)], host: host)
+    }
+
+    /// BSD `ping`'s answer to an option it does not know: `EX_USAGE`, 64,
+    /// with the usage on standard error and nothing on standard output
+    /// (macOS 26.6.2's `ping -w`, recorded 2026-09-18). The one answer
+    /// after which `ping` is tried again with `PingDeadline.t`.
+    static let usageExitStatus = 64
+
+    /// The deadline `ping` gets inside a step budget: three seconds — the
+    /// three requests the probe has always sent, one a second — or, in a
+    /// budget too small for that, the budget less two seconds, whole
+    /// seconds, at least one. The two seconds are the exec round trip and
+    /// the tool's own last second — BusyBox's `-w 3` returned after 3.08 to
+    /// 3.11 s over SSH on the rig — so the tool prints its statistics before
+    /// the budget cuts it. Capped rather than grown with the budget: a wider
+    /// budget is room for a slow machine, not a reason to ping for longer
+    /// (a 20 s budget would otherwise send eighteen, as it did in the rig
+    /// suite before the cap).
+    static func pingDeadlineSeconds(budget: Duration) -> Int {
+        min(3, max(1, Int(budget.seconds) - 2))
     }
 
     /// Numeric (`-n`: no reverse lookups, and addresses a reader can check),
@@ -164,8 +219,25 @@ struct JumpProbeCommand: Sendable, Equatable {
     /// `-w 1` here); the Linux `traceroute` package is not on any machine
     /// available here and was not measured. At 3 to 5 s a silent hop, the
     /// trace's budget would run out a handful of hops in.
-    static func traceroute(_ host: JumpProbeHost) -> JumpProbeCommand {
-        JumpProbeCommand(tool: .traceroute, options: ["-n", "-q", "1", "-w", "1"], host: host)
+    ///
+    /// And at most `maxHops` hops (`-m`, `tracerouteMaxHops(budget:)`), so
+    /// that a walk into silence ends inside the trace's budget with the hops
+    /// it measured and a hop-limit marker, rather than being cut off by the
+    /// budget.
+    static func traceroute(_ host: JumpProbeHost, maxHops: Int) -> JumpProbeCommand {
+        JumpProbeCommand(
+            tool: .traceroute,
+            options: ["-n", "-q", "1", "-w", "1", "-m", String(maxHops)], host: host)
+    }
+
+    /// The hop limit that keeps a `traceroute -q 1 -w 1` inside `budget`:
+    /// one second per hop is its worst case where hops are probed one after
+    /// another (BusyBox, BSD), so the whole seconds of the budget less three
+    /// — the exec round trip, the tool's own name lookup, and the last hop's
+    /// second — and never more than traceroute's own default of 30
+    /// (`NetworkTrace.defaultMaxHops`). 17 inside the default 20 s budget.
+    static func tracerouteMaxHops(budget: Duration) -> Int {
+        min(NetworkTrace.defaultMaxHops, max(1, Int(budget.seconds) - 3))
     }
 
     /// The fallback where `traceroute` is missing or gave no answer:
@@ -194,6 +266,56 @@ struct JumpPingSummary: Sendable, Equatable {
     let min: Duration?
     let average: Duration?
     let max: Duration?
+}
+
+/// How a probe's command came to its end — what a reader may conclude from
+/// the rows it printed.
+enum JumpProbeCompletion: Sendable, Equatable {
+    /// The command ended with this exit status.
+    case exited(Int)
+    /// The step's budget ran out while the command was still running: what
+    /// it had printed by then is all there is, and the walk it describes
+    /// stopped LOOKING rather than ended.
+    case cut
+}
+
+/// What one step's commands have printed so far, kept as it arrives — so a
+/// step its budget abandons can still report what it measured
+/// (`DiagnosticJumpStep.cut`).
+///
+/// One per step (`DiagnosticJumpStep.Context.forStep(budget:)`). `begin(_:)`
+/// starts a command's output afresh, so a trace that fell back to
+/// `tracepath` holds `tracepath`'s and not `traceroute`'s. The exec
+/// plumbing appends from its own task, and the budget's cut reads from the
+/// walk's, hence the lock.
+final class JumpProbeTranscript: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tool: JumpProbeCommand.Tool?
+    private var bytes: [UInt8] = []
+
+    init() {}
+
+    /// The next command's output starts here; what the last one printed is
+    /// dropped.
+    func begin(_ tool: JumpProbeCommand.Tool) {
+        lock.withLock {
+            self.tool = tool
+            bytes = []
+        }
+    }
+
+    func append(_ chunk: [UInt8]) {
+        lock.withLock { bytes.append(contentsOf: chunk) }
+    }
+
+    /// The command that was running, and what it had printed — `nil` when
+    /// no command had started.
+    var current: (tool: JumpProbeCommand.Tool, standardOutput: String)? {
+        lock.withLock {
+            guard let tool else { return nil }
+            return (tool, String(decoding: bytes, as: UTF8.self))
+        }
+    }
 }
 
 /// Reads the probes' standard output. Every function answers `nil` for
@@ -256,6 +378,38 @@ enum JumpProbeReading {
             min: heard?.min, average: heard?.average, max: heard?.max)
     }
 
+    /// A `ping` the budget cut off before its statistics: the address on its
+    /// `PING` line and the round trip of every reply line it printed —
+    /// `… time=0.040 ms`, the shape BusyBox, iputils and BSD all print. `nil`
+    /// when there is no `PING` line at all, which is no ping output.
+    static func pingReplies(
+        inPartialOutput output: String
+    ) -> (address: String?, replies: [Duration])? {
+        var sawPing = false
+        var address: String?
+        var replies: [Duration] = []
+        for line in lines(of: output, completion: .cut) {
+            if line.hasPrefix("PING ") {
+                sawPing = true
+                if let open = line.firstIndex(of: "("),
+                    let close = line[open...].firstIndex(of: ")")
+                {
+                    let inside = String(line[line.index(after: open)..<close])
+                    if JumpProbeHost.addressKind(of: inside) != nil { address = inside }
+                }
+            } else if line.contains(" bytes from "),
+                let time = line.range(of: " time=")
+            {
+                let words = line[time.upperBound...].split(whereSeparator: \.isWhitespace)
+                guard words.count >= 2, words[1] == "ms",
+                    let rtt = milliseconds(String(words[0]))
+                else { continue }
+                replies.append(rtt)
+            }
+        }
+        return sawPing ? (address, replies) : nil
+    }
+
     /// `traceroute -n -q 1`: an optional header (`traceroute to NAME (ADDR),
     /// N hops max, …` — recorded on standard output from BusyBox and on
     /// standard error from BSD, so often absent), then one row per hop:
@@ -277,10 +431,20 @@ enum JumpProbeReading {
     /// - Anything else — a walk that stopped at a silent hop short of the
     ///   limit, hop numbers out of order, a row that is not a row — is no
     ///   answer.
-    static func traceroute(_ output: String, target: JumpProbeHost) -> NetworkTraceOutcome? {
+    ///
+    /// **The exit status decides "arrived"** (fix round 1): only a walk that
+    /// exited 0 may end on a plain row that is not the named destination.
+    /// BusyBox's `traceroute` exits 1 when a send fails mid-walk, and a walk
+    /// that ended there would otherwise report the last router as the
+    /// target. Any other end is no answer — unless the row IS the header's
+    /// destination, which says so itself. A walk the budget `cut` ends
+    /// `.budget`, with the rows it had.
+    static func traceroute(
+        _ output: String, target: JumpProbeHost, completion: JumpProbeCompletion
+    ) -> NetworkTraceOutcome? {
         var header: (destination: String, maxHops: Int)?
         var rows: [TraceRow] = []
-        for line in lines(of: output) {
+        for line in lines(of: output, completion: completion) {
             if line.hasPrefix("traceroute to "), header == nil, rows.isEmpty {
                 guard let read = tracerouteHeader(line) else { return nil }
                 header = read
@@ -293,9 +457,10 @@ enum JumpProbeReading {
         }
         return walk(
             rows, destination: header?.destination ?? literal(target),
-            maxHops: header?.maxHops ?? NetworkTrace.defaultMaxHops,
+            maxHops: header?.maxHops ?? NetworkTrace.defaultMaxHops, completion: completion,
             arrivedWithoutAnnotation: { row, maxHops, destination in
-                row.address == destination || row.ttl < maxHops
+                row.address == destination
+                    || (completion == .exited(0) && row.ttl < maxHops)
             })
     }
 
@@ -304,11 +469,13 @@ enum JumpProbeReading {
     /// tool retries it, and the first is kept — `N:  no reply` for silence,
     /// `reached` on the row that is the destination, and `Too many hops`
     /// when it ran out.
-    static func tracepath(_ output: String, target: JumpProbeHost) -> NetworkTraceOutcome? {
+    static func tracepath(
+        _ output: String, target: JumpProbeHost, completion: JumpProbeCompletion
+    ) -> NetworkTraceOutcome? {
         var rows: [TraceRow] = []
         var reached: String?
         var ranOutOfHops = false
-        for line in lines(of: output) {
+        for line in lines(of: output, completion: completion) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("Too many hops") { ranOutOfHops = true; continue }
             if trimmed.hasPrefix("Resume:") { continue }
@@ -335,6 +502,7 @@ enum JumpProbeReading {
         return walk(
             rows, destination: reached ?? literal(target),
             maxHops: ranOutOfHops ? (rows.last?.ttl ?? 0) : NetworkTrace.defaultMaxHops,
+            completion: completion,
             arrivedWithoutAnnotation: { row, _, destination in row.address == destination })
     }
 
@@ -360,9 +528,12 @@ enum JumpProbeReading {
     /// annotated one (`unreachable` with its code) and the last one when
     /// `arrivedWithoutAnnotation` says the tool stopped there because it
     /// arrived (`unreachable` with port-unreachable — how the local trace
-    /// records its own destination). `nil` when the rows do not end a walk.
+    /// records its own destination). `nil` when the rows do not end a walk —
+    /// except under `.cut`, where a walk that neither arrived nor reached its
+    /// limit ends `.budget`: the trace stopped looking, and says so.
     private static func walk(
         _ rows: [TraceRow], destination: String?, maxHops: Int,
+        completion: JumpProbeCompletion,
         arrivedWithoutAnnotation: (TraceRow, Int, String?) -> Bool
     ) -> NetworkTraceOutcome? {
         guard let last = rows.last else { return nil }
@@ -401,6 +572,8 @@ enum JumpProbeReading {
             ending = .answered
         } else if last.ttl >= maxHops {
             ending = .hopLimit
+        } else if completion == .cut {
+            ending = .budget
         } else {
             return nil
         }
@@ -513,9 +686,19 @@ enum JumpProbeReading {
         return .nanoseconds(Int64((value * 1_000_000).rounded()))
     }
 
-    /// The non-empty lines of an output, each without its line ending.
-    private static func lines(of output: String) -> [String] {
-        output.split(whereSeparator: \.isNewline).map(String.init)
+    /// The non-empty lines of an output, each without its line ending. For
+    /// a `cut` output, a last line with no line ending yet is dropped: the
+    /// tool was still writing it.
+    private static func lines(
+        of output: String, completion: JumpProbeCompletion = .exited(0)
+    ) -> [String] {
+        var text = Substring(output)
+        if completion == .cut, let lastBreak = text.lastIndex(where: \.isNewline) {
+            text = text[...lastBreak]
+        } else if completion == .cut {
+            text = ""
+        }
+        return text.split(whereSeparator: \.isNewline).map(String.init)
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }
@@ -529,7 +712,8 @@ extension DiagnosticJumpStep {
     /// well as `.complete` — because that step's one refusal,
     /// `jumpCouldNotConnect`, cannot say whether the name failed there or the
     /// port; this row can. `failed` only for the one answer that is a finding
-    /// about the name, `getent`'s exit status 2.
+    /// about the name, `getent`'s exit status 2. Nothing to salvage when the
+    /// budget cuts it: a half-printed address table is no answer.
     static let resolveOnJump = DiagnosticJumpStep(
         id: DiagnosticStepID.targetResolveOnJump, phase: .tcp
     ) { context, timer in
@@ -540,7 +724,7 @@ extension DiagnosticJumpStep {
             return timer.finish(.skipped(DiagnosticReason.targetIsAnAddress), "")
         }
         let output: RemoteCommandOutput
-        switch await JumpProbeRun.run(.resolve(host), on: context.connection) {
+        switch await JumpProbeRun.run(.resolve(host), in: context) {
         case .answered(let answered): output = answered
         case .overran(let detail):
             return timer.finish(.unavailable(DiagnosticReason.jumpResolveUnreadable), detail)
@@ -569,23 +753,64 @@ extension DiagnosticJumpStep {
             JumpProbeRun.exitDetail(.getent, output.exitStatus))
     }
 
-    /// Three echo requests from the jump host. Silence is `timedOut`, as the
-    /// local echo reports it — a firewall that drops ICMP says nothing about
-    /// whether the target serves — and the detail line is the local echo's
-    /// shape, with the tool's own round-trip figures.
+    /// Echo requests from the jump host until a deadline inside the step
+    /// budget (`JumpProbeCommand.pingDeadlineSeconds(budget:)`): `-w`
+    /// first, and `-t` only when `-w` came back as a usage error — BSD's
+    /// `ping`, which has no `-w` (`JumpProbeCommand.PingDeadline`).
+    ///
+    /// Chosen by trying rather than by asking the jump host what it runs:
+    /// the tool's own answer is the one thing that says which options it
+    /// takes, a system name would not (a Linux jump host may run BusyBox's
+    /// `ping` or iputils', and `uname` says nothing about which), and only a
+    /// BSD jump host pays the second exec.
+    ///
+    /// Any reply is `ok` — the target answers from there, and a lost packet
+    /// is in the detail as `2/3 replies`. Silence is `timedOut`, as the local
+    /// echo reports it: a firewall that drops ICMP says nothing about whether
+    /// the target serves. The detail line is the local echo's shape, with
+    /// the tool's own figures. Cut by the budget, it reports the replies it
+    /// had printed (`cut`).
     static let icmpFromJump = DiagnosticJumpStep(
-        id: DiagnosticStepID.targetICMPFromJump, phase: .icmp
+        id: DiagnosticStepID.targetICMPFromJump, phase: .icmp,
+        cut: { context, timer in
+            guard let (tool, printed) = context.transcript.current, tool == .ping,
+                let host = JumpProbeHost(context.target.host)
+            else { return timer.finish(.timedOut, "") }
+            if let summary = JumpProbeReading.ping(printed) {
+                return JumpProbeRun.pingRow(summary, host: host, timer: timer)
+            }
+            guard let partial = JumpProbeReading.pingReplies(inPartialOutput: printed),
+                !partial.replies.isEmpty
+            else { return timer.finish(.timedOut, "") }
+            let times = partial.replies
+            let average = times.reduce(Duration.zero, +) / times.count
+            return timer.finish(
+                .ok,
+                "\(partial.address ?? host.text) \(times.count) replies before the step's "
+                    + "budget ran out, min \(DurationText.milliseconds(times.min() ?? .zero)), "
+                    + "avg \(DurationText.milliseconds(average)), "
+                    + "max \(DurationText.milliseconds(times.max() ?? .zero))")
+        }
     ) { context, timer in
         guard let host = JumpProbeHost(context.target.host) else {
             return timer.finish(.unavailable(DiagnosticReason.jumpProbeHostRefused), "")
         }
-        let output: RemoteCommandOutput
-        switch await JumpProbeRun.run(.ping(host), on: context.connection) {
-        case .answered(let answered): output = answered
-        case .overran(let detail):
-            return timer.finish(.unavailable(DiagnosticReason.jumpPingUnreadable), detail)
-        case .notRun(let detail):
-            return timer.finish(.unavailable(DiagnosticReason.jumpExecRefused), detail)
+        let seconds = JumpProbeCommand.pingDeadlineSeconds(budget: context.budget)
+        var output = RemoteCommandOutput(standardOutput: "", exitStatus: 0)
+        for flag in [JumpProbeCommand.PingDeadline.w, .t] {
+            let command = JumpProbeCommand.ping(host, deadlineSeconds: seconds, flag: flag)
+            switch await JumpProbeRun.run(command, in: context) {
+            case .answered(let answered): output = answered
+            case .overran(let detail):
+                return timer.finish(.unavailable(DiagnosticReason.jumpPingUnreadable), detail)
+            case .notRun(let detail):
+                return timer.finish(.unavailable(DiagnosticReason.jumpExecRefused), detail)
+            }
+            let refusedTheOption =
+                output.exitStatus == JumpProbeCommand.usageExitStatus
+                && output.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+            if !refusedTheOption { break }
         }
         if output.exitStatus == JumpProbeRun.commandNotFound {
             return timer.finish(.unavailable(DiagnosticReason.jumpHasNoPing), "")
@@ -595,36 +820,43 @@ extension DiagnosticJumpStep {
                 .unavailable(DiagnosticReason.jumpPingUnreadable),
                 JumpProbeRun.exitDetail(.ping, output.exitStatus))
         }
-        var detail = "\(summary.address ?? host.text) \(summary.received)/\(summary.sent) replies"
-        if let low = summary.min, let average = summary.average, let high = summary.max {
-            detail += ", min \(DurationText.milliseconds(low))"
-                + ", avg \(DurationText.milliseconds(average))"
-                + ", max \(DurationText.milliseconds(high))"
-        }
-        return timer.finish(summary.received > 0 ? .ok : .timedOut, detail)
+        return JumpProbeRun.pingRow(summary, host: host, timer: timer)
     }
 
-    /// The path from the jump host to the target: `traceroute`, and
-    /// `tracepath` when `traceroute` is missing or gave no answer this can
-    /// read. Raced against the TRACE budget (`Budget.trace`), as `jump.trace`
-    /// is. Its row is `jump.trace`'s: the same outcome rules, the same hop
-    /// table and markers (`ConnectionDiagnostics.traceOutcome`,
-    /// `traceTable`, `traceDetail`), and a first detail line naming the tool.
+    /// The path from the jump host to the target: `traceroute`, limited to
+    /// the hops its budget can hold (`JumpProbeCommand
+    /// .tracerouteMaxHops(budget:)`), and `tracepath` when `traceroute` is
+    /// missing or gave no answer this can read. Raced against the TRACE
+    /// budget (`Budget.trace`), as `jump.trace` is. Its row is
+    /// `jump.trace`'s: the same outcome rules, the same hop table and
+    /// markers (`ConnectionDiagnostics.traceOutcome`, `traceTable`,
+    /// `traceDetail`), and a first detail line naming the tool. Cut by the
+    /// budget, it reports the hops it had printed, marked as stopped by the
+    /// budget (`cut`).
     ///
     /// In the `.trace` phase — so the `.trace` scope now dials the jump
     /// host, where before it measured only from this Mac
     /// (`ConnectionDiagnostics.needsJumpConnection(_:)`).
     static let traceFromJump = DiagnosticJumpStep(
-        id: DiagnosticStepID.targetTraceFromJump, phase: .trace, budget: .trace
+        id: DiagnosticStepID.targetTraceFromJump, phase: .trace, budget: .trace,
+        cut: { context, timer in
+            guard let (tool, printed) = context.transcript.current,
+                let host = JumpProbeHost(context.target.host),
+                let outcome = JumpProbeRun.readTrace(
+                    printed, by: tool, target: host, completion: .cut)
+            else { return timer.finish(.timedOut, "") }
+            return JumpProbeRun.traceRow(outcome, by: tool, timer: timer)
+        }
     ) { context, timer in
         guard let host = JumpProbeHost(context.target.host) else {
             return timer.finish(.unavailable(DiagnosticReason.jumpProbeHostRefused), "")
         }
         var attempts: [String] = []
         var anyToolThere = false
-        for command in [JumpProbeCommand.traceroute(host), .tracepath(host)] {
+        let maxHops = JumpProbeCommand.tracerouteMaxHops(budget: context.budget)
+        for command in [JumpProbeCommand.traceroute(host, maxHops: maxHops), .tracepath(host)] {
             let output: RemoteCommandOutput
-            switch await JumpProbeRun.run(command, on: context.connection) {
+            switch await JumpProbeRun.run(command, in: context) {
             case .answered(let answered): output = answered
             case .overran(let detail):
                 // A tool that printed too much is a tool that is there.
@@ -635,17 +867,11 @@ extension DiagnosticJumpStep {
                 // A jump host that runs no command runs neither.
                 return timer.finish(.unavailable(DiagnosticReason.jumpExecRefused), detail)
             }
-            let read =
-                command.tool == .traceroute
-                ? JumpProbeReading.traceroute(output.standardOutput, target: host)
-                : JumpProbeReading.tracepath(output.standardOutput, target: host)
-            if let outcome = read {
-                let marker = ConnectionDiagnostics.traceDetail(outcome)
-                let detail = (["measured with \(command.tool.rawValue)"] + [marker])
-                    .filter { !$0.isEmpty }.joined(separator: "; ")
-                return timer.finish(
-                    ConnectionDiagnostics.traceOutcome(outcome), detail,
-                    table: ConnectionDiagnostics.traceTable(outcome))
+            if let outcome = JumpProbeRun.readTrace(
+                output.standardOutput, by: command.tool, target: host,
+                completion: .exited(output.exitStatus))
+            {
+                return JumpProbeRun.traceRow(outcome, by: command.tool, timer: timer)
             }
             if output.exitStatus != JumpProbeRun.commandNotFound { anyToolThere = true }
             attempts.append(JumpProbeRun.exitDetail(command.tool, output.exitStatus))
@@ -658,9 +884,9 @@ extension DiagnosticJumpStep {
     }
 }
 
-/// Running one probe command over the jump connection, and what its failure
-/// to answer means for a row — shared by the three steps above so the rule
-/// is stated once.
+/// Running one probe command over the jump connection, what its failure to
+/// answer means for a row, and the rows two steps share between finishing
+/// and being cut — stated once for the three steps above.
 private enum JumpProbeRun {
     /// POSIX shells' exit status for a command they could not find, whatever
     /// their wording (`ChecksumCommandExitFailure` measures the same).
@@ -681,11 +907,14 @@ private enum JumpProbeRun {
         case notRun(String)
     }
 
+    /// Runs `command` over the step's connection, its output going into the
+    /// step's transcript as it arrives.
     static func run(
-        _ command: JumpProbeCommand, on connection: any DiagnosticJumpConnection
+        _ command: JumpProbeCommand, in context: DiagnosticJumpStep.Context
     ) async -> Result {
+        context.transcript.begin(command.tool)
         do {
-            return .answered(try await connection.run(command))
+            return .answered(try await context.connection.run(command, into: context.transcript))
         } catch is RemoteCommandOutputTooLarge {
             return .overran(
                 "\(command.tool.rawValue) printed more than "
@@ -699,5 +928,48 @@ private enum JumpProbeRun {
 
     static func exitDetail(_ tool: JumpProbeCommand.Tool, _ status: Int) -> String {
         "\(tool.rawValue) exited with status \(status)"
+    }
+
+    /// A ping's row from its statistics: `ok` on any reply, `timedOut` on
+    /// none.
+    static func pingRow(
+        _ summary: JumpPingSummary, host: JumpProbeHost, timer: DiagnosticStepTimer
+    ) -> DiagnosticStep {
+        var detail = "\(summary.address ?? host.text) \(summary.received)/\(summary.sent) replies"
+        if let low = summary.min, let average = summary.average, let high = summary.max {
+            detail += ", min \(DurationText.milliseconds(low))"
+                + ", avg \(DurationText.milliseconds(average))"
+                + ", max \(DurationText.milliseconds(high))"
+        }
+        return timer.finish(summary.received > 0 ? .ok : .timedOut, detail)
+    }
+
+    /// The trace tool's output read by its own reader; `nil` for a tool that
+    /// is not a trace tool.
+    static func readTrace(
+        _ output: String, by tool: JumpProbeCommand.Tool, target: JumpProbeHost,
+        completion: JumpProbeCompletion
+    ) -> NetworkTraceOutcome? {
+        switch tool {
+        case .traceroute:
+            return JumpProbeReading.traceroute(output, target: target, completion: completion)
+        case .tracepath:
+            return JumpProbeReading.tracepath(output, target: target, completion: completion)
+        case .getent, .ping:
+            return nil
+        }
+    }
+
+    /// A trace's row, `jump.trace`'s own shape, with the tool named first.
+    static func traceRow(
+        _ outcome: NetworkTraceOutcome, by tool: JumpProbeCommand.Tool,
+        timer: DiagnosticStepTimer
+    ) -> DiagnosticStep {
+        let marker = ConnectionDiagnostics.traceDetail(outcome)
+        let detail = (["measured with \(tool.rawValue)"] + [marker])
+            .filter { !$0.isEmpty }.joined(separator: "; ")
+        return timer.finish(
+            ConnectionDiagnostics.traceOutcome(outcome), detail,
+            table: ConnectionDiagnostics.traceTable(outcome))
     }
 }
