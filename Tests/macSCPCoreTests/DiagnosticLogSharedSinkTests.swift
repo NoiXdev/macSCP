@@ -5,12 +5,14 @@ import Testing
 
 @testable import macSCPCore
 
-/// The eleven tests that MUST touch `DiagnosticLog.shared`, because the
+/// The twelve tests that MUST touch `DiagnosticLog.shared`, because the
 /// production code under test — `LocalFileSystem`, `TransferEngine`,
 /// `ConnectionViewModel`, `RemoteBrowserViewModel`, `TunnelRunner` — logs
 /// through that exact singleton and cannot be pointed at a private instance
 /// instead (their call sites spell `DiagnosticLog.shared.log(` directly).
-/// Eleven counted 2026-09-16 (technical backlog, Task 4, which added the
+/// Twelve counted 2026-09-18 (review follow-ups, Task 1, which added the
+/// drained-failure port test); eleven on 2026-09-16 (technical backlog,
+/// Task 4, which added the
 /// clock-driven `entry slow` test) — ten on 2026-09-06, in Task 5's fix
 /// round 2; seven before that task, eight after its first commit, nine
 /// after round 1. `dialSupportReasonNamesTheHostNeverTheFingerprintsForAMismatch`
@@ -666,6 +668,70 @@ struct DiagnosticLogSharedSinkTests {
         #expect(contents.components(separatedBy: failedLine).count - 1 == 1)
         let payloadInLog = contents.contains(Self.tunnelFailurePayload)
         #expect(payloadInLog == false)
+    }
+
+    /// A per-connection failure the report reader delivers while a lost
+    /// attempt is being released still logs the port the forward was bound
+    /// to — never `port=-`.
+    ///
+    /// Recorded 2026-09-17 in `docs/BACKLOG.md` ("A per-connection failure
+    /// logged while a forward is torn down prints `port=-`"):
+    /// `releaseCurrent()` dropped the runtime before it awaited the report
+    /// reader, and the `debug` line read the port off that runtime. The
+    /// window is held open deterministically: the first runtime's `stop()`
+    /// is gated, so the failure is sent while the lost attempt's release is
+    /// parked inside it, after the runtime was let go and before the reader
+    /// was awaited.
+    ///
+    /// The negative (no `port=-` line) sits beside the positive (the line
+    /// with the real port is there exactly once), so the absence is about a
+    /// line that was written.
+    @Test("TunnelRunner logs a failure drained while a lost attempt is released with its port")
+    func tunnelRunnerLogsADrainedFailureWithItsPort() async throws {
+        let logDirectory = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: logDirectory) }
+        defer { DiagnosticLog.shared.configure(level: .off) }
+
+        let profile = TunnelProfile(
+            sessionID: UUID(), name: "web-\(UUID().uuidString.prefix(8))",
+            kind: .local(bind: "127.0.0.1", localPort: 8080, host: "internal", remotePort: 80),
+            reconnects: true)
+        let latch = TunnelLatch()
+        defer { latch.release() }
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 18_081, firstStopGate: latch)
+        let runner = TunnelRunner(
+            profile: profile, connect: connections.connect, runtimes: runtimes,
+            sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        let fixedNow = Date()
+        DiagnosticLog.shared.configure(
+            level: .debug, directory: logDirectory, now: { fixedNow })
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        connections.made[0].drop()
+        try await pollUntil("the lost attempt's release to be parked in its stop") {
+            runtimes.made[0].stopEntered == 1
+        }
+        runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        latch.release()
+        try await states.waitFor(.reconnecting(attempt: 1))
+        try await states.waitFor(.active(connections: 0))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+        await DiagnosticLog.shared.flush()
+
+        let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
+        let sentence = TunnelFailureKind.channelOpenFailed.sentence
+        let withThePort =
+            "[debug] tunnel tunnel \(profile.name) connection failed port=18081 \(sentence)"
+        let withoutAPort =
+            "[debug] tunnel tunnel \(profile.name) connection failed port=- \(sentence)"
+        #expect(contents.components(separatedBy: withThePort).count - 1 == 1)
+        let portlessLine = contents.contains(withoutAPort)
+        #expect(portlessLine == false)
     }
 
     /// Stands in for text a foreign error could put in a per-connection

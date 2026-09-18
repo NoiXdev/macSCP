@@ -145,6 +145,7 @@ final class TunnelFakeConnection: TunnelSSHConnection, @unchecked Sendable {
     private let lock = NSLock()
     private var handler: (@Sendable () -> Void)?
     private var disconnects = 0
+    private var dropped = false
 
     var disconnectCount: Int {
         lock.lock()
@@ -152,14 +153,36 @@ final class TunnelFakeConnection: TunnelSSHConnection, @unchecked Sendable {
         return disconnects
     }
 
+    /// Up until `drop()` — which is the order a real transport keeps: the
+    /// SSH channel is inactive before anything it carried learns it is gone,
+    /// and before the disconnect handler runs.
+    var isConnected: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !dropped
+    }
+
     func onDisconnect(_ handler: @escaping @Sendable () -> Void) {
         lock.withLock { self.handler = handler }
     }
 
+    /// The transport going down WITHOUT the disconnect handler running yet:
+    /// `isConnected` turns `false`, and nothing else happens. That is the
+    /// window a real drop has — NIO marks the SSH channel inactive before it
+    /// fails the channels it carried, and Citadel fires the handler later,
+    /// from a `Task` of its own — and the one `drop()` alone cannot hold
+    /// open.
+    func goDown() {
+        lock.withLock { dropped = true }
+    }
+
     /// The transport drop a real connection reports through Citadel's own
-    /// close future.
+    /// close future: down, then the handler.
     func drop() {
-        let handler = lock.withLock { self.handler }
+        let handler = lock.withLock {
+            dropped = true
+            return self.handler
+        }
         handler?()
     }
 

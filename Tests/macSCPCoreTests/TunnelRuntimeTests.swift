@@ -129,6 +129,9 @@ private struct TunnelFakeForwardingConnection: TunnelSSHConnection {
 
     let behaviour: Behaviour
 
+    /// Never drops: nothing here disconnects it.
+    var isConnected: Bool { true }
+
     func onDisconnect(_ handler: @escaping @Sendable () -> Void) {}
 
     func openDirectTCPIP(host: String, port: Int) async throws -> Channel {

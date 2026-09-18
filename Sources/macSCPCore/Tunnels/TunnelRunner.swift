@@ -133,13 +133,24 @@ public actor TunnelRunner {
     /// again.
     private var isStopping = false
 
+    /// The port the current attempt's forward bound, captured when it
+    /// started — the number its `active port=…` line carries.
+    ///
+    /// Separate from `boundPort` because it has to outlive the runtime:
+    /// `releaseCurrent()` lets go of the runtime BEFORE it awaits the report
+    /// reader, so a failure the reader delivers during that drain found no
+    /// runtime to ask and logged `port=-`. This is cleared only once the
+    /// reader has been awaited.
+    private var startedPort: Int?
+
     /// The port the running forward actually bound — a LOCAL port for
     /// `.local`/`.dynamic`, the SERVER's for `.remote`. `nil` whenever no
     /// forward is up, which includes the whole of a reconnect.
     ///
-    /// The answer for a profile configured on port 0, and the number the
-    /// `active port=…` line carries. Read rather than stored, so it cannot
-    /// outlive the runtime it describes.
+    /// The answer for a profile configured on port 0. Read rather than
+    /// stored, so it cannot outlive the runtime it describes — which is
+    /// why the log lines read `startedPort` instead: they are written
+    /// during `releaseCurrent()`'s drain too, after the runtime is gone.
     public var boundPort: Int? { runtime?.boundPort }
 
     /// The English sentence of the failure the state carries — the text the
@@ -415,9 +426,9 @@ public actor TunnelRunner {
         // than a `Task` per report: separate tasks reach the actor in no
         // guaranteed order, and the failure count depends on order — an
         // `opened` resets it, so a failure reported just after an `opened`
-        // (a SOCKS5 reply that could not be written once the pump was in)
-        // would be erased if the `opened` overtook it. A stream's `yield`s
-        // are delivered in the order they were made.
+        // (a SOCKS5 hand-over whose own handler removal failed once the pump
+        // was in) would be erased if the `opened` overtook it. A stream's
+        // `yield`s are delivered in the order they were made.
         let (reports, report) = AsyncStream.makeStream(of: ConnectionReport.self)
         connectionReports = report
         reportReaders += 1
@@ -439,12 +450,13 @@ public actor TunnelRunner {
             return outcome(for: error, isRetry: isRetry)
         }
         runtime = started
+        startedPort = started.boundPort
 
         // A retry is announced as `retryDue` only now — see this type's own
         // doc comment for why that is not at the timer.
         if case .reconnecting = state { apply(.retryDue) }
         apply(.listening)
-        let portText = started.boundPort.map(String.init) ?? "-"
+        let portText = startedPort.map(String.init) ?? "-"
         log(.info, "tunnel \(profile.name) active port=\(portText)")
 
         // Cancellation ends this iteration too: `AsyncStream`'s own
@@ -522,7 +534,14 @@ public actor TunnelRunner {
     /// before the caller's next state (`reconnecting`); under a stop it
     /// delivers into `connectionReport(_:)`'s drop, so nothing lands between
     /// the stop and its `.stopped`
-    /// (`reportsBufferedWhileStoppingAreDroppedNotPublished`).
+    /// (`reportsBufferedWhileStoppingAreDroppedNotPublished`). A failure
+    /// delivered under a loss is logged and not counted: `connection` is
+    /// already `nil`, so the attempt is no longer live
+    /// (`connectionFailed(_:)`), and the `.reconnecting` that follows is
+    /// what describes it.
+    ///
+    /// `startedPort` is cleared LAST, after the reader has been awaited, so
+    /// a failure drained here still logs the port its forward had.
     private func releaseCurrent() async {
         let held = runtime
         let dialled = connection
@@ -535,6 +554,7 @@ public actor TunnelRunner {
         await held?.stop()
         reports?.finish()
         await reader?.value
+        startedPort = nil
         await dialled?.disconnect()
     }
 
@@ -565,21 +585,47 @@ public actor TunnelRunner {
         }
     }
 
-    /// One connection the forward could not carry: counted in the state,
-    /// the tunnel left up, one `debug` line.
+    /// One connection the forward could not carry: counted in the state
+    /// while the attempt is live, the tunnel left up, one `debug` line
+    /// either way.
     ///
-    /// The line carries the kind's own English sentence and the bound port,
-    /// and nothing the failure's `reason:` payload holds — that text can be
-    /// a foreign error's, and nothing about the client that connected is
-    /// in it either. A SOCKS5 client that never named a destination, or was
-    /// gone before its reply was written, never gets here:
-    /// `LocalForwardListener` does not report it, because that is the
-    /// client's failure, not the tunnel's.
+    /// **Counted only while the attempt is live** — its connection still
+    /// held and still up (`attemptIsLive`). A connection that fails because
+    /// the SSH connection dropped under it is the LOSS's failure, not the
+    /// forward's, and counting it published "1 connection failed" just
+    /// before the `.reconnecting` the drop produced. The runner cannot tell
+    /// the two apart by order: the failure travels on the report stream,
+    /// the drop on its own signal (Citadel fires it from a `Task` of its
+    /// own), and either can arrive first. What it CAN know is whether the
+    /// connection is still up when the failure arrives — and a real drop
+    /// answers `false` before any failure it causes exists
+    /// (`TunnelSSHConnection.isConnected`). A genuine failure that happens
+    /// to be read after a drop is not counted either; the reconnect would
+    /// have cleared it a moment later. No new state: the count simply does
+    /// not move.
+    ///
+    /// The line carries the kind's own English sentence and the port the
+    /// forward bound when it started (`startedPort`, which outlives the
+    /// runtime through `releaseCurrent()`'s drain), and nothing the
+    /// failure's `reason:` payload holds — that text can be a foreign
+    /// error's, and nothing about the client that connected is in it
+    /// either. A SOCKS5 client that never named a destination, or was gone
+    /// before its reply reached it, never gets here: `LocalForwardListener`
+    /// does not report it, because that is the client's failure, not the
+    /// tunnel's.
     private func connectionFailed(_ failure: TunnelFailure) {
         let kind = TunnelFailureKind(failure)
-        apply(.connectionFailed(kind))
-        let portText = boundPort.map(String.init) ?? "-"
+        if attemptIsLive { apply(.connectionFailed(kind)) }
+        let portText = startedPort.map(String.init) ?? "-"
         log(.debug, "tunnel \(profile.name) connection failed port=\(portText) \(kind.sentence)")
+    }
+
+    /// Whether the current attempt can still be carrying connections: its
+    /// connection is still held — `releaseCurrent()` has not begun — and
+    /// still reports itself up.
+    private var attemptIsLive: Bool {
+        guard let connection else { return false }
+        return connection.isConnected
     }
 
     /// One tunnelled connection opening or closing, from `BytePump`'s

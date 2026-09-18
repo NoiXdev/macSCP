@@ -61,6 +61,14 @@ public final class RemoteForward: @unchecked Sendable {
     private let transport: any RemoteForwardTransport
     private let open = OpenPairs()
     private let cancellationBoundSeconds: Int
+    private let localConnected: LocalConnectedHook?
+
+    /// Runs after an inbound connection's local target has answered and
+    /// before the new local channel is tracked — the one moment `serve`'s
+    /// second stop race needs a stop to land in, and one no other seam of
+    /// this type reaches: the local dial is a loopback connect that
+    /// completes in microseconds. Module-internal and `nil` in production.
+    typealias LocalConnectedHook = @Sendable () async -> Void
 
     /// The port the SERVER confirmed, once it has — `nil` before `start`
     /// and after `stop`. It is the port that was ASKED for: a forward cannot
@@ -75,9 +83,13 @@ public final class RemoteForward: @unchecked Sendable {
     /// The teardown bound as an argument, so a test can measure the
     /// abandonment in `stop()` without spending the production number on
     /// every run. Module-internal: production has exactly one value for it.
-    init(transport: any RemoteForwardTransport, cancellationBoundSeconds: Int) {
+    init(
+        transport: any RemoteForwardTransport, cancellationBoundSeconds: Int,
+        localConnected: LocalConnectedHook? = nil
+    ) {
         self.transport = transport
         self.cancellationBoundSeconds = cancellationBoundSeconds
+        self.localConnected = localConnected
     }
 
     /// Asks the server to listen, and returns the port it bound.
@@ -133,6 +145,7 @@ public final class RemoteForward: @unchecked Sendable {
         guard open.claimStart() else { throw TunnelFailure.alreadyStarted }
         let opened = OpenPortBox()
         let transport = self.transport
+        let localConnected = self.localConnected
         let task = Task {
             do {
                 try await transport.withRemotePortForward(
@@ -145,7 +158,7 @@ public final class RemoteForward: @unchecked Sendable {
                         try await Self.serve(
                             inbound, localHost: localHost, localPort: localPort,
                             observer: observer, onConnectionFailure: onConnectionFailure,
-                            open: open)
+                            open: open, localConnected: localConnected)
                     })
                 // Citadel's wrapper returns only when its sleep ends, which
                 // nothing but cancellation does. Resolving here covers the
@@ -276,11 +289,19 @@ public final class RemoteForward: @unchecked Sendable {
     /// inbound channel here. Both, because the two halves are needed by
     /// different transports: NIOSSH answers the server from the throw, and a
     /// transport that is a plain socket learns nothing from it.
+    ///
+    /// **A stop is never a connection failure.** Two places find the
+    /// forward already stopped — the inbound channel arriving after
+    /// `stop()`, and the local channel coming up after it — and both throw
+    /// (the server is still owed a refusal) without calling
+    /// `onConnectionFailure`. Until 2026-09-18 the second one threw from
+    /// inside the pair's `do` and was counted as a failure while the first
+    /// was not (`RemoteForwardTests.aStopWhileTheLocalTargetAnswersIsNotAFailure`).
     private static func serve(
         _ inbound: Channel, localHost: String, localPort: Int,
         observer: TunnelConnectionObserver?,
         onConnectionFailure: ConnectionFailureObserver?,
-        open: OpenPairs
+        open: OpenPairs, localConnected: LocalConnectedHook?
     ) async throws {
         guard open.track(inbound) else {
             inbound.close(promise: nil)
@@ -314,12 +335,17 @@ public final class RemoteForward: @unchecked Sendable {
             onConnectionFailure?(failure)
             throw failure
         }
+        await localConnected?()
+        // The second stop race, answered exactly like the first one above:
+        // outside the `do` below, whose `catch` reports, because a stop is
+        // never a connection failure — the user asked for the forward to be
+        // gone, and nothing about this connection failed.
+        guard open.track(local) else {
+            local.close(promise: nil)
+            inbound.close(promise: nil)
+            throw TunnelFailure.connectFailed(reason: "the forward has been stopped")
+        }
         do {
-            guard open.track(local) else {
-                local.close(promise: nil)
-                inbound.close(promise: nil)
-                throw TunnelFailure.connectFailed(reason: "the forward has been stopped")
-            }
             try await inbound.pipeline.addHandler(
                 BytePumpHandler(peer: local, side: .remote, counters: counters)).get()
         } catch {

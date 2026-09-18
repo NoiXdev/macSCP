@@ -54,7 +54,7 @@ extension SOCKS5ReplyCode {
     /// | `TunnelFailure` | code | raised by, today |
     /// |---|---|---|
     /// | `.channelOpenFailed` | `01` | `SSHForwardingConnection.openDirectTCPIP`'s own catch, and any foreign error before the factory answers |
-    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`. (A failed `confirm` was a producer too until 2026-09-17; the accept path now closes that pair without calling `reject`, because a reply that cannot be written is the client's failure — see `LocalForwardListener.accepted`.) |
+    /// | `.pumpFailed` | `01` | a foreign error after the factory answered — `BytePump.install`, and since 2026-09-18 a `confirm` that fails for a reason of its own on a live connection (`SOCKS5HandshakeHandler.succeed`'s `removeHandler`); `reject` then writes nothing, the reply having gone out already. (Every failed `confirm` was a producer until 2026-09-17, and none was from then until 2026-09-18. A reply that does not reach the client — `ForwardReplyUndelivered` — is the client's failure, and the accept path closes that pair without calling `reject`; see `LocalForwardListener.accepted`.) |
     /// | `.connectFailed` | `05` | nothing on this path. Its producers are `TunnelConnection.connect`'s unreachable non-SSH-config arm, before a listener exists, and `RemoteForward`, which is not this path at all. (A refused session and a deleted one were producers too until 2026-09-16; both are `TunnelRefusal` now.) Reachable only through the `DirectTCPIPFactory` seam, which is how `SOCKS5ListenerTests` measures it |
     /// | `.portInUse`, `.bindFailed`, `.alreadyStarted` | `01` | `start`, before any client has connected — unreachable here |
     /// | `.remotePortZeroRefused`, `.remoteBindRefused`, `.remoteForwardUnanswered` | `01` | a remote forward's start (`SSHForwardingConnection.withRemotePortForward`, `RemoteForward.start`), never this path — unreachable here |
@@ -64,15 +64,17 @@ extension SOCKS5ReplyCode {
     /// produced by nothing. Recounted 2026-09-17, after fix round 1 of the
     /// technical-backlog plan's Task 6, with `grep -rn "throw
     /// TunnelFailure\." Sources/`: EIGHT throw sites — `TunnelConnection
-    /// .swift:100`, `LocalForwardListener.swift:196` and `:222`,
-    /// `RemoteForward.swift:133`, `:287` and `:321`,
-    /// `SSHForwardingConnection.swift:131` and `:240` (every line number in
+    /// .swift:100`, `LocalForwardListener.swift:214` and `:240`,
+    /// `RemoteForward.swift:145`, `:308` and `:346`,
+    /// `SSHForwardingConnection.swift:131` and `:250` (every line number in
     /// this paragraph retaken 2026-09-17, when the forwarding code moved out
     /// of `CitadelFileSystem.swift`, and the three in
     /// `SSHForwardingConnection.swift` retaken again later that day, after an
-    /// edit there moved them; no count changed). ELEVEN on 2026-09-06;
-    /// NINE on 2026-09-16 once `TunnelConnection`'s refusal and
-    /// `TunnelManager`'s deleted session began throwing `TunnelRefusal`;
+    /// edit there moved them; and all of them again 2026-09-18, after Task 1
+    /// of the review follow-ups moved most of them; no count changed).
+    /// ELEVEN on 2026-09-06; NINE on 2026-09-16 once `TunnelConnection`'s
+    /// refusal and `TunnelManager`'s deleted session began throwing
+    /// `TunnelRefusal`;
     /// EIGHT once the refused remote bind began throwing
     /// the value `remoteBindFailure(for:bind:)` returns (`throw
     /// Self.remoteBindFailure`, which that grep does not match). A `throw`
@@ -81,13 +83,13 @@ extension SOCKS5ReplyCode {
     /// pattern also matches `DialSupport.failureKind(for:)`, whose return
     /// type is `TunnelFailureKind`, and a bare return type matches this very
     /// sentence — finds FIVE helpers that RETURN one:
-    /// `LocalForwardListener.acceptFailure` (`:375`) and `.bindFailure`
-    /// (`:381`), `RemoteForward.startFailure` (`:344`) and `.pairFailure`
-    /// (`:349`), and `SSHForwardingConnection.remoteBindFailure` (`:268`). And
+    /// `LocalForwardListener.acceptFailure` (`:393`) and `.bindFailure`
+    /// (`:399`), `RemoteForward.startFailure` (`:370`) and `.pairFailure`
+    /// (`:375`), and `SSHForwardingConnection.remoteBindFailure` (`:278`). And
     /// subtracting the throw sites from `grep -rn "TunnelFailure\." Sources/`
     /// (comment lines dropped) leaves THREE inline constructions:
-    /// `RemoteForward.swift:156` and `:172`, which resolve a failure into the
-    /// once-latch instead of throwing it, and `:312`, which binds one to a
+    /// `RemoteForward.swift:169` and `:185`, which resolve a failure into the
+    /// once-latch instead of throwing it, and `:333`, which binds one to a
     /// name so the same value can be reported and thrown. None of these is
     /// on the accept path this table is about, so the table's first four
     /// rows did not change with them.
@@ -417,24 +419,49 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
     /// so they reach the pump) — a client that pipelined its first request
     /// behind CONNECT must not see its own payload answered before the reply
     /// that says the tunnel is up.
+    ///
+    /// **Two ways to fail, and they belong to different sides.** The reply
+    /// not reaching the client — its write failing, or the connection
+    /// already closed so there is nothing left to write it to — is the
+    /// CLIENT's failure, and fails with `ForwardReplyUndelivered`, which the
+    /// accept path does not report. This handler's own `removeHandler`
+    /// failing after a written reply, on a connection that is still open,
+    /// is the TUNNEL's, and fails with the removal's own error, which the
+    /// accept path reports. Where both fail, the client is gone, and the
+    /// undelivered reply is the answer. The write used to go out with no
+    /// promise, so its failure was invisible, and the lookup's failure on a
+    /// closed connection reached the accept path as an error like any other.
     func succeed(on channel: Channel) -> EventLoopFuture<Void> {
         channel.eventLoop.flatSubmit {
             let context: ChannelHandlerContext
             do {
                 context = try channel.pipeline.syncOperations.context(handler: self)
             } catch {
+                // Out of the pipeline before the reply: a closed connection
+                // has had its handlers removed, and that is the client gone.
+                // On an OPEN connection nothing but this method removes the
+                // handler, so the lookup's own error travels as it is.
+                guard channel.isActive else {
+                    return channel.eventLoop.makeFailedFuture(ForwardReplyUndelivered())
+                }
                 return channel.eventLoop.makeFailedFuture(error)
             }
             self.state = .handedOver
+            let written = channel.eventLoop.makePromise(of: Void.self)
             context.writeAndFlush(
-                NIOAny(ByteBuffer(bytes: SOCKS5Frames.reply(.succeeded))), promise: nil)
+                NIOAny(ByteBuffer(bytes: SOCKS5Frames.reply(.succeeded))), promise: written)
             if self.accumulator.readableBytes > 0 {
                 let leftovers = self.accumulator
                 self.accumulator = ByteBuffer()
                 context.fireChannelRead(NIOAny(leftovers))
                 context.fireChannelReadComplete()
             }
-            return channel.pipeline.removeHandler(self)
+            let removed = channel.pipeline.removeHandler(self)
+            return written.futureResult
+                .flatMapError { _ in
+                    channel.eventLoop.makeFailedFuture(ForwardReplyUndelivered())
+                }
+                .flatMap { removed }
         }
     }
 
@@ -448,11 +475,14 @@ final class SOCKS5HandshakeHandler: ChannelInboundHandler, RemovableChannelHandl
     /// `confirm` can fail AFTER it has already handed over (`succeed` sets
     /// `.handedOver` and writes the success frame before its final
     /// `removeHandler`, whose future is the one the accept path awaits), and
-    /// the accept path used to call `reject` for that failure. It no longer
-    /// does — a failed `confirm` closes the pair unreported — so the check
-    /// now guards a path nothing takes, and is kept because the state, not
-    /// the caller, is what knows whether a reply is still owed. In `.handedOver` and `.done` the connection is
-    /// closed and nothing is written.
+    /// the accept path used to call `reject` for every such failure. From
+    /// 2026-09-17 it called it for none; since 2026-09-18 it calls it again
+    /// for one: the removal's own failure on a live connection, which is
+    /// the tunnel's and is reported. A reply that did not reach the client
+    /// (`ForwardReplyUndelivered`) still closes the pair without it. So the
+    /// check guards a path that is taken, and it is the state, not the
+    /// caller, that knows whether a reply is still owed. In `.handedOver`
+    /// and `.done` the connection is closed and nothing is written.
     func reject(_ code: SOCKS5ReplyCode, on channel: Channel) -> EventLoopFuture<Void> {
         channel.eventLoop.flatSubmit {
             switch self.state {

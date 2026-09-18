@@ -135,6 +135,9 @@ private final class RefusingConnection: TunnelSSHConnection, @unchecked Sendable
     private let lock = NSLock()
     private var handler: (@Sendable (Channel) async throws -> Void)?
 
+    /// Never drops: nothing here disconnects it.
+    var isConnected: Bool { true }
+
     func onDisconnect(_ handler: @escaping @Sendable () -> Void) {}
 
     static let refusal = TunnelFailure.channelOpenFailed(reason: "administratively prohibited")

@@ -26,6 +26,17 @@ public protocol TunnelSSHConnection: RemoteForwardTransport {
     /// is.
     func onDisconnect(_ handler: @escaping @Sendable () -> Void)
 
+    /// Whether the connection's transport is still up, answered at the
+    /// moment of asking.
+    ///
+    /// The runner asks it when a per-connection failure arrives, because
+    /// the failure and the disconnect signal travel separately and in no
+    /// guaranteed order (see `TunnelRunner.connectionFailed(_:)`). A real
+    /// drop turns this `false` BEFORE anything the connection carried is
+    /// told: the SSH channel goes inactive first, and only then are its
+    /// child channels — and a channel still being opened — failed.
+    var isConnected: Bool { get }
+
     /// Opens one channel to `host:port` as the far side reaches it, with
     /// `autoRead` off — `LocalForwardListener.DirectTCPIPFactory`'s
     /// contract.
@@ -72,7 +83,8 @@ public protocol TunnelRuntimeFactory: Sendable {
     ///   - onConnectionFailure: one call per accepted connection that could
     ///     not be carried — the listeners' `onFailure`, the remote forward's
     ///     `onConnectionFailure`. The forward stays up; the runner counts
-    ///     these in `active(failedConnections:)`. The success that resets
+    ///     these in `active(failedConnections:)` while the attempt is live
+    ///     (`TunnelRunner.connectionFailed(_:)`). The success that resets
     ///     that count is `observer`'s `.opened`, which all three forwards
     ///     already report once both halves of a pair are installed.
     func start(

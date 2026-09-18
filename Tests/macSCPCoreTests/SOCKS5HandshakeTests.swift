@@ -270,6 +270,82 @@ struct SOCKS5HandshakeTests {
         #expect(socks.channel.isActive == false)
     }
 
+    // MARK: - Whose failure a hand-over is
+
+    /// A success reply that cannot be written is the CLIENT's failure: the
+    /// hand-over fails with `ForwardReplyUndelivered`, the one error the
+    /// accept path leaves unreported (maintainer's ruling, 2026-09-16).
+    ///
+    /// The write used to go out with no promise at all, so its failure was
+    /// invisible and `succeed` answered success for a client that never
+    /// received its reply. The refusing handler sits at the head and is
+    /// armed only after the greeting, whose own method-selection reply must
+    /// still go out.
+    @Test func aReplyThatCannotBeWrittenIsUndelivered() throws {
+        let refuser = WriteRefuser()
+        let socks = try socks5Channel(head: refuser)
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try socks.channel.writeInbound(ByteBuffer(bytes: connectToIPv4))
+        refuser.arm()
+
+        let finished = CompletionBox()
+        socks.handshake.succeed(on: socks.channel).whenComplete { finished.record($0) }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(refuser.refused == 1)
+        #expect(finished.failure is ForwardReplyUndelivered, "\(String(describing: finished.failure))")
+    }
+
+    /// A connection that closed before the hand-over — the client hung up
+    /// while the channel through the server was being opened — leaves
+    /// nothing to write the reply to. Also the client's: undelivered.
+    @Test func aHandOverOnAClosedConnectionIsUndelivered() throws {
+        let socks = try socks5Channel()
+        try socks.channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try socks.channel.writeInbound(ByteBuffer(bytes: connectToIPv4))
+        socks.channel.close(promise: nil)
+        socks.channel.embeddedEventLoop.run()
+        #expect(socks.channel.isActive == false)
+
+        let finished = CompletionBox()
+        socks.handshake.succeed(on: socks.channel).whenComplete { finished.record($0) }
+        socks.channel.embeddedEventLoop.run()
+
+        #expect(finished.failure is ForwardReplyUndelivered, "\(String(describing: finished.failure))")
+    }
+
+    /// The hand-over's OWN last step failing — `removeHandler`, on a live
+    /// connection whose reply went out — is NOT undelivered: it is the
+    /// tunnel's failure, and the accept path reports it
+    /// (`LocalForwardListenerTests.aHandOversOwnFailureIsReportedOnce`).
+    ///
+    /// The removal is made to fail for real: the handler behind the
+    /// handshake takes the handshake out of the pipeline itself when the
+    /// leftovers' read completes, so `succeed`'s own `removeHandler` then
+    /// finds nothing to remove. The positive checks beside the negative
+    /// one: the call DID fail, the reply WAS written, and the connection is
+    /// still open.
+    @Test func aHandOverWhoseOwnRemovalFailsIsNotUndelivered() throws {
+        let channel = EmbeddedChannel()
+        let handshake = SOCKS5HandshakeHandler()
+        let remover = HandshakeRemover(handshake: handshake)
+        try channel.pipeline.syncOperations.addHandler(handshake)
+        try channel.pipeline.syncOperations.addHandler(remover)
+        channel.connect(to: try SocketAddress(ipAddress: "127.0.0.1", port: 0), promise: nil)
+        try channel.writeInbound(ByteBuffer(bytes: greetingOfferingNoAuth))
+        try channel.writeInbound(ByteBuffer(bytes: connectToIPv4 + Array("early".utf8)))
+
+        let finished = CompletionBox()
+        handshake.succeed(on: channel).whenComplete { finished.record($0) }
+        channel.embeddedEventLoop.run()
+
+        #expect(remover.removed == 1)
+        let failure = try #require(finished.failure)
+        #expect((failure is ForwardReplyUndelivered) == false, "\(failure)")
+        #expect(try outboundBytes(channel) == [0x05, 0x00] + replyFrame(code: 0x00))
+        #expect(channel.isActive)
+    }
+
     /// A refused `direct-tcpip` channel is answered with a SOCKS5 failure
     /// reply and the connection closed — the client learns WHY rather than
     /// seeing a bare disconnect.
@@ -438,12 +514,15 @@ private func replyFrame(code: UInt8) -> [UInt8] {
 
 // MARK: - Helpers
 
-private func socks5Channel() throws
+/// - Parameter head: an outbound handler placed in front of the handshake,
+///   closer to the socket — what the handshake's own writes travel through.
+private func socks5Channel(head: (any ChannelHandler)? = nil) throws
     -> (channel: EmbeddedChannel, handshake: SOCKS5HandshakeHandler, tail: ByteRecorder)
 {
     let channel = EmbeddedChannel()
     let handshake = SOCKS5HandshakeHandler()
     let tail = ByteRecorder()
+    if let head { try channel.pipeline.syncOperations.addHandler(head) }
     try channel.pipeline.syncOperations.addHandler(handshake)
     try channel.pipeline.syncOperations.addHandler(tail)
     // A bare `EmbeddedChannel()` is registered but never activated; the fake
@@ -549,6 +628,13 @@ private final class CompletionBox: @unchecked Sendable {
     private let lock = NSLock()
     private var outcome: Result<Void, any Error>?
 
+    var failure: (any Error)? {
+        lock.lock()
+        defer { lock.unlock() }
+        if case .failure(let error)? = outcome { return error }
+        return nil
+    }
+
     var succeeded: Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -560,5 +646,71 @@ private final class CompletionBox: @unchecked Sendable {
         lock.lock()
         outcome = result
         lock.unlock()
+    }
+}
+
+/// Fails every write once armed, and counts the writes it failed — a socket
+/// whose peer is gone, as the handshake's own reply write meets it.
+private final class WriteRefuser: ChannelOutboundHandler, @unchecked Sendable {
+    typealias OutboundIn = ByteBuffer
+
+    struct PeerGone: Error {}
+
+    private let lock = NSLock()
+    private var armed = false
+    private var refusals = 0
+
+    var refused: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return refusals
+    }
+
+    func arm() {
+        lock.lock()
+        armed = true
+        lock.unlock()
+    }
+
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        lock.lock()
+        let refusing = armed
+        if refusing { refusals += 1 }
+        lock.unlock()
+        guard refusing else {
+            context.write(data, promise: promise)
+            return
+        }
+        promise?.fail(PeerGone())
+    }
+}
+
+/// Sits behind the handshake and takes the handshake out of the pipeline
+/// when a read completes after the hand-over has begun — so `succeed`'s own
+/// `removeHandler` then finds nothing to remove, on a connection that is
+/// still open.
+private final class HandshakeRemover: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private let handshake: SOCKS5HandshakeHandler
+    private let lock = NSLock()
+    private var removals = 0
+
+    init(handshake: SOCKS5HandshakeHandler) { self.handshake = handshake }
+
+    var removed: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return removals
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {}
+
+    func channelReadComplete(context: ChannelHandlerContext) {
+        context.pipeline.syncOperations.removeHandler(handshake).whenSuccess {
+            self.lock.lock()
+            self.removals += 1
+            self.lock.unlock()
+        }
     }
 }

@@ -278,6 +278,115 @@ struct TunnelRunnerTests {
         await runner.stop()
     }
 
+    /// A connection that fails BECAUSE the SSH connection dropped under it —
+    /// its channel through the server was still opening — takes the tunnel
+    /// straight to `.reconnecting`, with no "1 connection failed" in
+    /// between. The failure belongs to the loss, and the loss's own state
+    /// is what describes it.
+    ///
+    /// Recorded 2026-09-17 in `docs/BACKLOG.md` ("…a reconnect can show a
+    /// transient failure count"): the report stream carried the failure,
+    /// the reader applied it, and `active(failedConnections: 1)` was
+    /// published before the `.reconnecting` the drop produced.
+    ///
+    /// The events arrive in the order a real drop produces them: the
+    /// transport goes down first (`goDown()`, NIO's inactive flag), then
+    /// what it carried is failed — the in-flight connection's channel open,
+    /// and an established pair closing — and the disconnect signal comes
+    /// LAST (Citadel's `Task`). So the failure reaches the runner while its
+    /// attempt is still fully held, which is the window only the
+    /// `isConnected` half of the rule covers; the pair's close is the sync
+    /// point that proves the failure was read in that window, because the
+    /// report stream keeps its order. Measured 2026-09-18: a first version
+    /// that fired the signal FIRST stayed green 10 of 10 with the
+    /// `isConnected` check removed — the failure then only ever landed
+    /// after the attempt was released, or after its stream was finished.
+    ///
+    /// The whole published sequence is compared, not only the absence of a
+    /// count, and the NEW attempt's failure is the control: it is counted,
+    /// so the rule is about the attempt that dropped, not about failures.
+    @Test func aDropWithAConnectionInFlightGoesStraightToReconnecting() async throws {
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 8080)
+        let runner = TunnelRunner(
+            profile: localProfile(reconnects: true), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+        runtimes.made[0].observer?(.opened)
+        try await states.waitFor(.active(connections: 1))
+
+        connections.made[0].goDown()
+        runtimes.made[0].onConnectionFailure(.channelOpenFailed(reason: "the connection dropped"))
+        runtimes.made[0].observer?(.closed(bytesIn: 1, bytesOut: 1, duration: .milliseconds(1)))
+        try await states.waitFor("the open pair's close") { state in
+            guard case .active(let open, _, _) = state else { return false }
+            return open == 0
+        }
+        connections.made[0].drop()
+        try await states.waitFor(.reconnecting(attempt: 1))
+        try await states.waitFor(.active(connections: 0))
+
+        runtimes.made[1].onConnectionFailure(.channelOpenFailed(reason: "refused"))
+        try await states.waitFor(
+            .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+
+        #expect(
+            states.recorded == [
+                .connecting, .active(connections: 0), .active(connections: 1),
+                .active(connections: 0), .reconnecting(attempt: 1), .connecting,
+                .active(connections: 0),
+                .active(connections: 0, failedConnections: 1, lastFailure: .channelOpenFailed),
+                .stopped,
+            ])
+    }
+
+    /// The other half of the same rule: a failure the reader delivers while
+    /// a LOST attempt is being released is not counted either — even with
+    /// the SSH connection still up, which is the shape of a forward that
+    /// ended by itself. The attempt is over; its `.reconnecting` is what
+    /// describes it.
+    ///
+    /// Deterministic through the gated runtime: the failure is sent while
+    /// the lost attempt's release is parked in the runtime's `stop()`,
+    /// after the runner let go of the attempt and before it awaited the
+    /// reader.
+    @Test func aFailureDrainedFromAnEndedForwardIsNotCounted() async throws {
+        let latch = TunnelLatch()
+        defer { latch.release() }
+        let connections = TunnelFakeConnections()
+        let runtimes = TunnelFakeRuntimes(boundPort: 45_000, firstStopGate: latch)
+        let runner = TunnelRunner(
+            profile: remoteProfile(reconnects: true), connect: connections.connect,
+            runtimes: runtimes, sleeper: TunnelRecordedSleeper().sleep)
+        let states = TunnelStateCollector(runner.states)
+
+        await runner.start(decider: .asking { _ in true })
+        try await states.waitFor(.active(connections: 0))
+
+        runtimes.made[0].endOnItsOwn()
+        try await pollUntil("the lost attempt's release to be parked in its stop") {
+            runtimes.made[0].stopEntered == 1
+        }
+        #expect(connections.made[0].isConnected)
+        runtimes.made[0].onConnectionFailure(.connectFailed(reason: "refused"))
+        latch.release()
+        try await states.waitFor(.reconnecting(attempt: 1))
+        try await states.waitFor(.active(connections: 0))
+        await runner.stop()
+        try await states.waitFor(.stopped)
+
+        #expect(
+            states.recorded == [
+                .connecting, .active(connections: 0), .reconnecting(attempt: 1), .connecting,
+                .active(connections: 0), .stopped,
+            ])
+    }
+
     // MARK: - Reconnect
 
     /// A loss after a HEALTHY period starts the backoff over: three drops,

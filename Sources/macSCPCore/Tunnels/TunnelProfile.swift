@@ -96,7 +96,10 @@ public enum TunnelState: Sendable, Equatable {
     /// the kind of the latest of them. A dynamic forward's client that
     /// fails its own part — never names a destination, or is gone before
     /// the reply is written — is not counted: the tunnel worked.
-    /// `LocalForwardListener.accepted` is where the two are told apart. The next connection
+    /// `LocalForwardListener.accepted` is where the two are told apart. Nor
+    /// is a connection that fails because the SSH connection dropped under
+    /// it: the loss's own `reconnecting` describes that one
+    /// (`TunnelRunner.connectionFailed(_:)`). The next connection
     /// that opens resets both to `0`/`nil`, and so does every entry into
     /// `active`. A failed connection does not change the lifecycle: the
     /// forward itself is still up, so `.failed` would be untrue (the

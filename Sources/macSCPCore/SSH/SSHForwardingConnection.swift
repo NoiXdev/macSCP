@@ -151,6 +151,16 @@ extension SSHForwardingConnection {
         client.onDisconnect(perform: handler)
     }
 
+    /// Citadel's own answer: whether the SSH session's channel is active.
+    /// NIO clears that flag when the channel closes, before it tells a
+    /// single handler (`BaseSocketChannel.close0`: the lifecycle transition
+    /// comes before `channelInactive`), so it is already `false` when the
+    /// child channels this connection carried are failed. For a connection
+    /// through a jump host the session's channel is the jump's own child
+    /// channel, which goes inactive the same way before the inner session's
+    /// children are failed.
+    public var isConnected: Bool { client.isConnected }
+
     /// Asks the server to listen on `bind:port` and hands every connection it
     /// accepts there back as a channel — the `forwarded-tcpip` side of a
     /// remote forward (`-R`).

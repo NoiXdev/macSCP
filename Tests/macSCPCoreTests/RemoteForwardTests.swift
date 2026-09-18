@@ -306,6 +306,95 @@ struct RemoteForwardTests {
                 bind: "127.0.0.1", remotePort: 8080, localHost: "127.0.0.1", localPort: 1)
         }
     }
+
+    // MARK: - A stop is never a connection failure
+
+    /// `serve`'s FIRST stop race: an inbound connection that reaches a
+    /// forward already stopped is refused — the transport is told, by the
+    /// throw, and the inbound side is closed — and it is not a connection
+    /// failure. The stop is the user's, and nothing about this connection
+    /// failed. The positive beside the negative: the refusal DID happen, so
+    /// the absence of a report is about a path that ran.
+    @Test func aConnectionArrivingAfterTheStopIsNotAFailure() async throws {
+        let target = try await RecordingServer.start()
+        let origin = try await RecordingServer.start()
+        let fake = FakeRemoteForwardTransport(boundPort: 45_007)
+        let forward = RemoteForward(transport: fake)
+        let failures = FailureRecorder()
+        do {
+            _ = try await forward.start(
+                bind: "127.0.0.1", remotePort: 8080,
+                localHost: "127.0.0.1", localPort: target.port,
+                onConnectionFailure: { failures.record($0) })
+            await forward.stop()
+
+            let inbound = try await origin.connectWithAutoReadOff()
+            await #expect(throws: TunnelFailure.self) { try await fake.deliver(inbound) }
+            try await awaitCancellably(inbound.closeFuture)
+
+            #expect(failures.failures.isEmpty, "\(failures.failures)")
+            #expect(target.accepted.isEmpty)
+        } catch {
+            await forward.stop()
+            await target.stop()
+            await origin.stop()
+            throw error
+        }
+        await target.stop()
+        await origin.stop()
+    }
+
+    /// `serve`'s SECOND stop race: the forward is stopped while an inbound
+    /// connection's local target is answering, so the new local channel
+    /// finds the forward stopped. The same event as the first race, and it
+    /// gets the same answer — refused, both sides closed, no connection
+    /// failure.
+    ///
+    /// Recorded 2026-09-17 in `docs/BACKLOG.md` ("A stop race in
+    /// `RemoteForward.swift` reports the same stop inconsistently"): the
+    /// second race threw from INSIDE the pair's `do`, whose `catch` reports
+    /// through `onConnectionFailure`, so stopping mid-connect counted as a
+    /// failure here and as nothing in the first race. The stop lands through
+    /// the `localConnected` hook, the only moment between the local dial and
+    /// the tracking of its channel. The positives: the hook ran exactly once
+    /// (the race was entered, not skipped), the local target DID accept, and
+    /// its end of the connection is closed — nothing leaked.
+    @Test func aStopWhileTheLocalTargetAnswersIsNotAFailure() async throws {
+        let target = try await RecordingServer.start()
+        let origin = try await RecordingServer.start()
+        let fake = FakeRemoteForwardTransport(boundPort: 45_008)
+        let stopper = ForwardStopper()
+        let forward = RemoteForward(
+            transport: fake, cancellationBoundSeconds: 5,
+            localConnected: { await stopper.stop() })
+        stopper.hold(forward)
+        let failures = FailureRecorder()
+        do {
+            _ = try await forward.start(
+                bind: "127.0.0.1", remotePort: 8080,
+                localHost: "127.0.0.1", localPort: target.port,
+                onConnectionFailure: { failures.record($0) })
+
+            let inbound = try await origin.connectWithAutoReadOff()
+            await #expect(throws: TunnelFailure.self) { try await fake.deliver(inbound) }
+            try await awaitCancellably(inbound.closeFuture)
+
+            #expect(stopper.stops == 1)
+            #expect(failures.failures.isEmpty, "\(failures.failures)")
+            try await pollUntil("the local target to have accepted the dial") {
+                target.accepted.count == 1
+            }
+            let atTheTarget = try #require(target.accepted.first)
+            try await awaitCancellably(atTheTarget.closeFuture)
+        } catch {
+            await forward.stop()
+            await target.stop()
+            await origin.stop()
+            throw error
+        }
+        await target.stop()
+        await origin.stop()
+    }
 }
 
 // MARK: - The transport seam
@@ -612,5 +701,35 @@ private final class FailureRecorder: @unchecked Sendable {
         lock.lock()
         recorded.append(failure)
         lock.unlock()
+    }
+}
+
+/// Stops the forward it holds from inside `RemoteForward`'s
+/// `localConnected` hook, and counts how often it was asked to. Holds the
+/// forward after construction because the hook is an argument OF that
+/// construction.
+private final class ForwardStopper: @unchecked Sendable {
+    private let lock = NSLock()
+    private var forward: RemoteForward?
+    private var count = 0
+
+    var stops: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func hold(_ forward: RemoteForward) {
+        lock.lock()
+        self.forward = forward
+        lock.unlock()
+    }
+
+    func stop() async {
+        let held: RemoteForward? = lock.withLock {
+            count += 1
+            return forward
+        }
+        await held?.stop()
     }
 }

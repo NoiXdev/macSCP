@@ -283,6 +283,53 @@ struct LocalForwardListenerTests {
         await echo.stop()
     }
 
+    /// A hand-over that fails for a reason of its OWN — not a reply that
+    /// could not reach the client — is the tunnel's failure, and is reported
+    /// exactly once, as a pump failure: the channel through the server was
+    /// open and the pump installed, so the tunnel is the side that broke.
+    ///
+    /// Recorded 2026-09-17 in `docs/BACKLOG.md` ("A SOCKS5 reply write's own
+    /// handler-removal failure is no longer reported"): the accept path's
+    /// `catch where replying` swallowed every error `confirm` threw, so
+    /// `SOCKS5Handshake.succeed`'s own `removeHandler` failing went as
+    /// unobserved as the client-gone case it was folded in with.
+    /// `aClientGoneBeforeItsReplyIsNotReportedAsAFailure` above is the other
+    /// half: the same moment, the client's failure, still not reported.
+    @Test func aHandOversOwnFailureIsReportedOnce() async throws {
+        let echo = try await EchoServer.start()
+        let listener = LocalForwardListener()
+        let failures = TunnelFailureRecorder()
+        let seen = TunnelEventRecorder()
+        do {
+            let port = try await listener.start(
+                bind: "127.0.0.1", localPort: 0,
+                destination: .negotiated { _ in HandOverFailingNegotiation() },
+                directTCPIPFactory: echo.factory(),
+                observer: { seen.record($0) },
+                onFailure: { failures.record($0) })
+
+            let client = try await connectClient(port: port, inbox: TextInbox())
+            try await awaitCancellably(client.closeFuture)
+            try await pollUntil("the hand-over's own failure is reported") {
+                failures.failures.isEmpty == false
+            }
+            #expect(failures.failures.count == 1)
+            let isPumpFailure: Bool
+            if case .pumpFailed = failures.failures.first {
+                isPumpFailure = true
+            } else {
+                isPumpFailure = false
+            }
+            #expect(isPumpFailure, "\(failures.failures)")
+        } catch {
+            await listener.stop()
+            await echo.stop()
+            throw error
+        }
+        await listener.stop()
+        await echo.stop()
+    }
+
     /// One listener binds once. A second `start` — with or without a `stop()`
     /// in between — is refused rather than silently binding a port whose
     /// connections `OpenForwards` would then drop on the floor.
@@ -399,14 +446,27 @@ private struct ClosingNegotiation: ForwardNegotiation {
 }
 
 /// A negotiation whose reply cannot be written: the client it would go to
-/// is gone.
+/// is gone. It says so the way `SOCKS5Negotiation` does — with
+/// `ForwardReplyUndelivered`, the one `confirm` failure that is the
+/// client's.
 private struct ReplyFailingNegotiation: ForwardNegotiation {
-    struct ClientGone: Error {}
+    let host = "irrelevant.example"
+    let port = 1
+
+    func confirm(on channel: Channel) async throws { throw ForwardReplyUndelivered() }
+    func reject(_ failure: TunnelFailure, on channel: Channel) async {}
+}
+
+/// A negotiation whose hand-over fails for a reason of its own, with the
+/// client still there — what `SOCKS5Handshake.succeed`'s own
+/// `removeHandler` failing looks like to the accept path.
+private struct HandOverFailingNegotiation: ForwardNegotiation {
+    struct HandOverBroke: Error {}
 
     let host = "irrelevant.example"
     let port = 1
 
-    func confirm(on channel: Channel) async throws { throw ClientGone() }
+    func confirm(on channel: Channel) async throws { throw HandOverBroke() }
     func reject(_ failure: TunnelFailure, on channel: Channel) async {}
 }
 
