@@ -36,7 +36,11 @@ struct DiagnosticsTarget: Identifiable {
     /// dials its target directly. Taken at the moment of asking like the rest
     /// of this value, and carrying no secret: the jump's is looked up when
     /// its dial asks (`DiagnosticJump`).
-    var jump: DiagnosticJump? = nil
+    ///
+    /// No default, so the memberwise initializer requires it: a door that
+    /// forgot the jump would otherwise compile and diagnose the target
+    /// directly. A connection without one passes `nil`.
+    let jump: DiagnosticJump?
 }
 
 /// The panel's half of the diagnosis: it starts one, cancels one, holds the

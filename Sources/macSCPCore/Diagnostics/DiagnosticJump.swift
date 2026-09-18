@@ -124,6 +124,16 @@ extension DiagnosticJump {
     /// session behind the tab — and a tab backed by no stored jump has no
     /// secret to offer, so its jump dial reports that rather than dialling
     /// without one.
+    ///
+    /// **And only when the form's jump IS the stored jump** (fix round 1 of
+    /// the 2026-09-18 plan's Task 6, the coordinator's ruling): host, port,
+    /// user name and auth kind all equal to the stored jump's. A form whose
+    /// jump was edited and not saved names another login, and handing it the
+    /// stored bastion's password would send that password to whatever host
+    /// the form now names. Such a jump has no secret either, and its dial
+    /// reports `noJumpSecret`. Compared exactly, the host included: a
+    /// spelling that differs only in case is still not the value the secret
+    /// was stored for, and a refusal costs one skipped row.
     public static func form(
         _ values: FieldValues, isEnabled: Bool, stored: DiagnosticJump?
     ) -> DiagnosticJump? {
@@ -138,15 +148,22 @@ extension DiagnosticJump {
             ?? .password
         let keyPath = values[SSHField.jump, SSHJumpField.keyPath]
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = host.isEmpty ? nil : Endpoint(host: host, port: port)
+        let login = Login(
+            username: values[SSHField.jump, SSHJumpField.username]
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            authKind: authKind,
+            keyPath: authKind == .privateKey && !keyPath.isEmpty ? keyPath : nil)
         let noSecret: @Sendable () throws -> String? = { nil }
-        return DiagnosticJump(
-            endpoint: host.isEmpty ? nil : Endpoint(host: host, port: port),
-            login: Login(
-                username: values[SSHField.jump, SSHJumpField.username]
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                authKind: authKind,
-                keyPath: authKind == .privateKey && !keyPath.isEmpty ? keyPath : nil),
-            secret: stored?.secret ?? noSecret)
+        let secret: @Sendable () throws -> String?
+        if let stored, let endpoint, stored.endpoint == endpoint,
+            stored.login.username == login.username, stored.login.authKind == login.authKind
+        {
+            secret = stored.secret
+        } else {
+            secret = noSecret
+        }
+        return DiagnosticJump(endpoint: endpoint, login: login, secret: secret)
     }
 }
 

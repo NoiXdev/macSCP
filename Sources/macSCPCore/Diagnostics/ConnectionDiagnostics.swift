@@ -235,13 +235,17 @@ public actor ConnectionDiagnostics {
     ///   - jump: the jump host this session dials through, or `nil` for one
     ///     that dials its target directly. With one, the walk checks the jump
     ///     first and reaches the target through it (`run(scope:observer:)`);
-    ///     without one, it is the walk it always was.
+    ///     without one, it is the walk it always was. REQUIRED, with no
+    ///     default (fix round 1 of the 2026-09-18 plan's Task 6): a caller
+    ///     that forgot it would compile and diagnose a bastion-only target
+    ///     directly — the bug this parameter exists to end, one layer up. A
+    ///     caller with no jump says so with `nil`.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,
         secrets: (any SecretSource)?,
         sessionID: UUID? = nil,
-        jump: DiagnosticJump? = nil,
+        jump: DiagnosticJump?,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"

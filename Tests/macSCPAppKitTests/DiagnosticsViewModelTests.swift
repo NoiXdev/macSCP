@@ -755,7 +755,7 @@ struct DiagnosticsViewModelTests {
         values[SSHField.port] = "2222"
         let model = DiagnosticsViewModel(
             target: DiagnosticsTarget(
-                name: "Test session", kind: .ssh, values: values, sessionID: nil),
+                name: "Test session", kind: .ssh, values: values, sessionID: nil, jump: nil),
             secrets: nil)
 
         #expect(model.endpoint == Endpoint(host: "example.test", port: 2222), """

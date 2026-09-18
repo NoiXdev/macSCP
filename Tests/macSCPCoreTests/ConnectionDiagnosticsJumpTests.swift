@@ -467,7 +467,8 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(DiagnosticJump.form(values, isEnabled: false, stored: nil) == nil)
 
         let stored = DiagnosticJump(
-            endpoint: nil, login: .init(username: "", authKind: .password, keyPath: nil),
+            endpoint: Endpoint(host: "bastion.invalid", port: 2200),
+            login: .init(username: "hop", authKind: .password, keyPath: nil),
             secret: { Self.jumpSecret })
         let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
         #expect(jump.endpoint == Endpoint(host: "bastion.invalid", port: 2200))
@@ -478,6 +479,85 @@ struct ConnectionDiagnosticsJumpTests {
         let unsaved = try #require(DiagnosticJump.form(values, isEnabled: true, stored: nil))
         let noSecret = try unsaved.secret() == nil
         #expect(noSecret, "a tab with no stored jump read the form's typed secret")
+    }
+
+    /// The stored jump's secret goes only to the stored jump (fix round 1 of
+    /// Task 6, the coordinator's ruling on the review's Minor 4).
+    ///
+    /// The form's jump can be edited and not saved — another host, port,
+    /// user or auth kind — while the secret still comes from the stored
+    /// session's slot. Sent as it was, the stored bastion's password would go
+    /// to whatever host the form now names. So it is handed over only when
+    /// all four equal the stored jump's, and otherwise the jump has no secret
+    /// to offer, which its dial reports as `noJumpSecret`.
+    ///
+    /// Whether the secret came back is computed into a `Bool` before any
+    /// expectation reads it: the value itself is never in an expression
+    /// `#expect` could print.
+    @Test(arguments: FormJumpEdit.allCases)
+    func aFormsJumpGetsTheStoredSecretOnlyWhenItIsTheStoredJump(edit: FormJumpEdit) throws {
+        var values = Self.targetValues()
+        values[SSHField.jump, SSHJumpField.host] = "bastion.invalid"
+        values[SSHField.jump, SSHJumpField.port] = "2200"
+        values[SSHField.jump, SSHJumpField.username] = "hop"
+        values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.password.rawValue
+        switch edit {
+        case .none: break
+        case .host: values[SSHField.jump, SSHJumpField.host] = "elsewhere.invalid"
+        case .port: values[SSHField.jump, SSHJumpField.port] = "2201"
+        case .username: values[SSHField.jump, SSHJumpField.username] = "someone-else"
+        case .authKind:
+            values[SSHField.jump, SSHJumpField.authKind] =
+                StoredSession.AuthKind.privateKey.rawValue
+            values[SSHField.jump, SSHJumpField.keyPath] = "/tmp/key.invalid"
+        }
+        let secret = Self.jumpSecret
+        let stored = DiagnosticJump(
+            endpoint: Endpoint(host: "bastion.invalid", port: 2200),
+            login: .init(username: "hop", authKind: .password, keyPath: nil),
+            secret: { secret })
+
+        let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
+
+        let answered = try jump.secret()
+        let gotTheStoredSecret = answered == secret
+        let gotNothing = answered == nil
+        if edit == .none {
+            #expect(gotTheStoredSecret, "the form names the stored jump, and got no secret")
+        } else {
+            #expect(gotNothing, "the form's jump differs in its \(edit), and got a secret")
+        }
+    }
+
+    enum FormJumpEdit: String, CaseIterable, CustomTestStringConvertible {
+        case none, host, port, username, authKind
+        var testDescription: String { rawValue }
+    }
+
+    /// The same rule through the walk: a form whose jump differs from the
+    /// stored one dials nothing, and the jump's login row says there was no
+    /// secret for it — the reason a missing secret has always had.
+    @Test func aFormsEditedJumpIsNotDialledWithTheStoredSecret() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        var values = Self.targetValues()
+        values[SSHField.jump, SSHJumpField.host] = "127.0.0.1"
+        values[SSHField.jump, SSHJumpField.port] = String(listener.port)
+        values[SSHField.jump, SSHJumpField.username] = "edited-not-saved"
+        values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.password.rawValue
+        let secret = Self.jumpSecret
+        let stored = DiagnosticJump(
+            endpoint: Endpoint(host: "127.0.0.1", port: listener.port),
+            login: .init(username: "testuser", authKind: .password, keyPath: nil),
+            secret: { secret })
+        let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
+        let rig = JumpRig()
+
+        let report = await Self.diagnostics(jump: jump, rig: rig).run(scope: .dial)
+
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.jumpDial })
+        #expect(dial.outcome == .skipped(DiagnosticReason.noJumpSecret))
+        #expect(rig.count("connect") == 0, "\(rig.events)")
     }
 
     // MARK: - The report names both halves
