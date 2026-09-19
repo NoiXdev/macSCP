@@ -548,190 +548,123 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 private struct GenerateKeySheet: View {
     let store: ManagedKeyStore
     /// `false` means the key exists but its passphrase did not reach the
-    /// Keychain — see `generate()`.
+    /// Keychain — see `GenerateKeyForm.run`.
     let onGenerated: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var comment = ""
-    @State private var typeChoice: KeyTypeChoice = .ed25519
-    @State private var rsaBits = 3072
-    @State private var passphrase = ""
-    @State private var passphraseConfirm = ""
-    @State private var errorMessage: String?
-    /// True while the generate task runs — `ImportKeySheet.isImporting`'s
-    /// job, for the same reason: `ssh-keygen` is `await`ed now, so the
-    /// press is no longer over before the button can be pressed again, and
-    /// two overlapping runs would add two keys for one press.
-    @State private var isGenerating = false
-
-    /// A `Picker`-friendly stand-in for `KeyType` — `KeyType.rsa` carries a
-    /// `bits` payload, so it can't be a segmented-picker `tag` on its own;
-    /// `rsaBits` below supplies that payload separately.
-    private enum KeyTypeChoice: String, CaseIterable, Identifiable {
-        case ed25519, rsa, ecdsa
-        var id: String { rawValue }
-    }
-
-    private var resolvedType: KeyType {
-        switch typeChoice {
-        case .ed25519: return .ed25519
-        case .rsa: return .rsa(bits: rsaBits)
-        case .ecdsa: return .ecdsa
-        }
-    }
-
-    private var passphrasesMismatch: Bool { passphrase != passphraseConfirm }
-
-    private var isGenerateDisabled: Bool {
-        isGenerating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || passphrasesMismatch
-    }
+    /// The fields, the latch and the run live in `GenerateKeyForm` (Core),
+    /// where `GenerateKeyFormTests` can edit fields mid-run and cancel one.
+    @State private var form = GenerateKeyForm()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("keys.generate.title", "Generate SSH Key")).font(.title3.bold())
 
-            let nameLabel = L10n.string("keys.generate.name", "Name")
-            KeyFieldRow(label: nameLabel) {
-                TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
-            }
-            let commentLabel = L10n.string("keys.generate.comment", "Comment")
-            KeyFieldRow(label: commentLabel) {
-                TextField(commentLabel, text: $comment, prompt: Text(verbatim: ""))
-            }
-            let typeLabel = L10n.string("keys.generate.type", "Type")
-            KeyFieldRow(label: typeLabel) {
-                Picker(typeLabel, selection: $typeChoice) {
-                    Text(L10n.string("keys.type.ed25519", "ED25519")).tag(KeyTypeChoice.ed25519)
-                    Text(L10n.string("keys.type.rsa", "RSA")).tag(KeyTypeChoice.rsa)
-                    Text(L10n.string("keys.type.ecdsa", "ECDSA")).tag(KeyTypeChoice.ecdsa)
+            // Fixed while `ssh-keygen` runs: the run works from the values it
+            // started with (`GenerateKeyForm`), and fields that went on
+            // accepting edits would show a key the sheet is not making.
+            Group {
+                let nameLabel = L10n.string("keys.generate.name", "Name")
+                KeyFieldRow(label: nameLabel) {
+                    TextField(nameLabel, text: $form.name, prompt: Text(verbatim: ""))
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-            if !resolvedType.isConnectable {
-                Text(L10n.string(
-                    "keys.notConnectable", "Not usable as a macSCP login (public key export only)"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if typeChoice == .rsa {
-                let bitsLabel = L10n.string("keys.generate.bits", "Key size")
-                KeyFieldRow(label: bitsLabel) {
-                    Picker(bitsLabel, selection: $rsaBits) {
-                        Text("2048").tag(2048)
-                        Text("3072").tag(3072)
-                        Text("4096").tag(4096)
+                let commentLabel = L10n.string("keys.generate.comment", "Comment")
+                KeyFieldRow(label: commentLabel) {
+                    TextField(commentLabel, text: $form.comment, prompt: Text(verbatim: ""))
+                }
+                let typeLabel = L10n.string("keys.generate.type", "Type")
+                KeyFieldRow(label: typeLabel) {
+                    Picker(typeLabel, selection: $form.typeChoice) {
+                        Text(L10n.string("keys.type.ed25519", "ED25519")).tag(GenerateKeyForm.TypeChoice.ed25519)
+                        Text(L10n.string("keys.type.rsa", "RSA")).tag(GenerateKeyForm.TypeChoice.rsa)
+                        Text(L10n.string("keys.type.ecdsa", "ECDSA")).tag(GenerateKeyForm.TypeChoice.ecdsa)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                 }
+                if !form.resolvedType.isConnectable {
+                    Text(L10n.string(
+                        "keys.notConnectable", "Not usable as a macSCP login (public key export only)"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if form.typeChoice == .rsa {
+                    let bitsLabel = L10n.string("keys.generate.bits", "Key size")
+                    KeyFieldRow(label: bitsLabel) {
+                        Picker(bitsLabel, selection: $form.rsaBits) {
+                            Text("2048").tag(2048)
+                            Text("3072").tag(3072)
+                            Text("4096").tag(4096)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                }
+                let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
+                KeyFieldRow(label: passphraseLabel) {
+                    SecureField(passphraseLabel, text: $form.passphrase, prompt: Text(verbatim: ""))
+                }
+                let confirmLabel = L10n.string("keys.generate.passphrase.confirm", "Confirm passphrase")
+                KeyFieldRow(label: confirmLabel) {
+                    SecureField(confirmLabel, text: $form.passphraseConfirm, prompt: Text(verbatim: ""))
+                }
             }
-            let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
-            KeyFieldRow(label: passphraseLabel) {
-                SecureField(passphraseLabel, text: $passphrase, prompt: Text(verbatim: ""))
-            }
-            let confirmLabel = L10n.string("keys.generate.passphrase.confirm", "Confirm passphrase")
-            KeyFieldRow(label: confirmLabel) {
-                SecureField(confirmLabel, text: $passphraseConfirm, prompt: Text(verbatim: ""))
-            }
-            if passphrasesMismatch && !passphraseConfirm.isEmpty {
+            .disabled(form.isGenerating)
+            if form.passphrasesMismatch && !form.passphraseConfirm.isEmpty {
                 Text(L10n.string("keys.generate.passphrase.mismatch", "Passphrases don't match."))
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            if let errorMessage {
+            if let errorMessage = form.failure.map(Self.message(for:)) {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
             HStack {
                 Spacer()
-                Button(L10n.string("common.cancel", "Cancel")) { dismiss() }
+                Button(L10n.string("common.cancel", "Cancel")) {
+                    form.cancel()
+                    dismiss()
+                }
                     .buttonStyle(.polished)
                 Button(L10n.string("keys.generate.submit", "Generate")) { generate() }
                     .buttonStyle(.polishedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isGenerateDisabled)
+                    .disabled(form.isGenerateDisabled)
             }
         }
         .padding(20)
         .frame(width: 380)
         .textFieldStyle(.roundedBorder)
+        // However the sheet goes away — Cancel, Escape, the parent closing —
+        // a run still in flight is cancelled, so a dismissed sheet adds no
+        // key. A finished run makes this a no-op.
+        .onDisappear { form.cancel() }
     }
 
-    /// Generates the key on disk, persists the resulting `ManagedKey`, and
-    /// only THEN saves the passphrase (if any) to the Keychain under the same
-    /// fresh id.
-    ///
-    /// The two failures fall in opposite directions, deliberately. A failed
-    /// METADATA write rolls the key files back: without a metadata entry there
-    /// is no key, and nothing on disk may pretend otherwise. A failed
-    /// PASSPHRASE write keeps everything — the key is already listed, so
-    /// "encrypted key, no stored passphrase" is a state the app carries (the
-    /// connection form shows the passphrase row, `ManagedKeyPassphrase.resolve`
-    /// falls back to what is typed, and typing it once persists it). Rolling
-    /// the key back there would discard what the user just created; writing the
-    /// passphrase first, as this used to, left a Keychain entry under an id
-    /// `managed_keys.json` never learned — unreachable, because nothing
-    /// enumerates the Keychain. `keptPassphrase` carries that outcome to the
-    /// parent sheet, which says so.
-    ///
-    /// New orphans only: existing ones cannot be collected without a Keychain
-    /// enumeration, which `SecretStore` deliberately does not have.
-    ///
-    /// Hands the work to a main-actor task, as `ImportKeySheet.performImport`
-    /// does: `SSHKeyGenerator.generate` is `async` (it awaits `ssh-keygen`
-    /// rather than blocking a thread on it), and a `Button` action cannot
-    /// be. `isGenerating` refuses an overlapping press.
+    /// Hands the run to the form, which captures every field before
+    /// `ssh-keygen` starts, refuses an overlapping press, and on success is
+    /// where the key and its Keychain slot are written (on the main actor).
     @MainActor private func generate() {
-        guard !isGenerating else { return }
-        isGenerating = true
+        guard let task = form.start(store: store, secrets: KeychainSecretStore()) else { return }
         Task { @MainActor in
-            defer { isGenerating = false }
-            await generateKey()
+            if case .generated(let keptPassphrase) = await task.value {
+                onGenerated(keptPassphrase)
+                dismiss()
+            }
         }
     }
 
-    @MainActor private func generateKey() async {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            let generated = try await SSHKeyGenerator.generate(
-                type: resolvedType, comment: trimmedComment,
-                passphrase: passphrase.isEmpty ? nil : passphrase,
-                into: store.keyDirectory)
-            let newID = UUID()
-            do {
-                let key = ManagedKey(
-                    id: newID, name: trimmedName, comment: trimmedComment, type: resolvedType,
-                    fingerprint: generated.fingerprint, publicKeyOpenSSH: generated.publicKeyOpenSSH,
-                    createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
-                    fileName: generated.privateKeyURL.lastPathComponent)
-                try store.add(key)
-            } catch {
-                try? FileManager.default.removeItem(at: generated.privateKeyURL)
-                try? FileManager.default.removeItem(
-                    at: generated.privateKeyURL.deletingLastPathComponent()
-                        .appendingPathComponent(generated.privateKeyURL.lastPathComponent + ".pub"))
-                throw error
-            }
-            var keptPassphrase = true
-            if !passphrase.isEmpty {
-                do {
-                    try KeychainSecretStore().savePassword(passphrase, for: newID)
-                } catch {
-                    keptPassphrase = false
-                }
-            }
-            onGenerated(keptPassphrase)
-            dismiss()
-        } catch {
-            // Never surface the underlying error (same reasoning as
-            // `PresignedURLSheet.generate`) — a fixed message only; the
-            // failure carries no secret material here, but this keeps the
-            // sheet consistent with the rest of the app's error surfaces.
-            errorMessage = L10n.string("keys.generate.error", "Couldn't generate the key.")
+    /// A fixed message per failure — never the underlying error (same
+    /// reasoning as `PresignedURLSheet.generate`). A timeout gets its own, so
+    /// a tool that was stopped does not read like a key that is broken.
+    private static func message(for failure: GenerateKeyForm.Failure) -> String {
+        switch failure {
+        case .failed:
+            return L10n.string("keys.generate.error", "Couldn't generate the key.")
+        case .timedOut:
+            return L10n.string(
+                "keys.generate.error.timedOut",
+                "Generating the key took too long and was stopped. Nothing was saved.")
         }
     }
 }
@@ -933,6 +866,12 @@ struct ImportKeySheet: View {
                 }
                 onImported(key, keptPassphrase)
                 dismiss()
+            } catch SSHKeyImporter.SSHKeyImportError.timedOut {
+                // Its own fixed text: `ssh-keygen` was stopped at
+                // `KeyToolBound.keygen`, which says nothing about the key.
+                errorMessage = L10n.string(
+                    "keys.import.error.timedOut",
+                    "Reading the key took too long and was stopped. The key was not imported.")
             } catch {
                 // Fixed message only (same reasoning as `GenerateKeySheet`):
                 // never surface the underlying error, which could otherwise leak

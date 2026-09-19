@@ -320,9 +320,25 @@ struct TestsNeverBlockThePoolGuardTests {
     /// wait of any kind. Read from the corpus's code view
     /// (`SwiftSource.blankingCommentsAndStrings`), so a comment that names
     /// the wait — the runner's own doc comment does — is not a call.
+    ///
+    /// Only files whose RAW text mentions a pattern are blanked and read:
+    /// blanking can only remove an occurrence (a comment or literal turned to
+    /// spaces), never create one, so a file whose bytes never spell the
+    /// pattern cannot hold it as code either. Measured 2026-09-19 without
+    /// this pre-filter: blanking every `Sources/` file cost this test about
+    /// 2.5 s of pool thread-time per run (`SwiftSource.blank` leaves); with
+    /// it, the two runner files and the handful that mention the wait are
+    /// blanked. `theSourcesScanReadsCodeNotProse` keeps one of those in view.
     @Test func noSourceWaitsForAChildOutsideTheRunner() throws {
         let runnerFiles = try Self.runnerFiles()
-        let files = try Self.sourceFiles()
+        let candidates = try Self.sourceFiles().filter { file in
+            try runnerFiles.contains(file.url)
+                || SourceCorpus.text(of: file.url).contains(BlockingWait.waitUntilExit.rawValue)
+        }
+        // Positive for the pre-filter: it keeps the runner's files and the
+        // allowlisted one, so it cannot have emptied the scan.
+        #expect(candidates.count >= runnerFiles.count + Self.sourcesAllowed.count, "\(candidates.map(\.relative))")
+        let files = candidates
         let codes = try SourceCorpus.code(ofAll: files.map(\.url))
         var violations: [String] = []
         for (file, code) in zip(files, codes) {

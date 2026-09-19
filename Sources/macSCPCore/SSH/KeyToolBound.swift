@@ -14,6 +14,15 @@
 /// round. Ten minutes is therefore some 75 000 rounds on that machine;
 /// a slower or busier one gets fewer. A key past that fails as timed out
 /// instead of opening, which it would have done before, eventually.
+///
+/// One place reads a timeout as something else. `EmbeddedKeyPorter`'s
+/// `identity(of:declaredBy:)` tries its `ssh-keygen` runs with `try?`, so a
+/// run stopped here counts as "this key does not open" and the import moves
+/// on to the next attempt: `-y` with no passphrase, `-y` with the carried
+/// one, then `-l`. One key can therefore hold a login-set import for up to
+/// three bounds, and a carried passphrase whose `-y` timed out is dropped,
+/// not stored. That last branch still checks the file's own cleartext public
+/// key, so it is no weaker. It only matters past the rounds above.
 enum KeyToolBound {
     static let keygen: Duration = .seconds(600)
 }

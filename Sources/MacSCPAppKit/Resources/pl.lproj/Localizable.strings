@@ -899,6 +899,7 @@
 "keys.generate.passphrase.mismatch" = "Hasła nie są zgodne.";
 "keys.generate.submit" = "Generuj";
 "keys.generate.error" = "Nie udało się wygenerować klucza.";
+"keys.generate.error.timedOut" = "Generowanie klucza trwało zbyt długo i zostało przerwane. Nic nie zostało zapisane.";
 "keys.passphrase.notStored" = "Klucz został zapisany, ale jego hasło nie. Zostanie ono wymagane przy następnym połączeniu.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
@@ -920,6 +921,7 @@
 "keys.import.file" = "Plik";
 "keys.import.submit" = "Importuj";
 "keys.import.error" = "Nie udało się zaimportować klucza.";
+"keys.import.error.timedOut" = "Odczyt klucza trwał zbyt długo i został przerwany. Klucz nie został zaimportowany.";
 "keys.exportPrivate" = "Eksportuj klucz prywatny…";
 "keys.exportPrivate.title" = "Wyeksportować klucz prywatny?";
 "keys.exportPrivate.warn" = "Klucz prywatny opuści chroniony magazyn. Kontynuować?";

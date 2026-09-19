@@ -67,14 +67,20 @@ struct PollingGuardTests {
         return try urls.indices.map { (urls[$0].path, try SourceCorpus.text(of: urls[$0]), codes[$0]) }
     }
 
-    /// The file name `AsyncSignal`'s declaration lives in, derived from the
-    /// type so a rename breaks compilation rather than an exemption.
-    private static let asyncSignalFile = "/\(String(describing: AsyncSignal.self)).swift"
+    /// The one file `AsyncSignal`'s exemptions below apply to: the exact
+    /// path `runnerSources()` found for it, not a file-name suffix — a suffix
+    /// would also exempt any later file of that name anywhere under
+    /// `Tests/`. Derived from the type, so a rename breaks compilation
+    /// rather than an exemption.
+    private static func asyncSignalPath() throws -> String {
+        try runnerSources()[1].path
+    }
 
     /// The runner's two files, found under `Sources/` by the names their
     /// types give them — exactly one each, or this throws.
     private static func runnerSources() throws -> [URL] {
         let all = try SourceCorpus.files(under: SourceCorpus.url(of: .sources))
+        // Order matters: `asyncSignalPath()` reads index 1.
         return try [String(describing: SubprocessRunner.self), String(describing: AsyncSignal.self)].map { type in
             let matches = all.filter { $0.lastPathComponent == "\(type).swift" }
             guard matches.count == 1, let match = matches.first else {
@@ -151,8 +157,9 @@ struct PollingGuardTests {
     ///
     /// Two exemptions are found by path: `AsyncSignalTests.swift` tests
     /// the bounded API itself (the positive below), and
-    /// `AsyncSignal.swift` (in `Sources/macSCPCore` since 2026-09-19)
-    /// declares `wait(timeout:)`, so its own signature spells the phrase. The third is found by neither path
+    /// `AsyncSignal.swift` (in `Sources/macSCPCore` since 2026-09-19, and
+    /// matched by its exact path there) declares `wait(timeout:)`, so its own
+    /// signature spells the phrase. The third is found by neither path
     /// nor file name, per the brief for this check: `SubprocessRunnerTests.swift`
     /// keeps one bound — `started.wait(timeout: startBound)` — because
     /// there the bound IS the saturation being measured, and the comment
@@ -164,11 +171,12 @@ struct PollingGuardTests {
     @Test func noLatchIsWaitedOnWithATimeout() throws {
         let measurementSentence = "the bound IS the measurement"
         let sources = try Self.sources()
+        let asyncSignalPath = try Self.asyncSignalPath()
 
         let callers = sources.filter { $0.text.contains("wait(timeout:") }
         let offenders = callers.filter {
             !$0.path.hasSuffix("AsyncSignalTests.swift")
-                && !$0.path.hasSuffix(Self.asyncSignalFile)
+                && $0.path != asyncSignalPath
                 && !$0.text.contains(measurementSentence)
         }.map(\.path)
 
@@ -226,6 +234,7 @@ struct PollingGuardTests {
         let pattern = try CompiledPattern.regex(Self.sleepingChildPattern)
         let raceExemptionSentence = "the timeout IS the API under test here"
         let sources = try Self.sources()
+        let asyncSignalPath = try Self.asyncSignalPath()
 
         let scanned = sources.map { source -> (path: String, text: String, matched: Bool) in
             let blanked = source.code
@@ -234,7 +243,7 @@ struct PollingGuardTests {
         }
 
         let offenders = scanned.filter { $0.matched }
-            .filter { !($0.path.hasSuffix(Self.asyncSignalFile) && $0.text.contains(raceExemptionSentence)) }
+            .filter { !($0.path == asyncSignalPath && $0.text.contains(raceExemptionSentence)) }
             .map(\.path)
         #expect(offenders.isEmpty, "\(offenders)")
 
@@ -246,7 +255,7 @@ struct PollingGuardTests {
         // the file in `offenders` — which a rewritten or deleted sentence
         // would also produce.
         #expect(scanned.contains {
-            $0.path.hasSuffix(Self.asyncSignalFile)
+            $0.path == asyncSignalPath
                 && $0.matched
                 && $0.text.contains(raceExemptionSentence)
         })

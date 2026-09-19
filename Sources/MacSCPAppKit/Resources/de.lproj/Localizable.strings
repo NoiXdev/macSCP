@@ -897,6 +897,7 @@
 "keys.generate.passphrase.mismatch" = "Die Passphrasen stimmen nicht überein.";
 "keys.generate.submit" = "Erzeugen";
 "keys.generate.error" = "Der Schlüssel konnte nicht erzeugt werden.";
+"keys.generate.error.timedOut" = "Das Erzeugen des Schlüssels hat zu lange gedauert und wurde abgebrochen. Es wurde nichts gespeichert.";
 "keys.passphrase.notStored" = "Der Schlüssel wurde gespeichert, seine Passphrase jedoch nicht. Sie wird bei der nächsten Verbindung abgefragt.";
 "keys.type.ed25519" = "ED25519";
 "keys.type.rsa" = "RSA";
@@ -918,6 +919,7 @@
 "keys.import.file" = "Datei";
 "keys.import.submit" = "Importieren";
 "keys.import.error" = "Der Schlüssel konnte nicht importiert werden.";
+"keys.import.error.timedOut" = "Das Lesen des Schlüssels hat zu lange gedauert und wurde abgebrochen. Der Schlüssel wurde nicht importiert.";
 "keys.exportPrivate" = "Privaten Schlüssel exportieren…";
 "keys.exportPrivate.title" = "Privaten Schlüssel exportieren?";
 "keys.exportPrivate.warn" = "Der private Schlüssel verlässt den geschützten Speicher. Fortfahren?";

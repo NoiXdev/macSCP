@@ -2080,6 +2080,14 @@ public final class SessionListViewModel {
         }
     }
 
+    /// Held while a login-set import plans and applies (`LoginSetsSheet`
+    /// runs both through it, and greys its Import action out while it is
+    /// held). Both halves suspend — planning on the conflict sheet, applying
+    /// on `ssh-keygen` once per embedded key — so without it a second import
+    /// could start against the same `loginSets` snapshot and write duplicate
+    /// sets and keys.
+    public let loginSetImports = OneAtATime()
+
     /// Applies a `LoginSetImportPlan`: materializes embedded keys, writes the
     /// sets, and stores their secrets (spec M19).
     ///

@@ -163,6 +163,19 @@ public enum EmbeddedKeyPorter {
     /// `async` because verifying the key material runs `ssh-keygen`
     /// (`identity(of:declaredBy:)`), and `SSHKeyImporter` awaits it rather
     /// than parking a thread.
+    ///
+    /// `@MainActor` because of what it writes. `ManagedKeyStore.add` is an
+    /// unlocked read-modify-write of `managed_keys.json`, and the key sheets
+    /// — generate, import, rename, delete, in any window — write that file
+    /// from the main actor. While this was synchronous it ran on its
+    /// main-actor caller too; as a plain `async` function it would run on
+    /// the global executor, and a write there could interleave with one of
+    /// theirs and drop an entry, stranding a key file and a Keychain slot
+    /// under an id no record names. Isolated here, every write below is
+    /// serialized with theirs, and only the `ssh-keygen` awaits in
+    /// `identity(of:declaredBy:)` leave the main actor.
+    /// `EmbeddedKeyPorterTests.materializeWritesOnTheMainActor` observes it.
+    @MainActor
     public static func materialize(
         _ key: EmbeddedKey, store: ManagedKeyStore, secrets: any SecretStore
     ) async throws -> MaterializedKey {

@@ -525,6 +525,40 @@ struct EmbeddedKeyPorterTests {
         #expect(!String(decoding: metadata, as: UTF8.self).contains("s3cr3t"))
     }
 
+    /// `materialize` writes the key store and the Keychain on the MAIN
+    /// ACTOR. `ManagedKeyStore.add` is an unlocked read-modify-write of
+    /// `managed_keys.json`, and every other in-app writer of that file (the
+    /// key sheets, login-set import) runs on the main actor — so a write
+    /// from anywhere else could interleave with one of them and lose an
+    /// entry, leaving a key file and a Keychain slot no record claims.
+    /// Only the `ssh-keygen` waits inside may leave the main actor.
+    ///
+    /// Observed through the Keychain write, the last write `materialize`
+    /// makes: a store that records, per save, whether it ran on the main
+    /// thread. The test itself runs off the main actor, so a
+    /// `materialize` that merely inherited its caller's executor would be
+    /// seen off it too.
+    @Test func materializeWritesOnTheMainActor() async throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = makeStore(in: dir)
+        let secrets = InMemorySecretStore()
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let embedded = try #require(
+            try EmbeddedKeyPorter.embed(
+                keyPath: path(of: key, in: source), includePassphrase: true,
+                store: source, secrets: secrets))
+
+        let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
+        let recording = ThreadRecordingSecretStore()
+        _ = try await EmbeddedKeyPorter.materialize(embedded, store: target, secrets: recording)
+
+        let saves = recording.savesOnMainThread
+        // Positive: the write being observed happened, once.
+        #expect(saves.count == 1)
+        // Negative: not one of them off the main thread.
+        #expect(saves.allSatisfy { $0 }, "\(saves)")
+    }
+
     /// The one failure that must NOT take the key with it. "Key present,
     /// passphrase missing" is a state the app handles end to end:
     /// `ManagedKeyPassphrase.resolve` falls back to the typed value, the
@@ -1051,4 +1085,24 @@ private final class RecordingSecretStore: SecretStore, @unchecked Sendable {
         storage[sessionID] = nil
         deletedOrder.append(sessionID)
     }
+}
+
+/// Records, for every `savePassword`, whether it ran on the main thread —
+/// `materializeWritesOnTheMainActor`'s observation point. Everything else is
+/// a no-op store.
+private final class ThreadRecordingSecretStore: SecretStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var saves: [Bool] = []
+
+    var savesOnMainThread: [Bool] { lock.lock(); defer { lock.unlock() }; return saves }
+
+    func savePassword(_ password: String, for sessionID: UUID) throws {
+        let onMain = Thread.isMainThread
+        lock.lock(); defer { lock.unlock() }
+        saves.append(onMain)
+    }
+
+    func password(for sessionID: UUID) throws -> String? { nil }
+
+    func deletePassword(for sessionID: UUID) throws {}
 }

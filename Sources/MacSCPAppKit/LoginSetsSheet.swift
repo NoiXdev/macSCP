@@ -193,7 +193,8 @@ struct LoginSetsSheet: View {
                 // hardened against exactly this in M18; export was not.
                 SheetOverflowMenu(
                     actions: SheetOverflowAction.offered(
-                        canExport: !visibleSets.isEmpty, canImport: true)
+                        canExport: !visibleSets.isEmpty,
+                        canImport: !sessionList.loginSetImports.isRunning)
                 ) { action in
                     switch action {
                     case .export:
@@ -714,20 +715,28 @@ struct LoginSetsSheet: View {
     /// Plan → apply. Conflicts are resolved through the SHARED arbiter and the
     /// same `ImportConflictSheet` the session import uses. A cancelled run
     /// reports nothing at all.
+    ///
+    /// Both halves run inside `sessionList.loginSetImports`, the latch that
+    /// also greys the Import action out: planning suspends on the conflict
+    /// sheet and applying on `ssh-keygen`, and a second import started in
+    /// either gap would plan against the same `loginSets` snapshot. A start
+    /// that got past the greyed action anyway is dropped by the latch.
     private func applyImport(_ pending: PendingLoginImport) async {
-        let bridge = importConflictBridge
-        let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
-        let plan = await LoginSetImportPlanner.plan(
-            existing: sessionList.loginSets, incoming: pending.payload, arbiter: arbiter)
         importFileData = nil
-        guard !plan.cancelled else { return }
-        let result = await sessionList.applyLoginSetImport(plan)
-        importResultMessage = importResultText(
-            result, includesSecrets: pending.payload.includesSecrets,
-            encrypted: pending.wasEncrypted)
-        showImportResultAlert = true
-        selectedID = nil
-        refreshMergeCandidate()
+        await sessionList.loginSetImports.run {
+            let bridge = importConflictBridge
+            let arbiter = ImportConflictArbiter { conflict in await bridge.ask(conflict) }
+            let plan = await LoginSetImportPlanner.plan(
+                existing: sessionList.loginSets, incoming: pending.payload, arbiter: arbiter)
+            guard !plan.cancelled else { return }
+            let result = await sessionList.applyLoginSetImport(plan)
+            importResultMessage = importResultText(
+                result, includesSecrets: pending.payload.includesSecrets,
+                encrypted: pending.wasEncrypted)
+            showImportResultAlert = true
+            selectedID = nil
+            refreshMergeCandidate()
+        }
     }
 
     private func importResultText(
