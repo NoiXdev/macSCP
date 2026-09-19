@@ -67,6 +67,11 @@
 "settings.terminal.copyOnSelect" = "Kopiuj tekst po zaznaczeniu";
 "settings.terminal.pasteOnRightClick" = "Wklejaj prawym przyciskiem myszy";
 "settings.terminal.pasteOnRightClick.footer" = "Gdy prawy przycisk myszy wkleja, menu fragmentów otwiera kliknięcie prawym przyciskiem z wciśniętym klawiszem Option.";
+"settings.terminal.type" = "Typ terminala";
+"settings.terminal.type.footer" = "Nazwa przekazywana serwerowi (TERM); od niej zależy, z jakich funkcji korzystają programy na serwerze. Sam terminal się nie zmienia. Obowiązuje od następnej otwartej powłoki; sesja może wybrać własny typ w swoim edytorze.";
+"terminal.type.xterm-256color" = "xterm-256color (256 kolorów)";
+"terminal.type.xterm" = "xterm (8 kolorów)";
+"terminal.type.vt100" = "vt100 (bez kolorów)";
 "settings.terminal.target.header" = "Terminal zewnętrzny";
 "settings.terminal.target" = "Otwieraj sesje w";
 "settings.terminal.target.builtIn" = "Wbudowany terminal";
@@ -340,6 +345,9 @@
 "connection.field.password.unchanged" = "bez zmian";
 "connection.field.group" = "Grupa";
 "connection.field.group.new.help" = "Tworzy grupę wewnątrz wybranej lub na najwyższym poziomie, gdy żadna grupa nie jest wybrana";
+"connection.field.terminalType" = "Typ terminala";
+"connection.field.terminalType.useGlobal %@" = "Użyj ustawienia globalnego (%@)";
+"connection.field.terminalType.help" = "Nazwa przekazywana serwerowi dla terminala tej sesji (TERM). Sam terminal się nie zmienia.";
 "connection.saveAndConnect" = "Zapisz i połącz";
 
 /* Polecenia menu (M7a/T4) */

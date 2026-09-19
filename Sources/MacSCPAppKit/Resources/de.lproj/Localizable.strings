@@ -65,6 +65,11 @@
 "settings.terminal.copyOnSelect" = "Text beim Auswählen kopieren";
 "settings.terminal.pasteOnRightClick" = "Mit Rechtsklick einfügen";
 "settings.terminal.pasteOnRightClick.footer" = "Solange ein Rechtsklick einfügt, öffnest du das Snippet-Menü mit einem Rechtsklick bei gedrückter Wahltaste.";
+"settings.terminal.type" = "Terminaltyp";
+"settings.terminal.type.footer" = "Der Name, den der Server erfährt (TERM); er entscheidet, welche Funktionen Programme auf dem Server nutzen. Das Terminal selbst ändert sich nicht. Gilt für die nächste Shell, die sich öffnet; eine Sitzung kann in ihrem Editor einen eigenen wählen.";
+"terminal.type.xterm-256color" = "xterm-256color (256 Farben)";
+"terminal.type.xterm" = "xterm (8 Farben)";
+"terminal.type.vt100" = "vt100 (keine Farben)";
 "settings.terminal.target.header" = "Externes Terminal";
 "settings.terminal.target" = "Sitzungen öffnen in";
 "settings.terminal.target.builtIn" = "Eingebautes Terminal";
@@ -338,6 +343,9 @@
 "connection.field.password.unchanged" = "unverändert";
 "connection.field.group" = "Gruppe";
 "connection.field.group.new.help" = "Legt eine Gruppe in der gewählten an, oder auf oberster Ebene, wenn keine Gruppe gewählt ist";
+"connection.field.terminalType" = "Terminaltyp";
+"connection.field.terminalType.useGlobal %@" = "Globale Einstellung verwenden (%@)";
+"connection.field.terminalType.help" = "Der Name, den der Server für das Terminal dieser Sitzung erfährt (TERM). Das Terminal selbst ändert sich nicht.";
 "connection.saveAndConnect" = "Speichern & verbinden";
 
 /* Menü-Befehle (M7a/T4) */

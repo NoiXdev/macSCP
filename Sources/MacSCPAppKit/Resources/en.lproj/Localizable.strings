@@ -65,6 +65,11 @@
 "settings.terminal.copyOnSelect" = "Copy text when you select it";
 "settings.terminal.pasteOnRightClick" = "Paste on right-click";
 "settings.terminal.pasteOnRightClick.footer" = "While right-click pastes, Option-right-click opens the snippet menu.";
+"settings.terminal.type" = "Terminal type";
+"settings.terminal.type.footer" = "The name the server is told (TERM); it decides which features programs on the server use. The terminal itself does not change. Applies to the next shell that opens; a session can choose its own in its editor.";
+"terminal.type.xterm-256color" = "xterm-256color (256 colors)";
+"terminal.type.xterm" = "xterm (8 colors)";
+"terminal.type.vt100" = "vt100 (no colors)";
 "settings.terminal.target.header" = "External Terminal";
 "settings.terminal.target" = "Open sessions in";
 "settings.terminal.target.builtIn" = "Built-in Terminal";
@@ -337,6 +342,9 @@
 "connection.field.password.unchanged" = "unchanged";
 "connection.field.group" = "Group";
 "connection.field.group.new.help" = "Creates a group inside the chosen one, or at the top level when no group is chosen";
+"connection.field.terminalType" = "Terminal type";
+"connection.field.terminalType.useGlobal %@" = "Use the global setting (%@)";
+"connection.field.terminalType.help" = "The name the server is told for this session's terminal (TERM). The terminal itself does not change.";
 "connection.saveAndConnect" = "Save & connect";
 
 /* Menu commands (M7a/T4) */

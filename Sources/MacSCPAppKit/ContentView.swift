@@ -1739,6 +1739,7 @@ struct ContentView: View {
             loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
             jump: form.buildJumpSpec(),
             jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
+            terminalType: form.terminalTypeOverride,
             tags: form.tags)
     }
 
@@ -1827,6 +1828,17 @@ struct ContentView: View {
         // folder — the folder one keeps returning to — does not spend a
         // fresh thread rediscovering the same stuck entry on every visit.
         let stuckPaths = StuckPaths()
+        // The terminal type (plan of 2026-09-19, Task 4), resolved when a
+        // shell OPENS rather than here: the stored session this tab is
+        // connected to is named by `activeStoredSessionID`, which both
+        // connect paths set only after this function has built the panel
+        // (the saved-on-connect branch below, and `connect(in:stored:)`
+        // after its call), and a change made in Settings or in the session
+        // editor then reaches the next shell of this connection too. An
+        // unsaved connection has no stored session and uses the global
+        // setting. `[weak tab]`: the panel lives inside `tab.session`.
+        let settings = settingsStore
+        let sessionList = sessionListViewModel
         tab.session = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup, stuckPaths: stuckPaths),
@@ -1836,14 +1848,21 @@ struct ContentView: View {
                 startPath: NSHomeDirectory(),
                 logCategory: "browser.local"),
             remote: RemoteBrowserViewModel(fs: fs, startPath: startPath, logCategory: "browser.remote"),
-            terminal: TerminalPanelViewModel(openShell: { term, cols, rows in
-                guard let shellProvider else {
-                    throw RemoteFSError.protocolError(
-                        reason: "This connection does not support a terminal.")
-                }
-                return try await shellProvider.openShell(
-                    terminal: term, cols: cols, rows: rows)
-            }),
+            terminal: TerminalPanelViewModel(
+                terminalType: { [weak tab] in
+                    TerminalType.resolved(
+                        sessionOverride: TerminalType.sessionOverride(
+                            of: tab?.activeStoredSessionID, in: sessionList.sessions),
+                        global: settings.terminalType)
+                },
+                openShell: { term, cols, rows in
+                    guard let shellProvider else {
+                        throw RemoteFSError.protocolError(
+                            reason: "This connection does not support a terminal.")
+                    }
+                    return try await shellProvider.openShell(
+                        terminal: term, cols: cols, rows: rows)
+                }),
             editManager: EditSessionManager(sessionID: sessionID, queue: queue),
             // Both callers of `startSession` already resolved this via
             // `homeDirectoryPath()` before calling in (see this function's

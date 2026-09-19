@@ -1083,6 +1083,25 @@ private struct TerminalSettingsTab: View {
                         "While right-click pastes, Option-right-click opens the snippet menu."))
                         .foregroundStyle(.secondary)
                 }
+
+                // Plan of 2026-09-19, Task 4. A session can override this
+                // in its editor; the list is `TerminalType.allCases`, the
+                // names SwiftTerm honours.
+                Section {
+                    Picker(
+                        L10n.string("settings.terminal.type", "Terminal type"),
+                        selection: $store.terminalType
+                    ) {
+                        ForEach(TerminalType.allCases, id: \.self) { type in
+                            Text(TerminalTypeLabel.text(for: type)).tag(type)
+                        }
+                    }
+                } footer: {
+                    Text(L10n.string(
+                        "settings.terminal.type.footer",
+                        "The name the server is told (TERM); it decides which features programs on the server use. The terminal itself does not change. Applies to the next shell that opens; a session can choose its own in its editor."))
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
 

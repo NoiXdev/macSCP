@@ -1,5 +1,6 @@
 import Foundation
 import NIOCore
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -172,6 +173,50 @@ struct CitadelShellIntegrationTests {
             if !value.isEmpty { return value }
         }
         return nil
+    }
+
+    /// The chosen terminal type reaches the server (plan of 2026-09-19,
+    /// Task 4), driven through `TerminalPanelViewModel` the way the app
+    /// drives it, with a NON-default type so a panel still opening with the
+    /// old literal cannot pass. Proves only that the name arrives as the
+    /// remote `TERM` — nothing here says SwiftTerm renders `vt100`
+    /// faithfully; that was decided by reading, in the task report.
+    ///
+    /// The marker is written split (`"T""ERM=["`) for the reason
+    /// `windowChangeReachesTheRemotePTY` gives: the PTY echoes the command
+    /// line back, and a whole marker would match its own echo.
+    @Test @MainActor func theChosenTerminalTypeReachesTheRemoteShell() async throws {
+        let fs = try await connectWithRetry()
+        let chosen = TerminalType.vt100
+        #expect(chosen != .default, "the check needs a type the old literal could not produce")
+        let panel = TerminalPanelViewModel(
+            terminalType: { chosen },
+            openShell: { term, cols, rows in
+                try await fs.openShell(terminal: term, cols: cols, rows: rows)
+            })
+        var collected = ""
+        panel.onOutput = { collected += String(decoding: $0, as: UTF8.self) }
+
+        panel.toggle()
+        try await pollUntil("the shell is running") { panel.state == .running }
+        panel.send(Array("echo \"T\"\"ERM=[$TERM]\"\n".utf8))
+        try await pollUntil("the remote echoed its TERM") { Self.echoedTerm(in: collected) != nil }
+
+        #expect(
+            Self.echoedTerm(in: collected) == chosen.rawValue,
+            "the remote shell answered: \(collected)")
+        await panel.shutdown()
+        await fs.disconnect()
+    }
+
+    /// The text between the first `TERM=[` and the `]` after it, or `nil`
+    /// until both have arrived — whatever the name is, so a wrong one ends
+    /// the wait and is reported instead of running out the time limit.
+    private static func echoedTerm(in text: String) -> String? {
+        guard let open = text.range(of: "TERM=["),
+              let close = text[open.upperBound...].firstIndex(of: "]")
+        else { return nil }
+        return String(text[open.upperBound..<close])
     }
 
     @Test func reopenAfterCloseWorks() async throws {

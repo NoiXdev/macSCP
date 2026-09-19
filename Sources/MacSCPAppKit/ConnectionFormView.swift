@@ -13,6 +13,11 @@ struct ConnectionFormView: View {
     /// instance is shared (the sidebar, the login picker), unlike
     /// `KnownHostsSheet`'s throwaway store instance.
     let sessionList: SessionListViewModel
+    /// The global terminal type (`SettingsStore.terminalType`), which the
+    /// terminal-type override row names as what "Use the global setting"
+    /// currently means. A value rather than the store: the form reads
+    /// nothing else from Settings.
+    let globalTerminalType: TerminalType
     /// Called right before `connect()`/`validateForEditSave()` whenever the
     /// form is in Set mode (M10b/T3) for the TARGET login, or the jump is
     /// enabled and ALSO in Set mode (M10c/T3): fills username/authChoice/
@@ -493,6 +498,19 @@ struct ConnectionFormView: View {
                                     SessionEditorGroupPicker(
                                         viewModel: viewModel,
                                         sessionList: sessionList, label: groupLabel)
+                                }
+
+                                // SSH only: the name travels in the SSH pty
+                                // request, and no other protocol opens a
+                                // shell (plan of 2026-09-19, Task 4).
+                                if viewModel.kind == .ssh {
+                                    let terminalTypeLabel = L10n.string(
+                                        "connection.field.terminalType", "Terminal type")
+                                    FormRow(label: terminalTypeLabel) {
+                                        SessionEditorTerminalTypePicker(
+                                            viewModel: viewModel,
+                                            globalType: globalTerminalType, label: terminalTypeLabel)
+                                    }
                                 }
                             }
                         }

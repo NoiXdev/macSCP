@@ -897,6 +897,7 @@ extension ContentView {
                         ConnectionFormView(
                             viewModel: tab.connectionViewModel,
                             sessionList: sessionListViewModel,
+                            globalTerminalType: settingsStore.terminalType,
                             resolveLoginSetForSubmit: {
                                 let form = tab.connectionViewModel
                                 let refusals = sessionListViewModel.prepareForSubmit(form: form)

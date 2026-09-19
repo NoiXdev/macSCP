@@ -458,6 +458,33 @@ struct CLISessionsEditingTests {
         #expect(ssh.username == "bob")
     }
 
+    /// The CLI opens no shell and has no flag for the terminal type (plan of
+    /// 2026-09-19, Task 4), but it WRITES the store the override lives in.
+    /// A session the app gave an override must keep it through every verb
+    /// that rewrites or reads that file: `edit` on another field, `add` of a
+    /// second session, and the listing.
+    @Test func theVerbsLeaveATerminalTypeOverrideUntouched() async throws {
+        let cli = try CLI.make()
+        defer { cli.tearDown() }
+
+        var seeded = StoredSession(name: "web", kind: .ssh)
+        seeded.ssh = StoredSSHConfig(host: "host.invalid", username: "bob")
+        seeded.ssh?.terminalType = .vt100
+        try SessionStore(directory: cli.storageDirectory).upsert(seeded)
+
+        #expect(try await cli.run(["sessions", "edit", "web", "--host", "other.invalid"]).status == 0)
+        #expect(try await cli.run([
+            "sessions", "add", "second", "--kind", "ssh", "--host", "h.invalid", "--user", "u",
+        ]).status == 0)
+        _ = try await cli.rows(["sessions", "--json"])
+
+        let after = try #require(cli.storedSession(named: "web")?.ssh)
+        #expect(after.host == "other.invalid", "the edit itself must have happened")
+        #expect(after.terminalType == .vt100)
+        #expect(cli.storedSession(named: "second")?.ssh?.terminalType == nil,
+                "a session added by the CLI has no override: it uses the global setting")
+    }
+
     @Test func editAddsATagAndNoTagRemovesIt() async throws {
         let cli = try CLI.make()
         defer { cli.tearDown() }

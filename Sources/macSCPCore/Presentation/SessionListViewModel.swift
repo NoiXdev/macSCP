@@ -196,6 +196,7 @@ public final class SessionListViewModel {
         kind: ConnectionKind = .ssh,
         groupID: UUID? = nil, loginSetID: UUID? = nil,
         jump: StoredSession.JumpSpec? = nil, jumpSecret: String? = nil,
+        terminalType: TerminalType? = nil,
         tags: [String] = []
     ) -> StoredSession? {
         let descriptor = BackendDescriptor.descriptor(for: kind)
@@ -250,6 +251,10 @@ public final class SessionListViewModel {
         // block, so a non-SSH session has nowhere to put one — and this line
         // is correctly a no-op there rather than storing a hop nothing dials.
         session.ssh?.jump = jump
+        // The session's own terminal type (plan of 2026-09-19, Task 4),
+        // inside the SSH block for the jump's reason just above; `nil` is
+        // "use the global setting".
+        session.ssh?.terminalType = terminalType
 
         do {
             try store.upsert(session)

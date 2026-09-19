@@ -69,6 +69,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = "terminalCursorBlink"
         static let terminalCopyOnSelect = "terminalCopyOnSelect"
         static let terminalPasteOnRightClick = "terminalPasteOnRightClick"
+        static let terminalType = "terminalType"
         static let notificationsEnabled = "notificationsEnabled"
         static let updateCheckEnabled = "updateCheckEnabled"
         static let lastUpdateCheck = "lastUpdateCheck"
@@ -323,6 +324,25 @@ public final class SettingsStore {
     public var terminalPasteOnRightClick: Bool {
         get { boolValue(for: Keys.terminalPasteOnRightClick, default: Defaults.terminalPasteOnRightClick) }
         set { setBool(newValue, for: Keys.terminalPasteOnRightClick) }
+    }
+
+    /// The terminal type a shell opens with unless its session overrides
+    /// it (plan of 2026-09-19, Task 4). Stored as the name itself; a name
+    /// this build does not offer — a hand edit, or a later build's wider
+    /// list — reads as `TerminalType.default` rather than reaching the
+    /// server unchecked. Default `xterm-256color`, the name every shell
+    /// opened with before this setting existed.
+    public var terminalType: TerminalType {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalType] else {
+                return TerminalType.default
+            }
+            return TerminalType(rawValue: value) ?? .default
+        }
+        set {
+            raw[Keys.terminalType] = .string(newValue.rawValue)
+            persist()
+        }
     }
 
     /// Whether macSCP posts a macOS notification when a connection is lost,

@@ -118,7 +118,19 @@ public final class TerminalPanelViewModel {
     /// it would overwrite a newer state (in particular a `shutdown()`).
     private var generation = 0
 
-    public init(openShell: @escaping ShellOpener) {
+    /// Answers which terminal type the next shell opens with. Asked once
+    /// per open, in `openIfNeeded()`, not when the panel is built: a change
+    /// made in Settings or in the session's editor reaches the next shell
+    /// of a session already connected (Reopen after the shell ended). The
+    /// app passes a closure over `TerminalType.resolved(sessionOverride:
+    /// global:)`; the default is for callers with no settings at all.
+    private let terminalType: @MainActor () -> TerminalType
+
+    public init(
+        terminalType: @escaping @MainActor () -> TerminalType = { .default },
+        openShell: @escaping ShellOpener
+    ) {
+        self.terminalType = terminalType
         self.openShell = openShell
     }
 
@@ -142,13 +154,14 @@ public final class TerminalPanelViewModel {
         cancelPendingSends()
         generation += 1
         let myGeneration = generation
+        let terminalName = terminalType().rawValue
         // `[self]` spelled out: the read loop below captures `self` weakly,
         // and Swift 6.4 warns when that differs from an implicit strong
         // capture in the enclosing closure. The strong capture is the one
         // this task always had; only its spelling changed.
         openTask = Task { [self] in
             do {
-                let shell = try await openShell("xterm-256color", 80, 24)
+                let shell = try await openShell(terminalName, 80, 24)
                 // `shutdown()` may have run while the `await` above was in
                 // flight. In that case this shell belongs to nobody anymore —
                 // close it instead of letting it run as an orphan or

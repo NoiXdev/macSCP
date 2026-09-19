@@ -291,6 +291,13 @@ public final class ConnectionViewModel {
     /// That property's own setter applies `TagList.normalized`, so neither
     /// write path — nor a third one added later — has to remember the rule.
     public var tags: [String] = []
+    /// The session's own terminal type, `nil` for "use the global setting"
+    /// (plan of 2026-09-19, Task 4). Shown and saved beside `selectedGroupID`
+    /// and `tags` — while saving a new session and while editing a stored
+    /// one — and, like `selectedGroupID`, reset by `exitEditMode()`, so a
+    /// choice made for one session never travels into the next form. SSH
+    /// only: a non-SSH session has no SSH block to carry it.
+    public var terminalTypeOverride: TerminalType?
     /// Three-way login switcher state (M10b/T3). The App layer reads this to
     /// decide whether to show the login-set picker or the manual
     /// username/password/key fields; it also fills `username`/`authChoice`/
@@ -1711,6 +1718,7 @@ public final class ConnectionViewModel {
         saveName = stored.name
         selectedGroupID = stored.groupID
         tags = stored.tags
+        terminalTypeOverride = stored.ssh?.terminalType
         // A referenced login set (M10b/T3) puts the form straight into Set
         // mode with that set preselected; a manual session goes to Manual
         // exactly as before — see the doc comment on `loginMode`.
@@ -1793,6 +1801,7 @@ public final class ConnectionViewModel {
         mode = .new
         editingOriginal = nil
         selectedGroupID = nil
+        terminalTypeOverride = nil
         loginMode = .manual
         selectedLoginSetID = nil
         saveAsNewLoginSet = false
@@ -1957,6 +1966,10 @@ public final class ConnectionViewModel {
         // concept and lives inside it, so a non-SSH session correctly keeps
         // none rather than storing a hop nothing dials.
         session.ssh?.jump = buildJumpSpec(existingSecretID: existingJumpSecretID)
+        // Same place and reason as the jump: the override lives in the SSH
+        // block. Written even when `nil`, which is how "Use the global
+        // setting" clears an override the session had.
+        session.ssh?.terminalType = terminalTypeOverride
 
         state = .idle
         return session
