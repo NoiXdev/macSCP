@@ -9,6 +9,11 @@ import Foundation
 /// The passphrase is passed via `-P` in the argument array (never a shell
 /// string) — it is briefly visible in the process's argv to the same user via
 /// `ps`, the same accepted minor `SSHKeyGenerator` documents for its own `-N`.
+///
+/// The two functions that run `ssh-keygen` are `async` and wait for it
+/// through `SubprocessRunner.run`, for the reason and with the same argv-only
+/// passphrase path `SSHKeyGenerator` documents. Cancelling the calling task
+/// ends the child and throws `CancellationError`.
 public enum SSHKeyImporter {
     public struct ImportedKeyInfo: Equatable, Sendable {
         public let type: KeyType
@@ -26,15 +31,18 @@ public enum SSHKeyImporter {
         /// would describe whatever key the sibling holds — refused rather
         /// than reported (see that function's doc comment).
         case publicKeySiblingPresent
+        /// `ssh-keygen` did not exit within `KeyToolBound.keygen` and was
+        /// ended.
+        case timedOut
     }
 
-    public static func inspect(privateKeyURL: URL, passphrase: String?) throws -> ImportedKeyInfo {
+    public static func inspect(privateKeyURL: URL, passphrase: String?) async throws -> ImportedKeyInfo {
         let tool = "/usr/bin/ssh-keygen"
         guard FileManager.default.isExecutableFile(atPath: tool) else {
             throw SSHKeyImportError.toolMissing
         }
         // Public key via `ssh-keygen -y -P <pass> -f <file>` (stdout).
-        let pub = try run(tool, ["-y", "-P", passphrase ?? "", "-f", privateKeyURL.path(percentEncoded: false)])
+        let pub = try await run(tool, ["-y", "-P", passphrase ?? "", "-f", privateKeyURL.path(percentEncoded: false)])
         // Fingerprint derived from the SAME `-y` output above (never a
         // separate `ssh-keygen -l -f <file>` call, which prefers a sibling
         // `.pub` file over the private key — if that `.pub` is stale/foreign
@@ -104,7 +112,7 @@ public enum SSHKeyImporter {
     /// encrypted keys — make `ssh-keygen -l` exit non-zero, and so fail closed
     /// through `.unsupportedOrEncrypted`. That is deliberate: there would be
     /// nothing left to check such a file against.
-    public static func fingerprint(ofPrivateKeyFileAt url: URL) throws -> String {
+    public static func fingerprint(ofPrivateKeyFileAt url: URL) async throws -> String {
         let tool = "/usr/bin/ssh-keygen"
         guard FileManager.default.isExecutableFile(atPath: tool) else {
             throw SSHKeyImportError.toolMissing
@@ -116,7 +124,7 @@ public enum SSHKeyImporter {
         // `256 SHA256:<base64> <comment> (ED25519)` — field 1 is the
         // fingerprint; the comment may contain spaces, so only that field is
         // ever read.
-        let listed = try run(tool, ["-l", "-f", path])
+        let listed = try await run(tool, ["-l", "-f", path])
         let fields = listed.split(separator: " ")
         guard fields.count >= 2, fields[1].hasPrefix("SHA256:") else {
             throw SSHKeyImportError.unreadable
@@ -136,19 +144,24 @@ public enum SSHKeyImporter {
         return String(data: raw.dropFirst(4).prefix(length), encoding: .utf8)
     }
 
-    private static func run(_ tool: String, _ args: [String]) throws -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: tool)
-        p.arguments = args
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        p.standardInput = FileHandle.nullDevice
-        do { try p.run() } catch { throw SSHKeyImportError.toolMissing }
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else { throw SSHKeyImportError.unsupportedOrEncrypted }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        guard let s = String(data: data, encoding: .utf8) else { throw SSHKeyImportError.unreadable }
+    /// `ssh-keygen`'s stdout on a zero exit. Stdin is the null device
+    /// (`stdin: nil`), so the tool can never wait on a prompt; stderr is
+    /// collected by the runner and dropped here, as the null device dropped
+    /// it before. A launch failure is `toolMissing`, as it always was.
+    private static func run(_ tool: String, _ args: [String]) async throws -> String {
+        let result: SubprocessResult
+        do {
+            result = try await SubprocessRunner.run(
+                URL(fileURLWithPath: tool), arguments: args, timeout: KeyToolBound.keygen)
+        } catch is SubprocessTimeout {
+            throw SSHKeyImportError.timedOut
+        } catch is SubprocessCancelled {
+            throw CancellationError()
+        } catch {
+            throw SSHKeyImportError.toolMissing
+        }
+        guard result.status == 0 else { throw SSHKeyImportError.unsupportedOrEncrypted }
+        guard let s = String(data: result.stdout, encoding: .utf8) else { throw SSHKeyImportError.unreadable }
         return s
     }
 

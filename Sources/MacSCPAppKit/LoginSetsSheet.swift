@@ -721,7 +721,7 @@ struct LoginSetsSheet: View {
             existing: sessionList.loginSets, incoming: pending.payload, arbiter: arbiter)
         importFileData = nil
         guard !plan.cancelled else { return }
-        let result = sessionList.applyLoginSetImport(plan)
+        let result = await sessionList.applyLoginSetImport(plan)
         importResultMessage = importResultText(
             result, includesSecrets: pending.payload.includesSecrets,
             encrypted: pending.wasEncrypted)

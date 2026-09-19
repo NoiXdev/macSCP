@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import MacSCPTestSupport
 import Testing
 

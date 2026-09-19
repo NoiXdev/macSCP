@@ -6,6 +6,10 @@ import Synchronization
 /// `wait()` on from a cooperative-pool thread (see CLAUDE.md, "Tests never
 /// block the cooperative pool").
 ///
+/// In `macSCPCore` at `package` scope since 2026-09-19, because
+/// `SubprocessRunner` waits on it and moved here then; the test targets use
+/// it as they did when both were test support.
+///
 /// Three properties the semaphore it replaces also had, and which the call
 /// sites depend on:
 ///
@@ -25,12 +29,12 @@ import Synchronization
 /// cancelled unwinds through the stream's own cancellation handling rather
 /// than through a continuation this type would have to track — there is no
 /// continuation here that a cancellation could strand.
-final class AsyncSignal: Sendable {
+package final class AsyncSignal: Sendable {
     /// How a wait ended. Three cases, because two cannot express the
     /// difference between "the thing I waited for happened" and "nobody is
     /// waiting for it any more" — and a caller that conflates them acts on a
     /// child process that is still running.
-    enum WaitOutcome: Sendable, Equatable {
+    package enum WaitOutcome: Sendable, Equatable {
         case signalled
         case timedOut
         case cancelled
@@ -45,16 +49,18 @@ final class AsyncSignal: Sendable {
     /// asynchronous context, and `wait()` is one.
     private let state = Mutex(State())
 
+    package init() {}
+
     /// Whether the latch has been raised, without waiting for it. Lets a
     /// caller skip work that only makes sense while the thing is pending —
     /// `SubprocessRunner` uses it to avoid signalling a pid that has already
     /// been reaped.
-    var isRaised: Bool { state.withLock { $0.isRaised } }
+    package var isRaised: Bool { state.withLock { $0.isRaised } }
 
     /// Raises the latch and releases every waiter. Idempotent, and safe from
     /// any thread — a dispatch queue, a `Process.terminationHandler`, an
     /// `NWListener` state handler.
-    func signal() {
+    package func signal() {
         let released = state.withLock { state -> [AsyncStream<Void>.Continuation] in
             guard !state.isRaised else { return [] }
             state.isRaised = true
@@ -76,7 +82,7 @@ final class AsyncSignal: Sendable {
     /// is parked: the suspension is an `AsyncStream` the signal finishes.
     ///
     /// Never returns `.timedOut` — it has no bound.
-    func wait() async -> WaitOutcome {
+    package func wait() async -> WaitOutcome {
         guard !Task.isCancelled else { return .cancelled }
         let identifier = UUID()
         let stream: AsyncStream<Void>? = state.withLock { state in
@@ -99,7 +105,7 @@ final class AsyncSignal: Sendable {
 
     /// Suspends until the latch is raised, `timeout` elapses, or this task is
     /// cancelled, and answers which of the three happened.
-    func wait(timeout: Duration) async -> WaitOutcome {
+    package func wait(timeout: Duration) async -> WaitOutcome {
         await Self.race(timeout: timeout) { await self.wait() }
     }
 
@@ -116,7 +122,7 @@ final class AsyncSignal: Sendable {
     /// cancelled, `Task.sleep` throws instead of returning `.timedOut`, and
     /// whichever answers first says `.cancelled`. Without that case the
     /// caller would read an outside cancellation as a bound it never set.
-    static func race(
+    package static func race(
         timeout: Duration, _ work: @escaping @Sendable () async -> WaitOutcome
     ) async -> WaitOutcome {
         await withTaskGroup(of: WaitOutcome.self, returning: WaitOutcome.self) { group in

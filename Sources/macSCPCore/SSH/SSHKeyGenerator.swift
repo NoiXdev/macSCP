@@ -6,6 +6,15 @@ import Foundation
 /// argument array (never a shell string) — it is briefly visible in the
 /// process's argv to the same user via `ps`, an accepted minor since
 /// `ssh-keygen` offers no stdin passphrase path for generation.
+///
+/// `async` because it waits for `ssh-keygen`, and that wait goes through
+/// `SubprocessRunner.run` — a suspension, never a thread parked on the
+/// child. It used to end in a blocking process wait, which from async code
+/// holds a cooperative-pool thread for as long as the tool runs (CLAUDE.md,
+/// "Tests never block the cooperative pool"). The argument array is handed
+/// to the runner unchanged, so the passphrase reaches the child exactly as
+/// before — argv, nothing else — and the runner's errors carry the argument
+/// COUNT, never the arguments.
 public enum SSHKeyGenerator {
     public struct GeneratedKey: Equatable, Sendable {
         public let privateKeyURL: URL
@@ -18,11 +27,16 @@ public enum SSHKeyGenerator {
         case publicKeyUnreadable
         case toolMissing
         case fingerprintUnavailable
+        /// `ssh-keygen` did not exit within `KeyToolBound.keygen`; it was
+        /// ended and any file it had started is removed.
+        case timedOut
     }
 
+    /// Cancelling the calling task ends `ssh-keygen`, removes whatever it
+    /// had written, and throws `CancellationError`.
     public static func generate(
         type: KeyType, comment: String, passphrase: String?, into dir: URL
-    ) throws -> GeneratedKey {
+    ) async throws -> GeneratedKey {
         try FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
@@ -47,22 +61,33 @@ public enum SSHKeyGenerator {
             "-q",
         ]
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = args
-        // Never inherit an interactive prompt; keep output quiet.
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw SSHKeyGenError.keygenFailed(status: process.terminationStatus)
+        let pubURL = dir.appendingPathComponent(fileURL.lastPathComponent + ".pub")
+        // Never inherit an interactive prompt: `stdin: nil` hands the child
+        // the null device. Its output is collected and dropped — `-q` keeps
+        // it quiet, and nothing here reads it.
+        let result: SubprocessResult
+        do {
+            result = try await SubprocessRunner.run(
+                URL(fileURLWithPath: tool), arguments: args, timeout: KeyToolBound.keygen)
+        } catch is SubprocessTimeout {
+            // The runner has ended the child; a half-written key must not
+            // stay behind in the key directory with no metadata claiming it.
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: pubURL)
+            throw SSHKeyGenError.timedOut
+        } catch is SubprocessCancelled {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: pubURL)
+            throw CancellationError()
+        }
+        guard result.status == 0 else {
+            throw SSHKeyGenError.keygenFailed(status: result.status)
         }
 
         // Harden perms (ssh-keygen already writes 0600, but be explicit).
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: fileURL.path(percentEncoded: false))
 
-        let pubURL = dir.appendingPathComponent(fileURL.lastPathComponent + ".pub")
         guard let pubContents = try? String(contentsOf: pubURL, encoding: .utf8) else {
             try? FileManager.default.removeItem(at: fileURL)
             try? FileManager.default.removeItem(at: pubURL)

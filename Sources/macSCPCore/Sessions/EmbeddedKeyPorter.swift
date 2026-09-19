@@ -159,9 +159,13 @@ public enum EmbeddedKeyPorter {
     /// the passphrase, and only the metadata leg rolls back. This prevents NEW
     /// orphans; it collects none that already exist, which would need a
     /// Keychain enumeration `SecretStore` deliberately does not have.
+    ///
+    /// `async` because verifying the key material runs `ssh-keygen`
+    /// (`identity(of:declaredBy:)`), and `SSHKeyImporter` awaits it rather
+    /// than parking a thread.
     public static func materialize(
         _ key: EmbeddedKey, store: ManagedKeyStore, secrets: any SecretStore
-    ) throws -> MaterializedKey {
+    ) async throws -> MaterializedKey {
         let newID = UUID()
         let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
         let destinationPath = destination.path(percentEncoded: false)
@@ -195,7 +199,7 @@ public enum EmbeddedKeyPorter {
             // (invariant 5). This runs BEFORE the Keychain write, so a rejected
             // payload never reaches the Keychain at all and the slot is only
             // created for a key whose passphrase demonstrably opens it.
-            evidence = try identity(of: destination, declaredBy: key)
+            evidence = try await identity(of: destination, declaredBy: key)
 
             // `name` and `comment` stay as the payload wrote them BY DESIGN:
             // they are user-facing labels, not identity, and the importer can
@@ -349,15 +353,15 @@ public enum EmbeddedKeyPorter {
     /// `keyMaterialUnverifiable`. That also covers an environmental failure (no
     /// `/usr/bin/ssh-keygen`, a key type it rejects): unable to verify is not a
     /// licence to believe the payload.
-    private static func identity(of url: URL, declaredBy key: EmbeddedKey) throws
+    private static func identity(of url: URL, declaredBy key: EmbeddedKey) async throws
         -> KeyMaterialEvidence
     {
         let carried = key.passphrase.flatMap { $0.isEmpty ? nil : $0 }
         let derived: KeyMaterialEvidence
-        if let plain = try? SSHKeyImporter.inspect(privateKeyURL: url, passphrase: nil) {
+        if let plain = try? await SSHKeyImporter.inspect(privateKeyURL: url, passphrase: nil) {
             derived = .openedWithoutAPassphrase(plain)
         } else if let carried,
-                  let unlocked = try? SSHKeyImporter.inspect(
+                  let unlocked = try? await SSHKeyImporter.inspect(
                       privateKeyURL: url, passphrase: carried)
         {
             derived = .openedWithTheCarriedPassphrase(unlocked)
@@ -372,7 +376,7 @@ public enum EmbeddedKeyPorter {
             // were ever hit by the stricter reading. The stale string is then
             // dropped, never stored (`keepsTheCarriedPassphrase`).
             derived = .encryptedWithThePassphraseLeftAtHome(
-                try identityOfAKeyThatWillNotOpen(at: url, declaredBy: key))
+                try await identityOfAKeyThatWillNotOpen(at: url, declaredBy: key))
         } else {
             throw PorterError.keyMaterialUnverifiable
         }
@@ -435,7 +439,7 @@ public enum EmbeddedKeyPorter {
 
     private static func identityOfAKeyThatWillNotOpen(
         at url: URL, declaredBy key: EmbeddedKey
-    ) throws -> SSHKeyImporter.ImportedKeyInfo {
+    ) async throws -> SSHKeyImporter.ImportedKeyInfo {
         // `ssh-keygen -l -f` fingerprints a plain public key file exactly as
         // readily as a private one, so this guard — not `-l -f` — is what
         // rejects a `fileContents` that is only ever the claimed public key
@@ -460,7 +464,7 @@ public enum EmbeddedKeyPorter {
             // private key under a fresh UUID, so there is none today — and if
             // that ever changes, this throws instead of silently fingerprinting
             // whatever the sibling holds.
-            onDisk = try SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: url)
+            onDisk = try await SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: url)
         } catch {
             throw PorterError.keyMaterialUnverifiable
         }

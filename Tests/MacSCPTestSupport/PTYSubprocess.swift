@@ -6,7 +6,7 @@ import Darwin
 
 /// Runs a child process attached to a real pseudo-terminal, so the child's
 /// `isatty(stdin)` is true — the one condition
-/// `Tests/macSCPCoreTests/Support/SubprocessRunner.swift` can never produce,
+/// `Sources/macSCPCore/Subprocess/SubprocessRunner.swift` can never produce,
 /// since it always hands the child the null device for stdin. This is what
 /// closes the backlog row "`--non-interactive` cannot be told apart from its
 /// own absence in this harness": every existing CLI integration test runs
@@ -188,10 +188,11 @@ public struct PTYSubprocess: Sendable {
     /// code can await — the bridge from the blocking `waitpid` thread and
     /// the blocking master-read thread (both plain, non-cooperative-pool
     /// execution contexts) into this function's `async` body. Reimplemented
-    /// here rather than reusing `Tests/macSCPCoreTests/Support/AsyncSignal.swift`,
-    /// which this target cannot see (SwiftPM compiles each test target from
-    /// its own directory; `MacSCPTestSupport` is the one place shared by
-    /// both).
+    /// here rather than reusing `AsyncSignal`, which this target cannot see:
+    /// it was a `macSCPCoreTests` file when this was written (SwiftPM
+    /// compiles each test target from its own directory; `MacSCPTestSupport`
+    /// is the one place shared by both), and since 2026-09-19 it is a
+    /// `package` type in `macSCPCore`, which this target does not depend on.
     private final class SingleShot<Value: Sendable>: Sendable {
         private let state = Mutex<(value: Value?, continuation: CheckedContinuation<Value, Never>?)>((nil, nil))
 

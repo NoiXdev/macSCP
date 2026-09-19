@@ -23,8 +23,8 @@ struct EmbeddedKeyPorterTests {
     private func addManagedKey(
         to store: ManagedKeyStore, secrets: any SecretStore,
         name: String = "work", comment: String = "work-key", passphrase: String? = nil
-    ) throws -> ManagedKey {
-        let generated = try SSHKeyGenerator.generate(
+    ) async throws -> ManagedKey {
+        let generated = try await SSHKeyGenerator.generate(
             type: .ed25519, comment: comment, passphrase: passphrase, into: store.keyDirectory)
         let key = ManagedKey(
             name: name, comment: comment, type: .ed25519, fingerprint: generated.fingerprint,
@@ -46,11 +46,11 @@ struct EmbeddedKeyPorterTests {
 
     // MARK: - embed
 
-    @Test func embedsOnlyManagedKeys() throws {
+    @Test func embedsOnlyManagedKeys() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: store, secrets: secrets, name: "prod", comment: "prod-key")
+        let key = try await addManagedKey(to: store, secrets: secrets, name: "prod", comment: "prod-key")
 
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
@@ -114,7 +114,7 @@ struct EmbeddedKeyPorterTests {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        try addManagedKey(to: store, secrets: secrets)
+        try await addManagedKey(to: store, secrets: secrets)
 
         let fifoPath = dir.appendingPathComponent("external-fifo").path(percentEncoded: false)
         #expect(mkfifo(fifoPath, 0o600) == 0)
@@ -339,11 +339,11 @@ struct EmbeddedKeyPorterTests {
     /// THAT set ("key file missing") — a raw Cocoa error would abort the
     /// whole export over one orphaned entry. Dropping the key silently is not
     /// an option either: the user asked for it to be embedded.
-    @Test func embedReportsAMissingKeyFileAsItsOwnCondition() throws {
+    @Test func embedReportsAMissingKeyFileAsItsOwnCondition() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: store, secrets: secrets, name: "prod")
+        let key = try await addManagedKey(to: store, secrets: secrets, name: "prod")
         let keyPath = path(of: key, in: store)
         try FileManager.default.removeItem(atPath: keyPath)
 
@@ -356,11 +356,11 @@ struct EmbeddedKeyPorterTests {
     /// Present but not readable as a file (here: a directory in its place).
     /// Also typed, and it carries the key's NAME rather than the underlying
     /// error, which would spell out the store path.
-    @Test func embedReportsAnUnreadableKeyFileAsItsOwnCondition() throws {
+    @Test func embedReportsAnUnreadableKeyFileAsItsOwnCondition() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: store, secrets: secrets, name: "prod")
+        let key = try await addManagedKey(to: store, secrets: secrets, name: "prod")
         let keyPath = path(of: key, in: store)
         try FileManager.default.removeItem(atPath: keyPath)
         try FileManager.default.createDirectory(
@@ -407,11 +407,11 @@ struct EmbeddedKeyPorterTests {
             includePassphrase: true, store: store, secrets: secrets) == nil)
     }
 
-    @Test func embedCarriesThePassphraseOnlyWhenAsked() throws {
+    @Test func embedCarriesThePassphraseOnlyWhenAsked() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let store = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: store, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: store, secrets: secrets, passphrase: "s3cr3t")
         let keyPath = path(of: key, in: store)
 
         let without = try #require(
@@ -429,7 +429,7 @@ struct EmbeddedKeyPorterTests {
         #expect(with.passphrase == "s3cr3t")
 
         // A key without a passphrase never gets one, even when asked.
-        let plain = try addManagedKey(to: store, secrets: secrets, name: "plain")
+        let plain = try await addManagedKey(to: store, secrets: secrets, name: "plain")
         let plainEmbedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: plain, in: store), includePassphrase: true,
@@ -440,11 +440,11 @@ struct EmbeddedKeyPorterTests {
 
     // MARK: - materialize
 
-    @Test func materializeWritesThePrivateKeyWith0600() throws {
+    @Test func materializeWritesThePrivateKeyWith0600() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets)
+        let key = try await addManagedKey(to: source, secrets: secrets)
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
@@ -452,7 +452,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = InMemorySecretStore()
-        let path = try EmbeddedKeyPorter.materialize(
+        let path = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: targetSecrets).path
 
         #expect(try permissions(of: path) == 0o600)
@@ -463,11 +463,11 @@ struct EmbeddedKeyPorterTests {
         _ = try SSHPrivateKeyLoader.authentication(username: "t", keyPath: path, passphrase: nil)
     }
 
-    @Test func materializeHardensAPreexistingKeyDirectoryTo0700() throws {
+    @Test func materializeHardensAPreexistingKeyDirectoryTo0700() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets)
+        let key = try await addManagedKey(to: source, secrets: secrets)
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
@@ -482,15 +482,15 @@ struct EmbeddedKeyPorterTests {
             attributes: [.posixPermissions: 0o777])
         #expect(try permissions(of: target.keyDirectory.path(percentEncoded: false)) == 0o777)
 
-        _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: InMemorySecretStore())
+        _ = try await EmbeddedKeyPorter.materialize(embedded, store: target, secrets: InMemorySecretStore())
         #expect(try permissions(of: target.keyDirectory.path(percentEncoded: false)) == 0o700)
     }
 
-    @Test func materializeUsesAFreshIDAndStoresThePassphraseUnderIt() throws {
+    @Test func materializeUsesAFreshIDAndStoresThePassphraseUnderIt() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: true,
@@ -498,7 +498,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = InMemorySecretStore()
-        let materialized = try EmbeddedKeyPorter.materialize(
+        let materialized = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: targetSecrets)
         let path = materialized.path
 
@@ -532,11 +532,11 @@ struct EmbeddedKeyPorterTests {
     /// as `passphraseRequired`, and typing it once persists it. The opposite
     /// leftover — a Keychain slot under an id no store knows — is reachable
     /// from nowhere, because `SecretStore` cannot enumerate.
-    @Test func materializeKeepsTheKeyWhenOnlyThePassphraseWriteFails() throws {
+    @Test func materializeKeepsTheKeyWhenOnlyThePassphraseWriteFails() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: true,
@@ -544,7 +544,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore(failSaves: true)
-        let materialized = try EmbeddedKeyPorter.materialize(
+        let materialized = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: targetSecrets)
 
         // `false` is what makes the caller keep its OWN copy of the
@@ -564,18 +564,18 @@ struct EmbeddedKeyPorterTests {
     /// fingerprint that reach the store are derived from the key material.
     /// The payload has no `type` field to claim at all — `EmbeddedKey`'s v1
     /// shape carries none, precisely so nothing can be tempted to read it.
-    @Test func materializeTakesTypeAndFingerprintFromTheKeyMaterial() throws {
+    @Test func materializeTakesTypeAndFingerprintFromTheKeyMaterial() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets)
+        let key = try await addManagedKey(to: source, secrets: secrets)
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
                 store: source, secrets: secrets))
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
-        let importedPath = try EmbeddedKeyPorter.materialize(
+        let importedPath = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: InMemorySecretStore()).path
 
         let imported = try #require(try target.key(forPath: importedPath))
@@ -588,11 +588,11 @@ struct EmbeddedKeyPorterTests {
     /// keys sheet enables "copy public key" unconditionally. Without the
     /// carried public key the button would hand out an empty string exactly
     /// when the user needs the line for `authorized_keys`.
-    @Test func materializeKeepsThePublicKeyOfAnEncryptedKeyExportedWithoutItsPassphrase() throws {
+    @Test func materializeKeepsThePublicKeyOfAnEncryptedKeyExportedWithoutItsPassphrase() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
@@ -600,7 +600,7 @@ struct EmbeddedKeyPorterTests {
         #expect(embedded.passphrase == nil)
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
-        let importedPath = try EmbeddedKeyPorter.materialize(
+        let importedPath = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: InMemorySecretStore()).path
 
         let imported = try #require(try target.key(forPath: importedPath))
@@ -613,21 +613,21 @@ struct EmbeddedKeyPorterTests {
     /// …and the fingerprint check still bites in that case: the declared
     /// fingerprint is cross-checked against the carried public key line, the
     /// only thing left to check it against.
-    @Test func materializeRejectsAForgedFingerprintWithoutThePassphrase() throws {
+    @Test func materializeRejectsAForgedFingerprintWithoutThePassphrase() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         var embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: false,
                 store: source, secrets: secrets))
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
         embedded.fingerprint = victim.fingerprint
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
-        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
-            _ = try EmbeddedKeyPorter.materialize(
+        await #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try await EmbeddedKeyPorter.materialize(
                 embedded, store: target, secrets: InMemorySecretStore())
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
@@ -641,24 +641,24 @@ struct EmbeddedKeyPorterTests {
     /// would put that fingerprint in the keys list, so anyone checking "is
     /// this my prod key?" by fingerprint would be lied to. A declared
     /// fingerprint the material does not have is therefore a hard stop.
-    @Test func materializeRejectsADeclaredFingerprintTheKeyMaterialDoesNotHave() throws {
+    @Test func materializeRejectsADeclaredFingerprintTheKeyMaterialDoesNotHave() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         var embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: true,
                 store: source, secrets: secrets))
         // The victim's real fingerprint, claimed for someone else's key.
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
         embedded.fingerprint = victim.fingerprint
         #expect(embedded.fingerprint != key.fingerprint)
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
-            _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try await EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
         }
         // The usual rollback: no key file, no metadata entry, no Keychain slot.
         let leftovers = (try? FileManager.default.contentsOfDirectory(
@@ -678,12 +678,12 @@ struct EmbeddedKeyPorterTests {
     /// Here the bytes are a PLAIN key that opens with no passphrase at all: the
     /// material is right there to be checked, and checking it must not depend on
     /// what the payload said about it.
-    @Test func materializeRejectsAPlainKeyThatClaimsToBeEncrypted() throws {
+    @Test func materializeRejectsAPlainKeyThatClaimsToBeEncrypted() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let attacker = try addManagedKey(to: source, secrets: secrets, name: "attacker")
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let attacker = try await addManagedKey(to: source, secrets: secrets, name: "attacker")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         // Attacker's plain key bytes, the victim's identity, and the declaration
         // that steers the import away from the material.
@@ -695,8 +695,8 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
-            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try await EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
@@ -709,11 +709,11 @@ struct EmbeddedKeyPorterTests {
     /// every failure and silently downgraded to the declared values. When the
     /// payload itself says the key is NOT encrypted, a failure to open it means
     /// broken-or-forged — never "fall back to what the file claimed".
-    @Test func materializeRejectsAPayloadWhoseKeyMaterialCannotBeOpened() throws {
+    @Test func materializeRejectsAPayloadWhoseKeyMaterialCannotBeOpened() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let payload = EmbeddedKey(
             fileContents: Data("NOT A KEY AT ALL".utf8),
@@ -723,8 +723,8 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
-            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try await EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
@@ -739,11 +739,11 @@ struct EmbeddedKeyPorterTests {
     /// opens with no passphrase is not encrypted, whatever it says, and the
     /// passphrase it carried is not written to the Keychain: a key with no slot
     /// must not claim to have one.
-    @Test func materializeDerivesHasPassphraseFromTheKeyMaterial() throws {
+    @Test func materializeDerivesHasPassphraseFromTheKeyMaterial() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let plain = try addManagedKey(to: source, secrets: secrets, name: "plain")
+        let plain = try await addManagedKey(to: source, secrets: secrets, name: "plain")
 
         // A plain key declared as encrypted, with a passphrase to match the
         // story. `ssh-keygen -y` ignores `-P` for an unencrypted key, so the
@@ -756,7 +756,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        let materialized = try EmbeddedKeyPorter.materialize(
+        let materialized = try await EmbeddedKeyPorter.materialize(
             payload, store: target, secrets: targetSecrets)
         let importedPath = materialized.path
 
@@ -785,13 +785,13 @@ struct EmbeddedKeyPorterTests {
     /// against the carried fingerprint, both from the same hand. The keys sheet
     /// would show a locked key named `prod` carrying the victim's genuine
     /// fingerprint next to foreign bytes.
-    @Test func materializeRejectsAnEncryptedForeignKeyCarryingABorrowedFingerprint() throws {
+    @Test func materializeRejectsAnEncryptedForeignKeyCarryingABorrowedFingerprint() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let attacker = try addManagedKey(
+        let attacker = try await addManagedKey(
             to: source, secrets: secrets, name: "attacker", passphrase: "attacker-pass")
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let payload = EmbeddedKey(
             fileContents: try Data(contentsOf: URL(fileURLWithPath: path(of: attacker, in: source))),
@@ -801,8 +801,8 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
-            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.fingerprintMismatch) {
+            _ = try await EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
@@ -815,11 +815,11 @@ struct EmbeddedKeyPorterTests {
     /// (`ssh-keygen -l` exits 255 on them) used to import as a
     /// "passphrase-protected" key carrying the victim's fingerprint. Unable to
     /// read the file's own public part is not a licence to believe the payload.
-    @Test func materializeRejectsNonKeyMaterialDeclaredAsPassphraseProtected() throws {
+    @Test func materializeRejectsNonKeyMaterialDeclaredAsPassphraseProtected() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let payload = EmbeddedKey(
             fileContents: Data("NOT A KEY AT ALL".utf8),
@@ -829,8 +829,8 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
-            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try await EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
@@ -857,7 +857,7 @@ struct EmbeddedKeyPorterTests {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let legacy = dir.appendingPathComponent("legacy")
         let keygenResult = try await SubprocessRunner.run(
@@ -875,8 +875,8 @@ struct EmbeddedKeyPorterTests {
             hasPassphrase: true, passphrase: nil)
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
-        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
-            _ = try EmbeddedKeyPorter.materialize(
+        await #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try await EmbeddedKeyPorter.materialize(
                 payload, store: target, secrets: InMemorySecretStore())
         }
         #expect(try target.all().isEmpty)
@@ -887,11 +887,11 @@ struct EmbeddedKeyPorterTests {
     /// porter's own failure — reported as `keyMaterialUnverifiable` rather
     /// than letting a raw `SSHKeyImportError` escape `PorterError`, and never
     /// as a registered key with an unverified fingerprint.
-    @Test func materializeRejectsAnEncryptedKeyWhoseCarriedPublicKeyLineIsUnusable() throws {
+    @Test func materializeRejectsAnEncryptedKeyWhoseCarriedPublicKeyLineIsUnusable() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         let bytes = try Data(contentsOf: URL(fileURLWithPath: path(of: key, in: source)))
         let blob = String(key.publicKeyOpenSSH.split(separator: " ")[1])
 
@@ -907,8 +907,8 @@ struct EmbeddedKeyPorterTests {
                 hasPassphrase: true, passphrase: nil)
             let target = ManagedKeyStore(
                 directory: dir.appendingPathComponent("imported-\(UUID().uuidString)"))
-            #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
-                _ = try EmbeddedKeyPorter.materialize(
+            await #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+                _ = try await EmbeddedKeyPorter.materialize(
                     payload, store: target, secrets: InMemorySecretStore())
             }
             #expect(try target.all().isEmpty)
@@ -922,11 +922,11 @@ struct EmbeddedKeyPorterTests {
     /// OpenSSH private key, this used to import cleanly and register an entry
     /// showing the victim's real fingerprint behind a lock glyph — no key
     /// material required, let alone a splice.
-    @Test func materializeRejectsAFileThatIsOnlyAPublicKeyLine() throws {
+    @Test func materializeRejectsAFileThatIsOnlyAPublicKeyLine() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let victim = try addManagedKey(to: source, secrets: secrets, name: "prod")
+        let victim = try await addManagedKey(to: source, secrets: secrets, name: "prod")
 
         let payload = EmbeddedKey(
             fileContents: Data(victim.publicKeyOpenSSH.utf8),
@@ -936,8 +936,8 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
-            _ = try EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.keyMaterialUnverifiable) {
+            _ = try await EmbeddedKeyPorter.materialize(payload, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []
@@ -952,11 +952,11 @@ struct EmbeddedKeyPorterTests {
     /// lands as encrypted-without-a-slot, exactly as if it had been exported
     /// without secrets. Strictness here bought nothing — an attacker after that
     /// branch simply carries no passphrase — and only ever hit honest users.
-    @Test func materializeImportsAnEncryptedKeyWhoseCarriedPassphraseWentStale() throws {
+    @Test func materializeImportsAnEncryptedKeyWhoseCarriedPassphraseWentStale() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         var embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: true,
@@ -965,7 +965,7 @@ struct EmbeddedKeyPorterTests {
 
         let target = ManagedKeyStore(directory: dir.appendingPathComponent("imported"))
         let targetSecrets = RecordingSecretStore()
-        let importedPath = try EmbeddedKeyPorter.materialize(
+        let importedPath = try await EmbeddedKeyPorter.materialize(
             embedded, store: target, secrets: targetSecrets).path
 
         let imported = try #require(try target.key(forPath: importedPath))
@@ -979,11 +979,11 @@ struct EmbeddedKeyPorterTests {
     /// Same invariant one step later: the Keychain write succeeded and the
     /// metadata write is what fails. Both the file and the Keychain slot have
     /// to go.
-    @Test func materializeCleansUpWhenTheMetadataWriteFails() throws {
+    @Test func materializeCleansUpWhenTheMetadataWriteFails() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let source = makeStore(in: dir)
         let secrets = InMemorySecretStore()
-        let key = try addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
+        let key = try await addManagedKey(to: source, secrets: secrets, passphrase: "s3cr3t")
         let embedded = try #require(
             try EmbeddedKeyPorter.embed(
                 keyPath: path(of: key, in: source), includePassphrase: true,
@@ -1000,8 +1000,8 @@ struct EmbeddedKeyPorterTests {
         // Named, not the raw Cocoa error: that one spells out the local
         // `managed_keys.json` path, which is what the embed side's own error
         // cases exist to avoid.
-        #expect(throws: EmbeddedKeyPorter.PorterError.keyStoreUnwritable) {
-            _ = try EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
+        await #expect(throws: EmbeddedKeyPorter.PorterError.keyStoreUnwritable) {
+            _ = try await EmbeddedKeyPorter.materialize(embedded, store: target, secrets: targetSecrets)
         }
         let leftovers = (try? FileManager.default.contentsOfDirectory(
             atPath: target.keyDirectory.path(percentEncoded: false))) ?? []

@@ -2099,7 +2099,7 @@ public final class SessionListViewModel {
     public func applyLoginSetImport(
         _ plan: LoginSetImportPlan,
         keyStore: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
-    ) -> LoginSetImportResult {
+    ) async -> LoginSetImportResult {
         guard !plan.cancelled else { return LoginSetImportResult() }
 
         var result = LoginSetImportResult(
@@ -2131,7 +2131,7 @@ public final class SessionListViewModel {
 
             if let embedded = planned.embeddedKey {
                 do {
-                    let materialized = try EmbeddedKeyPorter.materialize(
+                    let materialized = try await EmbeddedKeyPorter.materialize(
                         embedded, store: keyStore, secrets: secrets)
                     set.keyPath = materialized.path
                     materializedKeyID = (try? keyStore.key(forPath: materialized.path))??.id

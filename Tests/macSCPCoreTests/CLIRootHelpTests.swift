@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import Testing
 
 /// The root command's `--help` screen: whether it explains the `name:/path`

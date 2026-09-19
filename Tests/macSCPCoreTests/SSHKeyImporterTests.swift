@@ -17,12 +17,28 @@ struct SSHKeyImporterTests {
         #expect(result.status == 0)
     }
 
+    /// A cancelled caller gets `CancellationError`, not one of the
+    /// importer's own failures: "the key is unsupported" would be a claim
+    /// about a key nobody finished reading. Cancelled before the call, for
+    /// the reason `SSHKeyGeneratorTests.aCancelledGenerationThrowsCancellation`
+    /// gives.
+    @Test func aCancelledInspectionThrowsCancellation() async throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let key = dir.appendingPathComponent("id_ed25519")
+        try await keygen(["-t", "ed25519", "-f", key.path, "-N", "", "-q", "-C", "cancelled"])
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
+        }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+    }
+
     @Test func inspectsAnUnencryptedEd25519Key() async throws {
         let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = dir.appendingPathComponent("id_ed25519")
         try await keygen(["-t", "ed25519", "-f", key.path, "-N", "", "-q", "-C", "import-test"])
 
-        let info = try SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
+        let info = try await SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
         #expect(info.type == .ed25519)
         #expect(info.fingerprint.hasPrefix("SHA256:"))
         #expect(info.publicKeyOpenSSH.hasPrefix("ssh-ed25519 "))
@@ -36,10 +52,10 @@ struct SSHKeyImporterTests {
         try await keygen(["-t", "ed25519", "-f", key.path, "-N", "s3cr3t", "-q"])
 
         // Wrong/empty passphrase: public-key derivation (ssh-keygen -y) fails.
-        #expect(throws: (any Error).self) {
-            _ = try SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
+        await #expect(throws: (any Error).self) {
+            _ = try await SSHKeyImporter.inspect(privateKeyURL: key, passphrase: nil)
         }
-        let info = try SSHKeyImporter.inspect(privateKeyURL: key, passphrase: "s3cr3t")
+        let info = try await SSHKeyImporter.inspect(privateKeyURL: key, passphrase: "s3cr3t")
         #expect(info.type == .ed25519)
     }
 
@@ -67,7 +83,7 @@ struct SSHKeyImporterTests {
         try FileManager.default.removeItem(at: pubA)
         try FileManager.default.copyItem(at: pubB, to: pubA)
 
-        let info = try SSHKeyImporter.inspect(privateKeyURL: keyA, passphrase: nil)
+        let info = try await SSHKeyImporter.inspect(privateKeyURL: keyA, passphrase: nil)
 
         // The public key always comes from `-y` on the private key, so it
         // must describe key A.
@@ -120,14 +136,14 @@ struct SSHKeyImporterTests {
         // it has to be gone before the private file can be asked about itself.
         try FileManager.default.removeItem(atPath: key.path + ".pub")
 
-        #expect(try SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: key)
+        #expect(try await SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: key)
             == HostKeyFingerprint.sha256(ofKeyBlobBase64: blob))
 
         // Not a key file at all: no fingerprint, and never a guess.
         let junk = dir.appendingPathComponent("junk")
         try Data("NOT A KEY AT ALL".utf8).write(to: junk)
-        #expect(throws: SSHKeyImporter.SSHKeyImportError.unsupportedOrEncrypted) {
-            _ = try SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: junk)
+        await #expect(throws: SSHKeyImporter.SSHKeyImportError.unsupportedOrEncrypted) {
+            _ = try await SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: junk)
         }
     }
 
@@ -150,8 +166,8 @@ struct SSHKeyImporterTests {
         try FileManager.default.copyItem(
             atPath: keyB.path + ".pub", toPath: keyA.path + ".pub")
 
-        #expect(throws: SSHKeyImporter.SSHKeyImportError.publicKeySiblingPresent) {
-            _ = try SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: keyA)
+        await #expect(throws: SSHKeyImporter.SSHKeyImportError.publicKeySiblingPresent) {
+            _ = try await SSHKeyImporter.fingerprint(ofPrivateKeyFileAt: keyA)
         }
     }
 }

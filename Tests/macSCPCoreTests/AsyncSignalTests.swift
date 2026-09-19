@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import Testing
 
 /// `AsyncSignal`'s three outcomes, each pinned on its own.

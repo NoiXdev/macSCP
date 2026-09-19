@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import Testing
 
 // A test-owned ssh-agent, and the three things a gated test does with one.

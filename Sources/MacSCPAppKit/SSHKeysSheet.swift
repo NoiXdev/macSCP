@@ -559,6 +559,11 @@ private struct GenerateKeySheet: View {
     @State private var passphrase = ""
     @State private var passphraseConfirm = ""
     @State private var errorMessage: String?
+    /// True while the generate task runs — `ImportKeySheet.isImporting`'s
+    /// job, for the same reason: `ssh-keygen` is `await`ed now, so the
+    /// press is no longer over before the button can be pressed again, and
+    /// two overlapping runs would add two keys for one press.
+    @State private var isGenerating = false
 
     /// A `Picker`-friendly stand-in for `KeyType` — `KeyType.rsa` carries a
     /// `bits` payload, so it can't be a segmented-picker `tag` on its own;
@@ -579,7 +584,8 @@ private struct GenerateKeySheet: View {
     private var passphrasesMismatch: Bool { passphrase != passphraseConfirm }
 
     private var isGenerateDisabled: Bool {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || passphrasesMismatch
+        isGenerating || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || passphrasesMismatch
     }
 
     var body: some View {
@@ -673,11 +679,25 @@ private struct GenerateKeySheet: View {
     ///
     /// New orphans only: existing ones cannot be collected without a Keychain
     /// enumeration, which `SecretStore` deliberately does not have.
-    private func generate() {
+    ///
+    /// Hands the work to a main-actor task, as `ImportKeySheet.performImport`
+    /// does: `SSHKeyGenerator.generate` is `async` (it awaits `ssh-keygen`
+    /// rather than blocking a thread on it), and a `Button` action cannot
+    /// be. `isGenerating` refuses an overlapping press.
+    @MainActor private func generate() {
+        guard !isGenerating else { return }
+        isGenerating = true
+        Task { @MainActor in
+            defer { isGenerating = false }
+            await generateKey()
+        }
+    }
+
+    @MainActor private func generateKey() async {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let generated = try SSHKeyGenerator.generate(
+            let generated = try await SSHKeyGenerator.generate(
                 type: resolvedType, comment: trimmedComment,
                 passphrase: passphrase.isEmpty ? nil : passphrase,
                 into: store.keyDirectory)
@@ -881,7 +901,7 @@ struct ImportKeySheet: View {
                     try await SSHKeyConverter.copyAsOpenSSH(
                         from: fileURL, to: destination,
                         passphrase: passphrase.isEmpty ? nil : passphrase)
-                    let info = try SSHKeyImporter.inspect(
+                    let info = try await SSHKeyImporter.inspect(
                         privateKeyURL: destination,
                         passphrase: passphrase.isEmpty ? nil : passphrase)
                     key = ManagedKey(

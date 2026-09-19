@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import MacSCPTestSupport
 import Testing
 
@@ -18,6 +19,9 @@ import Testing
 /// - `theRunnerExists` pins `SubprocessRunner.run` at COMPILE time, by
 ///   binding it to a function value. Rename or reshape it and this file stops
 ///   compiling; there is no spelling here that can quietly stop matching.
+///   The runner lives in `macSCPCore` at `package` scope since 2026-09-19
+///   (the CI-starvation plan, Task 2), so production code awaits its
+///   children through the same runner the tests do.
 /// - `everyCLISuiteRunsItsChildThroughTheRunner` names the four suites by
 ///   TYPE and derives their file names and the call text from those types,
 ///   so the same rename breaks the anchor rather than emptying it.
@@ -30,6 +34,25 @@ import Testing
 ///   through the same corpus listing the scan uses and requires every
 ///   pattern to turn up in it, so "the scan found nothing" can never mean
 ///   "the scan read nothing".
+///
+/// ## `Sources/` too, for one pattern
+///
+/// The scan above covers `Tests/` only, and the 2026-09-19 measurement
+/// (CI run 35405472152) found the pool held from the other side: some 800
+/// samples of test threads parked in a child-process wait inside
+/// `SSHKeyGenerator` and `SSHKeyImporter`, reached from key tests that
+/// were themselves clean. Those now await `SubprocessRunner.run`, and
+/// `noSourceWaitsForAChildOutsideTheRunner` holds all of `Sources/` to
+/// that for `BlockingWait.waitUntilExit` — the one pattern that is always
+/// a wait for a child, and for which the runner is the replacement. The
+/// other patterns stay `Tests/`-only: `Sources/` blocks on purpose in
+/// places that run off the pool by design (a semaphore inside a
+/// synchronous protocol requirement, say), and each of those would need
+/// its own reading before it could be allowlisted here. The two files the
+/// runner is made of moved out of `Tests/` in the same change and are
+/// still scanned for EVERY pattern, as they were before the move.
+/// Positives beside it: `everySourcesAllowlistEntryIsStillNeeded`,
+/// `theKeyToolsAwaitTheRunner`, and `theSourcesScanReadsCodeNotProse`.
 @Suite("Tests never block the cooperative pool")
 struct TestsNeverBlockThePoolGuardTests {
     /// The blocking waits forbidden in a test target, as measured by the grep
@@ -109,11 +132,12 @@ struct TestsNeverBlockThePoolGuardTests {
         // contract. Sub-second is what they measure — `docker ps`, `rm -f`,
         // `pause` — but nothing in the code says so, and `pruneLeftovers`'s
         // retry loop calls three of them per iteration for up to fifteen
-        // seconds, so the reduction there is real but partial. Converting
-        // needs a shared test-support target: this file is in
-        // `macSCPAppKitTests`, which cannot see `SubprocessRunner`, and its
-        // six `defer`-bound teardowns cannot host an `await`. Task 1b
-        // decision.
+        // seconds, so the reduction there is real but partial. Task 1b left
+        // it for two reasons. One is gone: this file is in
+        // `macSCPAppKitTests`, which could not see `SubprocessRunner` while
+        // the runner was a `macSCPCoreTests` file — it has been a `package`
+        // type in `macSCPCore` since 2026-09-19. The other stands: its six
+        // `defer`-bound teardowns cannot host an `await`.
         "macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift":
             [.dispatchGroup, .waitUntilExit],
 
@@ -154,7 +178,7 @@ struct TestsNeverBlockThePoolGuardTests {
             violations.isEmpty,
             """
             a test source blocks a cooperative-pool thread. Await the child \
-            through `SubprocessRunner.run` (Tests/macSCPCoreTests/Support), or \
+            through `SubprocessRunner.run` (Sources/macSCPCore/Subprocess), or \
             — if the wait is short and its conversion belongs to a later pass \
             — add it to `allowed` with the reason:
             \(violations.sorted().joined(separator: "\n"))
@@ -182,9 +206,8 @@ struct TestsNeverBlockThePoolGuardTests {
             async throws -> SubprocessResult = SubprocessRunner.run
         _ = run
 
-        let file = "macSCPCoreTests/Support/\(String(describing: SubprocessRunner.self)).swift"
-        #expect(try Self.testSources().contains(file), "\(file) is not where the scan can see it")
-        let source = try SourceCorpus.text(of: Self.url(for: file))
+        let file = try Self.runnerFile(named: String(describing: SubprocessRunner.self))
+        let source = try SourceCorpus.code(of: file)
         #expect(source.contains("enum \(String(describing: SubprocessRunner.self))"))
     }
 
@@ -273,6 +296,148 @@ struct TestsNeverBlockThePoolGuardTests {
         for pattern in BlockingWait.allCases {
             #expect(source.contains(pattern.rawValue), "\(pattern) is not in the guard's own source")
         }
+    }
+
+    // MARK: - Sources: a child is awaited through the runner
+
+    /// `Sources/` files, keyed by their path under `Sources/`, that still
+    /// wait for a child with `BlockingWait.waitUntilExit`.
+    ///
+    /// One entry, counted 2026-09-19 in this edit. It is not a key tool, and
+    /// converting it is not this change's to do: `PasswordCommandSecretSource`
+    /// implements `SecretSource.secret(for:)`, which is synchronous, so there
+    /// is no `await` to turn its wait into without changing that protocol for
+    /// every source that implements it. Both of its waits come after the
+    /// child's stdout has been drained or the child has been signalled — a
+    /// short wait for a reap, not for the command's work — but that is a
+    /// reading of the code, not a measurement of which thread it runs on.
+    static let sourcesAllowed: [String: Set<BlockingWait>] = [
+        "macSCPCore/Sessions/CLISecretSources.swift": [.waitUntilExit],
+    ]
+
+    /// The negative: no `Sources/` file waits for a child with a blocking
+    /// wait outside the allowlist; the runner's own files carry no blocking
+    /// wait of any kind. Read from the corpus's code view
+    /// (`SwiftSource.blankingCommentsAndStrings`), so a comment that names
+    /// the wait — the runner's own doc comment does — is not a call.
+    @Test func noSourceWaitsForAChildOutsideTheRunner() throws {
+        let runnerFiles = try Self.runnerFiles()
+        let files = try Self.sourceFiles()
+        let codes = try SourceCorpus.code(ofAll: files.map(\.url))
+        var violations: [String] = []
+        for (file, code) in zip(files, codes) {
+            let patterns: [BlockingWait] = runnerFiles.contains(file.url)
+                ? BlockingWait.allCases : [.waitUntilExit]
+            let excused = Self.sourcesAllowed[file.relative] ?? []
+            for pattern in patterns
+            where code.contains(pattern.rawValue) && !excused.contains(pattern) {
+                violations.append("\(file.relative): \(pattern.rawValue)")
+            }
+        }
+        #expect(
+            violations.isEmpty,
+            """
+            a source file waits for a child by blocking its thread. Await it \
+            through `SubprocessRunner.run` (Sources/macSCPCore/Subprocess):
+            \(violations.sorted().joined(separator: "\n"))
+            """)
+    }
+
+    /// Positive for the scan's reach: it enumerated `Sources/` rather than
+    /// nothing, and the runner's two files are among what it read.
+    /// Measured 2026-09-19: 387 `.swift` files under `Sources/` after this
+    /// change (`find Sources -name '*.swift' | wc -l`). A lower bound, for
+    /// the reason `theGuardsOwnSourceCarriesEveryPatternItLooksFor` gives
+    /// for its own.
+    @Test func theSourcesScanReadsTheWholeTree() throws {
+        let files = try Self.sourceFiles().map(\.url)
+        #expect(files.count > 300, "the Sources scan enumerated only \(files.count) files")
+        for runner in try Self.runnerFiles() {
+            #expect(files.contains(runner), "\(runner.lastPathComponent) is not in the Sources scan")
+        }
+    }
+
+    /// An entry is a claim that its file still carries the wait. It is also
+    /// the scan's proof that it sees a real call in `Sources/`: the entry
+    /// can only be satisfied by the same code view the negative reads.
+    @Test func everySourcesAllowlistEntryIsStillNeeded() throws {
+        let files = Dictionary(uniqueKeysWithValues: try Self.sourceFiles().map { ($0.relative, $0.url) })
+        for (file, patterns) in Self.sourcesAllowed {
+            guard let url = files[file] else {
+                Issue.record("allowlisted source \(file) no longer exists — drop the entry")
+                continue
+            }
+            let code = try SourceCorpus.code(of: url)
+            for pattern in patterns where !code.contains(pattern.rawValue) {
+                Issue.record("\(file) no longer carries \(pattern.rawValue) — drop it from `sourcesAllowed`")
+            }
+        }
+    }
+
+    /// The positive the negative's replacement rests on: both key tools call
+    /// the runner. File names and the call text are derived from the types,
+    /// so a rename breaks compilation here instead of emptying the check.
+    @Test func theKeyToolsAwaitTheRunner() throws {
+        let call = "\(String(describing: SubprocessRunner.self)).run("
+        let files = try Self.sourceFiles()
+        for tool in [String(describing: SSHKeyGenerator.self), String(describing: SSHKeyImporter.self)] {
+            let matches = files.filter { $0.url.lastPathComponent == "\(tool).swift" }
+            #expect(matches.count == 1, "\(tool).swift: \(matches.count) files")
+            for match in matches {
+                #expect(try SourceCorpus.code(of: match.url).contains(call), "\(match.relative) does not call \(call)")
+            }
+        }
+    }
+
+    /// Sensitivity: the Sources scan reads code, not prose. The runner's own
+    /// doc comment names the blocking wait it replaces, so the file's raw
+    /// text carries the pattern while its code view must not — which proves
+    /// both that the file is read and that the comment is not what is read.
+    @Test func theSourcesScanReadsCodeNotProse() throws {
+        let file = try Self.runnerFile(named: String(describing: SubprocessRunner.self))
+        let pattern = BlockingWait.waitUntilExit.rawValue
+        #expect(try SourceCorpus.text(of: file).contains(pattern))
+        #expect(try SourceCorpus.code(of: file).contains(pattern) == false)
+    }
+
+    /// `Sources/` under the package root, as `SourceCorpus` holds it.
+    private static let sourcesRoot = SourceCorpus.url(of: .sources)
+
+    /// Every `.swift` file under `Sources/`, with its path relative to it.
+    private static func sourceFiles() throws -> [(relative: String, url: URL)] {
+        let prefix = SourceCorpus.key(sourcesRoot) + "/"
+        return try SourceCorpus.files(under: sourcesRoot).compactMap { url in
+            guard url.pathExtension == "swift" else { return nil }
+            let key = SourceCorpus.key(url)
+            guard key.hasPrefix(prefix) else { return nil }
+            return (String(key.dropFirst(prefix.count)), url)
+        }
+    }
+
+    /// The one `Sources/` file named `<type>.swift`, found by walking rather
+    /// than by a spelled directory, so the runner can move inside `Sources/`
+    /// without this going blind — and fails if there is not exactly one.
+    private static func runnerFile(named type: String) throws -> URL {
+        let matches = try sourceFiles().filter { $0.url.lastPathComponent == "\(type).swift" }
+        guard matches.count == 1, let match = matches.first else {
+            throw RunnerFileMissing(type: type, found: matches.map(\.relative))
+        }
+        return match.url
+    }
+
+    /// The two files the runner is made of — the two that moved out of
+    /// `Tests/` and keep the full-pattern scan they had there.
+    private static func runnerFiles() throws -> [URL] {
+        [
+            try runnerFile(named: String(describing: SubprocessRunner.self)),
+            try runnerFile(named: String(describing: AsyncSignal.self)),
+        ]
+    }
+
+    private struct RunnerFileMissing: Error, CustomStringConvertible {
+        let type: String
+        let found: [String]
+        var description: String { "expected exactly one \(type).swift under Sources/, found \(found)" }
     }
 
     // MARK: - Reading the corpus

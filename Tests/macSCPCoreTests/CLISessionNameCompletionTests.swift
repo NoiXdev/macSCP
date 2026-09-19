@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import Testing
 
 /// The CLI wiring for `name:` shell completion — everything that is

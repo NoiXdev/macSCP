@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 
 /// Awaits `run`, and cancels it if the CASE is cancelled first — by its
 /// suite's time limit. A bare `await run.value` does not answer the case's

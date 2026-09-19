@@ -2,17 +2,17 @@ import Foundation
 import Synchronization
 
 /// What a finished child process left behind.
-struct SubprocessResult: Sendable {
-    let status: Int32
-    let stdout: Data
-    let stderr: Data
+package struct SubprocessResult: Sendable {
+    package let status: Int32
+    package let stdout: Data
+    package let stderr: Data
 
     /// The two streams as text, for the many call sites that assert on
     /// output. Lossy decoding, deliberately: a test that fails because a
     /// byte was not UTF-8 should say what the command printed, not vanish
     /// into a nil.
-    var stdoutText: String { String(decoding: stdout, as: UTF8.self) }
-    var stderrText: String { String(decoding: stderr, as: UTF8.self) }
+    package var stdoutText: String { String(decoding: stdout, as: UTF8.self) }
+    package var stderrText: String { String(decoding: stderr, as: UTF8.self) }
 }
 
 /// What the escalation did to end a run, and how long each phase really took.
@@ -21,24 +21,24 @@ struct SubprocessResult: Sendable {
 /// the caller's task being cancelled — because the escalation itself is the
 /// same on both paths, and so is the question a reader of either error asks:
 /// did the child write nothing, or did the reader never get there?
-struct SubprocessReapReport: Sendable {
+package struct SubprocessReapReport: Sendable {
     /// Wall-clock spent on the wait that ended. On a saturated runner this
     /// overruns the bound — a deadline is when a sleeping task becomes
     /// RUNNABLE, not when it runs — and saying so by how much is the
     /// difference between "the bound is wrong" and "the machine is busy".
     /// On the cancellation path it is how long the wait had run when the
     /// cancellation reached it, which no bound predicts.
-    let bound: Duration
+    package let bound: Duration
     /// `nil` when the phase was not reached (the child had already been
     /// reaped, so nothing was signalled).
-    let sigtermGrace: Duration?
-    let sigkillGrace: Duration?
+    package let sigtermGrace: Duration?
+    package let sigkillGrace: Duration?
     /// Whether each reader had seen EOF by the time the error was built.
     /// A reader still open after `SIGKILL` means something OTHER than the
     /// child holds the write end — a grandchild that inherited it, most
     /// likely — and that is a fact about the child, not about the runner.
-    let stdoutDrained: Bool
-    let stderrDrained: Bool
+    package let stdoutDrained: Bool
+    package let stderrDrained: Bool
 }
 
 /// Thrown when a child outlives the bound it was run with.
@@ -50,13 +50,14 @@ struct SubprocessReapReport: Sendable {
 /// error is the entire report, and an error that says only "empty" cannot
 /// distinguish a child that wrote nothing from a reader that never got
 /// there. CI run 33693297919 was exactly that ambiguity.
-struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
-    let executable: String
+package struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
+    package let executable: String
 
     /// How many arguments there were. NOT the arguments.
     ///
-    /// Several suites in this target run `ssh-keygen -N <passphrase>` through
-    /// this runner, so an argument value can be a secret's value and a
+    /// Several test suites run `ssh-keygen -N <passphrase>` through this
+    /// runner, and so, since 2026-09-19, do `SSHKeyGenerator` (`-N`) and
+    /// `SSHKeyImporter` (`-P`) — so an argument value can be a secret's value and a
     /// rendered argument list is that secret sitting in a public CI log.
     /// Storing the count rather than the list is what makes the leak
     /// unwritable: no later `CustomDebugStringConvertible`, `LocalizedError`
@@ -64,13 +65,13 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
     /// textual expectation over `description` could only forbid it (CLAUDE.md,
     /// "Guards that name what they watch", rule 3 — a property that keeps
     /// buying one spelling wants a structural boundary).
-    let argumentCount: Int
+    package let argumentCount: Int
 
-    let timeout: Duration
-    let stderrSoFar: Data
-    let reap: SubprocessReapReport
+    package let timeout: Duration
+    package let stderrSoFar: Data
+    package let reap: SubprocessReapReport
 
-    var description: String {
+    package var description: String {
         let text = String(decoding: stderrSoFar, as: UTF8.self)
         let phases = [
             "waited \(reap.bound) for the \(timeout) bound",
@@ -109,20 +110,20 @@ struct SubprocessTimeout: Error, CustomStringConvertible, Sendable {
 /// `argumentCount`, not the arguments, for the reason `SubprocessTimeout`
 /// gives at its own field: an argument value can be a passphrase, and what
 /// this type does not hold, no later conformance can render.
-struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
-    let executable: String
+package struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
+    package let executable: String
 
     /// How many arguments there were. NOT the arguments.
-    let argumentCount: Int
+    package let argumentCount: Int
 
-    let stdoutSoFar: Data
-    let stderrSoFar: Data
-    let reap: SubprocessReapReport
+    package let stdoutSoFar: Data
+    package let stderrSoFar: Data
+    package let reap: SubprocessReapReport
 
-    var stdoutText: String { String(decoding: stdoutSoFar, as: UTF8.self) }
-    var stderrText: String { String(decoding: stderrSoFar, as: UTF8.self) }
+    package var stdoutText: String { String(decoding: stdoutSoFar, as: UTF8.self) }
+    package var stderrText: String { String(decoding: stderrSoFar, as: UTF8.self) }
 
-    var description: String {
+    package var description: String {
         let phases = [
             "waited \(reap.bound) before the cancellation",
             reap.sigtermGrace.map { "\($0) after SIGTERM" },
@@ -141,8 +142,17 @@ struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
     }
 }
 
-/// Runs child processes for the test suites without parking a thread of the
-/// Swift concurrency cooperative pool.
+/// Runs child processes without parking a thread of the Swift concurrency
+/// cooperative pool — for the test suites, and for the two key tools in
+/// this module that wait for `ssh-keygen` (`SSHKeyGenerator`,
+/// `SSHKeyImporter`; counted 2026-09-19).
+///
+/// It was test support in `Tests/macSCPCoreTests/Support/` until then, and
+/// moved here so those two could stop parking a thread per `ssh-keygen` run
+/// (about 800 samples of pool threads in the 2026-09-19 measurement of CI
+/// run 35405472152) without a second runner being written for them.
+/// `package`, not `public`: the test targets need it, nothing outside this
+/// package does.
 ///
 /// The pool is exactly as wide as the machine has cores, and Swift Testing
 /// runs every test on it. A test that blocks — `Process.waitUntilExit()`, a
@@ -171,7 +181,7 @@ struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
 /// suite had parked enough readers, a newly submitted one never got a
 /// thread at all — the child exited, and its output was never read. The
 /// comment at the readers below carries the log line.
-enum SubprocessRunner {
+package enum SubprocessRunner {
     /// Runs `executable` with `arguments`, drains both pipes, and awaits
     /// termination without parking a cooperative-pool thread.
     ///
@@ -232,7 +242,7 @@ enum SubprocessRunner {
     ///   in a `defer` and skips the `kill` once that is set. Nothing here
     ///   retains the number for the same reason.
     @discardableResult
-    static func run(
+    package static func run(
         _ executable: URL,
         arguments: [String],
         environment: [String: String]? = nil,

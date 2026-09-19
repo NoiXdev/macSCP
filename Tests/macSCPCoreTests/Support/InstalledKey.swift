@@ -1,4 +1,5 @@
 import Foundation
+import macSCPCore
 import Testing
 
 /// Generates a runtime key pair in a fresh temporary directory and hands back

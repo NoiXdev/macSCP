@@ -30,8 +30,8 @@ struct LoginSetExportImportTests {
     private func addManagedKey(
         to store: ManagedKeyStore, secrets: any SecretStore, name: String,
         passphrase: String? = nil
-    ) throws -> ManagedKey {
-        let generated = try SSHKeyGenerator.generate(
+    ) async throws -> ManagedKey {
+        let generated = try await SSHKeyGenerator.generate(
             type: .ed25519, comment: name, passphrase: passphrase, into: store.keyDirectory)
         let key = ManagedKey(
             name: name, comment: name, type: .ed25519, fingerprint: generated.fingerprint,
@@ -121,11 +121,11 @@ struct LoginSetExportImportTests {
         #expect(result.keyErrors.isEmpty)
     }
 
-    @Test func managedKeysTravelWithTheirOwnPassphrase() throws {
+    @Test func managedKeysTravelWithTheirOwnPassphrase() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore(in: dir)
-        let key = try addManagedKey(to: keys, secrets: secrets, name: "prod", passphrase: "pp")
+        let key = try await addManagedKey(to: keys, secrets: secrets, name: "prod", passphrase: "pp")
         vm.saveLoginSet(
             LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
                      keyPath: path(of: key, in: keys)),
@@ -145,13 +145,13 @@ struct LoginSetExportImportTests {
     /// afterwards lives in the LOGIN SET's slot. `EmbeddedKeyPorter.embed` only
     /// ever looks at the key's own slot and would ship a locked key whose
     /// passphrase this machine had all along — the caller fills it in.
-    @Test func aPassphraseHeldBytheSetIsNotLostOnReExport() throws {
+    @Test func aPassphraseHeldBytheSetIsNotLostOnReExport() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore(in: dir)
         // Encrypted key, NO Keychain slot of its own — exactly what
         // `EmbeddedKeyPorter.materialize` produces for a secret-free import.
-        let key = try addManagedKey(to: keys, secrets: secrets, name: "imported", passphrase: "pp")
+        let key = try await addManagedKey(to: keys, secrets: secrets, name: "imported", passphrase: "pp")
         try secrets.deletePassword(for: key.id)
         vm.saveLoginSet(
             LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
@@ -168,11 +168,11 @@ struct LoginSetExportImportTests {
 
     /// …and when NOBODY holds the passphrase, that is reported rather than
     /// silently shipped as an unopenable key.
-    @Test func aKeyWithNoReachablePassphraseIsReported() throws {
+    @Test func aKeyWithNoReachablePassphraseIsReported() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore(in: dir)
-        let key = try addManagedKey(to: keys, secrets: secrets, name: "imported", passphrase: "pp")
+        let key = try await addManagedKey(to: keys, secrets: secrets, name: "imported", passphrase: "pp")
         try secrets.deletePassword(for: key.id)
         vm.saveLoginSet(
             LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
@@ -188,11 +188,11 @@ struct LoginSetExportImportTests {
         #expect(result.payload.includesKeyFiles)
     }
 
-    @Test func aBrokenManagedKeyIsNamedAndTheRestStillExports() throws {
+    @Test func aBrokenManagedKeyIsNamedAndTheRestStillExports() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = keyStore(in: dir)
-        let key = try addManagedKey(to: keys, secrets: secrets, name: "gone")
+        let key = try await addManagedKey(to: keys, secrets: secrets, name: "gone")
         vm.saveLoginSet(
             LoginSet(name: "broken", username: "u", authKind: .privateKey,
                      keyPath: path(of: key, in: keys)),
@@ -212,7 +212,7 @@ struct LoginSetExportImportTests {
 
     // MARK: - Import
 
-    @Test func applyImportWritesSetsAndSecrets() throws {
+    @Test func applyImportWritesSetsAndSecrets() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let fresh = LoginSet(name: "prod", username: "deploy")
@@ -222,7 +222,7 @@ struct LoginSetExportImportTests {
             ],
             skipped: ["dup"], renamed: ["other (2)"])
 
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.imported == 1)
         #expect(result.skipped == 1)
@@ -232,12 +232,12 @@ struct LoginSetExportImportTests {
         #expect(try secrets.password(for: fresh.id) == "pw")
     }
 
-    @Test func cancelledPlanWritesAndReportsNothing() throws {
+    @Test func cancelledPlanWritesAndReportsNothing() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         vm.saveLoginSet(LoginSet(name: "existing", username: "u"), secret: "keep")
 
-        let result = vm.applyLoginSetImport(
+        let result = await vm.applyLoginSetImport(
             LoginSetImportPlan(cancelled: true), keyStore: keyStore(in: dir))
 
         #expect(result == SessionListViewModel.LoginSetImportResult())
@@ -246,7 +246,7 @@ struct LoginSetExportImportTests {
     }
 
     /// A replace that brings its own secret overwrites the old one…
-    @Test func replaceWithASecretOverwritesTheStoredOne() throws {
+    @Test func replaceWithASecretOverwritesTheStoredOne() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = LoginSet(name: "prod", username: "old")
@@ -257,7 +257,7 @@ struct LoginSetExportImportTests {
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: "new-pw", embeddedKey: nil, replacesExisting: true),
         ], replaced: ["prod"])
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.replaced == 1)
         #expect(result.secretsImported == 1)
@@ -270,7 +270,7 @@ struct LoginSetExportImportTests {
     /// bound to the set the user just replaced (M19 finding 1). Silently
     /// keeping it means the "replaced" set connects with a credential that is
     /// neither in the file nor visible anywhere.
-    @Test func replaceWithoutASecretRemovesTheStaleOne() throws {
+    @Test func replaceWithoutASecretRemovesTheStaleOne() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = LoginSet(name: "prod", username: "old")
@@ -281,7 +281,7 @@ struct LoginSetExportImportTests {
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: nil, embeddedKey: nil, replacesExisting: true),
         ], replaced: ["prod"])
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.secretsRemoved == 1)
         #expect(try secrets.password(for: existing.id) == nil)
@@ -290,7 +290,7 @@ struct LoginSetExportImportTests {
     /// The login-set twin of `aReplaceRemovesTheStaleSecretEvenWhenTheKeychain
     /// CannotBeRead` (M19 review, important 1): an unreadable Keychain is not
     /// evidence that there is no secret, so the delete runs regardless.
-    @Test func aReplaceRemovesTheStaleSecretEvenWhenTheKeychainCannotBeRead() throws {
+    @Test func aReplaceRemovesTheStaleSecretEvenWhenTheKeychainCannotBeRead() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-loginio-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -303,7 +303,7 @@ struct LoginSetExportImportTests {
         vm.saveLoginSet(existing, secret: "old-pw")
         #expect(secrets.peek(existing.id) == "old-pw")
 
-        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: nil, embeddedKey: nil, replacesExisting: true),
@@ -313,7 +313,7 @@ struct LoginSetExportImportTests {
         #expect(result.secretsRemoved == 0)
     }
 
-    @Test func aRemovalThatFailsIsReported() throws {
+    @Test func aRemovalThatFailsIsReported() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-loginio-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -325,7 +325,7 @@ struct LoginSetExportImportTests {
         let existing = LoginSet(name: "prod", username: "old")
         vm.saveLoginSet(existing, secret: "old-pw")
 
-        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: nil, embeddedKey: nil, replacesExisting: true),
@@ -346,7 +346,7 @@ struct LoginSetExportImportTests {
     /// The set therefore carries an id that DOES have a slot — the leftover
     /// state a re-import after a delete produces — so the guard is the only
     /// thing standing between "fresh import" and "wipes that slot".
-    @Test func aFreshImportWithoutASecretRemovesNothing() throws {
+    @Test func aFreshImportWithoutASecretRemovesNothing() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let unrelated = LoginSet(name: "other", username: "u")
@@ -358,7 +358,7 @@ struct LoginSetExportImportTests {
             PlannedLoginSet(
                 set: freshSet, secret: nil, embeddedKey: nil, replacesExisting: false),
         ])
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.secretsRemoved == 0)
         #expect(result.secretRemovalFailures == 0)
@@ -373,7 +373,7 @@ struct LoginSetExportImportTests {
     /// always builds them with `authKind: .password`), so a key set's
     /// legitimately absent passphrase never counts, and it counts both a
     /// fresh set that arrives empty and a replace that ends up empty.
-    @Test func importingSetsWithoutSecretsReportsTheirNumber() throws {
+    @Test func importingSetsWithoutSecretsReportsTheirNumber() async throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = LoginSet(name: "prod", username: "old")
@@ -393,7 +393,7 @@ struct LoginSetExportImportTests {
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: nil, embeddedKey: nil, replacesExisting: true),
         ], replaced: ["prod"])
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.secretsMissing == 2)
     }
@@ -402,13 +402,13 @@ struct LoginSetExportImportTests {
     /// summary's one line — "%lld imported, %lld replaced, %lld skipped" —
     /// reported a single replacing set as "1 imported, 1 replaced". `imported`
     /// now means what the line says: sets that are NEW to this machine.
-    @Test func aReplacedSetIsNotAlsoCountedAsImported() throws {
+    @Test func aReplacedSetIsNotAlsoCountedAsImported() async throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = LoginSet(name: "prod", username: "old")
         vm.saveLoginSet(existing, secret: nil)
 
-        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: LoginSet(id: existing.id, name: "prod", username: "new"),
                 secret: nil, embeddedKey: nil, replacesExisting: true),
@@ -429,12 +429,12 @@ struct LoginSetExportImportTests {
     /// `authKind: agent` with a secret created a Keychain entry our own UI can
     /// never show, change or clean up. Not producible by our exporter — which
     /// is exactly why the applier has to uphold the rule itself.
-    @Test func anAgentSetNeverGetsAKeychainEntry() throws {
+    @Test func anAgentSetNeverGetsAKeychainEntry() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let agentSet = LoginSet(name: "agent", username: "u", authKind: .agent)
 
-        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: agentSet, secret: "should-never-be-stored", embeddedKey: nil,
                 replacesExisting: false),
@@ -450,13 +450,13 @@ struct LoginSetExportImportTests {
     /// The removal is not REPORTED here: "removed because the file had none"
     /// would be untrue about a file that carried one — the same reasoning that
     /// keeps a passphrase handed to the key out of `secretsRemoved`.
-    @Test func replacingWithAnAgentSetClearsTheOldSecret() throws {
+    @Test func replacingWithAnAgentSetClearsTheOldSecret() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let existing = LoginSet(name: "prod", username: "u")
         vm.saveLoginSet(existing, secret: "old-pw")
 
-        let result = vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vm.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: LoginSet(id: existing.id, name: "prod", username: "u", authKind: .agent),
                 secret: "should-never-be-stored", embeddedKey: nil, replacesExisting: true),
@@ -467,11 +467,11 @@ struct LoginSetExportImportTests {
         #expect(result.secretsImported == 0)
     }
 
-    @Test func embeddedKeysAreMaterializedAndRepointTheSet() throws {
+    @Test func embeddedKeysAreMaterializedAndRepointTheSet() async throws {
         let (vm, secrets, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let sourceKeys = keyStore(in: dir.appendingPathComponent("source"))
-        let key = try addManagedKey(to: sourceKeys, secrets: secrets, name: "prod")
+        let key = try await addManagedKey(to: sourceKeys, secrets: secrets, name: "prod")
         let embedded = try #require(try EmbeddedKeyPorter.embed(
             keyPath: path(of: key, in: sourceKeys), includePassphrase: false,
             store: sourceKeys, secrets: secrets))
@@ -484,7 +484,7 @@ struct LoginSetExportImportTests {
                 secret: nil, embeddedKey: embedded, replacesExisting: false),
         ])
 
-        let result = vm.applyLoginSetImport(plan, keyStore: targetKeys)
+        let result = await vm.applyLoginSetImport(plan, keyStore: targetKeys)
 
         #expect(result.keysImported == 1)
         #expect(result.keyFailures.isEmpty)
@@ -506,13 +506,13 @@ struct LoginSetExportImportTests {
     /// prevent. Worse, the SET's slot wins at connect time (`resolve` prefers
     /// the typed/set value), so changing the passphrase later in the SSH keys
     /// sheet would leave the stale copy in force.
-    @Test func anImportedKeyPassphraseIsStoredInExactlyOneSlot() throws {
+    @Test func anImportedKeyPassphraseIsStoredInExactlyOneSlot() async throws {
         // Machine A: a managed key with its passphrase, and a set bound to it
         // whose own slot holds the same value (what the editor writes).
         let (vmA, secretsA, dirA) = makeVM()
         defer { try? FileManager.default.removeItem(at: dirA) }
         let keysA = keyStore(in: dirA)
-        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "pp")
+        let keyA = try await addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "pp")
         vmA.saveLoginSet(
             LoginSet(name: "prod", username: "deploy", authKind: .privateKey,
                      keyPath: path(of: keyA, in: keysA)),
@@ -536,7 +536,7 @@ struct LoginSetExportImportTests {
                 replacesExisting: false),
         ])
 
-        let result = vmB.applyLoginSetImport(plan, keyStore: keysB)
+        let result = await vmB.applyLoginSetImport(plan, keyStore: keysB)
 
         #expect(result.keysImported == 1)
         let imported = try #require(vmB.loginSets.first)
@@ -555,12 +555,12 @@ struct LoginSetExportImportTests {
     /// passphrase (an unencrypted key, or one whose carried passphrase did not
     /// open it), the set's secret is still the only place it can live, and
     /// must not be dropped.
-    @Test func aSecretIsStillStoredWhenTheKeyDidNotTakeIt() throws {
+    @Test func aSecretIsStillStoredWhenTheKeyDidNotTakeIt() async throws {
         let (_, secretsA, dirA) = makeVM()
         defer { try? FileManager.default.removeItem(at: dirA) }
         let keysA = keyStore(in: dirA)
         // No passphrase on the key at all.
-        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod")
+        let keyA = try await addManagedKey(to: keysA, secrets: secretsA, name: "prod")
         let embedded = try #require(try EmbeddedKeyPorter.embed(
             keyPath: path(of: keyA, in: keysA), includePassphrase: true,
             store: keysA, secrets: secretsA))
@@ -574,7 +574,7 @@ struct LoginSetExportImportTests {
                 secret: "kept", embeddedKey: embedded, replacesExisting: false),
         ])
 
-        let result = vmB.applyLoginSetImport(plan, keyStore: keyStore(in: dirB))
+        let result = await vmB.applyLoginSetImport(plan, keyStore: keyStore(in: dirB))
 
         #expect(result.secretsImported == 1)
         let imported = try #require(vmB.loginSets.first)
@@ -585,11 +585,11 @@ struct LoginSetExportImportTests {
     /// slot — leaving it would keep the stale value winning at connect time.
     /// It is not reported as a removal: nothing was lost, the passphrase just
     /// lives with the key now.
-    @Test func aReplaceWhoseKeyTookThePassphraseClearsTheSetSlotQuietly() throws {
+    @Test func aReplaceWhoseKeyTookThePassphraseClearsTheSetSlotQuietly() async throws {
         let (_, secretsA, dirA) = makeVM()
         defer { try? FileManager.default.removeItem(at: dirA) }
         let keysA = keyStore(in: dirA)
-        let keyA = try addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "new-pp")
+        let keyA = try await addManagedKey(to: keysA, secrets: secretsA, name: "prod", passphrase: "new-pp")
         let embedded = try #require(try EmbeddedKeyPorter.embed(
             keyPath: path(of: keyA, in: keysA), includePassphrase: true,
             store: keysA, secrets: secretsA))
@@ -600,7 +600,7 @@ struct LoginSetExportImportTests {
                                 keyPath: "/old/id_ed25519")
         vmB.saveLoginSet(existing, secret: "old-pp")
 
-        let result = vmB.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
+        let result = await vmB.applyLoginSetImport(LoginSetImportPlan(setsToImport: [
             PlannedLoginSet(
                 set: LoginSet(id: existing.id, name: "prod", username: "new",
                               authKind: .privateKey, keyPath: "/old/id_ed25519"),
@@ -617,7 +617,7 @@ struct LoginSetExportImportTests {
 
     /// A set whose key file is nowhere on this machine imports anyway — and
     /// says so, instead of failing at the next connect.
-    @Test func aSetWhoseKeyIsMissingLocallyIsReported() throws {
+    @Test func aSetWhoseKeyIsMissingLocallyIsReported() async throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
         let plan = LoginSetImportPlan(setsToImport: [
@@ -627,7 +627,7 @@ struct LoginSetExportImportTests {
                 secret: nil, embeddedKey: nil, replacesExisting: false),
         ])
 
-        let result = vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
+        let result = await vm.applyLoginSetImport(plan, keyStore: keyStore(in: dir))
 
         #expect(result.imported == 1)
         #expect(result.missingKeyPaths == ["prod"])
