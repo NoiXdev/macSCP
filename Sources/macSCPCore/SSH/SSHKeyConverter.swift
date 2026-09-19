@@ -15,6 +15,9 @@ import Foundation
 public enum SSHKeyConverter {
     public enum ConversionError: Error, Equatable, Sendable {
         case toolMissing, sourceUnreadable, conversionFailed, destinationExists
+        /// `ssh-keygen` did not exit within `KeyToolBound.keygen` and was
+        /// ended; the destination is removed.
+        case timedOut
     }
 
     public static let opensshBoundary = "-----BEGIN OPENSSH PRIVATE KEY-----"
@@ -40,13 +43,16 @@ public enum SSHKeyConverter {
     ///
     /// `async` because it waits for a child process, and a wait for a child
     /// process is never allowed to be a blocking one here (CLAUDE.md, "Tests
-    /// never block the cooperative pool"): every test that called this
-    /// parked a cooperative-pool thread on `ssh-keygen` for as long as it
+    /// never block the cooperative pool"): every test that called this used
+    /// to park a cooperative-pool thread on `ssh-keygen` for as long as it
     /// ran, and that pool is exactly as wide as the machine has cores. The
-    /// waiting is `waitForExit(_:)` below, an `await` on the process's own
-    /// termination handler. The file system work around it stays
-    /// synchronous — it is the process wait, not the I/O, that this changed
-    /// for.
+    /// waiting goes through `SubprocessRunner.run` — a suspension, never a
+    /// thread parked on the child, the same runner `SSHKeyGenerator` and
+    /// `SSHKeyImporter` await, bounded by the same `KeyToolBound.keygen` and
+    /// mapped the same way: a `SubprocessTimeout` becomes `.timedOut`, with
+    /// the half-written destination removed. The file system work around it
+    /// stays synchronous — it is the process wait, not the I/O, that this
+    /// changed for.
     @discardableResult
     public static func copyAsOpenSSH(from source: URL, to destination: URL,
                                      passphrase: String?) async throws -> Bool {
@@ -80,51 +86,34 @@ public enum SSHKeyConverter {
             return false
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = ["-q", "-p", "-P", passphrase ?? "", "-N", passphrase ?? "", "-f", destinationPath]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        let status: Int32
+        // Never inherit an interactive prompt: `stdin: nil` (the default)
+        // hands the child the null device, the same as the explicit
+        // `FileHandle.nullDevice` this replaced. Output is dropped — `-q`
+        // keeps it quiet, and nothing here reads it.
+        let result: SubprocessResult
         do {
-            status = try await waitForExit(process)
+            result = try await SubprocessRunner.run(
+                URL(fileURLWithPath: tool),
+                arguments: ["-q", "-p", "-P", passphrase ?? "", "-N", passphrase ?? "", "-f", destinationPath],
+                timeout: KeyToolBound.keygen)
+        } catch is SubprocessTimeout {
+            // The runner has ended the child; a half-rewritten copy must not
+            // stay behind claiming to be the converted key.
+            try? FileManager.default.removeItem(at: destination)
+            throw ConversionError.timedOut
+        } catch is SubprocessCancelled {
+            try? FileManager.default.removeItem(at: destination)
+            throw CancellationError()
         } catch {
             try? FileManager.default.removeItem(at: destination)
             throw ConversionError.conversionFailed
         }
 
-        guard status == 0, isOpenSSHFormat(fileAt: destination) else {
+        guard result.status == 0, isOpenSSHFormat(fileAt: destination) else {
             try? FileManager.default.removeItem(at: destination)
             throw ConversionError.conversionFailed
         }
         return true
-    }
-
-    /// Starts `process` and suspends until it exits, handing back its exit
-    /// status; throws whatever `run()` threw when it could not be started at
-    /// all.
-    ///
-    /// The termination handler is installed BEFORE `run()`, which is the
-    /// only order that cannot lose the notification for a process that exits
-    /// immediately. The continuation is resumed exactly once on each path:
-    /// `run()` throwing means the handler will never be called (nothing was
-    /// started), and clearing it there keeps that true even if the reference
-    /// outlives this call. The handler reads the exit status off the
-    /// `Process` it is HANDED rather than the one captured here, so there is
-    /// no shared mutable state between the two sides of the suspension.
-    private static func waitForExit(_ process: Process) async throws -> Int32 {
-        try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { finished in
-                continuation.resume(returning: finished.terminationStatus)
-            }
-            do {
-                try process.run()
-            } catch {
-                process.terminationHandler = nil
-                continuation.resume(throwing: error)
-            }
-        }
     }
 
     /// The in-place conversion a person runs in a terminal themselves:

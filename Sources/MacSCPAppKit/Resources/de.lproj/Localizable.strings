@@ -920,6 +920,7 @@
 "keys.import.submit" = "Importieren";
 "keys.import.error" = "Der Schlüssel konnte nicht importiert werden.";
 "keys.import.error.timedOut" = "Das Lesen des Schlüssels hat zu lange gedauert und wurde abgebrochen. Der Schlüssel wurde nicht importiert.";
+"keys.import.error.conversionTimedOut" = "Das Konvertieren des Schlüssels hat zu lange gedauert und wurde abgebrochen. Der Schlüssel wurde nicht importiert.";
 "keys.exportPrivate" = "Privaten Schlüssel exportieren…";
 "keys.exportPrivate.title" = "Privaten Schlüssel exportieren?";
 "keys.exportPrivate.warn" = "Der private Schlüssel verlässt den geschützten Speicher. Fortfahren?";

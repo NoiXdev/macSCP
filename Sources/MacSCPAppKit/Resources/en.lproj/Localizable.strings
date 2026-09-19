@@ -919,6 +919,7 @@
 "keys.import.submit" = "Import";
 "keys.import.error" = "Couldn't import the key.";
 "keys.import.error.timedOut" = "Reading the key took too long and was stopped. The key was not imported.";
+"keys.import.error.conversionTimedOut" = "Converting the key took too long and was stopped. The key was not imported.";
 "keys.exportPrivate" = "Export private key…";
 "keys.exportPrivate.title" = "Export the private key?";
 "keys.exportPrivate.warn" = "The private key will leave the protected store. Continue?";

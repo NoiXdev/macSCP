@@ -53,6 +53,21 @@ import Testing
 /// still scanned for EVERY pattern, as they were before the move.
 /// Positives beside it: `everySourcesAllowlistEntryIsStillNeeded`,
 /// `theKeyToolsAwaitTheRunner`, and `theSourcesScanReadsCodeNotProse`.
+///
+/// ## No second runner
+///
+/// `SSHKeyConverter` awaited `ssh-keygen` with its own small continuation
+/// wrapper around `Process.terminationHandler` until 2026-09-19 (Task 3 of
+/// the small-follow-ups plan) — it never parked a thread, so it carried none
+/// of the `BlockingWait` patterns above and the `Sources/` scan never saw
+/// it, but it was still a second place a child's exit was awaited, which is
+/// exactly what `SubprocessRunner` exists to be the only one of (recorded in
+/// `docs/BACKLOG.md`, "Task 2's deferred minors: the async key-tool
+/// surface"). `noSourceImplementsASecondTerminationHandlerRunner` holds all
+/// of `Sources/`, `SubprocessRunner.swift` itself excepted, to assigning no
+/// `.terminationHandler =` of its own. Positive beside it:
+/// `theKeyToolsAwaitTheRunner`, extended the same day to require
+/// `SSHKeyConverter.swift` to call `SubprocessRunner.run(` too.
 @Suite("Tests never block the cooperative pool")
 struct TestsNeverBlockThePoolGuardTests {
     /// The blocking waits forbidden in a test target, as measured by the grep
@@ -390,19 +405,63 @@ struct TestsNeverBlockThePoolGuardTests {
         }
     }
 
-    /// The positive the negative's replacement rests on: both key tools call
-    /// the runner. File names and the call text are derived from the types,
-    /// so a rename breaks compilation here instead of emptying the check.
+    /// The positive the negative's replacement rests on: all three key tools
+    /// call the runner. File names and the call text are derived from the
+    /// types, so a rename breaks compilation here instead of emptying the
+    /// check. `SSHKeyConverter` joined the other two on 2026-09-19 (Task 3
+    /// of the small-follow-ups plan), and is also
+    /// `noSourceImplementsASecondTerminationHandlerRunner`'s positive below.
     @Test func theKeyToolsAwaitTheRunner() throws {
         let call = "\(String(describing: SubprocessRunner.self)).run("
         let files = try Self.sourceFiles()
-        for tool in [String(describing: SSHKeyGenerator.self), String(describing: SSHKeyImporter.self)] {
+        for tool in [
+            String(describing: SSHKeyGenerator.self),
+            String(describing: SSHKeyImporter.self),
+            String(describing: SSHKeyConverter.self),
+        ] {
             let matches = files.filter { $0.url.lastPathComponent == "\(tool).swift" }
             #expect(matches.count == 1, "\(tool).swift: \(matches.count) files")
             for match in matches {
                 #expect(try SourceCorpus.code(of: match.url).contains(call), "\(match.relative) does not call \(call)")
             }
         }
+    }
+
+    /// The negative pinned by the positive above: no `Sources/` file other
+    /// than the runner's own implements a second, hand-rolled wait for a
+    /// child by assigning its own `Process.terminationHandler`.
+    /// `SSHKeyConverter` did exactly that until this same change — a small
+    /// continuation wrapper that never parked a thread, so it carried none
+    /// of the `BlockingWait` patterns `noSourceWaitsForAChildOutsideTheRunner`
+    /// scans for and that scan never caught it. It was still a second
+    /// runner, which is what this holds `Sources/` to having none of.
+    ///
+    /// The runner's own file is excluded by identity (the URL the walk
+    /// found it at), not by a second spelling of its name, so renaming
+    /// `SubprocessRunner.swift` cannot quietly widen this check's blind
+    /// spot — `runnerFile(named:)` would fail to resolve it first, and
+    /// every other test that calls it would fail too.
+    @Test func noSourceImplementsASecondTerminationHandlerRunner() throws {
+        let pattern = "terminationHandler ="
+        let runnerFile = try Self.runnerFile(named: String(describing: SubprocessRunner.self))
+        let candidates = try Self.sourceFiles().filter { file in
+            try file.url != runnerFile
+                && SourceCorpus.text(of: file.url).contains(pattern)
+        }
+        let codes = try SourceCorpus.code(ofAll: candidates.map(\.url))
+        var violations: [String] = []
+        for (file, code) in zip(candidates, codes) where code.contains(pattern) {
+            violations.append(file.relative)
+        }
+        #expect(
+            violations.isEmpty,
+            """
+            a source file outside SubprocessRunner.swift assigns its own \
+            `.terminationHandler =` — a second, hand-rolled wait for a child \
+            process. Await it through `SubprocessRunner.run` \
+            (Sources/macSCPCore/Subprocess) instead:
+            \(violations.sorted().joined(separator: "\n"))
+            """)
     }
 
     /// Sensitivity: the Sources scan reads code, not prose. The runner's own

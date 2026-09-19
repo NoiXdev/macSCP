@@ -900,6 +900,13 @@ struct ImportKeySheet: View {
                 }
                 onImported(key, keptPassphrase)
                 dismiss()
+            } catch SSHKeyConverter.ConversionError.timedOut {
+                // Its own fixed text: `ssh-keygen -p` was stopped at
+                // `KeyToolBound.keygen` while rewriting the copy, which says
+                // nothing about the key.
+                errorMessage = L10n.string(
+                    "keys.import.error.conversionTimedOut",
+                    "Converting the key took too long and was stopped. The key was not imported.")
             } catch SSHKeyImporter.SSHKeyImportError.timedOut {
                 // Its own fixed text: `ssh-keygen` was stopped at
                 // `KeyToolBound.keygen`, which says nothing about the key.

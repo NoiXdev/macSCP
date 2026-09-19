@@ -922,6 +922,7 @@
 "keys.import.submit" = "Importuj";
 "keys.import.error" = "Nie udało się zaimportować klucza.";
 "keys.import.error.timedOut" = "Odczyt klucza trwał zbyt długo i został przerwany. Klucz nie został zaimportowany.";
+"keys.import.error.conversionTimedOut" = "Konwertowanie klucza trwało zbyt długo i zostało przerwane. Klucz nie został zaimportowany.";
 "keys.exportPrivate" = "Eksportuj klucz prywatny…";
 "keys.exportPrivate.title" = "Wyeksportować klucz prywatny?";
 "keys.exportPrivate.warn" = "Klucz prywatny opuści chroniony magazyn. Kontynuować?";

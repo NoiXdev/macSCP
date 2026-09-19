@@ -923,6 +923,7 @@
 "keys.import.submit" = "Importer";
 "keys.import.error" = "Impossible d'importer la clé.";
 "keys.import.error.timedOut" = "La lecture de la clé a pris trop de temps et a été interrompue. La clé n'a pas été importée.";
+"keys.import.error.conversionTimedOut" = "La conversion de la clé a pris trop de temps et a été interrompue. La clé n'a pas été importée.";
 "keys.exportPrivate" = "Exporter la clé privée…";
 "keys.exportPrivate.title" = "Exporter la clé privée ?";
 "keys.exportPrivate.warn" = "La clé privée quittera le stockage protégé. Continuer ?";
