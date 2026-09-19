@@ -233,10 +233,32 @@ struct ConnectionDiagnosticsTests {
         #expect(report.steps[1].outcome != .ok)
     }
 
-    @Test func aStepThatOverrunsTheTimeoutIsReportedAsTimedOut() async throws {
+    /// A dial that never answers is cut by the deadline, and its row says so.
+    ///
+    /// The fake cannot finish on its own: it is parked until it is
+    /// cancelled, and nothing cancels it before the deadline has settled
+    /// the step — `DetachedProbe` cancels an abandoned probe only after it
+    /// has stopped waiting for it. So this row can read `.ok` only from a
+    /// runner that cancels the probe and then takes its answer anyway, and
+    /// the step can come back at all only when the deadline fires. A late
+    /// deadline makes this case slow, never wrong; a missing one makes it
+    /// hang, and `.timeLimit` turns that hang into a red. The limit is a
+    /// hang bound, not a ceiling on the deadline: CI run 35405472152 took
+    /// 87.253 s to get here on the three-core runner, and the limit sits
+    /// well above that.
+    ///
+    /// Until 2026-09-19 the fake slept 30 s and then returned `.ok`, and on
+    /// run 35405472152 (`af05535a`) it did exactly that: the row read `.ok`,
+    /// in both attempts. The deadline is a `DispatchQueue.global()` timer,
+    /// and that queue gets no thread while the cooperative pool is busy —
+    /// measured on the ten-core development machine, not on CI: with ten
+    /// CPU-bound 5 s tasks running, a 0.3 s global timer fired after 5.0 s,
+    /// when they stopped; with nine it fired after 0.31 s. A 30 s sleep
+    /// was a ceiling on how late the deadline could fire, which is the
+    /// shape "A wall-clock ceiling in a test measures the runner" names.
+    @Test(.timeLimit(.minutes(5)))
+    func aStepThatOverrunsTheTimeoutIsReportedAsTimedOut() async throws {
         let port = try #require(LoopbackSocket.closedPort())
-        let clock = ContinuousClock()
-        let started = clock.now
         let report = await Self.run(
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: port),
@@ -245,11 +267,10 @@ struct ConnectionDiagnosticsTests {
                 ) { _, _ in
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
-                    try? await Task.sleep(for: .seconds(30))
+                    await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
             stepTimeout: .milliseconds(200))
-        let elapsed = started.duration(to: clock.now)
 
         // The dial by NAME, not by position: the trace step runs after it,
         // so `last` reads a row this case says nothing about.
@@ -258,9 +279,7 @@ struct ConnectionDiagnosticsTests {
         // No wall-clock ceiling: on the three-core CI runner this step took
         // 20.68 s to come back (run 33727757421) while the outcome was
         // already `.timedOut` — a ceiling there measures the runner, not
-        // the deadline. The outcome carries the property: without a
-        // deadline the fake completes and the step reads `.ok`.
-        _ = elapsed
+        // the deadline.
     }
 
     /// A cancelled walk ends with the steps it had — and the report SAYS it
@@ -285,7 +304,7 @@ struct ConnectionDiagnosticsTests {
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
                     gate.open()
-                    try? await Task.sleep(for: .seconds(30))
+                    await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
             values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
@@ -379,7 +398,7 @@ struct ConnectionDiagnosticsTests {
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
                     gate.open()
-                    try? await Task.sleep(for: .seconds(30))
+                    await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
             values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
@@ -532,7 +551,7 @@ struct ConnectionDiagnosticsTests {
                     let timer = DiagnosticStepTimer(
                         id: DiagnosticStepID.dial, titleKey: "diagnostics.step.probe")
                     gate.open()
-                    try? await Task.sleep(for: .seconds(30))
+                    await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
             values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
@@ -1879,6 +1898,29 @@ private final class Gate: @unchecked Sendable {
     /// Whether nothing has opened it yet — read by the deadline case, which
     /// asks "was the probe still running when the step returned?".
     var isClosed: Bool { lock.withLock { !isOpen } }
+}
+
+/// Suspends until the calling task is cancelled, and only then returns.
+///
+/// Where the fake dials in this file park. They used to sleep 30 s and then
+/// answer `.ok`, and a fake that can finish on its own races whatever is
+/// meant to end it: the step deadline in the timeout case, the test's own
+/// cancel in the three cancellation cases. On CI run 35405472152 the sleep
+/// won that race against a deadline that fired late, and the row read `.ok`
+/// (see `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`). Parked here, a
+/// fake returns only after something cancelled it — and `DetachedProbe`
+/// cancels a probe only once the step is already settled, so whatever the
+/// fake says then is dropped.
+///
+/// An `AsyncStream` nothing ever yields to: its iterator ends when the task
+/// iterating it is cancelled, which is the whole mechanism, and it needs no
+/// continuation of this file's own. The stream's producer is held until the
+/// loop ends and finished after it, so nothing but the cancellation ends
+/// the wait.
+private func suspendUntilCancelled() async {
+    let (never, producer) = AsyncStream<Never>.makeStream()
+    for await _ in never {}
+    producer.finish()
 }
 
 /// A loopback TCP socket a test owns, for the two ends of the ping: one that
