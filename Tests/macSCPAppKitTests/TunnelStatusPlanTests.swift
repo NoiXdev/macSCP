@@ -70,9 +70,37 @@ struct TunnelStatusPlanTests {
     /// ruling, 2026-09-20, fix round 1). `NSDockTile` draws its badge red
     /// whatever it says, so the text is this surface's only channel and the
     /// two states may not share it.
+    ///
+    /// **The run carries a `"!"` of its own** (fix round 2): a bare `"3"`
+    /// is also what three healthy forwardings read as, and the Dock has no
+    /// second channel to tell the two apart with.
     @Test func aForwardingThatKeepsFailingSaysHowManyNotWhy() {
-        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 0, degradedRun: 3) == "3")
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 0, degradedRun: 3) == "3!")
         #expect(DockBadgePlan.label(activeCount: 1, failedCount: 0, degradedRun: 0) == "1")
+        #expect(DockBadgePlan.label(activeCount: 3, failedCount: 0, degradedRun: 0) == "3")
+    }
+
+    /// One case per state, on the badge, so no state can change what the
+    /// Dock says without a case here changing with it. The healthy count
+    /// and the marked run are the pair the ruling is about: `"3"` and
+    /// `"3!"` over the same number.
+    @Test(arguments: [
+        (TunnelState.stopped, String?.none),
+        (.connecting, nil),
+        (.active(connections: 0), "1"),
+        (.reconnecting(attempt: 2), nil),
+        (.needsConfirmation, nil),
+        (.failed(.connectionFailed), "!"),
+    ])
+    func everyStateHasItsOwnBadgeLabel(_ state: TunnelState, _ expected: String?) {
+        #expect(DockBadgePlan.label(states: [state]) == expected)
+    }
+
+    /// The seventh reading, which is not a case.
+    @Test func aForwardingThatKeepsFailingIsBadgedWithItsMarkedRun() {
+        #expect(
+            DockBadgePlan.label(states: [Self.degraded()])
+                == "\(TunnelState.failuresBeforeDegraded)!")
     }
 
     /// A failure still outranks it, and that is the mixed case's rule: a
@@ -87,14 +115,14 @@ struct TunnelStatusPlanTests {
     @Test func severalFailingForwardingsShowTheLongestRun() {
         let three = Self.failing(3)
         let five = Self.failing(5)
-        #expect(DockBadgePlan.label(states: [three, five]) == "5")
-        #expect(DockBadgePlan.label(states: [five, three]) == "5")
+        #expect(DockBadgePlan.label(states: [three, five]) == "5!")
+        #expect(DockBadgePlan.label(states: [five, three]) == "5!")
     }
 
     /// The states form of the same answer, folded through the plan so the
     /// badge is measured over what the report stream produces.
     @Test func theBadgeReadsAForwardingThatKeepsFailingFromItsState() {
-        #expect(DockBadgePlan.label(states: [Self.degraded(), .active(connections: 4)]) == "3")
+        #expect(DockBadgePlan.label(states: [Self.degraded(), .active(connections: 4)]) == "3!")
         #expect(DockBadgePlan.label(states: [Self.failingButHealthy(), .active(connections: 4)]) == "2")
     }
 
@@ -202,7 +230,7 @@ struct TunnelStatusPlanTests {
     @Test func aForwardingThatKeepsFailingDrawsAWarningAndItsRun() {
         let glyph = TunnelGlyphPlan.glyph(states: [Self.degraded()])
         #expect(glyph?.symbol == TunnelGlyphPlan.warningSymbol)
-        #expect(glyph?.text == String(TunnelState.failuresBeforeDegraded))
+        #expect(glyph?.text == "\(TunnelState.failuresBeforeDegraded)!")
     }
 
     /// The two symbols, written down once: a warning triangle for a
@@ -360,7 +388,7 @@ struct TunnelStatusPlanTests {
             let manual = Self.profile("manual")
             let listed = !TunnelMenuBlockPlan.entries(
                 profiles: [manual], state: { _ in state }).isEmpty
-            let shouted = DockBadgePlan.label(states: [state]) == "!"
+            let shouted = DockBadgePlan.label(states: [state])?.contains("!") == true
             #expect(
                 !shouted || listed,
                 "the badge marks \(state) with \"!\" and the block lists nothing for it")

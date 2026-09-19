@@ -161,8 +161,9 @@ enum TunnelGlyphPlan {
 /// nothing is running and nothing failed. The `"!"` outranks the count on
 /// purpose: a badge that read `"2"` while a third forwarding was down would
 /// be reporting the good news over the bad one. A forwarding that keeps
-/// failing outranks it too, and says the length of its failure run instead
-/// of `"!"` — the badge's one channel has to carry that difference.
+/// failing outranks it too, and reads as its failure run with a `"!"` on
+/// it (`"3!"`) — the badge's one channel has to carry all three answers,
+/// and a bare run would read exactly like a healthy count.
 ///
 /// **The badge is drawn red by AppKit itself.** `NSDockTile.badgeLabel`
 /// renders in the system's own red badge; there is no API to tint it and no
@@ -178,18 +179,35 @@ enum DockBadgePlan {
     /// connections in a row failed is up and carrying nothing, so counting
     /// it among the good ones is the good news drawn over the bad one.
     ///
-    /// **It says how many, where a failure says `"!"`** (coordinator
-    /// ruling, 2026-09-20, fix round 1). The badge's colour is AppKit's
-    /// red and not ours to choose, so its text is the only channel it has,
-    /// and the two states may not share it. The mixed cases, in the order
-    /// the code asks them: any forwarding DOWN wins and the badge reads
-    /// `"!"`; otherwise a failure run wins over the count of what is up;
-    /// among several runs the longest is shown (`TunnelGlyphPlan
-    /// .degradedRun`). On the sidebar the number is read with the glyph's
-    /// symbol, which says which number it is.
+    /// **It says how many, marked, where a failure says `"!"`**
+    /// (coordinator rulings of 2026-09-20, fix rounds 1 and 2). The badge's
+    /// colour is AppKit's red and not ours to choose, so its text is the
+    /// only channel it has: the three answers have to be three different
+    /// texts. They are `"!"`, `"3!"` and `"3"` — and the `"!"` on the run
+    /// is what fix round 2 added, because a bare `"3"` is also what three
+    /// healthy forwardings read as and the Dock has nothing else to tell
+    /// the two apart with.
+    ///
+    /// **Which forwarding the badge names, and the mixed-case rule**, in
+    /// the order the code asks them:
+    ///
+    /// 1. any forwarding DOWN → `"!"`, and the badge names that failure —
+    ///    a forwarding that cannot be used at all is the news, whatever
+    ///    else is happening;
+    /// 2. otherwise any forwarding whose last three connections in a row
+    ///    failed → `"<run>!"`, naming the ONE with the longest run
+    ///    (`TunnelGlyphPlan.degradedRun`), never the sum of several runs
+    ///    and never how many forwardings are failing;
+    /// 3. otherwise the count of what is up → `"3"`, which names no single
+    ///    forwarding: it counts them;
+    /// 4. otherwise no badge at all.
+    ///
+    /// Either menu behind the badge lists the forwardings themselves, with
+    /// each one's state in words; on the sidebar the number is read with
+    /// the glyph's symbol, which says which number it is.
     static func label(activeCount: Int, failedCount: Int, degradedRun: Int) -> String? {
         if failedCount > 0 { return "!" }
-        if degradedRun > 0 { return String(degradedRun) }
+        if degradedRun > 0 { return "\(degradedRun)!" }
         guard activeCount > 0 else { return nil }
         return String(activeCount)
     }
