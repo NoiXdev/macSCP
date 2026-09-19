@@ -943,7 +943,9 @@ extension ContentView {
                                 sessionListViewModel.updateSession(
                                     stored, newSecret: effectiveSecret,
                                     jumpSecret: tab.connectionViewModel.jumpSourceMode == .session
-                                        ? nil : tab.connectionViewModel.jumpPassword)
+                                        ? nil : tab.connectionViewModel.jumpPassword,
+                                    filledJumpPassphrase:
+                                        tab.connectionViewModel.filledJumpPassphrase)
                                 tab.connectionViewModel.endEditing()
                             },
                             // Save without dialing — the form's own route

@@ -437,17 +437,70 @@ public final class ConnectionViewModel {
     /// split it across (see `SSHFieldSchema.jumpLeaves`).
     public var jumpPassword: String {
         get { values[SSHField.jump, SSHJumpField.password] }
-        set { values[SSHField.jump, SSHJumpField.password] = newValue }
+        set {
+            values[SSHField.jump, SSHJumpField.password] = newValue
+            // Any write that is not the fill's own value ends the fill: a
+            // keystroke, a clear, a restore from a stored session. The fill
+            // itself writes the field first and records itself after, so it
+            // survives this. Nothing else can leave a remembered value
+            // standing over a field that no longer holds it.
+            if newValue != filledJumpPassphrase { filledJumpPassphrase = nil }
+        }
     }
 
     public var jumpKeyPath: String {
         get { values[SSHField.jump, SSHJumpField.keyPath] }
-        set { values[SSHField.jump, SSHJumpField.keyPath] = newValue }
+        set {
+            guard newValue != values[SSHField.jump, SSHJumpField.keyPath] else { return }
+            values[SSHField.jump, SSHJumpField.keyPath] = newValue
+            discardFilledJumpPassphrase()
+        }
+    }
+
+    /// What a jump FILL put into `jumpPassword`, and `nil` whenever the field
+    /// no longer holds it.
+    ///
+    /// The save guard's whole input. `save`/`updateSession` refuse to write
+    /// `jumpPassword` into a hop's own Keychain slot when it is exactly this
+    /// value — the fill's own echo, already stored under the managed key's
+    /// `key.id` — and write it when it differs, because then somebody typed
+    /// it.
+    public private(set) var filledJumpPassphrase: String?
+
+    /// Fills the jump passphrase field from a resolution and remembers what
+    /// was put there. Every jump fill in the App and in Core goes through
+    /// this, so the two halves cannot come apart.
+    ///
+    /// The field is written FIRST: its own setter ends any previous fill, and
+    /// this one is recorded after it.
+    public func fillJumpPassphrase(_ value: String) {
+        jumpPassword = value
+        filledJumpPassphrase = value.isEmpty ? nil : value
+    }
+
+    /// Drops a filled passphrase, and the field with it while the field still
+    /// holds exactly what was filled.
+    ///
+    /// Called when the jump's key path or auth kind changes, because a
+    /// passphrase belongs to ONE key: leaving a filled value in the field
+    /// while the jump names another key is how a save came to write the first
+    /// key's passphrase into the hop's own slot, which the session export
+    /// reads (`ExportedSession.jumpPassword`). A value the user typed over
+    /// the fill is theirs and is left alone — only the remembered fill is
+    /// dropped, and with it the refusal to save.
+    private func discardFilledJumpPassphrase() {
+        guard let filled = filledJumpPassphrase else { return }
+        if jumpPassword == filled { jumpPassword = "" }
+        filledJumpPassphrase = nil
     }
 
     public var jumpAuthChoice: AuthChoice {
         get { AuthChoice(rawValue: values[SSHField.jump, SSHJumpField.authKind]) ?? .password }
-        set { values[SSHField.jump, SSHJumpField.authKind] = newValue.rawValue }
+        set {
+            guard newValue.rawValue != values[SSHField.jump, SSHJumpField.authKind] else { return }
+            values[SSHField.jump, SSHJumpField.authKind] = newValue.rawValue
+            discardFilledJumpPassphrase()
+        }
     }
     /// The jump's own three-way login switcher (M10c/T3): the SAME building
     /// blocks the target uses (`loginMode`/`selectedLoginSetID`), reused for

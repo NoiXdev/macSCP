@@ -97,7 +97,9 @@ extension SessionListViewModel {
             secret: password(for: synthetic))
         // A private-key set takes the managed key's own passphrase over
         // whatever the set's slot holds, as every other jump fill does.
-        form.jumpPassword = withManagedKeyPassphrase(login).secret ?? ""
+        // Through `fillJumpPassphrase`, so a save can tell this value from
+        // one somebody typed.
+        form.fillJumpPassphrase(withManagedKeyPassphrase(login).secret ?? "")
     }
 
     /// Resolves the form's referenced JUMP CONNECTION before a submit: fills

@@ -9,11 +9,15 @@ import Foundation
 /// to `SessionListViewModel.save`); `ContentView.maybeCreateNewLoginSet` for
 /// a set built alongside a session; `SessionListViewModel.updateSession` for
 /// the session's own slot on an edit-save (since `bdf6f013` — this paragraph
-/// said until 2026-09-16 that the edit-save path wrote unconditionally); and
-/// `SessionListViewModel`'s `jumpEchoesStoredManagedPassphrase`, which both
-/// `save` and `updateSession` ask before writing a manual jump's slot
-/// (technical backlog of 2026-09-16, Task 5; narrowed to an echo by the
-/// maintainer answer of 2026-09-19, `echoesStoredManagedPassphrase` below).
+/// said until 2026-09-16 that the edit-save path wrote unconditionally).
+///
+/// A manual JUMP's own slot is NOT decided here, and was only briefly (the
+/// technical backlog of 2026-09-16, Task 5, until the maintainer answer of
+/// 2026-09-19 was implemented). `save`/`updateSession` compare what the form
+/// hands them against what a fill put in the field
+/// (`ConnectionViewModel.filledJumpPassphrase`) and read no Keychain to
+/// decide it — because a probe answers about the key the jump names NOW,
+/// which need not be the key the value in the field came from.
 ///
 /// A private-key login's passphrase can live in two different places: the
 /// managed key's own Keychain slot (addressed by `key.id`,
@@ -79,49 +83,6 @@ public enum SessionSecretPolicy {
             kind: .ssh, authChoice: .privateKey,
             keyPath: session.ssh?.keyPath ?? "",
             keys: keys, secrets: secrets)
-    }
-
-    /// Whether `typed` is the managed key's own passphrase read back — the
-    /// value a jump fill put into the form — rather than something a person
-    /// entered over it (maintainer answer of 2026-09-19).
-    ///
-    /// The jump's save guard. `usesStoredManagedPassphrase` above asks only
-    /// whether a slot EXISTS, and a guard built on that answer discards
-    /// everything the field holds, a typed correction included: the person
-    /// types the right passphrase over a wrong one, saves, and nothing
-    /// happens, silently. This asks the narrower question the guard actually
-    /// needs — is this value already stored under `key.id`? — so only the
-    /// duplication the guard was built to prevent is refused.
-    ///
-    /// The cost of being wrong moved, which is why this may compare where
-    /// `usesStoredManagedPassphrase` may not. Since
-    /// `LoginResolver.preferringManagedKeyPassphrase` the managed key's
-    /// passphrase WINS over a hop's own slot, so a copy written there can no
-    /// longer shadow the key at connect time; it is at worst a stale value
-    /// nothing reads. Dropping what the user typed is not recoverable that
-    /// way — there is no other UI for a hop's passphrase.
-    ///
-    /// So an unanswerable probe — a locked Keychain, a denied prompt, an
-    /// unreadable key store — answers `false` and the value is written, the
-    /// opposite of `usesStoredManagedPassphrase`'s `true`. The guard must
-    /// PROVE the duplication before it discards an input, and a probe that
-    /// could not be made proves nothing. `false` too for anything that is not
-    /// an SSH private-key login, and for a key macSCP does not manage.
-    public static func echoesStoredManagedPassphrase(
-        typed: String, kind: ConnectionKind, authChoice: ConnectionViewModel.AuthChoice,
-        keyPath: String, keys: ManagedKeyStore, secrets: any SecretStore
-    ) -> Bool {
-        guard kind == .ssh, authChoice == .privateKey else { return false }
-        do {
-            guard let stored = try ManagedKeyPassphrase.storedPassphrase(
-                keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                store: keys,
-                secrets: secrets)
-            else { return false }
-            return stored == typed
-        } catch {
-            return false
-        }
     }
 
     /// The value to persist under a session's OWN secret slot when a NEW

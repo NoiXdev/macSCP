@@ -13,6 +13,13 @@ import Testing
 /// save guard that stops the fill's own value from being copied back into the
 /// hop's slot skipped every write, including one carrying a typed correction.
 ///
+/// The guard's input is what a fill PUT in the field
+/// (`ConnectionViewModel.filledJumpPassphrase`), not a fresh Keychain probe
+/// (fix round 1). A probe answers about the key the jump names NOW, which is
+/// not necessarily the key the value came from — repointing the jump at
+/// another key made the next save write the first key's passphrase into the
+/// hop's slot, which the session export reads.
+///
 /// Passphrases live in named constants and are compared into a `Bool` before
 /// any expectation, so a failure message can carry neither the value nor its
 /// spelling.
@@ -151,6 +158,20 @@ struct JumpManagedKeyPassphraseTests {
             let keptOwn = resolved.secret == Self.ownPassphrase
             #expect(keptOwn, "a key the store cannot answer for lost the hop's own passphrase")
         }
+    }
+
+    /// The third spelling of "answers nothing", and the one the reporting of
+    /// 2026-09-18 is about: `managed_keys.json` cannot be read at all. The
+    /// hop's own slot survives it — an unreadable store costs a hop nothing
+    /// it already had.
+    @Test func anUnreadableKeyStoreKeepsTheHopsOwnSlot() throws {
+        let rig = try CorruptManagedKeyStoreRig()
+        defer { rig.tearDown() }
+        let resolved = LoginResolver.preferringManagedKeyPassphrase(
+            login(keyPath: rig.managedKeyPath, secret: Self.ownPassphrase),
+            keys: rig.keys, secrets: rig.secrets)
+        let keptOwn = resolved.secret == Self.ownPassphrase
+        #expect(keptOwn, "an unreadable managed key store cost the hop its own passphrase")
     }
 
     /// The precedence itself (maintainer answer of 2026-09-19): the managed
@@ -299,59 +320,130 @@ struct JumpManagedKeyPassphraseTests {
         #expect(storedSecretNil, "a password jump resolved a secret from the managed key's slot")
     }
 
-    // MARK: - The fallback's value is not copied back into the jump's slot
+    // MARK: - What a fill put in the field is not copied into the jump's slot
 
-    /// The fill above puts the managed key's passphrase into `jumpPassword`,
-    /// and both save paths write `jumpSecret` into the jump's own slot — so
-    /// without a guard, saving a form filled that way would put the one
-    /// passphrase in two places again. The same rule the target's save
-    /// applies (`SessionSecretPolicy.usesStoredManagedPassphrase`).
-    @Test func savingAJumpOnAManagedKeyWithAStoredPassphraseWritesNoJumpSlot() throws {
-        let fixture = try makeFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.dir) }
-        let spec = StoredSession.JumpSpec(
-            host: "hop.invalid", username: "u", authKind: .privateKey, keyPath: fixture.keyPath)
+    /// `ExportedSession.jumpPassword`, which is a hop's own slot read back
+    /// verbatim (`SessionListViewModel.exportPayload`, jump branch). Every
+    /// check below reads it: a stray write into that slot is not a stale
+    /// value nobody sees, it is a secret that leaves the machine.
+    private func exportedJumpPassword(
+        _ vm: SessionListViewModel, _ session: StoredSession
+    ) -> String? {
+        vm.exportPayload(for: .single(session), includeGroups: false, includePasswords: true)
+            .payload.sessions.first?.jumpPassword
+    }
 
-        let saved = try #require(fixture.vm.save(
+    private func hopSpec(keyPath: String) -> StoredSession.JumpSpec {
+        StoredSession.JumpSpec(
+            host: "hop.invalid", username: "u", authKind: .privateKey, keyPath: keyPath)
+    }
+
+    private func saveThroughHop(
+        _ fixture: Fixture, _ spec: StoredSession.JumpSpec,
+        jumpSecret: String, filled: String?
+    ) -> StoredSession? {
+        fixture.vm.save(
             name: "through-hop",
             values: sshValues(host: "target.invalid", username: "tim"),
-            password: Self.targetSecret, jump: spec, jumpSecret: Self.managedPassphrase))
+            password: Self.targetSecret, jump: spec,
+            jumpSecret: jumpSecret, filledJumpPassphrase: filled)
+    }
+
+    /// The fill puts the managed key's passphrase into `jumpPassword`, and
+    /// both save paths hand `jumpPassword` back as `jumpSecret` — so without
+    /// a guard, saving a form filled that way would put one passphrase in two
+    /// places. Handed back unchanged, it is refused, and the export carries
+    /// nothing.
+    @Test func aFilledJumpPassphraseIsNotCopiedIntoTheHopsSlot() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let spec = hopSpec(keyPath: fixture.keyPath)
+
+        let saved = try #require(saveThroughHop(
+            fixture, spec, jumpSecret: Self.managedPassphrase, filled: Self.managedPassphrase))
         let slotEmptyAfterSave = try fixture.secrets.password(for: spec.secretID) == nil
-        #expect(slotEmptyAfterSave, "`save` copied the managed key's passphrase into the jump's slot")
+        #expect(slotEmptyAfterSave, "`save` copied the filled passphrase into the jump's slot")
 
-        fixture.vm.updateSession(saved, newSecret: nil, jumpSecret: Self.managedPassphrase)
+        fixture.vm.updateSession(
+            saved, newSecret: nil,
+            jumpSecret: Self.managedPassphrase, filledJumpPassphrase: Self.managedPassphrase)
         let slotEmptyAfterUpdate = try fixture.secrets.password(for: spec.secretID) == nil
-        #expect(slotEmptyAfterUpdate, "`updateSession` copied the managed key's passphrase into the jump's slot")
+        #expect(slotEmptyAfterUpdate, "`updateSession` copied the filled passphrase into the jump's slot")
+
+        let exportCarriesNothing = exportedJumpPassword(fixture.vm, saved) == nil
+        #expect(exportCarriesNothing, "the export carried a passphrase nobody typed")
     }
 
-    /// A typed correction — a jump passphrase field holding something OTHER
-    /// than what the fill put there — is what the guard above must not eat.
-    /// Both save paths write it into the hop's own slot.
-    @Test func aTypedCorrectionReachesTheJumpsOwnSlot() throws {
+    /// The defect of fix round 1: the key path moves out from under a filled
+    /// passphrase. Changing it clears the field along with what the fill put
+    /// there, so the next save has nothing to write and one key's passphrase
+    /// cannot land in a hop that now names another.
+    @Test func changingTheJumpKeyPathTakesTheFilledPassphraseWithIt() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
-        let spec = StoredSession.JumpSpec(
-            host: "hop.invalid", username: "u", authKind: .privateKey, keyPath: fixture.keyPath)
-        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
+        let form = makeForm()
+        form.jumpAuthChoice = .privateKey
+        form.jumpKeyPath = fixture.keyPath
+        form.fillJumpPassphrase(Self.managedPassphrase)
+        let theFillReachedTheField = form.jumpPassword == Self.managedPassphrase
+        #expect(theFillReachedTheField, "the fill did not reach the field")
 
-        let saved = try #require(fixture.vm.save(
-            name: "through-hop",
-            values: sshValues(host: "target.invalid", username: "tim"),
-            password: Self.targetSecret, jump: spec, jumpSecret: Self.typedCorrection))
-        let savedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
-        #expect(savedTheCorrection, "`save` skipped a typed correction into the jump's own slot")
+        form.jumpKeyPath = fixture.dir.appendingPathComponent("other-key").path
+        let fieldCleared = form.jumpPassword.isEmpty
+        let rememberedFillCleared = form.filledJumpPassphrase == nil
+        #expect(fieldCleared, "the field kept a passphrase belonging to the previous key")
+        #expect(rememberedFillCleared, "the remembered fill outlived the key it came from")
 
-        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
-        fixture.vm.updateSession(saved, newSecret: nil, jumpSecret: Self.typedCorrection)
-        let updatedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
-        #expect(updatedTheCorrection, "`updateSession` skipped a typed correction into the jump's own slot")
+        let spec = hopSpec(keyPath: form.jumpKeyPath)
+        let saved = try #require(saveThroughHop(
+            fixture, spec, jumpSecret: form.jumpPassword, filled: form.filledJumpPassphrase))
+        let slotEmpty = try fixture.secrets.password(for: spec.secretID) == nil
+        let exportCarriesNothing = exportedJumpPassword(fixture.vm, saved) == nil
+        #expect(slotEmpty, "saving after a key-path change wrote another key's passphrase")
+        #expect(exportCarriesNothing, "the export carried another key's passphrase")
     }
 
-    /// A Keychain that is there but not answering cannot prove the value is
-    /// the fill's echo, and an unproven duplication no longer costs the user
-    /// what they typed: the guard writes. Read through `peek`, since this
-    /// store's own read path is the one that is rigged to fail.
-    @Test func aProbeThatCannotBeMadeStillSavesWhatWasTyped() throws {
+    /// The same for the auth kind: a passphrase belongs to a private-key
+    /// login, and switching away from one takes it with it.
+    @Test func changingTheJumpAuthKindTakesTheFilledPassphraseWithIt() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let form = makeForm()
+        form.jumpAuthChoice = .privateKey
+        form.jumpKeyPath = fixture.keyPath
+        form.fillJumpPassphrase(Self.managedPassphrase)
+
+        form.jumpAuthChoice = .password
+        let fieldCleared = form.jumpPassword.isEmpty
+        let rememberedFillCleared = form.filledJumpPassphrase == nil
+        #expect(fieldCleared, "the field kept a key passphrase after the login stopped using a key")
+        #expect(rememberedFillCleared, "the remembered fill outlived the auth kind it came from")
+    }
+
+    /// Typing over what the fill put there ends the fill — the form-level
+    /// half of the correction path, and the reason the save's comparison is
+    /// enough. Any write to the field that is not the fill's own value drops
+    /// the memory of it.
+    @Test func typingOverTheFilledPassphraseEndsTheFill() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let form = makeForm()
+        form.jumpAuthChoice = .privateKey
+        form.jumpKeyPath = fixture.keyPath
+        form.fillJumpPassphrase(Self.managedPassphrase)
+        let rememberedAfterTheFill = form.filledJumpPassphrase == Self.managedPassphrase
+        #expect(rememberedAfterTheFill, "the fill was not remembered")
+
+        form.jumpPassword = Self.typedCorrection
+        let rememberedFillCleared = form.filledJumpPassphrase == nil
+        #expect(rememberedFillCleared, "a typed value was still read as the fill's own")
+    }
+
+    /// A Keychain that is there but not answering changes nothing: the
+    /// decision is the comparison above, and no probe is made at save time.
+    /// Read through `peek`, since this store's own read path is rigged to
+    /// fail.
+    @Test func aKeychainThatWillNotAnswerCopiesNoFilledPassphrase() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-jumpkey-unreadable-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -366,16 +458,40 @@ struct JumpManagedKeyPassphraseTests {
             store: SessionStore(directory: dir), secrets: secrets,
             auditStore: AuditLogStore(directory: dir),
             loginSetStore: LoginSetStore(directory: dir), keys: keys)
-        let spec = StoredSession.JumpSpec(
-            host: "hop.invalid", username: "u", authKind: .privateKey,
-            keyPath: keys.keyDirectory.appendingPathComponent("hopkey").path)
+        let spec = hopSpec(keyPath: keys.keyDirectory.appendingPathComponent("hopkey").path)
 
         _ = vm.save(
             name: "through-hop",
             values: sshValues(host: "target.invalid", username: "tim"),
-            password: Self.targetSecret, jump: spec, jumpSecret: Self.typedCorrection)
-        let savedTheCorrection = secrets.peek(spec.secretID) == Self.typedCorrection
-        #expect(savedTheCorrection, "an unanswerable probe dropped what was typed")
+            password: Self.targetSecret, jump: spec,
+            jumpSecret: Self.managedPassphrase, filledJumpPassphrase: Self.managedPassphrase)
+        let slotEmpty = secrets.peek(spec.secretID) == nil
+        #expect(slotEmpty, "a Keychain that would not answer let the filled passphrase through")
+    }
+
+    /// A typed correction — a jump passphrase field holding something OTHER
+    /// than what the fill put there — is what the guard must not eat. Both
+    /// save paths write it, and the export carries exactly it.
+    @Test func aTypedCorrectionReachesTheJumpsOwnSlot() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let spec = hopSpec(keyPath: fixture.keyPath)
+        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
+
+        let saved = try #require(saveThroughHop(
+            fixture, spec, jumpSecret: Self.typedCorrection, filled: Self.managedPassphrase))
+        let savedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
+        #expect(savedTheCorrection, "`save` skipped a typed correction into the jump's own slot")
+
+        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
+        fixture.vm.updateSession(
+            saved, newSecret: nil,
+            jumpSecret: Self.typedCorrection, filledJumpPassphrase: Self.managedPassphrase)
+        let updatedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
+        #expect(updatedTheCorrection, "`updateSession` skipped a typed correction into the jump's own slot")
+
+        let exportCarriesOnlyWhatWasTyped = exportedJumpPassword(fixture.vm, saved) == Self.typedCorrection
+        #expect(exportCarriesOnlyWhatWasTyped, "the export carried something other than what was typed")
     }
 
     /// The positive beside the check above: a key macSCP does not manage

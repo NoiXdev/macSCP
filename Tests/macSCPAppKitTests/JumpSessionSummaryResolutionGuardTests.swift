@@ -11,8 +11,9 @@ import Testing
 /// managed key's own Keychain slot — a read of `managed_keys.json` and a second
 /// Keychain item, and on a re-signed build a possible consent prompt, per
 /// render. Since the maintainer answer of 2026-09-19 they reach it for every
-/// private-key hop, not only one whose own slot is empty. The summary must therefore resolve through
-/// `SessionListViewModel.resolvedJumpEndpoint(for:)`, which reads no secret.
+/// private-key hop, not only one whose own slot is empty. The summary must
+/// therefore resolve through `SessionListViewModel.resolvedJumpEndpoint(for:)`,
+/// which reads no secret.
 ///
 /// The forbidden tokens are DERIVED, not listed: every function in
 /// `SessionListViewModel.swift` and `SessionListViewModel+Submit.swift` whose

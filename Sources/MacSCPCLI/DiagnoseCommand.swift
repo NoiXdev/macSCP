@@ -265,7 +265,10 @@ struct DiagnoseCommand: AsyncParsableCommand {
     ///
     /// The jump's secret is the Keychain slot the app writes for it, read
     /// the same read-only way the target's is, with the managed key's slot
-    /// behind it. `--password-command` and `MACSCP_PASSWORD` answer the
+    /// in FRONT of it for a private-key hop (the maintainer answer of
+    /// 2026-09-19, `LoginResolver.preferringManagedKeyPassphrase`): the
+    /// key's own item answers first, and the hop's slot only when it has
+    /// nothing. `--password-command` and `MACSCP_PASSWORD` answer the
     /// TARGET's secret only: each names one secret, and a command that
     /// printed the target's password would otherwise be sent to the bastion
     /// too. A store that cannot be read is thrown, the way `resolveSession`

@@ -59,29 +59,6 @@ public enum ManagedKeyPassphrase {
         }
     }
 
-    /// The passphrase held by the managed key's OWN Keychain slot (`key.id`)
-    /// for the key at `keyPath`, or `nil` when there is none to read: no
-    /// managed key matches the path, the key is not encrypted, or its slot is
-    /// absent or empty.
-    ///
-    /// The value behind `hasStoredPassphrase` below, which is this question
-    /// asked for its answer's existence alone — one lookup, two questions, so
-    /// a caller that needs to COMPARE against the stored passphrase
-    /// (`SessionSecretPolicy.echoesStoredManagedPassphrase`) does not spell
-    /// the lookup a second time. It throws for the same reasons, documented
-    /// there.
-    ///
-    /// `hasPassphrase` is a fast path, as in `resolve`: an unencrypted key's
-    /// slot is never read, so no consent prompt is raised for a passphrase
-    /// that does not exist.
-    public static func storedPassphrase(
-        keyPath: String, store: ManagedKeyStore, secrets: any SecretStore
-    ) throws -> String? {
-        guard let key = try store.key(forPath: keyPath), key.hasPassphrase else { return nil }
-        guard let stored = try secrets.password(for: key.id), !stored.isEmpty else { return nil }
-        return stored
-    }
-
     /// Whether the managed key at `keyPath` has a Keychain slot of its own
     /// holding a passphrase.
     ///
@@ -111,6 +88,8 @@ public enum ManagedKeyPassphrase {
     public static func hasStoredPassphrase(
         keyPath: String, store: ManagedKeyStore, secrets: any SecretStore
     ) throws -> Bool {
-        try storedPassphrase(keyPath: keyPath, store: store, secrets: secrets) != nil
+        guard let key = try store.key(forPath: keyPath), key.hasPassphrase else { return false }
+        let stored = try secrets.password(for: key.id)
+        return !(stored ?? "").isEmpty
     }
 }

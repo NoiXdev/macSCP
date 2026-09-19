@@ -1739,6 +1739,7 @@ struct ContentView: View {
             loginSetID: form.loginMode == .set ? form.selectedLoginSetID : newSetID,
             jump: form.buildJumpSpec(),
             jumpSecret: form.jumpSourceMode == .session ? nil : form.jumpPassword,
+            filledJumpPassphrase: form.filledJumpPassphrase,
             terminalType: form.terminalTypeOverride,
             tags: form.tags)
     }
@@ -2996,7 +2997,7 @@ struct ContentView: View {
                         form.jumpUsername = resolved.login.username
                         form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
                         form.jumpKeyPath = resolved.login.keyPath ?? ""
-                        form.jumpPassword = resolved.login.secret ?? ""
+                        form.fillJumpPassphrase(resolved.login.secret ?? "")
                     }
                 } catch LoginResolveError.missingJumpSession {
                     form.showFailure(
@@ -3044,7 +3045,7 @@ struct ContentView: View {
                         form.jumpUsername = resolvedJump.username
                         form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolvedJump.authKind)
                         form.jumpKeyPath = resolvedJump.keyPath ?? ""
-                        form.jumpPassword = resolvedJump.secret ?? ""
+                        form.fillJumpPassphrase(resolvedJump.secret ?? "")
                     }
                 } catch LoginResolveError.jumpSetNotSSH {
                     // The jump is bound to a login set of another
