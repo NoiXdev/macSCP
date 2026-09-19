@@ -1675,7 +1675,11 @@ public final class SessionListViewModel {
                 // session, gated by nothing. It only means anything next to
                 // the folder the session sits in -- which is why the export
                 // of that folder, above, now carries its ancestors.
-                position: session.position, password: password,
+                position: session.position,
+                // The session's own terminal type (Task 4 of 2026-09-19),
+                // a value like `tags`, gated by nothing. `nil` writes no key.
+                terminalType: session.ssh?.terminalType,
+                password: password,
                 jumpHost: jumpHost, jumpPort: jumpPort, jumpUsername: jumpUsername,
                 jumpAuthKind: jumpAuthKind, jumpKeyPath: jumpKeyPath, jumpPassword: jumpPassword,
                 s3SecretAccessKey: s3SecretAccessKey,

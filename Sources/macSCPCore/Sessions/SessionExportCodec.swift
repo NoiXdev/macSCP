@@ -85,6 +85,19 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// `StoredSession.position`'s own default (`0`), the same way `kind ==
     /// nil` maps to `.ssh` at import rather than at decode.
     public var position: Int?
+    /// The session's own terminal type (`StoredSSHConfig.terminalType`,
+    /// plan of 2026-09-19, Task 4). Carried the way `tags` is: a value, not
+    /// a reference, so no remapping on import. Added without a version bump,
+    /// like `tags` and `position`: an older importer ignores the key.
+    ///
+    /// `nil` means the FILE SAYS NOTHING, which is not the same as "use the
+    /// global setting": a file written before this key existed, a Cyberduck
+    /// entry, or a session without an override all read this way. So the
+    /// import side never lets a `nil` here erase an override — a new session
+    /// gets none, a replaced one keeps its own (`SessionImportPlanner
+    /// .makePlanned`). Decoded leniently: a name this build does not offer
+    /// reads as `nil` instead of failing the file.
+    public var terminalType: TerminalType?
 
     /// Every backend field this session carries, keyed exactly as
     /// `FieldValues` keys them (`"<namespace>.<fieldID>"`).
@@ -216,6 +229,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         paneVisibility: PaneVisibility? = nil,
         tags: [String]? = nil,
         position: Int? = nil,
+        terminalType: TerminalType? = nil,
         password: String? = nil,
         jumpHost: String? = nil, jumpPort: Int? = nil, jumpUsername: String? = nil,
         jumpAuthKind: StoredSession.AuthKind? = nil, jumpKeyPath: String? = nil,
@@ -234,6 +248,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         self.paneVisibility = paneVisibility
         self.tags = tags
         self.position = position
+        self.terminalType = terminalType
         self.password = password
         self.jumpHost = jumpHost
         self.jumpPort = jumpPort
@@ -252,6 +267,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
     /// unchanged while the property names say what they are.
     private enum CodingKeys: String, CodingKey {
         case id, name, groupID, kind, fields, paneVisibility, tags, position, password
+        case terminalType
         case jumpHost, jumpPort, jumpUsername, jumpAuthKind, jumpKeyPath, jumpPassword
         case s3SecretAccessKey
         case importSource, importID, importedAt
@@ -282,6 +298,8 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility)
         tags = try c.decodeIfPresent([String].self, forKey: .tags)
         position = try c.decodeIfPresent(Int.self, forKey: .position)
+        terminalType = (try? c.decodeIfPresent(String.self, forKey: .terminalType))
+            .flatMap(TerminalType.init(rawValue:))
         fields = try c.decodeIfPresent([String: String].self, forKey: .fields) ?? [:]
         password = try c.decodeIfPresent(String.self, forKey: .password)
         jumpHost = try c.decodeIfPresent(String.self, forKey: .jumpHost)
@@ -327,6 +345,7 @@ public struct ExportedSession: Codable, Equatable, Sendable {
         try c.encodeIfPresent(paneVisibility, forKey: .paneVisibility)
         try c.encodeIfPresent(tags, forKey: .tags)
         try c.encodeIfPresent(position, forKey: .position)
+        try c.encodeIfPresent(terminalType, forKey: .terminalType)
         try c.encode(fields, forKey: .fields)
         try c.encodeIfPresent(password, forKey: .password)
         try c.encodeIfPresent(jumpHost, forKey: .jumpHost)

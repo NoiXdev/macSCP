@@ -351,7 +351,7 @@ public enum SessionImportPlanner {
                 takenNames.insert(normalizedName(trimmedName))
                 sessionsToImport.append(makePlanned(
                     from: fileSession, id: match.id, name: trimmedName,
-                    groupID: resolvedGroupID, replacesExisting: true,
+                    groupID: resolvedGroupID, replacing: match,
                     keepsExistingSecret: true))
                 replaced.append(trimmedName)
                 continue
@@ -402,7 +402,7 @@ public enum SessionImportPlanner {
                     takenNames.insert(normalizedName(trimmedName))
                     sessionsToImport.append(makePlanned(
                         from: fileSession, id: match.id, name: trimmedName, groupID: resolvedGroupID,
-                        replacesExisting: true))
+                        replacing: match))
                     replaced.append(trimmedName)
                 } else {
                     // Either the collision was against a triple first seen in
@@ -595,10 +595,18 @@ public enum SessionImportPlanner {
     /// Builds the planned session for one file entry under an already-decided
     /// id and name, so the unchanged, replaced and renamed paths cannot drift
     /// apart in how they map the file's fields.
+    ///
+    /// `replacing` is the stored record this entry overwrites, on the two
+    /// paths that overwrite one (the id-addressed update and the arbitrated
+    /// Replace), and `nil` everywhere else. Its presence is what
+    /// `replacesExisting` reports; the record itself is read for the one
+    /// setting a file may leave unsaid without meaning "clear it": the
+    /// terminal type.
     private static func makePlanned(
         from fileSession: ExportedSession, id: UUID, name: String, groupID: UUID?,
-        replacesExisting: Bool = false, keepsExistingSecret: Bool = false
+        replacing: StoredSession? = nil, keepsExistingSecret: Bool = false
     ) -> PlannedSession {
+        let replacesExisting = replacing != nil
         // Jump fields are only present together (all-or-nothing from
         // `exportPayload`) -- `jumpHost`/`jumpUsername` gate construction.
         // `secretID` is left at its default, generating a FRESH slot;
@@ -743,6 +751,15 @@ public enum SessionImportPlanner {
             ssh.jump = jump
             session.ssh = ssh
         }
+        // The terminal type (plan of 2026-09-19, Task 4, fix round 1), after
+        // the jump for the same reason: it lives in the SSH block, so a
+        // non-SSH session has nowhere to put one and this is a no-op there.
+        // The file's value wins; a file that says nothing keeps the replaced
+        // record's own override, because a missing key in an old export (or
+        // in any Cyberduck entry) must never erase a setting the user made.
+        // A new session, which replaces nothing, gets the file's value or
+        // none — "use the global setting".
+        session.ssh?.terminalType = fileSession.terminalType ?? replacing?.ssh?.terminalType
         // The kind's single secret always travels in the same
         // `password` slot -- for `.ssh` this is the SSH password, for
         // `.webdav` the WebDAV password, and for `.s3` the secret access
