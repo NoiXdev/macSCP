@@ -24,10 +24,10 @@
 
 **Row:** "Diagnostics: reverse DNS and host name check (maintainer wishlist)".
 
-- [ ] For each address the resolve step found (and, for a session behind a jump, the jump's resolve step too), a PTR lookup (`getnameinfo` with `NI_NAMEREQD`, off the cooperative pool as the resolver already runs) and a forward-confirm: the returned name resolves back to that address. Decided for the maintainer: report, never judge — a missing or non-matching PTR is a detail on the resolve row, never a failure of the step (the row's own reading and its S3-access-probe precedent). Trace hops are not named in this task (open in the row).
-- [ ] The lookups count against the resolve step's budget (inject the resolver; a lookup that does not answer in the budget is reported "no answer", not a failure). Output passes the report's filters.
-- [ ] Tests with an injected resolver: PTR present and confirming; PTR present, not confirming; no PTR; lookup cut by the budget; several addresses. Report text and CLI `diagnose` output (text and JSON — keys added only) in four languages.
-- [ ] Whole suite, zero warnings. Commit `feat(diagnostics): the resolve step names each address and checks the name resolves back`.
+- [x] For each address the resolve step found (and, for a session behind a jump, the jump's resolve step too), a PTR lookup (`getnameinfo` with `NI_NAMEREQD`, off the cooperative pool as the resolver already runs) and a forward-confirm: the returned name resolves back to that address. Decided for the maintainer: report, never judge — a missing or non-matching PTR is a detail on the resolve row, never a failure of the step (the row's own reading and its S3-access-probe precedent). Trace hops are not named in this task (open in the row).
+- [x] The lookups count against the resolve step's budget (inject the resolver; a lookup that does not answer in the budget is reported "no answer", not a failure). Output passes the report's filters.
+- [x] Tests with an injected resolver: PTR present and confirming; PTR present, not confirming; no PTR; lookup cut by the budget; several addresses. Report text and CLI `diagnose` output (text and JSON — keys added only) in four languages.
+- [x] Whole suite, zero warnings. Commit `feat(diagnostics): the resolve step names each address and checks the name resolves back`.
 
 ---
 
@@ -35,11 +35,11 @@
 
 **Row:** "A speed test in diagnostics (maintainer wishlist)".
 
-- [ ] A new diagnostics step (and scope, e.g. `.throughput`, never part of the default complete run — decided for the maintainer: it moves data on the user's server, so it runs only when chosen explicitly) that uploads a generated payload to a uniquely named temporary file in the session's home or start directory, downloads it, verifies the bytes, and removes it — on success, failure and cancel alike (test each). Payload size is a setting with a small default (decided: 8 MiB; range 1–256 MiB).
-- [ ] It uses the session's own backend through the same `RemoteFileSystem` the browser uses (SFTP, S3, WebDAV all get it); the configured bandwidth limits apply and the row says so when a limit is set. The result is a rate up and a rate down, reported, never judged; no test asserts a rate.
-- [ ] The temporary name cannot collide with a user file (a `.macscp-throughput-<uuid>` name) and a leftover from a crashed run is found and removed at the next run only if its name matches exactly that pattern.
-- [ ] Tests with an in-memory file system: the order of operations, removal on each exit path including cancel mid-transfer, the byte check, the leftover sweep never touching a non-matching name. Gated (`MACSCP_ITEST=1`): SFTP on the rig ends with no file left behind.
-- [ ] App panel and CLI (`macscp-cli diagnose --scope throughput`, JSON keys added only), four languages. Whole suite plus gated, zero warnings. Commit `feat(diagnostics): a throughput test to the server over the session's own protocol`.
+- [x] A new diagnostics step (and scope, e.g. `.throughput`, never part of the default complete run — decided for the maintainer: it moves data on the user's server, so it runs only when chosen explicitly) that uploads a generated payload to a uniquely named temporary file in the session's home or start directory, downloads it, verifies the bytes, and removes it — on success, failure and cancel alike (test each). Payload size is a setting with a small default (decided: 8 MiB; range 1–256 MiB).
+- [x] It uses the session's own backend through the same `RemoteFileSystem` the browser uses (SFTP, S3, WebDAV all get it); the configured bandwidth limits apply and the row says so when a limit is set. The result is a rate up and a rate down, reported, never judged; no test asserts a rate.
+- [x] The temporary name cannot collide with a user file (a `.macscp-throughput-<uuid>` name) and a leftover from a crashed run is found and removed at the next run only if its name matches exactly that pattern.
+- [x] Tests with an in-memory file system: the order of operations, removal on each exit path including cancel mid-transfer, the byte check, the leftover sweep never touching a non-matching name. Gated (`MACSCP_ITEST=1`): SFTP on the rig ends with no file left behind.
+- [x] App panel and CLI (`macscp-cli diagnose --scope throughput`, JSON keys added only), four languages. Whole suite plus gated, zero warnings. Commit `feat(diagnostics): a throughput test to the server over the session's own protocol`.
 
 ---
 
@@ -47,10 +47,10 @@
 
 **Row:** "Offer to resolve an entered host name to its IP (maintainer wishlist)".
 
-- [ ] An action beside the host field ("Resolve…") for SSH/SFTP sessions only — decided for the maintainer: not for S3 or WebDAV, because a TLS endpoint validates its certificate against the name and an address would not match (the row's constraint). It resolves the entered name (reuse the diagnostics resolver, made reachable through a narrow public seam rather than widening `HostResolver`) and offers the addresses as a menu (IPv4 first, then IPv6, in resolver order within each); choosing one replaces the host field's text. No address → an inline message; the field is untouched.
-- [ ] Consequences stated in the UI as a one-line note under the menu (four languages): the server will be asked to confirm its host key again for the address (known hosts are keyed by host and port), and the name is not kept. Decided: nothing else changes — no automatic known-hosts copy (that would be an accept path), no hidden name field.
-- [ ] Tests: the address ordering; the action is absent for S3/WebDAV; choosing an address writes only the host field; a failing lookup leaves the form unchanged; a guard that no known-hosts write happens on this path (negative beside a positive that the action exists).
-- [ ] Whole suite, zero warnings. Commit `feat(connect): the connection form can swap a host name for one of its addresses`.
+- [x] An action beside the host field ("Resolve…") for SSH/SFTP sessions only — decided for the maintainer: not for S3 or WebDAV, because a TLS endpoint validates its certificate against the name and an address would not match (the row's constraint). It resolves the entered name (reuse the diagnostics resolver, made reachable through a narrow public seam rather than widening `HostResolver`) and offers the addresses as a menu (IPv4 first, then IPv6, in resolver order within each); choosing one replaces the host field's text. No address → an inline message; the field is untouched.
+- [x] Consequences stated in the UI as a one-line note under the menu (four languages): the server will be asked to confirm its host key again for the address (known hosts are keyed by host and port), and the name is not kept. Decided: nothing else changes — no automatic known-hosts copy (that would be an accept path), no hidden name field.
+- [x] Tests: the address ordering; the action is absent for S3/WebDAV; choosing an address writes only the host field; a failing lookup leaves the form unchanged; a guard that no known-hosts write happens on this path (negative beside a positive that the action exists).
+- [x] Whole suite, zero warnings. Commit `feat(connect): the connection form can swap a host name for one of its addresses`.
 
 ---
 
@@ -58,16 +58,16 @@
 
 **Row:** "Terminal emulation type (maintainer wishlist)".
 
-- [ ] Measure first which terminal names SwiftTerm renders faithfully: read SwiftTerm's own terminfo/`TERM` handling and its emulation (it is an xterm-compatible emulator) and decide from that which names are honest to offer. Decided for the maintainer, subject to the measurement: offer `xterm-256color` (default, today's value), `xterm`, and `vt100`; offer `linux` or `screen`/`tmux` names only if the reading shows SwiftTerm handles their differences; write the reasoning into the report and the row.
-- [ ] A global setting in Settings → Terminal and a per-session override in the session editor ("Use the global setting" as the default); the value reaches `openShell(terminal:…)` in `TerminalPanelViewModel` instead of the literal. Stored sessions without the field decode as "use the global setting" (backward compatible; test decoding an old `sessions.json`). The CLI does not open shells, so nothing changes there — state it.
-- [ ] Tests: resolution order (session override → global → default); the value passed to `openShell`; old-file decoding; catalogue entries in four languages; a guard that `TerminalPanelViewModel` no longer passes a literal terminal name (negative beside a positive that it reads the resolved value).
-- [ ] Whole suite plus the gated SSH suites (the rig's shell receives the chosen `TERM`: assert `echo $TERM` for one non-default value), zero warnings. Commit `feat(terminal): the terminal type is a setting with a per-session override`.
+- [x] Measure first which terminal names SwiftTerm renders faithfully: read SwiftTerm's own terminfo/`TERM` handling and its emulation (it is an xterm-compatible emulator) and decide from that which names are honest to offer. Decided for the maintainer, subject to the measurement: offer `xterm-256color` (default, today's value), `xterm`, and `vt100`; offer `linux` or `screen`/`tmux` names only if the reading shows SwiftTerm handles their differences; write the reasoning into the report and the row.
+- [x] A global setting in Settings → Terminal and a per-session override in the session editor ("Use the global setting" as the default); the value reaches `openShell(terminal:…)` in `TerminalPanelViewModel` instead of the literal. Stored sessions without the field decode as "use the global setting" (backward compatible; test decoding an old `sessions.json`). The CLI does not open shells, so nothing changes there — state it.
+- [x] Tests: resolution order (session override → global → default); the value passed to `openShell`; old-file decoding; catalogue entries in four languages; a guard that `TerminalPanelViewModel` no longer passes a literal terminal name (negative beside a positive that it reads the resolved value).
+- [x] Whole suite plus the gated SSH suites (the rig's shell receives the chosen `TERM`: assert `echo $TERM` for one non-default value), zero warnings. Commit `feat(terminal): the terminal type is a setting with a per-session override`.
 
 ---
 
 ### Task 5: Closeout
 
-- [ ] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-19** sentence leading the row (the original text stays after it as history) with its commits; open remainders get their own rows grouped by feature; the decisions taken for the maintainer (Tasks 1-4) are listed in the rows so they can be overturned; this plan's sight checks join a grouped sight-check row for 2026-09-19. This plan's `- [ ]` step boxes ticked (not the header line). Commit `docs(backlog): diagnostics and terminal wishes of 2026-09-19 are recorded`.
+- [x] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-19** sentence leading the row (the original text stays after it as history) with its commits; open remainders get their own rows grouped by feature; the decisions taken for the maintainer (Tasks 1-4) are listed in the rows so they can be overturned; this plan's sight checks join a grouped sight-check row for 2026-09-19. This plan's `- [ ]` step boxes ticked (not the header line). Commit `docs(backlog): diagnostics and terminal wishes of 2026-09-19 are recorded`.
 
 ## Self-review
 
