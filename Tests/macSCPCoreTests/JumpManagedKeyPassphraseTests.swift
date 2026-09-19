@@ -2,13 +2,16 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// A jump hop's passphrase falls back to the managed key's own Keychain slot
-/// when the slot the hop reads — the jump's own, its login set's, or the
-/// referenced session's — is empty (technical backlog of 2026-09-16, Task 5).
+/// A jump hop whose login is a managed private key takes that key's own
+/// Keychain passphrase, and reads the slot the hop is bound to — the jump's
+/// own, its login set's, or the referenced session's — only when the managed
+/// store answers nothing (maintainer answer of 2026-09-19).
 ///
-/// Before this, the jump path ran no `ManagedKeyPassphrase.resolve` at all:
-/// a slot dropped for the managed key's (one passphrase, one place) left any
-/// jump hop added AFTER the drop with nothing to authenticate with.
+/// Two defects, one row. The fallback of the technical backlog of 2026-09-16
+/// (Task 5) applied only when the hop's own slot was EMPTY, so a stale value
+/// already sitting there kept winning over the key's real passphrase. And the
+/// save guard that stops the fill's own value from being copied back into the
+/// hop's slot skipped every write, including one carrying a typed correction.
 ///
 /// Passphrases live in named constants and are compared into a `Bool` before
 /// any expectation, so a failure message can carry neither the value nor its
@@ -19,6 +22,9 @@ struct JumpManagedKeyPassphraseTests {
     private static let managedPassphrase = "managed-slot-value"
     private static let ownPassphrase = "own-slot-value"
     private static let targetSecret = "target-slot-value"
+    /// What a person types into the jump passphrase field over the value the
+    /// fill put there — neither the managed key's nor the hop's stored one.
+    private static let typedCorrection = "typed-correction-value"
 
     private struct Fixture {
         let vm: SessionListViewModel
@@ -72,7 +78,7 @@ struct JumpManagedKeyPassphraseTests {
         return ssh.jump?.auth
     }
 
-    // MARK: - LoginResolver.fallingBackToManagedKeyPassphrase, directly
+    // MARK: - LoginResolver.preferringManagedKeyPassphrase, directly
 
     private static let unencryptedKeySlotValue = "unencrypted-key-slot-value"
 
@@ -112,12 +118,12 @@ struct JumpManagedKeyPassphraseTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         for typed in [nil, ""] as [String?] {
             let input = login(keyPath: keyPath, secret: typed)
-            let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+            let unchanged = LoginResolver.preferringManagedKeyPassphrase(
                 input, keys: keys, secrets: secrets) == input
             #expect(unchanged, "a blank key path resolved a passphrase")
         }
         let nilPath = login(keyPath: nil, secret: nil)
-        let nilUnchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+        let nilUnchanged = LoginResolver.preferringManagedKeyPassphrase(
             nilPath, keys: keys, secrets: secrets) == nilPath
         #expect(nilUnchanged, "a nil key path resolved a passphrase")
     }
@@ -126,18 +132,36 @@ struct JumpManagedKeyPassphraseTests {
         let (keys, secrets, dir, _, plain) = try makeKeys()
         defer { try? FileManager.default.removeItem(at: dir) }
         let input = login(keyPath: plain, secret: nil)
-        let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+        let unchanged = LoginResolver.preferringManagedKeyPassphrase(
             input, keys: keys, secrets: secrets) == input
         #expect(unchanged, "an unencrypted managed key's slot was read into the login")
     }
 
-    @Test func aTypedPassphraseWins() throws {
+    /// The other half of the precedence: the managed store answering nothing
+    /// leaves whatever the hop's own slot holds in place. Both spellings of
+    /// "answers nothing" that a key path can produce — a managed key that is
+    /// not encrypted, and a path macSCP does not manage at all — asked with a
+    /// value in the hop's slot, so a resolver that dropped it would be seen.
+    @Test func aManagedStoreThatAnswersNothingKeepsTheHopsOwnSlot() throws {
+        let (keys, secrets, dir, _, plain) = try makeKeys()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for keyPath in [plain, dir.appendingPathComponent("foreign-key").path] {
+            let resolved = LoginResolver.preferringManagedKeyPassphrase(
+                login(keyPath: keyPath, secret: Self.ownPassphrase), keys: keys, secrets: secrets)
+            let keptOwn = resolved.secret == Self.ownPassphrase
+            #expect(keptOwn, "a key the store cannot answer for lost the hop's own passphrase")
+        }
+    }
+
+    /// The precedence itself (maintainer answer of 2026-09-19): the managed
+    /// key's passphrase wins over a value already sitting in the hop's slot.
+    @Test func theManagedKeysPassphraseWinsOverTheHopsOwnSlot() throws {
         let (keys, secrets, dir, encrypted, _) = try makeKeys()
         defer { try? FileManager.default.removeItem(at: dir) }
         let input = login(keyPath: encrypted, secret: Self.ownPassphrase)
-        let typedWins = LoginResolver.fallingBackToManagedKeyPassphrase(
-            input, keys: keys, secrets: secrets).secret == Self.ownPassphrase
-        #expect(typedWins)
+        let managedWins = LoginResolver.preferringManagedKeyPassphrase(
+            input, keys: keys, secrets: secrets).secret == Self.managedPassphrase
+        #expect(managedWins, "the hop's own stored slot still won over the managed key's")
     }
 
     /// Both spellings of "nothing typed" — a slot that holds no item (`nil`)
@@ -148,7 +172,7 @@ struct JumpManagedKeyPassphraseTests {
         let (keys, secrets, dir, encrypted, _) = try makeKeys()
         defer { try? FileManager.default.removeItem(at: dir) }
         for keyPath in [encrypted, "  \(encrypted)\n"] {
-            let resolved = LoginResolver.fallingBackToManagedKeyPassphrase(
+            let resolved = LoginResolver.preferringManagedKeyPassphrase(
                 login(keyPath: keyPath, secret: typed), keys: keys, secrets: secrets)
             let takesManaged = resolved.secret == Self.managedPassphrase
             #expect(takesManaged, "nothing typed did not take the managed key's passphrase")
@@ -160,7 +184,7 @@ struct JumpManagedKeyPassphraseTests {
         let (keys, secrets, dir, encrypted, _) = try makeKeys()
         defer { try? FileManager.default.removeItem(at: dir) }
         let input = login(keyPath: encrypted, secret: nil, authKind: authKind)
-        let unchanged = LoginResolver.fallingBackToManagedKeyPassphrase(
+        let unchanged = LoginResolver.preferringManagedKeyPassphrase(
             input, keys: keys, secrets: secrets) == input
         #expect(unchanged)
     }
@@ -233,9 +257,10 @@ struct JumpManagedKeyPassphraseTests {
 
     // MARK: - What the fallback leaves alone
 
-    /// `ManagedKeyPassphrase.resolve` answers the typed value first, and on
-    /// the jump path the slot's value is what is typed.
-    @Test func aJumpsOwnPassphraseStillWins() throws {
+    /// The same precedence through the App's stored-session fill: a hop
+    /// whose own slot still holds a stale passphrase dials with the managed
+    /// key's.
+    @Test func aStaleOwnJumpSlotLosesToTheManagedKeysPassphrase() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.dir) }
         let spec = StoredSession.JumpSpec(
@@ -245,8 +270,8 @@ struct JumpManagedKeyPassphraseTests {
             name: "through-hop", kind: .ssh,
             ssh: StoredSSHConfig(host: "target.invalid", username: "tim", jump: spec))
 
-        let ownWins = try fixture.vm.resolvedJumpLogin(for: stored)?.secret == Self.ownPassphrase
-        #expect(ownWins, "the jump's own slot no longer wins over the managed key's")
+        let managedWins = try fixture.vm.resolvedJumpLogin(for: stored)?.secret == Self.managedPassphrase
+        #expect(managedWins, "a stale value in the jump's own slot still won over the managed key's")
     }
 
     /// A password jump has no key to fall back to — even one whose set still
@@ -297,6 +322,60 @@ struct JumpManagedKeyPassphraseTests {
         fixture.vm.updateSession(saved, newSecret: nil, jumpSecret: Self.managedPassphrase)
         let slotEmptyAfterUpdate = try fixture.secrets.password(for: spec.secretID) == nil
         #expect(slotEmptyAfterUpdate, "`updateSession` copied the managed key's passphrase into the jump's slot")
+    }
+
+    /// A typed correction — a jump passphrase field holding something OTHER
+    /// than what the fill put there — is what the guard above must not eat.
+    /// Both save paths write it into the hop's own slot.
+    @Test func aTypedCorrectionReachesTheJumpsOwnSlot() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let spec = StoredSession.JumpSpec(
+            host: "hop.invalid", username: "u", authKind: .privateKey, keyPath: fixture.keyPath)
+        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
+
+        let saved = try #require(fixture.vm.save(
+            name: "through-hop",
+            values: sshValues(host: "target.invalid", username: "tim"),
+            password: Self.targetSecret, jump: spec, jumpSecret: Self.typedCorrection))
+        let savedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
+        #expect(savedTheCorrection, "`save` skipped a typed correction into the jump's own slot")
+
+        try fixture.secrets.savePassword(Self.ownPassphrase, for: spec.secretID)
+        fixture.vm.updateSession(saved, newSecret: nil, jumpSecret: Self.typedCorrection)
+        let updatedTheCorrection = try fixture.secrets.password(for: spec.secretID) == Self.typedCorrection
+        #expect(updatedTheCorrection, "`updateSession` skipped a typed correction into the jump's own slot")
+    }
+
+    /// A Keychain that is there but not answering cannot prove the value is
+    /// the fill's echo, and an unproven duplication no longer costs the user
+    /// what they typed: the guard writes. Read through `peek`, since this
+    /// store's own read path is the one that is rigged to fail.
+    @Test func aProbeThatCannotBeMadeStillSavesWhatWasTyped() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-jumpkey-unreadable-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = UnreliableSecretStore(failsReads: true)
+        let keys = ManagedKeyStore(directory: dir)
+        let key = ManagedKey(
+            name: "hop-key", comment: "", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(timeIntervalSince1970: 0),
+            hasPassphrase: true, fileName: "hopkey")
+        try keys.add(key)
+        let vm = SessionListViewModel(
+            store: SessionStore(directory: dir), secrets: secrets,
+            auditStore: AuditLogStore(directory: dir),
+            loginSetStore: LoginSetStore(directory: dir), keys: keys)
+        let spec = StoredSession.JumpSpec(
+            host: "hop.invalid", username: "u", authKind: .privateKey,
+            keyPath: keys.keyDirectory.appendingPathComponent("hopkey").path)
+
+        _ = vm.save(
+            name: "through-hop",
+            values: sshValues(host: "target.invalid", username: "tim"),
+            password: Self.targetSecret, jump: spec, jumpSecret: Self.typedCorrection)
+        let savedTheCorrection = secrets.peek(spec.secretID) == Self.typedCorrection
+        #expect(savedTheCorrection, "an unanswerable probe dropped what was typed")
     }
 
     /// The positive beside the check above: a key macSCP does not manage

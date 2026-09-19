@@ -95,8 +95,8 @@ extension SessionListViewModel {
         let login = ResolvedLogin(
             username: set.username, authKind: set.authKind, keyPath: set.keyPath,
             secret: password(for: synthetic))
-        // An empty set slot on a private-key set takes the managed key's own
-        // passphrase, as every other jump fill does.
+        // A private-key set takes the managed key's own passphrase over
+        // whatever the set's slot holds, as every other jump fill does.
         form.jumpPassword = withManagedKeyPassphrase(login).secret ?? ""
     }
 

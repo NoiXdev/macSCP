@@ -2727,7 +2727,8 @@ struct ContentView: View {
                 keyPath: path, store: managedKeyStore, secrets: secretStore)) == true
             // The slot stays while a session-mode jump references this session
             // (Task 2 fix round 1) — defence in depth since the jump fills
-            // fall back to the managed key's slot when this one is empty
+            // take the managed key's passphrase whenever the store has one,
+            // and read this slot only when it has none
             // (`SessionListViewModel.setServesAJumpHop(_:)` says why).
             let jumpHopReadsTheSessionSlot = sessionListViewModel.sessionServesAJumpHop(updated.id)
             if keySlotHoldsThePassphrase && !jumpHopReadsTheSessionSlot {
@@ -2805,8 +2806,9 @@ struct ContentView: View {
         let keySlotHoldsThePassphrase = (try? ManagedKeyPassphrase.hasStoredPassphrase(
             keyPath: request.keyPath, store: managedKeyStore, secrets: secretStore)) == true
         // The set's slot stays while a jump hop resolves from the set (Task 2
-        // fix round 1) — defence in depth since the jump fills fall back to
-        // the managed key's slot when the set's is empty
+        // fix round 1) — defence in depth since the jump fills take the
+        // managed key's passphrase whenever the store has one, and read the
+        // set's slot only when it has none
         // (`SessionListViewModel.setServesAJumpHop(_:)` says why).
         let jumpHopReadsTheSetSlot = sessionListViewModel.setServesAJumpHop(set.id)
         if keySlotHoldsThePassphrase && !jumpHopReadsTheSetSlot {

@@ -479,7 +479,7 @@ public enum DialSupport {
     /// and `DiagnosticJumpStep.dialViaJump`, two call sites, counted
     /// 2026-09-18. A jump's secret is not looked up through a managed-key
     /// link: `DiagnosticJump.stored` resolves it with `LoginResolver
-    /// .fallingBackToManagedKeyPassphrase`, which drops the resolver's
+    /// .preferringManagedKeyPassphrase`, which drops the resolver's
     /// unreadable-store fact (its own comment says why) and hands back only
     /// a secret, so `noJumpSecret` has no fact to name.
     static func missingSecretReason(_ missing: String, secrets: (any SecretSource)?) -> String {

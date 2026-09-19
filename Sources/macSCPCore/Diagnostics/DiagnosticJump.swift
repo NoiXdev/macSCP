@@ -74,7 +74,7 @@ extension DiagnosticJump {
     /// that holds nothing, so building this reads no Keychain item. The
     /// secret is the SAME resolution again, with the real store, followed by
     /// the managed key's fallback (`LoginResolver
-    /// .fallingBackToManagedKeyPassphrase`) — the two calls the App's connect
+    /// .preferringManagedKeyPassphrase`) — the two calls the App's connect
     /// fill makes (`SessionListViewModel.resolvedJump(for:)`) — deferred until
     /// a dial asks. So the slot the diagnosis reads is the slot the connect
     /// reads, by construction rather than by a second statement of which slot
@@ -106,7 +106,7 @@ extension DiagnosticJump {
                 let resolved = try LoginResolver.resolveJump(
                     spec: spec, sets: sets, secrets: secrets, sessions: sessions,
                     referencingSessionID: referencingID)
-                return LoginResolver.fallingBackToManagedKeyPassphrase(
+                return LoginResolver.preferringManagedKeyPassphrase(
                     resolved.login, keys: keys, secrets: secrets
                 ).secret
             })

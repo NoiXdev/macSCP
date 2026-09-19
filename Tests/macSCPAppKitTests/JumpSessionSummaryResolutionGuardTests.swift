@@ -7,16 +7,17 @@ import Testing
 ///
 /// `ConnectionFormView.jumpSessionSummary` is computed in `body`, so it runs on
 /// every keystroke in the form. It shows host, port, user and auth kind and no
-/// secret. Since `561fc589` the connect path's jump resolutions fall back to a
+/// secret. Since `561fc589` the connect path's jump resolutions reach a
 /// managed key's own Keychain slot — a read of `managed_keys.json` and a second
 /// Keychain item, and on a re-signed build a possible consent prompt, per
-/// render. The summary must therefore resolve through
+/// render. Since the maintainer answer of 2026-09-19 they reach it for every
+/// private-key hop, not only one whose own slot is empty. The summary must therefore resolve through
 /// `SessionListViewModel.resolvedJumpEndpoint(for:)`, which reads no secret.
 ///
 /// The forbidden tokens are DERIVED, not listed: every function in
 /// `SessionListViewModel.swift` and `SessionListViewModel+Submit.swift` whose
 /// body calls the fallback (`withManagedKeyPassphrase(`,
-/// `LoginResolver.fallingBackToManagedKeyPassphrase(` or
+/// `LoginResolver.preferringManagedKeyPassphrase(` or
 /// `ManagedKeyPassphrase.resolve(`), and — repeated until nothing new is
 /// found — every function there that calls one of those. A resolver renamed or
 /// added later is read, not remembered. The negative ("the summary calls none
@@ -33,7 +34,7 @@ struct JumpSessionSummaryResolutionGuardTests {
     ]
     private static let summaryAnchor = "var jumpSessionSummary:"
     private static let fallbackCalls = [
-        "withManagedKeyPassphrase(", "fallingBackToManagedKeyPassphrase(", "ManagedKeyPassphrase.resolve(",
+        "withManagedKeyPassphrase(", "preferringManagedKeyPassphrase(", "ManagedKeyPassphrase.resolve(",
         // The form's own fill (Task 6 fix round 1 of the review follow-ups
         // of 2026-09-18), declared on `ConnectionViewModel`, a file this
         // derivation does not read — so named as a seed.

@@ -180,17 +180,34 @@ public enum LoginResolver {
             keyPath: set.keyPath, secret: secret)
     }
 
-    /// A jump hop's login with its passphrase falling back to the managed
-    /// key's own Keychain slot (technical backlog of 2026-09-16, Task 5).
+    /// A jump hop's login carrying the MANAGED key's own passphrase, with the
+    /// slot the hop is bound to used only when the managed store has none
+    /// (maintainer answer of 2026-09-19; the fallback itself came from the
+    /// technical backlog of 2026-09-16, Task 5).
     ///
     /// The two `resolveJump` overloads read the one slot the hop is bound to
     /// — the jump's own, its login set's, or the referenced session's — and
     /// nothing else. A slot dropped because the managed key's slot holds the
     /// same passphrase (one passphrase, one place) therefore left a hop added
-    /// after the drop with nothing to authenticate with. This is the target's
-    /// connect-time rule applied to the hop: `ManagedKeyPassphrase.resolve`
-    /// with the slot's value as the typed one, so a slot that still holds a
-    /// passphrase keeps winning, and an empty one asks the key.
+    /// after the drop with nothing to authenticate with. Which place that one
+    /// is, is the precedence here: the key's own item (`key.id`) is asked
+    /// first, and the hop's slot answers only when the key does not — an
+    /// unencrypted key, a key with no slot of its own, a path macSCP does not
+    /// manage, or a `managed_keys.json` that cannot be read at all.
+    ///
+    /// It used to be the other way round, and that was the defect: the
+    /// fallback applied only to an EMPTY hop slot, so a stale value left in
+    /// one went on winning over the key's real passphrase — and could not be
+    /// corrected, because the save guard beside it skipped the write
+    /// (`SessionSecretPolicy.echoesStoredManagedPassphrase`).
+    ///
+    /// `ManagedKeyPassphrase.resolve` is therefore asked with NOTHING typed,
+    /// which is what makes the key win. That argument means a value a person
+    /// just entered, and on this path there is no such value: what the
+    /// overloads hand over is a STORED one. The target's own fill goes on
+    /// passing the real thing (`ConnectionViewModel
+    /// .fillManagedKeyPassphrase(store:secrets:)`), where the person is at
+    /// the form and their keystrokes must win.
     ///
     /// Only a private-key login with a non-empty key path is looked at; a
     /// password or agent hop is returned unchanged, and a key path macSCP
@@ -198,7 +215,7 @@ public enum LoginResolver {
     /// `resolveJump` so the export, which must not write a managed key's
     /// passphrase into a jump's `jumpPassword`, can go on reading the slot
     /// alone.
-    public static func fallingBackToManagedKeyPassphrase(
+    public static func preferringManagedKeyPassphrase(
         _ login: ResolvedLogin, keys: ManagedKeyStore, secrets: any SecretStore
     ) -> ResolvedLogin {
         guard login.authKind == .privateKey else { return login }
@@ -210,12 +227,15 @@ public enum LoginResolver {
         // dial's `passphraseRequired` names no hop — a jump's fact would name
         // the store for a target key it never hid. The target's fill names
         // it (`ConnectionViewModel.fillManagedKeyPassphrase(store:secrets:)`).
-        let resolved = ManagedKeyPassphrase.resolve(
-            keyPath: keyPath, typed: login.secret ?? "", store: keys, secrets: secrets
+        let managed = ManagedKeyPassphrase.resolve(
+            keyPath: keyPath, typed: "", store: keys, secrets: secrets
         ).passphrase
-        guard !resolved.isEmpty else { return login }
+        // Nothing from the key — including the unreadable store above, which
+        // answers the (empty) typed value — leaves the hop's own slot exactly
+        // as the overloads read it.
+        guard !managed.isEmpty else { return login }
         var result = login
-        result.secret = resolved
+        result.secret = managed
         return result
     }
 

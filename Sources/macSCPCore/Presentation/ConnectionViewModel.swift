@@ -386,7 +386,7 @@ public final class ConnectionViewModel {
     /// `lastFailureReason` all come from it.
     ///
     /// The jump hop's key is not considered: its fill
-    /// (`LoginResolver.fallingBackToManagedKeyPassphrase`) keeps no record,
+    /// (`LoginResolver.preferringManagedKeyPassphrase`) keeps no record,
     /// and `passphraseRequired` names no hop.
     private func namingUnreadableStore(_ error: any Error) -> any Error {
         guard case .passphraseRequired? = error as? SSHKeyError,
