@@ -1221,7 +1221,7 @@
 "diagnostics.throughput.direction.down" = "Download";
 "diagnostics.reason.throughputNeedsAFolder" = "Diese Verbindung beginnt bei der Bucket-Liste, und dort gibt es keinen Ordner für eine Testdatei.";
 "diagnostics.reason.throughputBytesDiffer" = "Die zurückgelesene Datei ist nicht die geschriebene.";
-"diagnostics.reason.throughputFileLeftBehind" = "Die Testdatei ist möglicherweise auf dem Server geblieben. Der nächste Durchsatztest entfernt sie.";
+"diagnostics.reason.throughputFileLeftBehind" = "Die Testdatei ist möglicherweise auf dem Server geblieben – ihr Name steht in den Details. Der nächste Durchsatztest versucht, sie zu entfernen; lehnt der Server erneut ab, entferne sie von Hand.";
 "diagnostics.throughput.notice" = "Lädt eine Testdatei in den Startordner dieser Verbindung hoch, lädt sie wieder herunter, vergleicht sie und löscht sie. Die Größe stellst du in den Einstellungen unter Übertragungen ein; die Bandbreiten-Limits dort gelten.";
 
 /* Import aus einem anderen Programm — Cyberduck (2026-09-03). Menüeintrag,

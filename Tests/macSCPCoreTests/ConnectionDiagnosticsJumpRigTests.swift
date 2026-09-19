@@ -148,7 +148,8 @@ struct ConnectionDiagnosticsJumpRigTests {
         var values = Self.targetValues(host: "sshd2", port: 2222)
         values[SSHField.authKind] = StoredSession.AuthKind.password.rawValue
         let report = await ConnectionDiagnostics(
-            descriptor: .descriptor(for: .ssh), values: values, secrets: nil, jump: nil
+            descriptor: .descriptor(for: .ssh), values: values, secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings()
         ).run(scope: .ping)
 
         let resolve = try #require(report.steps.first)

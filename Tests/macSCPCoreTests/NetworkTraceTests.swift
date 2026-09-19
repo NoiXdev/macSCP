@@ -648,7 +648,8 @@ struct NetworkTraceTests {
         let report = await ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(5)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(5)
         ).run()
 
         #expect(
@@ -678,7 +679,8 @@ struct NetworkTraceTests {
         let report = await ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "not-a-numeric-address", port: 22)),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(2)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(2)
         ).run()
 
         guard let trace = report.steps.first(where: { $0.id == DiagnosticStepID.trace }) else {
@@ -703,7 +705,8 @@ struct NetworkTraceTests {
         defer { listener.close() }
         let report = await ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(endpoint: Endpoint(host: "::1", port: listener.port)),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(3)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(3)
         ).run()
 
         let trace = try #require(report.steps.first { $0.id == DiagnosticStepID.trace })
@@ -833,7 +836,8 @@ struct NetworkTraceTests {
         let report = await ConnectionDiagnostics(
             descriptor: probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(5),
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(5),
             traceTimeout: budget
         ).run()
         return report.steps.first { $0.id == DiagnosticStepID.trace }

@@ -224,7 +224,10 @@ public struct DiagnosticRunObserver: Sendable {
 /// steps that finished before the cancellation, and never a half-measured
 /// row. That report says it was cancelled and after how many steps
 /// (`DiagnosticReport.Completion`) — a partial measurement that presents
-/// itself as a whole one is what makes a pasted report unreadable.
+/// itself as a whole one is what makes a pasted report unreadable. One row
+/// is the exception: a throughput row that says its test file may remain on
+/// the server is kept on a cancelled walk too, because it is the only place
+/// the file is named (`contributions(_:_:into:)`).
 public actor ConnectionDiagnostics {
     private let descriptor: BackendDescriptor
     private let values: FieldValues
@@ -272,18 +275,21 @@ public actor ConnectionDiagnostics {
     ///     directly — the bug this parameter exists to end, one layer up. A
     ///     caller with no jump says so with `nil`.
     ///   - throughput: what the throughput test moves and the bandwidth
-    ///     limits it moves it under (`DiagnosticThroughputSettings`). Read
-    ///     only by `DiagnosticScope.throughput`, which is why it may default:
-    ///     a caller that never offers that scope has nothing to say here. The
-    ///     two callers that ship both pass one — the panel its settings and
-    ///     shared buckets, the CLI its `--payload-mib`.
+    ///     limits it moves it under (`DiagnosticThroughputSettings`).
+    ///     REQUIRED, with no default, for `jump:`'s reason (Task 2 fix round
+    ///     1 of the 2026-09-19 plan, M1): a caller that forgot it would
+    ///     compile, and a `.throughput` run would then write to the user's
+    ///     server ignoring their payload size and their bandwidth limits. The
+    ///     panel passes its settings and the shared buckets, the CLI its
+    ///     `--payload-mib`; a caller that never offers the scope says so with
+    ///     `DiagnosticThroughputSettings()`.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,
         secrets: (any SecretSource)?,
         sessionID: UUID? = nil,
         jump: DiagnosticJump?,
-        throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(),
+        throughput: DiagnosticThroughputSettings,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -503,7 +509,15 @@ public actor ConnectionDiagnostics {
         if scope.runs(.throughput) {
             guard !Task.isCancelled else { return walk.cancelled() }
             let step = await throughput(observer)
-            guard !Task.isCancelled else { return walk.cancelled() }
+            guard !Task.isCancelled else {
+                // The one row a cancel keeps. Every other step's row is
+                // dropped so a cut-short measurement is never reported —
+                // but this row, when it says the test file may remain, is
+                // not a measurement: it is the only place the file is named,
+                // and the step's cleanup is already over when it returns.
+                if ThroughputProbe.mayHaveLeftAFile(step) { await walk.append(step) }
+                return walk.cancelled()
+            }
             await walk.append(step)
         }
         return walk.report(.complete)
@@ -574,8 +588,10 @@ public actor ConnectionDiagnostics {
         let step = await ThroughputProbe.measure(
             on: fileSystem, payloadBytes: throughputSettings.payloadBytes,
             uploadThrottle: throughputSettings.uploadThrottle,
-            downloadThrottle: throughputSettings.downloadThrottle, timer: timer)
-        await ThroughputProbe.close(fileSystem)
+            downloadThrottle: throughputSettings.downloadThrottle,
+            id: throughputSettings.fileID,
+            cleanupBoundSeconds: throughputSettings.cleanupBoundSeconds, timer: timer)
+        await ThroughputProbe.close(fileSystem, within: throughputSettings.cleanupBoundSeconds)
         return step
     }
 

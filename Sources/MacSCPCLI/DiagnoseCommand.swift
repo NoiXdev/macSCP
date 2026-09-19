@@ -135,6 +135,10 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // anything: the closure is `@Sendable`, and a `Bool` copied into it
         // is one, where the command value is not.
         let asJSON = options.json
+        // Built here rather than inline, because its file name is what the
+        // command prints if a second Ctrl-C leaves before the run could.
+        let throughput = DiagnosticThroughputSettings(
+            payloadMiB: payloadMib ?? DiagnosticThroughputSettings.defaultPayloadMiB)
         // No bandwidth bucket: this binary paces no transfer — `put` and
         // `get` run unthrottled, and the app's limits live in a settings
         // file the command line does not read (`SettingsStore
@@ -146,8 +150,7 @@ struct DiagnoseCommand: AsyncParsableCommand {
             secrets: target.secrets,
             sessionID: target.sessionID,
             jump: target.jump,
-            throughput: DiagnosticThroughputSettings(
-                payloadMiB: payloadMib ?? DiagnosticThroughputSettings.defaultPayloadMiB))
+            throughput: throughput)
         // No `appVersion`: this binary reports none. It has no bundle to
         // read `CFBundleShortVersionString` from (the App's `SettingsView`
         // does that, and Core deliberately does not), and no `version:` in
@@ -156,8 +159,29 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // stands, and nothing this command prints carries it anyway: the
         // version reaches paper only through `DiagnosticReport.plainText()`,
         // which the CLI does not print.
-        let report = await diagnostics.run(scope: scope) { step in
-            OutputFormatter.print(step: step, asJSON: asJSON)
+        let scope = self.scope
+        let walk: @Sendable () async -> DiagnosticReport = {
+            await diagnostics.run(scope: scope) { step in
+                OutputFormatter.print(step: step, asJSON: asJSON)
+            }
+        }
+        // `--scope throughput` writes a file to the user's server, so a
+        // signal must cancel it — and let its removal run — rather than kill
+        // the process mid-transfer (`DiagnoseForegroundRun`). The handler is
+        // `tunnels start`'s own, not a second one. Every other scope only
+        // reads, and keeps the default disposition: Ctrl-C ends it at once,
+        // as it always has.
+        let ending: DiagnoseForegroundRun.Ending =
+            scope == .throughput
+            ? await DiagnoseForegroundRun.drive(stops: TunnelStartCommand.interrupts(), walk)
+            : .finished(await walk())
+        guard case .finished(let report) = ending else {
+            if let note = DiagnoseForegroundRun.leftoverNote(
+                for: ending, fileName: throughput.fileName)
+            {
+                OutputFormatter.note(note)
+            }
+            Foundation.exit(DiagnoseForegroundRun.exitCode(for: ending).rawValue)
         }
 
         if asJSON {
@@ -180,6 +204,11 @@ struct DiagnoseCommand: AsyncParsableCommand {
         if options.verbose, scope.resolvesASecret, let secrets = target.secrets {
             OutputFormatter.note("secret source: \(secrets.label)")
         }
+        // On standard error as well as in the row: a script that parses
+        // stdout still gets told a file of this app's may be on the server.
+        if let note = DiagnoseForegroundRun.leftoverNote(for: ending, fileName: throughput.fileName) {
+            OutputFormatter.note(note)
+        }
         // `Foundation.exit`, the way `MacSCPCLI.main()` leaves on a mapped
         // error: a diagnosis that found something wrong is not an error —
         // nothing was thrown, the rows are already printed, and the walk did
@@ -187,7 +216,7 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // carry the number instead would go through that same catch, where
         // `CLIErrorMapping` has no case for it and would print a message and
         // exit 13.
-        Foundation.exit(DiagnoseRendering.exitCode(for: report).rawValue)
+        Foundation.exit(DiagnoseForegroundRun.exitCode(for: ending).rawValue)
     }
 
     /// What the diagnosis is pointed at: which backend answers, which field

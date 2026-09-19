@@ -174,7 +174,7 @@ struct ThroughputProbeTests {
         let run = Task { await Self.measure(on: fs) }
         #expect(await reached.wait() == .signalled)
         run.cancel()
-        _ = await run.value
+        _ = await finishing(run)
 
         #expect(await fs.log.contains("write \(Self.testFile)"))
         #expect(await fs.log.last == "delete \(Self.testFile)")
@@ -190,7 +190,7 @@ struct ThroughputProbeTests {
         let run = Task { await Self.measure(on: fs) }
         #expect(await reached.wait() == .signalled)
         run.cancel()
-        _ = await run.value
+        _ = await finishing(run)
 
         #expect(await fs.log.contains("read \(Self.testFile)"))
         #expect(await fs.log.last == "delete \(Self.testFile)")
@@ -211,7 +211,7 @@ struct ThroughputProbeTests {
             return try? await fs.delete(path: Self.testFile)
         }
         run.cancel()
-        _ = await run.value
+        _ = await finishing(run)
 
         #expect(await fs.refusedCancelledDeletes == 1)
         #expect(await fs.paths == [Self.testFile])
@@ -227,7 +227,7 @@ struct ThroughputProbeTests {
         let run = Task { await Self.measure(on: fs) }
         #expect(await reached.wait() == .signalled)
         run.cancel()
-        _ = await run.value
+        _ = await finishing(run)
 
         #expect(!(await fs.log.contains { $0.hasPrefix("write ") }))
         #expect(!(await fs.log.contains { $0.hasPrefix("delete ") }))
@@ -388,7 +388,7 @@ struct ThroughputProbeTests {
         let run = Task { await diagnostics.run(scope: .throughput) }
         #expect(await reached.wait() == .signalled)
         run.cancel()
-        let report = await run.value
+        let report = await finishing(run)
 
         #expect(report.completion == .cancelled(afterSteps: 1))
         #expect(!report.steps.contains { $0.id == DiagnosticStepID.throughput })
@@ -399,6 +399,119 @@ struct ThroughputProbeTests {
         let path = String(written.dropFirst("write ".count))
         #expect(Array(log.suffix(2)) == ["delete \(path)", "disconnect"], "\(log)")
         await Self.expectNothingLeft(on: fs)
+    }
+
+    // MARK: - A file that may remain is always named (fix round 1, I1)
+
+    /// Cancelled mid-upload, and the server refuses the removal: the file
+    /// stays, so the report must say so by name even though the walk was
+    /// cancelled — the row that says it is the one row a cancel keeps.
+    @Test func aCancelWhoseRemovalIsRefusedStillReportsTheFileByName() async throws {
+        let fs = InMemoryThroughputFileSystem(home: Self.home)
+        let reached = AsyncSignal()
+        await fs.parkWrite(afterChunks: 1, reached: reached)
+        await fs.refuseDelete(of: Self.testFile)
+        let diagnostics = Self.diagnostics(
+            opener: RecordingOpener(fileSystem: fs), throughput: Self.settings())
+
+        let run = Task { await diagnostics.run(scope: .throughput) }
+        #expect(await reached.wait() == .signalled)
+        run.cancel()
+        let report = await finishing(run)
+
+        #expect(report.completion == .cancelled(afterSteps: 2))
+        let row = try #require(report.steps.last)
+        #expect(row.id == DiagnosticStepID.throughput)
+        #expect(row.outcome == .failed(DiagnosticReason.throughputFileLeftBehind))
+        #expect(row.detail.contains(ThroughputProbe.fileName(for: Self.id)), "\(row.detail)")
+        #expect(await fs.paths == [Self.testFile])
+    }
+
+    /// The same, with a removal that never answers: the backstop ends the
+    /// wait, and the row names the file. The fake's delete parks until the
+    /// backstop abandons it, so the outcome does not depend on how fast the
+    /// runner is — the delete never answers at all.
+    @Test func aCancelWhoseRemovalDoesNotAnswerStillReportsTheFileByName() async throws {
+        let fs = InMemoryThroughputFileSystem(home: Self.home)
+        let reached = AsyncSignal()
+        await fs.parkWrite(afterChunks: 1, reached: reached)
+        await fs.parkDelete(of: Self.testFile)
+        var settings = Self.settings()
+        settings.cleanupBoundSeconds = 1
+        let diagnostics = Self.diagnostics(
+            opener: RecordingOpener(fileSystem: fs), throughput: settings)
+
+        let run = Task { await diagnostics.run(scope: .throughput) }
+        #expect(await reached.wait() == .signalled)
+        run.cancel()
+        let report = await finishing(run)
+
+        #expect(report.completion == .cancelled(afterSteps: 2))
+        let row = try #require(report.steps.last)
+        #expect(row.outcome == .failed(DiagnosticReason.throughputFileLeftBehind))
+        #expect(row.detail.contains(ThroughputProbe.fileName(for: Self.id)), "\(row.detail)")
+        #expect(row.detail.contains("the removal did not answer"), "\(row.detail)")
+    }
+
+    /// Whoever is watching — a panel that was closed is watching nothing —
+    /// a file that may remain is written to the diagnostic log, by name and
+    /// folder, and with nothing about the login.
+    @Test func aFileThatMayRemainIsNotedByNameAndAFileThatIsGoneIsNot() async throws {
+        let notes = NoteRecorder()
+        let refused = InMemoryThroughputFileSystem(home: Self.home)
+        await refused.refuseDelete(of: Self.testFile)
+        _ = await Self.measure(on: refused, note: notes.record)
+        let clean = InMemoryThroughputFileSystem(home: Self.home)
+        _ = await Self.measure(on: clean, note: notes.record)
+
+        let lines = notes.lines
+        #expect(lines.count == 1, "\(lines)")
+        let line = try #require(lines.first)
+        #expect(line.contains(ThroughputProbe.fileName(for: Self.id)))
+        #expect(line.contains(Self.home))
+    }
+
+    // MARK: - An incomplete upload (fix round 1, I3)
+
+    /// A failed upload on a backend that says an incomplete upload may
+    /// remain — an S3 multipart upload whose abort did not confirm — is a
+    /// file left behind, even though `delete` finds nothing to remove.
+    @Test func anIncompleteUploadThatMayRemainIsAFileLeftBehind() async throws {
+        let fs = InMemoryThroughputFileSystem(home: Self.home)
+        await fs.failWrite(afterChunks: 1)
+        await fs.markIncompleteUpload(at: Self.testFile)
+        let notes = NoteRecorder()
+
+        let step = await Self.measure(on: fs, note: notes.record)
+
+        #expect(step.outcome == .failed(DiagnosticReason.throughputFileLeftBehind))
+        #expect(step.detail.contains("incomplete upload"), "\(step.detail)")
+        #expect(notes.lines.count == 1, "\(notes.lines)")
+    }
+
+    // MARK: - A file that vanished (fix round 1, M4)
+
+    /// The upload finished, and at the removal the file was gone: said in
+    /// the detail, not read as a run that never wrote anything.
+    @Test func aFileGoneBeforeItsRemovalIsSaid() async throws {
+        let fs = InMemoryThroughputFileSystem(home: Self.home)
+        await fs.vanishOnDelete(of: Self.testFile)
+
+        let step = await Self.measure(on: fs)
+
+        #expect(step.detail.contains("already gone"), "\(step.detail)")
+        await Self.expectNothingLeft(on: fs)
+    }
+
+    /// The positive half: an upload that never created its file says
+    /// nothing about a vanished one.
+    @Test func anUploadThatNeverCreatedItsFileSaysNothingAboutAVanishedOne() async throws {
+        let fs = InMemoryThroughputFileSystem(home: Self.home)
+        await fs.failWriteBeforeCreating()
+
+        let step = await Self.measure(on: fs)
+
+        #expect(!step.detail.contains("already gone"), "\(step.detail)")
     }
 
     /// The secret is looked up the way the dial looks it up, and a session
@@ -455,10 +568,18 @@ struct ThroughputProbeTests {
             titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.throughput))
     }
 
-    static func measure(on fs: InMemoryThroughputFileSystem) async -> DiagnosticStep {
+    static func measure(
+        on fs: InMemoryThroughputFileSystem,
+        note: @escaping @Sendable (String) -> Void = { _ in }
+    ) async -> DiagnosticStep {
         await ThroughputProbe.measure(
             on: fs, payloadBytes: payloadBytes, uploadThrottle: nil, downloadThrottle: nil,
-            id: id, seed: seed, timer: timer())
+            id: id, seed: seed, note: note, timer: timer())
+    }
+
+    /// 1 MiB, and the file named with the suite's own UUID.
+    static func settings() -> DiagnosticThroughputSettings {
+        DiagnosticThroughputSettings(payloadMiB: 1, fileID: id)
     }
 
     /// A walk over SSH-shaped values with an agent login (so nothing asks a
@@ -466,7 +587,8 @@ struct ThroughputProbeTests {
     /// contributions, and names that are never looked up.
     static func diagnostics(
         opener: RecordingOpener, port: Int = 22, requiresSecret: Bool = false,
-        jump: DiagnosticJump? = nil
+        jump: DiagnosticJump? = nil,
+        throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(payloadMiB: 1)
     ) -> ConnectionDiagnostics {
         var values = SSHFieldSchema.defaults
         values[SSHField.host] = "127.0.0.1"
@@ -486,7 +608,7 @@ struct ThroughputProbeTests {
             descriptor: descriptor, values: values, secrets: nil, sessionID: UUID(),
             jump: jump, jumpDialer: JumpDialerThatIsNeverCalled.dialer,
             lookups: ResolveLookups(reverse: { _, _ in nil }, forward: { _, _, _ in nil }),
-            throughput: DiagnosticThroughputSettings(payloadMiB: 1),
+            throughput: throughput,
             throughputOpener: opener.opener, appVersion: "test")
     }
 }
@@ -528,6 +650,13 @@ final class RecordingOpener: Sendable {
             return fileSystem
         }
     }
+}
+
+/// Collects the lines the throughput step notes, in order.
+final class NoteRecorder: Sendable {
+    private let state = Mutex<[String]>([])
+    var lines: [String] { state.withLock { $0 } }
+    var record: @Sendable (String) -> Void { { [self] line in state.withLock { $0.append(line) } } }
 }
 
 /// A clock a `BandwidthBucket` can be paced by without real time passing:
@@ -581,6 +710,10 @@ actor InMemoryThroughputFileSystem: RemoteFileSystem {
     private var corruptAt: Int?
     private var truncateTo: Int?
     private var refusedDeletes: Set<String> = []
+    private var parkedDeletes: Set<String> = []
+    private var vanishingDeletes: Set<String> = []
+    private var incompleteUploads: Set<String> = []
+    private var writeFailsBeforeCreating = false
 
     init(home: String, bucketList: Bool = false) {
         self.home = home
@@ -608,6 +741,17 @@ actor InMemoryThroughputFileSystem: RemoteFileSystem {
     func corruptReadBack(atByte offset: Int) { corruptAt = offset }
     func truncateReadBack(to count: Int) { truncateTo = count }
     func refuseDelete(of path: String) { refusedDeletes.insert(path) }
+    /// The delete of `path` never answers: it parks until its task is
+    /// cancelled, which is what the removal's backstop does to it.
+    func parkDelete(of path: String) { parkedDeletes.insert(path) }
+    /// Something else removes `path` just before this delete reaches it.
+    func vanishOnDelete(of path: String) { vanishingDeletes.insert(path) }
+    func markIncompleteUpload(at path: String) { incompleteUploads.insert(path) }
+    func failWriteBeforeCreating() { writeFailsBeforeCreating = true }
+
+    func incompleteUploadMayRemain(at path: String) async -> Bool {
+        incompleteUploads.contains(path)
+    }
 
     func homeDirectoryPath() async throws -> String {
         log.append("home")
@@ -646,6 +790,9 @@ actor InMemoryThroughputFileSystem: RemoteFileSystem {
         path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
     ) async throws {
         log.append("write \(path)")
+        if writeFailsBeforeCreating {
+            throw RemoteFSError.permissionDenied(path: path)
+        }
         files[path] = Data()
         var chunks = 0
         for try await chunk in contents {
@@ -697,6 +844,14 @@ actor InMemoryThroughputFileSystem: RemoteFileSystem {
             throw CancellationError()
         }
         if refusedDeletes.contains(path) { throw RemoteFSError.permissionDenied(path: path) }
+        if parkedDeletes.contains(path) {
+            _ = await AsyncSignal().wait()
+            throw CancellationError()
+        }
+        if vanishingDeletes.contains(path) {
+            files[path] = nil
+            throw RemoteFSError.notFound(path: path)
+        }
         guard let data = files.removeValue(forKey: path) else {
             throw RemoteFSError.notFound(path: path)
         }

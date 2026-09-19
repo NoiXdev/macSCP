@@ -233,6 +233,12 @@ struct TunnelStartCommand: AsyncParsableCommand {
     /// The sources are held by the stream's own termination handler, which
     /// is the only reference to them: without it they would be released at
     /// the end of this function and never fire.
+    ///
+    /// Two callers, counted 2026-09-19: this command's `run()`, and
+    /// `DiagnoseCommand.run()` under `--scope throughput` since Task 2 fix
+    /// round 1 of the 2026-09-19 plan (`DiagnoseForegroundRun`), where the
+    /// first signal cancels the run so its test file is removed. The
+    /// `--password-command` paragraph above holds there too.
     static func interrupts(_ numbers: [Int32] = [SIGINT, SIGTERM]) -> AsyncStream<Void> {
         AsyncStream { continuation in
             var sources: [any DispatchSourceSignal] = []

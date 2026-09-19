@@ -1224,7 +1224,7 @@
 "diagnostics.throughput.direction.down" = "Réception";
 "diagnostics.reason.throughputNeedsAFolder" = "Cette connexion commence à la liste des buckets, qui n’a aucun dossier où écrire un fichier de test.";
 "diagnostics.reason.throughputBytesDiffer" = "Le fichier relu n’est pas le fichier écrit.";
-"diagnostics.reason.throughputFileLeftBehind" = "Le fichier de test est peut-être resté sur le serveur. Le prochain test de débit le supprime.";
+"diagnostics.reason.throughputFileLeftBehind" = "Le fichier de test est peut-être resté sur le serveur — son nom figure dans les détails. Le prochain test de débit tente de le supprimer ; si le serveur refuse encore, supprimez-le à la main.";
 "diagnostics.throughput.notice" = "Envoie un fichier de test dans le dossier de départ de cette connexion, le télécharge, le compare et le supprime. Sa taille se règle sous Transferts dans les Réglages, et les limites de bande passante qui s’y trouvent s’appliquent.";
 
 /* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de

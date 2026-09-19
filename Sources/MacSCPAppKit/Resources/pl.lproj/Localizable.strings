@@ -1223,7 +1223,7 @@
 "diagnostics.throughput.direction.down" = "Pobieranie";
 "diagnostics.reason.throughputNeedsAFolder" = "To połączenie zaczyna się od listy bucketów, w której nie ma folderu na plik testowy.";
 "diagnostics.reason.throughputBytesDiffer" = "Odczytany plik nie jest plikiem zapisanym.";
-"diagnostics.reason.throughputFileLeftBehind" = "Plik testowy mógł pozostać na serwerze. Następny test przepustowości go usunie.";
+"diagnostics.reason.throughputFileLeftBehind" = "Plik testowy mógł pozostać na serwerze — jego nazwa jest w szczegółach. Następny test przepustowości spróbuje go usunąć; jeśli serwer znowu odmówi, usuń go ręcznie.";
 "diagnostics.throughput.notice" = "Wysyła plik testowy do folderu startowego tego połączenia, pobiera go, porównuje i usuwa. Jego rozmiar ustawia się w Ustawieniach w sekcji Transfery, a obowiązują tam ustawione limity przepustowości.";
 
 /* Import z innego programu — Cyberduck (2026-09-03). Pozycja menu, arkusz

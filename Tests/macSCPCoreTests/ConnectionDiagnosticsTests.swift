@@ -307,7 +307,8 @@ struct ConnectionDiagnosticsTests {
                     await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(30))
 
         let task = Task { await diagnostics.run() }
         await gate.opened()
@@ -361,7 +362,8 @@ struct ConnectionDiagnosticsTests {
                     await dials.tick()
                     return timer.finish(.ok, "dialled")
                 }),
-            values: FieldValues(), secrets: nil, jump: nil)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings())
 
         let observed = StepLog()
         let report = await diagnostics.run(
@@ -401,7 +403,8 @@ struct ConnectionDiagnosticsTests {
                     await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(30))
 
         let task = Task { await diagnostics.run(onStep: { await observed.append($0.id) }) }
         await gate.opened()
@@ -440,7 +443,8 @@ struct ConnectionDiagnosticsTests {
         let observed = StepLog()
         let diagnostics = ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(endpoint: nil, dial: nil),
-            values: FieldValues(), secrets: nil, jump: nil)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings())
         let report = await diagnostics.run(onStep: { await observed.append($0.id) })
         #expect(await observed.ids == report.steps.map(\.id))
         #expect(await observed.ids == [DiagnosticStepID.resolve])
@@ -468,7 +472,8 @@ struct ConnectionDiagnosticsTests {
         let diagnostics = ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port), dial: nil),
-            values: FieldValues(), secrets: nil, jump: nil)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings())
 
         let report = await diagnostics.run(
             scope: .ping,
@@ -515,7 +520,8 @@ struct ConnectionDiagnosticsTests {
                         id: Self.contributionID, titleKey: "diagnostics.step.probe",
                         outcome: .ok, detail: "")
                 ]),
-            values: FieldValues(), secrets: nil, jump: nil)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings())
 
         let report = await diagnostics.run(
             observer: DiagnosticRunObserver(
@@ -554,7 +560,8 @@ struct ConnectionDiagnosticsTests {
                     await suspendUntilCancelled()
                     return timer.finish(.ok, "never reached")
                 }),
-            values: FieldValues(), secrets: nil, jump: nil, stepTimeout: .seconds(30))
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(30))
 
         let task = Task {
             await diagnostics.run(
@@ -702,7 +709,8 @@ struct ConnectionDiagnosticsTests {
                 // values need a secret (`requiresSecret`, false for an SSH
                 // agent login), the way the dial of an SSH login does.
                 requiresSecret: true),
-            values: FieldValues(), secrets: source, sessionID: UUID(), jump: nil, appVersion: "test")
+            values: FieldValues(), secrets: source, sessionID: UUID(), jump: nil,
+            throughput: DiagnosticThroughputSettings(), appVersion: "test")
         _ = await diagnostics.run(scope: scope)
 
         let asked = source.count > 0
@@ -752,7 +760,8 @@ struct ConnectionDiagnosticsTests {
     @Test func aRunThatNamesNoScopeIsTheCompleteOne() async {
         let diagnostics = ConnectionDiagnostics(
             descriptor: Self.probeDescriptor(endpoint: nil, dial: nil),
-            values: FieldValues(), secrets: nil, jump: nil)
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings())
         let watched = await diagnostics.run(onStep: { _ in })
         let silent = await diagnostics.run()
         let scoped = await diagnostics.run(scope: .ping)
@@ -1010,7 +1019,7 @@ struct ConnectionDiagnosticsTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: values,
             secrets: FixedSecretSource(value: secret), sessionID: UUID(), jump: nil,
-            stepTimeout: .seconds(10)
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(10)
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1036,7 +1045,7 @@ struct ConnectionDiagnosticsTests {
 
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: values, secrets: nil, jump: nil,
-            stepTimeout: .seconds(10)
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(10)
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1273,7 +1282,7 @@ struct ConnectionDiagnosticsTests {
 
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .s3), values: values, secrets: nil, jump: nil,
-            stepTimeout: .seconds(10)
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(10)
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1487,7 +1496,7 @@ struct ConnectionDiagnosticsTests {
 
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .s3), values: values, secrets: nil, jump: nil,
-            stepTimeout: .seconds(10)
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(10)
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1505,7 +1514,7 @@ struct ConnectionDiagnosticsTests {
 
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .webdav), values: values, secrets: nil, jump: nil,
-            stepTimeout: .seconds(10)
+            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(10)
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1645,7 +1654,8 @@ struct ConnectionDiagnosticsTests {
     ) async -> DiagnosticReport {
         await ConnectionDiagnostics(
             descriptor: descriptor, values: FieldValues(), secrets: nil, jump: nil,
-            stepTimeout: stepTimeout, appVersion: appVersion
+
+            throughput: DiagnosticThroughputSettings(), stepTimeout: stepTimeout, appVersion: appVersion
         ).run()
     }
 
@@ -1716,7 +1726,8 @@ struct ConnectionDiagnosticsTests {
                 endpoint: endpoint,
                 dial: recordingContribution(id: DiagnosticStepID.dial, ticker: dials),
                 diagnostics: [recordingContribution(id: contributionID, ticker: contributions)]),
-            values: FieldValues(), secrets: nil, jump: nil, appVersion: "test")
+            values: FieldValues(), secrets: nil, jump: nil,
+            throughput: DiagnosticThroughputSettings(), appVersion: "test")
         let report = await diagnostics.run(
             scope: scope, onStep: { step in await observed.append(step.id) })
         return ScopedWalk(

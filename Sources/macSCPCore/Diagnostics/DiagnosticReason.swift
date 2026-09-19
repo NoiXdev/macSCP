@@ -117,8 +117,10 @@ public enum DiagnosticReason {
     static let throughputBytesDiffer = "the bytes read back are not the bytes written"
     /// The throughput step's test file could not be removed, or its removal
     /// did not answer — the one outcome that leaves something of this app's
-    /// on the user's server. The detail names the file; the next run's
-    /// leftover sweep removes it.
+    /// on the user's server. The detail names the file. The next run's
+    /// leftover sweep tries to remove it — which a server that refused this
+    /// removal may refuse again, and which cannot reach an S3 incomplete
+    /// upload at all — so the panel's sentence says "tries", and "by hand".
     static let throughputFileLeftBehind = "the test file may have been left on the server"
 
     /// A refusal with any other reason code. Composed, like

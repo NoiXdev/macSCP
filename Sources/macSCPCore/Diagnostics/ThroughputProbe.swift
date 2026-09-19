@@ -31,17 +31,32 @@ public struct DiagnosticThroughputSettings: Sendable {
     public let uploadThrottle: BandwidthBucket?
     /// The bucket every download of this app is paced by, or `nil` for none.
     public let downloadThrottle: BandwidthBucket?
+    /// The UUID the run's test file is named with — fresh per value, so
+    /// every run names a file of its own. Known to the caller BEFORE the run
+    /// starts, which is what lets `macscp-cli diagnose` name the file after
+    /// a second Ctrl-C, when the run was abandoned and never said.
+    public let fileID: UUID
+    /// How long the removal and the close may take before the step stops
+    /// waiting (`ThroughputProbe.cleanupBoundSeconds`). Internal and
+    /// settable so the suite can reach the backstop without spending the
+    /// production thirty seconds on it.
+    var cleanupBoundSeconds = ThroughputProbe.cleanupBoundSeconds
 
     public init(
         payloadMiB: Int = defaultPayloadMiB,
         uploadThrottle: BandwidthBucket? = nil,
-        downloadThrottle: BandwidthBucket? = nil
+        downloadThrottle: BandwidthBucket? = nil,
+        fileID: UUID = UUID()
     ) {
         self.payloadMiB = min(
             max(payloadMiB, Self.payloadMiBRange.lowerBound), Self.payloadMiBRange.upperBound)
         self.uploadThrottle = uploadThrottle
         self.downloadThrottle = downloadThrottle
+        self.fileID = fileID
     }
+
+    /// The name of the file this run writes (`ThroughputProbe.fileName(for:)`).
+    public var fileName: String { ThroughputProbe.fileName(for: fileID) }
 
     /// The payload in bytes.
     var payloadBytes: Int { payloadMiB * 1024 * 1024 }
@@ -150,6 +165,14 @@ enum ThroughputProbe {
     /// left behind, and the next run's sweep finds it.
     static let cleanupBoundSeconds = 30
 
+    /// Writes `line` to the diagnostic log, under `transfer`: the throughput
+    /// test's own record that a file of this app's may remain on a server.
+    /// The line names the file and the folder and nothing else — no host, no
+    /// login, no secret.
+    static func logLeftover(_ line: String) {
+        DiagnosticLog.shared.log(.error, "transfer", line)
+    }
+
     /// The test file's name for one run.
     static func fileName(for id: UUID) -> String { namePrefix + id.uuidString }
 
@@ -176,6 +199,8 @@ enum ThroughputProbe {
         on fileSystem: any RemoteFileSystem, payloadBytes: Int,
         uploadThrottle: BandwidthBucket?, downloadThrottle: BandwidthBucket?,
         id: UUID = UUID(), seed: UInt64 = UInt64.random(in: .min ... .max),
+        cleanupBoundSeconds: Int = cleanupBoundSeconds,
+        note: @escaping @Sendable (String) -> Void = logLeftover,
         timer: DiagnosticStepTimer
     ) async -> DiagnosticStep {
         // An S3 session started at the bucket list has no folder at its
@@ -231,12 +256,35 @@ enum ThroughputProbe {
                 failure = ("the download", DialSupport.reason(for: error))
             }
         }
-        let removal = await remove(path, from: fileSystem)
+        // Asked only of an upload that did not finish: an S3 multipart
+        // upload whose abort did not confirm leaves parts no listing shows
+        // and no `delete` reaches (`S3MultipartAbortUnconfirmed`).
+        let incompleteUpload =
+            legs.isEmpty ? await fileSystem.incompleteUploadMayRemain(at: path) : false
+        let removal = await remove(path, from: fileSystem, within: cleanupBoundSeconds)
 
-        return row(
+        let step = row(
             timer: timer, name: name, payloadBytes: payloadBytes, legs: legs,
             failure: failure, verdict: failure == nil ? sink.verdict(expected: payloadBytes) : nil,
-            removal: removal, sweep: sweep)
+            removal: removal, incompleteUpload: incompleteUpload, sweep: sweep)
+        // Whoever is watching. A panel that was closed mid-run is watching
+        // nothing, and a cancelled walk keeps this row only because it says
+        // this (`ConnectionDiagnostics.contributions(_:_:into:)`); the log
+        // is the record that outlives both. Name and folder only — the
+        // folder is the session's own, and nothing here names a login.
+        if mayHaveLeftAFile(step) {
+            note(
+                "throughput test file may remain on the server: name=\(name) folder=\(directory) "
+                    + "removal=\(removal.logWord) incompleteUpload=\(incompleteUpload)")
+        }
+        return step
+    }
+
+    /// Whether `step` says a file of this test may remain on the server —
+    /// the one row a cancelled walk still hands over, because it is the only
+    /// place the file is named.
+    static func mayHaveLeftAFile(_ step: DiagnosticStep) -> Bool {
+        step.outcome == .failed(DiagnosticReason.throughputFileLeftBehind)
     }
 
     // MARK: The legs
@@ -277,13 +325,27 @@ enum ThroughputProbe {
         case failed(String)
         /// The removal did not answer inside `cleanupBoundSeconds`.
         case unanswered
+
+        /// One word for the diagnostic log's `removal=` field — never the
+        /// server's sentence, which the row carries instead.
+        var logWord: String {
+            switch self {
+            case .removed: return "removed"
+            case .absent: return "absent"
+            case .failed: return "refused"
+            case .unanswered: return "unanswered"
+            }
+        }
     }
 
     /// Removes `path`, in a task the caller's cancellation does not reach,
     /// and waits for it — up to `cleanupBoundSeconds`.
-    static func remove(_ path: String, from fileSystem: any RemoteFileSystem) async -> Removal {
+    static func remove(
+        _ path: String, from fileSystem: any RemoteFileSystem,
+        within bound: Int = cleanupBoundSeconds
+    ) async -> Removal {
         let outcome = CleanupOutcome<Removal>()
-        let finished = await BoundedClose.run(boundSeconds: cleanupBoundSeconds) {
+        let finished = await BoundedClose.run(boundSeconds: bound) {
             do {
                 try await fileSystem.delete(path: path)
                 outcome.store(.removed)
@@ -299,8 +361,10 @@ enum ThroughputProbe {
 
     /// Closes the step's connection the way `remove(_:from:)` removes its
     /// file: out of the reach of the caller's cancellation, and bounded.
-    static func close(_ fileSystem: any RemoteFileSystem) async {
-        _ = await BoundedClose.run(boundSeconds: cleanupBoundSeconds) {
+    static func close(
+        _ fileSystem: any RemoteFileSystem, within bound: Int = cleanupBoundSeconds
+    ) async {
+        _ = await BoundedClose.run(boundSeconds: bound) {
             await fileSystem.disconnect()
         }
     }
@@ -353,7 +417,7 @@ enum ThroughputProbe {
     private static func row(
         timer: DiagnosticStepTimer, name: String, payloadBytes: Int, legs: [Leg],
         failure: (leg: String, reason: String)?, verdict: ThroughputSink.Verdict?,
-        removal: Removal, sweep: Sweep
+        removal: Removal, incompleteUpload: Bool, sweep: Sweep
     ) -> DiagnosticStep {
         var parts = ["\(name), \(payloadBytes) bytes"]
         switch verdict {
@@ -369,6 +433,11 @@ enum ThroughputProbe {
         switch removal {
         case .removed:
             parts.append("removed")
+        case .absent where !legs.isEmpty:
+            // The upload finished, so the file WAS there: something else
+            // removed it first — another run's sweep, or a person. Said,
+            // because "never written" is what a silent `absent` means.
+            parts.append("the test file was already gone at its removal")
         case .absent:
             break
         case .failed(let reason):
@@ -391,10 +460,13 @@ enum ThroughputProbe {
         if sweep.couldNotList {
             parts.append("the folder could not be listed for leftovers")
         }
+        if incompleteUpload {
+            parts.append("an incomplete upload may remain: its abort was not confirmed")
+        }
 
         let outcome: DiagnosticOutcome
         switch (removal, failure, verdict) {
-        case (.failed, _, _), (.unanswered, _, _):
+        case _ where incompleteUpload, (.failed, _, _), (.unanswered, _, _):
             // A file on the user's server that the user did not put there is
             // the one thing the row must not bury, so it wins over whatever
             // else went wrong — and that goes into the detail instead.

@@ -1220,7 +1220,7 @@
 "diagnostics.throughput.direction.down" = "Download";
 "diagnostics.reason.throughputNeedsAFolder" = "This connection starts at the bucket list, which has no folder to write a test file to.";
 "diagnostics.reason.throughputBytesDiffer" = "The file read back is not the file written.";
-"diagnostics.reason.throughputFileLeftBehind" = "The test file may have been left on the server. The next throughput test removes it.";
+"diagnostics.reason.throughputFileLeftBehind" = "The test file may have been left on the server — its name is in the details. The next throughput test tries to remove it; if the server refuses again, remove it by hand.";
 "diagnostics.throughput.notice" = "Uploads a test file to this connection’s start folder, downloads it, compares it and deletes it. Its size is set under Transfers in Settings, and the bandwidth limits there apply.";
 
 /* Import from another program — Cyberduck (2026-09-03). The menu entry, the

@@ -25,9 +25,12 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **45** as
-/// of 2026-09-18 — recounted by running exactly that command and summing its
-/// per-file numbers. 45 is one more than 44 because Task 6 of the review
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **46** as
+/// of 2026-09-19 — recounted by running exactly that command and summing its
+/// per-file numbers. 46 is one more than 45 because Task 2 fix round 1 of
+/// the 2026-09-19 plan added one call in `ThroughputProbe.logLeftover(_:)`
+/// (the line written when a throughput test file may remain on a server).
+/// 45 was one more than 44 because Task 6 of the review
 /// follow-ups of 2026-09-18 added one call in
 /// `ManagedKeyPassphraseSecretSource.secret(for:)` (the line written when
 /// `managed_keys.json` cannot be read). 44 was two more than the 42 this
@@ -49,8 +52,11 @@ import Testing
 /// do NOT count the same thing, and the difference is two: the grep counts
 /// the literal text wherever it appears, INCLUDING inside a doc comment —
 /// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
-/// — while this scan blanks comments first and sees 43 real calls on
-/// 2026-09-18, one more for the same call, measured the way the 42 was (42
+/// — while this scan blanks comments first and sees 44 real calls on
+/// 2026-09-19 (read from the floor's own message with the floor raised to
+/// 999 by a probe, reverted and checked with `cmp`), one more than the 43 of
+/// 2026-09-18 for the same call. The 43 was one more for its own call,
+/// measured the way the 42 was (42
 /// on 2026-09-16, 40 before
 /// Task 3's two calls and 39 before Task 2's, all 2026-09-16; each recounted
 /// that day with this file's own `callSites(in:file:)` — the 43 and the 42 by
