@@ -96,10 +96,10 @@ struct S3FileSystemTests {
     </ListBucketResult>
     """
 
-    private func httpResponse(status: Int) -> HTTPURLResponse {
+    private func httpResponse(status: Int, headers: [String: String]? = nil) -> HTTPURLResponse {
         HTTPURLResponse(
             url: URL(string: "http://127.0.0.1:9000/macscp-seed")!,
-            statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+            statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
     }
 
     private func connect(responses: [(Data, HTTPURLResponse)]) async throws -> (S3FileSystem, FakeS3Transport) {
@@ -487,7 +487,12 @@ struct S3FileSystemTests {
     /// proven above — this test only cares that the bytes/header are right).
     @Test func readStreamRequestsRangeAndYieldsChunkedBytes() async throws {
         let body = Data((0..<(TransferChunk.size + 10)).map { UInt8($0 & 0xFF) })
-        let (fs, transport) = try await connect(responses: [(body, httpResponse(status: 206))])
+        // The range the server says it sent, as every conforming server
+        // does on a 206: a resumed read refuses one that does not start at
+        // the offset asked for (final review of 2026-09-19, I-3).
+        let contentRange = "bytes 5-\(5 + body.count - 1)/\(5 + body.count)"
+        let (fs, transport) = try await connect(
+            responses: [(body, httpResponse(status: 206, headers: ["Content-Range": contentRange]))])
         var received = Data()
         for try await chunk in try await fs.readStream(path: "/big.bin", fromOffset: 5) {
             received.append(chunk)
@@ -502,6 +507,63 @@ struct S3FileSystemTests {
         // Range were mistakenly folded into the signed header set.
         let auth = req.value(forHTTPHeaderField: "Authorization") ?? ""
         #expect(!auth.contains("range"))
+    }
+
+    // MARK: - A resumed read refuses a server that ignores Range (final review of 2026-09-19, I-3)
+
+    /// A server or proxy that ignores `Range` answers 200 with the WHOLE
+    /// object. Handed to a resume, that body would be appended after the
+    /// partial file already on disk — a silent corruption. A resumed read
+    /// (offset above zero) refuses it before a byte is handed on.
+    @Test func aResumedReadRefusesAServerThatIgnoresRange() async throws {
+        let object = Data((0..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [(object, httpResponse(status: 200))])
+        await expectRangeRefusal { _ = try await fs.readStream(path: "/big.bin", fromOffset: 16) }
+    }
+
+    /// A 206 whose `Content-Range` starts somewhere else is the same
+    /// corruption one step removed: bytes from the wrong place, appended.
+    @Test func aResumedReadRefusesARangeThatStartsElsewhere() async throws {
+        let object = Data((0..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [
+            (object, httpResponse(status: 206, headers: ["Content-Range": "bytes 0-63/64"])),
+        ])
+        await expectRangeRefusal { _ = try await fs.readStream(path: "/big.bin", fromOffset: 16) }
+    }
+
+    /// A 206 that does not say which range it carries cannot be checked, so
+    /// it is not appended either — RFC 9110 requires the header on a
+    /// single-range 206, and every S3 implementation this project has met
+    /// sends it.
+    @Test func aResumedReadRefusesARangeItCannotCheck() async throws {
+        let tail = Data((16..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [(tail, httpResponse(status: 206))])
+        await expectRangeRefusal { _ = try await fs.readStream(path: "/big.bin", fromOffset: 16) }
+    }
+
+    /// A read from the start is not a resume: a 200 with the whole body is
+    /// exactly what it asked for.
+    @Test func aReadFromTheStartTakesAWholeBody() async throws {
+        let object = Data((0..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [(object, httpResponse(status: 200))])
+        var received = Data()
+        for try await chunk in try await fs.readStream(path: "/big.bin", fromOffset: 0) {
+            received.append(chunk)
+        }
+        #expect(received == object)
+    }
+
+    private func expectRangeRefusal(
+        sourceLocation: SourceLocation = #_sourceLocation, _ read: () async throws -> Void
+    ) async {
+        do {
+            try await read()
+            Issue.record("the resumed read was not refused", sourceLocation: sourceLocation)
+        } catch RemoteFSError.protocolError(let reason) {
+            #expect(reason == S3FileSystem.rangeIgnoredReason, sourceLocation: sourceLocation)
+        } catch {
+            Issue.record("refused with \(error), not the Range refusal", sourceLocation: sourceLocation)
+        }
     }
 
     /// S3 answers a range request past EOF with HTTP 416; the protocol

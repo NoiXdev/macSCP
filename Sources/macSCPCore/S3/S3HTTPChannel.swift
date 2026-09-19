@@ -63,9 +63,19 @@ struct S3HTTPChannel: S3AbortChannel {
     /// `S3AbortChannel.finish`.
     func finish() { finishing() }
 
-    /// Every buffered request goes through here, so the transport-error
-    /// mapping exists once instead of once per call site — and so a redirect
-    /// the session's delegate refused is reported as what it was.
+    /// Every buffered request but one goes through here, so the
+    /// transport-error mapping exists once instead of once per call site —
+    /// and so a redirect the session's delegate refused is reported as what
+    /// it was. The exception is `S3FileSystem.deleteTree`'s batch delete,
+    /// which calls `transport.send` itself: it maps a cancellation and a
+    /// transport failure the same way (`HTTPCancellation`,
+    /// `connectionFailure(_:)`), but never asks `refusedRedirect()`, so a
+    /// refused redirect there is reported as "S3 request failed with HTTP
+    /// status" and the 3xx it left behind.
+    /// Recorded open in `docs/BACKLOG.md` ("S3's batch delete bypasses the
+    /// channel's refused-redirect reporting"); found by the final review of
+    /// the 2026-09-19 small follow-ups (I-4). Streaming requests have their
+    /// own arm in `S3FileSystem.readStream`.
     ///
     /// A refusal is not an error at the `URLSession` level: declining to
     /// follow leaves the 3xx response to be delivered as if the endpoint had

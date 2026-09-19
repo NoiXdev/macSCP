@@ -421,7 +421,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     /// A signed range GET on the object key, streamed through
-    /// `channel.transport.sendStreaming`. Maps 2xx → the body stream, 416
+    /// `channel.transport.sendStreaming`. Maps 2xx → the body stream (for
+    /// `offset > 0`, only a 206 whose `Content-Range` starts at `offset`;
+    /// anything else → `.protocolError`, see `answersTheRange`), 416
     /// (range at or beyond EOF) → an EMPTY stream (per the
     /// `RemoteFileSystem` contract — this is not an error), 403 →
     /// `.authenticationFailed`, 404 → `.notFound`, anything else →
@@ -458,6 +460,20 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
         switch response.statusCode {
         case 200..<300:
+            // A resume appends what this returns after the bytes already on
+            // disk, so it must be exactly the range asked for. A server or
+            // proxy that ignores `Range` answers 200 with the WHOLE object;
+            // WebDAV drops that head (`WebDAVFileSystem.readStream`), this
+            // refuses it, and a 206 whose `Content-Range` does not start at
+            // `offset` — or does not say where it starts — too: a failed
+            // resume leaves the partial file as it was, an appended wrong
+            // body does not. Before the S3 download body read `.interrupted`
+            // (fix round 1 of the 2026-09-19 small follow-ups' Task 1) a
+            // resume was practically unreachable here; since then it is
+            // `retryInterrupted`'s path.
+            if offset > 0, !Self.answersTheRange(response, from: offset) {
+                throw RemoteFSError.protocolError(reason: Self.rangeIgnoredReason)
+            }
             return Self.wrappingTransportErrors(body)
         case 416:
             return AsyncThrowingStream { $0.finish() }
@@ -468,6 +484,28 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         default:
             throw RemoteFSError.protocolError(reason: "S3 download failed with HTTP status \(response.statusCode)")
         }
+    }
+
+    /// Why a resumed download was refused: the server did not answer with
+    /// the byte range it was asked for (final review of the 2026-09-19 small
+    /// follow-ups, I-3).
+    static let rangeIgnoredReason =
+        "S3 did not answer with the byte range asked for, so the download was not resumed"
+
+    /// Whether `response` carries the bytes from `offset` on: a 206 whose
+    /// `Content-Range` (`bytes <first>-<last>/<length>`, RFC 9110 §14.4)
+    /// starts at `offset`. Anything else — a 200, a 206 without the header,
+    /// a range that starts elsewhere — is not what a resume may append.
+    static func answersTheRange(_ response: HTTPURLResponse, from offset: UInt64) -> Bool {
+        guard response.statusCode == 206,
+              let contentRange = response.value(forHTTPHeaderField: "Content-Range")
+        else { return false }
+        let prefix = "bytes "
+        guard contentRange.hasPrefix(prefix),
+              let first = contentRange.dropFirst(prefix.count).split(separator: "-").first,
+              let start = UInt64(first.trimmingCharacters(in: .whitespaces))
+        else { return false }
+        return start == offset
     }
 
     /// `body`, with what it throws wrapped the way every other S3 transport
