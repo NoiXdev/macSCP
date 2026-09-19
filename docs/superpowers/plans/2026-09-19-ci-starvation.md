@@ -22,10 +22,10 @@
 
 **Row:** the Bugs row about CI red 35405472152 (its "guard CPU cost" part).
 
-- [ ] Inventory: every guard test that reads files from `Sources/` or `Tests/` (both test targets) — how it lists files, reads them, blanks them, and which regexes it compiles per call. Record counts and the top CPU users (the 2026-09-19 table names `DiagnosticLogSecrecyGuardTests`, `PollingGuardTests`, `TestsNeverBlockThePoolGuardTests`).
-- [ ] One process-wide, lazily built, thread-safe corpus per test target: the file list per root, each file's text, and its blanked views, computed once (a `static let` of an immutable value is enough — no locks on the read path). Every guard reads through it. Regexes compiled once (static), not per file or per call.
-- [ ] Same scope: a test pins that the corpus's file lists equal what a direct directory walk finds (positive), so a guard cannot silently start scanning less.
-- [ ] Probe table for every converted guard; before/after pool-CPU numbers and full-suite wall time. Whole suite, zero warnings. Commit `test(guards): the source guards read one corpus built once per test process`.
+- [x] Inventory: every guard test that reads files from `Sources/` or `Tests/` (both test targets) — how it lists files, reads them, blanks them, and which regexes it compiles per call. Record counts and the top CPU users (the 2026-09-19 table names `DiagnosticLogSecrecyGuardTests`, `PollingGuardTests`, `TestsNeverBlockThePoolGuardTests`).
+- [x] One process-wide, lazily built, thread-safe corpus per test target: the file list per root, each file's text, and its blanked views, computed once (a `static let` of an immutable value is enough — no locks on the read path). Every guard reads through it. Regexes compiled once (static), not per file or per call.
+- [x] Same scope: a test pins that the corpus's file lists equal what a direct directory walk finds (positive), so a guard cannot silently start scanning less.
+- [x] Probe table for every converted guard; before/after pool-CPU numbers and full-suite wall time. Whole suite, zero warnings. Commit `test(guards): the source guards read one corpus built once per test process`.
 
 ---
 
@@ -33,9 +33,9 @@
 
 **Row:** the same Bugs row (its `waitUntilExit` part).
 
-- [ ] `SSHKeyGenerator.swift` and `SSHKeyImporter.swift` (re-verify the anchors) wait for `ssh-keygen` with `Process.waitUntilExit()` on whatever thread calls them — from async code that is a cooperative-pool thread. Move the wait off the pool the way the project's subprocess runner already does (read `SubprocessRunner` and its readers; reuse it rather than writing a second one) so callers `await` without parking a thread.
-- [ ] Tests: behaviour unchanged (existing key tests green); a guard that no `waitUntilExit` remains in Sources outside the sanctioned runner (negative beside a positive that the runner is used). The `TestsNeverBlockThePoolGuardTests` scope note says it covers only `Tests/` — add Sources coverage for `waitUntilExit` if it fits that guard, or state why not.
-- [ ] Whole suite, zero warnings. Commit `fix(keys): ssh-keygen runs are awaited without parking a thread`.
+- [x] `SSHKeyGenerator.swift` and `SSHKeyImporter.swift` (re-verify the anchors) wait for `ssh-keygen` with `Process.waitUntilExit()` on whatever thread calls them — from async code that is a cooperative-pool thread. Move the wait off the pool the way the project's subprocess runner already does (read `SubprocessRunner` and its readers; reuse it rather than writing a second one) so callers `await` without parking a thread.
+- [x] Tests: behaviour unchanged (existing key tests green); a guard that no `waitUntilExit` remains in Sources outside the sanctioned runner (negative beside a positive that the runner is used). The `TestsNeverBlockThePoolGuardTests` scope note says it covers only `Tests/` — add Sources coverage for `waitUntilExit` if it fits that guard, or state why not.
+- [x] Whole suite, zero warnings. Commit `fix(keys): ssh-keygen runs are awaited without parking a thread`.
 
 ---
 
@@ -43,14 +43,14 @@
 
 **Row:** the same Bugs row (its `AuditLogStore` part).
 
-- [ ] `AuditLogStoreTests.rollingCapKeepsNewest` appends 1001 events, each rewriting the whole log (7 s locally, 46–55 s on CI). Make the cap injectable (production default unchanged) and test the property with a small cap; keep one test that the production default is the documented value. Decide whether the production append should stop rewriting the whole file per event: measure the cost at the default cap, and change it only if a real user path pays it (state the numbers either way; if unchanged, record it as open).
-- [ ] Whole suite, zero warnings. Commit `test(audit): the rolling cap is tested at a small cap`.
+- [x] `AuditLogStoreTests.rollingCapKeepsNewest` appends 1001 events, each rewriting the whole log (7 s locally, 46–55 s on CI). Make the cap injectable (production default unchanged) and test the property with a small cap; keep one test that the production default is the documented value. Decide whether the production append should stop rewriting the whole file per event: measure the cost at the default cap, and change it only if a real user path pays it (state the numbers either way; if unchanged, record it as open).
+- [x] Whole suite, zero warnings. Commit `test(audit): the rolling cap is tested at a small cap`.
 
 ---
 
 ### Task 4: Closeout
 
-- [ ] `docs/BACKLOG.md`: the CI-red row's parts get **Done 2026-09-19** sentences with commits and the before/after numbers; what remains (the production `DispatchQueue.global()` deadline weakness, the bcrypt test cost, anything measured but not changed) stays open in its own row. This plan's step boxes ticked. Commit `docs(backlog): the CI starvation fixes of 2026-09-19 are recorded`.
+- [x] `docs/BACKLOG.md`: the CI-red row's parts get **Done 2026-09-19** sentences with commits and the before/after numbers; what remains (the production `DispatchQueue.global()` deadline weakness, the bcrypt test cost, anything measured but not changed) stays open in its own row. This plan's step boxes ticked. Commit `docs(backlog): the CI starvation fixes of 2026-09-19 are recorded`.
 
 ## Self-review
 
