@@ -4,11 +4,16 @@ import Testing
 
 @Suite("AuditLogStore")
 struct AuditLogStoreTests {
-    private func makeStore() throws -> (AuditLogStore, URL) {
+    /// `maxEntries` is `nil` for the production default (`init(directory:)`)
+    /// or a small cap for a rolling-eviction test that must stay
+    /// O(cap), not O(productionCap) — `rollingCapKeepsNewest` below.
+    private func makeStore(maxEntries: Int? = nil) throws -> (AuditLogStore, URL) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("audit-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return (AuditLogStore(directory: dir), dir)
+        let store = maxEntries.map { AuditLogStore(directory: dir, maxEntries: $0) }
+            ?? AuditLogStore(directory: dir)
+        return (store, dir)
     }
 
     private func event(_ detail: String, kind: AuditEvent.Kind = .transferFinished) -> AuditEvent {
@@ -35,12 +40,9 @@ struct AuditLogStoreTests {
     /// than 1001. The production value itself is pinned separately by
     /// `productionDefaultCapIs1000` below.
     @Test func rollingCapKeepsNewest() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("audit-tests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
         let smallCap = 5
-        let store = AuditLogStore(directory: dir, maxEntries: smallCap)
+        let (store, dir) = try makeStore(maxEntries: smallCap)
+        defer { try? FileManager.default.removeItem(at: dir) }
         let id = UUID()
         for index in 0...smallCap {  // one over the cap
             store.append(event("e\(index)"), for: id)
@@ -51,13 +53,17 @@ struct AuditLogStoreTests {
         #expect(events.last?.detail == "e\(smallCap)")
     }
 
-    /// Pins the documented production default (M9b design spec, and the
-    /// task-3 brief for the 2026-09-19 CI-starvation plan): every real
-    /// caller relies on `init(directory:)`'s default `maxEntries` equalling
-    /// this constant. `rollingCapKeepsNewest` above no longer exercises this
-    /// value directly, so it needs its own pin.
-    @Test func productionDefaultCapIs1000() {
+    /// Pins the documented production default (M9b design spec) on BOTH
+    /// exits: the constant AND `init(directory:)`'s actual cap. Pinning only
+    /// the constant left a gap — `init(directory:)` could stop reading
+    /// `maxEntriesPerSession` and hardcode a different cap of its own, and
+    /// this test would still be green. `rollingCapKeepsNewest` above no
+    /// longer exercises either directly, so both need their own pin.
+    @Test func productionDefaultCapIs1000() throws {
         #expect(AuditLogStore.maxEntriesPerSession == 1000)
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(store.maxEntries == 1000)
     }
 
     @Test func clearAndDeleteRemoveEverything() throws {

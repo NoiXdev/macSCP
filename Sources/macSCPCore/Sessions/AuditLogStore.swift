@@ -29,16 +29,28 @@ import Foundation
 /// ONE cache and ONE serial queue per session directory, not independent
 /// copies — a `struct` would have silently defeated the cache.
 public final class AuditLogStore: @unchecked Sendable {
-    /// The documented production value (M9b design spec). Every real caller
-    /// (`MacSCPApp`, `SessionOverviewView`, …) constructs with the default
-    /// `init(directory:)` and gets exactly this; only tests that need a
-    /// small cap to keep a rolling-eviction test linear pass `maxEntries`
-    /// explicitly. `AuditLogStoreTests.productionDefaultCapIs1000` pins this
-    /// value itself.
-    public static let maxEntriesPerSession = 1000
+    /// The documented production value (M9b design spec). The two
+    /// production callers — `MacSCPApp.swift:743` and
+    /// `SessionOverviewView.swift:649` — both construct through the public
+    /// `init(directory:)` and get exactly this; only tests that need a
+    /// small cap to keep a rolling-eviction test linear use the internal
+    /// `init(directory:maxEntries:)` overload below.
+    /// `AuditLogStoreTests.productionDefaultCapIs1000` pins both this
+    /// constant and the init's own default.
+    ///
+    /// `internal`, not `public`: nothing outside this module reads it. A
+    /// public initializer's default-argument expression has to be at least
+    /// as visible as the initializer itself — that is what forced this
+    /// constant `public` when `init(directory:maxEntries:)` was the only
+    /// initializer and carried the default. Splitting that one initializer
+    /// into two below (M3 fix; CI-starvation plan final review, retiring the
+    /// "`maxEntriesPerSession` made public" backlog row) removes the
+    /// default-argument expression from any `public` signature, so the
+    /// constant it reads can go back to `internal`.
+    static let maxEntriesPerSession = 1000
 
     private let directory: URL
-    private let maxEntries: Int
+    let maxEntries: Int
     private let queue = DispatchQueue(label: "dev.noidee.macscp.auditlog")
     /// In-memory mirror of each session's on-disk log. Only ever read/written
     /// from blocks running ON `queue`.
@@ -56,11 +68,18 @@ public final class AuditLogStore: @unchecked Sendable {
     /// replace the whole on-disk history rather than append to it.
     private var partiallyRead: Set<UUID> = []
 
-    /// `maxEntries` defaults to the production cap (`maxEntriesPerSession`);
-    /// only tests pass a smaller value, to keep a rolling-eviction test's
-    /// event count — and so its runtime — independent of the production
-    /// cap. No production call site passes this argument.
-    public init(directory: URL, maxEntries: Int = AuditLogStore.maxEntriesPerSession) {
+    /// The only initializer every production caller uses; always the
+    /// production cap.
+    public init(directory: URL) {
+        self.directory = directory
+        self.maxEntries = Self.maxEntriesPerSession
+    }
+
+    /// `internal`: only `AuditLogStoreTests.rollingCapKeepsNewest` calls
+    /// this, to keep a rolling-eviction test's event count — and so its
+    /// runtime — independent of the production cap. No production call site
+    /// needs a cap other than the default above.
+    init(directory: URL, maxEntries: Int) {
         self.directory = directory
         self.maxEntries = maxEntries
     }

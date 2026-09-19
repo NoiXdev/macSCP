@@ -724,6 +724,9 @@ struct ImportKeySheet: View {
     /// now, so the press is no longer over before the sheet can be pressed
     /// again.
     @State private var isImporting = false
+    /// The run in flight, if any. Cancel and every other way out of the
+    /// sheet (`onDisappear`) cancel it, so a dismissed sheet adds no key.
+    @State private var importTask: Task<Void, Never>?
 
     init(
         fileURL: URL, store: ManagedKeyStore,
@@ -743,33 +746,43 @@ struct ImportKeySheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("keys.import.title", "Import SSH Key")).font(.title3.bold())
 
-            let fileLabel = L10n.string("keys.import.file", "File")
-            KeyFieldRow(label: fileLabel) {
-                Text(fileURL.lastPathComponent)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            // Fixed while the conversion and the inspection run: the run
+            // works from the values it started with (captured below in
+            // `performImport()`), and fields that went on accepting edits
+            // would show a key the sheet is not importing.
+            Group {
+                let fileLabel = L10n.string("keys.import.file", "File")
+                KeyFieldRow(label: fileLabel) {
+                    Text(fileURL.lastPathComponent)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                let nameLabel = L10n.string("keys.generate.name", "Name")
+                KeyFieldRow(label: nameLabel) {
+                    TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
+                }
+                let commentLabel = L10n.string("keys.generate.comment", "Comment")
+                KeyFieldRow(label: commentLabel) {
+                    TextField(commentLabel, text: $comment, prompt: Text(verbatim: ""))
+                }
+                let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
+                KeyFieldRow(label: passphraseLabel) {
+                    SecureField(passphraseLabel, text: $passphrase, prompt: Text(verbatim: ""))
+                }
             }
-            let nameLabel = L10n.string("keys.generate.name", "Name")
-            KeyFieldRow(label: nameLabel) {
-                TextField(nameLabel, text: $name, prompt: Text(verbatim: ""))
-            }
-            let commentLabel = L10n.string("keys.generate.comment", "Comment")
-            KeyFieldRow(label: commentLabel) {
-                TextField(commentLabel, text: $comment, prompt: Text(verbatim: ""))
-            }
-            let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
-            KeyFieldRow(label: passphraseLabel) {
-                SecureField(passphraseLabel, text: $passphrase, prompt: Text(verbatim: ""))
-            }
+            .disabled(isImporting)
             if let errorMessage {
                 Text(errorMessage).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
 
             HStack {
                 Spacer()
-                Button(L10n.string("common.cancel", "Cancel")) { dismiss() }
+                Button(L10n.string("common.cancel", "Cancel")) {
+                    importTask?.cancel()
+                    dismiss()
+                }
                     .buttonStyle(.polished)
                 Button(L10n.string("keys.import.submit", "Import")) { performImport() }
                     .buttonStyle(.polishedProminent)
@@ -780,25 +793,41 @@ struct ImportKeySheet: View {
         .padding(20)
         .frame(width: 380)
         .textFieldStyle(.roundedBorder)
+        // However the sheet goes away — Cancel, Escape, the parent closing —
+        // a run still in flight is cancelled, so a dismissed sheet adds no
+        // key. A finished run makes this a no-op.
+        .onDisappear { importTask?.cancel() }
     }
 
     /// Runs on the main actor and hands the work to a task on it: the
-    /// conversion below is `await`ed now, and a `Button` action cannot be
-    /// `async`. Nothing leaves the main actor — `SSHKeyConverter`'s wait for
-    /// `ssh-keygen` is a suspension rather than a blocked thread, so
-    /// awaiting it here does not hold the main actor while the tool runs.
+    /// conversion (`SSHKeyConverter.copyAsOpenSSH`) AND the inspection
+    /// (`SSHKeyImporter.inspect`) below are both `await`ed now, and a
+    /// `Button` action cannot be `async`. Nothing leaves the main actor —
+    /// each wait is a suspension rather than a blocked thread, so awaiting
+    /// them here does not hold the main actor while the tools run.
     ///
-    /// `isImporting` closes the door that suspension opens: until the
-    /// converter became `async` this ran to completion inside the press, so
-    /// a second press could not overlap the first. Now it can, and two
-    /// overlapping imports would write two UUID destinations and add two
-    /// keys for one picked file. The flag greys the button out
-    /// (`isImportDisabled`), and the `guard` refuses a press that reached
-    /// here anyway.
+    /// `isImporting` closes the door that suspension opens: until both calls
+    /// became `async` this ran to completion inside the press, so a second
+    /// press could not overlap the first, and nothing could edit the fields
+    /// out from under a run in flight. Now both are possible across TWO
+    /// suspensions, not one, so every field the run reads is captured into a
+    /// `let` — `trimmedName`, `trimmedComment`, `capturedPassphrase` — before
+    /// the first `await`, and the fields themselves are disabled
+    /// (`.disabled(isImporting)`) for the same window. A passphrase read
+    /// live after either await could put a different secret in the Keychain
+    /// slot than the one the key was converted and inspected with.
+    ///
+    /// `importTask` lets Cancel, and every other way out of the sheet
+    /// (`onDisappear`), stop a run in flight: a cancellation caught after
+    /// both awaits return records nothing and removes the destination file
+    /// the conversion wrote.
     @MainActor private func performImport() {
         guard !isImporting else { return }
         isImporting = true
-        Task { @MainActor in
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let capturedPassphrase = passphrase.isEmpty ? nil : passphrase
+        importTask = Task { @MainActor in
             defer { isImporting = false }
             // `fileURL` came out of a `fileImporter` picker in the parent sheet,
             // possibly outside this app's own sandbox container — the same
@@ -807,8 +836,6 @@ struct ImportKeySheet: View {
             let didAccess = fileURL.startAccessingSecurityScopedResource()
             defer { if didAccess { fileURL.stopAccessingSecurityScopedResource() } }
 
-            let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
             do {
                 let newID = UUID()
                 let destination = store.keyDirectory.appendingPathComponent(newID.uuidString)
@@ -833,14 +860,21 @@ struct ImportKeySheet: View {
                     // actually dial with.
                     try await SSHKeyConverter.copyAsOpenSSH(
                         from: fileURL, to: destination,
-                        passphrase: passphrase.isEmpty ? nil : passphrase)
+                        passphrase: capturedPassphrase)
                     let info = try await SSHKeyImporter.inspect(
                         privateKeyURL: destination,
-                        passphrase: passphrase.isEmpty ? nil : passphrase)
+                        passphrase: capturedPassphrase)
+                    // A cancellation that arrived after both awaits returned:
+                    // the user has already left the sheet, so the key must
+                    // not appear in the list.
+                    guard !Task.isCancelled else {
+                        try? FileManager.default.removeItem(at: destination)
+                        return
+                    }
                     key = ManagedKey(
                         id: newID, name: trimmedName, comment: trimmedComment, type: info.type,
                         fingerprint: info.fingerprint, publicKeyOpenSSH: info.publicKeyOpenSSH,
-                        createdAt: Date(), hasPassphrase: !passphrase.isEmpty,
+                        createdAt: Date(), hasPassphrase: capturedPassphrase != nil,
                         fileName: newID.uuidString)
                     try store.add(key)
                 } catch {
@@ -857,9 +891,9 @@ struct ImportKeySheet: View {
                     throw error
                 }
                 var keptPassphrase = true
-                if !passphrase.isEmpty {
+                if let capturedPassphrase {
                     do {
-                        try KeychainSecretStore().savePassword(passphrase, for: newID)
+                        try KeychainSecretStore().savePassword(capturedPassphrase, for: newID)
                     } catch {
                         keptPassphrase = false
                     }
