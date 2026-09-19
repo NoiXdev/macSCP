@@ -138,6 +138,22 @@ plan's base `112dbc97`, and one of the three fixes does too. Counted
   the reader (an `onStderrChunk` seam raising a latch, awaited before
   the bound is asserted on) instead of on the clock.
 
+**2026-09-19 update** (`938609d8`): the fake behind
+`aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`, described above as
+sleeping 30 s, no longer does. CI run 35405472152 (three cores) went red
+in both attempts — `(dial.outcome → .ok) == .timedOut`, after 87.670 s
+and 87.253 s — because the 30 s sleep was itself a ceiling one level
+down: `DetachedProbe`'s deadline is a `DispatchQueue.global()` timer, and
+a starved cooperative pool leaves that queue with no thread to fire it,
+so the fake's 30 s sleep finished and returned `.ok` before the timer
+fired at all. It now parks until `DetachedProbe` cancels it — which
+happens only once the step has settled — so it cannot outrun the
+deadline however late that fires, and the case carries its own
+`.timeLimit(.minutes(5))` hang bound in place of a wall-clock ceiling.
+The three cancellation cases in the same file raced the same 30 s
+sleep-then-`.ok` shape against the test's own cancel and now park the
+same way.
+
 One thing this section cannot cite, and the reason the counting rule
 above applies to it too: run 33741778350 (`4456836d`, on the plan) is
 red with **one issue attributed to no test at all** — its 10623-line job
