@@ -216,6 +216,70 @@ struct S3EndpointSecrecyTests {
         #expect(Self.endpointInterpolations(in: planted).count == 2)
     }
 
+    /// The interpolation scan above sees only `\(…)` (re-review of the small
+    /// follow-ups, N-1): a throw site that concatenated
+    /// (`"Invalid S3 endpoint: " + config.endpoint`), formatted
+    /// (`String(format: "%@", config.endpoint)`) or first copied the value
+    /// into a local (`let e = config.endpoint`) passed it. So in every S3
+    /// source except the two that DEFINE and adapt the typed value, the
+    /// endpoint may be read in one spelling only — handed to the one parse,
+    /// `endpointComponents(config.endpoint)` — and any other read is
+    /// reported, whatever it is then used for. The two definers are held by
+    /// `TypedEndpointSecrecyTests.noRenderingOfATypedEndpointBypassesTheFilter`,
+    /// which reads concatenation and `String(format:)` too.
+    ///
+    /// Positives beside the negative: the scan read files, the definers are
+    /// among them (so the exclusion names real files), and the allowed
+    /// spelling is still found — so a renamed property or parse turns this
+    /// red instead of leaving it matching nothing.
+    @Test func noS3SourceReadsTheEndpointOutsideTheParse() throws {
+        let directory = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/S3", isDirectory: true)
+        let all = try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
+        let definers = Self.definerFiles
+        let files = all.filter { !definers.contains($0.lastPathComponent) }
+        let sources = try SourceCorpus.commentFree(ofAll: files)
+        var allowed = 0
+        var found: [String] = []
+        for (file, source) in zip(files, sources) {
+            for line in source.split(separator: "\n").map(String.init) {
+                let spelled = line.components(separatedBy: Self.endpointRead).count - 1
+                allowed += spelled
+                if TypedEndpointSecrecyTests.reads(in: line).count > spelled {
+                    found.append("\(file.lastPathComponent): \(line.trimmingCharacters(in: .whitespaces))")
+                }
+            }
+        }
+        let definersFound = definers.allSatisfy { name in all.contains { $0.lastPathComponent == name } }
+        #expect(files.isEmpty == false, "no S3 source was found — moved?")
+        #expect(definersFound, "an excluded definer file is gone — renamed?")
+        #expect(allowed >= 1, "the builders no longer read the endpoint through the parse — renamed?")
+        #expect(found.isEmpty, "\(found)")
+    }
+
+    /// The widened scan is not blind to the three shapes N-1 named, and lets
+    /// the one allowed spelling through.
+    @Test func theWidenedGuardSeesConcatenationFormatAndACopy() {
+        let planted = [
+            #"throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: " + config.endpoint)"#,
+            #"throw RemoteFSError.connectionFailed(reason: String(format: "%@", config.endpoint))"#,
+            "let e = config.endpoint",
+        ]
+        let allowedLine = "guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {"
+        let missed = planted.indices.filter { TypedEndpointSecrecyTests.reads(in: planted[$0]).isEmpty }
+        let allowedReads = TypedEndpointSecrecyTests.reads(in: allowedLine).count
+        let allowedSpelled = allowedLine.components(separatedBy: Self.endpointRead).count - 1
+        #expect(missed.isEmpty, "planted reads the scan missed, by index: \(missed)")
+        #expect(allowedReads == allowedSpelled, "the allowed spelling is reported")
+    }
+
+    /// The files that define the typed endpoint and translate it between the
+    /// form, the store and the runtime config — named after the types they
+    /// declare, so a rename moves the exclusion with it.
+    static let definerFiles = [
+        String(describing: S3FieldSchema.self), String(describing: S3ConnectionConfig.self),
+    ].map { $0 + ".swift" }
+
     static let endpointRead = "endpointComponents(config.endpoint)"
 
     /// Every line of `source` with a string interpolation whose expression —

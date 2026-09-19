@@ -63,10 +63,12 @@ struct S3HTTPChannel: S3AbortChannel {
     /// `S3AbortChannel.finish`.
     func finish() { finishing() }
 
-    /// Every buffered request but one goes through here, so the
-    /// transport-error mapping exists once instead of once per call site —
-    /// and so a redirect the session's delegate refused is reported as what
-    /// it was. The exception is `S3FileSystem.deleteTree`'s batch delete,
+    /// Every buffered request `S3FileSystem` makes but one goes through
+    /// here, so the transport-error mapping exists once instead of once per
+    /// call site — and so a redirect the session's delegate refused is
+    /// reported as what it was. (Scoped to `S3FileSystem` on purpose:
+    /// `S3AccessProbe` sends its own buffered request, with its own
+    /// redirect delegate.) The exception is `S3FileSystem.deleteTree`'s batch delete,
     /// which calls `transport.send` itself: it maps a cancellation and a
     /// transport failure the same way (`HTTPCancellation`,
     /// `connectionFailure(_:)`), but never asks `refusedRedirect()`, so a

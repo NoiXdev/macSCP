@@ -11,9 +11,9 @@ import Foundation
 /// authority scan before the `@` (until the re-review's O-1 fix of
 /// 2026-09-19), so a reason that carried the endpoint could not be cleaned
 /// by any filter further down — it reached the CLI's stderr and the connect
-/// form verbatim. `S3EndpointSecrecyTests` drives
-/// each refusal it can reach with such an endpoint and scans the backend's
-/// sources for any interpolated endpoint.
+/// form verbatim. `S3EndpointSecrecyTests` drives each refusal it can reach
+/// with such an endpoint, and scans the backend's sources for any
+/// interpolated endpoint and for any read of it outside the one parse.
 enum S3EndpointReason {
     /// The endpoint does not parse as a URL (`S3FileSystem`'s URL builders).
     static let unparseable = "Invalid S3 endpoint: it is not a URL that can be read"
@@ -21,9 +21,11 @@ enum S3EndpointReason {
     /// (`S3FileSystem`'s virtual-hosted builders).
     static let noHostForBucket = "Invalid S3 endpoint host: the URL names no host"
     /// The endpoint parses, but no request URL could be built from it with
-    /// the bucket and key in place (`S3FileSystem`'s URL builders).
+    /// the request's path in place (`S3FileSystem`'s URL builders — the
+    /// bucket-list one, whose path is `/` and names no bucket or key, as
+    /// much as the two that put a bucket and a key in).
     static let requestURLUnbuildable =
-        "Failed to build S3 request URL for endpoint: the bucket and key do not fit into it"
+        "Failed to build S3 request URL for endpoint: the request's path does not fit into it"
     /// The URL a request is signed for has no host (`S3RequestSigning`,
     /// `S3FileSystem.presignedURL`).
     static let noHost = "S3 endpoint has no host"
