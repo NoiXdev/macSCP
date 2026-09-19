@@ -106,6 +106,21 @@ public enum DiagnosticReason {
     /// read as a failure nobody had.
     static let targetIsAnAddress = "the target is an IP address, so there is no name to resolve"
 
+    /// The throughput step's session starts at an S3 bucket list, which
+    /// holds buckets and no folder a test file could be written to. About
+    /// this session, not the server — so `unavailable`, and never `failed`.
+    static let throughputNeedsAFolder =
+        "this session starts at the bucket list, which has no folder to write a test file to"
+    /// The throughput step read its payload back and it is not what was
+    /// written: a different byte, or a different length. The detail says
+    /// which, and where.
+    static let throughputBytesDiffer = "the bytes read back are not the bytes written"
+    /// The throughput step's test file could not be removed, or its removal
+    /// did not answer — the one outcome that leaves something of this app's
+    /// on the user's server. The detail names the file; the next run's
+    /// leftover sweep removes it.
+    static let throughputFileLeftBehind = "the test file may have been left on the server"
+
     /// A refusal with any other reason code. Composed, like
     /// `traceHopUnreachable`, so it carries no catalogue key and the panel
     /// shows it as measured.
@@ -250,6 +265,9 @@ public enum DiagnosticReason {
         jumpTraceUnreadable: "diagnostics.reason.jumpTraceUnreadable",
         jumpCouldNotResolve: "diagnostics.reason.jumpCouldNotResolve",
         targetIsAnAddress: "diagnostics.reason.targetIsAnAddress",
+        throughputNeedsAFolder: "diagnostics.reason.throughputNeedsAFolder",
+        throughputBytesDiffer: "diagnostics.reason.throughputBytesDiffer",
+        throughputFileLeftBehind: "diagnostics.reason.throughputFileLeftBehind",
         ICMPEcho.noIPv6RouteReason: "diagnostics.reason.noIPv6Route",
         NetworkTrace.ipv6UnmeasuredReason: "diagnostics.reason.ipv6TraceUnmeasured",
         NetworkTrace.notIPv4Reason: "diagnostics.reason.traceNeedsIPv4",

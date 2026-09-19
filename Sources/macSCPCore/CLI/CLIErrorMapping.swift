@@ -20,8 +20,9 @@ import Foundation
 /// In Core, not the CLI target, for this file's own reason: the CLI has no
 /// test target.
 public enum DiagnoseUsageError: Error, Equatable, Sendable {
-    /// `--host` with a scope whose steps need a stored session — the dial
-    /// and the contributions both authenticate, and a bare endpoint carries
+    /// `--host` with a scope whose steps need a stored session — the dial,
+    /// the contributions and the throughput test all authenticate, and a
+    /// bare endpoint carries
     /// no session id for a secret source to answer for. Refused up front
     /// rather than reported as a `skipped` row nobody asked for.
     case scopeNeedsASession(DiagnosticScope)
@@ -32,16 +33,17 @@ public enum DiagnoseUsageError: Error, Equatable, Sendable {
     /// `complete` is on the permitted side even though it RUNS the dial and
     /// the contributions: it also runs the resolve, the TCP connection, the
     /// echo and the trace, so the walk measures plenty and the two
-    /// authenticating steps report `skipped` beside the rest. The two
+    /// authenticating steps report `skipped` beside the rest. The three
     /// refused scopes are the ones whose ONLY steps beyond the resolve
     /// authenticate — asked without a session, they produce a row saying
     /// nothing was measured and nothing else.
     ///
-    /// An exhaustive switch, so a sixth `DiagnosticScope` cannot reach the
-    /// CLI until someone decides which side of this it is on.
+    /// An exhaustive switch, so a new `DiagnosticScope` cannot reach the CLI
+    /// until someone decides which side of this it is on — as the sixth,
+    /// `throughput`, was decided on 2026-09-19.
     public static func refusal(forEndpointScope scope: DiagnosticScope) -> DiagnoseUsageError? {
         switch scope {
-        case .dial, .contributions: return .scopeNeedsASession(scope)
+        case .dial, .contributions, .throughput: return .scopeNeedsASession(scope)
         case .complete, .ping, .trace: return nil
         }
     }

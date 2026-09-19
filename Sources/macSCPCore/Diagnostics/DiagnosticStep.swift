@@ -89,6 +89,9 @@ public enum DiagnosticStepID {
     public static let icmp = "icmp"
     public static let dial = "dial"
     public static let trace = "trace"
+    /// The throughput test (`DiagnosticScope.throughput`): a payload written
+    /// to the server over the session's own protocol and read back.
+    public static let throughput = "throughput"
 
     /// The steps of a session behind a jump host (`DiagnosticJump`): the jump
     /// itself first, from this Mac, then the target as the jump reaches it.
@@ -97,7 +100,10 @@ public enum DiagnosticStepID {
     /// rows and its JSON name which half a row belongs to in the one field
     /// every renderer already prints — the id — and none of them grows a
     /// column. A session without a jump never produces one of these; its
-    /// walk keeps the five ids above.
+    /// walk keeps the ids above. The throughput step keeps its one id in
+    /// both walks: it measures the server over the session's own connection,
+    /// which behind a jump host is reached through it the way a tab reaches
+    /// it.
     public static let jumpResolve = "jump.resolve"
     public static let jumpTCP = "jump.tcp"
     public static let jumpICMP = "jump.icmp"
@@ -261,11 +267,13 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     public let detail: String
     /// The rows this step measured, when it measured a list of things rather
     /// than one — `nil` for every step but the three traces (`trace`,
-    /// `jump.trace`, `target.traceFromJump`), whose rows are hops, and the
-    /// two resolves this Mac makes (`resolve`, `jump.resolve`), whose rows
-    /// are the names of the addresses found. Counted 2026-09-19 at the three
-    /// places a step is finished with a table: `ConnectionDiagnostics`'s
-    /// `trace` and `resolve`, and `DiagnosticJumpStep.traceFromJump`.
+    /// `jump.trace`, `target.traceFromJump`), whose rows are hops, the two
+    /// resolves this Mac makes (`resolve`, `jump.resolve`), whose rows are
+    /// the names of the addresses found, and the throughput step, whose rows
+    /// are its two directions. Counted 2026-09-19 at the four places a step
+    /// is finished with a table: `ConnectionDiagnostics`'s `trace` and
+    /// `resolve`, `DiagnosticJumpStep.traceFromJump`, and
+    /// `ThroughputProbe.row`.
     ///
     /// Beside `detail` rather than instead of it: the trace's detail keeps
     /// the markers that say the walk STOPPED LOOKING, which are statements

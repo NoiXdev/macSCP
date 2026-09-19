@@ -1170,6 +1170,38 @@ struct SettingsStoreTests {
         #expect(SettingsStore.defaultConnectTimeoutSeconds == store.connectTimeoutSeconds)
     }
 
+    /// The throughput test's payload: 8 MiB by default, clamped on both ends
+    /// to the range the diagnosis itself declares — asserted through the
+    /// persisted file, for `theKeepAliveIntervalIsClampedOnBothEnds`'s
+    /// reason — and read back by a fresh store.
+    @Test func theThroughputPayloadDefaultsToEightAndIsClampedToTheDiagnosisRange() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.throughputPayloadMiB == 8)
+        #expect(store.throughputPayloadMiB == DiagnosticThroughputSettings.defaultPayloadMiB)
+        #expect(SettingsStore.throughputPayloadMiBRange == 1...256)
+
+        store.throughputPayloadMiB = 0
+        #expect(store.throughputPayloadMiB == 1)
+        #expect(try persistedRaw(dir)["throughputPayloadMiB"] == .number(1))
+
+        store.throughputPayloadMiB = 10_000
+        #expect(store.throughputPayloadMiB == 256)
+        #expect(try persistedRaw(dir)["throughputPayloadMiB"] == .number(256))
+
+        store.throughputPayloadMiB = 32
+        #expect(SettingsStore(directory: dir).throughputPayloadMiB == 32)
+    }
+
+    /// The settings value the runner is handed is clamped too, so a caller
+    /// that skipped the store cannot ask for an empty or a gigabyte payload.
+    @Test func theThroughputSettingsClampThePayloadToTheirRange() {
+        #expect(DiagnosticThroughputSettings(payloadMiB: 0).payloadMiB == 1)
+        #expect(DiagnosticThroughputSettings(payloadMiB: 999).payloadMiB == 256)
+        #expect(DiagnosticThroughputSettings().payloadBytes == 8 * 1024 * 1024)
+    }
+
     @Test func reconnectDefaultsToOfferingOnly() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

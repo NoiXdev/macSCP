@@ -24,10 +24,17 @@ import Foundation
 /// `rawValue` is the stable spelling the App builds its catalogue keys from
 /// (`diagnostics.scope.<rawValue>`), which is why the cases are named for
 /// what the user picks rather than for the step ids they expand into.
+///
+/// **`.throughput` is the one scope `.complete` does not include.** Every
+/// other step reads; the throughput test WRITES a file to the user's server,
+/// moves up to 256 MiB each way, and removes it again. Decided for the
+/// maintainer in the plan of 2026-09-19: something that moves data on the
+/// user's server runs only when it is chosen by name, never as part of
+/// "everything".
 public enum DiagnosticScope: String, CaseIterable, Sendable {
-    /// Everything: the resolve, the TCP connection attempt, the ICMP echo,
-    /// the backend's own dial, the network trace and the backend's
-    /// contributions.
+    /// Everything that only reads: the resolve, the TCP connection attempt,
+    /// the ICMP echo, the backend's own dial, the network trace and the
+    /// backend's contributions. Not the throughput test (see above).
     case complete
     /// Is anything there: the resolve, the TCP connection attempt and the
     /// ICMP echo. Behind a jump host it also dials the jump and reads the
@@ -42,6 +49,12 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     case dial
     /// What does the server say: the resolve and the backend's contributions.
     case contributions
+    /// How fast does it move data: the resolve and the throughput test — a
+    /// payload written to the session's start folder over the session's own
+    /// protocol, read back, compared and removed (`ThroughputProbe`). It
+    /// authenticates, so it reads the session's secret; behind a jump host
+    /// it reads the jump's too, because its connection goes through it.
+    case throughput
 
     /// A step a scope is allowed to leave out.
     ///
@@ -57,10 +70,12 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
         case dial
         case trace
         case contributions
+        case throughput
     }
 
-    /// Whether this scope runs a step that resolves a secret — the dial and
-    /// the contributions, the two that authenticate. Derived from
+    /// Whether this scope runs a step that resolves a secret — the dial, the
+    /// contributions and the throughput test, the three that authenticate.
+    /// Derived from
     /// `runs(_:)`, so a scope added to this enum answers by construction
     /// rather than by being remembered here.
     ///
@@ -76,13 +91,15 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     /// answered, and a scope that asked for none would otherwise print
     /// `secret source: none` — a line that reads as a finding about the
     /// session when it only means nothing looked.
-    public var resolvesASecret: Bool { runs(.dial) || runs(.contributions) }
+    public var resolvesASecret: Bool {
+        runs(.dial) || runs(.contributions) || runs(.throughput)
+    }
 
     /// Whether this scope measures that step.
     func runs(_ step: OptionalStep) -> Bool {
         switch self {
         case .complete:
-            return true
+            return step != .throughput
         case .ping:
             return step == .tcp || step == .icmp
         case .trace:
@@ -91,6 +108,8 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
             return step == .dial
         case .contributions:
             return step == .contributions
+        case .throughput:
+            return step == .throughput
         }
     }
 }
@@ -186,7 +205,9 @@ public struct DiagnosticRunObserver: Sendable {
 /// address, the backend's own dial, an IPv4 network trace, and then whatever
 /// the backend contributes — or the subset of those a `DiagnosticScope`
 /// names, which is what a caller who wants one probe and not the whole walk
-/// passes to `run(scope:observer:)`. A session behind a jump host is walked
+/// passes to `run(scope:observer:)`. The throughput test runs only under its
+/// own scope, and is the one step not held to a deadline from outside
+/// (`throughput(_:)` says why). A session behind a jump host is walked
 /// through it instead — the jump first, then the target as the jump reaches
 /// it (`DiagnosticJump`, `targetHalf`). Nothing here asks which protocol it is
 /// looking at — the endpoint, the dial and the contributions all arrive through
@@ -215,6 +236,8 @@ public actor ConnectionDiagnostics {
     private let jump: DiagnosticJump?
     private let jumpDialer: DiagnosticJumpDialer
     private let lookups: ResolveLookups
+    private let throughputSettings: DiagnosticThroughputSettings
+    private let throughputOpener: DiagnosticThroughputOpener
 
     /// - Parameters:
     ///   - secrets: where a contribution's credential comes from — the same
@@ -248,12 +271,19 @@ public actor ConnectionDiagnostics {
     ///     that forgot it would compile and diagnose a bastion-only target
     ///     directly — the bug this parameter exists to end, one layer up. A
     ///     caller with no jump says so with `nil`.
+    ///   - throughput: what the throughput test moves and the bandwidth
+    ///     limits it moves it under (`DiagnosticThroughputSettings`). Read
+    ///     only by `DiagnosticScope.throughput`, which is why it may default:
+    ///     a caller that never offers that scope has nothing to say here. The
+    ///     two callers that ship both pass one — the panel its settings and
+    ///     shared buckets, the CLI its `--payload-mib`.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,
         secrets: (any SecretSource)?,
         sessionID: UUID? = nil,
         jump: DiagnosticJump?,
+        throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(),
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -262,16 +292,19 @@ public actor ConnectionDiagnostics {
             descriptor: descriptor, values: values, secrets: secrets, sessionID: sessionID,
             jump: jump,
             jumpDialer: .live(knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory)),
-            lookups: .live,
+            lookups: .live, throughput: throughput, throughputOpener: .live,
             stepTimeout: stepTimeout, traceTimeout: traceTimeout, appVersion: appVersion)
     }
 
-    /// The same, with the jump's two dials and the resolve step's lookups
-    /// injected — the suite's seams (`DiagnosticJumpDialer`,
-    /// `ResolveLookups`). The public initializer hands the real ones: the
-    /// dials over the known-hosts store the app's own connect reads, and the
-    /// machine's resolver. `lookups` defaults to that resolver, so the cases
-    /// that are not about the resolve keep the walk they always had.
+    /// The same, with the jump's two dials, the resolve step's lookups and
+    /// the throughput step's connection injected — the suite's seams
+    /// (`DiagnosticJumpDialer`, `ResolveLookups`,
+    /// `DiagnosticThroughputOpener`). The public initializer hands the real
+    /// ones: the dials over the known-hosts store the app's own connect
+    /// reads, the machine's resolver, and the backend's own connect.
+    /// `lookups` and `throughputOpener` default to those, so the cases that
+    /// are not about the resolve or the throughput test keep the walk they
+    /// always had.
     init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -280,6 +313,8 @@ public actor ConnectionDiagnostics {
         jump: DiagnosticJump?,
         jumpDialer: DiagnosticJumpDialer,
         lookups: ResolveLookups = .live,
+        throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(),
+        throughputOpener: DiagnosticThroughputOpener = .live,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -291,6 +326,8 @@ public actor ConnectionDiagnostics {
         self.jump = jump
         self.jumpDialer = jumpDialer
         self.lookups = lookups
+        self.throughputSettings = throughput
+        self.throughputOpener = throughputOpener
         self.stepTimeout = stepTimeout
         self.traceTimeout = traceTimeout
         self.appVersion = appVersion
@@ -343,8 +380,9 @@ public actor ConnectionDiagnostics {
     /// like a resolve that had hung (maintainer's finding on the dev build,
     /// 2026-09-04). Every step announces itself here — the resolve, the TCP
     /// ping, the echo, the trace and, through `bounded(_:_:)`, the dial and
-    /// each contribution; on a walk through a jump host, the `jump.` steps
-    /// and every `target.` step too, measured or skipped.
+    /// each contribution, and the throughput test; on a walk through a jump
+    /// host, the `jump.` steps and every `target.` step too, measured or
+    /// skipped.
     ///
     /// **A session behind a jump host** (`jump` non-nil) is walked through it
     /// (`walkThroughJump`): the jump first, from this Mac, then the target as
@@ -438,9 +476,19 @@ public actor ConnectionDiagnostics {
         return await contributions(scope, observer, into: &walk)
     }
 
-    /// The backend's contributions, when the scope asks for them, and the
-    /// walk's natural end — shared by the direct walk and the one through a
-    /// jump, which both finish here.
+    /// The backend's contributions and the throughput test, when the scope
+    /// asks for them, and the walk's natural end — shared by the direct walk
+    /// and the one through a jump, which both finish here.
+    ///
+    /// The throughput test comes last. It is the one step that writes, the
+    /// one that takes as long as its payload does, and no scope runs it
+    /// beside anything but the resolve today — last is where it would stay
+    /// out of every other row's way if one ever did.
+    ///
+    /// Through a jump host it runs whether or not the walk reached the jump:
+    /// it opens its own connection through the jump the way a tab does, as
+    /// `target.dialViaJump` does, and a jump it cannot reach is its own
+    /// connect failing.
     private func contributions(
         _ scope: DiagnosticScope, _ observer: DiagnosticRunObserver, into walk: inout Walk
     ) async -> DiagnosticReport {
@@ -452,7 +500,83 @@ public actor ConnectionDiagnostics {
                 await walk.append(step)
             }
         }
+        if scope.runs(.throughput) {
+            guard !Task.isCancelled else { return walk.cancelled() }
+            let step = await throughput(observer)
+            guard !Task.isCancelled else { return walk.cancelled() }
+            await walk.append(step)
+        }
         return walk.report(.complete)
+    }
+
+    // MARK: - The throughput test
+
+    /// The throughput step: the session's own connection opened, the
+    /// payload measured over it (`ThroughputProbe.measure`), and the
+    /// connection closed.
+    ///
+    /// **Not raced against a deadline**, unlike every other step that
+    /// dials. `DetachedProbe` abandons what it races, and an abandoned
+    /// throughput test is a file left on the user's server by a task nobody
+    /// holds. So the step runs in the walk's own task, from the connect to
+    /// the removal: the connect is bounded by the transport's own timeout
+    /// (`DialSupport.connectSeconds(stepTimeout)`, the dial's), the transfer
+    /// by the payload size and the limits, and the whole of it by the
+    /// user's Cancel — after which the removal and the close still run, out
+    /// of the cancellation's reach and under their own backstop
+    /// (`ThroughputProbe.cleanupBoundSeconds`).
+    ///
+    /// The secret is looked up as the session's dial looks it up: only when
+    /// the backend says the values need one (`requiresSecret`, false for an
+    /// SSH agent login), through the source the connect itself uses. Behind
+    /// a jump host the jump's secret is looked up too, and the connection is
+    /// the two-stage one a tab makes (`DiagnosticJump.targetConfig`).
+    private func throughput(_ observer: DiagnosticRunObserver) async -> DiagnosticStep {
+        let timer = await Self.starting(DiagnosticStepID.throughput, announcedTo: observer)
+        let context = DiagnosticContext(
+            secrets: secrets, sessionID: sessionID, timeout: stepTimeout)
+        let secret: String
+        switch DialSupport.dialSecret(
+            usesAgent: !descriptor.requiresSecret(values),
+            missing: DialSupport.missingSecretReason(DiagnosticReason.noSecret, secrets: secrets),
+            context.secret)
+        {
+        case .secret(let resolved): secret = resolved
+        case .unanswered(let outcome): return timer.finish(outcome, "")
+        }
+        let config: ConnectionConfig
+        do {
+            if let jump {
+                let jumpSecret: String
+                switch DialSupport.dialSecret(
+                    usesAgent: jump.login.authKind == .agent,
+                    missing: DiagnosticReason.noJumpSecret, jump.secret)
+                {
+                case .secret(let resolved): jumpSecret = resolved
+                case .unanswered(let outcome): return timer.finish(outcome, "")
+                }
+                config = .ssh(
+                    try jump.targetConfig(
+                        values: values, targetSecret: secret, jumpSecret: jumpSecret))
+            } else {
+                config = try descriptor.makeConfig(values, secret)
+            }
+        } catch {
+            return timer.finish(.failed(DialSupport.reason(for: error)), "")
+        }
+        let fileSystem: any RemoteFileSystem
+        do {
+            fileSystem = try await throughputOpener.open(
+                config, DialSupport.connectSeconds(stepTimeout))
+        } catch {
+            return timer.finish(.failed(DialSupport.reason(for: error)), "")
+        }
+        let step = await ThroughputProbe.measure(
+            on: fileSystem, payloadBytes: throughputSettings.payloadBytes,
+            uploadThrottle: throughputSettings.uploadThrottle,
+            downloadThrottle: throughputSettings.downloadThrottle, timer: timer)
+        await ThroughputProbe.close(fileSystem)
+        return step
     }
 
     // MARK: - Through a jump host
@@ -1049,10 +1173,10 @@ public actor ConnectionDiagnostics {
 
     /// A universal step's timer, with its start announced first.
     ///
-    /// The announcement is made HERE rather than at each of its seven call
-    /// sites (counted 2026-09-18: `resolve`, `ping`, `echo` and `trace`, each
+    /// The announcement is made HERE rather than at each of its eight call
+    /// sites (counted 2026-09-19: `resolve`, `ping`, `echo` and `trace`, each
     /// for both walks' ids; `dialJump`; the target half's
-    /// `bounded(_:_:_:)`; `skippingTargetHalf`), so the id is spelled once
+    /// `bounded(_:_:_:)`; `skippingTargetHalf`; `throughput`), so the id is spelled once
     /// per step: a start announced beside the call and a timer built inside
     /// the step would be two copies of one name, drifting the moment either
     /// moved.

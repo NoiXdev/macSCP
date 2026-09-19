@@ -50,7 +50,8 @@ public enum DiagnoseRendering {
     }
 
     /// `id`, padded with spaces to width 14 — wide enough for every id of a
-    /// direct walk (`DiagnosticStepID`'s five, and the `jump.` ids of a walk
+    /// direct walk (`DiagnosticStepID`'s six — `throughput`, the longest,
+    /// is 10 — and the `jump.` ids of a walk
     /// through a jump host) with room for a contribution's own, without
     /// truncating one that runs longer. The five `target.` ids do run longer
     /// (`target.tcpViaJump` 17, `target.resolveOnJump` 20,
@@ -87,7 +88,8 @@ public enum DiagnoseRendering {
     ///
     /// A step's table (`step.table`) follows as indented rows below the
     /// step's own row — a trace's hops, one row per hop, and since
-    /// 2026-09-19 the resolve step's names, one row per address — aligned to
+    /// 2026-09-19 the resolve step's names, one row per address, and the
+    /// throughput step's directions, one row each — aligned to
     /// each other's column widths, with no header row: this is a terse CLI
     /// line, not the full report's table.
     public static func textRows(for step: DiagnosticStep) -> [String] {
@@ -140,9 +142,19 @@ public enum DiagnoseRendering {
 
     /// One JSON object per step: `id`, `outcome`, `reason` (absent for
     /// `ok`/`timedOut`), `durationMs` (an integer), `detail`, and — for a
-    /// step that carries a table — `hops` or `names`: `names` for the resolve
-    /// step's name table (`DiagnosticNameColumn`), `hops` for every other
-    /// table, which today is a trace's.
+    /// step that carries a table — `hops`, `names` or `throughput`: `names`
+    /// for the resolve step's name table (`DiagnosticNameColumn`),
+    /// `throughput` for the throughput step's (`DiagnosticThroughputColumn`),
+    /// `hops` for every other table, which today is a trace's.
+    ///
+    /// `throughput` was ADDED on 2026-09-19 with the throughput step: one
+    /// object per direction that finished, `direction`/`bytes`/`duration`/
+    /// `rate`/`limit`, every value a `String` the way `hops`'s are — the
+    /// cells are what the table carries. `bytes` is a plain integer in
+    /// that string and `duration` the leg's own time (`"123.4 ms"`), so a
+    /// script that wants a number rather than the formatted `rate` has both
+    /// halves of one; the step's `durationMs` is not that, because it also
+    /// covers the connect, the leftover sweep and the removal.
     ///
     /// `names` was ADDED on 2026-09-19, when the resolve step (and
     /// `jump.resolve`) began carrying a table: one object per address,
@@ -182,7 +194,12 @@ public enum DiagnoseRendering {
             object["reason"] = reason
         }
         if let table = step.table {
-            let key = table.columns == DiagnosticNameColumn.all ? "names" : "hops"
+            let key: String
+            switch table.columns {
+            case DiagnosticNameColumn.all: key = "names"
+            case DiagnosticThroughputColumn.all: key = "throughput"
+            default: key = "hops"
+            }
             object[key] = jsonRows(table)
         }
         return object

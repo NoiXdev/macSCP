@@ -48,6 +48,9 @@
 "settings.bandwidth.footer" = "0 = illimité";
 "settings.bandwidth.upload" = "Envoi";
 "settings.bandwidth.download" = "Réception";
+"settings.throughput.header" = "Test de débit";
+"settings.throughput.payload" = "Taille du fichier de test";
+"settings.throughput.footer" = "Le test de débit du diagnostic de connexion envoie un fichier de cette taille au serveur, le télécharge puis le supprime.";
 "settings.transfers.presignedExpiry.header" = "Liens de partage S3";
 "settings.transfers.presignedExpiry" = "Expiration par défaut des liens de partage";
 
@@ -1209,6 +1212,20 @@
 "diagnostics.reason.jumpTraceUnreadable" = "Aucun outil d’itinéraire sur l’hôte relais n’a donné de réponse que cette vérification sache lire.";
 "diagnostics.reason.jumpCouldNotResolve" = "L’hôte relais n’a pas pu résoudre le nom de la cible.";
 "diagnostics.reason.targetIsAnAddress" = "La cible est désignée par son adresse IP ; il n’y a donc aucun nom à résoudre.";
+// Le test de débit (2026-09-19) : sa portée et son étape, les cinq en-têtes de colonne et les deux mots de direction de son tableau, ses trois raisons et la note du panneau. Les octets, durées, débits et limites sont des mesures et ne sont jamais traduits.
+"diagnostics.scope.throughput" = "Débit";
+"diagnostics.step.throughput" = "Débit";
+"diagnostics.throughput.column.direction" = "Sens";
+"diagnostics.throughput.column.bytes" = "Octets";
+"diagnostics.throughput.column.duration" = "Durée";
+"diagnostics.throughput.column.rate" = "Débit";
+"diagnostics.throughput.column.limit" = "Limite";
+"diagnostics.throughput.direction.up" = "Envoi";
+"diagnostics.throughput.direction.down" = "Réception";
+"diagnostics.reason.throughputNeedsAFolder" = "Cette connexion commence à la liste des buckets, qui n’a aucun dossier où écrire un fichier de test.";
+"diagnostics.reason.throughputBytesDiffer" = "Le fichier relu n’est pas le fichier écrit.";
+"diagnostics.reason.throughputFileLeftBehind" = "Le fichier de test est peut-être resté sur le serveur. Le prochain test de débit le supprime.";
+"diagnostics.throughput.notice" = "Envoie un fichier de test dans le dossier de départ de cette connexion, le télécharge, le compare et le supprime. Sa taille se règle sous Transferts dans les Réglages, et les limites de bande passante qui s’y trouvent s’appliquent.";
 
 /* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de
    menu, la feuille d’aperçu, les deux interrupteurs et le sélecteur de

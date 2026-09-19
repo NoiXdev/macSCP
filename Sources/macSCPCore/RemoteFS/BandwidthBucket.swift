@@ -59,6 +59,10 @@ public actor BandwidthBucket {
         tokens = min(tokens, capacity)
     }
 
+    /// The rate this bucket paces to right now, in bytes per second — what
+    /// the diagnosis's throughput row names as the limit a leg ran under.
+    public var bytesPerSecond: Int { Int(rate) }
+
     /// Waits until the token balance is positive, then deducts `bytes`.
     /// Cooperatively cancellable: throws `CancellationError` from the
     /// injected `sleep` (Task.sleep default) or the explicit check.

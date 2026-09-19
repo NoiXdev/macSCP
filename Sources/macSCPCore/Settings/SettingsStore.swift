@@ -83,6 +83,7 @@ public final class SettingsStore {
         static let keepAliveEnabled = "keepAliveEnabled"
         static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
+        static let throughputPayloadMiB = "throughputPayloadMiB"
         static let sidebarWidth = "sidebarWidth"
         static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
         static let sidebarCompact = "sidebarCompact"
@@ -114,6 +115,11 @@ public final class SettingsStore {
         static let keepAliveEnabled = true
         static let keepAliveIntervalSeconds = 60
         static let connectTimeoutSeconds = 10
+        /// Read off the diagnosis's own settings type, like
+        /// `checksumAlgorithm` below: the range and the default are the
+        /// throughput test's, and a second copy here could drift from the
+        /// one the CLI's `--payload-mib` is checked against.
+        static let throughputPayloadMiB = DiagnosticThroughputSettings.defaultPayloadMiB
         static let sidebarWidth = 190
         static let sidebarTagFilterEnabled = true
         static let sidebarCompact = false
@@ -745,6 +751,32 @@ public final class SettingsStore {
         }
         set { setInt(clamp(newValue, 5, 120), for: Keys.connectTimeoutSeconds) }
     }
+
+    /// The throughput test's payload in MiB (`DiagnosticScope.throughput`) —
+    /// default 8, clamped on BOTH ends to
+    /// `DiagnosticThroughputSettings.payloadMiBRange` (1–256), so a
+    /// hand-edited settings.json can neither ask for an empty payload nor
+    /// move gigabytes through somebody's server.
+    public var throughputPayloadMiB: Int {
+        get {
+            clamp(
+                intValue(for: Keys.throughputPayloadMiB, default: Defaults.throughputPayloadMiB),
+                Self.throughputPayloadMiBRange.lowerBound,
+                Self.throughputPayloadMiBRange.upperBound)
+        }
+        set {
+            setInt(
+                clamp(
+                    newValue, Self.throughputPayloadMiBRange.lowerBound,
+                    Self.throughputPayloadMiBRange.upperBound),
+                for: Keys.throughputPayloadMiB)
+        }
+    }
+
+    /// The range `throughputPayloadMiB` clamps to, reachable without an
+    /// instance so the Settings stepper is built from the same two numbers.
+    public nonisolated static let throughputPayloadMiBRange =
+        DiagnosticThroughputSettings.payloadMiBRange
 
     /// The same default as the instance property above, reachable without a
     /// `SettingsStore` instance. `MacSCPCLI` never reads user settings at

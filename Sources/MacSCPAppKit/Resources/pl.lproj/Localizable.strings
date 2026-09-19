@@ -48,6 +48,9 @@
 "settings.bandwidth.footer" = "0 = bez limitu";
 "settings.bandwidth.upload" = "Wysyłanie";
 "settings.bandwidth.download" = "Pobieranie";
+"settings.throughput.header" = "Test przepustowości";
+"settings.throughput.payload" = "Rozmiar pliku testowego";
+"settings.throughput.footer" = "Test przepustowości w diagnostyce połączenia wysyła na serwer plik tego rozmiaru, pobiera go i usuwa.";
 "settings.transfers.presignedExpiry.header" = "Linki udostępniania S3";
 "settings.transfers.presignedExpiry" = "Domyślny czas ważności linku udostępniania";
 
@@ -1208,6 +1211,20 @@
 "diagnostics.reason.jumpTraceUnreadable" = "Żadne narzędzie do śledzenia trasy na hoście pośredniczącym nie dało odpowiedzi, którą to sprawdzenie potrafi odczytać.";
 "diagnostics.reason.jumpCouldNotResolve" = "Host pośredniczący nie mógł rozwiązać nazwy celu.";
 "diagnostics.reason.targetIsAnAddress" = "Cel jest podany przez adres IP, więc nie ma nazwy do rozwiązania.";
+// Test przepustowości (2026-09-19): jego zakres i krok, pięć nagłówków kolumn i dwa słowa kierunku jego tabeli, trzy powody i uwaga w panelu. Liczby bajtów, czasy, prędkości i limity są pomiarami i nigdy nie są tłumaczone.
+"diagnostics.scope.throughput" = "Przepustowość";
+"diagnostics.step.throughput" = "Przepustowość";
+"diagnostics.throughput.column.direction" = "Kierunek";
+"diagnostics.throughput.column.bytes" = "Bajty";
+"diagnostics.throughput.column.duration" = "Czas";
+"diagnostics.throughput.column.rate" = "Prędkość";
+"diagnostics.throughput.column.limit" = "Limit";
+"diagnostics.throughput.direction.up" = "Wysyłanie";
+"diagnostics.throughput.direction.down" = "Pobieranie";
+"diagnostics.reason.throughputNeedsAFolder" = "To połączenie zaczyna się od listy bucketów, w której nie ma folderu na plik testowy.";
+"diagnostics.reason.throughputBytesDiffer" = "Odczytany plik nie jest plikiem zapisanym.";
+"diagnostics.reason.throughputFileLeftBehind" = "Plik testowy mógł pozostać na serwerze. Następny test przepustowości go usunie.";
+"diagnostics.throughput.notice" = "Wysyła plik testowy do folderu startowego tego połączenia, pobiera go, porównuje i usuwa. Jego rozmiar ustawia się w Ustawieniach w sekcji Transfery, a obowiązują tam ustawione limity przepustowości.";
 
 /* Import z innego programu — Cyberduck (2026-09-03). Pozycja menu, arkusz
    podglądu, dwa przełączniki i wybór grupy, a także nazwy pól, z których

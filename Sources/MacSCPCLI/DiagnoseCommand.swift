@@ -36,7 +36,11 @@ struct DiagnoseCommand: AsyncParsableCommand {
             each step finishes. The exit \
             code is 0 while every step came back ok, skipped or unavailable, \
             and 16 as soon as one failed or timed out, so a script can \
-            branch on the path being broken without reading a row.
+            branch on the path being broken without reading a row. \
+            --scope throughput is the one check that writes: it uploads a \
+            test file of --payload-mib MiB to the session's start folder, \
+            downloads it, compares it and deletes it, and it runs only when \
+            asked for by name, never as part of complete.
             """)
 
     @OptionGroup var options: DiagnoseOptions
@@ -58,6 +62,15 @@ struct DiagnoseCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Which steps to run.")
     var scope: DiagnosticScope = .complete
 
+    /// The throughput test's payload. Optional rather than defaulted, so
+    /// `validate()` can tell "not given" from "given with another scope" —
+    /// the default is the app's own (`DiagnosticThroughputSettings
+    /// .defaultPayloadMiB`), applied in `run()`.
+    @Option(
+        name: .long,
+        help: "Size of the --scope throughput test file in MiB, 1 to 256. Defaults to 8.")
+    var payloadMib: Int?
+
     /// The ARGUMENT SHAPE only: exactly one target, and the two options that
     /// describe the `--host` form are not accepted without it.
     ///
@@ -78,6 +91,16 @@ struct DiagnoseCommand: AsyncParsableCommand {
         }
         if host == nil, port != nil || kind != nil {
             throw ValidationError("--port and --kind describe --host.")
+        }
+        if let payloadMib {
+            guard scope == .throughput else {
+                throw ValidationError("--payload-mib describes --scope throughput.")
+            }
+            let range = DiagnosticThroughputSettings.payloadMiBRange
+            guard range.contains(payloadMib) else {
+                throw ValidationError(
+                    "--payload-mib must be between \(range.lowerBound) and \(range.upperBound).")
+            }
         }
     }
 
@@ -112,12 +135,19 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // anything: the closure is `@Sendable`, and a `Bool` copied into it
         // is one, where the command value is not.
         let asJSON = options.json
+        // No bandwidth bucket: this binary paces no transfer — `put` and
+        // `get` run unthrottled, and the app's limits live in a settings
+        // file the command line does not read (`SettingsStore
+        // .defaultConnectTimeoutSeconds` states that rule). The row's limit
+        // column therefore says none, which is what applied.
         let diagnostics = ConnectionDiagnostics(
             descriptor: target.descriptor,
             values: target.values,
             secrets: target.secrets,
             sessionID: target.sessionID,
-            jump: target.jump)
+            jump: target.jump,
+            throughput: DiagnosticThroughputSettings(
+                payloadMiB: payloadMib ?? DiagnosticThroughputSettings.defaultPayloadMiB))
         // No `appVersion`: this binary reports none. It has no bundle to
         // read `CFBundleShortVersionString` from (the App's `SettingsView`
         // does that, and Core deliberately does not), and no `version:` in

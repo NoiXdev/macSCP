@@ -167,6 +167,38 @@ struct DiagnoseRenderingJSONObjectTests {
         #expect(object["detail"] as? String == "IPv4 192.0.2.1")
     }
 
+    /// The throughput step's two directions are ADDED under a key of their
+    /// own, `throughput`, one object per direction keyed by the table's own
+    /// column names — never under `hops`, which a script reads as a path.
+    /// Every key the object had is still there with the value it had.
+    @Test func aThroughputStepsDirectionsAreAddedUnderTheirOwnKey() throws {
+        let table = DiagnosticTable(
+            columns: DiagnosticThroughputColumn.all,
+            rows: [
+                [DiagnosticThroughputColumn.up, "8388608", "812.5 ms", "9.8 MB/s", "—"],
+                [DiagnosticThroughputColumn.down, "8388608", "401.0 ms", "20 MB/s", "1 MB/s"],
+            ])
+        let step = makeStep(
+            id: DiagnosticStepID.throughput, outcome: .ok, detail: "read back identical",
+            table: table)
+        let object = DiagnoseRendering.jsonObject(for: step)
+
+        let rows = try #require(object["throughput"] as? [[String: String]])
+        #expect(rows == [
+            [
+                "direction": "up", "bytes": "8388608", "duration": "812.5 ms",
+                "rate": "9.8 MB/s", "limit": "—",
+            ],
+            [
+                "direction": "down", "bytes": "8388608", "duration": "401.0 ms",
+                "rate": "20 MB/s", "limit": "1 MB/s",
+            ],
+        ])
+        #expect(object["hops"] == nil)
+        #expect(object["names"] == nil)
+        #expect(Set(object.keys) == ["id", "outcome", "durationMs", "detail", "throughput"])
+    }
+
     /// And the trace keeps `hops`, and gains no `names`.
     @Test func aTraceStepKeepsItsHopsAndCarriesNoNames() {
         let table = DiagnosticTable(

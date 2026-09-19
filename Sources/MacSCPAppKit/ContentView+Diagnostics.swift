@@ -79,8 +79,24 @@ extension ContentView {
                 jump: sessionListViewModel.diagnosticJump(for: stored))
         }
         diagnostics.present(
-            DiagnosticsViewModel(target: target, secrets: diagnosticsSecrets(for: target)),
+            DiagnosticsViewModel(
+                target: target, secrets: diagnosticsSecrets(for: target),
+                throughput: diagnosticsThroughput),
             for: source.tabID)
+    }
+
+    /// What the throughput test moves, read when a run starts: the payload
+    /// size from Settings, and the SAME two buckets every transfer in every
+    /// tab is paced by (`BandwidthLimiter`), so the test measures what a
+    /// transfer would get under the limits the user set — in the aggregate
+    /// those limits are, not beside them.
+    var diagnosticsThroughput: @MainActor @Sendable () -> DiagnosticThroughputSettings {
+        { [settingsStore, bandwidthLimiter] in
+            DiagnosticThroughputSettings(
+                payloadMiB: settingsStore.throughputPayloadMiB,
+                uploadThrottle: bandwidthLimiter.uploadBucket,
+                downloadThrottle: bandwidthLimiter.downloadBucket)
+        }
     }
 
     /// Closes the panel and stops whatever it was measuring.

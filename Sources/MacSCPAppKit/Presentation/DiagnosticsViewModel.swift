@@ -223,12 +223,23 @@ final class DiagnosticsViewModel: Identifiable {
     /// `appVersion` is read here and not in Core — Core touches no bundle
     /// (`DiagnosticReport.appVersion`'s own doc comment) — the same way
     /// `SettingsView` and `UpdateCheckModel` read it.
-    convenience init(target: DiagnosticsTarget, secrets: (any SecretSource)?) {
+    ///
+    /// `throughput` is asked at the START of every run, not once here: the
+    /// payload size is a setting and the bandwidth buckets come and go as the
+    /// limits are switched on and off (`BandwidthLimiter`), and a panel left
+    /// open while either changed would otherwise measure under the values
+    /// it was opened with. It is the only thing read per run — what the
+    /// diagnosis is POINTED at is still the value taken when the door was
+    /// pressed (`DiagnosticsTarget`).
+    convenience init(
+        target: DiagnosticsTarget, secrets: (any SecretSource)?,
+        throughput: @escaping @MainActor @Sendable () -> DiagnosticThroughputSettings
+    ) {
         let descriptor = BackendDescriptor.descriptor(for: target.kind)
         let version = Self.bundleVersion
-        let diagnostics = ConnectionDiagnostics(
-            descriptor: descriptor, values: target.values, secrets: secrets,
-            sessionID: target.sessionID, jump: target.jump, appVersion: version)
+        let values = target.values
+        let sessionID = target.sessionID
+        let jump = target.jump
         self.init(
             name: target.name,
             // The same answer Core's first line computes, from the same
@@ -238,7 +249,11 @@ final class DiagnosticsViewModel: Identifiable {
             jumpEndpoint: target.jump?.endpoint,
             appVersion: version,
             runner: { scope, observer in
-                await diagnostics.run(scope: scope, observer: observer)
+                let diagnostics = ConnectionDiagnostics(
+                    descriptor: descriptor, values: values, secrets: secrets,
+                    sessionID: sessionID, jump: jump, throughput: await throughput(),
+                    appVersion: version)
+                return await diagnostics.run(scope: scope, observer: observer)
             })
     }
 
@@ -560,10 +575,10 @@ enum DiagnosticsPresentation {
     /// A switch rather than a key composed from the case's `rawValue`.
     /// `DiagnosticsDoorsGuardTests` compares the `diagnostics.*` keys the
     /// SOURCES spell against `en.lproj` for equality, and an interpolated key
-    /// is invisible to that scan — the five entries would be translations
+    /// is invisible to that scan — the six entries would be translations
     /// nothing requires, in four catalogs, with the check green either way.
-    /// Being exhaustive, it also means a sixth scope in Core does not compile
-    /// until it has a name here.
+    /// Being exhaustive, it also means a new scope in Core does not compile
+    /// until it has a name here — as the sixth, `throughput`, did not.
     static func scopeName(_ scope: DiagnosticScope) -> String {
         switch scope {
         case .complete:
@@ -576,6 +591,8 @@ enum DiagnosticsPresentation {
             return L10n.string("diagnostics.scope.dial", "Connect")
         case .contributions:
             return L10n.string("diagnostics.scope.contributions", "Protocol probes")
+        case .throughput:
+            return L10n.string("diagnostics.scope.throughput", "Throughput")
         }
     }
 
@@ -597,14 +614,30 @@ enum DiagnosticsPresentation {
     /// are copied through for the same reason the detail line is: they are
     /// what somebody pastes into a bug report, and a translated address is
     /// one its reader cannot search for. Two columns hold words Core
-    /// COMPOSED — the trace's outcome and the resolve step's name check —
-    /// and which columns those are comes from the table's own keys rather
-    /// than from a position a reordering would silently change.
+    /// COMPOSED — the trace's outcome, the resolve step's name check and
+    /// the throughput test's direction — and which columns those are comes
+    /// from the table's own keys rather than from a position a reordering
+    /// would silently change.
     static func cell(_ text: String, column key: String) -> String {
         switch key {
         case DiagnosticTraceColumn.outcome: return traceOutcome(text)
         case DiagnosticNameColumn.check: return nameCheck(text)
+        case DiagnosticThroughputColumn.direction: return throughputDirection(text)
         default: return text
+        }
+    }
+
+    /// The throughput test's direction word, looked up under its own key —
+    /// the shape `nameCheck(_:)` has. The byte count, the time, the rate and
+    /// the limit beside it are measurements and are copied through.
+    private static func throughputDirection(_ cell: String) -> String {
+        switch cell {
+        case DiagnosticThroughputColumn.up:
+            return L10n.string("diagnostics.throughput.direction.up", cell)
+        case DiagnosticThroughputColumn.down:
+            return L10n.string("diagnostics.throughput.direction.down", cell)
+        default:
+            return cell
         }
     }
 

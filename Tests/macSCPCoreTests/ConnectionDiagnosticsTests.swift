@@ -680,8 +680,8 @@ struct ConnectionDiagnosticsTests {
     /// Over `allCases`, so a sixth scope is measured the day it exists
     /// rather than landing on whichever side its author had in mind. Both
     /// sides are covered by construction — `ping` and `trace` ask nothing,
-    /// `complete`, `dial` and `contributions` ask — so a property stuck at
-    /// either constant is red on three cases or on two.
+    /// `complete`, `dial`, `contributions` and `throughput` ask — so a
+    /// property stuck at either constant is red on four cases or on two.
     ///
     /// `macscp-cli diagnose --verbose` prints `secret source: <label>` only
     /// where this is true (`DiagnoseCommand`), so a `--scope ping` cannot
@@ -697,7 +697,11 @@ struct ConnectionDiagnosticsTests {
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port),
                 dial: Self.askingContribution(id: DiagnosticStepID.dial),
-                diagnostics: [Self.askingContribution(id: Self.contributionID)]),
+                diagnostics: [Self.askingContribution(id: Self.contributionID)],
+                // The throughput test asks only when the backend says the
+                // values need a secret (`requiresSecret`, false for an SSH
+                // agent login), the way the dial of an SSH login does.
+                requiresSecret: true),
             values: FieldValues(), secrets: source, sessionID: UUID(), jump: nil, appVersion: "test")
         _ = await diagnostics.run(scope: scope)
 
@@ -1650,7 +1654,7 @@ struct ConnectionDiagnosticsTests {
     /// of them would be reaching past the seam.
     private static func probeDescriptor(
         endpoint: Endpoint?, dial: DiagnosticContribution?,
-        diagnostics: [DiagnosticContribution] = []
+        diagnostics: [DiagnosticContribution] = [], requiresSecret: Bool = false
     ) -> BackendDescriptor {
         BackendDescriptor(
             kind: .s3,
@@ -1662,7 +1666,7 @@ struct ConnectionDiagnosticsTests {
             apply: { _, _ in },
             connect: { _, _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B",
-            secretEnvironmentVariable: nil, requiresSecret: { _ in false },
+            secretEnvironmentVariable: nil, requiresSecret: { _ in requiresSecret },
             fileActions: [],
             endpoint: { _ in endpoint }, dial: dial, diagnostics: diagnostics)
     }

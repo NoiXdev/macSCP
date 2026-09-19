@@ -46,6 +46,9 @@
 "settings.bandwidth.footer" = "0 = unbegrenzt";
 "settings.bandwidth.upload" = "Upload";
 "settings.bandwidth.download" = "Download";
+"settings.throughput.header" = "Durchsatztest";
+"settings.throughput.payload" = "Größe der Testdatei";
+"settings.throughput.footer" = "Der Durchsatztest in der Verbindungsdiagnose lädt eine Datei dieser Größe auf den Server hoch, lädt sie wieder herunter und löscht sie.";
 "settings.transfers.presignedExpiry.header" = "S3-Freigabe-Links";
 "settings.transfers.presignedExpiry" = "Standard-Ablaufzeit für Freigabe-Links";
 
@@ -1206,6 +1209,20 @@
 "diagnostics.reason.jumpTraceUnreadable" = "Kein Routenwerkzeug auf dem Jump-Host lieferte eine Antwort, die diese Prüfung lesen kann.";
 "diagnostics.reason.jumpCouldNotResolve" = "Der Jump-Host konnte den Namen des Ziels nicht auflösen.";
 "diagnostics.reason.targetIsAnAddress" = "Das Ziel ist über seine IP-Adresse angegeben, es gibt also keinen Namen aufzulösen.";
+// Der Durchsatztest (2026-09-19): Umfang und Schritt, die fünf Spaltenköpfe und zwei Richtungswörter seiner Tabelle, seine drei Gründe und der Hinweis im Panel. Bytezahlen, Zeiten, Raten und Limits sind Messwerte und werden nie übersetzt.
+"diagnostics.scope.throughput" = "Durchsatz";
+"diagnostics.step.throughput" = "Durchsatz";
+"diagnostics.throughput.column.direction" = "Richtung";
+"diagnostics.throughput.column.bytes" = "Bytes";
+"diagnostics.throughput.column.duration" = "Zeit";
+"diagnostics.throughput.column.rate" = "Rate";
+"diagnostics.throughput.column.limit" = "Limit";
+"diagnostics.throughput.direction.up" = "Upload";
+"diagnostics.throughput.direction.down" = "Download";
+"diagnostics.reason.throughputNeedsAFolder" = "Diese Verbindung beginnt bei der Bucket-Liste, und dort gibt es keinen Ordner für eine Testdatei.";
+"diagnostics.reason.throughputBytesDiffer" = "Die zurückgelesene Datei ist nicht die geschriebene.";
+"diagnostics.reason.throughputFileLeftBehind" = "Die Testdatei ist möglicherweise auf dem Server geblieben. Der nächste Durchsatztest entfernt sie.";
+"diagnostics.throughput.notice" = "Lädt eine Testdatei in den Startordner dieser Verbindung hoch, lädt sie wieder herunter, vergleicht sie und löscht sie. Die Größe stellst du in den Einstellungen unter Übertragungen ein; die Bandbreiten-Limits dort gelten.";
 
 /* Import aus einem anderen Programm — Cyberduck (2026-09-03). Menüeintrag,
    Vorschau-Sheet, die beiden Schalter und die Gruppenauswahl, dazu die

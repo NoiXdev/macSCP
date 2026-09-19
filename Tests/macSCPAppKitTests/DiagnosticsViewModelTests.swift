@@ -756,7 +756,7 @@ struct DiagnosticsViewModelTests {
         let model = DiagnosticsViewModel(
             target: DiagnosticsTarget(
                 name: "Test session", kind: .ssh, values: values, sessionID: nil, jump: nil),
-            secrets: nil)
+            secrets: nil, throughput: { DiagnosticThroughputSettings() })
 
         #expect(model.endpoint == Endpoint(host: "example.test", port: 2222), """
             the endpoint is `descriptor.endpoint(values)`, known before the first probe — \
@@ -1032,6 +1032,40 @@ struct DiagnosticsViewModelTests {
         #expect(
             DiagnosticsPresentation.cell(sentence, column: DiagnosticNameColumn.check) == sentence)
         for key in DiagnosticNameColumn.all {
+            let title = DiagnosticsPresentation.columnTitle(key)
+            #expect(title != key.components(separatedBy: ".").last, """
+                \(key) must have an entry of its own, not degrade to the column's name: \(title)
+                """)
+        }
+    }
+
+    /// The throughput table's two direction words are looked up under their
+    /// own keys; the byte count, time, rate and limit beside them are
+    /// measurements and are copied through; and the five headers have
+    /// entries of their own.
+    @Test func theThroughputTablesDirectionsAreLookedUpAndItsMeasurementsCopiedThrough() {
+        let direction = DiagnosticThroughputColumn.direction
+        let missing = "«no entry»"
+        let words: [(word: String, key: String)] = [
+            (DiagnosticThroughputColumn.up, "diagnostics.throughput.direction.up"),
+            (DiagnosticThroughputColumn.down, "diagnostics.throughput.direction.down"),
+        ]
+        for (word, key) in words {
+            let rendered = DiagnosticsPresentation.cell(word, column: direction)
+            let underItsOwnKey = rendered == L10n.string(key, missing)
+            let differsFromWhatCoreComposed = rendered != word
+            #expect(underItsOwnKey, "`\(word)` must render as what \(key) resolves to. Got: \(rendered)")
+            #expect(differsFromWhatCoreComposed, "\(key) must not be Core's own word. Got: \(rendered)")
+        }
+        for (cell, column) in [
+            ("8388608", DiagnosticThroughputColumn.bytes),
+            ("812.5 ms", DiagnosticThroughputColumn.duration),
+            ("9.8 MB/s", DiagnosticThroughputColumn.rate),
+            (DiagnosticThroughputColumn.up, DiagnosticThroughputColumn.limit),
+        ] {
+            #expect(DiagnosticsPresentation.cell(cell, column: column) == cell, "\(column)")
+        }
+        for key in DiagnosticThroughputColumn.all {
             let title = DiagnosticsPresentation.columnTitle(key)
             #expect(title != key.components(separatedBy: ".").last, """
                 \(key) must have an entry of its own, not degrade to the column's name: \(title)

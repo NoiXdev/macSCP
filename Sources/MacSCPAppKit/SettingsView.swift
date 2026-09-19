@@ -717,6 +717,41 @@ private struct TransfersSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // The diagnostics throughput test's payload (plan of
+            // 2026-09-19). Here, under the bandwidth limits, because the test
+            // IS a transfer — paced by those limits — and this is where a
+            // reader looks for what moves how much. The range is the
+            // diagnosis's own (`SettingsStore.throughputPayloadMiBRange`).
+            Section {
+                Stepper(
+                    value: Binding(
+                        get: { store.throughputPayloadMiB },
+                        set: { store.throughputPayloadMiB = $0 }
+                    ),
+                    in: SettingsStore.throughputPayloadMiBRange
+                ) {
+                    HStack {
+                        Text(L10n.string("settings.throughput.payload", "Test file size"))
+                        Spacer()
+                        // Unit abbreviation, not prose — the "KB/s" rule
+                        // above.
+                        Text(verbatim: "\(store.throughputPayloadMiB) MiB")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.throughput.header", "Throughput test"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.throughput.footer",
+                    """
+                    The throughput test in Connection diagnostics uploads a file of this \
+                    size to the server, downloads it and deletes it.
+                    """))
+                    .foregroundStyle(.secondary)
+            }
+
             // Checksums live here because computing one IS a transfer: it
             // reads the whole file on the far side, takes minutes on a
             // large one, and is asked for and cancelled like any other.

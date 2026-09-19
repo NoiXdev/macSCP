@@ -117,6 +117,23 @@ struct DiagnosticsPanel: View {
                 .foregroundStyle(DesignTokens.inkTertiary)
                 .textSelection(.enabled)
             }
+            // The one choice that WRITES to the user's server says so where
+            // it is chosen, before Run is pressed — for as long as it is the
+            // choice, rows or no rows. Every other choice only reads, and
+            // needs no such line.
+            if model.scope == .throughput {
+                L10n.text(
+                    "diagnostics.throughput.notice",
+                    """
+                    Uploads a test file to this connection's start folder, downloads it, \
+                    compares it and deletes it. Its size is set under Transfers in Settings, \
+                    and the bandwidth limits there apply.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
         }
     }
 

@@ -151,7 +151,7 @@ struct CLIErrorMappingTests {
     /// The refusal exists so the exit code is 2 and not ArgumentParser's own
     /// 64 — see `DiagnoseUsageError`'s doc comment. This is the half of that
     /// argument a test can hold.
-    @Test(arguments: [DiagnosticScope.dial, .contributions])
+    @Test(arguments: [DiagnosticScope.dial, .contributions, .throughput])
     func aScopeThatNeedsASessionIsAUsageError(scope: DiagnosticScope) throws {
         let error = try #require(DiagnoseUsageError.refusal(forEndpointScope: scope))
         #expect(CLIErrorMapping.exitCode(for: error) == .usage)
@@ -175,8 +175,8 @@ struct CLIErrorMappingTests {
         let refused = DiagnosticScope.allCases.filter {
             DiagnoseUsageError.refusal(forEndpointScope: $0) != nil
         }
-        #expect(refused.count == 2, "refused: \(refused.map(\.rawValue))")
-        #expect(DiagnosticScope.allCases.count == 5)
+        #expect(refused.count == 3, "refused: \(refused.map(\.rawValue))")
+        #expect(DiagnosticScope.allCases.count == 6)
     }
 
     /// An unreadable forwarding store exits the way an unreadable SESSION

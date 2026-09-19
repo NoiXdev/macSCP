@@ -135,6 +135,11 @@ struct ConnectionDiagnosticsJumpTests {
             ]
         case .contributions:
             expected = [DiagnosticStepID.jumpResolve, Self.contributionID]
+        case .throughput:
+            // The throughput test opens its own connection through the jump
+            // (`ConnectionDiagnostics.throughput(_:)`), through its own seam
+            // — so the walk dials no jump connection for it.
+            expected = [DiagnosticStepID.jumpResolve, DiagnosticStepID.throughput]
         }
         #expect(report.steps.map(\.id) == expected, "\(scope.rawValue): \(report.steps.map(\.id))")
         #expect(report.scope == scope)
@@ -1185,6 +1190,10 @@ struct ConnectionDiagnosticsJumpTests {
                 dial: okDial(),
                 diagnostics: contribution.map { [recordingContribution(ticker: $0)] } ?? []),
             values: values, secrets: nil, jump: jump, jumpDialer: rig.dialer,
+            throughput: DiagnosticThroughputSettings(payloadMiB: 1),
+            throughputOpener: RecordingOpener(
+                fileSystem: InMemoryThroughputFileSystem(home: "/home/testuser")
+            ).opener,
             stepTimeout: stepTimeout, appVersion: "test")
     }
 
