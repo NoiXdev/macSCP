@@ -1,5 +1,6 @@
 import Crypto
 import Foundation
+import Synchronization
 
 /// Thin S3 (and S3-compatible: MinIO, R2, Hetzner, …) implementation of
 /// `RemoteFileSystem` (M12/T5). `connect`/`list`/`stat`/`readStream` are
@@ -95,6 +96,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     private let mode: RootMode
+
+    /// Paths whose multipart upload failed and whose abort was not
+    /// confirmed on this connection (`incompleteUploadMayRemain(at:)`).
+    private let unconfirmedAborts = Mutex<Set<String>>([])
 
     private init(
         config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?,
@@ -454,9 +459,27 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// resume guard (`supportsAppendResume == false`) guarantees
     /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
     /// resumed `.append` write from a non-zero offset never reaches here.
+    ///
+    /// An upload whose multipart abort was not confirmed is remembered for
+    /// `incompleteUploadMayRemain(at:)`, and the error that ended it is
+    /// thrown on unwrapped — every caller keeps seeing the error it always
+    /// saw, a cancelled transfer still `CancellationError`.
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
         try refuseBucketLevelOperation(.write, path: path)
-        try await S3Uploader().upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
+        do {
+            try await S3Uploader().upload(
+                key: Self.objectKey(forPath: path), contents: contents, using: self)
+        } catch let unconfirmed as S3MultipartAbortUnconfirmed {
+            unconfirmedAborts.withLock { _ = $0.insert(path) }
+            throw unconfirmed.underlying
+        }
+    }
+
+    /// Whether a multipart upload to `path` failed on this connection with
+    /// its abort unconfirmed — parts that no listing shows and no
+    /// `delete(path:)` removes.
+    public func incompleteUploadMayRemain(at path: String) async -> Bool {
+        unconfirmedAborts.withLock { $0.contains(path) }
     }
 
     /// A signed `DELETE` on the object key — after the lookup the

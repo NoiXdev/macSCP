@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The seam `S3Uploader` needs from `S3FileSystem` to sign and send a
 /// request — exactly the two operations `buildSignedRequest` +
@@ -12,6 +13,22 @@ public protocol S3RequestBuilder: Sendable {
     ) throws -> URLRequest
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+}
+
+/// A multipart upload failed — or was cancelled — and its abort did not
+/// confirm: the server may still hold its parts as an INCOMPLETE upload,
+/// which no object listing shows, no `DeleteObject` removes, and the
+/// account is billed for until a lifecycle rule or a later abort ends it.
+///
+/// Thrown by `S3Uploader` in place of the original error, which it carries;
+/// `S3FileSystem.write` records the path (`incompleteUploadMayRemain(at:)`)
+/// and throws the original on, so every caller keeps seeing the error it
+/// always saw — a cancelled transfer still ends in `CancellationError`.
+public struct S3MultipartAbortUnconfirmed: Error {
+    /// The object key the upload was for.
+    public let key: String
+    /// What ended the upload.
+    public let underlying: any Error
 }
 
 /// Uploads an object to S3 from a chunk stream (M13/T5, multipart in M13/T6).
@@ -28,7 +45,8 @@ public protocol S3RequestBuilder: Sendable {
 /// large to buffer twice just to hash them) → complete with the collected
 /// ETags. ANY failure during the part-upload/complete phase — including
 /// cancellation — aborts the multipart upload so nothing is left orphaned
-/// on the server.
+/// on the server, and an abort that is not confirmed is thrown as
+/// `S3MultipartAbortUnconfirmed` rather than swallowed.
 public struct S3Uploader: Sendable {
     /// Objects at or below this size go out as a single PUT. AWS's own
     /// single-PUT limit is 5 GiB, but buffering the whole object in memory
@@ -136,9 +154,19 @@ public struct S3Uploader: Sendable {
         } catch {
             // Any failure past this point — a failed part, a failed
             // complete, or a cancellation — must never leave an orphaned
-            // multipart upload sitting on the server. Best-effort: the abort
-            // itself failing must not mask the original error.
-            try? await abort(key: key, uploadID: uploadID, using: builder)
+            // multipart upload sitting on the server.
+            //
+            // The abort is sent OUTSIDE this task (`abortConfirmed`): after a
+            // cancellation this task is cancelled, and a request made from a
+            // cancelled task may be refused for that alone — which, sent
+            // from here as the `try?` it used to be, left a billed
+            // incomplete upload behind with nothing said (Task 2 fix round
+            // 1 of the 2026-09-19 plan, I3). An abort that does not confirm
+            // is said: the original error travels inside
+            // `S3MultipartAbortUnconfirmed`, and never gets masked.
+            guard await Self.abortConfirmed(key: key, uploadID: uploadID, using: builder) else {
+                throw S3MultipartAbortUnconfirmed(key: key, underlying: error)
+            }
             throw error
         }
     }
@@ -166,11 +194,36 @@ public struct S3Uploader: Sendable {
         return etag
     }
 
+    /// How long the abort may take before the upload stops waiting for it —
+    /// a backstop for an endpoint that stopped answering, not the way out;
+    /// an abort that runs past it is reported as unconfirmed.
+    static let abortBoundSeconds = 30
+
+    /// Sends the abort in a task the caller's cancellation does not reach
+    /// (`BoundedClose.run`, the way the throughput test's removal runs), and
+    /// answers whether the server confirmed it inside `abortBoundSeconds`.
+    private static func abortConfirmed(
+        key: String, uploadID: String, using builder: any S3RequestBuilder
+    ) async -> Bool {
+        let confirmed = Mutex(false)
+        let finished = await BoundedClose.run(boundSeconds: abortBoundSeconds) {
+            do {
+                try await abort(key: key, uploadID: uploadID, using: builder)
+                confirmed.withLock { $0 = true }
+            } catch {
+                // Unconfirmed; the caller says so.
+            }
+        }
+        return finished && confirmed.withLock { $0 }
+    }
+
     /// Sends `DELETE ?uploadId={id}` to abort a multipart upload — called
-    /// from the catch-and-rethrow in `uploadMultipart` so a failed or
-    /// cancelled upload never leaves storage (and the bill) sitting on an
-    /// incomplete multipart upload.
-    private func abort(key: String, uploadID: String, using builder: any S3RequestBuilder) async throws {
+    /// through `abortConfirmed` from the catch-and-rethrow in
+    /// `uploadMultipart` so a failed or cancelled upload never leaves
+    /// storage (and the bill) sitting on an incomplete multipart upload.
+    private static func abort(
+        key: String, uploadID: String, using builder: any S3RequestBuilder
+    ) async throws {
         let request = try builder.signedRequest(
             method: "DELETE", key: key, query: [(name: "uploadId", value: uploadID)],
             extraHeaders: [:], body: nil, payloadHash: SigV4Signer.emptyPayloadHash)

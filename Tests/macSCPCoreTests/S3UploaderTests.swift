@@ -60,8 +60,152 @@ final class FakeRequestBuilder: S3RequestBuilder, Sendable {
     }
 }
 
+/// A request builder that refuses any request made from a cancelled task —
+/// the way a `URLSession` request is documented to throw once its task is
+/// cancelled — and counts the refusals. Its first stream element arrives at
+/// once; its second parks until the task reading it is cancelled.
+final class CancellationRefusingBuilder: S3RequestBuilder, Sendable {
+    private struct State {
+        var responses: [(Data, HTTPURLResponse)]
+        var performed: [URLRequest] = []
+        var refusedFromACancelledTask = 0
+    }
+
+    private let state: Mutex<State>
+
+    init(responses: [(Data, HTTPURLResponse)]) {
+        state = Mutex(State(responses: responses))
+    }
+
+    var performed: [URLRequest] { state.withLock { $0.performed } }
+    var refusedFromACancelledTask: Int { state.withLock { $0.refusedFromACancelledTask } }
+
+    func signedRequest(
+        method: String, key: String, query: [(name: String, value: String)],
+        extraHeaders: [String: String], body: Data?, payloadHash: String
+    ) throws -> URLRequest {
+        var components = URLComponents(string: "http://127.0.0.1:9000/bucket/\(key)")!
+        if !query.isEmpty {
+            components.queryItems = query.map { URLQueryItem(name: $0.name, value: $0.value) }
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = method
+        return request
+    }
+
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let cancelled = Task.isCancelled
+        return try state.withLock {
+            if cancelled {
+                $0.refusedFromACancelledTask += 1
+                throw CancellationError()
+            }
+            $0.performed.append(request)
+            guard !$0.responses.isEmpty else {
+                throw RemoteFSError.protocolError(reason: "out of canned responses")
+            }
+            return $0.responses.removeFirst()
+        }
+    }
+
+    /// Just over the single-PUT threshold, so the upload goes multipart and
+    /// sends its first part; then a park until the reader is cancelled.
+    static func parkingStream(reached: AsyncSignal) -> AsyncThrowingStream<Data, Error> {
+        let pulls = Mutex(0)
+        return AsyncThrowingStream(unfolding: {
+            let pull = pulls.withLock { value -> Int in
+                defer { value += 1 }
+                return value
+            }
+            if pull == 0 { return Data(count: S3Uploader.singlePutThreshold + 1) }
+            reached.signal()
+            _ = await AsyncSignal().wait()
+            throw CancellationError()
+        })
+    }
+}
+
 @Suite("S3Uploader")
 struct S3UploaderTests {
+    // MARK: - The abort survives a cancel (Task 2 fix round 1, I3)
+
+    /// Cancelled mid-multipart: the abort is SENT — from a task the
+    /// cancellation does not reach, so a transport that refuses a cancelled
+    /// caller still carries it — and the cancellation is what the caller
+    /// sees. Red while the abort ran in the cancelled task: the builder
+    /// refused it, and the `try?` swallowed that.
+    @Test func aCancelledMultipartUploadIsAbortedOutsideTheCancelledTask() async throws {
+        let builder = CancellationRefusingBuilder(responses: [
+            (Data(initiateXML(uploadID: "UP3").utf8), http(200)),
+            (Data(), http(200, etag: "\"etag-1\"")),
+            (Data(), http(204)),
+        ])
+        let reached = AsyncSignal()
+
+        let run = Task {
+            try await S3Uploader().upload(
+                key: "big.bin", contents: CancellationRefusingBuilder.parkingStream(reached: reached),
+                using: builder)
+        }
+        #expect(await reached.wait() == .signalled)
+        run.cancel()
+        let result = await finishingResult(run)
+
+        let aborted = builder.performed.contains {
+            $0.httpMethod == "DELETE" && ($0.url!.query ?? "").contains("uploadId=UP3")
+        }
+        #expect(aborted, "no abort reached the server: \(builder.performed.map(\.httpMethod))")
+        #expect(builder.refusedFromACancelledTask == 0)
+        guard case .failure(let error) = result else {
+            Issue.record("a cancelled upload succeeded")
+            return
+        }
+        #expect(error is CancellationError, "\(error)")
+    }
+
+    /// The abort was sent and the server did not confirm it: the uploader
+    /// says an incomplete upload may remain, carrying what ended the upload.
+    @Test func anAbortThatIsNotConfirmedIsReported() async throws {
+        let builder = CancellationRefusingBuilder(responses: [
+            (Data(initiateXML(uploadID: "UP4").utf8), http(200)),
+            (Data(), http(200, etag: "\"etag-1\"")),
+            (Data(), http(500)),
+        ])
+        let reached = AsyncSignal()
+
+        let run = Task {
+            try await S3Uploader().upload(
+                key: "big.bin", contents: CancellationRefusingBuilder.parkingStream(reached: reached),
+                using: builder)
+        }
+        #expect(await reached.wait() == .signalled)
+        run.cancel()
+        let result = await finishingResult(run)
+
+        guard case .failure(let error) = result,
+            let unconfirmed = error as? S3MultipartAbortUnconfirmed
+        else {
+            Issue.record("expected S3MultipartAbortUnconfirmed, got \(result)")
+            return
+        }
+        #expect(unconfirmed.key == "big.bin")
+        #expect(unconfirmed.underlying is CancellationError)
+    }
+
+    /// And a confirmed abort after a plain failure reports nothing more than
+    /// the failure — the positive half of the case above.
+    @Test func aConfirmedAbortThrowsTheOriginalError() async throws {
+        let chunks = Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160)
+        let builder = FakeRequestBuilder(responses: [
+            (Data(initiateXML(uploadID: "UP5").utf8), http(200)),
+            (Data(), http(403)),
+            (Data(), http(204)),
+        ])
+        await #expect(throws: RemoteFSError.authenticationFailed) {
+            try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+        }
+    }
+
     private func http(_ status: Int, etag: String? = nil) -> HTTPURLResponse {
         HTTPURLResponse(
             url: URL(string: "http://127.0.0.1:9000/bucket/key")!,

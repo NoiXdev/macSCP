@@ -108,6 +108,33 @@ struct S3FileSystemTests {
         return (fs, transport)
     }
 
+    /// A write whose multipart abort did not confirm is remembered by the
+    /// file system, so a caller that promised to leave nothing behind can
+    /// ask (`incompleteUploadMayRemain(at:)`) — while the error it sees is
+    /// the one that ended the upload, not a new one (Task 2 fix round 1, I3).
+    @Test func aWriteWhoseAbortDidNotConfirmIsRememberedAsAnIncompleteUpload() async throws {
+        let initiate = """
+            <?xml version="1.0" encoding="UTF-8"?><InitiateMultipartUploadResult>\
+            <UploadId>UP9</UploadId></InitiateMultipartUploadResult>
+            """
+        let (fs, _) = try await connect(responses: [
+            (Data(initiate.utf8), httpResponse(status: 200)),
+            (Data(), httpResponse(status: 403)),
+            (Data(), httpResponse(status: 500)),
+        ])
+        let chunks = Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160)
+        let contents = AsyncThrowingStream<Data, Error> { continuation in
+            for chunk in chunks { continuation.yield(chunk) }
+            continuation.finish()
+        }
+
+        await #expect(throws: RemoteFSError.authenticationFailed) {
+            try await fs.write(path: "/big.bin", contents: contents)
+        }
+        #expect(await fs.incompleteUploadMayRemain(at: "/big.bin"))
+        #expect(await !fs.incompleteUploadMayRemain(at: "/other.bin"))
+    }
+
     @Test func listMapsCannedXMLIntoItems() async throws {
         let (fs, _) = try await connect(responses: [(Data(rootListingXML.utf8), httpResponse(status: 200))])
 

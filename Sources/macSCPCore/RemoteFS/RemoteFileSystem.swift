@@ -83,6 +83,12 @@ public protocol RemoteFileSystem: Sendable {
     /// know that `/` holds containers and nothing else about how they are
     /// addressed.
     var rootIsContainerList: Bool { get }
+    /// Whether an upload to `path` that failed on this connection may have
+    /// left an INCOMPLETE upload behind that no listing shows and no
+    /// `delete(path:)` removes — `true` only for an S3 multipart upload
+    /// whose abort did not confirm (`S3MultipartAbortUnconfirmed`). A caller
+    /// that promises to leave nothing behind asks this after a failed write.
+    func incompleteUploadMayRemain(at path: String) async -> Bool
 }
 
 extension RemoteFileSystem {
@@ -110,4 +116,11 @@ extension RemoteFileSystem {
     /// same reason as `supportsAppendResume`: every conformer, test doubles
     /// included, compiles unchanged.
     public var rootIsContainerList: Bool { false }
+
+    /// Default: no backend but S3 has an upload that can outlive its own
+    /// failure unseen — a file written through SFTP, WebDAV or the local
+    /// disk is where `list` and `delete` can reach it. `S3FileSystem` is the
+    /// sole overrider; every other conformer, test doubles included,
+    /// compiles unchanged.
+    public func incompleteUploadMayRemain(at path: String) async -> Bool { false }
 }
