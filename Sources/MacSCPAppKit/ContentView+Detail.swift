@@ -790,7 +790,8 @@ extension ContentView {
                                 reason: tab.lostConnection?.reason ?? .probeGaveUp,
                                 targetIsKnown: reconnectTarget(for: tab) != nil,
                                 behaviour: settingsStore.reconnectBehaviour,
-                                attempts: tab.lostConnection?.automaticAttempts ?? 0),
+                                attempts: tab.lostConnection?.automaticAttempts ?? 0,
+                                probeFailure: tab.lostConnection?.probeFailure),
                             onReconnect: { reconnect(tab) },
                             onDismiss: { dismissLostConnection(tab) })
                     }
@@ -1342,14 +1343,38 @@ enum LivenessProbeStep {
         case abandoned
     }
 
+    /// The failure is kept, not discarded (lost-connection cause,
+    /// 2026-09-19): the race settles on `nil` for an answer, on the
+    /// timeout's own value when the deadline wins, or on what
+    /// `LivenessProbeFailure.classify(_:probedPath:)` made of the error the
+    /// `stat` threw. A failure is written to `tab.lastProbeFailure` and
+    /// logged, one `info` line per probe, behind the same guard as the
+    /// `liveness` write — an abandoned probe writes and logs nothing.
+    /// `LivenessProbeErrorKeptGuardTests` holds this body to catching the
+    /// error rather than dropping it.
     static func perform(on tab: SessionTab, timeoutSeconds: Int) async -> Result {
         guard let session = tab.session else { return .abandoned }
-        let alive = await LivenessProbeRace.run(timeoutSeconds: timeoutSeconds) {
-            (try? await session.remoteFS.stat(path: session.homePath)) != nil
+        let failure: LivenessProbeFailure? = await LivenessProbeRace.run(
+            timeoutSeconds: timeoutSeconds, onTimeout: .timeout(seconds: timeoutSeconds)
+        ) {
+            do {
+                _ = try await session.remoteFS.stat(path: session.homePath)
+                return nil
+            } catch {
+                return LivenessProbeFailure.classify(error, probedPath: session.homePath)
+            }
         }
         guard !Task.isCancelled, tab.session?.id == session.id else { return .abandoned }
-        tab.liveness = alive ? .connected : .degraded
-        return alive ? .alive : .failed
+        tab.lastProbeFailure = failure
+        guard let failure else {
+            tab.liveness = .connected
+            return .alive
+        }
+        tab.liveness = .degraded
+        let tabID = tab.id
+        DiagnosticLog.shared.log(
+            .info, "connect", LivenessLogLines.probeFailed(tab: tabID, failure: failure))
+        return .failed
     }
 }
 
@@ -1406,32 +1431,43 @@ enum LivenessProbeRace {
     static func run(
         timeoutSeconds: Int, operation: @escaping @Sendable () async -> Bool
     ) async -> Bool {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        await run(timeoutSeconds: timeoutSeconds, onTimeout: false, operation: operation)
+    }
+
+    /// The same race over any answer (lost-connection cause, 2026-09-19):
+    /// `onTimeout` is what it settles on when the deadline wins, so the
+    /// caller can tell a deadline from an answer that said "failed".
+    /// The `Bool` form above is this one with `false` for the deadline.
+    static func run<Value: Sendable>(
+        timeoutSeconds: Int, onTimeout: Value,
+        operation: @escaping @Sendable () async -> Value
+    ) async -> Value {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Value, Never>) in
             let box = Box(continuation: continuation)
             box.operationTask = Task { @MainActor in
-                let succeeded = await operation()
-                box.resume(with: succeeded)
+                let answer = await operation()
+                box.resume(with: answer)
             }
             box.timeoutTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(timeoutSeconds))
-                box.resume(with: false)
+                box.resume(with: onTimeout)
             }
         }
     }
 
     @MainActor
-    private final class Box {
-        private var continuation: CheckedContinuation<Bool, Never>?
+    private final class Box<Value: Sendable> {
+        private var continuation: CheckedContinuation<Value, Never>?
         var operationTask: Task<Void, Never>?
         var timeoutTask: Task<Void, Never>?
 
-        init(continuation: CheckedContinuation<Bool, Never>) {
+        init(continuation: CheckedContinuation<Value, Never>) {
             self.continuation = continuation
         }
 
         /// The only place `continuation` is taken and resumed — see this
         /// type's own doc comment for the exactly-once argument.
-        func resume(with value: Bool) {
+        func resume(with value: Value) {
             guard let continuation else { return }
             self.continuation = nil
             operationTask?.cancel()
@@ -1569,6 +1605,12 @@ struct LostConnection: Equatable {
     /// attempts finished — an attempt that is still dialing must not be
     /// started a second time by the same schedule.
     var automaticAttempts = 0
+    /// Why the probe that gave up failed, at the coarseness the surface
+    /// names it (lost-connection cause, 2026-09-19) — an enum, like
+    /// everything else here, never the error or its text. `nil` for an
+    /// episode the probe did not open, and read by the surface only while
+    /// `reason` is still `.probeGaveUp`.
+    var probeFailure: LivenessProbeFailure.Kind? = nil
 }
 
 /// What a tab remembers about a connect attempt that failed on the wire
@@ -1619,6 +1661,11 @@ struct LostConnectionContent: Equatable {
 
     let title: Message
     let body: Message
+    /// Why the probe gave up, in one fixed sentence per cause, under the
+    /// body (lost-connection cause, 2026-09-19). `nil` when the body is
+    /// not the probe's, or the episode carries no cause. Never an error's
+    /// own text — the rule of 2026-09-19 for every connection surface.
+    let detail: Message?
     /// A second line under the body, when there is something to add about
     /// what macSCP is doing on its own. `nil` when the body already says
     /// everything.
@@ -1648,9 +1695,14 @@ enum LostConnectionPlan {
     /// all, so a user could not tell that macSCP was about to try by
     /// itself, nor afterwards that it already had. That invisibility, not
     /// the delay before the attempt, was the friction.
+    ///
+    /// `probeFailure` is `LostConnection.probeFailure`. It adds the detail
+    /// line only under the probe's own body: once a reconnect attempt has
+    /// replaced the reason, the body describes that attempt, and the old
+    /// drop's cause under it would describe something else.
     static func content(
         reason: LostConnectionReason, targetIsKnown: Bool, behaviour: ReconnectBehaviour,
-        attempts: Int
+        attempts: Int, probeFailure: LivenessProbeFailure.Kind? = nil
     ) -> LostConnectionContent {
         let body: LostConnectionContent.Message
         switch reason {
@@ -1666,6 +1718,24 @@ enum LostConnectionPlan {
             body = .init(
                 key: "connection.lost.body.needsPerson",
                 fallback: "The last attempt stopped at a question only you can answer.")
+        }
+
+        let detail: LostConnectionContent.Message?
+        switch (reason, probeFailure) {
+        case (.probeGaveUp, .timeout?):
+            detail = .init(
+                key: "connection.lost.detail.timeout",
+                fallback: "The last checks got no answer in time.")
+        case (.probeGaveUp, .connectionClosed?):
+            detail = .init(
+                key: "connection.lost.detail.closed",
+                fallback: "The connection was closed by the server or by the network.")
+        case (.probeGaveUp, .other?):
+            detail = .init(
+                key: "connection.lost.detail.other",
+                fallback: "The last check ended in an error.")
+        default:
+            detail = nil
         }
 
         let hint: LostConnectionContent.Message?
@@ -1703,6 +1773,7 @@ enum LostConnectionPlan {
         return LostConnectionContent(
             title: .init(key: "connection.lost.title", fallback: "Connection lost"),
             body: body,
+            detail: detail,
             hint: hint,
             reconnectButton: targetIsKnown
                 ? .init(key: "connection.lost.reconnect", fallback: "Reconnect") : nil,
@@ -2321,6 +2392,12 @@ private struct LostConnectionView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            if let detail = content.detail {
+                Text(L10n.string(detail.key, detail.fallback))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
             if let hint = content.hint {
                 Text(L10n.string(hint.key, hint.fallback))
                     .font(.caption)

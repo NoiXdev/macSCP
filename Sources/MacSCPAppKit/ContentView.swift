@@ -1876,6 +1876,20 @@ struct ContentView: View {
         // here rather than getting one for free from `BrowserSession`'s
         // memberwise init the way it used to.
         tab.liveness = .connected
+        // A fresh session has no failed probe behind it (lost-connection
+        // cause, 2026-09-19); see `SessionTab.lastProbeFailure`.
+        tab.lastProbeFailure = nil
+        // Its SSH connections' closes go to the diagnostic log, named by
+        // this tab's id (lost-connection cause, 2026-09-19). Observation
+        // only: the handler captures the id, not the tab and not `fs`, so
+        // it keeps nothing alive, and teardown still owns the close.
+        if let reporting = fs as? TransportCloseReporting {
+            let tabID = tab.id
+            reporting.onTransportClose { event in
+                DiagnosticLog.shared.log(
+                    .info, "connect", LivenessLogLines.transportClosed(tab: tabID, event: event))
+            }
+        }
         // Nothing left to describe (connection-liveness plan, Task 7): this
         // tab has a live session again, so the record of the connection
         // that dropped — including the attempt counter an unattended

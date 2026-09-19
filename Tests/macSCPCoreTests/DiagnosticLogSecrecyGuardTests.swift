@@ -12,10 +12,11 @@ import Testing
 ///
 /// 1. `noInterpolationNamesASecretIdentifier`: the direct call-site floor
 ///    (`direct.count >= 20`).
-/// 2. …: each of the SEVEN files measured as having its wrapper call sites
+/// 2. …: each of the NINE files measured as having its wrapper call sites
 ///    reached by the forwarding walk still yields them
-///    (`filesWithReachableForwardedSites` — counted 2026-09-06 by listing
-///    that set, which is seven names long).
+///    (`filesWithReachableForwardedSites` — counted 2026-09-19 by listing
+///    that set, which is nine names long; seven until the lost-connection
+///    cause work of that day).
 /// 3. …: the `tunnel` category yields forwarded call sites at all.
 /// 4. …: every one of those `tunnel` sites carries an interpolation.
 /// 5. `everyCategoryLiteralIsOnTheFixedList`: every entry on
@@ -25,9 +26,13 @@ import Testing
 ///
 /// They keep the negative from going stale in silence the way
 /// "Guards that name what they watch" describes: `grep -rc
-/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **47** as
+/// "DiagnosticLog.shared.log("` over `Sources/`, summed, reports **50** as
 /// of 2026-09-19 — recounted by running exactly that command and summing its
-/// per-file numbers. 47 is one more than 46 because Task 2 fix round 2 of
+/// per-file numbers. 50 is three more than 47 because the lost-connection
+/// cause work of 2026-09-19 added three calls: in `LivenessProbeStep.perform`
+/// (a failed probe), in `ContentView.handleLivenessGiveUp(_:)` (the tab
+/// marked lost) and in `ContentView.startSession`'s close handler (an SSH
+/// connection closed). 47 was one more than 46 because Task 2 fix round 2 of
 /// the 2026-09-19 plan added one call in `S3Uploader.logUnconfirmedAbort(_:)`
 /// (the line written when a multipart abort is not confirmed). 46 was one
 /// more than 45 because Task 2 fix round 1 of
@@ -55,9 +60,10 @@ import Testing
 /// do NOT count the same thing, and the difference is two: the grep counts
 /// the literal text wherever it appears, INCLUDING inside a doc comment —
 /// `TabDetachSequence.swift` and `TunnelRunner.swift` each spell it in prose
-/// — while this scan blanks comments first and sees 45 real calls on
-/// 2026-09-19 after fix round 2, and saw 44 after fix round 1 (both read
-/// from the floor's own message with the floor raised to 999 by a probe,
+/// — while this scan blanks comments first and sees 48 real calls after the
+/// lost-connection cause work of 2026-09-19, 45 on the same day after fix
+/// round 2, and saw 44 after fix round 1 (all read from the floor's own
+/// message with the floor raised to 999 by a probe,
 /// reverted and checked with `cmp`), 44 being one more than the 43 of
 /// 2026-09-18 for fix round 1's call. The 43 was one more for its own call,
 /// measured the way the 42 was (42
@@ -134,11 +140,19 @@ struct DiagnosticLogSecrecyGuardTests {
     ]
 
     /// The files under `Sources/` in which the forwarding walk actually
-    /// LOCATES a wrapper's call sites — SEVEN, measured 2026-09-06 by
-    /// running the walk and printing what it collects per file (the table is
-    /// in `noInterpolationNamesASecretIdentifier`, beside the assertion that
+    /// LOCATES a wrapper's call sites — NINE, measured 2026-09-19 by running
+    /// the walk and printing what it collects per file (a probe, reverted and
+    /// checked with `cmp`; the older table is in
+    /// `noInterpolationNamesASecretIdentifier`, beside the assertion that
     /// reads this list) and recounted against the literal below in the same
-    /// pass. It said SIX until 2026-09-06 (CLI-store plan, Task 5 round 4),
+    /// pass. It said SEVEN until 2026-09-19, when the lost-connection cause
+    /// work put a marker call into `LivenessProbeStep.perform`
+    /// (`ContentView+Detail.swift`, called by the probe loop in its own file)
+    /// and into `ContentView.startSession` (`ContentView.swift`, called in
+    /// its own file), so both files grew a reachable forwarder. The same run
+    /// counted EIGHTEEN files with a forwarder, where the paragraph below
+    /// says twelve — that paragraph is the record of 2026-09-06. It said SIX
+    /// until 2026-09-06 (CLI-store plan, Task 5 round 4),
     /// having been written before `TunnelManager.swift` joined the literal
     /// below — the number and the list disagreed, in a file whose own
     /// subject is that a count is a claim to be recounted.
@@ -148,7 +162,7 @@ struct DiagnosticLogSecrecyGuardTests {
     /// antecedent comes from the thing under test cancels out — extraction
     /// that stops finding a wrapper's calls also stops the fixpoint growing
     /// onto its callers, so the file quietly leaves the set the check
-    /// quantifies over. Naming the seven files is what makes the check able to
+    /// quantifies over. Naming the nine files is what makes the check able to
     /// fail: break the extraction for any one of their wrappers and that file
     /// stops yielding sites while its name stays here.
     ///
@@ -170,6 +184,7 @@ struct DiagnosticLogSecrecyGuardTests {
     /// call moves into a function something else calls.
     private static let filesWithReachableForwardedSites: Set<String> = [
         "CitadelFileSystem.swift", "ContentView+Lifecycle.swift",
+        "ContentView+Detail.swift", "ContentView.swift",
         "MacSCPApp.swift", "RemoteBrowserViewModel.swift",
         "TunnelManager.swift", "TunnelRunner.swift", "TunnelStore.swift",
     ]
@@ -724,6 +739,13 @@ struct DiagnosticLogSecrecyGuardTests {
         // NAMED a forwarder (see `WalkResult`), which made the observation
         // possible and showed round 3's property to be not merely dead but
         // FALSE.
+        //
+        // The table below is the record of 2026-09-06 and 2026-09-16; the
+        // 2026-09-19 re-run (lost-connection cause) measured only WHICH files
+        // yield sites, not their five numbers, and found two more —
+        // `ContentView+Detail` and `ContentView` — which is why
+        // `filesWithReachableForwardedSites` has nine names and this table
+        // seven rows.
         //
         // Measured 2026-09-06 by running the walk and printing what it
         // collects, per file, with the name set split into seeds and the names

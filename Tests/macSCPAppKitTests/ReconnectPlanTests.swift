@@ -140,7 +140,9 @@ struct ReconnectPlanTests {
     /// form field into any of them would have to invent a key that is not
     /// in this set, or change one of these strings, and either fails here.
     ///
-    /// Eleven keys, counted while writing this sentence, and — since round
+    /// Fourteen keys, counted while writing this sentence (eleven until the
+    /// lost-connection cause work of 2026-09-19 added the three detail
+    /// sentences), and — since round
     /// 2 moved the two button labels into `LostConnectionContent` — this
     /// really is everything the surface renders, not everything that
     /// happened to live in the content type. `ReconnectWiringGuardTests`
@@ -153,6 +155,9 @@ struct ReconnectPlanTests {
             "connection.lost.body.probe",
             "connection.lost.body.retryFailed",
             "connection.lost.body.needsPerson",
+            "connection.lost.detail.timeout",
+            "connection.lost.detail.closed",
+            "connection.lost.detail.other",
             "connection.lost.hint.noSavedSession",
             "connection.lost.hint.stopped",
             "connection.lost.hint.automatic",
@@ -166,19 +171,21 @@ struct ReconnectPlanTests {
             for targetIsKnown in [true, false] {
                 for behaviour in ReconnectBehaviour.allCases {
                     for attempts in [0, 1, 7] {
-                        let content = LostConnectionPlan.content(
-                            reason: reason, targetIsKnown: targetIsKnown,
-                            behaviour: behaviour, attempts: attempts)
-                        let messages = [content.title, content.body, content.dismissButton]
-                            + [content.hint, content.reconnectButton].compactMap { $0 }
-                        for message in messages {
-                            #expect(allowedKeys.contains(message.key), """
-                                `\(message.key)` is not one of the keys this surface is allowed \
-                                to show. Every string on the lost-connection surface must be a \
-                                fixed catalog entry — see the design spec's §10 rule.
-                                """)
-                            #expect(!message.fallback.isEmpty)
-                            seen.insert(message.key)
+                        for probeFailure in [nil] + LivenessProbeFailure.Kind.allCases.map(Optional.some) {
+                            let content = LostConnectionPlan.content(
+                                reason: reason, targetIsKnown: targetIsKnown,
+                                behaviour: behaviour, attempts: attempts, probeFailure: probeFailure)
+                            let messages = [content.title, content.body, content.dismissButton]
+                                + [content.detail, content.hint, content.reconnectButton].compactMap { $0 }
+                            for message in messages {
+                                #expect(allowedKeys.contains(message.key), """
+                                    `\(message.key)` is not one of the keys this surface is allowed \
+                                    to show. Every string on the lost-connection surface must be a \
+                                    fixed catalog entry — see the design spec's §10 rule.
+                                    """)
+                                #expect(!message.fallback.isEmpty)
+                                seen.insert(message.key)
+                            }
                         }
                     }
                 }
@@ -200,6 +207,35 @@ struct ReconnectPlanTests {
             reason: reason, targetIsKnown: true, behaviour: .offerOnly, attempts: 0)
         #expect(content.body.key == key)
         #expect(content.title.key == "connection.lost.title")
+    }
+
+    /// Lost-connection cause, 2026-09-19: one fixed sentence per cause,
+    /// under the probe's own body and nowhere else.
+    @Test(arguments: [
+        (LivenessProbeFailure.Kind.timeout, "connection.lost.detail.timeout"),
+        (.connectionClosed, "connection.lost.detail.closed"),
+        (.other, "connection.lost.detail.other"),
+    ])
+    func eachProbeCauseHasItsOwnDetail(kind: LivenessProbeFailure.Kind, key: String) {
+        let content = LostConnectionPlan.content(
+            reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly, attempts: 0,
+            probeFailure: kind)
+        #expect(content.detail?.key == key)
+        #expect(content.body.key == "connection.lost.body.probe")
+    }
+
+    @Test(arguments: [LostConnectionReason.reconnectFailed, .needsPerson])
+    func aReasonThatReplacedTheProbesHasNoDetail(reason: LostConnectionReason) {
+        let content = LostConnectionPlan.content(
+            reason: reason, targetIsKnown: true, behaviour: .offerOnly, attempts: 0,
+            probeFailure: .connectionClosed)
+        #expect(content.detail == nil)
+    }
+
+    @Test func anEpisodeWithoutACauseHasNoDetail() {
+        let content = LostConnectionPlan.content(
+            reason: .probeGaveUp, targetIsKnown: true, behaviour: .offerOnly, attempts: 0)
+        #expect(content.detail == nil)
     }
 
     @Test func reconnectIsOfferedOnlyWhenThereIsSomethingToRedial() {

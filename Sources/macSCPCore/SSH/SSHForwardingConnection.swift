@@ -180,7 +180,10 @@ extension SSHForwardingConnection {
     /// **One handler, not a list.** Citadel's `SSHClient` stores a single
     /// closure (`Client.swift`, `onDisconnect(perform:)`), so a second
     /// registration replaces the first. Nothing else in this project
-    /// registers one, and a tunnel owns its connection outright
+    /// registers one on THIS client — `CitadelFileSystem` fills the same
+    /// slot on the clients it owns since 2026-09-19 (its close report), and
+    /// a tunnel's client is never one of those — and a tunnel owns its
+    /// connection outright
     /// (`TunnelConnection`'s doc comment), so the runner is the only
     /// registrant there is.
     ///

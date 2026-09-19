@@ -269,6 +269,30 @@ struct LivenessGiveUpOrderingTests {
             """)
     }
 
+    /// Lost-connection cause, 2026-09-19: the last probe's failure reaches
+    /// the lost episode as its coarse kind — the surface's detail line
+    /// reads it from there.
+    @Test(arguments: [
+        (LivenessProbeFailure.timeout(seconds: 10), LivenessProbeFailure.Kind.timeout),
+        (.error(typeName: "RemoteFSError", reason: "r", closedConnection: true), .connectionClosed),
+        (.cancelled, .other),
+    ])
+    func givingUpCarriesTheLastProbesCauseIntoTheEpisode(
+        failure: LivenessProbeFailure, kind: LivenessProbeFailure.Kind
+    ) async {
+        let (view, cleanup) = makeContentView()
+        defer { cleanup() }
+        let tab = makeTab()
+        attachSession(to: tab)
+        tab.lastProbeFailure = failure
+
+        await view.handleLivenessGiveUp(tab)
+
+        #expect(tab.lostConnection?.probeFailure == kind)
+        #expect(tab.lostConnection?.reason == .probeGaveUp)
+        #expect(tab.liveness == .lost)
+    }
+
     /// Demonstrated, not just asserted by construction — same reasoning as
     /// `ConnectAttemptHandoffTests.theRealSessionsFileIsNeverTouched`, whose
     /// own doc comment explains why a snapshot comparison is the standard

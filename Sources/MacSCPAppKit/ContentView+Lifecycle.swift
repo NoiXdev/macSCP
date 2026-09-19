@@ -511,8 +511,18 @@ extension ContentView {
     /// dropped — and that id is exactly what "Reconnect" needs. Reading it
     /// first changes nothing about the order the two WRITES happen in,
     /// which is what `LivenessGiveUpOrderingTests` pins.
+    ///
+    /// The cause (lost-connection cause, 2026-09-19): the last probe's
+    /// failure is read first as well, logged as the one `error` line of the
+    /// episode BEFORE the teardown — so it precedes the close lines the
+    /// teardown's own disconnect produces — and carried into
+    /// `LostConnection.probeFailure` as its coarse kind for the surface.
     func handleLivenessGiveUp(_ tab: SessionTab) async {
         let storedSessionID = tab.activeStoredSessionID
+        let lastFailure = tab.lastProbeFailure
+        let tabID = tab.id
+        DiagnosticLog.shared.log(
+            .error, "connect", LivenessLogLines.connectionLost(tab: tabID, lastFailure: lastFailure))
         // `reason: .connectionLost` (connection-liveness plan, Task 8): this
         // is the ONE call site that means an actual drop rather than a
         // deliberate disconnect, so the queue's own items read "connection
@@ -523,7 +533,8 @@ extension ContentView {
         // literal is ever `.userRequested` instead.
         await teardown(tab, reason: .connectionLost)
         tab.lostConnection = LostConnection(
-            reason: .probeGaveUp, storedSessionID: storedSessionID)
+            reason: .probeGaveUp, storedSessionID: storedSessionID,
+            probeFailure: lastFailure?.kind)
         tab.liveness = .lost
         // The lost-connection notification (next build of 2026-09-17, Task
         // 7). Posted here because this is the function that OPENS a lost

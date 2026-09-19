@@ -302,6 +302,18 @@ final class SessionTab: Identifiable {
     /// session it was describing is gone.
     var liveness: ConnectionLiveness?
 
+    /// Why the last liveness probe on this tab's current session failed, or
+    /// `nil` when it came back alive or none has failed yet (lost-connection
+    /// cause, 2026-09-19).
+    ///
+    /// Two writers: `LivenessProbeStep.perform` writes each probe's answer
+    /// here, under the same guard as its `liveness` write, and
+    /// `ContentView.startSession` clears it for a fresh session.
+    /// `ContentView.handleLivenessGiveUp(_:)` reads it — the probe that
+    /// failed last is the one the give-up follows — into its log line and
+    /// into `LostConnection.probeFailure`.
+    var lastProbeFailure: LivenessProbeFailure?
+
     /// What the lost-connection surface describes and offers while
     /// `liveness` is `.lost` (connection-liveness plan, Task 7).
     ///

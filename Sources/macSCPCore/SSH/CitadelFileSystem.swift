@@ -52,6 +52,11 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// tools at connect time, and paying a round trip for a capability most
     /// sessions never use would be a cost every connect carries.
     private let checksumForm = ChecksumFormMemory()
+    /// Which of this connection's SSH transports closed, and whether macSCP
+    /// asked for it — see `TransportCloseReporting`. The close hooks below
+    /// capture this monitor and nothing else, so they cannot keep this
+    /// object, or the clients it owns, alive.
+    private let closeMonitor = TransportCloseMonitor()
 
     private init(
         client: SSHClient, sftp: BoundedSFTPSession, jumpClient: SSHClient? = nil,
@@ -61,6 +66,46 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         self.sftp = sftp
         self.jumpClient = jumpClient
         self.dedicatedGroup = dedicatedGroup
+        Self.watchClose(of: client, as: .target, into: closeMonitor)
+        if let jumpClient { Self.watchClose(of: jumpClient, as: .jump, into: closeMonitor) }
+    }
+
+    /// Hooks one SSH client's close into `monitor` (lost-connection cause,
+    /// 2026-09-19).
+    ///
+    /// Citadel's `onDisconnect` is the one close signal it makes public — the
+    /// channel's own `closeFuture` sits behind an internal `session` — and
+    /// it is a single slot. Nothing else sets it on the clients this type
+    /// owns: counted 2026-09-19, `Sources/` holds two calls to Citadel's
+    /// `onDisconnect(perform:)` — the one below, and
+    /// `SSHForwardingConnection.onDisconnect(_:)`'s, on a tunnel's own
+    /// client, which is never one of these. It fires from
+    /// the client's channel `closeFuture`, for every close: one this object
+    /// asked for in `disconnect()`, and one it did not.
+    ///
+    /// Set here, before the connection is handed to anyone, and backed by
+    /// an `isConnected` check afterwards: a channel that closed between the
+    /// connect and this line has already run its close hook with no handler
+    /// in the slot, and the check is what still reports it. The monitor
+    /// drops the second report when both see the same close.
+    ///
+    /// One close this cannot see, measured 2026-09-19 on the Docker rig
+    /// (`TransportCloseRigTests`' doc comment has the numbers): a TARGET
+    /// whose server side goes away behind a jump host. The jump's sshd sends
+    /// only an EOF on the forwarding channel, Citadel opens that channel with
+    /// remote half-closure allowed, and the channel never closes — so no
+    /// report, and the probe sees a timeout rather than a closed connection.
+    ///
+    /// The Citadel crossing this file's opening comment asks to be argued:
+    /// the slot is written once, here, from the task that finished the
+    /// connect, before any other code holds the client; Citadel reads it
+    /// from its own task after the channel closed. The closure captures the
+    /// monitor only — a `Sendable` value that owns no connection.
+    private static func watchClose(
+        of client: SSHClient, as hop: TransportHop, into monitor: TransportCloseMonitor
+    ) {
+        client.onDisconnect { monitor.closed(hop) }
+        if !client.isConnected { monitor.closed(hop) }
     }
 
     /// Marks a stage-1 (jump host) failure so the outer retry loop can tell
@@ -902,7 +947,12 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// request promises; NIOSSH signals a dropped transport as `.tcpShutdown`.
     /// Deliberately conservative: only these clear connection-loss shapes
     /// match — everything else keeps its existing mapping.
-    private static func isConnectionLoss(_ error: Error) -> Bool {
+    ///
+    /// Internal (not private) since the lost-connection cause work of
+    /// 2026-09-19: `LivenessProbeFailure.classify(_:probedPath:)` reads the
+    /// same shapes, so an error that reached the probe unmapped is still
+    /// recognised as a closed connection.
+    static func isConnectionLoss(_ error: Error) -> Bool {
         switch error {
         case ChannelError.ioOnClosedChannel, ChannelError.alreadyClosed:
             return true
@@ -1351,6 +1401,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     static let sftpCloseBoundSeconds = BoundedSFTPSession.closeBoundSeconds
 
     public func disconnect() async {
+        // First, before anything closes: every close that follows is one
+        // macSCP asked for, and `TransportCloseReporting` says so.
+        closeMonitor.markCloseRequested()
         // Close the SFTP child channel explicitly (its own closeFuture),
         // rather than relying solely on the parent SSH channel's close to
         // cascade to it, before closing the parent connection(s) and (I-2)
@@ -1543,6 +1596,12 @@ private final class SFTPReadHandle: Sendable {
         // answer it.
         let file = self.file
         Task { _ = await file.closeBounded() }
+    }
+}
+
+extension CitadelFileSystem: TransportCloseReporting {
+    public func onTransportClose(_ handler: @escaping @Sendable (TransportCloseEvent) -> Void) {
+        closeMonitor.setHandler(handler)
     }
 }
 

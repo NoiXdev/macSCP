@@ -1083,6 +1083,9 @@
 "connection.lost.body.probe" = "Host przestał odpowiadać, więc macSCP zamknął sesję.";
 "connection.lost.body.retryFailed" = "macSCP nie zdołał ponownie połączyć się z hostem.";
 "connection.lost.body.needsPerson" = "Ostatnia próba zatrzymała się na pytaniu, na które tylko Ty możesz odpowiedzieć.";
+"connection.lost.detail.timeout" = "Ostatnie sprawdzenia nie otrzymały odpowiedzi na czas.";
+"connection.lost.detail.closed" = "Połączenie zostało zamknięte przez serwer lub przez sieć.";
+"connection.lost.detail.other" = "Ostatnie sprawdzenie zakończyło się błędem.";
 "connection.lost.hint.noSavedSession" = "To połączenie nie było zapisane — aby połączyć się ponownie, wypełnij formularz jeszcze raz.";
 "connection.lost.hint.stopped" = "macSCP nie ponawia prób samodzielnie, dopóki nie odpowiesz.";
 "connection.lost.hint.automatic" = "macSCP ponawia próby samodzielnie, z coraz dłuższymi przerwami.";
