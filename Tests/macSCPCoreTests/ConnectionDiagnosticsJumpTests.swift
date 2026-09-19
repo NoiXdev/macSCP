@@ -344,7 +344,12 @@ struct ConnectionDiagnosticsJumpTests {
         let report = await ConnectionDiagnostics(
             descriptor: Self.descriptor(dial: nil), values: Self.targetValues(), secrets: nil,
             jump: Self.agentJump(port: 1), jumpDialer: JumpRig().dialer, lookups: lookups,
-            stepTimeout: .seconds(30), appVersion: "test"
+            // Roomy, not tight: the names get what the host lookup left of
+            // this budget, and CI run 35455555028 (`231b549d`) read
+            // `no answer` here with 30 s — the three-core runner's pool
+            // held the instant fakes past it. The budget is not the claim;
+            // the rows are (`ResolveNamesTests.roomy` is 600 s likewise).
+            stepTimeout: .seconds(600), appVersion: "test"
         ).run(scope: .contributions)
 
         #expect(report.steps.map(\.id) == [DiagnosticStepID.jumpResolve])
@@ -876,7 +881,10 @@ struct ConnectionDiagnosticsJumpTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: Self.targetValues(), secrets: nil,
             jump: jump, jumpDialer: .live(knownHosts: KnownHostsStore(directory: directory)),
-            stepTimeout: .seconds(10), appVersion: "test"
+            // Roomy: the claim is that the refused dial's row carries no
+            // secret, and a starved runner that let 10 s pass first would
+            // read `timedOut` and fail the guard below for the wrong reason.
+            stepTimeout: .seconds(600), appVersion: "test"
         ).run(scope: .dial)
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.jumpDial })
