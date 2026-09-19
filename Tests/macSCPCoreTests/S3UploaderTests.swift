@@ -58,6 +58,21 @@ final class FakeRequestBuilder: S3RequestBuilder, Sendable {
             return $0.responses.removeFirst()
         }
     }
+
+    func abortChannel() -> any S3AbortChannel { ThroughTheBuilder(builder: self) }
+}
+
+/// An abort channel that sends through its builder's own `perform`, for the
+/// fakes here, which have no connection a disconnect could end — which
+/// channel an abort takes is `S3AbortOutlivesDisconnectTests`' subject.
+struct ThroughTheBuilder: S3AbortChannel {
+    let builder: any S3RequestBuilder
+
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try await builder.perform(request)
+    }
+
+    func finish() {}
 }
 
 /// A request builder that refuses any request made from a cancelled task —
@@ -108,6 +123,8 @@ final class CancellationRefusingBuilder: S3RequestBuilder, Sendable {
         }
     }
 
+    func abortChannel() -> any S3AbortChannel { ThroughTheBuilder(builder: self) }
+
     /// Just over the single-PUT threshold, so the upload goes multipart and
     /// sends its first part; then a park until the reader is cancelled.
     static func parkingStream(reached: AsyncSignal) -> AsyncThrowingStream<Data, Error> {
@@ -133,23 +150,16 @@ final class AbortNotes: Sendable {
 }
 
 /// Initiates, fails the first part, and holds the abort until the case
-/// releases it — an endpoint that stopped answering. An abort abandoned by
-/// its backstop (its task cancelled) is recorded as such.
+/// releases it — an endpoint that stopped answering.
 final class SilentAbortBuilder: S3RequestBuilder, Sendable {
-    private struct State {
-        var answered = false
-        var abandoned = false
-    }
-
-    private let state = Mutex(State())
+    private let answered = Mutex(false)
     private let uploadID: String
     let abortArrived = AsyncSignal()
     let release = AsyncSignal()
 
     init(uploadID: String) { self.uploadID = uploadID }
 
-    var abortAnswered: Bool { state.withLock { $0.answered } }
-    var abortAbandoned: Bool { state.withLock { $0.abandoned } }
+    var abortAnswered: Bool { answered.withLock { $0 } }
 
     func signedRequest(
         method: String, key: String, query: [(name: String, value: String)],
@@ -178,16 +188,15 @@ final class SilentAbortBuilder: S3RequestBuilder, Sendable {
             return (Data(body.utf8), response(200))
         case "DELETE":
             abortArrived.signal()
-            guard await release.wait() == .signalled else {
-                state.withLock { $0.abandoned = true }
-                throw CancellationError()
-            }
-            state.withLock { $0.answered = true }
+            guard await release.wait() == .signalled else { throw CancellationError() }
+            answered.withLock { $0 = true }
             return (Data(), response(204))
         default:
             return (Data(), response(500))
         }
     }
+
+    func abortChannel() -> any S3AbortChannel { ThroughTheBuilder(builder: self) }
 }
 
 @Suite("S3Uploader")
@@ -208,9 +217,11 @@ struct S3UploaderTests {
         let reached = AsyncSignal()
 
         let run = Task {
-            try await S3Uploader().upload(
-                key: "big.bin", contents: CancellationRefusingBuilder.parkingStream(reached: reached),
-                using: builder)
+            try await S3Uploader(noteUnconfirmedAbort: { _ in }, abortBound: Self.roomyAbortBound)
+                .upload(
+                    key: "big.bin",
+                    contents: CancellationRefusingBuilder.parkingStream(reached: reached),
+                    using: builder)
         }
         #expect(await reached.wait() == .signalled)
         run.cancel()
@@ -244,9 +255,11 @@ struct S3UploaderTests {
 
         let notes = AbortNotes()
         let run = Task {
-            try await S3Uploader(noteUnconfirmedAbort: notes.record).upload(
-                key: "big.bin", contents: CancellationRefusingBuilder.parkingStream(reached: reached),
-                using: builder)
+            try await S3Uploader(noteUnconfirmedAbort: notes.record, abortBound: Self.roomyAbortBound)
+                .upload(
+                    key: "big.bin",
+                    contents: CancellationRefusingBuilder.parkingStream(reached: reached),
+                    using: builder)
         }
         #expect(await reached.wait() == .signalled)
         run.cancel()
@@ -275,8 +288,8 @@ struct S3UploaderTests {
         ])
         let notes = AbortNotes()
         do {
-            try await S3Uploader(noteUnconfirmedAbort: notes.record).upload(
-                key: "big.bin", contents: stream(of: chunks), using: builder)
+            try await S3Uploader(noteUnconfirmedAbort: notes.record, abortBound: Self.roomyAbortBound)
+                .upload(key: "big.bin", contents: stream(of: chunks), using: builder)
             Issue.record("expected a throw")
         } catch let aborting as S3MultipartAbortInFlight {
             #expect(aborting.underlying as? RemoteFSError == .authenticationFailed)
@@ -291,28 +304,42 @@ struct S3UploaderTests {
     /// stopped answering (Task 2 fix round 2 of the 2026-09-19 plan, N1).
     /// The abort answers only when the case releases it, so the ordering is
     /// fixed without a clock.
-    @Test func theUploadThrowsBeforeItsAbortIsAnswered() async throws {
-        let chunks = Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160)
+    ///
+    /// An upload that waited for its abort would never throw here: the
+    /// bound is one no runner reaches, and the abort is released only after
+    /// the throw. The upload runs through `returnedOrCancelled`, so the time
+    /// limit ends that wait as `.cancelled` — a plain `await` would hold the
+    /// run until the bound. It used to be caught by an "abandoned" flag
+    /// instead, which the 30 s production bound could raise only after
+    /// 30 s — a wall-clock ceiling (final review M8 of the 2026-09-19 plan).
+    @Test(.timeLimit(.minutes(2))) func theUploadThrowsBeforeItsAbortIsAnswered() async throws {
+        let contents = stream(of: Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160))
         let builder = SilentAbortBuilder(uploadID: "UP6")
+        let uploader = S3Uploader(noteUnconfirmedAbort: { _ in }, abortBound: Self.roomyAbortBound)
 
-        var thrown: (any Error)?
-        do {
-            try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
-        } catch {
-            thrown = error
+        let upload = await returnedOrCancelled { () -> (any Error)? in
+            do {
+                try await uploader.upload(key: "big.bin", contents: contents, using: builder)
+                return nil
+            } catch {
+                return error
+            }
         }
-
         let answeredWhenTheUploadThrew = builder.abortAnswered
-        let abandonedWhenTheUploadThrew = builder.abortAbandoned
-        #expect(answeredWhenTheUploadThrew == false)
-        #expect(abandonedWhenTheUploadThrew == false)
-        #expect(await builder.abortArrived.wait() == .signalled, "the abort was never sent")
+        let arrived = await builder.abortArrived.wait()
         builder.release.signal()
-        let aborting = try #require(thrown as? S3MultipartAbortInFlight)
+
+        #expect(upload.returned == .signalled, "the upload waited for its abort")
+        #expect(answeredWhenTheUploadThrew == false)
+        #expect(arrived == .signalled, "the abort was never sent")
+        let aborting = try #require(await upload.task.value as? S3MultipartAbortInFlight)
         #expect(await aborting.confirmation.value)
         #expect(builder.abortAnswered)
     }
 
+    /// A bound no runner reaches, for every case that reads an abort's
+    /// confirmation: the fake answers the abort, never the clock.
+    static let roomyAbortBound = 600
 
     private func http(_ status: Int, etag: String? = nil) -> HTTPURLResponse {
         HTTPURLResponse(
@@ -444,7 +471,8 @@ struct S3UploaderTests {
             (Data(), http(500)),  // UploadPart 1 fails
         ])
         do {
-            try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+            try await S3Uploader(noteUnconfirmedAbort: { _ in }, abortBound: Self.roomyAbortBound)
+                .upload(key: "big.bin", contents: stream(of: chunks), using: builder)
             Issue.record("expected a throw")
         } catch let aborting as S3MultipartAbortInFlight {
             // The abort runs detached from the upload; wait for it before

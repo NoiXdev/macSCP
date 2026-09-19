@@ -132,19 +132,24 @@ func connect(
 /// flagged once a fourth command arrived). NOT a `Task { }` in a `defer`:
 /// this process exits right after a subcommand's `run()` returns, and a
 /// detached task has no guarantee of completing before that happens.
+///
+/// Everything after the dial is `CLIConnectionScope.run` (Core), where it
+/// can be tested; this target has no test target.
 func withConnection(
     to reference: SessionReference,
     options: GlobalOptions,
     _ body: (any RemoteFileSystem) async throws -> Void
 ) async throws {
     let fs = try await connect(to: reference, options: options)
-    do {
-        try await body(fs)
-        await fs.disconnect()
-    } catch {
-        await fs.disconnect()
-        throw error
-    }
+    try await CLIConnectionScope.run(fs, noteUnconfirmedAbort: noteUnconfirmedAbort, body)
+}
+
+/// One stderr line per upload whose abort did not confirm. The object key
+/// only — no credential, endpoint or upload id.
+private func noteUnconfirmedAbort(_ objectKey: String) {
+    OutputFormatter.note(
+        "The upload's abort was not confirmed; an incomplete multipart upload may remain: "
+            + objectKey)
 }
 
 /// Builds the decider for UNKNOWN host keys. A mismatch never reaches this:

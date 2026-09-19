@@ -91,6 +91,13 @@ public protocol RemoteFileSystem: Sendable {
     /// It may WAIT for that abort's answer, so the transfer queue never
     /// calls it: its cancel path has to return at once.
     func incompleteUploadMayRemain(at path: String) async -> Bool
+    /// Waits for every upload abort this connection still has running —
+    /// each under its own bound — and answers the object key of each one
+    /// that did not confirm, in path order. The command line asks this
+    /// before it disconnects and exits (`CLIConnectionScope`), because an
+    /// abort still running dies with the process. It WAITS, so the transfer
+    /// queue never calls it, for the reason above.
+    func awaitUnconfirmedAborts() async -> [String]
 }
 
 extension RemoteFileSystem {
@@ -125,4 +132,8 @@ extension RemoteFileSystem {
     /// sole overrider; every other conformer, test doubles included,
     /// compiles unchanged.
     public func incompleteUploadMayRemain(at path: String) async -> Bool { false }
+
+    /// Default: nothing to wait for, for the reason above. `S3FileSystem` is
+    /// the sole overrider.
+    public func awaitUnconfirmedAborts() async -> [String] { [] }
 }

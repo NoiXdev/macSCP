@@ -5,7 +5,8 @@ import Synchronization
 /// request — exactly the two operations `buildSignedRequest` +
 /// `transport.send` provide, exposed as thin wrappers so the uploader is
 /// unit-testable with a fake builder and never needs to know about
-/// `S3ConnectionConfig`, `HTTPTransport`, or pagination (M13/T5).
+/// `S3ConnectionConfig`, `HTTPTransport`, or pagination (M13/T5) — plus
+/// where a multipart abort goes out.
 public protocol S3RequestBuilder: Sendable {
     func signedRequest(
         method: String, key: String, query: [(name: String, value: String)],
@@ -13,6 +14,25 @@ public protocol S3RequestBuilder: Sendable {
     ) throws -> URLRequest
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+
+    /// A way out to the network for ONE multipart abort, of its own: the
+    /// builder's `disconnect()` neither cancels it nor waits for it (final
+    /// review I1 of the 2026-09-19 plan). The abort is still signed through
+    /// `signedRequest`. The uploader asks for one per abort and finishes it
+    /// once the abort was answered or given up.
+    func abortChannel() -> any S3AbortChannel
+}
+
+/// One multipart abort's way out to the network (`S3RequestBuilder`).
+public protocol S3AbortChannel: Sendable {
+    /// Sends the abort, with the error mapping `S3RequestBuilder.perform`
+    /// applies.
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+
+    /// Lets the channel go once whatever it still carries has finished —
+    /// never cancelling it. Called once, after the abort was answered or
+    /// its bound gave up on it.
+    func finish()
 }
 
 /// A multipart upload failed — or was cancelled — and its abort is running.
@@ -27,8 +47,9 @@ public protocol S3RequestBuilder: Sendable {
 /// `true` once the server confirmed it, `false` when it refused or did not
 /// answer inside `S3Uploader.abortBoundSeconds` — in which case the
 /// uploader has already written its log line. `S3FileSystem.write` keeps
-/// the confirmation for `incompleteUploadMayRemain(at:)` and throws the
-/// original on, so every caller keeps seeing the error it always saw.
+/// this error for `incompleteUploadMayRemain(at:)` and
+/// `awaitUnconfirmedAborts()` and throws the original on, so every caller
+/// keeps seeing the error it always saw.
 public struct S3MultipartAbortInFlight: Error {
     /// The object key the upload was for.
     public let key: String
@@ -52,9 +73,10 @@ public struct S3MultipartAbortInFlight: Error {
 /// large to buffer twice just to hash them) → complete with the collected
 /// ETags. ANY failure during the part-upload/complete phase — including
 /// cancellation — aborts the multipart upload so nothing is left orphaned
-/// on the server. The abort runs detached and is never waited for here; it
-/// travels in the thrown `S3MultipartAbortInFlight`, and one that is not
-/// confirmed is noted rather than swallowed.
+/// on the server. The abort runs detached, on a channel of its own that the
+/// connection's `disconnect()` does not cancel, and is never waited for
+/// here; it travels in the thrown `S3MultipartAbortInFlight`, and one that
+/// is not confirmed is noted rather than swallowed.
 public struct S3Uploader: Sendable {
     /// Objects at or below this size go out as a single PUT. AWS's own
     /// single-PUT limit is 5 GiB, but buffering the whole object in memory
@@ -71,13 +93,24 @@ public struct S3Uploader: Sendable {
     /// Told the object key of an upload whose abort did not confirm.
     let noteUnconfirmedAbort: @Sendable (_ objectKey: String) -> Void
 
+    /// How long this uploader's abort may take before it is given up, in
+    /// seconds — `abortBoundSeconds` everywhere but the suites.
+    let abortBound: Int
+
     public init() {
         self.init(noteUnconfirmedAbort: S3Uploader.logUnconfirmedAbort)
     }
 
-    /// The same, with the note injected — the suite's seam.
-    init(noteUnconfirmedAbort: @escaping @Sendable (_ objectKey: String) -> Void) {
+    /// The same, with the note and the bound injected — the suites' seam. A
+    /// case that must see a caller that waits for the abort HANG, rather
+    /// than return once the bound gives up on it, passes a bound no runner
+    /// reaches and lets its time limit turn the hang red.
+    init(
+        noteUnconfirmedAbort: @escaping @Sendable (_ objectKey: String) -> Void,
+        abortBound: Int = S3Uploader.abortBoundSeconds
+    ) {
         self.noteUnconfirmedAbort = noteUnconfirmedAbort
+        self.abortBound = abortBound
     }
 
     /// The production note: one diagnostic-log line naming the object key
@@ -200,10 +233,21 @@ public struct S3Uploader: Sendable {
             // unconfirmed answer itself, and travels inside the error as a
             // `confirmation` only a caller that asks awaits
             // (`S3FileSystem.incompleteUploadMayRemain(at:)`).
+            //
+            // And it goes out on a channel of its OWN (final review I1 of the
+            // 2026-09-19 plan): the connection's `disconnect()` follows a
+            // failure within milliseconds — a tab's teardown, the command
+            // line's exit — and cancelled an abort sent on the connection's
+            // channel, leaving the upload behind. The channel is finished,
+            // not cancelled, once the abort was answered or given up.
             let note = noteUnconfirmedAbort
+            let bound = abortBound
             let confirmation = Task.detached {
+                let channel = builder.abortChannel()
                 let confirmed = await Self.abortConfirmed(
-                    key: key, uploadID: uploadID, using: builder)
+                    key: key, uploadID: uploadID, signedBy: builder, sentOn: channel,
+                    boundSeconds: bound)
+                channel.finish()
                 if !confirmed { note(key) }
                 return confirmed
             }
@@ -243,14 +287,15 @@ public struct S3Uploader: Sendable {
 
     /// Sends the abort in a task the caller's cancellation does not reach
     /// (`BoundedClose.run`, the way the throughput test's removal runs), and
-    /// answers whether the server confirmed it inside `abortBoundSeconds`.
+    /// answers whether the server confirmed it inside `boundSeconds`.
     private static func abortConfirmed(
-        key: String, uploadID: String, using builder: any S3RequestBuilder
+        key: String, uploadID: String, signedBy builder: any S3RequestBuilder,
+        sentOn channel: any S3AbortChannel, boundSeconds: Int
     ) async -> Bool {
         let confirmed = Mutex(false)
-        let finished = await BoundedClose.run(boundSeconds: abortBoundSeconds) {
+        let finished = await BoundedClose.run(boundSeconds: boundSeconds) {
             do {
-                try await abort(key: key, uploadID: uploadID, using: builder)
+                try await abort(key: key, uploadID: uploadID, signedBy: builder, sentOn: channel)
                 confirmed.withLock { $0 = true }
             } catch {
                 // Unconfirmed; the caller says so.
@@ -264,12 +309,13 @@ public struct S3Uploader: Sendable {
     /// `uploadMultipart` so a failed or cancelled upload never leaves
     /// storage (and the bill) sitting on an incomplete multipart upload.
     private static func abort(
-        key: String, uploadID: String, using builder: any S3RequestBuilder
+        key: String, uploadID: String, signedBy builder: any S3RequestBuilder,
+        sentOn channel: any S3AbortChannel
     ) async throws {
         let request = try builder.signedRequest(
             method: "DELETE", key: key, query: [(name: "uploadId", value: uploadID)],
             extraHeaders: [:], body: nil, payloadHash: SigV4Signer.emptyPayloadHash)
-        let (_, response) = try await builder.perform(request)
+        let (_, response) = try await channel.perform(request)
         guard (200..<300).contains(response.statusCode) else {
             throw Self.mapStatus(response.statusCode, key: key)
         }

@@ -13,19 +13,27 @@ import Testing
 /// (`TabTeardown.run`'s doc comment). The multipart abort a cancel sends
 /// must therefore never be waited for on that path: it runs detached, under
 /// its own bound, and only a caller that ASKS — the throughput test,
-/// through `incompleteUploadMayRemain(at:)` — waits for its answer.
+/// through `incompleteUploadMayRemain(at:)`, and the command line before it
+/// exits, through `awaitUnconfirmedAborts()` — waits for its answer.
 ///
 /// The endpoint here holds the abort until the case releases it, and fails
 /// a part request whose task is cancelled, the way a `URLSession` request is
-/// documented to. The ordering is asserted, never a time. The time limit is
-/// a hang bound.
+/// documented to. The ordering is asserted, never a time. The abort bound is
+/// one no runner reaches, so a `cancelAll` that waited for the abort would
+/// never return — the abort is released only after it. It runs through
+/// `returnedOrCancelled`, so the time limit ends that wait as `.cancelled`
+/// and the case goes red, where a plain `await` would hold the run until
+/// the bound. (It used to be caught by an "abandoned" flag the 30 s
+/// production bound raised only after 30 s: a wall-clock ceiling, final
+/// review M8 of the 2026-09-19 plan.)
 @Suite("S3 multipart cancel in the transfer queue", .timeLimit(.minutes(2)))
 struct S3QueueCancelTests {
     @Test @MainActor func aQueueCancelReturnsBeforeTheAbortIsAnsweredAndTheAbortIsStillSent()
         async throws
     {
         let transport = SilentS3Endpoint()
-        let fs = try await S3FileSystem.connect(Self.config, transport: transport)
+        let fs = try await S3FileSystem.connect(
+            Self.config, transport: transport, abortBoundSeconds: Self.roomyAbortBound)
         let queue = TransferQueueViewModel()
         queue.enqueue(
             fileName: "big.bin", direction: .upload,
@@ -34,22 +42,21 @@ struct S3QueueCancelTests {
             onCompleted: nil)
         #expect(await transport.partArrived.wait() == .signalled)
 
-        await queue.cancelAll(reason: .userRequested)
-
+        let cancel = await returnedOrCancelled { await queue.cancelAll(reason: .userRequested) }
         let answeredWhenCancelAllReturned = transport.abortAnswered
-        let abandonedWhenCancelAllReturned = transport.abortAbandoned
+        let arrived = await transport.abortArrived.wait()
+        transport.release.signal()
+
+        #expect(cancel.returned == .signalled, "cancelAll waited for the abort")
         #expect(answeredWhenCancelAllReturned == false)
-        #expect(abandonedWhenCancelAllReturned == false, """
-            cancelAll waited for the abort until its backstop gave up on it
-            """)
+        #expect(arrived == .signalled, "the abort was never sent")
+        await cancel.task.value
         // The item's status is not asserted: `S3FileSystem.send` maps any
         // transport error, a cancellation included, to `connectionFailed`,
         // so this item reads "Connection lost" — a pre-existing mapping this
         // case is not about (recorded in the Task 2 report, fix round 2).
         #expect(queue.items.first?.status.isRunning == false)
 
-        #expect(await transport.abortArrived.wait() == .signalled, "the abort was never sent")
-        transport.release.signal()
         // The one caller that asks waits for the answer, and reads it.
         #expect(await fs.incompleteUploadMayRemain(at: "/big.bin") == false)
         #expect(transport.abortAnswered)
@@ -57,25 +64,29 @@ struct S3QueueCancelTests {
 
     // MARK: - The guard: the queue path never awaits an abort
 
-    /// The awaiting variant is `incompleteUploadMayRemain(at:)` and the
-    /// in-flight abort's `confirmation`. Neither may appear on the queue's
-    /// path — the queue and the engine it calls — while the throughput test
-    /// is where the first is used. Read with comments and strings blanked
-    /// (`SwiftSource`), so a doc comment naming the method is not a call.
+    /// The awaiting variants are `incompleteUploadMayRemain(at:)`,
+    /// `awaitUnconfirmedAborts()` and the in-flight abort's `confirmation`.
+    /// None may appear on the queue's path — the queue and the engine it
+    /// calls — while the throughput test is where the first is used and the
+    /// command line's connection scope where the second is. Read with
+    /// comments and strings blanked (`SwiftSource`), so a doc comment naming
+    /// the method is not a call.
     ///
     /// The negative check stands beside positive ones: each scanned file
     /// must still carry the code this guard is about (`copyFile(` in both),
-    /// and the probe must still call the method, so a moved or renamed
-    /// method turns this red instead of leaving the negative matching
-    /// nothing.
+    /// and the probe and the scope must still call their method, so a moved
+    /// or renamed method turns this red instead of leaving the negative
+    /// matching nothing.
     @Test func theQueuePathNeverAwaitsAnAbort() throws {
         let queue = try Self.code("Sources/macSCPCore/Presentation/TransferQueueViewModel.swift")
         let engine = try Self.code("Sources/macSCPCore/RemoteFS/TransferEngine.swift")
         let probe = try Self.code("Sources/macSCPCore/Diagnostics/ThroughputProbe.swift")
+        let scope = try Self.code("Sources/macSCPCore/CLI/CLIConnectionScope.swift")
 
         #expect(queue.contains("copyFile("), "the queue no longer calls the engine")
         #expect(engine.contains("func copyFile("), "the engine no longer declares copyFile")
         #expect(probe.contains(Self.awaiting[0]), "the probe no longer asks — rename?")
+        #expect(scope.contains(Self.awaiting[1]), "the scope no longer asks — rename?")
         for (name, code) in [("TransferQueueViewModel", queue), ("TransferEngine", engine)] {
             for spelling in Self.awaiting {
                 #expect(!code.contains(spelling), "\(name) spells \(spelling)")
@@ -89,6 +100,7 @@ struct S3QueueCancelTests {
         let planted = try SwiftSource.blankingCommentsAndStrings("""
             func cancel(fs: any RemoteFileSystem) async {
                 _ = await fs.incompleteUploadMayRemain(at: "/x")
+                _ = await fs.awaitUnconfirmedAborts()
                 _ = await error.confirmation.value
             }
             """)
@@ -99,7 +111,11 @@ struct S3QueueCancelTests {
 
     // MARK: - Support
 
-    static let awaiting = ["incompleteUploadMayRemain(", ".confirmation"]
+    static let awaiting = ["incompleteUploadMayRemain(", "awaitUnconfirmedAborts(", ".confirmation"]
+
+    /// A bound no runner reaches: the abort answers when the case releases
+    /// it, never when the clock gives up on it.
+    static let roomyAbortBound = 600
 
     static let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -120,18 +136,12 @@ struct S3QueueCancelTests {
 /// cancelled `URLSession` request does), and an abort held until the case
 /// releases it.
 final class SilentS3Endpoint: HTTPTransport, Sendable {
-    private struct State {
-        var answered = false
-        var abandoned = false
-    }
-
-    private let state = Mutex(State())
+    private let answered = Mutex(false)
     let partArrived = AsyncSignal()
     let abortArrived = AsyncSignal()
     let release = AsyncSignal()
 
-    var abortAnswered: Bool { state.withLock { $0.answered } }
-    var abortAbandoned: Bool { state.withLock { $0.abandoned } }
+    var abortAnswered: Bool { answered.withLock { $0 } }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let query = request.url?.query ?? ""
@@ -153,11 +163,8 @@ final class SilentS3Endpoint: HTTPTransport, Sendable {
             throw CancellationError()
         case "DELETE":
             abortArrived.signal()
-            guard await release.wait() == .signalled else {
-                state.withLock { $0.abandoned = true }
-                throw CancellationError()
-            }
-            state.withLock { $0.answered = true }
+            guard await release.wait() == .signalled else { throw CancellationError() }
+            answered.withLock { $0 = true }
             return (Data(), Self.response(request, 204))
         default:
             return (Data(), Self.response(request, 500))

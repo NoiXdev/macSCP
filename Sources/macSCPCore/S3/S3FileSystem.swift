@@ -13,10 +13,9 @@ import Synchronization
 ///
 /// `Sendable` by construction rather than `@unchecked`: every stored
 /// property is immutable and itself `Sendable` (`S3ConnectionConfig` is a
-/// `Sendable` struct; `any HTTPTransport` requires `Sendable`; `URLSession`
-/// is `Sendable`; `S3RedirectSessionDelegate` is `@unchecked Sendable` and
-/// argues its own case — one recorded refusal behind a lock), so there is
-/// no shared mutable state here to race on.
+/// `Sendable` struct; `S3HTTPChannel` argues its own case; the channel
+/// factory is a `@Sendable` closure; the pending aborts sit behind a
+/// `Mutex`), so there is no shared mutable state here to race on.
 /// Which S3 resource a request addresses — the input to
 /// `S3FileSystem.signedRequest(_:method:query:…)`, and the only way to name
 /// one.
@@ -45,15 +44,17 @@ enum S3RequestShape: Sendable, Equatable {
 
 public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let config: S3ConnectionConfig
-    private let transport: any HTTPTransport
-    /// The session this file system owns and must invalidate, or `nil` when
-    /// the transport was injected and the session belongs to someone else.
-    /// Same arrangement as `WebDAVFileSystem`.
-    private let session: URLSession?
-    /// The delegate that decided what to do with any redirect on that
-    /// session, or `nil` for an injected transport — whose session's
-    /// redirect policy, if it has one, is the caller's business.
-    private let redirectPolicy: S3RedirectSessionDelegate?
+    /// This connection's way out to the network, cancelled by
+    /// `disconnect()`.
+    private let channel: S3HTTPChannel
+    /// Where a multipart abort's own channel comes from — the same factory
+    /// that built `channel`, so an abort goes out signed and redirected
+    /// exactly as the connection's requests do, on a session
+    /// `disconnect()` does not cancel (`abortChannel()`).
+    private let openChannel: @Sendable () -> S3HTTPChannel
+    /// How long a multipart abort may take before it is given up —
+    /// `S3Uploader.abortBoundSeconds` outside the suites.
+    private let abortBound: Int
 
     /// Where this connection's root sits, decided once in `connect` from
     /// `S3ConnectionConfig.startsAtBucketList` and never re-derived.
@@ -98,18 +99,19 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     private let mode: RootMode
 
     /// The abort of every multipart upload that failed on this connection,
-    /// by path — running or answered (`incompleteUploadMayRemain(at:)`).
-    private let pendingAborts = Mutex<[String: Task<Bool, Never>]>([:])
+    /// by path — running or answered (`incompleteUploadMayRemain(at:)`,
+    /// `awaitUnconfirmedAborts()`).
+    private let pendingAborts = Mutex<[String: S3MultipartAbortInFlight]>([:])
 
     private init(
-        config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?,
-        redirectPolicy: S3RedirectSessionDelegate?
+        config: S3ConnectionConfig, openChannel: @escaping @Sendable () -> S3HTTPChannel,
+        abortBound: Int
     ) {
         self.mode = config.startsAtBucketList ? .bucketList : .bucket(config.bucket)
         self.config = config
-        self.transport = transport
-        self.session = session
-        self.redirectPolicy = redirectPolicy
+        self.channel = openChannel()
+        self.openChannel = openChannel
+        self.abortBound = abortBound
     }
 
     /// Connects by performing one ListObjectsV2 probe against the bucket
@@ -138,21 +140,31 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// INJECTED transport gets none of that; a test that wants to measure
     /// what Foundation does when nothing decides injects one for exactly
     /// that reason (`S3RedirectAuthorizationMeasurementTests`).
+    ///
+    /// `abortBoundSeconds` is the suites' seam: a case that must see a
+    /// waiting caller hang, rather than return once the bound gives up on
+    /// the abort, passes one no runner reaches.
     static func connect(
-        _ config: S3ConnectionConfig, transport: (any HTTPTransport)? = nil
+        _ config: S3ConnectionConfig, transport: (any HTTPTransport)? = nil,
+        abortBoundSeconds: Int = S3Uploader.abortBoundSeconds
     ) async throws -> S3FileSystem {
-        let fs: S3FileSystem
         if let transport {
-            fs = S3FileSystem(
-                config: config, transport: transport, session: nil, redirectPolicy: nil)
-        } else {
-            let redirectPolicy = S3RedirectSessionDelegate(config: config)
-            let session = URLSession(
-                configuration: .ephemeral, delegate: redirectPolicy, delegateQueue: nil)
-            fs = S3FileSystem(
-                config: config, transport: URLSessionHTTPTransport(session: session),
-                session: session, redirectPolicy: redirectPolicy)
+            return try await connect(
+                config, channels: { .borrowing(transport) }, abortBoundSeconds: abortBoundSeconds)
         }
+        return try await connect(
+            config, channels: { .ownSession(for: config) }, abortBoundSeconds: abortBoundSeconds)
+    }
+
+    /// The dial with its channel factory injected — the seam a suite uses to
+    /// see which channel a request went out on and what ended it. `channels`
+    /// is called once for the connection and once for every multipart
+    /// abort.
+    static func connect(
+        _ config: S3ConnectionConfig, channels: @escaping @Sendable () -> S3HTTPChannel,
+        abortBoundSeconds: Int
+    ) async throws -> S3FileSystem {
+        let fs = S3FileSystem(config: config, openChannel: channels, abortBound: abortBoundSeconds)
         do {
             switch fs.mode {
             case .bucket(let bucket):
@@ -409,10 +421,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     }
 
     /// A signed range GET on the object key, streamed through
-    /// `transport.sendStreaming`. Maps 2xx → the body stream, 416 (range at
-    /// or beyond EOF) → an EMPTY stream (per the `RemoteFileSystem` contract
-    /// — this is not an error), 403 → `.authenticationFailed`, 404 →
-    /// `.notFound`, anything else → `.protocolError`.
+    /// `channel.transport.sendStreaming`. Maps 2xx → the body stream, 416
+    /// (range at or beyond EOF) → an EMPTY stream (per the
+    /// `RemoteFileSystem` contract — this is not an error), 403 →
+    /// `.authenticationFailed`, 404 → `.notFound`, anything else →
+    /// `.protocolError`.
     ///
     /// `Range` is set on the request AFTER `buildSignedRequest` returns, so
     /// it is never part of the SigV4-signed header set — AWS does not
@@ -433,12 +446,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         let body: AsyncThrowingStream<Data, Error>
         let response: HTTPURLResponse
         do {
-            (body, response) = try await transport.sendStreaming(request)
-            if let refused = refusedRedirect() { throw refused }
+            (body, response) = try await channel.transport.sendStreaming(request)
+            if let refused = channel.refusedRedirect() { throw refused }
         } catch let error as RemoteFSError {
             throw error
         } catch {
-            if let refused = refusedRedirect() { throw refused }
+            if let refused = channel.refusedRedirect() { throw refused }
             throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
         }
         switch response.statusCode {
@@ -462,16 +475,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     ///
     /// A multipart upload that failed leaves its abort running, detached
     /// (`S3MultipartAbortInFlight`); this keeps it for
-    /// `incompleteUploadMayRemain(at:)` and throws the error that ended the
-    /// upload on, unwrapped and AT ONCE — a queue's `cancelAll` must not wait
-    /// for an abort (Task 2 fix round 2 of the 2026-09-19 plan, N1).
+    /// `incompleteUploadMayRemain(at:)` and `awaitUnconfirmedAborts()` and
+    /// throws the error that ended the upload on, unwrapped and AT ONCE — a
+    /// queue's `cancelAll` must not wait for an abort (Task 2 fix round 2 of
+    /// the 2026-09-19 plan, N1).
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
         try refuseBucketLevelOperation(.write, path: path)
         do {
-            try await S3Uploader().upload(
-                key: Self.objectKey(forPath: path), contents: contents, using: self)
+            try await S3Uploader(
+                noteUnconfirmedAbort: S3Uploader.logUnconfirmedAbort, abortBound: abortBound
+            ).upload(key: Self.objectKey(forPath: path), contents: contents, using: self)
         } catch let aborting as S3MultipartAbortInFlight {
-            pendingAborts.withLock { $0[path] = aborting.confirmation }
+            pendingAborts.withLock { $0[path] = aborting }
             throw aborting.underlying
         }
     }
@@ -480,13 +495,28 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// its abort was not confirmed — parts that no listing shows and no
     /// `delete(path:)` removes.
     ///
-    /// The AWAITING variant: it waits for that abort's answer, up to
-    /// `S3Uploader.abortBoundSeconds`. Only a caller that asks may call it —
-    /// the throughput test does — and the transfer queue must not
-    /// (`S3QueueCancelTests.theQueuePathNeverAwaitsAnAbort`).
+    /// The AWAITING variant: it waits for that abort's answer, up to the
+    /// abort bound (`S3Uploader.abortBoundSeconds`). Only a caller that asks
+    /// may call it — the throughput test does — and the transfer queue must
+    /// not (`S3QueueCancelTests.theQueuePathNeverAwaitsAnAbort`).
     public func incompleteUploadMayRemain(at path: String) async -> Bool {
         guard let abort = pendingAborts.withLock({ $0[path] }) else { return false }
-        return !(await abort.value)
+        return !(await abort.confirmation.value)
+    }
+
+    /// Every failed multipart upload's abort, awaited in path order, and
+    /// the object key of each that did not confirm. The aborts run side by
+    /// side, each under the uploader's bound from its own launch, so this
+    /// returns at most one bound after the last of them was launched. The command line asks, before it exits
+    /// (`CLIConnectionScope`); the transfer queue must not, for the reason
+    /// above.
+    public func awaitUnconfirmedAborts() async -> [String] {
+        let pending = pendingAborts.withLock { $0 }.sorted { $0.key < $1.key }
+        var unconfirmed: [String] = []
+        for (_, abort) in pending where !(await abort.confirmation.value) {
+            unconfirmed.append(abort.key)
+        }
+        return unconfirmed
     }
 
     /// A signed `DELETE` on the object key — after the lookup the
@@ -691,7 +721,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             let data: Data
             let response: HTTPURLResponse
             do {
-                (data, response) = try await transport.send(request)
+                (data, response) = try await channel.transport.send(request)
             } catch let error as RemoteFSError {
                 throw error
             } catch {
@@ -724,8 +754,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// invalidated, and this one exists for the length of this file system
     /// and nothing else. A no-op when the transport was injected: that
     /// session is the caller's to end.
+    ///
+    /// Cancels this connection's channel only. A multipart abort still
+    /// running is on a channel of its own and is neither cancelled nor
+    /// waited for here: a tab's teardown awaits this.
     public func disconnect() async {
-        session?.invalidateAndCancel()
+        channel.cancel()
     }
 
     /// S3 has no append; a re-PUT replaces the whole object (M13).
@@ -765,40 +799,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// uploader's requests get the same transport-error mapping and the
     /// same refused-redirect reporting every other request path gets.
     public func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await send(request)
+        try await channel.perform(request)
+    }
+
+    /// `S3RequestBuilder.abortChannel`: a fresh channel from the factory that
+    /// built this connection's own — same credentials through
+    /// `signedRequest`, same redirect policy — which `disconnect()` never
+    /// touches.
+    public func abortChannel() -> any S3AbortChannel {
+        openChannel()
     }
 
     // MARK: - The one way out to the network
 
-    /// Every buffered request goes through here, so the transport-error
-    /// mapping exists once instead of once per call site — and so a redirect
-    /// the session's delegate refused is reported as what it was.
-    ///
-    /// A refusal is not an error at the `URLSession` level: declining to
-    /// follow leaves the 3xx response to be delivered as if the endpoint had
-    /// answered it, so without this every caller would report "S3 request
-    /// failed with HTTP status 302" and no reader would learn that their
-    /// endpoint tried to send them elsewhere. Checked on both outcomes
-    /// because a refusal can also precede a genuine transport failure — a
-    /// declined redirect whose 3xx body then fails to arrive.
+    /// Every buffered request goes through the connection's channel
+    /// (`S3HTTPChannel.perform`, where the error mapping and the
+    /// refused-redirect reporting live).
     private func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        do {
-            let result = try await transport.send(request)
-            if let refused = refusedRedirect() { throw refused }
-            return result
-        } catch let error as RemoteFSError {
-            throw error
-        } catch {
-            if let refused = refusedRedirect() { throw refused }
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// The redirect this file system's session refused, as the error to
-    /// report instead of whatever the refusal left behind. Always `nil` for
-    /// an injected transport, which carries no policy of ours.
-    private func refusedRedirect() -> RemoteFSError? {
-        redirectPolicy?.lastRefusedRedirect.map { RemoteFSError.connectionFailed(reason: $0) }
+        try await channel.perform(request)
     }
 
     // MARK: - Request building + signed ListObjectsV2
