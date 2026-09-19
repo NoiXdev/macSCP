@@ -86,8 +86,10 @@ public protocol RemoteFileSystem: Sendable {
     /// Whether an upload to `path` that failed on this connection may have
     /// left an INCOMPLETE upload behind that no listing shows and no
     /// `delete(path:)` removes — `true` only for an S3 multipart upload
-    /// whose abort did not confirm (`S3MultipartAbortUnconfirmed`). A caller
+    /// whose abort did not confirm (`S3MultipartAbortInFlight`). A caller
     /// that promises to leave nothing behind asks this after a failed write.
+    /// It may WAIT for that abort's answer, so the transfer queue never
+    /// calls it: its cancel path has to return at once.
     func incompleteUploadMayRemain(at path: String) async -> Bool
 }
 

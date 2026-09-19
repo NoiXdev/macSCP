@@ -125,6 +125,71 @@ final class CancellationRefusingBuilder: S3RequestBuilder, Sendable {
     }
 }
 
+/// Collects the object keys `S3Uploader` notes.
+final class AbortNotes: Sendable {
+    private let state = Mutex<[String]>([])
+    var keys: [String] { state.withLock { $0 } }
+    var record: @Sendable (String) -> Void { { [self] key in state.withLock { $0.append(key) } } }
+}
+
+/// Initiates, fails the first part, and holds the abort until the case
+/// releases it — an endpoint that stopped answering. An abort abandoned by
+/// its backstop (its task cancelled) is recorded as such.
+final class SilentAbortBuilder: S3RequestBuilder, Sendable {
+    private struct State {
+        var answered = false
+        var abandoned = false
+    }
+
+    private let state = Mutex(State())
+    private let uploadID: String
+    let abortArrived = AsyncSignal()
+    let release = AsyncSignal()
+
+    init(uploadID: String) { self.uploadID = uploadID }
+
+    var abortAnswered: Bool { state.withLock { $0.answered } }
+    var abortAbandoned: Bool { state.withLock { $0.abandoned } }
+
+    func signedRequest(
+        method: String, key: String, query: [(name: String, value: String)],
+        extraHeaders: [String: String], body: Data?, payloadHash: String
+    ) throws -> URLRequest {
+        var components = URLComponents(string: "http://127.0.0.1:9000/bucket/\(key)")!
+        if !query.isEmpty {
+            components.queryItems = query.map { URLQueryItem(name: $0.name, value: $0.value) }
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = method
+        return request
+    }
+
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let query = request.url?.query ?? ""
+        let response = { (status: Int) in
+            HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+                headerFields: nil)!
+        }
+        switch request.httpMethod {
+        case "POST" where query.contains("uploads"):
+            let body = "<InitiateMultipartUploadResult><UploadId>\(uploadID)</UploadId>"
+                + "</InitiateMultipartUploadResult>"
+            return (Data(body.utf8), response(200))
+        case "DELETE":
+            abortArrived.signal()
+            guard await release.wait() == .signalled else {
+                state.withLock { $0.abandoned = true }
+                throw CancellationError()
+            }
+            state.withLock { $0.answered = true }
+            return (Data(), response(204))
+        default:
+            return (Data(), response(500))
+        }
+    }
+}
+
 @Suite("S3Uploader")
 struct S3UploaderTests {
     // MARK: - The abort survives a cancel (Task 2 fix round 1, I3)
@@ -151,21 +216,25 @@ struct S3UploaderTests {
         run.cancel()
         let result = await finishingResult(run)
 
+        guard case .failure(let error) = result,
+            let aborting = error as? S3MultipartAbortInFlight
+        else {
+            Issue.record("expected S3MultipartAbortInFlight, got \(result)")
+            return
+        }
+        #expect(aborting.underlying is CancellationError, "\(aborting.underlying)")
+        #expect(await aborting.confirmation.value, "the abort was not confirmed")
         let aborted = builder.performed.contains {
             $0.httpMethod == "DELETE" && ($0.url!.query ?? "").contains("uploadId=UP3")
         }
         #expect(aborted, "no abort reached the server: \(builder.performed.map(\.httpMethod))")
         #expect(builder.refusedFromACancelledTask == 0)
-        guard case .failure(let error) = result else {
-            Issue.record("a cancelled upload succeeded")
-            return
-        }
-        #expect(error is CancellationError, "\(error)")
     }
 
-    /// The abort was sent and the server did not confirm it: the uploader
-    /// says an incomplete upload may remain, carrying what ended the upload.
-    @Test func anAbortThatIsNotConfirmedIsReported() async throws {
+    /// The abort was sent and the server did not confirm it: the abort's
+    /// confirmation says so, the note names the object key, and the error
+    /// carries what ended the upload.
+    @Test func anAbortThatIsNotConfirmedIsReportedAndNoted() async throws {
         let builder = CancellationRefusingBuilder(responses: [
             (Data(initiateXML(uploadID: "UP4").utf8), http(200)),
             (Data(), http(200, etag: "\"etag-1\"")),
@@ -173,8 +242,9 @@ struct S3UploaderTests {
         ])
         let reached = AsyncSignal()
 
+        let notes = AbortNotes()
         let run = Task {
-            try await S3Uploader().upload(
+            try await S3Uploader(noteUnconfirmedAbort: notes.record).upload(
                 key: "big.bin", contents: CancellationRefusingBuilder.parkingStream(reached: reached),
                 using: builder)
         }
@@ -183,28 +253,66 @@ struct S3UploaderTests {
         let result = await finishingResult(run)
 
         guard case .failure(let error) = result,
-            let unconfirmed = error as? S3MultipartAbortUnconfirmed
+            let aborting = error as? S3MultipartAbortInFlight
         else {
-            Issue.record("expected S3MultipartAbortUnconfirmed, got \(result)")
+            Issue.record("expected S3MultipartAbortInFlight, got \(result)")
             return
         }
-        #expect(unconfirmed.key == "big.bin")
-        #expect(unconfirmed.underlying is CancellationError)
+        #expect(aborting.key == "big.bin")
+        #expect(aborting.underlying is CancellationError)
+        #expect(await aborting.confirmation.value == false)
+        #expect(notes.keys == ["big.bin"])
     }
 
-    /// And a confirmed abort after a plain failure reports nothing more than
-    /// the failure — the positive half of the case above.
-    @Test func aConfirmedAbortThrowsTheOriginalError() async throws {
+    /// And a confirmed abort after a plain failure carries the failure, is
+    /// confirmed, and notes nothing — the positive half of the case above.
+    @Test func aConfirmedAbortCarriesTheOriginalErrorAndNotesNothing() async throws {
         let chunks = Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160)
         let builder = FakeRequestBuilder(responses: [
             (Data(initiateXML(uploadID: "UP5").utf8), http(200)),
             (Data(), http(403)),
             (Data(), http(204)),
         ])
-        await #expect(throws: RemoteFSError.authenticationFailed) {
-            try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+        let notes = AbortNotes()
+        do {
+            try await S3Uploader(noteUnconfirmedAbort: notes.record).upload(
+                key: "big.bin", contents: stream(of: chunks), using: builder)
+            Issue.record("expected a throw")
+        } catch let aborting as S3MultipartAbortInFlight {
+            #expect(aborting.underlying as? RemoteFSError == .authenticationFailed)
+            #expect(await aborting.confirmation.value)
+            #expect(notes.keys.isEmpty)
         }
     }
+
+    /// The upload throws while its abort is still unanswered: nothing that
+    /// cancelled the upload waits on the abort — a queue's `cancelAll`
+    /// awaits the upload's task, and must not be held by an endpoint that
+    /// stopped answering (Task 2 fix round 2 of the 2026-09-19 plan, N1).
+    /// The abort answers only when the case releases it, so the ordering is
+    /// fixed without a clock.
+    @Test func theUploadThrowsBeforeItsAbortIsAnswered() async throws {
+        let chunks = Array(repeating: Data(repeating: 1, count: 64 * 1024), count: 160)
+        let builder = SilentAbortBuilder(uploadID: "UP6")
+
+        var thrown: (any Error)?
+        do {
+            try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+        } catch {
+            thrown = error
+        }
+
+        let answeredWhenTheUploadThrew = builder.abortAnswered
+        let abandonedWhenTheUploadThrew = builder.abortAbandoned
+        #expect(answeredWhenTheUploadThrew == false)
+        #expect(abandonedWhenTheUploadThrew == false)
+        #expect(await builder.abortArrived.wait() == .signalled, "the abort was never sent")
+        builder.release.signal()
+        let aborting = try #require(thrown as? S3MultipartAbortInFlight)
+        #expect(await aborting.confirmation.value)
+        #expect(builder.abortAnswered)
+    }
+
 
     private func http(_ status: Int, etag: String? = nil) -> HTTPURLResponse {
         HTTPURLResponse(
@@ -335,8 +443,13 @@ struct S3UploaderTests {
             (Data(initiateXML(uploadID: "UP2").utf8), http(200)),  // Initiate
             (Data(), http(500)),  // UploadPart 1 fails
         ])
-        await #expect(throws: (any Error).self) {
+        do {
             try await S3Uploader().upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+            Issue.record("expected a throw")
+        } catch let aborting as S3MultipartAbortInFlight {
+            // The abort runs detached from the upload; wait for it before
+            // looking at what was sent.
+            _ = await aborting.confirmation.value
         }
         // An Abort (DELETE ?uploadId) must have been issued:
         #expect(builder.performed.contains { $0.httpMethod == "DELETE" && ($0.url!.query ?? "").contains("uploadId=UP2") })

@@ -97,9 +97,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
     private let mode: RootMode
 
-    /// Paths whose multipart upload failed and whose abort was not
-    /// confirmed on this connection (`incompleteUploadMayRemain(at:)`).
-    private let unconfirmedAborts = Mutex<Set<String>>([])
+    /// The abort of every multipart upload that failed on this connection,
+    /// by path — running or answered (`incompleteUploadMayRemain(at:)`).
+    private let pendingAborts = Mutex<[String: Task<Bool, Never>]>([:])
 
     private init(
         config: S3ConnectionConfig, transport: any HTTPTransport, session: URLSession?,
@@ -460,26 +460,33 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `TransferEngine` only ever hands an S3 destination `.overwrite` — a
     /// resumed `.append` write from a non-zero offset never reaches here.
     ///
-    /// An upload whose multipart abort was not confirmed is remembered for
-    /// `incompleteUploadMayRemain(at:)`, and the error that ended it is
-    /// thrown on unwrapped — every caller keeps seeing the error it always
-    /// saw, a cancelled transfer still `CancellationError`.
+    /// A multipart upload that failed leaves its abort running, detached
+    /// (`S3MultipartAbortInFlight`); this keeps it for
+    /// `incompleteUploadMayRemain(at:)` and throws the error that ended the
+    /// upload on, unwrapped and AT ONCE — a queue's `cancelAll` must not wait
+    /// for an abort (Task 2 fix round 2 of the 2026-09-19 plan, N1).
     public func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
         try refuseBucketLevelOperation(.write, path: path)
         do {
             try await S3Uploader().upload(
                 key: Self.objectKey(forPath: path), contents: contents, using: self)
-        } catch let unconfirmed as S3MultipartAbortUnconfirmed {
-            unconfirmedAborts.withLock { _ = $0.insert(path) }
-            throw unconfirmed.underlying
+        } catch let aborting as S3MultipartAbortInFlight {
+            pendingAborts.withLock { $0[path] = aborting.confirmation }
+            throw aborting.underlying
         }
     }
 
-    /// Whether a multipart upload to `path` failed on this connection with
-    /// its abort unconfirmed — parts that no listing shows and no
+    /// Whether a multipart upload to `path` failed on this connection and
+    /// its abort was not confirmed — parts that no listing shows and no
     /// `delete(path:)` removes.
+    ///
+    /// The AWAITING variant: it waits for that abort's answer, up to
+    /// `S3Uploader.abortBoundSeconds`. Only a caller that asks may call it —
+    /// the throughput test does — and the transfer queue must not
+    /// (`S3QueueCancelTests.theQueuePathNeverAwaitsAnAbort`).
     public func incompleteUploadMayRemain(at path: String) async -> Bool {
-        unconfirmedAborts.withLock { $0.contains(path) }
+        guard let abort = pendingAborts.withLock({ $0[path] }) else { return false }
+        return !(await abort.value)
     }
 
     /// A signed `DELETE` on the object key — after the lookup the

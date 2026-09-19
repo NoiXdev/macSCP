@@ -15,20 +15,27 @@ public protocol S3RequestBuilder: Sendable {
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
 
-/// A multipart upload failed — or was cancelled — and its abort did not
-/// confirm: the server may still hold its parts as an INCOMPLETE upload,
-/// which no object listing shows, no `DeleteObject` removes, and the
-/// account is billed for until a lifecycle rule or a later abort ends it.
+/// A multipart upload failed — or was cancelled — and its abort is running.
+/// Until the server confirms it, the server may still hold the upload's
+/// parts as an INCOMPLETE upload, which no object listing shows, no
+/// `DeleteObject` removes, and the account is billed for until a lifecycle
+/// rule or a later abort ends it.
 ///
-/// Thrown by `S3Uploader` in place of the original error, which it carries;
-/// `S3FileSystem.write` records the path (`incompleteUploadMayRemain(at:)`)
-/// and throws the original on, so every caller keeps seeing the error it
-/// always saw — a cancelled transfer still ends in `CancellationError`.
-public struct S3MultipartAbortUnconfirmed: Error {
+/// Thrown by `S3Uploader` in place of the original error, which it carries,
+/// the moment the abort is LAUNCHED — never after waiting for it (Task 2 fix
+/// round 2 of the 2026-09-19 plan, N1). `confirmation` is the abort itself:
+/// `true` once the server confirmed it, `false` when it refused or did not
+/// answer inside `S3Uploader.abortBoundSeconds` — in which case the
+/// uploader has already written its log line. `S3FileSystem.write` keeps
+/// the confirmation for `incompleteUploadMayRemain(at:)` and throws the
+/// original on, so every caller keeps seeing the error it always saw.
+public struct S3MultipartAbortInFlight: Error {
     /// The object key the upload was for.
     public let key: String
     /// What ended the upload.
     public let underlying: any Error
+    /// The abort, running: `true` once the server confirmed it.
+    public let confirmation: Task<Bool, Never>
 }
 
 /// Uploads an object to S3 from a chunk stream (M13/T5, multipart in M13/T6).
@@ -45,8 +52,9 @@ public struct S3MultipartAbortUnconfirmed: Error {
 /// large to buffer twice just to hash them) → complete with the collected
 /// ETags. ANY failure during the part-upload/complete phase — including
 /// cancellation — aborts the multipart upload so nothing is left orphaned
-/// on the server, and an abort that is not confirmed is thrown as
-/// `S3MultipartAbortUnconfirmed` rather than swallowed.
+/// on the server. The abort runs detached and is never waited for here; it
+/// travels in the thrown `S3MultipartAbortInFlight`, and one that is not
+/// confirmed is noted rather than swallowed.
 public struct S3Uploader: Sendable {
     /// Objects at or below this size go out as a single PUT. AWS's own
     /// single-PUT limit is 5 GiB, but buffering the whole object in memory
@@ -60,7 +68,27 @@ public struct S3Uploader: Sendable {
     /// minimum.
     private static let partSize = 8 * 1024 * 1024
 
-    public init() {}
+    /// Told the object key of an upload whose abort did not confirm.
+    let noteUnconfirmedAbort: @Sendable (_ objectKey: String) -> Void
+
+    public init() {
+        self.init(noteUnconfirmedAbort: S3Uploader.logUnconfirmedAbort)
+    }
+
+    /// The same, with the note injected — the suite's seam.
+    init(noteUnconfirmedAbort: @escaping @Sendable (_ objectKey: String) -> Void) {
+        self.noteUnconfirmedAbort = noteUnconfirmedAbort
+    }
+
+    /// The production note: one diagnostic-log line naming the object key
+    /// and what may remain. The key is the object's path in its bucket —
+    /// no credential, no endpoint, no upload id.
+    static func logUnconfirmedAbort(_ objectKey: String) {
+        DiagnosticLog.shared.log(
+            .error, "transfer",
+            "s3 multipart abort not confirmed key=\(objectKey); "
+                + "an incomplete multipart upload may remain")
+    }
 
     public func upload(
         key: String, contents: AsyncThrowingStream<Data, Error>, using builder: any S3RequestBuilder
@@ -156,18 +184,31 @@ public struct S3Uploader: Sendable {
             // complete, or a cancellation — must never leave an orphaned
             // multipart upload sitting on the server.
             //
-            // The abort is sent OUTSIDE this task (`abortConfirmed`): after a
-            // cancellation this task is cancelled, and a request made from a
-            // cancelled task may be refused for that alone — which, sent
-            // from here as the `try?` it used to be, left a billed
-            // incomplete upload behind with nothing said (Task 2 fix round
-            // 1 of the 2026-09-19 plan, I3). An abort that does not confirm
-            // is said: the original error travels inside
-            // `S3MultipartAbortUnconfirmed`, and never gets masked.
-            guard await Self.abortConfirmed(key: key, uploadID: uploadID, using: builder) else {
-                throw S3MultipartAbortUnconfirmed(key: key, underlying: error)
+            // The abort is sent OUTSIDE this task: after a cancellation this
+            // task is cancelled, and a request made from a cancelled task may
+            // be refused for that alone — which, sent from here as the
+            // `try?` it used to be, left a billed incomplete upload behind
+            // with nothing said (Task 2 fix round 1 of the 2026-09-19 plan,
+            // I3).
+            //
+            // And it is NOT WAITED FOR here (fix round 2, N1). This throw is
+            // what ends a transfer the queue cancelled, and `cancelAll`
+            // awaits that — a tab's teardown and the quit watchdog rest on it
+            // returning at once (`TabTeardown.run`). An abort to an endpoint
+            // that stopped answering would hold all three for its whole
+            // backstop. So it runs detached under its own bound, notes an
+            // unconfirmed answer itself, and travels inside the error as a
+            // `confirmation` only a caller that asks awaits
+            // (`S3FileSystem.incompleteUploadMayRemain(at:)`).
+            let note = noteUnconfirmedAbort
+            let confirmation = Task.detached {
+                let confirmed = await Self.abortConfirmed(
+                    key: key, uploadID: uploadID, using: builder)
+                if !confirmed { note(key) }
+                return confirmed
             }
-            throw error
+            throw S3MultipartAbortInFlight(
+                key: key, underlying: error, confirmation: confirmation)
         }
     }
 
@@ -194,9 +235,10 @@ public struct S3Uploader: Sendable {
         return etag
     }
 
-    /// How long the abort may take before the upload stops waiting for it —
-    /// a backstop for an endpoint that stopped answering, not the way out;
-    /// an abort that runs past it is reported as unconfirmed.
+    /// How long the detached abort may take before it is given up — a
+    /// backstop for an endpoint that stopped answering. Nothing on a
+    /// transfer's cancel path waits this long: the upload throws before the
+    /// abort answers. Only a caller that asks for the confirmation can.
     static let abortBoundSeconds = 30
 
     /// Sends the abort in a task the caller's cancellation does not reach
