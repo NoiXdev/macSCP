@@ -131,9 +131,10 @@ struct S3AccessProbe: Sendable {
             //
             // Measured 2026-09-03: a password containing `/` makes the whole
             // string an invalid URL, so this arm is exactly the one such an
-            // endpoint reaches, and `URLText.withoutUserinfo` cannot clean it
-            // — its authority scan ends at the `/` before the `@`, the limit
-            // its own doc comment states. Nothing a reader can act on is
+            // endpoint reaches, and `URLText.withoutUserinfo` could not clean
+            // it then — its authority scan ended at the `/` before the `@`.
+            // It can since 2026-09-19 (the small follow-ups' re-review, O-1),
+            // but a backstop is not the defence. Nothing a reader can act on is
             // lost: the endpoint cannot be turned into a request, which is
             // what the sentence says.
             return .failed(Self.unusableEndpointReason)

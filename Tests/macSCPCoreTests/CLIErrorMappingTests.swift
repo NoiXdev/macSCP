@@ -271,8 +271,9 @@ struct CLIErrorMappingTests {
     }
 
     /// The case that fires in practice: an S3 endpoint whose secret holds a
-    /// `/` does not parse, and `URLText.withoutUserinfo` cannot clean it —
-    /// so the CLI filter alone would be false assurance here. The throw
+    /// `/` does not parse, and `URLText.withoutUserinfo` could not clean it
+    /// when this was written (it can since 2026-09-19, re-review O-1) — so
+    /// the CLI filter alone was false assurance here. The throw
     /// sites carry a fixed sentence instead (`S3EndpointReason`), and that
     /// is what reaches stderr.
     @Test func anUnparseableS3EndpointReachesStderrWithoutTheCredential() {

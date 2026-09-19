@@ -543,16 +543,20 @@ struct DiagnosticLogSharedSinkTests {
     /// .connectLogFields` interpolated `s3.endpoint`/`webdav.baseURL`
     /// verbatim into `connect start host=…` — free text a user types into
     /// the endpoint field, which takes `scheme://KEY:SECRET@host` as
-    /// ordinary input no schema here strips (`ConnectFailureSecrecyTests`).
-    /// A stored S3 session whose endpoint carries a credential would
-    /// otherwise write that credential straight into the diagnostic log's
-    /// `connect start` line. The fix routes both `s3.endpoint` and
-    /// `webdav.baseURL` through `URLText.withoutUserinfo` before they reach
-    /// the log call; this test drives the S3 side end to end, through
-    /// `ConnectionViewModel.connect()` itself, rather than the helper in
-    /// isolation.
+    /// ordinary input (`ConnectFailureSecrecyTests`). The fix routed both
+    /// through the free-text filter, and the test that pinned it planted a
+    /// secret with no `/` — so it could not see that a `/` ended that
+    /// filter's authority scan before the `@` and let the whole credential
+    /// through (re-review of the small follow-ups, O-1, measured on
+    /// `https://AKIAX:wJal/rXUtnFEMI@s3.example.test`). Both fields now go
+    /// through `URLText.withoutUserinfo(typedURL:)`, and this test plants a
+    /// secret carrying a `/` AND an `@`, for each backend, end to end
+    /// through `ConnectionViewModel.connect()` itself. The schemeless S3
+    /// case is the one only the typed-URL door cuts: the free-text door
+    /// looks for `://`, and S3 reads `KEY:SECRET@host:9000` as `https`
+    /// without one.
     ///
-    /// The secret lives in a named constant, and both checks below compute
+    /// The secret lives in named constants, and both checks below compute
     /// their `Bool` before the expectation, for the same reason
     /// `connectionFailedReasonNeverReachesMessageOrLog` above does:
     /// `#expect` prints the source text of a failing expression, and
@@ -562,21 +566,34 @@ struct DiagnosticLogSharedSinkTests {
     /// must still reach the line, or the fix would be indistinguishable
     /// from silently dropping `host=` altogether.
     @MainActor
-    @Test("ConnectionViewModel.connect() drops the S3 endpoint's userinfo from the connect start line")
-    func connectStartLineDropsS3EndpointUserinfo() async throws {
-        let secret = "AKIAEXAMPLE:hunter2"
+    @Test("ConnectionViewModel.connect() drops the endpoint's userinfo from the connect start line",
+          arguments: ["s3", "s3-schemeless", "webdav"])
+    func connectStartLineDropsS3EndpointUserinfo(spelling: String) async throws {
+        let user = "sentinel-log-user-5d1c"
+        let secretHalves = ["sentinel-log-a7", "log-secret-b8"]
+        let secret = secretHalves[0] + "/" + secretHalves[1] + "@c9"
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
         defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }
 
         let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
-        vm.kind = .s3
-        vm.s3AccessKeyID = "AKIAEXAMPLE"
-        vm.s3SecretAccessKey = "shh-secret"
-        vm.s3Region = "eu-central-1"
-        vm.s3Endpoint = "https://\(secret)@s3.example.test"
-        vm.s3Bucket = "my-bucket"
-        vm.s3UsePathStyle = true
+        let expectedHost: String
+        if spelling == "webdav" {
+            vm.kind = .webdav
+            vm.webdavBaseURL = "https://\(user):\(secret)@dav.example.test/dav"
+            vm.password = "shh-secret"
+            expectedHost = "host=https://dav.example.test/dav "
+        } else {
+            vm.kind = .s3
+            vm.s3AccessKeyID = "AKIAEXAMPLE"
+            vm.s3SecretAccessKey = "shh-secret"
+            vm.s3Region = "eu-central-1"
+            let schemeless = spelling == "s3-schemeless"
+            vm.s3Endpoint = (schemeless ? "" : "https://") + "\(user):\(secret)@s3.example.test:9000"
+            vm.s3Bucket = "my-bucket"
+            vm.s3UsePathStyle = true
+            expectedHost = (schemeless ? "host=" : "host=https://") + "s3.example.test:9000 "
+        }
 
         let fixedNow = Date()
         DiagnosticLog.shared.configure(level: .info, directory: logDirectory, now: { fixedNow })
@@ -584,10 +601,10 @@ struct DiagnosticLogSharedSinkTests {
         await DiagnosticLog.shared.flush()
 
         let contents = fileContents(ownFileURL(directory: logDirectory, fixedNow: fixedNow))
-        let inLog = contents.contains(secret)
+        let inLog = contents.contains(user) || secretHalves.contains { contents.contains($0) }
         #expect(inLog == false)
 
-        let hostStillPresent = contents.contains("s3.example.test")
+        let hostStillPresent = contents.contains(expectedHost)
         #expect(hostStillPresent)
     }
 

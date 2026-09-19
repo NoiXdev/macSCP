@@ -331,7 +331,14 @@ public enum ImportPreviewPlanner {
             // user to infer the rest.
             compare(FieldKey.authKind, old[SSHField.authKind], new[SSHField.authKind])
         case .s3:
-            compare(FieldKey.endpoint, old[S3Field.endpoint], new[S3Field.endpoint])
+            // Compared as typed, shown without userinfo: the sheet renders
+            // both sides, and a stored endpoint can carry a credential.
+            if old[S3Field.endpoint] != new[S3Field.endpoint] {
+                result.append(FieldChange(
+                    field: FieldKey.endpoint,
+                    old: URLText.withoutUserinfo(typedURL: old[S3Field.endpoint]),
+                    new: URLText.withoutUserinfo(typedURL: new[S3Field.endpoint])))
+            }
             compare(FieldKey.username, old[S3Field.accessKeyID], new[S3Field.accessKeyID])
             compare(FieldKey.bucket, old[S3Field.bucket], new[S3Field.bucket])
         }

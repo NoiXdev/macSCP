@@ -159,11 +159,12 @@ public enum DialSupport {
     /// backends compose that text out of the endpoint the user typed —
     /// a field that takes `scheme://KEY:SECRET@host` as ordinary input
     /// (`ConnectFailureSecrecyTests`). `DiagnosticStep.init`'s backstop
-    /// strips the plain shape but cannot strip a secret containing a `/`:
-    /// `URLText.withoutUserinfo` documents that hole about itself, the
-    /// authority scan ends at the slash and the line is copied through
-    /// whole. So each case gets one fixed sentence instead, and the two
-    /// free-text payloads are dropped rather than rendered.
+    /// stripped the plain shape but not a secret containing a `/`: the
+    /// authority scan ended at the slash and the line was copied through
+    /// whole (closed 2026-09-19 by the small follow-ups' re-review, O-1; the
+    /// filter still documents a hole of its own, whitespace). So each case
+    /// gets one fixed sentence instead, and the two free-text payloads are
+    /// dropped rather than rendered.
     ///
     /// `TunnelFailure` is spelled out because it conforms to no
     /// `LocalizedError` either, and its generic rendering was measured on

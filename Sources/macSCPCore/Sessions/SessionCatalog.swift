@@ -182,6 +182,12 @@ public struct SessionCatalog: Sendable {
     /// there has always been "the empty bag", the same term that hygiene
     /// comment uses. `""` continues that answer instead of introducing a
     /// fabricated host/bucket/URL placeholder alongside it.
+    ///
+    /// The S3 endpoint and the WebDAV base URL are text the user typed, and
+    /// both take `scheme://KEY:SECRET@host`; the CLI prints this column to a
+    /// terminal that gets pasted into issues, so both go through
+    /// `URLText.withoutUserinfo(typedURL:)` (re-review of the 2026-09-19
+    /// small follow-ups, O-3).
     private func target(for session: StoredSession) -> String {
         switch session.kind {
         case .ssh:
@@ -189,10 +195,10 @@ public struct SessionCatalog: Sendable {
             return "\(ssh.username)@\(ssh.host):\(ssh.port)"
         case .s3:
             guard let s3 = session.s3 else { return "" }
-            return "\(s3.bucket) @ \(s3.endpoint)"
+            return "\(s3.bucket) @ \(URLText.withoutUserinfo(typedURL: s3.endpoint))"
         case .webdav:
             guard let webdav = session.webdav else { return "" }
-            return webdav.baseURL
+            return URLText.withoutUserinfo(typedURL: webdav.baseURL)
         }
     }
 }

@@ -150,7 +150,11 @@ public enum WebDAVFieldSchema {
 
     /// User name and host — what identifies a WebDAV connection to a human.
     public static func displaySummary(_ values: FieldValues) -> String {
-        let host = URL(string: values[WebDAVField.baseURL])?.host() ?? values[WebDAVField.baseURL]
+        // The fallback is the typed text itself, for a URL that does not
+        // parse — which a password containing a `/` makes it.
+        let host =
+            URL(string: values[WebDAVField.baseURL])?.host()
+            ?? URLText.withoutUserinfo(typedURL: values[WebDAVField.baseURL])
         return "\(values[WebDAVField.username]) @ \(host)"
     }
 

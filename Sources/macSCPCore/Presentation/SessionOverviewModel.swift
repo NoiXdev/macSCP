@@ -23,7 +23,7 @@ public enum HostKeyStatus: Sendable, Equatable {
 /// `SecretPresence`, which returns a `Bool` and has no way of carrying a
 /// value; the two URL-shaped fields a user can type
 /// `scheme://KEY:SECRET@host` into are stripped through
-/// `URLText.withoutUserinfo` before they become a fact. Both halves are
+/// `URLText.withoutUserinfo(typedURL:)` before they become a fact. Both halves are
 /// pinned by `SessionOverviewModelTests`, which plants a value in each field
 /// and asserts that no rendered text carries it.
 ///
@@ -293,7 +293,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
             facts.append(
                 Fact(
                     id: "endpoint", labelKey: label("endpoint"),
-                    text: URLText.withoutUserinfo(s3.endpoint), isMonospaced: true))
+                    text: URLText.withoutUserinfo(typedURL: s3.endpoint), isMonospaced: true))
         }
         facts.append(
             Fact(id: "pathStyle", labelKey: label("pathStyle"), text: yesNo(s3.usePathStyle)))
@@ -307,13 +307,13 @@ public struct SessionOverviewModel: Sendable, Equatable {
         if !webdav.baseURL.isEmpty {
             // The one field a user can type `https://user:secret@host` into
             // and have it work, so it is stripped before it is shown. The
-            // helper documents the one shape it cannot strip (a credential
-            // containing a `/`); that hole is why the planted-secret tests
-            // check the WHOLE rendered set rather than this fact alone.
+            // planted-secret tests check the WHOLE rendered set rather than
+            // this fact alone, so a second field that starts carrying the
+            // URL is caught too.
             facts.append(
                 Fact(
                     id: "baseURL", labelKey: label("baseURL"),
-                    text: URLText.withoutUserinfo(webdav.baseURL), isMonospaced: true))
+                    text: URLText.withoutUserinfo(typedURL: webdav.baseURL), isMonospaced: true))
         }
         if !webdav.username.isEmpty {
             facts.append(

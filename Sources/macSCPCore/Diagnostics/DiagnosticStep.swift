@@ -124,13 +124,17 @@ public enum DiagnosticStepID {
     public static func titleKey(for id: String) -> String { "diagnostics.step.\(id)" }
 }
 
-/// How a URL is allowed to appear in a diagnosis.
+/// How a URL is allowed to appear in a diagnosis, a log line, the CLI or any
+/// other rendering.
 ///
 /// A URL typed into a form can carry userinfo — `https://KEY:SECRET@host` is
-/// ordinary input that no schema here strips, and this project has already
-/// had one such credential reach a user-facing message
-/// (`ConnectFailureSecrecyTests`). A report is written to be pasted into a
-/// public issue, so a URL reaches one of its rows only through this type.
+/// ordinary input, and this project has already had one such credential
+/// reach a user-facing message (`ConnectFailureSecrecyTests`). The S3 parse
+/// drops it (`S3FieldSchema.endpointComponents`); the WebDAV base URL keeps
+/// it, because Foundation answers the server's challenge with it (measured
+/// 2026-09-19, see `withoutUserinfo(typedURL:)`). A report is written to be
+/// pasted into a public issue, so a URL reaches one of its rows only
+/// through this type.
 enum URLText {
     /// Host, port and path — never the scheme's userinfo, and never a query
     /// or fragment, both of which are also places a credential travels.
@@ -140,53 +144,170 @@ enum URLText {
         return path.isEmpty || path == "/" ? endpoint.text : endpoint.text + path
     }
 
+    /// A URL the user TYPED into a form — the S3 endpoint, the WebDAV base
+    /// URL — with its userinfo removed. The one door every rendering of
+    /// those two fields goes through: the session overview, the sidebar
+    /// summary, the CLI's session list, the connect log line and the
+    /// import preview (`TypedEndpointSecrecyTests` scans `Sources/` for a
+    /// rendering that bypasses it).
+    ///
+    /// Unlike the free-text door below, the whole string is one URL, so a
+    /// space does not end it, and a schemeless one (`KEY:SECRET@host:9000`,
+    /// which S3 reads as `https`) has its userinfo from the first character.
+    /// What the userinfo is, `hostStart(in:)` says.
+    ///
+    /// **The WebDAV base URL's userinfo is USED, which is why only its
+    /// renderings go through here.** Measured 2026-09-19 with a local HTTP
+    /// server and an ephemeral `URLSession` whose delegate answers every
+    /// challenge: a `401` on `http://urluser:urlpass@…` was answered with
+    /// `Basic` for `urluser:urlpass` WITHOUT the delegate being asked, so a
+    /// base URL typed with a credential logs in with it. S3 signs with the
+    /// Keychain's key and never reads the userinfo, so its parse drops it.
+    static func withoutUserinfo(typedURL text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)[...]
+        var prefix: Substring = ""
+        var rest = trimmed
+        if let marker = trimmed.range(of: "://"), isScheme(trimmed[..<marker.lowerBound]) {
+            prefix = trimmed[..<marker.upperBound]
+            rest = trimmed[marker.upperBound...]
+        }
+        let host = hostStart(in: rest)
+        let authorityEnd = rest[host...].firstIndex(where: endsAuthority) ?? rest.endIndex
+        // A URL nested in the path or query is free text to this one.
+        return String(prefix) + String(rest[host..<authorityEnd])
+            + withoutUserinfo(String(rest[authorityEnd...]))
+    }
+
     /// Strips `userinfo@` out of every `scheme://…` in a free-text string.
     ///
     /// The backstop for text this module did not compose — an `NSError`
     /// sentence, a server's own message — where a URL may be embedded
-    /// anywhere. Scans authorities rather than replacing a pattern, because
-    /// what has to go is "everything between `://` and the last `@` before
-    /// the authority ends", which is not a literal.
+    /// anywhere. Each URL runs from its `://` to the next whitespace, and
+    /// its userinfo is found by the same rule as a typed URL's
+    /// (`hostStart(in:)`), so a `/` in the secret no longer ends the scan
+    /// before the `@`.
     ///
     /// **What still defeats it, stated rather than implied.** A credential
-    /// containing whitespace or a `/` still ends the authority scan before
-    /// the `@` — and those two cannot be dropped from `endsAuthority` below,
-    /// because they are also what ends a URL inside a sentence. In free text
-    /// the two are indistinguishable. This is why the helper is a backstop
-    /// and not the defence: no dial prints a URL it did not build itself
-    /// (`hostPortPath(of:)`), and a contribution that interpolates a raw
-    /// endpoint string into a message is the shape to refuse in review.
+    /// containing whitespace still ends the URL before the `@`, because in
+    /// a sentence whitespace is also what ends a URL, and the two are
+    /// indistinguishable. `hostStart(in:)` states the rule's own residue.
+    /// This is why the helper is a backstop and not the defence: no dial
+    /// prints a URL it did not build itself (`hostPortPath(of:)`), a typed
+    /// URL is rendered through `withoutUserinfo(typedURL:)`, and a
+    /// contribution that interpolates a raw endpoint string into a message
+    /// is the shape to refuse in review.
     static func withoutUserinfo(_ text: String) -> String {
         var output = ""
         var remainder = Substring(text)
         while let marker = remainder.range(of: "://") {
             output.append(contentsOf: remainder[..<marker.upperBound])
             let rest = remainder[marker.upperBound...]
-            let end = rest.firstIndex(where: endsAuthority) ?? rest.endIndex
-            let authority = rest[..<end]
-            if let at = authority.lastIndex(of: "@") {
-                output.append(contentsOf: authority[authority.index(after: at)...])
-            } else {
-                output.append(contentsOf: authority)
-            }
-            remainder = rest[end...]
+            let url = rest[..<(rest.firstIndex(where: \.isWhitespace) ?? rest.endIndex)]
+            let host = hostStart(in: url)
+            let authorityEnd = url[host...].firstIndex(where: endsAuthority) ?? url.endIndex
+            output.append(contentsOf: url[host..<authorityEnd])
+            remainder = rest[authorityEnd...]
         }
         output.append(contentsOf: remainder)
         return output
     }
 
-    /// What ends an authority: the path, query and fragment delimiters, and
-    /// whitespace.
+    /// Where the host begins in `rest` — a URL's text after its `://`, or a
+    /// schemeless one from its first character: just past the userinfo's
+    /// `@`, or `rest.startIndex` when there is no userinfo.
+    ///
+    /// **The rule.** With no `@`, there is no userinfo. When the last `@`
+    /// comes before the first `/`, `?` or `#`, the userinfo is everything up
+    /// to that last `@` — RFC 3986's reading, which also covers a secret
+    /// holding `@`, `:`, `%` or a space. Otherwise the last `@` sits in what
+    /// RFC 3986 would call the path, query or fragment, and that has two
+    /// readings: a real `@` there (`/dav/files/alice@example.com/`, which
+    /// Nextcloud users type), or a secret that contains a `/`, `?` or `#`
+    /// (`KEY:wJal/rXUtn@host`, the shape of a real S3 secret key). The
+    /// RFC reading is kept only when the text before the first delimiter —
+    /// after its own last `@`, if it has one — is a SERVER ADDRESS
+    /// (`isServerAddress`): a dotted name, `localhost`, or an IP literal,
+    /// with at most a numeric port. A server always looks like that; the
+    /// front of a secret (`KEY:wJal`) almost never does. Anything else is
+    /// cut at the LAST `@`.
+    ///
+    /// **Which way it fails.** Toward the secret: a credential with a `/`
+    /// beside an `@` in the path costs the path (`https://example.com/`
+    /// instead of `https://cloud.example.com/files/alice@example.com/`) — a
+    /// confused reader, not a published key. A dotless server name
+    /// (`http://nas/dav/a@b/`) followed by an `@` in the path is cut the
+    /// same way. The residue the other way, named because it is not
+    /// closed: a user name that looks like a dotted host followed by a
+    /// secret whose text before its first `/` is a number up to 65535
+    /// (`first.last:1234/rest@host`) reads as a host and a port, and is
+    /// kept. `TypedEndpointSecrecyTests` holds the rule to its table.
+    private static func hostStart(in rest: Substring) -> Substring.Index {
+        guard let lastAt = rest.lastIndex(of: "@") else { return rest.startIndex }
+        let headEnd = rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex
+        guard lastAt > headEnd else { return rest.index(after: lastAt) }
+        let head = rest[..<headEnd]
+        let headHost = head.lastIndex(of: "@").map { head.index(after: $0) } ?? head.startIndex
+        return isServerAddress(head[headHost...]) ? headHost : rest.index(after: lastAt)
+    }
+
+    /// `host[:port]`, where the host is a bracketed IP literal, `localhost`,
+    /// or a name of at least two dot-separated labels (an IPv4 address is
+    /// one), and the port is 1 to 65535.
+    private static func isServerAddress(_ text: Substring) -> Bool {
+        var host = text
+        if host.hasPrefix("[") {
+            guard let close = host.firstIndex(of: "]") else { return false }
+            let literal = host[host.index(after: host.startIndex)..<close]
+            let isLiteral = literal.contains(":")
+                && literal.allSatisfy { $0.isASCII && ($0.isHexDigit || ":.%".contains($0) || $0.isLetter || $0.isNumber) }
+            let after = host[host.index(after: close)...]
+            guard isLiteral else { return false }
+            return after.isEmpty || (after.first == ":" && isPort(after.dropFirst()))
+        }
+        if let colon = host.lastIndex(of: ":") {
+            guard isPort(host[host.index(after: colon)...]) else { return false }
+            host = host[..<colon]
+        }
+        if host.lowercased() == "localhost" { return true }
+        var labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if labels.count > 2, labels.last?.isEmpty == true { labels.removeLast() }
+        return labels.count >= 2
+            && labels.allSatisfy { label in
+                !label.isEmpty
+                    && label.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+            }
+    }
+
+    private static func isPort(_ text: Substring) -> Bool {
+        guard (1...5).contains(text.count), text.allSatisfy({ $0.isASCII && $0.isNumber }),
+            let value = Int(text)
+        else { return false }
+        return (1...65_535).contains(value)
+    }
+
+    /// Whether `text` is a URL scheme — RFC 3986's
+    /// `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`. The same rule
+    /// `S3FieldSchema.endpointComponents` decides "schemeless" by, so the
+    /// parse and the renderings agree on where the userinfo starts.
+    static func isScheme(_ text: Substring) -> Bool {
+        guard let first = text.first, first.isLetter, first.isASCII else { return false }
+        return text.allSatisfy { character in
+            character.isASCII
+                && (character.isLetter || character.isNumber || "+-.".contains(character))
+        }
+    }
+
+    /// What ends an authority once its host has been found: the path, query
+    /// and fragment delimiters, and whitespace.
     ///
     /// Deliberately NOT the sub-delimiters. `,` `)` `(` `'` `;` `"` `]` and
     /// their kin are permitted UNENCODED inside userinfo by RFC 3986, and
     /// while they were in this set a password containing one ended the
     /// authority before the `@` — leaving a span with no separator to cut at,
-    /// which was then copied out whole. Under-stripping costs the whole
-    /// credential; over-stripping costs at most some prose after a later `@`,
-    /// so the set is chosen to fail in that direction. Removing `]` also
-    /// FIXED the IPv6 case rather than breaking it: `u:p@[::1]:9000` now ends
-    /// at the `/`, and its last `@` is the real separator.
+    /// which was then copied out whole. The userinfo is found before this
+    /// set is consulted now (`hostStart(in:)`), and `]` still must not be
+    /// in it: it closes an IPv6 literal, `[::1]:9000`, which the port
+    /// follows.
     private static func endsAuthority(_ character: Character) -> Bool {
         character == "/" || character == "?" || character == "#" || character.isWhitespace
     }
@@ -238,8 +359,8 @@ public struct DiagnosticTable: Sendable, Equatable {
     /// place a credential reaches a pasted report.
     var redacted: DiagnosticTable {
         DiagnosticTable(
-            columns: columns.map(URLText.withoutUserinfo),
-            rows: rows.map { $0.map(URLText.withoutUserinfo) })
+            columns: columns.map(URLText.withoutUserinfo(_:)),
+            rows: rows.map { $0.map(URLText.withoutUserinfo(_:)) })
     }
 }
 

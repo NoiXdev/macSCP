@@ -52,11 +52,12 @@ struct ConnectionDiagnosticsTests {
     private static let loaderErrorSentinel = "CITADEL-INTERNAL-BUFFER-CONTENTS"
 
     /// A secret carrying a `/` — the shape of a real S3 secret access key,
-    /// and the hole `URLText.withoutUserinfo` documents about itself: the
-    /// authority scan ends at the slash, the span it looked at holds no `@`
-    /// to cut at, and the line is copied through whole. The backstop cannot
-    /// close this one, so a sentence that must not carry a credential has to
-    /// not compose it in the first place.
+    /// and the hole `URLText.withoutUserinfo` documented about itself until
+    /// 2026-09-19 (the small follow-ups' re-review, O-1): the authority scan
+    /// ended at the slash, the span it looked at held no `@` to cut at, and
+    /// the line was copied through whole. A backstop is still not the
+    /// defence, so a sentence that must not carry a credential has to not
+    /// compose it in the first place.
     ///
     /// Named, like every other secret in this file, because `#expect` prints
     /// the source text of what it checks.
@@ -1065,12 +1066,14 @@ struct ConnectionDiagnosticsTests {
     /// putting that endpoint into a row written to be pasted into a public
     /// issue.
     ///
-    /// The planted secret carries a `/`, which is the hole
-    /// `URLText.withoutUserinfo` documents about itself: the authority scan
-    /// ends at the slash, so the span it examined holds no `@` to cut at and
-    /// the whole line is copied through. That is why the fix is a fixed
-    /// sentence per case rather than a wider backstop — the backstop is
-    /// structurally unable to catch this shape.
+    /// The planted secret carries a `/`, which was the hole
+    /// `URLText.withoutUserinfo` documented about itself when this was
+    /// written: the authority scan ended at the slash, so the span it
+    /// examined held no `@` to cut at and the whole line was copied through.
+    /// That is why the fix is a fixed sentence per case rather than a wider
+    /// backstop. The backstop was widened anyway on 2026-09-19 (re-review
+    /// O-1), and still has a hole of its own (whitespace), so the fixed
+    /// sentences stay the defence.
     @Test func aBackendErrorsOwnDescriptionNeverReachesTheRow() async throws {
         let port = try #require(LoopbackSocket.closedPort())
         let key = Self.userinfoKey

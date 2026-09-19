@@ -7,10 +7,11 @@ import Foundation
 /// The endpoint is ordinary input that a credential travels in
 /// (`https://KEY:SECRET@host`, which no schema here strips), and these
 /// refusals fire for exactly such an endpoint: a `/` in the secret makes the
-/// whole string unparseable. The same `/` ends `URLText.withoutUserinfo`'s
-/// authority scan before the `@`, so a reason that carried the endpoint
-/// could not be cleaned by any filter further down — it reached the CLI's
-/// stderr and the connect form verbatim. `S3EndpointSecrecyTests` drives
+/// whole string unparseable. The same `/` ended `URLText.withoutUserinfo`'s
+/// authority scan before the `@` (until the re-review's O-1 fix of
+/// 2026-09-19), so a reason that carried the endpoint could not be cleaned
+/// by any filter further down — it reached the CLI's stderr and the connect
+/// form verbatim. `S3EndpointSecrecyTests` drives
 /// each refusal it can reach with such an endpoint and scans the backend's
 /// sources for any interpolated endpoint.
 enum S3EndpointReason {

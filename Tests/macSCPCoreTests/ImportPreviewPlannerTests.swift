@@ -235,6 +235,38 @@ struct ImportPreviewPlannerTests {
         #expect(changes.contains { $0.field == ImportPreviewPlanner.FieldKey.username } == false)
     }
 
+    /// The change list renders both sides of the endpoint, and the stored
+    /// side is what the user typed — which can carry `KEY:SECRET@`, a `/`
+    /// in the secret included (re-review of the 2026-09-19 small
+    /// follow-ups). Compared as typed, so the update is still reported;
+    /// shown through `URLText.withoutUserinfo(typedURL:)`. The secret is
+    /// named and read back only as a `Bool` (CLAUDE.md, "A value a test
+    /// must not leak has two exits").
+    @Test func theChangeListShowsNoCredentialTypedIntoTheStoredEndpoint() throws {
+        let stored = s3Session(
+            name: "Backups",
+            endpoint: "https://\(Self.typedUser):\(Self.typedSecret)@objects.example.net:9000",
+            bucket: "bucket", accessKeyID: "AKIAEXAMPLE", importID: s3Bookmark().id)
+        let bookmark = s3Bookmark(
+            nickname: "Backups", host: "objects.example.net", port: 9000,
+            username: "AKIAEXAMPLE", path: "bucket")
+
+        let row = try #require(ImportPreviewPlanner.preview(
+            [bookmark], against: [stored], switches: ImportSwitches()).first)
+        let changes = try #require(changeList(row.status))
+        let endpoint = changes.first { $0.field == ImportPreviewPlanner.FieldKey.endpoint }
+        let rendered = changes.flatMap { [$0.old, $0.new] }
+        let leaks = rendered.contains { text in Self.typedSecretParts.contains { text.contains($0) } }
+        let showsTheServer = endpoint?.old == "https://objects.example.net:9000"
+        #expect(endpoint != nil, "the typed endpoint no longer differs from the bookmark's")
+        #expect(leaks == false, "the change list carries the stored endpoint's credential")
+        #expect(showsTheServer)
+    }
+
+    private static let typedUser = "sentinel-import-user-6e2a"
+    private static let typedSecret = "sentinel-import-a3/import-secret-b4"
+    private static let typedSecretParts = [typedUser, "sentinel-import-a3", "import-secret-b4"]
+
     @Test func theLabelsSwitchMovesLabelsInAndOutOfTheChangeList() throws {
         let stored = sshSession(
             name: "Web 01", host: "web-01.example.net", port: 22, username: "deploy",

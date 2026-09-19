@@ -252,11 +252,23 @@ public enum S3FieldSchema {
     ///
     /// Returns components, not a URL, because the connect path mutates them
     /// (path-style writes the path; virtual-hosted rewrites the host).
+    ///
+    /// **The userinfo is dropped here, once, for every consumer** (re-review
+    /// of the 2026-09-19 small follow-ups, O-2). S3 signs with the access
+    /// key and secret from the Keychain and reads nothing out of the
+    /// endpoint's `KEY:SECRET@`, but `URLComponents` kept it, so every
+    /// request URL carried it — and so did `presignedURL`, which
+    /// `PresignedURLSheet` shows so the user can hand it to somebody else.
+    /// Dropped rather than refused: a session saved with one keeps
+    /// connecting exactly as before, and the stored text is not rewritten.
     public static func endpointComponents(_ endpoint: String) -> URLComponents? {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let qualified = hasScheme(trimmed) ? trimmed : "\(assumedEndpointScheme)://\(trimmed)"
-        return URLComponents(string: qualified)
+        guard var components = URLComponents(string: qualified) else { return nil }
+        components.user = nil
+        components.password = nil
+        return components
     }
 
     /// Whether `text` already opens with a URL scheme — RFC 3986's
@@ -267,12 +279,7 @@ public enum S3FieldSchema {
     /// exactly the spellings this must treat as schemeless.
     private static func hasScheme(_ text: String) -> Bool {
         guard let separator = text.range(of: "://") else { return false }
-        let scheme = text[text.startIndex..<separator.lowerBound]
-        guard let first = scheme.first, first.isLetter, first.isASCII else { return false }
-        return scheme.allSatisfy { character in
-            character.isASCII
-                && (character.isLetter || character.isNumber || "+-.".contains(character))
-        }
+        return URLText.isScheme(text[text.startIndex..<separator.lowerBound])
     }
 
     /// The endpoint as a URL, or nil when the connect path could not use it
@@ -509,7 +516,7 @@ public enum S3FieldSchema {
     /// any spelling — this is host and port, composed the same way
     /// `canonicalEndpoint` composes its origin.
     public static func displaySummary(_ values: FieldValues) -> String {
-        let host = endpointHostText(values) ?? values[S3Field.endpoint]
+        let host = endpointHostText(values) ?? URLText.withoutUserinfo(typedURL: values[S3Field.endpoint])
         guard !values[bool: S3Field.startsAtBucketList] else { return host }
         return "\(values[S3Field.bucket]) @ \(host)"
     }

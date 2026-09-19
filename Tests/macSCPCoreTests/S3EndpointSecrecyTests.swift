@@ -11,10 +11,11 @@ import Testing
 /// the S3 throw sites that refuse an endpoint which cannot become a request
 /// used to interpolate it into `connectionFailed(reason:)`. They fire for
 /// exactly such an endpoint: a `/` in the secret — AWS secret keys routinely
-/// carry one — makes the whole string unparseable, and the same `/` ends
-/// `URLText.withoutUserinfo`'s authority scan before the `@`, so no filter
-/// further down could clean the text. Their reasons are fixed sentences now
-/// (`S3EndpointReason`), which name the part that failed and never its value.
+/// carry one — makes the whole string unparseable, and the same `/` ended
+/// `URLText.withoutUserinfo`'s authority scan before the `@` (until the
+/// re-review's O-1 fix), so no filter further down could clean the text.
+/// Their reasons are fixed sentences now (`S3EndpointReason`), which name
+/// the part that failed and never its value.
 ///
 /// Every value that must not leak is a named constant, and every expectation
 /// reads a `Bool` computed before it (CLAUDE.md, "A value a test must not
@@ -24,9 +25,9 @@ struct S3EndpointSecrecyTests {
     // MARK: - The values that must not leak
 
     static let user = "sentinel-endpoint-key-3a9f"
-    /// A `/`, which makes the endpoint unparseable and stops
-    /// `URLText.withoutUserinfo` short, and an `@`, which puts a second
-    /// separator inside the userinfo.
+    /// A `/`, which makes the endpoint unparseable (and stopped
+    /// `URLText.withoutUserinfo` short until the re-review's O-1 fix), and
+    /// an `@`, which puts a second separator inside the userinfo.
     static let secret = "sentinel-a1c7/endpoint-b2d8@secret-c3e9"
     static let unparseableEndpoint = "https://\(user):\(secret)@s3.example.test"
 

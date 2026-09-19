@@ -30,8 +30,9 @@ struct S3AccessProbeTests {
 
     /// The userinfo halves of the endpoint the leak test below types. The
     /// password carries a `/` on purpose: that is the character
-    /// `URLText.withoutUserinfo` cannot scan past, and therefore the shape
-    /// that must not reach a row in the first place.
+    /// `URLText.withoutUserinfo` could not scan past until 2026-09-19
+    /// (re-review O-1), and therefore the shape that must not reach a row in
+    /// the first place.
     private static let endpointUserinfoUser = "ENDPOINTKEYID"
     private static let endpointUserinfoPassword = "endpointpa/ssword"
 
@@ -197,8 +198,9 @@ struct S3AccessProbeTests {
     /// message, and `DialSupport.reason(for:)`'s `RemoteFSError` arm would
     /// not print it either even if this path did reach it — `connectionFailed`
     /// and `protocolError` both drop their `reason` text for one fixed
-    /// sentence per case. The backstop's hole is real (`DiagnosticStep.swift`,
-    /// the `withoutUserinfo` doc comment) but is no longer what closes this
+    /// sentence per case. The backstop's remaining hole (whitespace; the
+    /// `/` one was closed on 2026-09-19, re-review O-1) is stated in its doc
+    /// comment in `DiagnosticStep.swift`, and is no longer what closes this
     /// route: there is no free text left for it to fail to strip.
     @Test func aCredentialTypedIntoTheEndpointNeverReachesTheRow() async throws {
         let user = Self.endpointUserinfoUser

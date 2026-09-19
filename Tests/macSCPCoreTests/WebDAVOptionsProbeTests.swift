@@ -39,8 +39,8 @@ struct WebDAVOptionsProbeTests {
     private static let secretUnderTest = "webdav-claims-probe-secret-value"
 
     /// The userinfo halves of the base URL the leak test below types — the
-    /// password carrying the `/` that `URLText.withoutUserinfo` cannot scan
-    /// past.
+    /// password carrying the `/` that `URLText.withoutUserinfo` could not
+    /// scan past until 2026-09-19 (re-review O-1).
     private static let baseURLUserinfoUser = "BASEURLUSER"
     private static let baseURLUserinfoPassword = "baseurlpa/ssword"
 

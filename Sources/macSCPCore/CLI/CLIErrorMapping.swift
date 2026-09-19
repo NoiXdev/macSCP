@@ -324,7 +324,8 @@ public enum CLIErrorMapping {
             // as its localized sentence (never its description), and
             // `URLText.withoutUserinfo` cuts the userinfo out of any URL that
             // sentence quotes. That filter is a backstop with a documented
-            // hole (a credential holding `/` or whitespace), which is why
+            // hole (a credential holding whitespace; one holding `/` too,
+            // until 2026-09-19), which is why
             // the backends still wrap at the throw site and compose no text
             // out of a typed endpoint (`S3EndpointReason`).
             //
