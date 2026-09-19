@@ -179,9 +179,9 @@ struct DiagnosticLogSecrecyGuardTests {
         let arguments: String
     }
 
-    /// Every `.swift` file under `directory`, from `SourceCorpus` — the one
-    /// read of the tree per test process — which throws for a directory it
-    /// does not hold where the enumerator this replaced answered `[]`.
+    /// Every `.swift` file under `directory`, from `SourceCorpus` — the
+    /// tree's shared listing — which throws for a directory it does not
+    /// hold where the enumerator this replaced answered `[]`.
     private static func swiftFiles(under directory: URL) throws -> [URL] {
         try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
     }
@@ -192,22 +192,25 @@ struct DiagnosticLogSecrecyGuardTests {
     /// each with its brace-balanced argument text — comments blanked,
     /// string literals (and what they interpolate) intact.
     ///
-    /// Three checks read it and the tree does not change under a run, so it
-    /// is collected once per process (`callSitesScan`).
+    /// Three checks read it and the tree does not change under a run, so
+    /// each file's sites are remembered (`callSitesByFile`, a
+    /// `PerKeyCache`): a check that misses a file collects it itself and
+    /// never waits for another check's collection.
     private static func collectCallSites() throws -> [CallSite] {
-        try callSitesScan.get()
+        let files = try swiftFiles(under: sourcesRoot)
+        // All at once, so the checks that start together share the work
+        // file by file (`PerKeyCache.values(for:compute:)`).
+        let stripped = try SourceCorpus.commentFree(ofAll: files)
+        return try callSitesByFile.values(for: files.map(SourceCorpus.key)) { index in
+            Result { Self.callSites(inStripped: stripped[index], file: files[index].lastPathComponent) }
+        }.flatMap { try $0.get() }
     }
 
-    private static let callSitesScan = Result { try scanCallSites() }
+    private static let callSitesByFile = PerKeyCache<Result<[CallSite], any Error>>()
 
-    private static func scanCallSites() throws -> [CallSite] {
-        var sites: [CallSite] = []
-        for file in try swiftFiles(under: sourcesRoot) {
-            let stripped = try SourceCorpus.commentFree(of: file)
-            guard !stripped.contains("final class DiagnosticLog: Sendable") else { continue }
-            sites.append(contentsOf: Self.callSites(in: stripped, file: file.lastPathComponent))
-        }
-        return sites
+    private static func callSites(inStripped stripped: String, file: String) -> [CallSite] {
+        guard !stripped.contains("final class DiagnosticLog: Sendable") else { return [] }
+        return Self.callSites(in: stripped, file: file)
     }
 
     /// One file's forwarded call sites, with the categories that file's own

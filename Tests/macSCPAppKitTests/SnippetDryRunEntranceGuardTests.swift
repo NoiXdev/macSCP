@@ -332,16 +332,23 @@ struct SnippetDryRunEntranceGuardTests {
         try SourceCorpus.commentFree(of: appSourceDirectory.appendingPathComponent(name))
     }
 
-    /// Reads the file's two views from `SourceCorpus`, blanked once per
-    /// test process. A file whose comment-only view does not contain the
-    /// marker at all is answered without the character walk: every call the
-    /// walk reports, and every `MarkerInsideALiteral` it throws, starts at an
-    /// occurrence of the marker in exactly that view.
+    /// Reads the file's two views from `SourceCorpus`, blanked at most once
+    /// per test process. Both are fetched for EVERY file, marker or not:
+    /// the corpus refuses a view that is not as long as the file's text
+    /// (`SourceCorpus.lengthCheckedView`), so the two views agreeing on
+    /// length — what `SnippetSourceScan.ViewsDisagree` checks — is checked
+    /// for every file this scan lists, not only for the files the
+    /// pre-filter lets through (fix round 1, review M2). A file whose
+    /// comment-only view does not contain the marker at all is then
+    /// answered without the character walk: every call the walk reports,
+    /// and every `MarkerInsideALiteral` it throws, starts at an occurrence
+    /// of the marker in exactly that view.
     private static func calls(to marker: String, inFileAt url: URL) throws -> [String] {
         let text = try SourceCorpus.commentFree(of: url)
+        let code = try SourceCorpus.code(of: url)
         guard text.contains(marker) else { return [] }
         do {
-            return try SnippetSourceScan.calls(to: marker, text: text, code: try SourceCorpus.code(of: url))
+            return try SnippetSourceScan.calls(to: marker, text: text, code: code)
         } catch var refused as SnippetSourceScan.MarkerInsideALiteral {
             refused.file = url.lastPathComponent
             throw refused

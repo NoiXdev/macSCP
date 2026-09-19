@@ -236,9 +236,9 @@ struct ConnectingAttemptWiringGuardTests {
     // through `SwiftSource.blankingCommentsAndStrings` before any caller sees it.
 
     /// Convenience over `strippedBody(after:in:)` for the real file — read
-    /// through `SourceCorpus`, the snapshot of the tree taken once per test
+    /// through `SourceCorpus`, which reads each file at most once per test
     /// process, so every check in a run reads the file as it stood when the
-    /// run began.
+    /// first of them asked for it.
     private static func strippedBody(after anchor: String) throws -> String {
         let source = try SourceCorpus.text(of: Self.detailFile)
         return try strippedBody(after: anchor, in: source)

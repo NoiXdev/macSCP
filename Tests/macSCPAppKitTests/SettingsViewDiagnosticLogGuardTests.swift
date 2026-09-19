@@ -325,9 +325,10 @@ struct SettingsViewDiagnosticLogGuardTests {
     /// literals blanked) source, skipping `excludedFileName`. Returns the
     /// file names (not full paths) that contain it.
     ///
-    /// The real tree is read through `SourceCorpus`, built once per test
-    /// process. The self-test below points this at a fixture tree it writes
-    /// to a temporary directory on purpose, which the corpus does not hold
+    /// The real tree is read through `SourceCorpus`, which reads and blanks
+    /// each file at most once per test process. The self-test below points
+    /// this at a fixture tree it writes to a temporary directory on
+    /// purpose, which the corpus does not hold
     /// and must not: that one is walked and read from disk. The choice is
     /// made by where `directory` points (`SourceCorpus.covers`), so a
     /// mistyped path under `Sources/` throws rather than reading nothing.
@@ -528,6 +529,13 @@ struct SettingsViewDiagnosticLogGuardTests {
     /// directory rather than the real tree -- proves the enumerator would
     /// actually catch a second `configure(` call site, not just that none
     /// happens to exist in `Sources/MacSCPAppKit` today.
+    ///
+    /// What it proves is the half the two branches of `filesCalling` share:
+    /// the file filter, the exclusion and the match on the blanked text. A
+    /// temp directory takes the disk branch; the real scan takes the corpus
+    /// branch, whose listing and blanking are pinned by
+    /// `SourceCorpusScopeTests` and by the plant in the report's probe table
+    /// (A44), not by this test.
     @Test func filesCallingFindsAPlantedViolationAndSkipsTheExcludedFile() throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-diagnosticlog-scan-\(UUID().uuidString)")

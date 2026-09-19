@@ -310,8 +310,8 @@ struct TestsNeverBlockThePoolGuardTests {
     }
 
     /// Every `.swift` file under `Tests/`, as paths relative to it — listed
-    /// and later read through `SourceCorpus`, the one read of the tree per
-    /// test process, which throws where the walk it replaced did.
+    /// and later read through `SourceCorpus`, the tree's shared listing and
+    /// per-file cache, which throws where the walk it replaced did.
     private static func testSources() throws -> [String] {
         let prefix = testsRootPath + "/"
         return try SourceCorpus.files(under: testsRoot).compactMap { url in

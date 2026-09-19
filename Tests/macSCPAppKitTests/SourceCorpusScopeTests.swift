@@ -42,6 +42,39 @@ struct SourceCorpusScopeTests {
         #expect(try SourceCorpus.code(of: url) != text, "nothing in \(url.lastPathComponent) was blanked")
     }
 
+    /// A walk that meets an entry it cannot classify fails, as the type
+    /// says a walk error does, instead of leaving the entry out of both the
+    /// files and the directories (fix round 1, review M5). The entry is the
+    /// first file a plain walk of `Sources/` lists, so no rename can empty
+    /// the check.
+    @Test func aWalkThatCannotClassifyAnEntryFailsRatherThanDroppingIt() throws {
+        struct Unclassifiable: Error {}
+        let root = SourceCorpus.url(of: .sources)
+        let victim = try #require(SourceCorpus.walk(root).urls.first)
+        let listing = SourceCorpus.walk(root) { url in
+            if SourceCorpus.key(url) == SourceCorpus.key(victim) { throw Unclassifiable() }
+            return try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+        }
+        #expect(listing.failure != nil, "a walk that could not classify an entry reported no failure")
+        #expect(listing.failure?.contains(victim.lastPathComponent) == true)
+    }
+
+    /// A view that is not as long as its text is refused, so every guard
+    /// that finds an offset in one view and slices another can rely on it
+    /// for every file it reads (fix round 1, review M2). Beside it, the
+    /// real stripper's view of the same text passes.
+    @Test func aViewThatIsNotAsLongAsItsTextIsRefused() throws {
+        let text = "let x = 1 // note"
+        #expect(throws: SourceCorpus.CorpusError.self) {
+            try SourceCorpus.lengthCheckedView(of: text, path: "planted.swift") {
+                String(try SwiftSource.blankingComments($0).dropLast())
+            }
+        }
+        let view = try SourceCorpus.lengthCheckedView(
+            of: text, path: "planted.swift", blank: SwiftSource.blankingComments)
+        #expect(view == (try SwiftSource.blankingComments(text)))
+    }
+
     /// A path outside both roots, a directory the walk never saw, and a
     /// view of a file that is not Swift all throw — never an empty answer
     /// a guard could read as "nothing to find".

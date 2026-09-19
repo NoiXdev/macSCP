@@ -297,8 +297,8 @@ struct PKCS12ImportIsolationGuardTests {
     /// has to reach it for `theScanReachesTheImportSite` to be able to say
     /// that excluding it excludes something.
     ///
-    /// Listed through `SourceCorpus`, the one walk of `Tests/` per test
-    /// process. It throws for a root it does not hold, where the enumerator
+    /// Listed through `SourceCorpus`, the tree's shared listing of
+    /// `Tests/`. It throws for a root it does not hold, where the enumerator
     /// this replaced skipped the root in silence; and it does not skip
     /// hidden files, so it lists a superset of what that enumerator did.
     /// The roots themselves are still derived from the disk and the

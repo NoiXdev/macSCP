@@ -17,9 +17,10 @@ import Testing
 ///
 /// `.timeLimit(.minutes(1))` because every check here scans every Swift
 /// file under `Tests/`. The files, their text and their blanked view come
-/// from `SourceCorpus`, built once per test process; the patterns are
-/// compiled once, below, rather than on every call; and the while-block
-/// scan two checks share runs once (`sleepingWhileBlocksScan`).
+/// from `SourceCorpus`, each file read and blanked at most once per test
+/// process; the patterns are compiled once per process (`CompiledPattern`)
+/// rather than on every call; and the while-block scan two checks share is
+/// remembered per file (`sleepingWhileBlocksByFile`).
 @Suite("Polling guard", .timeLimit(.minutes(1)))
 struct PollingGuardTests {
     private static var testsRoot: URL {
@@ -41,34 +42,37 @@ struct PollingGuardTests {
     /// `code` is the file's `SwiftSource.blankingCommentsAndStrings` view,
     /// the one every blanked scan below reads.
     private static func sources() throws -> [(path: String, text: String, code: String)] {
-        var result: [(String, String, String)] = []
-        for url in try SourceCorpus.files(under: testsRoot) where url.pathExtension == "swift" {
+        let urls = try SourceCorpus.files(under: testsRoot).filter { url in
             let path = url.path
-            if path.hasSuffix("PollingGuardTests.swift")
-                || path.hasSuffix("PollUntil.swift")
-                || path.hasSuffix("SleepingChildRegexFixture.swift")
-                || path.hasSuffix("CeilingRegexFixture.swift")
-                || path.hasSuffix("FutureGetRegexFixture.swift")
-            { continue }
-            result.append((path, try SourceCorpus.text(of: url), try SourceCorpus.code(of: url)))
+            return url.pathExtension == "swift"
+                && !(path.hasSuffix("PollingGuardTests.swift")
+                    || path.hasSuffix("PollUntil.swift")
+                    || path.hasSuffix("SleepingChildRegexFixture.swift")
+                    || path.hasSuffix("CeilingRegexFixture.swift")
+                    || path.hasSuffix("FutureGetRegexFixture.swift"))
         }
-        return result
+        // All at once, so the checks here that start together share the
+        // blanking file by file instead of each blanking the whole tree.
+        let codes = try SourceCorpus.code(ofAll: urls)
+        return try urls.indices.map { (urls[$0].path, try SourceCorpus.text(of: urls[$0]), codes[$0]) }
     }
 
-    // The patterns, compiled once per process instead of once per call.
-    private static let elapsedCeilingPattern = try! NSRegularExpression(pattern: #"elapsed\s*<=?\s*\."#)
-    private static let sleepingChildPattern = try! NSRegularExpression(
-        pattern: #"addTask(?:\([^)]*\))?\s*\{\s*(?:do\s*\{\s*)?(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#)
-    private static let dateCeilingPattern = try! NSRegularExpression(
-        pattern: #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#)
-    private static let dateDeadlinePattern = try! NSRegularExpression(pattern: #"\.wait\(until:\s*Date\("#)
-    private static let whileBlockPattern = try! NSRegularExpression(pattern: #"\bwhile\b[^{]*\{\s*$"#)
-    private static let futureGetPattern = try! NSRegularExpression(
-        pattern: #"\w*(?:futureResult|future|Future)\s*\.get\(\)"#)
-    private static let bareContinuationPattern = try! NSRegularExpression(
-        pattern: #"with(?:Unsafe(?:Throwing)?|Checked(?:Throwing)?)Continuation\s*[({]"#)
-    private static let funcDeclarationPattern = try! NSRegularExpression(
-        pattern: #"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\("#)
+    // The patterns. Each is compiled once per process, through
+    // `CompiledPattern`, by the check that uses it — so a pattern edited
+    // into something that does not compile fails that check, not the whole
+    // test process (a `try!` static did the latter: measured in fix round 1
+    // of the 2026-09-19 CI-starvation plan, `Fatal error: 'try!' expression
+    // unexpectedly raised an error`, signal 5, every verdict lost).
+    private static let elapsedCeilingPattern = #"elapsed\s*<=?\s*\."#
+    private static let sleepingChildPattern =
+        #"addTask(?:\([^)]*\))?\s*\{\s*(?:do\s*\{\s*)?(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#
+    private static let dateCeilingPattern = #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#
+    private static let dateDeadlinePattern = #"\.wait\(until:\s*Date\("#
+    private static let whileBlockPattern = #"\bwhile\b[^{]*\{\s*$"#
+    private static let futureGetPattern = #"\w*(?:futureResult|future|Future)\s*\.get\(\)"#
+    private static let bareContinuationPattern =
+        #"with(?:Unsafe(?:Throwing)?|Checked(?:Throwing)?)Continuation\s*[({]"#
+    private static let funcDeclarationPattern = #"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\("#
 
     /// Positive: the helper is in use. Without this, the negative checks
     /// below could pass over an empty tree.
@@ -96,7 +100,7 @@ struct PollingGuardTests {
     /// asserted; it now describes the same fact in prose instead of
     /// quoting the code, per that same rule.
     @Test func noTestAssertsAnElapsedCeiling() throws {
-        let pattern = Self.elapsedCeilingPattern
+        let pattern = try CompiledPattern.regex(Self.elapsedCeilingPattern)
         let offenders = try Self.sources().filter {
             pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
         }.map(\.path)
@@ -192,7 +196,7 @@ struct PollingGuardTests {
     /// name, so a rewording without also removing the shape turns this
     /// check red instead of quietly staying green.
     @Test func noSleepingChildRacesWorkInAGroup() throws {
-        let pattern = Self.sleepingChildPattern
+        let pattern = try CompiledPattern.regex(Self.sleepingChildPattern)
         let raceExemptionSentence = "the timeout IS the API under test here"
         let sources = try Self.sources()
 
@@ -249,7 +253,7 @@ struct PollingGuardTests {
     /// indistinguishable from the shape itself, on both the negative side
     /// and the positive fixture check below it.
     @Test func noTestAssertsAnElapsedSinceCeiling() throws {
-        let pattern = Self.dateCeilingPattern
+        let pattern = try CompiledPattern.regex(Self.dateCeilingPattern)
         let offenders = try Self.sources().compactMap { source -> String? in
             let blanked = source.code
             let range = NSRange(blanked.startIndex..., in: blanked)
@@ -286,7 +290,7 @@ struct PollingGuardTests {
     /// guards read comments too", on both the negative side and the
     /// positive fixture check below it.
     @Test func noWaitTakesAWallClockDeadline() throws {
-        let pattern = Self.dateDeadlinePattern
+        let pattern = try CompiledPattern.regex(Self.dateDeadlinePattern)
         let offenders = try Self.sources().compactMap { source -> String? in
             let blanked = source.code
             let range = NSRange(blanked.startIndex..., in: blanked)
@@ -462,36 +466,41 @@ struct PollingGuardTests {
     /// hidden, and the reason the positive below counts what the scan
     /// does find rather than trusting it to find everything.
     ///
-    /// Two checks read it, and the tree does not change under a run, so the
-    /// scan runs once per process (`sleepingWhileBlocksScan`).
+    /// Two checks read it, and the tree does not change under a run, so each
+    /// file's blocks are remembered (`sleepingWhileBlocksByFile`, a
+    /// `PerKeyCache`): a check that misses a file scans it itself and never
+    /// waits for the other check's scan.
     private static func sleepingWhileBlocks() throws -> [SleepingWhileBlock] {
-        try sleepingWhileBlocksScan.get()
+        let sources = try Self.sources()
+        return try sleepingWhileBlocksByFile.values(for: sources.map(\.path)) { index in
+            Result { try scanSleepingWhileBlocks(in: sources[index]) }
+        }.flatMap { try $0.get() }
     }
 
-    private static let sleepingWhileBlocksScan = Result { try scanSleepingWhileBlocks() }
+    private static let sleepingWhileBlocksByFile = PerKeyCache<Result<[SleepingWhileBlock], any Error>>()
 
-    private static func scanSleepingWhileBlocks() throws -> [SleepingWhileBlock] {
-        let pattern = Self.whileBlockPattern
+    private static func scanSleepingWhileBlocks(
+        in source: (path: String, text: String, code: String)
+    ) throws -> [SleepingWhileBlock] {
+        let pattern = try CompiledPattern.regex(Self.whileBlockPattern)
         var found: [SleepingWhileBlock] = []
-        for source in try Self.sources() {
-            let blanked = source.code.components(separatedBy: "\n")
-            let original = source.text.components(separatedBy: "\n")
-            for (index, line) in blanked.enumerated() {
-                let range = NSRange(line.startIndex..., in: line)
-                guard pattern.firstMatch(in: line, range: range) != nil else { continue }
-                guard let last = Self.blockEndLine(openingAt: index, in: blanked) else { continue }
-                let body = blanked[index...last].joined(separator: "\n")
-                guard body.contains("try? await Task.sleep") else { continue }
+        let blanked = source.code.components(separatedBy: "\n")
+        let original = source.text.components(separatedBy: "\n")
+        for (index, line) in blanked.enumerated() {
+            let range = NSRange(line.startIndex..., in: line)
+            guard pattern.firstMatch(in: line, range: range) != nil else { continue }
+            guard let last = Self.blockEndLine(openingAt: index, in: blanked) else { continue }
+            let body = blanked[index...last].joined(separator: "\n")
+            guard body.contains("try? await Task.sleep") else { continue }
 
-                let windowStart = max(0, index - Self.continuationExemptionWindow)
-                let context = Self.flattened(original[windowStart...last].joined(separator: "\n"))
-                found.append(
-                    SleepingWhileBlock(
-                        path: source.path,
-                        line: index + 1,
-                        observesCancellation: line.contains("Task.isCancelled"),
-                        exemption: Self.sleepExemptionSentences.first { context.contains($0) }))
-            }
+            let windowStart = max(0, index - Self.continuationExemptionWindow)
+            let context = Self.flattened(original[windowStart...last].joined(separator: "\n"))
+            found.append(
+                SleepingWhileBlock(
+                    path: source.path,
+                    line: index + 1,
+                    observesCancellation: line.contains("Task.isCancelled"),
+                    exemption: Self.sleepExemptionSentences.first { context.contains($0) }))
         }
         return found
     }
@@ -567,7 +576,7 @@ struct PollingGuardTests {
     /// `.get()` in `Tests/` that would otherwise match this regex, at the
     /// point this check was written, sits in such a comment.
     @Test func noEventLoopFutureIsAwaitedWithGet() throws {
-        let pattern = Self.futureGetPattern
+        let pattern = try CompiledPattern.regex(Self.futureGetPattern)
         // Every match of the pattern ends in the literal `.get()`, so a file
         // whose blanked text lacks it cannot match: the regex, whose leading
         // `\w*` makes ICU retry at every character, runs only on the files
@@ -576,7 +585,7 @@ struct PollingGuardTests {
         // premise on the fixture's real matches.
         let offenders = try Self.sources().compactMap { source -> String? in
             let blanked = source.code
-            guard blanked.contains(Self.futureGetLiteral) else { return nil }
+            guard Self.futureGetPrefilterAdmits(blanked) else { return nil }
             let range = NSRange(blanked.startIndex..., in: blanked)
             return pattern.firstMatch(in: blanked, range: range) != nil ? source.path : nil
         }
@@ -607,6 +616,28 @@ struct PollingGuardTests {
     /// The literal `noEventLoopFutureIsAwaitedWithGet` pre-filters files by.
     private static let futureGetLiteral = ".get()"
 
+    /// Whether a file could hold a match of `futureGetPattern` at all:
+    /// searched as UTF-16 code units, the level the pattern itself matches
+    /// at, so a grapheme cluster that swallows the literal's last character
+    /// cannot hide it from the filter while the pattern still sees it.
+    static func futureGetPrefilterAdmits(_ text: String) -> Bool {
+        (text as NSString).range(of: Self.futureGetLiteral, options: .literal).location != NSNotFound
+    }
+
+    /// The pre-filter must never skip a text the pattern matches. It once
+    /// compared `Character`s while the pattern (ICU) compares UTF-16, and
+    /// the two part ways on a grapheme extender right after the literal:
+    /// `.get()` followed by U+0301 COMBINING ACUTE ACCENT is one `Character`
+    /// ending in `)́`, so `String.contains(".get()")` answered `false` about
+    /// a text the pattern matched (fix round 1, review M1).
+    @Test func theFutureGetPrefilterAdmitsEveryTextThePatternMatches() throws {
+        let planted = "try await promise.futureResult.get()\u{301}"
+        let pattern = try CompiledPattern.regex(Self.futureGetPattern)
+        let matched = pattern.firstMatch(in: planted, range: NSRange(planted.startIndex..., in: planted)) != nil
+        #expect(matched)
+        #expect(Self.futureGetPrefilterAdmits(planted))
+    }
+
     /// The pre-filter's premise, measured on the pattern's own demonstration
     /// rather than only assumed from reading it: every match in the fixture
     /// ends in `futureGetLiteral`. It cannot prove that no text anywhere
@@ -616,7 +647,7 @@ struct PollingGuardTests {
     @Test func everyFutureGetMatchEndsInTheLiteralThePrefilterReads() throws {
         let fixtureURL = Self.testsRoot.appendingPathComponent("MacSCPTestSupport/FutureGetRegexFixture.swift")
         let fixtureBlanked = try SourceCorpus.code(of: fixtureURL)
-        let matches = Self.futureGetPattern.matches(
+        let matches = try CompiledPattern.regex(Self.futureGetPattern).matches(
             in: fixtureBlanked, range: NSRange(fixtureBlanked.startIndex..., in: fixtureBlanked))
         #expect(matches.count == 3, "\(matches.count)")
         for match in matches {
@@ -676,7 +707,7 @@ struct PollingGuardTests {
         // uses trailing-closure syntax (`withCheckedContinuation { ... }`),
         // never `withCheckedContinuation({ ... })` — a first version of this
         // pattern required the paren and matched nothing at all.
-        let pattern = Self.bareContinuationPattern
+        let pattern = try CompiledPattern.regex(Self.bareContinuationPattern)
         let exemptionSentence = "the continuation IS the API under test here"
 
         let candidates = try Self.sources().filter { !$0.path.contains("/MacSCPTestSupport/") }
@@ -743,7 +774,7 @@ struct PollingGuardTests {
     private static func pollingHelperFunctionNames(
         in files: [(path: String, text: String, code: String)]
     ) throws -> Set<String> {
-        let funcPattern = Self.funcDeclarationPattern
+        let funcPattern = try CompiledPattern.regex(Self.funcDeclarationPattern)
         var names: Set<String> = []
         for file in files {
             let text = file.text
