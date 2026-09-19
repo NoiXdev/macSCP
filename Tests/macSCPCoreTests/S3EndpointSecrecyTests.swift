@@ -222,15 +222,28 @@ struct S3EndpointSecrecyTests {
     /// (`String(format: "%@", config.endpoint)`) or first copied the value
     /// into a local (`let e = config.endpoint`) passed it. So in every S3
     /// source except the two that DEFINE and adapt the typed value, the
-    /// endpoint may be read in one spelling only — handed to the one parse,
-    /// `endpointComponents(config.endpoint)` — and any other read is
-    /// reported, whatever it is then used for. The two definers are held by
+    /// endpoint may be named in one spelling only — handed to the one parse,
+    /// `endpointComponents(config.endpoint)` — and every other `endpoint`
+    /// token is reported, whatever it is then used for.
+    ///
+    /// A TOKEN, not a receiver pattern (review of the endpoint-leak fix,
+    /// M-2): the first version matched `lowercaseName.endpoint` on one line,
+    /// so `$0.endpoint`, a key path `\.endpoint`, `(config).endpoint` and a
+    /// `.endpoint` continued onto the next line all passed. Every one of
+    /// them, and a bare `endpoint` local or parameter, contains the word
+    /// `endpoint` standing alone, and nothing else in these files does —
+    /// `endpointComponents`, `S3EndpointReason` and `unusableEndpointReason`
+    /// are other words. Read over the CODE-ONLY view (comments and string
+    /// literals blanked), because the fixed sentences say "endpoint" in
+    /// prose; an interpolation hidden inside a literal is the scan above.
+    /// The two definers are held by
     /// `TypedEndpointSecrecyTests.noRenderingOfATypedEndpointBypassesTheFilter`,
     /// which reads concatenation and `String(format:)` too.
     ///
     /// Positives beside the negative: the scan read files, the definers are
     /// among them (so the exclusion names real files), and the allowed
-    /// spelling is still found — so a renamed property or parse turns this
+    /// spelling is still found in the code-only view — so a renamed
+    /// property or parse, or a view that started blanking it, turns this
     /// red instead of leaving it matching nothing.
     @Test func noS3SourceReadsTheEndpointOutsideTheParse() throws {
         let directory = SourceCorpus.url(of: .sources)
@@ -238,17 +251,12 @@ struct S3EndpointSecrecyTests {
         let all = try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
         let definers = Self.definerFiles
         let files = all.filter { !definers.contains($0.lastPathComponent) }
-        let sources = try SourceCorpus.commentFree(ofAll: files)
+        let sources = try SourceCorpus.code(ofAll: files)
         var allowed = 0
         var found: [String] = []
         for (file, source) in zip(files, sources) {
-            for line in source.split(separator: "\n").map(String.init) {
-                let spelled = line.components(separatedBy: Self.endpointRead).count - 1
-                allowed += spelled
-                if TypedEndpointSecrecyTests.reads(in: line).count > spelled {
-                    found.append("\(file.lastPathComponent): \(line.trimmingCharacters(in: .whitespaces))")
-                }
-            }
+            allowed += source.components(separatedBy: Self.endpointRead).count - 1
+            found += Self.endpointTokensOutsideTheParse(in: source).map { "\(file.lastPathComponent): \($0)" }
         }
         let definersFound = definers.allSatisfy { name in all.contains { $0.lastPathComponent == name } }
         #expect(files.isEmpty == false, "no S3 source was found — moved?")
@@ -257,20 +265,35 @@ struct S3EndpointSecrecyTests {
         #expect(found.isEmpty, "\(found)")
     }
 
-    /// The widened scan is not blind to the three shapes N-1 named, and lets
-    /// the one allowed spelling through.
-    @Test func theWidenedGuardSeesConcatenationFormatAndACopy() {
+    /// The widened scan is not blind to the shapes N-1 and M-2 named, and
+    /// lets the one allowed spelling through.
+    @Test func theWidenedGuardSeesEverySpellingOfARead() {
         let planted = [
             #"throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: " + config.endpoint)"#,
             #"throw RemoteFSError.connectionFailed(reason: String(format: "%@", config.endpoint))"#,
             "let e = config.endpoint",
+            "let all = configs.map { $0.endpoint }",
+            #"let all = configs.map(\.endpoint)"#,
+            "let e = (config).endpoint",
+            "let e = config\n        .endpoint",
+            "func describe(endpoint: String) -> String { endpoint }",
         ]
         let allowedLine = "guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {"
-        let missed = planted.indices.filter { TypedEndpointSecrecyTests.reads(in: planted[$0]).isEmpty }
-        let allowedReads = TypedEndpointSecrecyTests.reads(in: allowedLine).count
-        let allowedSpelled = allowedLine.components(separatedBy: Self.endpointRead).count - 1
+        let missed = planted.indices.filter { Self.endpointTokensOutsideTheParse(in: planted[$0]).isEmpty }
+        let allowedReported = Self.endpointTokensOutsideTheParse(in: allowedLine).isEmpty == false
         #expect(missed.isEmpty, "planted reads the scan missed, by index: \(missed)")
-        #expect(allowedReads == allowedSpelled, "the allowed spelling is reported")
+        #expect(allowedReported == false, "the allowed spelling is reported")
+    }
+
+    /// Every line of `source` holding more `endpoint` tokens than allowed
+    /// spellings of the parse.
+    static func endpointTokensOutsideTheParse(in source: String) -> [String] {
+        guard let token = try? NSRegularExpression(pattern: #"\bendpoint\b"#) else { return [source] }
+        return source.split(separator: "\n").map(String.init).filter { line in
+            let tokens = token.numberOfMatches(in: line, range: NSRange(line.startIndex..., in: line))
+            let spelled = line.components(separatedBy: Self.endpointRead).count - 1
+            return tokens > spelled
+        }.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The files that define the typed endpoint and translate it between the

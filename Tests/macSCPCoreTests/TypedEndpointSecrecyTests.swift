@@ -10,10 +10,14 @@ import Testing
 /// and O-3).
 ///
 /// Both fields take `scheme://KEY:SECRET@host` as ordinary input. The
-/// renderings read it through ONE filter, `URLText.withoutUserinfo(typedURL:)`,
-/// and S3 drops the userinfo at its one parse, `S3FieldSchema
-/// .endpointComponents`, so every request, bucket and presigned URL is built
-/// without it.
+/// renderings read it through ONE filter,
+/// `URLText.withoutUserinfo(typedURL:atMayFollowHost:)`, and S3 drops the
+/// userinfo at its one parse, `S3FieldSchema.endpointComponents`, so every
+/// request, bucket and presigned URL is built without it. S3 also refuses
+/// an `@` after the host, in the editor and at that parse (the review of
+/// this fix, M-1), which leaves the known limit of the WebDAV door
+/// (`aHostLikeTextAfterAnAtInTheSecretIsAKnownLimitOfTheWebDAVDoor`) to
+/// WebDAV alone.
 ///
 /// Every value that must not leak is a named constant, and every
 /// expectation reads a `Bool` or an index list computed before it
@@ -49,15 +53,28 @@ struct TypedEndpointSecrecyTests {
     /// Every piece of every secret between its separators, so a text that
     /// carries half of one — what a filter that stopped at the `/` leaves —
     /// is caught too. Every piece is at least eight characters, so none of
-    /// them turns up by chance in a hex signature.
-    static let fragments: [String] = ([user, parseableSecret] + secrets).flatMap { secret in
+    /// them turns up by chance in a hex signature. The one exception is left
+    /// out rather than shortened: `digitSecret`'s leading `12`, which
+    /// Foundation reads as a PORT and which only ever appears right after
+    /// the key ID (`user:12`), where `user` is the piece that catches it.
+    static let fragments: [String] = ([user, parseableSecret] + secrets + atAfterHostSecrets).flatMap { secret in
         secret.replacingOccurrences(of: "%2F", with: "/")
             .split(whereSeparator: { "/@: #?".contains($0) }).map(String.init)
-    }
+    }.filter { !$0.allSatisfy(\.isNumber) }
 
     static func leaks(_ text: String) -> Bool {
         fragments.contains { text.contains($0) }
     }
+
+    /// Secrets that put an `@` AFTER the host, for the one door that cannot
+    /// tell them from a path (re-review of the endpoint-leak fix, I-1 and
+    /// M-1). The first holds an `@`, then a dotted name, then a `/`: the
+    /// typed door reads `hl-host.example` as the server and keeps the tail.
+    /// The second is a key ID followed by a secret whose text before its
+    /// first `/` is a number, which Foundation reads as host and port.
+    static let hostLikeSecret = "sentinel-hl@hl-host.example/sentinel-hl-more"
+    static let digitSecret = "12/sentinel-dg-rest"
+    static let atAfterHostSecrets = [hostLikeSecret, digitSecret]
 
     // MARK: - The sanitizer
 
@@ -108,7 +125,7 @@ struct TypedEndpointSecrecyTests {
 
     @Test func everyCredentialSpellingIsCutAndTheServerKept() {
         let rows = Self.credentialRows()
-        let outputs = rows.map { URLText.withoutUserinfo(typedURL: $0.input) }
+        let outputs = rows.map { URLText.withoutUserinfo(typedURL: $0.input, atMayFollowHost: true) }
         let leaking = outputs.indices.filter { Self.leaks(outputs[$0]) }
         let wrong = outputs.indices.filter { outputs[$0] != rows[$0].expected }
         #expect(rows.count == Self.secrets.count * 8 + 1, "the table lost rows")
@@ -118,7 +135,8 @@ struct TypedEndpointSecrecyTests {
 
     @Test func aURLWithoutACredentialIsLeftAlone() {
         let changed = Self.untouchedRows.indices.filter {
-            URLText.withoutUserinfo(typedURL: Self.untouchedRows[$0]) != Self.untouchedRows[$0]
+            URLText.withoutUserinfo(typedURL: Self.untouchedRows[$0], atMayFollowHost: true)
+                != Self.untouchedRows[$0]
         }
         #expect(changed.isEmpty, "rows the filter changed, by index: \(changed)")
     }
@@ -129,7 +147,8 @@ struct TypedEndpointSecrecyTests {
     @Test func aCredentialBesideAnAtInThePathIsCutAndThePathKept() {
         let path = "/remote.php/dav/files/alice@example.com/"
         let outputs = Self.delimiterFreeSecrets.map {
-            URLText.withoutUserinfo(typedURL: "https://\(Self.user):\($0)@cloud.example.com\(path)")
+            URLText.withoutUserinfo(
+                typedURL: "https://\(Self.user):\($0)@cloud.example.com\(path)", atMayFollowHost: true)
         }
         let leaking = outputs.indices.filter { Self.leaks(outputs[$0]) }
         let wrong = outputs.indices.filter { outputs[$0] != "https://cloud.example.com\(path)" }
@@ -146,7 +165,8 @@ struct TypedEndpointSecrecyTests {
     @Test func aSlashInTheSecretBesideAnAtInThePathFailsTowardTheSecret() {
         let outputs = [Self.slashSecret, Self.everySeparatorSecret].map {
             URLText.withoutUserinfo(
-                typedURL: "https://\(Self.user):\($0)@cloud.example.com/files/alice@example.com/")
+                typedURL: "https://\(Self.user):\($0)@cloud.example.com/files/alice@example.com/",
+                atMayFollowHost: true)
         }
         let leaking = outputs.indices.filter { Self.leaks(outputs[$0]) }
         let keepsAServer = outputs.allSatisfy { $0 == "https://example.com/" }
@@ -320,6 +340,176 @@ struct TypedEndpointSecrecyTests {
         #expect(namesTheServers)
     }
 
+    // MARK: - The known limit of the WebDAV door (re-review I-1)
+
+    /// Where the typed door with `atMayFollowHost: true` cannot tell a
+    /// secret from a path: the password holds an `@`, then text that reads
+    /// as a server address, then a `/`, `?` or `#`. It has the structure of
+    /// the Nextcloud row this door exists to keep
+    /// (`u:p@cloud.example.com/files/alice@example.com/`), so the door keeps
+    /// the tail. This pins TODAY's output, the known leak, so a change to
+    /// the rule is a decision someone makes on purpose rather than a
+    /// side effect. S3 does not go through this door
+    /// (`anS3EndpointWithAnAtAfterTheHostIsRefusedEverywhere`).
+    static let knownLimitInput = "https://\(user):\(hostLikeSecret)@dav.example.test/dav"
+    static let knownLimitOutput = "https://hl-host.example/sentinel-hl-more@dav.example.test/dav"
+
+    @Test func aHostLikeTextAfterAnAtInTheSecretIsAKnownLimitOfTheWebDAVDoor() {
+        let output = URLText.withoutUserinfo(typedURL: Self.knownLimitInput, atMayFollowHost: true)
+        let isTodaysOutput = output == Self.knownLimitOutput
+        let cutsTheFront = output.contains(Self.user) == false && output.contains("sentinel-hl@") == false
+        #expect(isTodaysOutput, "the known limit changed — update the doc of URLText.hostStart(in:) and the BACKLOG row")
+        #expect(cutsTheFront)
+    }
+
+    // MARK: - S3 refuses an @ after the host (re-review M-1)
+
+    static let atAfterHostEndpoints = [
+        "https://\(user):\(digitSecret)@s3.example.test",
+        "https://\(user):\(hostLikeSecret)@s3.example.test/dav",
+        "\(user):\(hostLikeSecret)@s3.example.test:9000",
+        "https://s3.example.test/path?owner=someone@example.test",
+    ]
+
+    /// Endpoints that must keep working: a port, a path, a schemeless one,
+    /// an IP literal, and a credential in FRONT of the host (dropped by the
+    /// parse, and no `@` after the host).
+    static let acceptedEndpoints = [
+        "https://s3.example.test:9000/some/path",
+        "https://s3.example.test",
+        "minio.lan:9000",
+        "http://[::1]:9000/",
+        "https://\(user):\(colonSecret)@s3.example.test:9000/seed",
+    ]
+
+    static func s3Values(endpoint: String) -> FieldValues {
+        var values = BackendDescriptor.descriptor(for: .s3).defaultValues
+        values[S3Field.endpoint] = endpoint
+        values[S3Field.region] = "eu-central-1"
+        values[S3Field.bucket] = "bucket"
+        values[S3Field.accessKeyID] = "AKIA"
+        values[S3Field.secretAccessKey] = "SK"
+        return values
+    }
+
+    /// The session editor: the same field-validation shape as a blank
+    /// field, with the endpoint's own message.
+    @Test func anS3EndpointWithAnAtAfterTheHostIsAValidationError() {
+        let violations = Self.atAfterHostEndpoints.map {
+            BackendDescriptor.descriptor(for: .s3).firstViolation(in: Self.s3Values(endpoint: $0), requireSecrets: true)
+        }
+        let wrong = violations.indices.filter {
+            violations[$0]?.messageKey != "core.connect.s3EndpointInvalid"
+                || violations[$0]?.fieldKey != "S3Field.endpoint"
+        }
+        #expect(wrong.isEmpty, "endpoints not refused with the endpoint's message, by index: \(wrong)")
+    }
+
+    @Test func aNormalS3EndpointStillPassesAndParses() {
+        let refused = Self.acceptedEndpoints.indices.filter {
+            BackendDescriptor.descriptor(for: .s3)
+                .firstViolation(in: Self.s3Values(endpoint: Self.acceptedEndpoints[$0]), requireSecrets: true) != nil
+        }
+        let unparsed = Self.acceptedEndpoints.indices.filter {
+            S3FieldSchema.endpointComponents(Self.acceptedEndpoints[$0])?.host?.isEmpty != false
+        }
+        #expect(refused.isEmpty, "accepted endpoints refused, by index: \(refused)")
+        #expect(unparsed.isEmpty, "accepted endpoints the parse no longer reads, by index: \(unparsed)")
+    }
+
+    /// The one parse refuses it too, so a stored session that already holds
+    /// such an endpoint — saved before this rule, or written by the CLI or
+    /// an import — reaches no request, and every rendering that reads the
+    /// parse (the sidebar's summary, the audit entries, "Connects to", the
+    /// diagnosis endpoint) falls back to nothing or to the S3 door.
+    @Test func theS3ParseRefusesAnAtAfterTheHost() {
+        let parsed = Self.atAfterHostEndpoints.indices.filter {
+            S3FieldSchema.endpointComponents(Self.atAfterHostEndpoints[$0]) != nil
+        }
+        #expect(parsed.isEmpty, "endpoints the parse still reads, by index: \(parsed)")
+    }
+
+    /// Every S3 rendering, for every endpoint with an `@` after the host.
+    @Test func noS3RenderingOfAnAtAfterTheHostEndpointCarriesTheCredential() {
+        var texts: [String] = []
+        for endpoint in Self.atAfterHostEndpoints {
+            let values = Self.s3Values(endpoint: endpoint)
+            texts.append(S3FieldSchema.displaySummary(values))
+            texts.append(S3FieldSchema.canonicalEndpoint(endpoint) ?? "")
+            texts.append(S3FieldSchema.requestOrigin(values) ?? "")
+            texts.append(S3FieldSchema.endpoint(values)?.text ?? "")
+            let session = s3Session(
+                name: "s3",
+                config: StoredS3Config(
+                    accessKeyID: "AKIA", region: "eu-central-1", endpoint: endpoint,
+                    bucket: "bucket", usePathStyle: false))
+            texts += SessionCatalog(sessions: [session], groups: []).rows(matching: .init()).map(\.target)
+            texts += SessionOverviewModel(
+                session: session, descriptor: .descriptor(for: .s3), knownKey: nil,
+                secrets: NoSecrets(), events: [], snippets: []
+            ).facts.map(\.text)
+        }
+        let leaking = texts.indices.filter { Self.leaks(texts[$0]) }
+        let namesTheServer = texts.contains { $0.contains("s3.example.test") }
+        #expect(leaking.isEmpty, "renderings carrying a credential, by index: \(leaking)")
+        #expect(namesTheServer)
+    }
+
+    /// A stored session holding such an endpoint: the CLI's builder refuses
+    /// it with the field's LABEL (never its value), and a dial that got past
+    /// it anyway meets the parse's fixed sentence. Nothing traps.
+    @Test func aStoredSessionWithAnAtAfterTheHostFailsWithAFixedSentence() async {
+        var outcomes: [String] = []
+        for endpoint in Self.atAfterHostEndpoints {
+            let session = s3Session(
+                name: "s3",
+                config: StoredS3Config(
+                    accessKeyID: "AKIA", region: "eu-central-1", endpoint: endpoint,
+                    bucket: "bucket", usePathStyle: true))
+            do {
+                _ = try StoredSessionConnectionConfig.build(for: session, secret: "SK")
+                outcomes.append("built")
+            } catch StoredSessionConnectionError.incompleteConfiguration(let field) {
+                outcomes.append("incomplete:\(field)")
+            } catch {
+                outcomes.append("other")
+            }
+            let config = S3ConnectionConfig(
+                accessKeyID: "AKIA", secretAccessKey: "SK", region: "eu-central-1",
+                endpoint: endpoint, bucket: "bucket", usePathStyle: true, sessionToken: nil,
+                startsAtBucketList: false)
+            do {
+                _ = try await S3FileSystem.connect(config, transport: FakeS3Transport(responses: []))
+                outcomes.append("connected")
+            } catch RemoteFSError.connectionFailed(let reason) {
+                outcomes.append(reason == S3EndpointReason.unparseable ? "unparseable" : "reason-leak:\(Self.leaks(reason))")
+            } catch {
+                outcomes.append("other")
+            }
+        }
+        let label = BackendDescriptor.descriptor(for: .s3).fieldLabel(forKey: "S3Field.endpoint")
+        let expected = Array(repeating: ["incomplete:\(label)", "unparseable"], count: Self.atAfterHostEndpoints.count)
+            .flatMap { $0 }
+        let asExpected = outcomes == expected
+        #expect(asExpected, "outcomes: \(outcomes.map { $0.hasPrefix("incomplete:") ? "incomplete" : $0 })")
+    }
+
+    /// The editor shows the violation on the endpoint field, in the
+    /// catalogue's words, when the form is resolved for a save or a dial.
+    @MainActor
+    @Test func theEditorShowsTheEndpointsOwnMessage() {
+        let vm = ConnectionViewModel(connector: { _, _ in MockRemoteFileSystem(tree: ["/": []]) })
+        vm.kind = .s3
+        vm.values = Self.s3Values(endpoint: Self.atAfterHostEndpoints[0])
+        let resolution = vm.resolveConfigWithoutDialing()
+        var shown: String?
+        if case .failed(.failed(let message, _)) = resolution { shown = message }
+        let isTheEndpointMessage = shown == CoreL10n.string("core.connect.s3EndpointInvalid")
+        let leaks = Self.leaks(shown ?? "")
+        #expect(isTheEndpointMessage)
+        #expect(leaks == false)
+    }
+
     private struct NoSecrets: SecretPresence {
         func hasSecret(for slot: UUID) -> Bool { false }
     }
@@ -376,11 +566,11 @@ struct TypedEndpointSecrecyTests {
             #"let c = "\(values[WebDAVField.baseURL])""#,
         ]
         let allowed = [
-            #"return "\(s3.bucket) @ \(URLText.withoutUserinfo(typedURL: s3.endpoint))""#,
+            #"return "\(s3.bucket) @ \(URLText.withoutUserinfo(typedURL: s3.endpoint, atMayFollowHost: false))""#,
             "guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {",
-            "text: URLText.withoutUserinfo(typedURL: webdav.baseURL), isMonospaced: true))",
+            "text: URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true), isMonospaced: true))",
             "values[S3Field.endpoint] = stored.endpoint",
-            "return (URLText.withoutUserinfo(typedURL: s3.endpoint), \"-\", \"s3\")",
+            "return (URLText.withoutUserinfo(typedURL: s3.endpoint, atMayFollowHost: false), \"-\", \"s3\")",
             "if let endpoint = model.endpoint {",
         ]
         let missed = planted.indices.filter { Self.rendersARead(planted[$0]) == false }

@@ -239,9 +239,12 @@ struct ImportPreviewPlannerTests {
     /// side is what the user typed — which can carry `KEY:SECRET@`, a `/`
     /// in the secret included (re-review of the 2026-09-19 small
     /// follow-ups). Compared as typed, so the update is still reported;
-    /// shown through `URLText.withoutUserinfo(typedURL:)`. The secret is
-    /// named and read back only as a `Bool` (CLAUDE.md, "A value a test
-    /// must not leak has two exits").
+    /// shown through `URLText.withoutUserinfo(typedURL:atMayFollowHost:)`.
+    /// When the two sides differ ONLY in that credential, the stored side
+    /// marks where it was (`https://•••@host`), so the row does not read
+    /// "X → X" (the endpoint-leak review, N-a). The secret is named and read
+    /// back only as a `Bool` (CLAUDE.md, "A value a test must not leak has
+    /// two exits").
     @Test func theChangeListShowsNoCredentialTypedIntoTheStoredEndpoint() throws {
         let stored = s3Session(
             name: "Backups",
@@ -257,9 +260,11 @@ struct ImportPreviewPlannerTests {
         let endpoint = changes.first { $0.field == ImportPreviewPlanner.FieldKey.endpoint }
         let rendered = changes.flatMap { [$0.old, $0.new] }
         let leaks = rendered.contains { text in Self.typedSecretParts.contains { text.contains($0) } }
-        let showsTheServer = endpoint?.old == "https://objects.example.net:9000"
+        let marksTheCredential = endpoint?.old == "https://•••@objects.example.net:9000"
+        let showsTheServer = endpoint?.new == "https://objects.example.net:9000"
         #expect(endpoint != nil, "the typed endpoint no longer differs from the bookmark's")
         #expect(leaks == false, "the change list carries the stored endpoint's credential")
+        #expect(marksTheCredential, "a row that differs only in the credential reads X → X")
         #expect(showsTheServer)
     }
 

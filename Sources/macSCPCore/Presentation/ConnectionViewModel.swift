@@ -1082,7 +1082,7 @@ public final class ConnectionViewModel {
     /// `s3.endpoint`/`webdav.baseURL` are free text a user typed into a form
     /// field, not a value this module built — the same category of input
     /// `URLText`'s own doc comment warns about (`scheme://KEY:SECRET@host`
-    /// is ordinary input). Routed through `URLText.withoutUserinfo(typedURL:)`
+    /// is ordinary input). Routed through `URLText.withoutUserinfo(typedURL:atMayFollowHost:)`
     /// for the same reason `SessionOverviewModel`'s summary rows are: this
     /// is text reaching a diagnosis, and a diagnosis is written to be pasted
     /// into a public issue. The free-text filter this used before let a
@@ -1095,9 +1095,9 @@ public final class ConnectionViewModel {
         case .ssh(let ssh):
             return (ssh.host, String(ssh.port), "ssh")
         case .s3(let s3):
-            return (URLText.withoutUserinfo(typedURL: s3.endpoint), "-", "s3")
+            return (URLText.withoutUserinfo(typedURL: s3.endpoint, atMayFollowHost: false), "-", "s3")
         case .webdav(let webdav):
-            return (URLText.withoutUserinfo(typedURL: webdav.baseURL), "-", "webdav")
+            return (URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true), "-", "webdav")
         }
     }
 

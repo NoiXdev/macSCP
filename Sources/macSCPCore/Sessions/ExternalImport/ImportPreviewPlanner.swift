@@ -147,6 +147,12 @@ public enum ImportPreviewPlanner {
     /// `Username` is the S3 access key without changing the row's label. Seven
     /// of the nine are spelled by the schema field they compare, so a
     /// renamed field takes its key with it.
+    /// Put where a stored endpoint's userinfo was, on a change row that
+    /// differs in nothing else. Language-neutral on purpose: the row's
+    /// frame is the App's (`import.cyberduck.change`), and a masked
+    /// credential reads the same in all four catalogues.
+    static let removedUserinfoMarker = "•••@"
+
     public enum FieldKey {
         private static let prefix = "import.field."
         public static let host = prefix + SSHField.host.rawValue
@@ -332,12 +338,18 @@ public enum ImportPreviewPlanner {
             compare(FieldKey.authKind, old[SSHField.authKind], new[SSHField.authKind])
         case .s3:
             // Compared as typed, shown without userinfo: the sheet renders
-            // both sides, and a stored endpoint can carry a credential.
+            // both sides, and a stored endpoint can carry a credential. When
+            // the two differ in nothing BUT that credential, the stored side
+            // marks where it was, so the row does not read "X → X" (review
+            // of the endpoint-leak fix, N-a).
             if old[S3Field.endpoint] != new[S3Field.endpoint] {
-                result.append(FieldChange(
-                    field: FieldKey.endpoint,
-                    old: URLText.withoutUserinfo(typedURL: old[S3Field.endpoint]),
-                    new: URLText.withoutUserinfo(typedURL: new[S3Field.endpoint])))
+                let shownNew = URLText.withoutUserinfo(typedURL: new[S3Field.endpoint], atMayFollowHost: false)
+                var shownOld = URLText.withoutUserinfo(typedURL: old[S3Field.endpoint], atMayFollowHost: false)
+                if shownOld == shownNew {
+                    shownOld = URLText.withoutUserinfo(typedURL: old[S3Field.endpoint], atMayFollowHost: false,
+                        marker: Self.removedUserinfoMarker)
+                }
+                result.append(FieldChange(field: FieldKey.endpoint, old: shownOld, new: shownNew))
             }
             compare(FieldKey.username, old[S3Field.accessKeyID], new[S3Field.accessKeyID])
             compare(FieldKey.bucket, old[S3Field.bucket], new[S3Field.bucket])

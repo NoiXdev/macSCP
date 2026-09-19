@@ -154,7 +154,7 @@ public enum WebDAVFieldSchema {
         // parse — which a password containing a `/` makes it.
         let host =
             URL(string: values[WebDAVField.baseURL])?.host()
-            ?? URLText.withoutUserinfo(typedURL: values[WebDAVField.baseURL])
+            ?? URLText.withoutUserinfo(typedURL: values[WebDAVField.baseURL], atMayFollowHost: true)
         return "\(values[WebDAVField.username]) @ \(host)"
     }
 

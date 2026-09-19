@@ -549,12 +549,17 @@ struct DiagnosticLogSharedSinkTests {
     /// filter's authority scan before the `@` and let the whole credential
     /// through (re-review of the small follow-ups, O-1, measured on
     /// `https://AKIAX:wJal/rXUtnFEMI@s3.example.test`). Both fields now go
-    /// through `URLText.withoutUserinfo(typedURL:)`, and this test plants a
-    /// secret carrying a `/` AND an `@`, for each backend, end to end
-    /// through `ConnectionViewModel.connect()` itself. The schemeless S3
-    /// case is the one only the typed-URL door cuts: the free-text door
-    /// looks for `://`, and S3 reads `KEY:SECRET@host:9000` as `https`
-    /// without one.
+    /// through `URLText.withoutUserinfo(typedURL:atMayFollowHost:)`, and
+    /// this test plants a hostile secret for each backend, end to end
+    /// through `ConnectionViewModel.connect()` itself: WebDAV's carries a
+    /// `/` AND an `@`. S3's carries an `@` and a `%2F` but no raw `/`,
+    /// because since the endpoint-leak review (M-1) an S3 endpoint with an
+    /// `@` after its host — which a raw `/` in the secret always makes — is
+    /// a validation error, and never dials or logs at all
+    /// (`TypedEndpointSecrecyTests.theEditorShowsTheEndpointsOwnMessage`).
+    /// The schemeless S3 case is the one only the typed-URL door cuts: the
+    /// free-text door looks for `://`, and S3 reads `KEY:SECRET@host:9000`
+    /// as `https` without one.
     ///
     /// The secret lives in named constants, and both checks below compute
     /// their `Bool` before the expectation, for the same reason
@@ -571,7 +576,8 @@ struct DiagnosticLogSharedSinkTests {
     func connectStartLineDropsS3EndpointUserinfo(spelling: String) async throws {
         let user = "sentinel-log-user-5d1c"
         let secretHalves = ["sentinel-log-a7", "log-secret-b8"]
-        let secret = secretHalves[0] + "/" + secretHalves[1] + "@c9"
+        let separator = spelling == "webdav" ? "/" : "%2F"
+        let secret = secretHalves[0] + separator + secretHalves[1] + "@c9"
         let logDirectory = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: logDirectory) }
         defer { DiagnosticLog.shared.configure(level: .off, directory: logDirectory) }

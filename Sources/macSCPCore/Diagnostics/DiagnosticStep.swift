@@ -132,7 +132,7 @@ public enum DiagnosticStepID {
 /// reach a user-facing message (`ConnectFailureSecrecyTests`). The S3 parse
 /// drops it (`S3FieldSchema.endpointComponents`); the WebDAV base URL keeps
 /// it, because Foundation answers the server's challenge with it (measured
-/// 2026-09-19, see `withoutUserinfo(typedURL:)`). A report is written to be
+/// 2026-09-19, see `withoutUserinfo(typedURL:atMayFollowHost:)`). A report is written to be
 /// pasted into a public issue, so a URL reaches one of its rows only
 /// through this type.
 enum URLText {
@@ -145,11 +145,27 @@ enum URLText {
     }
 
     /// A URL the user TYPED into a form — the S3 endpoint, the WebDAV base
-    /// URL — with its userinfo removed. The one door every rendering of
-    /// those two fields goes through: the session overview, the sidebar
-    /// summary, the CLI's session list, the connect log line and the
-    /// import preview (`TypedEndpointSecrecyTests` scans `Sources/` for a
-    /// rendering that bypasses it).
+    /// URL — with its userinfo removed. The one door every rendering of the
+    /// typed TEXT goes through: the session overview, the CLI's session
+    /// list, the connect log line, the import preview and the summaries'
+    /// fallback (`TypedEndpointSecrecyTests` scans `Sources/` for a
+    /// rendering that bypasses it). Renderings of what the endpoint was
+    /// PARSED to — the sidebar summary's host, "Connects to", a diagnosis's
+    /// endpoint — read `S3FieldSchema.endpointComponents` or `URL(string:)`
+    /// instead, and do not come through here.
+    ///
+    /// `atMayFollowHost` is the one thing the two fields disagree on. A
+    /// WebDAV base URL may carry an `@` in its path (Nextcloud names the
+    /// files collection after the account, often an e-mail address), so it
+    /// passes `true` and gets `hostStart(in:)`'s tie-break, with its known
+    /// limit. An S3 endpoint may not — its path takes no part in any
+    /// request, and `hasAtAfterHost(typedURL:)` makes one a validation
+    /// error — so it passes `false`, and everything up to the LAST `@` is
+    /// the userinfo, with no tie to break.
+    ///
+    /// `marker`, when not empty, is put where a userinfo was cut, so a
+    /// rendering that must show THAT something was there (the import
+    /// preview's "X → X") can.
     ///
     /// Unlike the free-text door below, the whole string is one URL, so a
     /// space does not end it, and a schemeless one (`KEY:SECRET@host:9000`,
@@ -163,7 +179,9 @@ enum URLText {
     /// `Basic` for `urluser:urlpass` WITHOUT the delegate being asked, so a
     /// base URL typed with a credential logs in with it. S3 signs with the
     /// Keychain's key and never reads the userinfo, so its parse drops it.
-    static func withoutUserinfo(typedURL text: String) -> String {
+    static func withoutUserinfo(
+        typedURL text: String, atMayFollowHost: Bool, marker: String = ""
+    ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)[...]
         var prefix: Substring = ""
         var rest = trimmed
@@ -171,11 +189,36 @@ enum URLText {
             prefix = trimmed[..<marker.upperBound]
             rest = trimmed[marker.upperBound...]
         }
-        let host = hostStart(in: rest)
+        let host =
+            atMayFollowHost
+            ? hostStart(in: rest)
+            : (rest.lastIndex(of: "@").map { rest.index(after: $0) } ?? rest.startIndex)
         let authorityEnd = rest[host...].firstIndex(where: endsAuthority) ?? rest.endIndex
+        let mark = host == rest.startIndex ? "" : marker
         // A URL nested in the path or query is free text to this one.
-        return String(prefix) + String(rest[host..<authorityEnd])
+        return String(prefix) + mark + String(rest[host..<authorityEnd])
             + withoutUserinfo(String(rest[authorityEnd...]))
+    }
+
+    /// Whether a typed URL carries an `@` anywhere after its host — in the
+    /// path, the query or the fragment, i.e. after the first `/`, `?` or `#`
+    /// that follows the scheme (or the start, when there is none).
+    ///
+    /// For an S3 endpoint that is never meaningful (the path is overwritten
+    /// by every request) and always ambiguous: it is either a path nobody
+    /// uses or a secret with a `/`, `?` or `#` in it, which no rule can tell
+    /// apart (`hostStart(in:)`'s known limit). So S3 refuses it, in the
+    /// editor (`FieldFormat.urlWithoutAtAfterHost`) and at the one parse
+    /// (`S3FieldSchema.endpointComponents`), which closes both residues
+    /// for S3.
+    static func hasAtAfterHost(typedURL text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)[...]
+        var rest = trimmed
+        if let marker = trimmed.range(of: "://"), isScheme(trimmed[..<marker.lowerBound]) {
+            rest = trimmed[marker.upperBound...]
+        }
+        guard let delimiter = rest.firstIndex(where: { "/?#".contains($0) }) else { return false }
+        return rest[delimiter...].contains("@")
     }
 
     /// Strips `userinfo@` out of every `scheme://…` in a free-text string.
@@ -193,7 +236,7 @@ enum URLText {
     /// indistinguishable. `hostStart(in:)` states the rule's own residue.
     /// This is why the helper is a backstop and not the defence: no dial
     /// prints a URL it did not build itself (`hostPortPath(of:)`), a typed
-    /// URL is rendered through `withoutUserinfo(typedURL:)`, and a
+    /// URL is rendered through `withoutUserinfo(typedURL:atMayFollowHost:)`, and a
     /// contribution that interpolates a raw endpoint string into a message
     /// is the shape to refuse in review.
     static func withoutUserinfo(_ text: String) -> String {
@@ -228,19 +271,39 @@ enum URLText {
     /// after its own last `@`, if it has one — is a SERVER ADDRESS
     /// (`isServerAddress`): a dotted name, `localhost`, or an IP literal,
     /// with at most a numeric port. A server always looks like that; the
-    /// front of a secret (`KEY:wJal`) almost never does. Anything else is
-    /// cut at the LAST `@`.
+    /// front of a secret with no `@` in it (`KEY:wJal`) rarely does — but
+    /// the tested text starts after the head's own last `@`, so a secret
+    /// that carries one decides what is tested (the known limit below).
+    /// Anything else is cut at the LAST `@`.
     ///
-    /// **Which way it fails.** Toward the secret: a credential with a `/`
-    /// beside an `@` in the path costs the path (`https://example.com/`
-    /// instead of `https://cloud.example.com/files/alice@example.com/`) — a
-    /// confused reader, not a published key. A dotless server name
+    /// **Which way it fails, when the tested text is NOT a server address.**
+    /// Toward the secret: a credential with a `/` beside an `@` in the path
+    /// costs the path (`https://example.com/` instead of
+    /// `https://cloud.example.com/files/alice@example.com/`) — a confused
+    /// reader, not a published key. A dotless server name
     /// (`http://nas/dav/a@b/`) followed by an `@` in the path is cut the
-    /// same way. The residue the other way, named because it is not
-    /// closed: a user name that looks like a dotted host followed by a
-    /// secret whose text before its first `/` is a number up to 65535
-    /// (`first.last:1234/rest@host`) reads as a host and a port, and is
-    /// kept. `TypedEndpointSecrecyTests` holds the rule to its table.
+    /// same way.
+    ///
+    /// **The known limit, the other way — a CLASS, not one shape** (review
+    /// of the endpoint-leak fix, I-1). The rule tests the text between the
+    /// last `@` before the first delimiter (or the start, when there is no
+    /// such `@`) and that delimiter. Whenever the secret itself makes that
+    /// text read as `host[:port]`, the RFC reading is kept, and everything
+    /// of the secret after that point is rendered. Two ways a secret does
+    /// it: an `@`, then something host-shaped, then a `/`, `?` or `#`
+    /// (`user:pa@ss.word/more@dav.example.com/dav` renders as
+    /// `https://ss.word/more@dav.example.com/dav`; so do `@localhost/`,
+    /// `@1.2/`, `@[::1]/` and `@x.y:80?`); or a user name that looks like
+    /// a dotted host followed by a secret whose text before its first `/`
+    /// is a number up to 65535 (`first.last:1234/rest@host`). It is the
+    /// same structure as the Nextcloud row the rule exists to keep, so no
+    /// rule over the text alone can close it. What bounds it: Foundation
+    /// reads the host the same way, so such a URL dials the wrong server
+    /// and never connects; and S3 does not reach this rule at all
+    /// (`atMayFollowHost: false`, and `hasAtAfterHost(typedURL:)` refuses
+    /// the shape). A human-chosen WebDAV password is exposed to it.
+    /// `TypedEndpointSecrecyTests` holds the rule to its table and pins
+    /// today's output for the limit as a known leak.
     private static func hostStart(in rest: Substring) -> Substring.Index {
         guard let lastAt = rest.lastIndex(of: "@") else { return rest.startIndex }
         let headEnd = rest.firstIndex(where: { "/?#".contains($0) }) ?? rest.endIndex

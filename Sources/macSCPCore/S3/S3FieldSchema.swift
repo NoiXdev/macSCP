@@ -19,11 +19,15 @@ public enum S3FieldSchema {
             // schema, are what make an S3 connection distinct on import
             // (M23/P3). VERBATIM throughout: unlike a host name, a URL path
             // and a bucket name are case-sensitive.
+            // No `@` after the host (review of the endpoint-leak fix, M-1):
+            // see `FieldFormat.urlWithoutAtAfterHost`. The message names what
+            // to type, so it serves the blank field too.
             ConnectionField(id: S3Field.endpoint.rawValue,
                             labelKey: "connection.s3.endpoint", labelDefault: "Endpoint",
                             kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.s3FieldRequired",
+                            format: .urlWithoutAtAfterHost,
+                            invalidMessageKey: "core.connect.s3EndpointInvalid",
                             identity: .verbatim),
             // NOT identifying, though it is required: the region is part of
             // the SigV4 credential scope, not of which bucket this is. Two
@@ -261,9 +265,19 @@ public enum S3FieldSchema {
     /// `PresignedURLSheet` shows so the user can hand it to somebody else.
     /// Dropped rather than refused: a session saved with one keeps
     /// connecting exactly as before, and the stored text is not rewritten.
+    ///
+    /// **An `@` AFTER the host is refused here, with nil** (review of the
+    /// endpoint-leak fix, M-1): `URLText.hasAtAfterHost(typedURL:)`. It is
+    /// either a path no request uses or a secret holding a `/`, `?` or `#`
+    /// that Foundation would split into a host and a port
+    /// (`https://AKIA:12/rest@host` reads as host `AKIA`, port `12`) — which
+    /// every rendering of this parse (the sidebar summary, "Connects to",
+    /// a diagnosis's endpoint) then showed. The editor refuses the same
+    /// shape (`FieldFormat.urlWithoutAtAfterHost`); a session stored before
+    /// that rule fails its dial here, with `S3EndpointReason.unparseable`.
     public static func endpointComponents(_ endpoint: String) -> URLComponents? {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, !URLText.hasAtAfterHost(typedURL: trimmed) else { return nil }
         let qualified = hasScheme(trimmed) ? trimmed : "\(assumedEndpointScheme)://\(trimmed)"
         guard var components = URLComponents(string: qualified) else { return nil }
         components.user = nil
@@ -516,7 +530,7 @@ public enum S3FieldSchema {
     /// any spelling — this is host and port, composed the same way
     /// `canonicalEndpoint` composes its origin.
     public static func displaySummary(_ values: FieldValues) -> String {
-        let host = endpointHostText(values) ?? URLText.withoutUserinfo(typedURL: values[S3Field.endpoint])
+        let host = endpointHostText(values) ?? URLText.withoutUserinfo(typedURL: values[S3Field.endpoint], atMayFollowHost: false)
         guard !values[bool: S3Field.startsAtBucketList] else { return host }
         return "\(values[S3Field.bucket]) @ \(host)"
     }

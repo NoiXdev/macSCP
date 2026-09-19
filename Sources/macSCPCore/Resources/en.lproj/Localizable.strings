@@ -41,6 +41,7 @@
 
 /* ConnectionViewModel S3 form validation (M12/T7a) */
 "core.connect.s3FieldRequired" = "Fill in all required S3 fields.";
+"core.connect.s3EndpointInvalid" = "Enter the endpoint as a server address, such as https://s3.example.com. Nothing after the server name may contain an @ — the Access Key ID and the Secret Access Key have fields of their own.";
 
 /* S3 blank-bucket/region messages — each names why the field is required
    rather than pointing at "some S3 field" (v1.3.0 user report) */

@@ -23,8 +23,8 @@ public enum HostKeyStatus: Sendable, Equatable {
 /// `SecretPresence`, which returns a `Bool` and has no way of carrying a
 /// value; the two URL-shaped fields a user can type
 /// `scheme://KEY:SECRET@host` into are stripped through
-/// `URLText.withoutUserinfo(typedURL:)` before they become a fact. Both halves are
-/// pinned by `SessionOverviewModelTests`, which plants a value in each field
+/// `URLText.withoutUserinfo(typedURL:atMayFollowHost:)` before they become
+/// a fact. Both halves are pinned by `SessionOverviewModelTests`, which plants a value in each field
 /// and asserts that no rendered text carries it.
 ///
 /// A value, not an observable object: it is rebuilt from the store whenever
@@ -293,7 +293,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
             facts.append(
                 Fact(
                     id: "endpoint", labelKey: label("endpoint"),
-                    text: URLText.withoutUserinfo(typedURL: s3.endpoint), isMonospaced: true))
+                    text: URLText.withoutUserinfo(typedURL: s3.endpoint, atMayFollowHost: false), isMonospaced: true))
         }
         facts.append(
             Fact(id: "pathStyle", labelKey: label("pathStyle"), text: yesNo(s3.usePathStyle)))
@@ -313,7 +313,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
             facts.append(
                 Fact(
                     id: "baseURL", labelKey: label("baseURL"),
-                    text: URLText.withoutUserinfo(typedURL: webdav.baseURL), isMonospaced: true))
+                    text: URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true), isMonospaced: true))
         }
         if !webdav.username.isEmpty {
             facts.append(

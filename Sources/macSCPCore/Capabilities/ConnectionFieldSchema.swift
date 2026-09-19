@@ -206,7 +206,7 @@ extension ConnectionFieldSchema {
                 ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
             let isBlank = field.isRequired && value.isEmpty
-            let isUnparsable = field.format == .numeric && Int(value) == nil
+            let isUnparsable = field.format.map { !$0.accepts(value) } ?? false
             guard isBlank || isUnparsable else { continue }
             // The `??` is unreachable while
             // `everyValidatableFieldDeclaresItsMessage` passes; it is here so

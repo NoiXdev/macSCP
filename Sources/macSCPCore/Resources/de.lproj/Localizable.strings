@@ -41,6 +41,7 @@
 
 /* ConnectionViewModel S3 form validation (M12/T7a) */
 "core.connect.s3FieldRequired" = "Bitte alle erforderlichen S3-Felder ausfüllen.";
+"core.connect.s3EndpointInvalid" = "Gib den Endpunkt als Serveradresse ein, etwa https://s3.example.com. Nach dem Servernamen darf kein @ stehen – Access Key ID und Secret Access Key haben eigene Felder.";
 
 /* S3 blank-bucket/region messages — each names why the field is required
    rather than pointing at "some S3 field" (v1.3.0 user report) */

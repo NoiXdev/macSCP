@@ -31,12 +31,29 @@ public enum OptionSource: Sendable, Equatable {
 
 /// A parse rule a field's raw string must satisfy (M23).
 ///
-/// Exactly one case, and deliberately so: the port is the only format rule in
-/// the entire pre-M23 validation code. A second case should arrive with a
-/// second real need, not in anticipation of one — the same discipline that
-/// keeps `FieldCondition` from growing into an expression language.
+/// Two cases, each for a real need rather than in anticipation of one — the
+/// same discipline that keeps `FieldCondition` from growing into an
+/// expression language. The port was the only format rule in the pre-M23
+/// validation code; the second arrived with the endpoint-leak review of
+/// 2026-09-19 (M-1).
 public enum FieldFormat: Sendable, Equatable {
+    /// An integer (SSH's port).
     case numeric
+    /// A URL with no `@` after its host (S3's endpoint): an S3 endpoint's
+    /// path takes no part in any request, and an `@` there is either a path
+    /// nobody uses or a credential no rule can separate from one
+    /// (`URLText.hasAtAfterHost(typedURL:)`).
+    case urlWithoutAtAfterHost
+
+    /// Whether `value` — already trimmed, and not blank — satisfies the rule.
+    /// Blank is `isRequired`'s question, not the format's; `numeric` keeps
+    /// the answer it always gave (a blank port is not a number).
+    func accepts(_ value: String) -> Bool {
+        switch self {
+        case .numeric: return Int(value) != nil
+        case .urlWithoutAtAfterHost: return !URLText.hasAtAfterHost(typedURL: value)
+        }
+    }
 }
 
 /// How a field takes part in a connection's IDENTITY (M23/P3) — the answer to
