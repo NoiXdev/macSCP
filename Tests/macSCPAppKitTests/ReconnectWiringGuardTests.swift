@@ -863,6 +863,21 @@ struct ReconnectWiringGuardTests {
             """)
     }
 
+    /// The cause sentence really reaches the screen (fix round 1 of the
+    /// lost-connection cause work, review item 3): `LostConnectionContent
+    /// .detail` is optional, so deleting the `if let detail` block renders
+    /// a surface that shows everything else and no cause, with nothing red.
+    /// The positive beside it is the one the check above also relies on —
+    /// the view renders localized text at all.
+    @Test func theLostSurfaceRendersTheCauseDetail() throws {
+        let body = try Self.strippedBody(
+            after: "private struct LostConnectionView: View", in: Self.detailFile)
+        #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
+        #expect(body.contains("content.detail"), """
+            `LostConnectionView` no longer reads `content.detail` — the per-cause sentence             the plan builds is then never rendered, and nothing else in the suite notices.
+            """)
+    }
+
     /// The literal reader, on every shape the two surface tests depend on
     /// — including the wrapped one that defeated the line-based version.
     @Test func theLiteralReaderSeesAWrappedCallTheSameAsAnInlineOne() throws {
@@ -1258,6 +1273,23 @@ struct ReconnectWiringGuardTests {
             """)
         #expect(body.contains("LostConnectionPlan.content("), """
             the lost branch no longer asks `LostConnectionPlan.content(`.
+            """)
+    }
+
+    /// The cause the surface names (fix round 1 of the lost-connection
+    /// cause work, review item 3). `LostConnectionPlan.content`'s
+    /// `probeFailure:` has a default of `nil`, so DELETING the argument
+    /// here compiles and leaves every plan test green while the surface
+    /// silently stops naming any cause at all. The positive beside it is
+    /// the call itself, already checked above and repeated here so this
+    /// check cannot pass by reading a span with no call in it.
+    @Test func theLostBranchHandsThePlanTheProbesCause() throws {
+        let body = try Self.strippedBody(after: Self.lostBranchAnchor, in: Self.detailFile)
+        #expect(body.contains("LostConnectionPlan.content("), """
+            the lost branch no longer asks `LostConnectionPlan.content(` — the check below             would be reading a span with no call in it.
+            """)
+        #expect(body.contains("probeFailure:"), """
+            the lost branch no longer passes `probeFailure:` to `LostConnectionPlan.content(`.             That argument defaults to `nil`, so dropping it compiles, keeps every plan test             green, and takes the cause sentence off the surface without a word.
             """)
     }
 

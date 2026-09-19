@@ -23,7 +23,7 @@ struct LivenessProbeCauseTests {
 
         #expect(result == .failed)
         #expect(tab.liveness == .degraded)
-        guard case .error(let typeName, _, true)? = tab.lastProbeFailure else {
+        guard case .error(let typeName, true)? = tab.lastProbeFailure else {
             Issue.record("expected a closed-connection error, got \(String(describing: tab.lastProbeFailure))")
             return
         }
@@ -145,6 +145,71 @@ private final class ScriptedStatFileSystem: RemoteFileSystem, @unchecked Sendabl
         }
     }
 
+    func list(path: String) async throws -> [RemoteFileItem] { fatalError("not exercised") }
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> { fatalError("not exercised") }
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws { fatalError("not exercised") }
+    func delete(path: String) async throws { fatalError("not exercised") }
+    func createDirectory(at path: String) async throws { fatalError("not exercised") }
+    func rename(from: String, to: String) async throws { fatalError("not exercised") }
+    func setPermissions(path: String, permissions: UInt32) async throws { fatalError("not exercised") }
+    func deleteTree(at path: String) async throws { fatalError("not exercised") }
+    func homeDirectoryPath() async throws -> String { fatalError("not exercised") }
+    func disconnect() async {}
+}
+
+/// The close report ends with the session it describes (fix round 1 of the
+/// lost-connection cause work, review Minor 8): `TabTeardown.run` is the one
+/// place every disconnect goes through, and it is where the App stops
+/// listening — so a close arriving afterwards cannot write a line naming a
+/// tab whose session is gone.
+@Suite("Close report ends at teardown", .timeLimit(.minutes(1)))
+@MainActor
+struct CloseReportTeardownTests {
+    @Test func teardownStopsTheCloseReport() async {
+        let tab = SessionTab(
+            connectionViewModel: ConnectionViewModel(connector: { _, _ in throw CancellationError() }),
+            certificateBridge: CertificatePromptBridge(),
+            limiter: BandwidthLimiter(),
+            maxConcurrent: 2)
+        let sessionID = UUID()
+        let remoteFS = ReportingFileSystem()
+        tab.session = BrowserSession(
+            id: sessionID,
+            localFS: LocalFileSystem(),
+            remoteFS: remoteFS,
+            local: RemoteBrowserViewModel(fs: LocalFileSystem(), startPath: NSTemporaryDirectory()),
+            remote: RemoteBrowserViewModel(fs: remoteFS, startPath: "/"),
+            terminal: TerminalPanelViewModel(openShell: { _, _, _ in throw CancellationError() }),
+            editManager: EditSessionManager(sessionID: sessionID, queue: tab.transferQueue),
+            homePath: "/")
+
+        #expect(remoteFS.stopped == false)
+        await TabTeardown.run(tab, reason: .userRequested)
+        #expect(remoteFS.stopped, """
+            `TabTeardown.run` did not stop the connection's close report. A close arriving \
+            after the teardown then logs `ssh connection closed tab=<id>` for a session this \
+            tab has already left.
+            """)
+    }
+}
+
+/// A file system that reports transport closes and records being told to
+/// stop. File-local, like every double in this target.
+private final class ReportingFileSystem: RemoteFileSystem, TransportCloseReporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var stoppedFlag = false
+
+    var stopped: Bool { lock.withLock { stoppedFlag } }
+
+    func onTransportClose(_ handler: @escaping @Sendable (TransportCloseEvent) -> Void) {}
+
+    func stopReportingTransportClose() { lock.withLock { stoppedFlag = true } }
+
+    func stat(path: String) async throws -> RemoteFileItem { fatalError("not exercised") }
     func list(path: String) async throws -> [RemoteFileItem] { fatalError("not exercised") }
     func readStream(
         path: String, fromOffset offset: UInt64

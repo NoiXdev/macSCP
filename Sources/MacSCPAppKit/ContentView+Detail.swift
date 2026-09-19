@@ -1346,7 +1346,7 @@ enum LivenessProbeStep {
     /// The failure is kept, not discarded (lost-connection cause,
     /// 2026-09-19): the race settles on `nil` for an answer, on the
     /// timeout's own value when the deadline wins, or on what
-    /// `LivenessProbeFailure.classify(_:probedPath:)` made of the error the
+    /// `LivenessProbeFailure.classify(_:)` made of the error the
     /// `stat` threw. A failure is written to `tab.lastProbeFailure` and
     /// logged, one `info` line per probe, behind the same guard as the
     /// `liveness` write — an abandoned probe writes and logs nothing.
@@ -1361,7 +1361,7 @@ enum LivenessProbeStep {
                 _ = try await session.remoteFS.stat(path: session.homePath)
                 return nil
             } catch {
-                return LivenessProbeFailure.classify(error, probedPath: session.homePath)
+                return LivenessProbeFailure.classify(error)
             }
         }
         guard !Task.isCancelled, tab.session?.id == session.id else { return .abandoned }
@@ -1428,16 +1428,12 @@ enum LivenessProbeStep {
 /// resumption (which would trap) impossible.
 @MainActor
 enum LivenessProbeRace {
-    static func run(
-        timeoutSeconds: Int, operation: @escaping @Sendable () async -> Bool
-    ) async -> Bool {
-        await run(timeoutSeconds: timeoutSeconds, onTimeout: false, operation: operation)
-    }
-
-    /// The same race over any answer (lost-connection cause, 2026-09-19):
-    /// `onTimeout` is what it settles on when the deadline wins, so the
-    /// caller can tell a deadline from an answer that said "failed".
-    /// The `Bool` form above is this one with `false` for the deadline.
+    /// `onTimeout` is what the race settles on when the deadline wins, so
+    /// the caller can tell a deadline from an answer that said "failed"
+    /// (lost-connection cause, 2026-09-19). It replaced a `Bool`-only form,
+    /// whose convenience overload fix round 1 deleted: after the probe moved
+    /// to this one, nothing under `Sources/` called it, and a second
+    /// spelling nothing uses is a second thing to keep true.
     static func run<Value: Sendable>(
         timeoutSeconds: Int, onTimeout: Value,
         operation: @escaping @Sendable () async -> Value

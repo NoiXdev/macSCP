@@ -102,7 +102,7 @@ struct TransportCloseRigTests {
             _ = try await watched.fs.stat(path: "/")
             Issue.record("stat succeeded on a connection whose session was killed")
         } catch {
-            #expect(LivenessProbeFailure.classify(error, probedPath: "/").kind == .connectionClosed)
+            #expect(LivenessProbeFailure.classify(error).kind == .connectionClosed)
         }
         await watched.fs.disconnect()
         watched.continuation.finish()

@@ -9,16 +9,24 @@ import Foundation
 /// the one question a lost connection through a jump host raised and the
 /// app could not answer (findings of 2026-09-19).
 ///
-/// Carries no raw error. `reason` is `DialSupport.reason(for:)`'s fixed
-/// sentence, passed through the log's userinfo filter and with the probed
-/// path replaced — see `classify(_:probedPath:)`.
+/// A CLOSED SET, deliberately (review of 2026-09-19, item 1): three cases, a
+/// whole-second deadline, a `Bool`, and the error's Swift type name. No
+/// sentence from an error is kept — not `DialSupport.reason(for:)`'s and not
+/// a `localizedDescription` — because both can name a path
+/// (`nothing at <path>`), a host (`HostKeyError.mismatch`) or whatever a
+/// foreign error's description happens to hold. Round 1 of this work kept
+/// such a sentence, filtered; the filter was best-effort and the claim above
+/// it was not. Dropping the sentence is what makes the claim structural: a
+/// value of this type cannot carry text that a server, an error or a form
+/// composed.
 public enum LivenessProbeFailure: Equatable, Sendable {
     /// The deadline won: no answer within `seconds`.
     case timeout(seconds: Int)
-    /// The probe's `stat` threw. `typeName` is the error's Swift type name;
-    /// `closedConnection` is whether the error is one of the shapes that
-    /// mean the connection itself is gone.
-    case error(typeName: String, reason: String, closedConnection: Bool)
+    /// The probe's `stat` threw. `typeName` is the error's Swift type name
+    /// — a name written in this repository or in a package it builds
+    /// against, never a value; `closedConnection` is whether the error is
+    /// one of the shapes that mean the connection itself is gone.
+    case error(typeName: String, closedConnection: Bool)
     /// The probe's `stat` ended in a `CancellationError`.
     case cancelled
 
@@ -33,36 +41,23 @@ public enum LivenessProbeFailure: Equatable, Sendable {
     public var kind: Kind {
         switch self {
         case .timeout: return .timeout
-        case .error(_, _, let closedConnection): return closedConnection ? .connectionClosed : .other
+        case .error(_, let closedConnection): return closedConnection ? .connectionClosed : .other
         case .cancelled: return .other
         }
     }
 
-    /// What the probe's `stat` threw, classified. Pure: the same error and
-    /// path always give the same value.
+    /// What the probe's `stat` threw, classified. Pure: the same error
+    /// always gives the same value.
     ///
-    /// `probedPath` is the path the probe stats — the session's home, which
-    /// typically names the account (`/home/<user>`). `DialSupport.reason(for:)`
-    /// prints the path for `notFound` and `permissionDenied`, so the path is
-    /// replaced by `<home>` here; a path of `/` is left alone, because
-    /// replacing every slash would destroy the sentence and `/` names no one.
-    public static func classify(_ error: any Error, probedPath: String) -> LivenessProbeFailure {
+    /// It takes the error and nothing else. Round 1 passed the probed path
+    /// as well, to mask it inside a sentence; the sentence is gone (see this
+    /// type's own doc comment), and a parameter that no longer takes part in
+    /// the answer would read as a promise that something is being masked.
+    public static func classify(_ error: any Error) -> LivenessProbeFailure {
         if error is CancellationError { return .cancelled }
-        var reason = URLText.withoutUserinfo(DialSupport.reason(for: error))
-        if probedPath.count > 1 {
-            reason = reason.replacingOccurrences(of: probedPath, with: "<home>")
-        }
         return .error(
-            typeName: String(describing: type(of: error)), reason: reason,
-            closedConnection: closesConnection(error))
-    }
-
-    /// `RemoteFSError.connectionFailed` is what `CitadelFileSystem` maps a
-    /// dead channel to (`mapSFTPError`); the raw shapes are checked too, so
-    /// an error that reached the probe unmapped is still read correctly.
-    private static func closesConnection(_ error: any Error) -> Bool {
-        if case RemoteFSError.connectionFailed = error { return true }
-        return CitadelFileSystem.isConnectionLoss(error)
+            typeName: String(describing: type(of: error)),
+            closedConnection: ConnectionLossShapes.matchesOrWasMapped(error))
     }
 }
 
@@ -72,7 +67,16 @@ public enum LivenessProbeFailure: Equatable, Sendable {
 /// logs; the call sites pass these straight to `DiagnosticLog.shared.log`.
 ///
 /// A tab is named by its id only — a UUID minted per tab, the same form the
-/// window-move lines name a seed by. No host, no user, no path.
+/// window-move lines name a seed by. Everything else these lines hold comes
+/// from a closed set: the cases of `LivenessProbeFailure` and
+/// `TransportCloseEvent`, a whole-second deadline, and an error's Swift type
+/// name. No host, no user, no path, and no sentence any error, server or
+/// form composed — see `LivenessProbeFailure`'s own doc comment for why that
+/// is a property of the values rather than of a filter.
+///
+/// `DiagnosticLogSecrecyGuardTests` scans this enum's body the way it scans
+/// a call site's arguments (review of 2026-09-19, item 2), so the boundary
+/// `DiagnosticLog.log(_:_:_:reason:)` draws for error text holds here too.
 public enum LivenessLogLines {
     /// One line per failed probe, at `info`.
     public static func probeFailed(tab: UUID, failure: LivenessProbeFailure) -> String {
@@ -91,14 +95,14 @@ public enum LivenessLogLines {
         "ssh connection closed tab=\(tab) hop=\(event.hop.rawValue) by=\(event.initiator.rawValue)"
     }
 
-    /// `detail=` last: it is a sentence, and everything before it is one
-    /// word per key.
+    /// One word per key, and every value a closed-set case, a number or a
+    /// type name.
     private static func fields(_ failure: LivenessProbeFailure) -> String {
         switch failure {
         case .timeout(let seconds):
             return "cause=timeout kind=\(failure.kind.rawValue) after=\(seconds)s"
-        case .error(let typeName, let reason, _):
-            return "cause=error kind=\(failure.kind.rawValue) type=\(typeName) detail=\(reason)"
+        case .error(let typeName, _):
+            return "cause=error kind=\(failure.kind.rawValue) type=\(typeName)"
         case .cancelled:
             return "cause=cancelled kind=\(failure.kind.rawValue)"
         }

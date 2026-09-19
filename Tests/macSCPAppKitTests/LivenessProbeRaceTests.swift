@@ -94,7 +94,7 @@ struct LivenessProbeRaceTests {
     func aStatThatNeverRespondsStillReportsFailureWithinTheDeadline() async {
         let fs = NeverRespondingFileSystem()
         let start = ContinuousClock.now
-        let alive = await LivenessProbeRace.run(timeoutSeconds: 1) {
+        let alive = await LivenessProbeRace.run(timeoutSeconds: 1, onTimeout: false) {
             (try? await fs.stat(path: "/home")) != nil
         }
         let elapsed = start.duration(to: .now)
@@ -112,7 +112,7 @@ struct LivenessProbeRaceTests {
     }
 
     @Test func aStatThatSucceedsQuicklyReportsSuccess() async {
-        let alive = await LivenessProbeRace.run(timeoutSeconds: 5) {
+        let alive = await LivenessProbeRace.run(timeoutSeconds: 5, onTimeout: false) {
             true
         }
         #expect(alive == true)

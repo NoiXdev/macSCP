@@ -148,6 +148,15 @@ enum TabTeardown {
                 await terminal.shutdown()
             }
             await session.remote.disconnect()
+            // The close report ends with the connection it described (fix
+            // round 1 of the lost-connection cause work, review Minor 8).
+            // `CitadelFileSystem.disconnect()` reports both of its hops
+            // before returning, so the `by=app` lines are already written
+            // by the time this runs; what it refuses is a close arriving
+            // later — from a channel that had not finished closing — which
+            // would name a tab whose session is gone. Observation only:
+            // nothing here owns or closes anything.
+            (session.remoteFS as? TransportCloseReporting)?.stopReportingTransportClose()
             // Audit recorder teardown (M9b/T3): only present for a stored
             // session (`attachAuditRecorder` never runs for an ad-hoc
             // connect), so this is a no-op otherwise. `recordDisconnected()`

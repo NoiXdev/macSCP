@@ -943,6 +943,176 @@ struct DiagnosticLogSecrecyGuardTests {
             """)
     }
 
+    // MARK: - The message builders a call hands to `log`
+
+    /// Type names of the form `Name.method(` appearing in a call site's
+    /// arguments — the message BUILDERS a line is assembled by, one level
+    /// out from the call.
+    ///
+    /// Read from the arguments rather than spelled here, so a renamed
+    /// builder is followed rather than lost (CLAUDE.md, "A guard that spells
+    /// a symbol it could read instead is waiting for a rename"). Only
+    /// capitalised heads count: a call on a value (`message()`,
+    /// `tab.id`) is not a type's static function, and `Self.` is skipped
+    /// because the declaration walk below cannot resolve it.
+    private static func builderTypeNames(in sites: [CallSite]) -> Set<String> {
+        var names: Set<String> = []
+        for site in sites {
+            let chars = Array(site.arguments)
+            var i = 0
+            while i < chars.count {
+                guard chars[i].isUppercase, i == 0 || !Self.isIdentifierCharacter(chars[i - 1])
+                else {
+                    i += 1
+                    continue
+                }
+                var j = i
+                while j < chars.count, Self.isIdentifierCharacter(chars[j]) { j += 1 }
+                let name = String(chars[i..<j])
+                // `Name.method(` — a dot, a lower-case method head, an open paren.
+                if j + 1 < chars.count, chars[j] == ".", chars[j + 1].isLowercase {
+                    var k = j + 1
+                    while k < chars.count, Self.isIdentifierCharacter(chars[k]) { k += 1 }
+                    if k < chars.count, chars[k] == "(", name != "Self" {
+                        names.insert(name)
+                    }
+                }
+                i = j
+            }
+        }
+        return names
+    }
+
+    private static func isIdentifierCharacter(_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || c == "_"
+    }
+
+    /// The brace-balanced body of `enum`/`struct`/`final class <name>` under
+    /// `Sources/`, comments blanked and string literals KEPT — the
+    /// interpolations inside those literals are exactly what this scan has
+    /// to read. `nil` when no declaration is found (a type from a package,
+    /// or one this walk cannot resolve).
+    private static func declarationBody(of name: String) throws -> String? {
+        for file in try swiftFiles(under: sourcesRoot) {
+            let text = try SourceCorpus.commentFree(of: file)
+            for keyword in ["enum ", "struct ", "final class ", "class ", "actor "] {
+                guard let declaration = text.range(of: keyword + name) else { continue }
+                let after = text[declaration.upperBound...]
+                guard let head = after.first, !isIdentifierCharacter(head) else { continue }
+                let chars = Array(text)
+                var i = text.distance(from: text.startIndex, to: declaration.upperBound)
+                while i < chars.count, chars[i] != "{" { i += 1 }
+                guard i < chars.count else { continue }
+                let start = i
+                var depth = 0
+                while i < chars.count {
+                    if chars[i] == "{" { depth += 1 }
+                    if chars[i] == "}" {
+                        depth -= 1
+                        if depth == 0 { break }
+                    }
+                    i += 1
+                }
+                return String(chars[start..<min(i + 1, chars.count)])
+            }
+        }
+        return nil
+    }
+
+    /// The builders this scan must keep finding — a measurement, taken
+    /// 2026-09-19 by printing `builderTypeNames(in:)`'s answer through a
+    /// probe (reverted, `cmp`-identical). That run found THREE names:
+    /// these two, whose whole job is building a line, and `QuitSequence`,
+    /// whose body is scanned as well but which is named here by nobody —
+    /// a helper that stops being called from a log line is not a
+    /// regression, while either of these two disappearing is.
+    ///
+    /// It is the positive that keeps the negatives below from reading an
+    /// empty set: break the extraction and these names stop being found
+    /// while they stay here.
+    private static let knownMessageBuilders: Set<String> = [
+        "LivenessLogLines", "TabMoveLogLines",
+    ]
+
+    /// Free text a builder must not reach for. `DiagnosticLog.log(_:_:_:reason:)`
+    /// is the one door an error's own words may come through
+    /// (`DiagnosticLog.swift`, that overload's doc comment), and it converts
+    /// them itself; a builder that called any of these would put the same
+    /// class of text into a line under a key of its own choosing, which is
+    /// the boundary the overload exists to draw.
+    private static let freeTextSources = [
+        "localizedDescription", "String(describing:", "DialSupport.reason(",
+        "DiagnosticJump.reason(",
+    ]
+
+    /// The boundary `DiagnosticLog.log(_:_:_:reason:)` draws, one level out
+    /// (review of 2026-09-19, item 2).
+    ///
+    /// `noInterpolationNamesASecretIdentifier` and
+    /// `noHandWrittenMessageSpellsReasonEquals` both read a CALL SITE's
+    /// arguments. A call that hands `log` a message built elsewhere —
+    /// `LivenessLogLines.probeFailed(tab:failure:)`,
+    /// `TabMoveLogLines.parked(seedID:tabCount:)` — has no interpolation in
+    /// its arguments at all, so both checks pass by finding nothing, and the
+    /// text those builders interpolate is never read by anything. That is
+    /// the same "a negative check that matches nothing reads like one that
+    /// is satisfied" shape CLAUDE.md's "Guards that name what they watch"
+    /// describes.
+    ///
+    /// NEGATIVES, over each builder's whole body: no interpolation names a
+    /// secret-looking identifier, no `reason=` is spelled by hand, and
+    /// nothing reaches for an error's own words (`freeTextSources`).
+    /// POSITIVES beside them: every builder in `knownMessageBuilders` is
+    /// still found by reading the call sites, and at least two of the bodies
+    /// actually carry an interpolation — a body the walk could not locate,
+    /// or one with nothing in it, would satisfy every negative above.
+    @Test func everyMessageBuilderAlineIsAssembledByIsScannedToo() throws {
+        let sites = try Self.collectCallSites()
+            + Self.collectForwardedCallSites().flatMap(\.sites)
+        let builders = Self.builderTypeNames(in: sites)
+        let missing = Self.knownMessageBuilders.subtracting(builders).sorted()
+        #expect(missing.isEmpty, """
+            \(missing) no longer appear as `Name.method(` in any \
+            DiagnosticLog.shared.log(...) call's arguments — either the builder was renamed \
+            (rename it here too) or the extraction stopped reading call arguments, in which \
+            case the checks below are quantifying over nothing.
+            """)
+
+        var offenders: [String] = []
+        var bodiesWithAnInterpolation = 0
+        for name in builders.sorted() {
+            guard let body = try Self.declarationBody(of: name) else { continue }
+            let interpolations = Self.interpolations(in: body)
+            if !interpolations.isEmpty { bodiesWithAnInterpolation += 1 }
+            for interpolation in interpolations {
+                let lowered = interpolation.lowercased()
+                for fragment in Self.forbiddenFragments where lowered.contains(fragment) {
+                    offenders.append("\(name): \\(\(interpolation))")
+                }
+            }
+            if body.contains("reason=") {
+                offenders.append("\(name): spells `reason=` by hand")
+            }
+            for source in Self.freeTextSources where body.contains(source) {
+                offenders.append("\(name): reaches for `\(source)`")
+            }
+        }
+        #expect(offenders.isEmpty, """
+            a message builder a DiagnosticLog line is assembled by carries something the \
+            boundary keeps out:
+            \(offenders.joined(separator: "\n"))
+
+            A line's text may hold a closed set of values and an error's TYPE name; an \
+            error's own words reach a line only through DiagnosticLog.log(_:_:_:reason:), \
+            which converts them through DialSupport.reason(for:) itself.
+            """)
+        #expect(bodiesWithAnInterpolation >= 2, """
+            only \(bodiesWithAnInterpolation) builder bodies carried an interpolation — the \
+            declaration walk is no longer finding the bodies it is meant to scan, so the \
+            negatives above are reading empty spans.
+            """)
+    }
+
     /// Whether a call site's arguments use the `reason:` labeled overload
     /// (`DiagnosticLog.log(_:_:_:reason:)`) — a top-level argument (outside
     /// any string literal or nested call) whose trimmed text starts with

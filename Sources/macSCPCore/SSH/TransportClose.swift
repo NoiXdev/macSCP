@@ -52,6 +52,17 @@ public protocol TransportCloseReporting: Sendable {
     /// handler installed after the connect returns still hears about a
     /// connection that closed in between. Each hop is reported at most once.
     func onTransportClose(_ handler: @escaping @Sendable (TransportCloseEvent) -> Void)
+
+    /// Stops reporting: the handler is dropped, nothing buffered is kept,
+    /// and no later close is delivered (fix round 1 of the lost-connection
+    /// cause work, review Minor 8).
+    ///
+    /// Called by the UI's teardown once `disconnect()` has returned. It
+    /// costs nothing to hear about: `disconnect()` reports both hops
+    /// itself before it returns, so the app's own closes are already in
+    /// hand by then, and what this refuses is only a report that would name
+    /// a session the tab has left.
+    func stopReportingTransportClose()
 }
 
 /// The state behind `TransportCloseReporting` for one connection: whether
@@ -66,6 +77,7 @@ public protocol TransportCloseReporting: Sendable {
 final class TransportCloseMonitor: Sendable {
     private struct State {
         var closeRequested = false
+        var stopped = false
         var reported: Set<TransportHop> = []
         var pending: [TransportCloseEvent] = []
         var handler: (@Sendable (TransportCloseEvent) -> Void)?
@@ -81,13 +93,25 @@ final class TransportCloseMonitor: Sendable {
         state.withLock { $0.closeRequested = true }
     }
 
+    /// Drops the handler and anything buffered, and refuses every later
+    /// close. Not the same as never having had a handler: this is an end,
+    /// so a close arriving afterwards is not kept for a future handler
+    /// either.
+    func stopReporting() {
+        state.withLock { s in
+            s.handler = nil
+            s.pending = []
+            s.stopped = true
+        }
+    }
+
     /// A hop's transport closed. Reports it once; a second report of the
     /// same hop — the close hook and the "already closed at install" check
     /// can both see one close — is dropped.
     func closed(_ hop: TransportHop) {
         let delivery: (handler: @Sendable (TransportCloseEvent) -> Void, event: TransportCloseEvent)? =
             state.withLock { s in
-                guard !s.reported.contains(hop) else { return nil }
+                guard !s.stopped, !s.reported.contains(hop) else { return nil }
                 s.reported.insert(hop)
                 let event = TransportCloseEvent(
                     hop: hop, initiator: s.closeRequested ? .app : .peerOrNetwork)
@@ -105,6 +129,7 @@ final class TransportCloseMonitor: Sendable {
     /// Installs the handler and hands it every close it missed.
     func setHandler(_ handler: @escaping @Sendable (TransportCloseEvent) -> Void) {
         let missed: [TransportCloseEvent] = state.withLock { s in
+            guard !s.stopped else { return [] }
             s.handler = handler
             let missed = s.pending
             s.pending = []

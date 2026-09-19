@@ -274,7 +274,7 @@ struct LivenessGiveUpOrderingTests {
     /// reads it from there.
     @Test(arguments: [
         (LivenessProbeFailure.timeout(seconds: 10), LivenessProbeFailure.Kind.timeout),
-        (.error(typeName: "RemoteFSError", reason: "r", closedConnection: true), .connectionClosed),
+        (.error(typeName: "RemoteFSError", closedConnection: true), .connectionClosed),
         (.cancelled, .other),
     ])
     func givingUpCarriesTheLastProbesCauseIntoTheEpisode(

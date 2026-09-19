@@ -939,30 +939,18 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
     }
 
-    /// True for errors that mean "the SSH connection/channel is gone".
-    /// A mid-transfer disconnect does NOT surface as a typed Citadel error:
-    /// in-flight SFTP requests fail with NIO's `ChannelError.ioOnClosedChannel`
-    /// (verified via live kill test against the Docker rig), or with Citadel's
-    /// `SFTPError.connectionClosed` when the channel closes with pending
-    /// request promises; NIOSSH signals a dropped transport as `.tcpShutdown`.
-    /// Deliberately conservative: only these clear connection-loss shapes
-    /// match — everything else keeps its existing mapping.
+    /// True for errors that mean "the SSH connection/channel is gone" —
+    /// `ConnectionLossShapes.matches(_:)`, which is where the shapes are
+    /// written and why.
     ///
-    /// Internal (not private) since the lost-connection cause work of
-    /// 2026-09-19: `LivenessProbeFailure.classify(_:probedPath:)` reads the
-    /// same shapes, so an error that reached the probe unmapped is still
-    /// recognised as a closed connection.
-    static func isConnectionLoss(_ error: Error) -> Bool {
-        switch error {
-        case ChannelError.ioOnClosedChannel, ChannelError.alreadyClosed:
-            return true
-        case SFTPError.connectionClosed:
-            return true
-        case let error as NIOSSHError where error.type == .tcpShutdown:
-            return true
-        default:
-            return false
-        }
+    /// Private again (fix round 1 of the lost-connection cause work, review
+    /// Minor 9): it was widened to internal so
+    /// `LivenessProbeFailure.classify(_:)` could read the same
+    /// shapes, which pointed a Sessions-layer type at a concrete backend.
+    /// The shapes moved to `ConnectionLossShapes` in this layer instead, and
+    /// both callers read that.
+    private static func isConnectionLoss(_ error: Error) -> Bool {
+        ConnectionLossShapes.matches(error)
     }
 
     /// Translates Citadel's raw SFTP status errors into typed RemoteFSError.
@@ -1445,6 +1433,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
             try? await client.close()
             try? await jumpClient?.close()
         }
+        // Report what this call just did, before returning (fix round 1 of
+        // the lost-connection cause work, review Minor 8). Citadel delivers
+        // its own close on a task of its own, which can land after this
+        // function has returned and after the UI's teardown has stopped
+        // listening — so the app's own closes would be the ones most likely
+        // to go unreported. The monitor drops whichever of the two reports
+        // arrives second, and both say the same thing: `by=app`, because
+        // `markCloseRequested()` ran at the top of this function.
+        closeMonitor.closed(.target)
+        if jumpClient != nil { closeMonitor.closed(.jump) }
         // I-2/R-1: release the dedicated event-loop group this connection
         // took ownership of at construction time (see `connectAuthenticated`) — but not
         // immediately. Citadel's `SFTPClient.openSFTP` schedules an internal
@@ -1602,6 +1600,10 @@ private final class SFTPReadHandle: Sendable {
 extension CitadelFileSystem: TransportCloseReporting {
     public func onTransportClose(_ handler: @escaping @Sendable (TransportCloseEvent) -> Void) {
         closeMonitor.setHandler(handler)
+    }
+
+    public func stopReportingTransportClose() {
+        closeMonitor.stopReporting()
     }
 }
 
