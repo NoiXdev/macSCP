@@ -1347,6 +1347,7 @@
 "tunnel.state.active" = "Active";
 "tunnel.state.activeConnections %lld" = "Active (%lld)";
 "tunnel.state.activeWithFailures %lld" = "Active · %lld connections failed";
+"tunnel.state.degraded %lld" = "Degraded · %lld connections failed in a row";
 "tunnel.state.lastFailure %@" = "Last failure: %@";
 "tunnel.state.reconnecting %lld" = "Reconnecting, attempt %lld";
 "tunnel.state.needsConfirmation" = "Connect this session once by hand";

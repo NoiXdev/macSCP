@@ -77,6 +77,12 @@ public enum TunnelStateLine {
             // the previous one. The kind stays out: this is not a failure
             // of the tunnel, and the diagnostic log has the sentence.
             if failed > 0 { line += " failed=\(failed)" }
+            // And once the last three in a row failed, the word for what
+            // the count now means: up, and carrying nothing
+            // (`TunnelState.isDegraded`, maintainer answer 2026-09-19). A
+            // word rather than a threshold a script has to know, and the
+            // same fact the `--json` form's `degraded` carries.
+            if state.isDegraded { line += " degraded" }
             return line
         case .reconnecting(let attempt):
             return "reconnecting attempt=\(attempt)"
@@ -92,6 +98,12 @@ public enum TunnelStateLine {
             object["connections"] = connections
             if let port { object["port"] = port }
             if failed > 0 { object["failedConnections"] = failed }
+            // An ADDED key, never a renamed one: a script reading
+            // `failedConnections` goes on reading it, and one that wants
+            // the app's own "this forwarding stopped reading healthy"
+            // answer reads this instead of re-deriving the threshold.
+            // Written only when true, like the count above it.
+            if state.isDegraded { object["degraded"] = true }
         case .reconnecting(let attempt):
             object["attempt"] = attempt
         case .failed(let kind):

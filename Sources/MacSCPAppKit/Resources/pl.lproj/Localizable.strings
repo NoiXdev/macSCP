@@ -1351,6 +1351,7 @@
 "tunnel.state.active" = "Aktywne";
 "tunnel.state.activeConnections %lld" = "Aktywne (%lld)";
 "tunnel.state.activeWithFailures %lld" = "Aktywne · nieudane połączenia: %lld";
+"tunnel.state.degraded %lld" = "Pogorszone · nieudane połączenia z rzędu: %lld";
 "tunnel.state.lastFailure %@" = "Ostatni błąd: %@";
 "tunnel.state.reconnecting %lld" = "Ponowna próba nr %lld";
 "tunnel.state.needsConfirmation" = "Połącz tę sesję raz ręcznie";

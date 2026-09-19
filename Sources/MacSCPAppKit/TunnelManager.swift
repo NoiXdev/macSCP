@@ -316,11 +316,14 @@ final class TunnelManager {
                     let seen = rank(of: state)
                     if kept > seen { continue }
                     // Equal ranks keep the first — except that an `active`
-                    // failing connections replaces a healthy `active`, or a
-                    // healthy forwarding listed first would hide the
-                    // failures from the sidebar's tooltip. Same rank, so the
-                    // tint does not change.
-                    if kept == seen, !(isFailingConnections(state) && !isFailingConnections(worst)) {
+                    // with worse news about its connections replaces one
+                    // with better, or a healthy forwarding listed first
+                    // would hide the failures from the sidebar's tooltip,
+                    // and one that keeps failing would be hidden behind one
+                    // that has failed a connection or two. The rank is
+                    // unchanged, so only an `active` can displace an
+                    // `active` here.
+                    if kept == seen, connectionNews(of: state) <= connectionNews(of: worst) {
                         continue
                     }
                 }
@@ -329,9 +332,16 @@ final class TunnelManager {
             return aggregate
         }
 
-        private static func isFailingConnections(_ state: TunnelState) -> Bool {
-            guard case .active(_, let failed, _) = state else { return false }
-            return failed > 0
+        /// How bad an `.active` forwarding's connection news is, as a
+        /// number, so the tie-break above is one `<=` rather than a nest of
+        /// conditions: `0` carrying or idle, `1` a connection or two it
+        /// could not carry, `2` three in a row (`TunnelState.isDegraded`,
+        /// the reading the glyph turns amber for). Every other state
+        /// answers `0` and is separated by `rank(of:)` instead.
+        private static func connectionNews(of state: TunnelState) -> Int {
+            guard case .active(_, let failed, _) = state else { return 0 }
+            if state.isDegraded { return 2 }
+            return failed > 0 ? 1 : 0
         }
 
         /// The design's precedence — "colour by the worst state among the

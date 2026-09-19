@@ -150,6 +150,26 @@
             <string>Aktywne · %lld nieudanego połączenia</string>
         </dict>
     </dict>
+    <key>tunnel.state.degraded %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Pogorszone · %lld nieudane połączenie z rzędu</string>
+            <key>few</key>
+            <string>Pogorszone · %lld nieudane połączenia z rzędu</string>
+            <key>many</key>
+            <string>Pogorszone · %lld nieudanych połączeń z rzędu</string>
+            <key>other</key>
+            <string>Pogorszone · %lld nieudanego połączenia z rzędu</string>
+        </dict>
+    </dict>
     <key>connection.convertKey.repoint.message %lld %@</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

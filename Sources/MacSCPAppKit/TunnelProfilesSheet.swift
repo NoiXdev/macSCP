@@ -537,6 +537,10 @@ struct TunnelProfilesSheet: View {
 
     /// The state, as one line, in the app's language.
     ///
+    /// An `.active` forwarding has three of them: plain, with the count of
+    /// connections it could not carry, and — from three in a row on — the
+    /// degraded line that stops calling it active at all.
+    ///
     /// The four places it reaches are this column, the autostart sheet's
     /// state column, the Dock menu's tooltip and the sidebar glyph's tooltip
     /// — one function decides the text and four show it. A `.failed` state
@@ -550,6 +554,18 @@ struct TunnelProfilesSheet: View {
         switch state {
         case .stopped: return L10n.string("tunnel.state.stopped", "Stopped")
         case .connecting: return L10n.string("tunnel.state.connecting", "Connecting…")
+        // Above the threshold first: a forwarding whose last three
+        // connections in a row failed stops saying "Active" at all
+        // (maintainer answer, 2026-09-19). The threshold is
+        // `TunnelState.isDegraded`'s, in Core, where the glyph's colour and
+        // the CLI's `degraded` key read it too — this switch decides the
+        // words and nothing else.
+        case .active(_, let failed, _) where state.isDegraded:
+            return String(
+                format: L10n.string(
+                    "tunnel.state.degraded %lld",
+                    "Degraded · %lld connections failed in a row"),
+                failed)
         case .active(_, let failed, _) where failed > 0:
             return String(
                 format: L10n.string(

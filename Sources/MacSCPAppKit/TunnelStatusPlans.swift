@@ -18,8 +18,10 @@ enum TunnelStatusTint: Equatable, Sendable {
     case grey
     /// At least one forwarding is up and nothing worse is happening.
     case green
-    /// Something is on its way, or is waiting for the user: `.connecting`,
-    /// `.reconnecting`, `.needsConfirmation`.
+    /// Something is on its way, is waiting for the user, or is up without
+    /// carrying anything: `.connecting`, `.reconnecting`,
+    /// `.needsConfirmation`, and an `.active` forwarding whose last three
+    /// connections in a row failed (`TunnelState.isDegraded`).
     case amber
     /// At least one forwarding failed.
     case red
@@ -73,7 +75,8 @@ enum TunnelGlyphPlan {
         return Glyph(
             tint: tint(worst: aggregate.worst),
             text: DockBadgePlan.label(
-                activeCount: aggregate.active, failedCount: failedCount(states)))
+                activeCount: aggregate.active, failedCount: failedCount(states),
+                degradedCount: degradedCount(states)))
     }
 
     /// How many of these forwardings are `.failed`. `.needsConfirmation` is
@@ -83,11 +86,26 @@ enum TunnelGlyphPlan {
         states.count(where: { if case .failed = $0 { return true } else { return false } })
     }
 
+    /// How many of these forwardings are up and carrying nothing — the last
+    /// three connections in a row failed (maintainer answer, 2026-09-19).
+    /// The threshold is `TunnelState.isDegraded`'s, in Core, where the CLI
+    /// reads it too; nothing here counts failures itself.
+    static func degradedCount(_ states: [TunnelState]) -> Int {
+        states.count(where: \.isDegraded)
+    }
+
+    /// **An `.active` forwarding is green unless it keeps failing.** Three
+    /// connections in a row that it could not carry turn it amber — the
+    /// maintainer's orange, and the same amber `.connecting` draws, because
+    /// the palette has one and both mean "up, but not working for you yet"
+    /// (answer of 2026-09-19). Red stays what it has always been: a
+    /// forwarding that is DOWN, which is worse news than one that is up and
+    /// carrying nothing.
     private static func tint(worst: TunnelState?) -> TunnelStatusTint {
         guard let worst else { return .grey }
         switch worst {
         case .stopped: return .grey
-        case .active: return .green
+        case .active: return worst.isDegraded ? .amber : .green
         case .connecting, .reconnecting, .needsConfirmation: return .amber
         case .failed: return .red
         }
@@ -107,19 +125,30 @@ enum TunnelGlyphPlan {
 /// therefore sits in the same red badge, which is why the TEXT — a numeral
 /// versus `"!"` — is the channel that separates the two states.
 enum DockBadgePlan {
-    /// `"!"` on any failure, otherwise the active count, otherwise `nil`.
-    static func label(activeCount: Int, failedCount: Int) -> String? {
-        if failedCount > 0 { return "!" }
+    /// `"!"` on any failure or any forwarding that keeps failing, otherwise
+    /// the active count, otherwise `nil`.
+    ///
+    /// **`degradedCount` outranks the count for the same reason a failure
+    /// does** (maintainer answer, 2026-09-19): a forwarding whose last three
+    /// connections in a row failed is up and carrying nothing, so counting
+    /// it among the good ones is the good news drawn over the bad one. It
+    /// is not distinguished from a failure HERE, and cannot be: the badge
+    /// has one colour, AppKit's own red, so its text is its only channel.
+    /// The distinction the maintainer asked for — orange, not red — is the
+    /// glyph's, which has a tint (`TunnelGlyphPlan`).
+    static func label(activeCount: Int, failedCount: Int, degradedCount: Int) -> String? {
+        if failedCount > 0 || degradedCount > 0 { return "!" }
         guard activeCount > 0 else { return nil }
         return String(activeCount)
     }
 
     /// The same label, derived from states — the form both the controller and
-    /// the sidebar glyph use, so the two counts come from one reading.
+    /// the sidebar glyph use, so the three counts come from one reading.
     static func label(states: [TunnelState]) -> String? {
         label(
             activeCount: TunnelManager.Aggregate.of(states).active,
-            failedCount: TunnelGlyphPlan.failedCount(states))
+            failedCount: TunnelGlyphPlan.failedCount(states),
+            degradedCount: TunnelGlyphPlan.degradedCount(states))
     }
 }
 

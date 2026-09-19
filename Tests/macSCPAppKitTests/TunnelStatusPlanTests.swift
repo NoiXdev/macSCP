@@ -25,22 +25,61 @@ struct TunnelStatusPlanTests {
             autoStart: autoStart)
     }
 
+    /// A forwarding whose last three connections in a row failed, folded
+    /// through `TunnelStatePlan` rather than built by hand: the threshold is
+    /// Core's, and this suite reads it rather than spelling a number.
+    private static func degraded() -> TunnelState {
+        failing(TunnelState.failuresBeforeDegraded)
+    }
+
+    /// One below it — the negative beside every positive here.
+    private static func failingButHealthy() -> TunnelState {
+        failing(TunnelState.failuresBeforeDegraded - 1)
+    }
+
+    private static func failing(_ count: Int) -> TunnelState {
+        var state = TunnelState.active(connections: 0)
+        for _ in 0..<count {
+            state = TunnelStatePlan.next(state, on: .connectionFailed(.channelOpenFailed))
+        }
+        return state
+    }
+
     // MARK: - The Dock badge
 
     /// The three cases the design names, in the order they outrank each
     /// other.
     @Test func theBadgeCountsWhatIsUpAndShoutsWhatIsBroken() {
-        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 0) == nil)
-        #expect(DockBadgePlan.label(activeCount: 3, failedCount: 0) == "3")
-        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 1) == "!")
+        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 0, degradedCount: 0) == nil)
+        #expect(DockBadgePlan.label(activeCount: 3, failedCount: 0, degradedCount: 0) == "3")
+        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 1, degradedCount: 0) == "!")
     }
 
     /// The precedence, on its own: a failure is reported even while other
     /// forwardings are up, because a badge reading "2" over a third one that
     /// is down would be the good news drawn over the bad one.
     @Test func aFailureOutranksTheCount() {
-        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 1) == "!")
-        #expect(DockBadgePlan.label(activeCount: 9, failedCount: 4) == "!")
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 1, degradedCount: 0) == "!")
+        #expect(DockBadgePlan.label(activeCount: 9, failedCount: 4, degradedCount: 0) == "!")
+    }
+
+    /// A forwarding whose last three connections all failed is up, and is
+    /// carrying nothing: the badge stops reporting it as one of the good
+    /// ones (maintainer answer, 2026-09-19). Same precedence as a failure,
+    /// and for the same reason — a badge reading `"2"` over a forwarding
+    /// nobody can use is the good news drawn over the bad one. The colour
+    /// the answer belongs to is the glyph's; `NSDockTile` draws its badge
+    /// red whatever it says, so the TEXT is this surface's only channel.
+    @Test func aForwardingThatKeepsFailingOutranksTheCountToo() {
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 0, degradedCount: 1) == "!")
+        #expect(DockBadgePlan.label(activeCount: 1, failedCount: 0, degradedCount: 0) == "1")
+    }
+
+    /// The states form of the same answer, folded through the plan so the
+    /// badge is measured over what the report stream produces.
+    @Test func theBadgeReadsAForwardingThatKeepsFailingFromItsState() {
+        #expect(DockBadgePlan.label(states: [Self.degraded(), .active(connections: 4)]) == "!")
+        #expect(DockBadgePlan.label(states: [Self.failingButHealthy(), .active(connections: 4)]) == "2")
     }
 
     /// The states form, which is what the controller actually calls: the
@@ -90,6 +129,40 @@ struct TunnelStatusPlanTests {
         let waiting: [TunnelState] = [.active(connections: 1), .needsConfirmation]
         #expect(TunnelGlyphPlan.glyph(states: waiting)?.tint == .amber)
         #expect(TunnelGlyphPlan.glyph(states: waiting)?.text == "1")
+    }
+
+    /// Orange, not green, once the last three connections in a row failed —
+    /// and green again after the next one that is carried (maintainer
+    /// answer, 2026-09-19). The same amber a `.connecting` forwarding
+    /// draws: the maintainer asked for orange, and the palette has one.
+    @Test func aForwardingThatKeepsFailingStopsDrawingGreen() {
+        #expect(TunnelGlyphPlan.glyph(states: [Self.failingButHealthy()])?.tint == .green)
+        #expect(TunnelGlyphPlan.glyph(states: [Self.degraded()])?.tint == .amber)
+
+        let recovered = TunnelStatePlan.next(Self.degraded(), on: .connectionAccepted)
+        #expect(TunnelGlyphPlan.glyph(states: [recovered])?.tint == .green)
+    }
+
+    /// One session, two forwardings: the one that keeps failing decides the
+    /// colour even when a healthy one — or one that has failed less — was
+    /// read first. Both orders, because the aggregate's tie-break is where
+    /// a rule like this goes wrong.
+    @Test func theForwardingThatKeepsFailingDecidesTheColour() {
+        let healthyFirst: [TunnelState] = [.active(connections: 3), Self.degraded()]
+        let degradedFirst: [TunnelState] = [Self.degraded(), .active(connections: 3)]
+        #expect(TunnelGlyphPlan.glyph(states: healthyFirst)?.tint == .amber)
+        #expect(TunnelGlyphPlan.glyph(states: degradedFirst)?.tint == .amber)
+
+        let oneFailureFirst: [TunnelState] = [Self.failingButHealthy(), Self.degraded()]
+        #expect(TunnelGlyphPlan.glyph(states: oneFailureFirst)?.tint == .amber)
+    }
+
+    /// A failure still outranks it: a forwarding that is DOWN is worse news
+    /// than one that is up and carrying nothing.
+    @Test func aFailedForwardingStillOutranksAFailingOne() {
+        #expect(
+            TunnelGlyphPlan.glyph(states: [Self.degraded(), .failed(.connectionFailed)])?.tint
+                == .red)
     }
 
     /// The coalescing the hand-off asks for: a successful reconnect passes
@@ -195,12 +268,14 @@ struct TunnelStatusPlanTests {
 
     /// The property behind both, stated once: whatever the badge marks with
     /// `"!"`, the block lists. Driven over every state rather than over the
-    /// two the cases above name, so a sixth `TunnelState` cannot be added
-    /// on one side of this only.
+    /// two the cases above name, so a seventh `TunnelState` cannot be added
+    /// on one side of this only — plus the reading that is not a case,
+    /// `.active` that keeps failing, which the badge marks since
+    /// 2026-09-19 and the block lists because it is running.
     @Test func everyStateTheBadgeShoutsAboutIsListedInTheBlock() {
         let states: [TunnelState] = [
-            .stopped, .connecting, .active(connections: 0), .reconnecting(attempt: 1),
-            .failed(.connectionFailed), .needsConfirmation,
+            .stopped, .connecting, .active(connections: 0), Self.degraded(),
+            .reconnecting(attempt: 1), .failed(.connectionFailed), .needsConfirmation,
         ]
         for state in states {
             let manual = Self.profile("manual")

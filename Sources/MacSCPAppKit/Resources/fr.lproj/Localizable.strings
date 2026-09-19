@@ -1352,6 +1352,7 @@
 "tunnel.state.active" = "Active";
 "tunnel.state.activeConnections %lld" = "Active (%lld)";
 "tunnel.state.activeWithFailures %lld" = "Active · %lld connexions échouées";
+"tunnel.state.degraded %lld" = "Dégradée · %lld connexions échouées d’affilée";
 "tunnel.state.lastFailure %@" = "Dernier échec : %@";
 "tunnel.state.reconnecting %lld" = "Reconnexion, tentative %lld";
 "tunnel.state.needsConfirmation" = "Connectez cette session une fois à la main";

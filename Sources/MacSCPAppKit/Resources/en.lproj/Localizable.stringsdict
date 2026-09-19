@@ -130,6 +130,22 @@
             <string>Active · %lld connections failed</string>
         </dict>
     </dict>
+    <key>tunnel.state.degraded %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Degraded · %lld connection failed in a row</string>
+            <key>other</key>
+            <string>Degraded · %lld connections failed in a row</string>
+        </dict>
+    </dict>
     <key>connection.convertKey.repoint.message %lld %@</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

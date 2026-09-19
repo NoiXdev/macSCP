@@ -123,3 +123,35 @@ public enum TunnelState: Sendable, Equatable {
     /// Resolved only by connecting the session once, by hand, in a window.
     case needsConfirmation
 }
+
+extension TunnelState {
+    /// How many connections must fail in a row before a forwarding stops
+    /// reading healthy: three (maintainer answer, 2026-09-19).
+    ///
+    /// "In a row" needs no history of its own, because `failedConnections`
+    /// already IS the run length — `TunnelStatePlan` clears it on the next
+    /// connection that opens and on every entry into `active`, so the
+    /// number it carries is exactly how many failed since the last one the
+    /// forwarding could carry.
+    public static let failuresBeforeDegraded = 3
+
+    /// Whether this state should stop reading healthy on the surfaces that
+    /// draw a colour: the sidebar glyph, which turns from green to amber,
+    /// and the Dock badge, which stops counting this forwarding among the
+    /// good ones. The `tunnels start` line and the state label say it in
+    /// words.
+    ///
+    /// **A reading, not a state.** No lifecycle case was added for it (the
+    /// maintainer's 2026-09-16 ruling, restated on 2026-09-19): the forward
+    /// is up, its port is bound, and the next connection that succeeds
+    /// makes this `false` again with no transition anywhere. Every caller
+    /// asks the state this question; nobody stores the answer.
+    ///
+    /// Only `.active` can be degraded. A forwarding that is `.failed`,
+    /// `.reconnecting` or stopped has worse or different news of its own,
+    /// and the surfaces already draw it.
+    public var isDegraded: Bool {
+        guard case .active(_, let failedConnections, _) = self else { return false }
+        return failedConnections >= Self.failuresBeforeDegraded
+    }
+}

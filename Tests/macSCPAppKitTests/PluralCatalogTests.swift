@@ -5,12 +5,13 @@ import Testing
 
 /// Guards the `%lld`-count messages that would read as "1 snippets"/"1
 /// logins"/"1 of them" without real plural support. Counted while writing
-/// this sentence (2026-09-17), `catalogKeys()` carries four:
+/// this sentence (2026-09-19), `catalogKeys()` carries five:
 /// `snippets.export.confirm.message %lld`, `logins.export.summary %lld`,
-/// `tabs.closeOthers.incomingTransfers %lld` and
-/// `tunnel.state.activeWithFailures %lld`. A fourth key,
-/// `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on its own
-/// (`activeTransfersKey`) because only its first argument is pluralized.
+/// `tabs.closeOthers.incomingTransfers %lld`,
+/// `tunnel.state.activeWithFailures %lld` and `tunnel.state.degraded %lld`.
+/// A sixth key, `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on
+/// its own (`activeTransfersKey`) because only its first argument is
+/// pluralized.
 /// Each is backed by a `Localizable.stringsdict` per language, alongside the
 /// existing `Localizable.strings`, which still carries the same keys.
 ///
@@ -50,6 +51,7 @@ struct PluralCatalogTests {
                 "%lld of them are receiving transfers from other tabs; closing cancels those."
             ),
             ("tunnel.state.activeWithFailures %lld", "Active · %lld connections failed"),
+            ("tunnel.state.degraded %lld", "Degraded · %lld connections failed in a row"),
         ]
     }
 
@@ -165,8 +167,9 @@ struct PluralCatalogTests {
     /// sentence: `SnippetsSheet.swift` for the snippet export,
     /// `SessionExportImportSheets.swift` for the login export,
     /// `TabCloseWarning.bulkMessage` for the incoming-transfer line of the
-    /// bulk-close warning, and `TunnelProfilesSheet.stateLabel` for a
-    /// forwarding that is up while connections fail (counted 2026-09-17).
+    /// bulk-close warning, and `TunnelProfilesSheet.stateLabel` twice — for
+    /// a forwarding that is up while connections fail, and for one whose
+    /// last three in a row failed (counted 2026-09-19).
     @Test
     func resolvesThroughTheProductionLookupPath() {
         for entry in Self.catalogKeys() {

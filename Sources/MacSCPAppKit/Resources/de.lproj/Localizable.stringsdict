@@ -130,6 +130,22 @@
             <string>Aktiv · %lld Verbindungen fehlgeschlagen</string>
         </dict>
     </dict>
+    <key>tunnel.state.degraded %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>Beeinträchtigt · %lld Verbindung in Folge fehlgeschlagen</string>
+            <key>other</key>
+            <string>Beeinträchtigt · %lld Verbindungen in Folge fehlgeschlagen</string>
+        </dict>
+    </dict>
     <key>connection.convertKey.repoint.message %lld %@</key>
     <dict>
         <key>NSStringLocalizedFormatKey</key>

@@ -190,7 +190,43 @@ struct CLITunnelStartRenderingTests {
         #expect(
             try TunnelStateJSONLine.decode(line)
                 == TunnelStateJSONLine(
-                    state: "active", connections: 0, port: 2222, failedConnections: 3))
+                    state: "active", connections: 0, port: 2222, failedConnections: 3,
+                    degraded: true))
+    }
+
+    /// The mark a script reads for "this forwarding is not carrying
+    /// anything any more" (maintainer answer, 2026-09-19): an ADDED key,
+    /// written only once the last three connections in a row failed, and
+    /// left out below that — the same shape `failedConnections` has.
+    @Test func theJSONActiveLineMarksAForwardingThatKeepsFailing() throws {
+        let belowTheThreshold = TunnelStateLine.render(
+            .active(connections: 0, failedConnections: TunnelState.failuresBeforeDegraded - 1,
+                lastFailure: .channelOpenFailed),
+            port: 2222, json: true)
+        #expect(try TunnelStateJSONLine.decode(belowTheThreshold).degraded == nil)
+
+        let atTheThreshold = TunnelStateLine.render(
+            .active(connections: 0, failedConnections: TunnelState.failuresBeforeDegraded,
+                lastFailure: .channelOpenFailed),
+            port: 2222, json: true)
+        #expect(try TunnelStateJSONLine.decode(atTheThreshold).degraded == true)
+    }
+
+    /// The text form carries the same fact as the JSON one — the two are
+    /// one rendering read twice, so a person watching `tunnels start` sees
+    /// what a `jq` consumer switches on.
+    @Test func theTextActiveLineMarksAForwardingThatKeepsFailing() {
+        let belowTheThreshold = TunnelState.active(
+            connections: 0, failedConnections: TunnelState.failuresBeforeDegraded - 1,
+            lastFailure: .channelOpenFailed)
+        #expect(!TunnelStateLine.render(belowTheThreshold, port: nil, json: false).contains("degraded"))
+
+        let atTheThreshold = TunnelState.active(
+            connections: 1, failedConnections: TunnelState.failuresBeforeDegraded,
+            lastFailure: .channelOpenFailed)
+        #expect(
+            TunnelStateLine.render(atTheThreshold, port: nil, json: false)
+                == "active connections=1 failed=\(TunnelState.failuresBeforeDegraded) degraded")
     }
 
     @Test func theJSONActiveLineCarriesTheBoundPort() throws {
@@ -225,10 +261,12 @@ struct TunnelStateJSONLine: Decodable, Equatable {
     var reason: String?
     var reasonIsGeneric: Bool?
     var failedConnections: Int?
+    var degraded: Bool?
 
     init(
         state: String, connections: Int? = nil, attempt: Int? = nil, port: Int? = nil,
-        reason: String? = nil, reasonIsGeneric: Bool? = nil, failedConnections: Int? = nil
+        reason: String? = nil, reasonIsGeneric: Bool? = nil, failedConnections: Int? = nil,
+        degraded: Bool? = nil
     ) {
         self.state = state
         self.connections = connections
@@ -237,6 +275,7 @@ struct TunnelStateJSONLine: Decodable, Equatable {
         self.reason = reason
         self.reasonIsGeneric = reasonIsGeneric
         self.failedConnections = failedConnections
+        self.degraded = degraded
     }
 
     static func decode(_ line: String) throws -> TunnelStateJSONLine {
