@@ -90,8 +90,17 @@ struct S3HTTPChannel: S3AbortChannel {
         } catch {
             if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
             if let refused = refusedRedirect() { throw refused }
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+            throw Self.connectionFailure(error)
         }
+    }
+
+    /// A transport error as this backend reports it: `connectionFailed`,
+    /// carrying the error's localized sentence and never its description,
+    /// which would print its `userInfo` — the failing URL among it. One
+    /// spelling for the four places S3 wraps a transport error: here,
+    /// `readStream`'s request and its body, and `deleteTree`'s batch delete.
+    static func connectionFailure(_ error: any Error) -> RemoteFSError {
+        .connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
     }
 
     /// The redirect this channel's session refused, as the error to report

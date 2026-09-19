@@ -454,11 +454,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         } catch {
             if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
             if let refused = channel.refusedRedirect() { throw refused }
-            throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+            throw S3HTTPChannel.connectionFailure(error)
         }
         switch response.statusCode {
         case 200..<300:
-            return Self.cancellable(body)
+            return Self.wrappingTransportErrors(body)
         case 416:
             return AsyncThrowingStream { $0.finish() }
         case 403:
@@ -470,12 +470,16 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
     }
 
-    /// `body`, with a cancelled request's end handed on as a
-    /// `CancellationError` (`HTTPCancellation`) — a Cancel mid-download
-    /// lands in the body, long after `readStream` returned, and `URLSession`
-    /// ends it with `URLError(.cancelled)`. Every other error passes through
-    /// unchanged, as it did before this wrapper existed: a body's transport
-    /// failure is not wrapped as `connectionFailed`.
+    /// `body`, with what it throws wrapped the way every other S3 transport
+    /// error is. A download's failures land here, long after `readStream`
+    /// returned: a cancelled request's end goes on as a `CancellationError`
+    /// (`HTTPCancellation`) — `URLSession` ends it with
+    /// `URLError(.cancelled)` — and any other transport failure as
+    /// `connectionFailed` (`S3HTTPChannel.connectionFailure`), as WebDAV's
+    /// body does. Until fix round 1 of the 2026-09-19 small follow-ups'
+    /// Task 1 the body was not wrapped at all: a lost connection
+    /// mid-download reached the queue raw, which printed its whole
+    /// description — the failing URL, userinfo credentials included.
     ///
     /// Pull-based, like the body it wraps: the `unfolding:` closure runs
     /// only when the consumer asks, in the consumer's task — which is why
@@ -485,15 +489,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `URLSessionHTTPTransport.sendStreaming`'s iterator: this one is made
     /// here, never stored or handed out, and advanced only by the closure
     /// that produces the returned stream, which has a single consumer.
-    static func cancellable(
+    static func wrappingTransportErrors(
         _ body: AsyncThrowingStream<Data, Error>
     ) -> AsyncThrowingStream<Data, Error> {
         nonisolated(unsafe) var iterator = body.makeAsyncIterator()
         return AsyncThrowingStream(unfolding: {
             do {
                 return try await iterator.next()
+            } catch let error as RemoteFSError {
+                throw error
             } catch {
-                throw HTTPCancellation.cancellation(in: error) ?? error
+                if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
+                throw S3HTTPChannel.connectionFailure(error)
             }
         })
     }
@@ -756,7 +763,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 throw error
             } catch {
                 if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
-                throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
+                throw S3HTTPChannel.connectionFailure(error)
             }
             guard (200..<300).contains(response.statusCode) else {
                 throw Self.mapErrorStatus(response.statusCode, path: path)

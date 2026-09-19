@@ -1251,8 +1251,9 @@ public final class RemoteBrowserViewModel {
         case RemoteFSError.bucketLevelRefused(let operation, _):
             return CoreL10n.string(operation.refusalMessageKey)
         // The second arm the same lesson asks for: a new `RemoteFSError`
-        // case has TWO dumping `default:`s to close, in two view models
-        // both called `message(for:)`.
+        // case needs an arm in both view models called `message(for:)` —
+        // this one's `default:` still dumps the case; the queue's no longer
+        // does, but reads a generic sentence for a case it missed.
         case RemoteFSError.crossBucketRenameRefused:
             return CoreL10n.string("core.connect.s3CrossBucketRename")
         // `.bucketListForbidden` is NOT connect-time only (Task 3 review,

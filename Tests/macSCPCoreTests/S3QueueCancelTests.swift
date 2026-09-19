@@ -130,9 +130,10 @@ struct S3QueueCancelTests {
 }
 
 /// An S3 endpoint for one multipart upload: empty listings, an initiate, a
-/// part request that hangs until its task is cancelled (then fails, as a
-/// cancelled `URLSession` request does), and an abort held until the case
-/// releases it.
+/// part request that hangs until its task is cancelled and then throws
+/// `CancellationError` (a real `URLSession` request throws
+/// `URLError(.cancelled)` instead; both reach the queue as a cancellation,
+/// `HTTPTransferCancelTests`), and an abort held until the case releases it.
 final class SilentS3Endpoint: HTTPTransport, Sendable {
     private let answered = Mutex(false)
     let partArrived = AsyncSignal()

@@ -2878,8 +2878,9 @@ struct TransferQueueViewModelTests {
 
     /// And the second new case, in the second `message(for:)` — unreachable
     /// from a transfer today (nothing in the queue renames), but the arm
-    /// exists for the same reason its sibling does: a `default:` that dumps
-    /// `String(describing:)` is what a missing arm looks like to a user.
+    /// exists for the same reason its sibling does: a missing arm reads
+    /// the `default:`'s generic sentence (until fix round 1 of 2026-09-19's
+    /// Task 1, the error's whole description) instead of a written one.
     @Test func aCrossBucketRenameRefusalGetsAWrittenSentenceInTheQueueToo() {
         let error = RemoteFSError.crossBucketRenameRefused(
             from: "/one/a.txt", to: "/two/a.txt")

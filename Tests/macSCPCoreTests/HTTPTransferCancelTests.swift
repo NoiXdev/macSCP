@@ -40,13 +40,11 @@ struct HTTPTransferCancelTests {
 
     // MARK: - A lost connection still reads lost
 
-    /// The one leg left out is S3's body mid-stream: apart from a
-    /// cancellation, what its body throws reaches the queue unwrapped, as
-    /// it did before this task, so a lost connection there reads "Transfer
-    /// failed", not "Connection lost" (recorded in the Task 1 report).
-    @Test(arguments: Case.all(failures: [.networkConnectionLost]).filter {
-        !($0.backend == .s3 && $0.leg == .downloadBody)
-    })
+    /// Every leg, S3's body mid-stream included: since fix round 1 of
+    /// Task 1 it wraps a transport failure as `connectionFailed`, as
+    /// WebDAV's body does. Before, the raw error reached the queue and read
+    /// "Transfer failed: <the error's whole description>".
+    @Test(arguments: Case.all(failures: [.networkConnectionLost]))
     @MainActor func aLostConnectionStillReadsConnectionLost(_ testCase: Case) async throws {
         let endpoint = ParkingHTTPEndpoint(backend: testCase.backend, leg: testCase.leg,
                                            failure: testCase.failure)
@@ -122,18 +120,29 @@ struct HTTPTransferCancelTests {
 
     enum Failure: String, Sendable {
         case cancellationError, urlCancelled, networkConnectionLost
+        /// A lost connection whose error carries the failing URL, with a
+        /// credential in its userinfo, the way `URLSession` fills
+        /// `NSURLErrorFailingURLStringErrorKey` (`TransferErrorSecrecyTests`).
+        case networkConnectionLostWithCredentialURL
 
         var error: any Error {
             switch self {
             case .cancellationError: return CancellationError()
             case .urlCancelled: return URLError(.cancelled)
             case .networkConnectionLost: return URLError(.networkConnectionLost)
+            case .networkConnectionLostWithCredentialURL:
+                return TransferErrorSecrecyTests.lostConnectionCarryingTheCredential
             }
         }
 
         /// A cancellation is thrown once the request's task is cancelled; a
         /// lost connection at once.
-        var waitsForCancellation: Bool { self != .networkConnectionLost }
+        var waitsForCancellation: Bool {
+            switch self {
+            case .cancellationError, .urlCancelled: return true
+            case .networkConnectionLost, .networkConnectionLostWithCredentialURL: return false
+            }
+        }
     }
 
     struct Case: Sendable, CustomTestStringConvertible {

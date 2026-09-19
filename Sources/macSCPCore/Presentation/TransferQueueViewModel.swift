@@ -1505,6 +1505,22 @@ public final class TransferQueueViewModel {
     }
 
     /// Public: the App layer reuses this mapping for editor-open failures (M6a).
+    ///
+    /// **No error's own description reaches a user through here** (fix
+    /// round 1 of the 2026-09-19 small follow-ups, Task 1). An `NSError`'s
+    /// description prints its whole `userInfo`, and a `URLSession` failure
+    /// carries the failing URL there — userinfo included, so an endpoint
+    /// typed as `https://KEY:SECRET@host` put its secret into the queue's
+    /// row, the audit log and the editor banner. So every text a backend or
+    /// Foundation composed — a `reason`, a localized sentence — goes through
+    /// `URLText.withoutUserinfo`, the filter the diagnostics report uses; a
+    /// foreign error is shown as its localized sentence, never described;
+    /// and a lost connection reads the fixed "Connection lost" sentence.
+    /// `TransferErrorSecrecyTests.noQueueMessagePathRendersARawError` scans
+    /// this file for a raw rendering.
+    ///
+    /// Paths are shown as they are: they are the transfer's own remote or
+    /// local paths, which the row names anyway.
     public static func message(for error: Error) -> String {
         switch error {
         case RemoteFSError.notFound(let path):
@@ -1512,26 +1528,66 @@ public final class TransferQueueViewModel {
         case RemoteFSError.permissionDenied(let path):
             return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
         case RemoteFSError.connectionFailed(let reason):
-            return String(format: CoreL10n.string("core.error.connectionLost %@"), reason)
+            return String(
+                format: CoreL10n.string("core.error.connectionLost %@"),
+                URLText.withoutUserinfo(reason))
         case RemoteFSError.protocolError(let reason):
-            return String(format: CoreL10n.string("core.transfer.failed %@"), reason)
+            return String(
+                format: CoreL10n.string("core.transfer.failed %@"), URLText.withoutUserinfo(reason))
+        // The cases the `default:` below used to print by name ("Transfer
+        // failed: authenticationFailed"). Its replacement would print
+        // Foundation's "The operation couldn't be completed" sentence for
+        // them instead, so each gets the sentence the connect form already
+        // has for it.
+        case RemoteFSError.authenticationFailed:
+            return CoreL10n.string("core.connect.authFailed")
+        case RemoteFSError.jumpAuthenticationFailed:
+            return CoreL10n.string("core.connect.jumpAuthFailed")
+        case RemoteFSError.bucketListForbidden:
+            return CoreL10n.string("core.connect.s3BucketListForbidden")
+        case RemoteFSError.bucketListEmpty:
+            return CoreL10n.string("core.connect.s3BucketListEmpty")
         // The SECOND `message(for:)` this project has (Task 3 review, I-1).
         // A folder dropped onto an S3 bucket-list root makes
         // `TransferEngine` call `createDirectory("/name")`, which
-        // `S3FileSystem` refuses — and this switch's `default:` below
-        // renders `String(describing:)`, so without this arm the queue
+        // `S3FileSystem` refuses — and this switch's `default:` then
+        // rendered the error's description, so without this arm the queue
         // showed the raw case. It reads exactly like the browser's arm in
         // `RemoteBrowserViewModel.message(for:path:)`, deliberately: a new
-        // `RemoteFSError` case has two dumping `default:`s to close, not one.
+        // `RemoteFSError` case needs an arm in both `message(for:)`s. This
+        // one's `default:` no longer dumps (fix round 1 above), but it
+        // would read Foundation's generic sentence for a case it missed.
         case RemoteFSError.bucketLevelRefused(let operation, _):
             return CoreL10n.string(operation.refusalMessageKey)
         // The second arm the same lesson asks for: a new `RemoteFSError`
-        // case has TWO dumping `default:`s to close, in two view models
-        // both called `message(for:)`.
+        // case needs an arm in both view models called `message(for:)`.
         case RemoteFSError.crossBucketRenameRefused:
             return CoreL10n.string("core.connect.s3CrossBucketRename")
         default:
-            return String(format: CoreL10n.string("core.transfer.failed %@"), String(describing: error))
+            if isLostConnection(error) { return CoreL10n.string("core.transfer.connectionLost") }
+            return String(
+                format: CoreL10n.string("core.transfer.failed %@"),
+                URLText.withoutUserinfo((error as NSError).localizedDescription))
+        }
+    }
+
+    /// Whether a foreign error — one no backend wrapped — says the
+    /// connection went away mid-transfer: `URLSession`'s lost, offline and
+    /// timed-out codes, and a reset, abort or broken pipe at the socket.
+    /// Not the codes for a connection that never came up (refused, host
+    /// not found): mid-transfer those are a failure to reach, not a loss.
+    private static func isLostConnection(_ error: any Error) -> Bool {
+        let error = error as NSError
+        switch error.domain {
+        case NSURLErrorDomain:
+            return [
+                URLError.networkConnectionLost, .notConnectedToInternet, .timedOut,
+            ].map(\.rawValue).contains(error.code)
+        case NSPOSIXErrorDomain:
+            return [ECONNRESET, ECONNABORTED, EPIPE, ETIMEDOUT, ENETDOWN, ENETRESET]
+                .map(Int.init).contains(error.code)
+        default:
+            return false
         }
     }
 }
