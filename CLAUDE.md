@@ -382,6 +382,30 @@ and its interest is paid by checking, not by remembering:
    no fabricated hash (both happened once, 2026-09-01, and were caught
    before the push).
 
+## User documentation ships with the feature (maintainer decision, 2026-09-19)
+
+Every user-visible change — a new feature, a changed behaviour, a new
+setting, a new CLI command or flag — is written into the user
+documentation in the same piece of work, not later. The user docs live in
+the separate repository `/Users/noidee/_dev/noix-docs` (GitHub
+`NoiXdev/noix-docs`), under `src/content/docs/macscp/`
+(`getting-started/`, `guide/` one page per feature, `reference/`); its
+own page `reference/contributing-docs.md` is the house style, and
+`npm run build` (links validator) and `npm run check` must both pass.
+
+- A plan's closeout task updates the matching docs page(s) alongside
+  `docs/BACKLOG.md`; a plan whose change is user-visible is not closed
+  until the docs say what the app now does.
+- Features not yet in a release are marked as coming in the next
+  version, so a reader of the published docs is not sent looking for
+  something their build does not have.
+- The docs repository is shared with other products and other sessions:
+  work in a git worktree on its own branch, never on a branch or a
+  working tree someone else has open, and push or merge only when the
+  maintainer asks.
+- Public texts carry no tech-stack terms (global rule); user docs are
+  public texts.
+
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
