@@ -230,14 +230,21 @@ struct ResolveLookups: Sendable {
     }
 
     /// Anything the resolver handed back that would break a line or a cell,
-    /// written as an escape instead: a C0 or C1 control, a space, DEL and the
-    /// two Unicode line breaks. The DNS presentation escape `\DDD` for a
-    /// scalar that fits a byte, `\u{…}` for the two that do not.
+    /// or rearrange the text around it, written as an escape instead: a C0
+    /// or C1 control, a space, DEL, the two Unicode line breaks and the
+    /// twelve bidirectional controls (the `Bidi_Control` scalars: U+061C,
+    /// U+200E–200F, U+202A–202E, U+2066–2069). The DNS presentation escape
+    /// `\DDD` for a scalar that fits a byte, `\u{…}` for those that do not.
+    /// A backslash the name carries is itself escaped, as `\\`, so no name
+    /// can spell an escape it does not contain — the text `\010` would
+    /// otherwise print exactly like an escaped newline (final review M2 of
+    /// the 2026-09-19 plan).
     ///
     /// Only for what the row PRINTS. A name is text a DNS server chose, and a
     /// newline in it would start a fresh line in the pasted report and in the
-    /// command line's rows — a row that nobody measured. The forward lookup
-    /// is asked with the name as it came back.
+    /// command line's rows — a row that nobody measured — while a
+    /// right-to-left override would reorder what follows it on screen. The
+    /// forward lookup is asked with the name as it came back.
     static func presentable(_ name: String) -> String {
         var escaped = ""
         for scalar in name.unicodeScalars {
@@ -245,7 +252,9 @@ struct ResolveLookups: Sendable {
             case 0...0x20, 0x7F...0x9F:
                 escaped += "\\" + String(repeating: "0", count: 3 - String(scalar.value).count)
                     + String(scalar.value)
-            case 0x2028, 0x2029:
+            case 0x5C:
+                escaped += "\\\\"
+            case 0x2028, 0x2029, 0x061C, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069:
                 escaped += "\\u{\(String(scalar.value, radix: 16, uppercase: true))}"
             default:
                 escaped.unicodeScalars.append(scalar)

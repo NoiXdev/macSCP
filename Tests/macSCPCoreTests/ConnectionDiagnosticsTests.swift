@@ -1654,8 +1654,8 @@ struct ConnectionDiagnosticsTests {
     ) async -> DiagnosticReport {
         await ConnectionDiagnostics(
             descriptor: descriptor, values: FieldValues(), secrets: nil, jump: nil,
-
-            throughput: DiagnosticThroughputSettings(), stepTimeout: stepTimeout, appVersion: appVersion
+            throughput: DiagnosticThroughputSettings(), stepTimeout: stepTimeout,
+            appVersion: appVersion
         ).run()
     }
 

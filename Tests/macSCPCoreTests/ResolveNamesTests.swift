@@ -19,15 +19,17 @@ import Testing
 /// `127.0.0.1`, which this machine names (which source answered — the hosts
 /// file or DNS — was not measured).
 ///
-/// **Budgets.** A case whose lookups must NOT be cut gives them 30 s, which
-/// nothing here comes near — 600 s for the one against the machine's own
-/// resolver; the cases about the cut give 200 ms to a lookup that never
-/// answers until the case releases it, or to a host lookup that sleeps the
-/// whole of it, so the cut is decided by the lookup and not by how fast the
-/// runner is.
-@Suite("The resolve step's names")
+/// **Budgets.** A case whose lookups must NOT be cut gives them 600 s, the
+/// one against the machine's own resolver included — a budget no runner
+/// reaches, as `HostAddressLookupTests` gives its own; 30 s was only twice
+/// the 14.67 s ambient stall measured on CI. The time limit is a hang bound,
+/// not a ceiling on any case. The cases about the cut give 200 ms to a
+/// lookup that never answers until the case releases it, or to a host
+/// lookup that sleeps the whole of it, so the cut is decided by the lookup
+/// and not by how fast the runner is.
+@Suite("The resolve step's names", .timeLimit(.minutes(2)))
 struct ResolveNamesTests {
-    private static let roomy: Duration = .seconds(30)
+    private static let roomy: Duration = .seconds(600)
     private static let tight: Duration = .milliseconds(200)
 
     // MARK: - One address, each answer
@@ -239,7 +241,8 @@ struct ResolveNamesTests {
     /// budget. Proven without a clock: the first address's lookup answers
     /// only once the SECOND address has been asked, which naming them in
     /// turn would never do while the first was waiting. In turn, the first
-    /// would be cut at the end of the 30 s and read `no answer`.
+    /// would wait out the whole 600 s budget, and the suite's time limit
+    /// turns that wait red long before.
     @Test func theAddressesAreNamedAtTheSameTime() async throws {
         let addresses = [try await Self.address("192.0.2.1"), try await Self.address("192.0.2.2")]
         let secondAsked = AsyncSignal()
@@ -288,6 +291,35 @@ struct ResolveNamesTests {
         #expect(ResolveLookups.presentable("tab\there") == "tab\\009here")
     }
 
+    /// A backslash the name itself carries is escaped too, so the text
+    /// `\010` in a name cannot pass for an escaped newline: the two print
+    /// differently.
+    @Test func aLiteralBackslashIsEscaped() {
+        let spelled = ResolveLookups.presentable("a\\010b.invalid")
+        let newline = ResolveLookups.presentable("a\nb.invalid")
+
+        #expect(spelled == "a\\\\010b.invalid")
+        #expect(newline == "a\\010b.invalid")
+        #expect(spelled != newline)
+    }
+
+    /// The Unicode bidirectional controls — the twelve scalars with the
+    /// `Bidi_Control` property — would reorder the text around them in a
+    /// pasted report, so each is written as an escape.
+    @Test(arguments: [
+        0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+        0x2066, 0x2067, 0x2068, 0x2069,
+    ] as [UInt32])
+    func aBidiControlIsEscaped(value: UInt32) throws {
+        let scalar = try #require(Unicode.Scalar(value))
+        var name = "a"
+        name.unicodeScalars.append(scalar)
+        name += "b.invalid"
+
+        let escape = "\\u{\(String(value, radix: 16, uppercase: true))}"
+        #expect(ResolveLookups.presentable(name) == "a" + escape + "b.invalid")
+    }
+
     // MARK: - The table
 
     @Test func theTableHasOneRowPerAddressUnderTheThreeColumns() {
@@ -334,7 +366,7 @@ struct ResolveNamesTests {
     /// The host lookup is made to take at least 300 ms, so the budget
     /// handed on can be at most the step's less that — a floor on the time
     /// spent, which a slow runner can only make larger, and the budget
-    /// handed on only smaller. The step's budget is 30 s, which no runner
+    /// handed on only smaller. The step's budget is 600 s, which no runner
     /// comes near, so the naming is never cut here.
     @Test func theNamesAreHandedWhatTheHostLookupLeftOfTheStepsBudget() async throws {
         let spent: Duration = .milliseconds(300)
