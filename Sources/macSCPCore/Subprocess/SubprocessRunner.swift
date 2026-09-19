@@ -143,12 +143,15 @@ package struct SubprocessCancelled: Error, CustomStringConvertible, Sendable {
 }
 
 /// Runs child processes without parking a thread of the Swift concurrency
-/// cooperative pool — for the test suites, and for the two key tools in
+/// cooperative pool — for the test suites, and for the three key tools in
 /// this module that wait for `ssh-keygen` (`SSHKeyGenerator`,
-/// `SSHKeyImporter`; counted 2026-09-19).
+/// `SSHKeyImporter`, `SSHKeyConverter`; the calls to `run` in `Sources/`,
+/// counted 2026-09-19 after the converter joined the other two in Task 3
+/// of the small-follow-ups plan).
 ///
-/// It was test support in `Tests/macSCPCoreTests/Support/` until then, and
-/// moved here so those two could stop parking a thread per `ssh-keygen` run
+/// It was test support in `Tests/macSCPCoreTests/Support/` until the first
+/// two moved onto it, and moved here so those two could stop parking a
+/// thread per `ssh-keygen` run
 /// (about 800 samples of pool threads in the 2026-09-19 measurement of CI
 /// run 35405472152) without a second runner being written for them.
 /// `package`, not `public`: the test targets need it, nothing outside this

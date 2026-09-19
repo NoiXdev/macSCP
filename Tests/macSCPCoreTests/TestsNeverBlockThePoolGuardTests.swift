@@ -441,16 +441,25 @@ struct TestsNeverBlockThePoolGuardTests {
     /// `SubprocessRunner.swift` cannot quietly widen this check's blind
     /// spot — `runnerFile(named:)` would fail to resolve it first, and
     /// every other test that calls it would fail too.
+    ///
+    /// The pattern is matched with whitespace removed, so
+    /// `terminationHandler=` and `terminationHandler  =` are the same
+    /// assignment. And it has a positive of its own (final review of the
+    /// 2026-09-19 small follow-ups, M-7): the runner's own assignment must
+    /// match it in the code view the scan reads, so a drift in the pattern,
+    /// in the runner's spelling or in how `SourceCorpus.code` blanks cannot
+    /// leave this negative matching nothing.
     @Test func noSourceImplementsASecondTerminationHandlerRunner() throws {
-        let pattern = "terminationHandler ="
         let runnerFile = try Self.runnerFile(named: String(describing: SubprocessRunner.self))
+        let runnerAssigns = Self.assignsTerminationHandler(try SourceCorpus.code(of: runnerFile))
+        #expect(runnerAssigns, "the pattern no longer matches the runner's own assignment")
         let candidates = try Self.sourceFiles().filter { file in
             try file.url != runnerFile
-                && SourceCorpus.text(of: file.url).contains(pattern)
+                && Self.assignsTerminationHandler(SourceCorpus.text(of: file.url))
         }
         let codes = try SourceCorpus.code(ofAll: candidates.map(\.url))
         var violations: [String] = []
-        for (file, code) in zip(candidates, codes) where code.contains(pattern) {
+        for (file, code) in zip(candidates, codes) where Self.assignsTerminationHandler(code) {
             violations.append(file.relative)
         }
         #expect(
@@ -462,6 +471,12 @@ struct TestsNeverBlockThePoolGuardTests {
             (Sources/macSCPCore/Subprocess) instead:
             \(violations.sorted().joined(separator: "\n"))
             """)
+    }
+
+    /// Whether `source` assigns a `terminationHandler`, however it is
+    /// spaced.
+    static func assignsTerminationHandler(_ source: String) -> Bool {
+        source.filter { !$0.isWhitespace }.contains("terminationHandler=")
     }
 
     /// Sensitivity: the Sources scan reads code, not prose. The runner's own

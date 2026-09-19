@@ -4,7 +4,12 @@ import Testing
 @testable import macSCPCore
 
 // Tests use isolated temp roots; nothing here touches shared global state.
-@Suite("EditSessionManager")
+//
+// The time limit is a hang bound, not an assertion on elapsed time: the
+// write-back waits below go through `returnedOrCancelled`, so a waiter that
+// never resumes ends the case at the limit instead of holding the process
+// until CI's step timeout (final review of the 2026-09-19 small follow-ups).
+@Suite("EditSessionManager", .timeLimit(.minutes(2)))
 @MainActor
 struct EditSessionManagerTests {
 
@@ -268,7 +273,8 @@ struct EditSessionManagerTests {
         try Data("v2".utf8).write(to: firstURL)
         manager.handleFileEvent(editID: editID)
 
-        await manager.awaitWriteBacksSettled(editID: editID)
+        let settled = await returnedOrCancelled { await manager.awaitWriteBacksSettled(editID: editID) }
+        #expect(settled.returned == .signalled, "the write-backs never settled")
         #expect(uploadCount(queue) == 1)
 
         await manager.stopAll()
@@ -295,7 +301,8 @@ struct EditSessionManagerTests {
         try Data("v2".utf8).write(to: url)
         manager.handleFileEvent(editID: editID)
 
-        await manager.awaitWriteBacksSettled(editID: editID)
+        let settled = await returnedOrCancelled { await manager.awaitWriteBacksSettled(editID: editID) }
+        #expect(settled.returned == .signalled, "the write-backs never settled")
         #expect(uploadCount(queue) == 1)
         #expect(queue.items.first(where: { $0.direction == .upload })?.status == .finished)
         #expect(await remote.writtenData(at: "/dir/a.txt") == Data("v2".utf8))
@@ -312,8 +319,11 @@ struct EditSessionManagerTests {
         // only change notifications. With one armed, the write below was a
         // third, and whenever it reached the main queue after the zero-length
         // debounce had fired it became a second upload (2026-09-19: 1 of 8
-        // sampled full runs; 14 of 5000 repetitions of this test next to 40
-        // CPU-bound processes).
+        // sampled full runs, measured in the CI-starvation plan's Task 2 fix
+        // round, `afterq3` — `docs/BACKLOG.md`, "The flake
+        // `EditSessionManagerTests.twoFastChangesTriggerSingleUpload`"; 14
+        // of 5000 repetitions of this test next to 40 CPU-bound processes,
+        // small-follow-ups Task 2).
         let manager = EditSessionManager(
             sessionID: UUID(), queue: queue,
             debounceInterval: .zero, sleep: { _ in }, watchesLocalFile: false)
@@ -332,7 +342,8 @@ struct EditSessionManagerTests {
         // The final count, not the first moment the count is 1: a surviving
         // first debounce would set `uploadPending`, and its second upload is
         // only enqueued once the first one has finished.
-        await manager.awaitWriteBacksSettled(editID: editID)
+        let settled = await returnedOrCancelled { await manager.awaitWriteBacksSettled(editID: editID) }
+        #expect(settled.returned == .signalled, "the write-backs never settled")
         #expect(uploadCount(queue) == 1)
 
         await manager.stopAll()
@@ -379,7 +390,8 @@ struct EditSessionManagerTests {
         // Release #1. Its completion must enqueue EXACTLY ONE more write-back,
         // which reads the latest ("v3") content — still never concurrent.
         writeGate.fire()
-        await manager.awaitWriteBacksSettled(editID: editID)
+        let settled = await returnedOrCancelled { await manager.awaitWriteBacksSettled(editID: editID) }
+        #expect(settled.returned == .signalled, "the write-backs never settled")
         #expect(uploadCount(queue) == 2)
         #expect(queue.items.filter { $0.direction == .upload }
             .allSatisfy { $0.status == .finished })
