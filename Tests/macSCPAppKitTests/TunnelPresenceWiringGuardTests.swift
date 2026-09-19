@@ -271,6 +271,17 @@ struct TunnelPresenceWiringGuardTests {
             glyph.contains("glyph.tint.color"),
             "the glyph is drawn without the tint the plan chose")
         #expect(glyph.contains("glyph.text"), "the glyph draws a colour with no text beside it")
+        // The SYMBOL is the plan's too since fix round 1 (2026-09-20): it
+        // is what tells a forwarding that keeps failing from one that is
+        // down, on a row where the two tints are the only other
+        // difference. The negative below cannot go stale in silence while
+        // this positive stands beside it.
+        #expect(
+            glyph.contains("glyph.symbol"),
+            "the glyph draws a symbol the row chose instead of the one the plan decided")
+        #expect(
+            !glyph.contains("systemName: \""),
+            "the row spells the forwarding glyph's symbol itself instead of reading the plan's")
         for forbidden in ["DesignTokens.", "Color.", ".red", ".green", ".orange"] {
             #expect(
                 !glyph.contains(forbidden),

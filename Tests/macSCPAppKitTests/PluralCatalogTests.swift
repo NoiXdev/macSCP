@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -163,13 +164,17 @@ struct PluralCatalogTests {
     /// entry is reachable through it rather than only through this suite's
     /// per-language bundle helper.
     ///
-    /// One call site per key in `catalogKeys()`, counted while writing this
-    /// sentence: `SnippetsSheet.swift` for the snippet export,
-    /// `SessionExportImportSheets.swift` for the login export,
-    /// `TabCloseWarning.bulkMessage` for the incoming-transfer line of the
-    /// bulk-close warning, and `TunnelProfilesSheet.stateLabel` twice — for
-    /// a forwarding that is up while connections fail, and for one whose
-    /// last three in a row failed (counted 2026-09-19).
+    /// Which call sites those are is counted by
+    /// `everyPluralKeyIsAskedForInTheApp` below, not described here. The
+    /// sentence that used to stand in this place named them — and named
+    /// them correctly — but nothing checked it: probe D of Task 1
+    /// (2026-09-19) deleted the production branch that asks for
+    /// `tunnel.state.degraded %lld` and every case in this suite stayed
+    /// green, because every one of them resolves the key through
+    /// `L10n.string` and the catalog and never through the `switch` that
+    /// asks for it. A description of other code, with nothing reading it —
+    /// which is what CLAUDE.md's rule about comments that describe other
+    /// code is about.
     @Test
     func resolvesThroughTheProductionLookupPath() {
         for entry in Self.catalogKeys() {
@@ -179,6 +184,36 @@ struct PluralCatalogTests {
             #expect(
                 Self.wordingIgnoringDigits(one) != Self.wordingIgnoringDigits(two),
                 "\(entry.key) did not distinguish 1 from 2 through L10n.string + String(format:): \(one)")
+        }
+    }
+
+    /// **Every key this suite guards is asked for by the App**, in at least
+    /// one `L10n.string` call in `Sources/MacSCPAppKit` — counted here
+    /// rather than listed in a comment. A key whose last production call
+    /// site is deleted stops being a key worth a catalog entry, and until
+    /// this test existed that deletion read exactly like a suite that was
+    /// satisfied.
+    ///
+    /// `commentFree` and not `code`, deliberately: `code(of:)` blanks
+    /// string literals as well as comments, which would blank every key
+    /// this test is looking for. A comment that quotes a key is blanked,
+    /// so a scanner cannot buy a mention for a call.
+    @Test func everyPluralKeyIsAskedForInTheApp() throws {
+        let appSources = try SourceCorpus.files(
+            under: SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
+        ).filter { $0.pathExtension == "swift" }
+        #expect(appSources.count > 1, "the App's sources were not found — re-anchor this guard")
+        let code = try SourceCorpus.commentFree(ofAll: appSources)
+
+        let guarded = Self.catalogKeys() + [(Self.activeTransfersKey, Self.activeTransfersDefault)]
+        for entry in guarded {
+            let needle = "\"\(entry.key)\""
+            let callSites = code.reduce(0) { total, file in
+                total + (file.contains(needle) ? 1 : 0)
+            }
+            #expect(
+                callSites >= 1,
+                "no file under Sources/MacSCPAppKit asks for \(entry.key) any more")
         }
     }
 

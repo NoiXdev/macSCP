@@ -1649,12 +1649,15 @@ private struct SessionRow: View {
             // that hid whether its forwardings were up would be hiding the
             // one thing about them that is visible without a menu.
             //
-            // Colour is never the only channel: the symbol says "forwarding"
-            // and the text beside it says how many are up, or `!`. Both come
-            // from `tunnelGlyph`; this view chooses neither.
+            // Colour is never the only channel: the symbol says whether
+            // this is a forwarding or a warning about one, and the text
+            // beside it says how many are up, how many connections failed
+            // in a row, or `!`. Both come from `tunnelGlyph`; this view
+            // chooses neither, and since fix round 1 (2026-09-20) that is
+            // true of the symbol as well — it used to be spelled here.
             if let glyph = tunnelGlyph {
                 HStack(spacing: 2) {
-                    Image(systemName: "arrow.left.arrow.right")
+                    Image(systemName: glyph.symbol)
                         .font(.system(size: 9, weight: .semibold))
                     if let text = glyph.text {
                         Text(text).font(.system(size: 10, weight: .semibold))

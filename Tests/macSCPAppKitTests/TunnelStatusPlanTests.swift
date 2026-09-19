@@ -50,35 +50,51 @@ struct TunnelStatusPlanTests {
     /// The three cases the design names, in the order they outrank each
     /// other.
     @Test func theBadgeCountsWhatIsUpAndShoutsWhatIsBroken() {
-        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 0, degradedCount: 0) == nil)
-        #expect(DockBadgePlan.label(activeCount: 3, failedCount: 0, degradedCount: 0) == "3")
-        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 1, degradedCount: 0) == "!")
+        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 0, degradedRun: 0) == nil)
+        #expect(DockBadgePlan.label(activeCount: 3, failedCount: 0, degradedRun: 0) == "3")
+        #expect(DockBadgePlan.label(activeCount: 0, failedCount: 1, degradedRun: 0) == "!")
     }
 
     /// The precedence, on its own: a failure is reported even while other
     /// forwardings are up, because a badge reading "2" over a third one that
     /// is down would be the good news drawn over the bad one.
     @Test func aFailureOutranksTheCount() {
-        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 1, degradedCount: 0) == "!")
-        #expect(DockBadgePlan.label(activeCount: 9, failedCount: 4, degradedCount: 0) == "!")
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 1, degradedRun: 0) == "!")
+        #expect(DockBadgePlan.label(activeCount: 9, failedCount: 4, degradedRun: 0) == "!")
     }
 
     /// A forwarding whose last three connections all failed is up, and is
     /// carrying nothing: the badge stops reporting it as one of the good
-    /// ones (maintainer answer, 2026-09-19). Same precedence as a failure,
-    /// and for the same reason — a badge reading `"2"` over a forwarding
-    /// nobody can use is the good news drawn over the bad one. The colour
-    /// the answer belongs to is the glyph's; `NSDockTile` draws its badge
-    /// red whatever it says, so the TEXT is this surface's only channel.
-    @Test func aForwardingThatKeepsFailingOutranksTheCountToo() {
-        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 0, degradedCount: 1) == "!")
-        #expect(DockBadgePlan.label(activeCount: 1, failedCount: 0, degradedCount: 0) == "1")
+    /// ones (maintainer answer, 2026-09-19) — and says how many failed in a
+    /// row rather than the `"!"` a DOWN forwarding gets (coordinator
+    /// ruling, 2026-09-20, fix round 1). `NSDockTile` draws its badge red
+    /// whatever it says, so the text is this surface's only channel and the
+    /// two states may not share it.
+    @Test func aForwardingThatKeepsFailingSaysHowManyNotWhy() {
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 0, degradedRun: 3) == "3")
+        #expect(DockBadgePlan.label(activeCount: 1, failedCount: 0, degradedRun: 0) == "1")
+    }
+
+    /// A failure still outranks it, and that is the mixed case's rule: a
+    /// forwarding that is DOWN is the news, whatever else is happening.
+    @Test func aFailureOutranksAForwardingThatKeepsFailing() {
+        #expect(DockBadgePlan.label(activeCount: 2, failedCount: 1, degradedRun: 7) == "!")
+    }
+
+    /// Several forwardings failing at once: the badge shows the LONGEST run,
+    /// never their sum — no forwarding failed six connections in a row, and
+    /// a badge saying so would be reporting something that did not happen.
+    @Test func severalFailingForwardingsShowTheLongestRun() {
+        let three = Self.failing(3)
+        let five = Self.failing(5)
+        #expect(DockBadgePlan.label(states: [three, five]) == "5")
+        #expect(DockBadgePlan.label(states: [five, three]) == "5")
     }
 
     /// The states form of the same answer, folded through the plan so the
     /// badge is measured over what the report stream produces.
     @Test func theBadgeReadsAForwardingThatKeepsFailingFromItsState() {
-        #expect(DockBadgePlan.label(states: [Self.degraded(), .active(connections: 4)]) == "!")
+        #expect(DockBadgePlan.label(states: [Self.degraded(), .active(connections: 4)]) == "3")
         #expect(DockBadgePlan.label(states: [Self.failingButHealthy(), .active(connections: 4)]) == "2")
     }
 
@@ -108,13 +124,16 @@ struct TunnelStatusPlanTests {
         #expect(TunnelGlyphPlan.glyph(states: []) == nil)
         #expect(
             TunnelGlyphPlan.glyph(states: [.stopped])
-                == TunnelGlyphPlan.Glyph(tint: .grey, text: nil))
+                == TunnelGlyphPlan.Glyph(
+                    tint: .grey, symbol: TunnelGlyphPlan.forwardingSymbol, text: nil))
         #expect(
             TunnelGlyphPlan.glyph(states: [.active(connections: 0)])
-                == TunnelGlyphPlan.Glyph(tint: .green, text: "1"))
+                == TunnelGlyphPlan.Glyph(
+                    tint: .green, symbol: TunnelGlyphPlan.forwardingSymbol, text: "1"))
         #expect(
             TunnelGlyphPlan.glyph(states: [.failed(.portInUse(port: 8080))])
-                == TunnelGlyphPlan.Glyph(tint: .red, text: "!"))
+                == TunnelGlyphPlan.Glyph(
+                    tint: .red, symbol: TunnelGlyphPlan.forwardingSymbol, text: "!"))
     }
 
     /// Red outranks green, and the count gives way to the `"!"` — the same
@@ -157,6 +176,65 @@ struct TunnelStatusPlanTests {
         #expect(TunnelGlyphPlan.glyph(states: oneFailureFirst)?.tint == .amber)
     }
 
+    /// One case per state, pinning what a reader sees WITHOUT the colour:
+    /// the symbol and the text beside it (coordinator ruling, 2026-09-20,
+    /// fix round 1). The two symbol names are read from the plan rather
+    /// than spelled again here; `theWarningSymbolIsAWarning` below is the
+    /// one place either name is written down.
+    @Test(arguments: [
+        (TunnelState.stopped, TunnelGlyphPlan.forwardingSymbol, String?.none),
+        (.connecting, TunnelGlyphPlan.forwardingSymbol, nil),
+        (.active(connections: 0), TunnelGlyphPlan.forwardingSymbol, "1"),
+        (.reconnecting(attempt: 2), TunnelGlyphPlan.forwardingSymbol, nil),
+        (.needsConfirmation, TunnelGlyphPlan.forwardingSymbol, nil),
+        (.failed(.connectionFailed), TunnelGlyphPlan.forwardingSymbol, "!"),
+    ])
+    func everyStateDrawsItsOwnSymbolAndText(
+        _ state: TunnelState, _ symbol: String, _ text: String?
+    ) {
+        let glyph = TunnelGlyphPlan.glyph(states: [state])
+        #expect(glyph?.symbol == symbol)
+        #expect(glyph?.text == text)
+    }
+
+    /// The seventh reading, which is not a case: a forwarding that keeps
+    /// failing draws the warning symbol and says how many failed in a row.
+    @Test func aForwardingThatKeepsFailingDrawsAWarningAndItsRun() {
+        let glyph = TunnelGlyphPlan.glyph(states: [Self.degraded()])
+        #expect(glyph?.symbol == TunnelGlyphPlan.warningSymbol)
+        #expect(glyph?.text == String(TunnelState.failuresBeforeDegraded))
+    }
+
+    /// The two symbols, written down once: a warning triangle for a
+    /// forwarding that is up and carrying nothing, the forwarding arrows
+    /// for everything else. Sight-checkable, and the anchor every other
+    /// case above reads instead of spelling a name.
+    @Test func theWarningSymbolIsAWarning() {
+        #expect(TunnelGlyphPlan.forwardingSymbol == "arrow.left.arrow.right")
+        #expect(TunnelGlyphPlan.warningSymbol == "exclamationmark.triangle.fill")
+    }
+
+    /// **Neither surface tells the two apart by colour alone.** The glyph's
+    /// colour DOES differ (the positive, first) — and with the colour taken
+    /// away, the symbol and the text still differ, on the glyph and on the
+    /// Dock badge, whose red is AppKit's and not ours to choose. This is
+    /// the file's own "colour never alone" invariant, stated for the pair
+    /// that came closest to breaking it.
+    @Test func aFailingForwardingAndAFailedOneDifferWithoutColour() {
+        let failing = TunnelGlyphPlan.glyph(states: [Self.degraded()])
+        let failed = TunnelGlyphPlan.glyph(states: [.failed(.connectionFailed)])
+        #expect(failing != nil && failed != nil)
+        #expect(failing?.tint != failed?.tint)
+
+        func withoutColour(_ glyph: TunnelGlyphPlan.Glyph?) -> [String?] {
+            [glyph?.symbol, glyph?.text]
+        }
+        #expect(withoutColour(failing) != withoutColour(failed))
+        #expect(
+            DockBadgePlan.label(states: [Self.degraded()])
+                != DockBadgePlan.label(states: [.failed(.connectionFailed)]))
+    }
+
     /// A failure still outranks it: a forwarding that is DOWN is worse news
     /// than one that is up and carrying nothing.
     @Test func aFailedForwardingStillOutranksAFailingOne() {
@@ -188,7 +266,8 @@ struct TunnelStatusPlanTests {
     @Test func severalStoppedForwardingsStillDrawNoCount() {
         #expect(
             TunnelGlyphPlan.glyph(states: [.stopped, .stopped, .stopped])
-                == TunnelGlyphPlan.Glyph(tint: .grey, text: nil))
+                == TunnelGlyphPlan.Glyph(
+                    tint: .grey, symbol: TunnelGlyphPlan.forwardingSymbol, text: nil))
     }
 
     // MARK: - Which moments a launch runs

@@ -55,10 +55,34 @@ enum TunnelStatusTint: Equatable, Sendable {
 /// `.connecting` tunnel is not `.active`, and neither is a `.reconnecting`
 /// one, so the number is the same across the pair.
 enum TunnelGlyphPlan {
+    /// The symbol a row draws for its forwardings: two arrows, the mark
+    /// this app has always used for a forwarding.
+    static let forwardingSymbol = "arrow.left.arrow.right"
+
+    /// And the one it draws instead while a forwarding is up and carrying
+    /// nothing — a WARNING, not a stop: the forwarding is still listening,
+    /// which is exactly what makes it worth warning about. The same
+    /// triangle the transfer queue and the detail pane already use for
+    /// "look at this", rather than a seventh mark nobody has seen before.
+    ///
+    /// **Why the glyph has a symbol at all** (coordinator ruling,
+    /// 2026-09-20, fix round 1): until then a forwarding that kept failing
+    /// and one that was DOWN both drew `"!"` beside the same arrows, and
+    /// only the tint told them apart — which is the one thing this file's
+    /// own rule says a surface may never rely on, and the one channel a
+    /// colour-blind reader does not have.
+    static let warningSymbol = "exclamationmark.triangle.fill"
+
     struct Glyph: Equatable, Sendable {
         var tint: TunnelStatusTint
-        /// The count of active forwardings, `"!"` when any failed, or `nil`
-        /// when there is no number worth drawing (everything stopped, or
+        /// Which mark is drawn: `forwardingSymbol`, or `warningSymbol`
+        /// while a forwarding keeps failing. It also says WHICH number
+        /// `text` is — the arrows count forwardings that are up, the
+        /// triangle counts connections that failed in a row.
+        var symbol: String
+        /// The count of active forwardings, the length of the failure run
+        /// while one keeps failing, `"!"` when any failed, or `nil` when
+        /// there is no number worth drawing (everything stopped, or
         /// everything still on its way).
         var text: String?
     }
@@ -74,9 +98,19 @@ enum TunnelGlyphPlan {
         let aggregate = TunnelManager.Aggregate.of(states)
         return Glyph(
             tint: tint(worst: aggregate.worst),
+            symbol: symbol(states: states),
             text: DockBadgePlan.label(
                 activeCount: aggregate.active, failedCount: failedCount(states),
-                degradedCount: degradedCount(states)))
+                degradedRun: degradedRun(states)))
+    }
+
+    /// The warning triangle exactly when the text beside it is a failure
+    /// run — which is exactly when `DockBadgePlan.label` answers with one:
+    /// nothing failed outright, and something keeps failing. Derived from
+    /// the same two numbers the label is, so the mark and the number can
+    /// never describe two different readings.
+    static func symbol(states: [TunnelState]) -> String {
+        failedCount(states) == 0 && degradedRun(states) > 0 ? warningSymbol : forwardingSymbol
     }
 
     /// How many of these forwardings are `.failed`. `.needsConfirmation` is
@@ -86,12 +120,21 @@ enum TunnelGlyphPlan {
         states.count(where: { if case .failed = $0 { return true } else { return false } })
     }
 
-    /// How many of these forwardings are up and carrying nothing — the last
-    /// three connections in a row failed (maintainer answer, 2026-09-19).
-    /// The threshold is `TunnelState.isDegraded`'s, in Core, where the CLI
-    /// reads it too; nothing here counts failures itself.
-    static func degradedCount(_ states: [TunnelState]) -> Int {
-        states.count(where: \.isDegraded)
+    /// The LONGEST run of failed connections among the forwardings that are
+    /// up and carrying nothing — the last three in a row failed (maintainer
+    /// answer, 2026-09-19); `0` when none of them is. The threshold is
+    /// `TunnelState.isDegraded`'s, in Core, where the CLI reads it too;
+    /// nothing here counts failures itself.
+    ///
+    /// **The longest, never the sum** (coordinator ruling, 2026-09-20): two
+    /// forwardings that each failed three connections in a row did not fail
+    /// six, and a badge saying `6` would be reporting a run that never
+    /// happened.
+    static func degradedRun(_ states: [TunnelState]) -> Int {
+        states.map { state in
+            guard case .active(_, let failed, _) = state, state.isDegraded else { return 0 }
+            return failed
+        }.max() ?? 0
     }
 
     /// **An `.active` forwarding is green unless it keeps failing.** Three
@@ -117,7 +160,9 @@ enum TunnelGlyphPlan {
 /// `nil` is "no badge at all", which is what the design asks for when
 /// nothing is running and nothing failed. The `"!"` outranks the count on
 /// purpose: a badge that read `"2"` while a third forwarding was down would
-/// be reporting the good news over the bad one.
+/// be reporting the good news over the bad one. A forwarding that keeps
+/// failing outranks it too, and says the length of its failure run instead
+/// of `"!"` — the badge's one channel has to carry that difference.
 ///
 /// **The badge is drawn red by AppKit itself.** `NSDockTile.badgeLabel`
 /// renders in the system's own red badge; there is no API to tint it and no
@@ -128,16 +173,23 @@ enum DockBadgePlan {
     /// `"!"` on any failure or any forwarding that keeps failing, otherwise
     /// the active count, otherwise `nil`.
     ///
-    /// **`degradedCount` outranks the count for the same reason a failure
+    /// **`degradedRun` outranks the count for the same reason a failure
     /// does** (maintainer answer, 2026-09-19): a forwarding whose last three
     /// connections in a row failed is up and carrying nothing, so counting
-    /// it among the good ones is the good news drawn over the bad one. It
-    /// is not distinguished from a failure HERE, and cannot be: the badge
-    /// has one colour, AppKit's own red, so its text is its only channel.
-    /// The distinction the maintainer asked for — orange, not red — is the
-    /// glyph's, which has a tint (`TunnelGlyphPlan`).
-    static func label(activeCount: Int, failedCount: Int, degradedCount: Int) -> String? {
-        if failedCount > 0 || degradedCount > 0 { return "!" }
+    /// it among the good ones is the good news drawn over the bad one.
+    ///
+    /// **It says how many, where a failure says `"!"`** (coordinator
+    /// ruling, 2026-09-20, fix round 1). The badge's colour is AppKit's
+    /// red and not ours to choose, so its text is the only channel it has,
+    /// and the two states may not share it. The mixed cases, in the order
+    /// the code asks them: any forwarding DOWN wins and the badge reads
+    /// `"!"`; otherwise a failure run wins over the count of what is up;
+    /// among several runs the longest is shown (`TunnelGlyphPlan
+    /// .degradedRun`). On the sidebar the number is read with the glyph's
+    /// symbol, which says which number it is.
+    static func label(activeCount: Int, failedCount: Int, degradedRun: Int) -> String? {
+        if failedCount > 0 { return "!" }
+        if degradedRun > 0 { return String(degradedRun) }
         guard activeCount > 0 else { return nil }
         return String(activeCount)
     }
@@ -148,7 +200,7 @@ enum DockBadgePlan {
         label(
             activeCount: TunnelManager.Aggregate.of(states).active,
             failedCount: TunnelGlyphPlan.failedCount(states),
-            degradedCount: TunnelGlyphPlan.degradedCount(states))
+            degradedRun: TunnelGlyphPlan.degradedRun(states))
     }
 }
 
