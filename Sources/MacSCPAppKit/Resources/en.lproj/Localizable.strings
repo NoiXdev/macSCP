@@ -107,6 +107,13 @@
 "connection.title" = "New connection";
 "connection.field.host" = "Host";
 "connection.field.host.placeholder" = "server.example.com";
+"connection.host.resolve" = "Resolve…";
+"connection.host.resolve.help" = "Looks this name up and offers its addresses to use instead";
+"connection.host.resolve.choose" = "Use address";
+"connection.host.resolve.resolving" = "Resolving…";
+"connection.host.resolve.note" = "Connecting to an address asks you to confirm the server's host key again, and the name is not kept.";
+"connection.host.resolve.noAddress" = "No address was found for this name.";
+"connection.host.resolve.noAnswer" = "The name did not resolve in time.";
 "connection.field.port" = "Port";
 "connection.field.username" = "Username";
 "connection.field.authMethod" = "Authentication";

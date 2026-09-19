@@ -70,19 +70,37 @@ struct SchemaFormView: View {
 
     /// An advisory line drawn UNDER a field, saying what the app made of what
     /// is typed there. Returns nil for a field that has nothing to say, which
-    /// is every field but one today.
+    /// is every field but three today (counted against
+    /// `ConnectionFormView.fieldFootnote`'s arms on 2026-09-19): S3's
+    /// endpoint, S3's path-style toggle, and SSH's host, where the
+    /// "Resolve…" action beside it (`accessory`) says what it found.
     ///
-    /// That one is S3's endpoint (2026-09-03): `host:9000` is a spelling the
-    /// parse now reads as `https://host:9000`, and a user who cannot see the
-    /// scheme that was assumed cannot tell why a plain-HTTP server refuses
-    /// them. The text is the caller's, out of the App's catalogs — Core
-    /// composes the origin (`S3FieldSchema.canonicalEndpoint`) and never a
-    /// sentence.
+    /// The first of them is S3's endpoint (2026-09-03): `host:9000` is a
+    /// spelling the parse now reads as `https://host:9000`, and a user who
+    /// cannot see the scheme that was assumed cannot tell why a plain-HTTP
+    /// server refuses them. The text is the caller's, out of the App's
+    /// catalogs — Core composes the origin (`S3FieldSchema.canonicalEndpoint`)
+    /// and never a sentence.
     ///
     /// A closure rather than a schema field, because the answer depends on
     /// the VALUE and is recomputed as it is typed; `ConnectionField` carries
     /// only what is true of the field itself.
     var footnote: ((_ field: ConnectionField, _ value: String) -> String?)?
+
+    /// A control drawn BESIDE a field, in the same row. Returns nil for a
+    /// field that has none, which is every field but one today: SSH's host,
+    /// where the form puts "Resolve…" (`HostResolveControl`).
+    ///
+    /// Asked for top-level fields only; a group's leaves never get one. The
+    /// one group declared today is SSH's jump (counted with `grep` for
+    /// `.group(` in Core on 2026-09-19), and it is not drawn here at all:
+    /// the form skips it (`skipping`) and draws the jump host's row itself,
+    /// deliberately without the action.
+    ///
+    /// A closure for the reason `footnote` is one: the control is App-only
+    /// UI that no schema vocabulary describes, and whether it is offered
+    /// depends on the form's kind, not on the field alone.
+    var accessory: ((_ field: ConnectionField) -> AnyView?)?
 
     /// Fields whose value is decided by a RULE rather than by the user: the
     /// id maps to the value the form must show, and the row is rendered
@@ -129,7 +147,8 @@ struct SchemaFormView: View {
     private func row(for field: ConnectionField) -> some View {
         if let leafKind = field.kind.asLeafKind {
             leafRow(label: L10n.string(field.labelKey, field.labelDefault),
-                    kind: leafKind, binding: binding(field.id))
+                    kind: leafKind, binding: binding(field.id),
+                    accessory: accessory?(field))
                 .errorHighlight(failedFieldID == key(field.id))
                 // Greyed for a field whose value a rule decides. The footnote
                 // below stays enabled, because the sentence explaining why is
@@ -174,14 +193,25 @@ struct SchemaFormView: View {
     /// The control keeps its own title for VoiceOver -- `FormRow` hides its
     /// visible label from it (M6a) -- while `prompt:` stays empty so the title
     /// does not also surface as an in-field placeholder.
+    ///
+    /// `accessory` sits beside a text or number field, in the same row; the
+    /// other kinds have no room for one and ignore it.
     @ViewBuilder
     private func leafRow(
-        label: String, kind: LeafField.Kind, binding: Binding<String>
+        label: String, kind: LeafField.Kind, binding: Binding<String>,
+        accessory: AnyView? = nil
     ) -> some View {
         switch kind {
         case .text, .number:
             FormRow(label: label) {
-                TextField(label, text: binding, prompt: Text(verbatim: ""))
+                if let accessory {
+                    HStack(spacing: 8) {
+                        TextField(label, text: binding, prompt: Text(verbatim: ""))
+                        accessory
+                    }
+                } else {
+                    TextField(label, text: binding, prompt: Text(verbatim: ""))
+                }
             }
         case .secret:
             FormRow(label: label) {

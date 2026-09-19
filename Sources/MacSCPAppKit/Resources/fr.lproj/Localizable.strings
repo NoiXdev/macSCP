@@ -109,6 +109,13 @@
 "connection.title" = "Nouvelle connexion";
 "connection.field.host" = "Hôte";
 "connection.field.host.placeholder" = "server.example.com";
+"connection.host.resolve" = "Résoudre…";
+"connection.host.resolve.help" = "Recherche ce nom et propose ses adresses à utiliser à la place";
+"connection.host.resolve.choose" = "Utiliser l’adresse";
+"connection.host.resolve.resolving" = "Résolution…";
+"connection.host.resolve.note" = "Se connecter à une adresse vous demande de confirmer à nouveau la clé d’hôte du serveur, et le nom n’est pas conservé.";
+"connection.host.resolve.noAddress" = "Aucune adresse n’a été trouvée pour ce nom.";
+"connection.host.resolve.noAnswer" = "Le nom n’a pas été résolu à temps.";
 "connection.field.port" = "Port";
 "connection.field.username" = "Nom d'utilisateur";
 "connection.field.authMethod" = "Authentification";

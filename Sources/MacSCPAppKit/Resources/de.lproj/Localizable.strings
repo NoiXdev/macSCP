@@ -107,6 +107,13 @@
 "connection.title" = "Neue Verbindung";
 "connection.field.host" = "Host";
 "connection.field.host.placeholder" = "server.example.com";
+"connection.host.resolve" = "Auflösen…";
+"connection.host.resolve.help" = "Schlägt diesen Namen nach und bietet seine Adressen stattdessen an";
+"connection.host.resolve.choose" = "Adresse verwenden";
+"connection.host.resolve.resolving" = "Wird aufgelöst…";
+"connection.host.resolve.note" = "Beim Verbinden mit einer Adresse bestätigst du den Host-Schlüssel des Servers erneut, und der Name wird nicht behalten.";
+"connection.host.resolve.noAddress" = "Für diesen Namen wurde keine Adresse gefunden.";
+"connection.host.resolve.noAnswer" = "Der Name wurde nicht rechtzeitig aufgelöst.";
 "connection.field.port" = "Port";
 "connection.field.username" = "Benutzername";
 "connection.field.authMethod" = "Authentifizierung";

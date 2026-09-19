@@ -137,6 +137,10 @@ struct ConnectionFormView: View {
     /// replaces the M17 `SettingsLink` to the Settings tab with a locally
     /// opened sheet, same pattern as `showLoginSetsSheet` above.
     @State private var showSSHKeysSheet = false
+    /// "Resolve…" beside the SSH host field (`HostResolveControl`), and the
+    /// line under it (`fieldFootnote`). One per form, so what one window
+    /// resolves is not offered in another.
+    @State private var hostResolve = HostResolveModel()
 
     private var isConnecting: Bool { viewModel.state == .connecting }
 
@@ -758,7 +762,14 @@ struct ConnectionFormView: View {
     }
 
     /// What a field's value was UNDERSTOOD as, drawn under the field by
-    /// `SchemaFormView.footnote`. Two fields answer today, both S3's.
+    /// `SchemaFormView.footnote`. Three fields answer today: two of S3's,
+    /// below, and SSH's host.
+    ///
+    /// **The SSH host** carries what "Resolve…" beside it found
+    /// (`HostResolveModel.footnote(for:)`): under an offer of addresses, the
+    /// note that the server's host key is confirmed again for the address
+    /// and that the name is not kept; when there is no address, or no answer
+    /// in time, the message saying so.
     ///
     /// **The endpoint** prints where the request will actually go. The parse
     /// behind it accepts spellings that are not URLs as typed — a schemeless
@@ -783,6 +794,9 @@ struct ConnectionFormView: View {
     /// in Core, over a `KEY:SECRET@host` endpoint
     /// (`noCredentialInTheEndpointReachesTheOriginOrTheCanonicalSpelling`).
     private func fieldFootnote(_ field: ConnectionField, _ value: String) -> String? {
+        if HostResolveModel.isOffered(for: viewModel.kind), field.id == SSHField.host.rawValue {
+            return HostResolveModel.footnote(for: hostResolve.presentation(forHost: value))
+        }
         guard viewModel.kind == .s3 else { return nil }
         switch field.id {
         case S3Field.endpoint.rawValue:
@@ -805,6 +819,21 @@ struct ConnectionFormView: View {
         default:
             return nil
         }
+    }
+
+    /// The control drawn beside a field, handed to
+    /// `SchemaFormView.accessory`: "Resolve…" beside the host field of an SSH
+    /// form, in new and edit mode alike, and nothing anywhere else.
+    ///
+    /// Not for S3 or WebDAV (`HostResolveModel.isOffered(for:)`), whose TLS
+    /// certificate is checked against the name. Not for the jump host
+    /// either: its row is drawn by `sshJumpSection`, which this closure never
+    /// reaches — the action covers the target host only.
+    private func fieldAccessory(_ field: ConnectionField) -> AnyView? {
+        guard HostResolveModel.isOffered(for: viewModel.kind),
+              field.id == SSHField.host.rawValue
+        else { return nil }
+        return AnyView(HostResolveControl(model: hostResolve, form: viewModel))
     }
 
     /// The values a RULE decides for this form, handed to
@@ -1094,7 +1123,7 @@ struct ConnectionFormView: View {
                 isEditMode: isEditMode, resolve: resolveOptions,
                 failedFieldID: failedFieldID, skipping: Self.customRenderedFields,
                 interceptEdit: interceptEdit, footnote: fieldFootnote,
-                forcedValues: forcedFieldValues)
+                accessory: fieldAccessory, forcedValues: forcedFieldValues)
         case .loginModeSwitcher:
             loginModeSwitcher
         case .loginSetPicker:
