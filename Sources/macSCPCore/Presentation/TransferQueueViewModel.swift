@@ -1554,9 +1554,10 @@ public final class TransferQueueViewModel {
         // rendered the error's description, so without this arm the queue
         // showed the raw case. It reads exactly like the browser's arm in
         // `RemoteBrowserViewModel.message(for:path:)`, deliberately: a new
-        // `RemoteFSError` case needs an arm in both `message(for:)`s. This
-        // one's `default:` no longer dumps (fix round 1 above), but it
-        // would read Foundation's generic sentence for a case it missed.
+        // `RemoteFSError` case needs an arm in both `message(for:)`s.
+        // Neither `default:` dumps any more (this one since fix round 1
+        // above, the browser's since the plan's final review), but each
+        // would read a generic sentence for a case it missed.
         case RemoteFSError.bucketLevelRefused(let operation, _):
             return CoreL10n.string(operation.refusalMessageKey)
         // The second arm the same lesson asks for: a new `RemoteFSError`

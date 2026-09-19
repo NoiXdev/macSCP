@@ -2861,7 +2861,10 @@ struct TransferQueueViewModelTests {
     /// `createDirectory("/name")`, which `S3FileSystem` refuses — and until
     /// this arm existed the queue rendered the raw case through
     /// `default:`. Every operation, so a case added later cannot slip
-    /// through with a dump.
+    /// through to that arm, which since fix round 1 of 2026-09-19's Task 1
+    /// reads a generic sentence rather than a dump — the negative below
+    /// compares against that sentence (`defaultArmText(for:)`), the text the
+    /// arm produces today.
     @Test func everyBucketLevelRefusalGetsAWrittenSentenceInTheQueue() {
         for operation in RemoteFSError.BucketLevelOperation.allCases {
             let error = RemoteFSError.bucketLevelRefused(operation: operation, path: "/photos")
@@ -2871,8 +2874,7 @@ struct TransferQueueViewModelTests {
             // The catalog answered (a missing key comes back AS the key),
             // and the raw dump is not what came out.
             #expect(message != operation.refusalMessageKey)
-            #expect(message != String(
-                format: CoreL10n.string("core.transfer.failed %@"), String(describing: error)))
+            #expect(message != Self.defaultArmText(for: error))
         }
     }
 
@@ -2880,7 +2882,10 @@ struct TransferQueueViewModelTests {
     /// from a transfer today (nothing in the queue renames), but the arm
     /// exists for the same reason its sibling does: a missing arm reads
     /// the `default:`'s generic sentence (until fix round 1 of 2026-09-19's
-    /// Task 1, the error's whole description) instead of a written one.
+    /// Task 1, the error's whole description) instead of a written one. The
+    /// browser's `message(for:path:)` has the same shape since the final
+    /// review of that plan: neither `default:` dumps any more, and both read
+    /// a generic sentence for a case they miss.
     @Test func aCrossBucketRenameRefusalGetsAWrittenSentenceInTheQueueToo() {
         let error = RemoteFSError.crossBucketRenameRefused(
             from: "/one/a.txt", to: "/two/a.txt")
@@ -2890,8 +2895,15 @@ struct TransferQueueViewModelTests {
 
         #expect(message == CoreL10n.string(key))
         #expect(message != key)
-        #expect(message != String(
-            format: CoreL10n.string("core.transfer.failed %@"), String(describing: error)))
+        #expect(message != Self.defaultArmText(for: error))
+    }
+
+    /// What the queue's `message(for:)` `default:` arm reads for `error` —
+    /// the text an arm of its own must NOT produce.
+    static func defaultArmText(for error: any Error) -> String {
+        String(
+            format: CoreL10n.string("core.transfer.failed %@"),
+            URLText.withoutUserinfo((error as NSError).localizedDescription))
     }
 
     // MARK: - 43 (M6b/T1)

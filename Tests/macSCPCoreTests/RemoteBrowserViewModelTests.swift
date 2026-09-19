@@ -291,9 +291,12 @@ struct RemoteBrowserViewModelTests {
     }
 
     /// A bucket-level refusal (2026-09-02) is its own `RemoteFSError` case,
-    /// so it gets its own sentence instead of falling into `default:` and
-    /// dumping `String(describing:)` — which would print the operation name
-    /// and the path at the user.
+    /// so it gets its own sentence instead of falling into `default:`. That
+    /// arm dumped `String(describing:)` — the operation name and the path —
+    /// until the final review of the 2026-09-19 small follow-ups; it now
+    /// reads `DialSupport.reason(for:)`'s generic sentence, and the negatives
+    /// below compare against what it reads today (`defaultArmText(for:)`),
+    /// not against the dump it can no longer produce.
     @Test func everyBucketLevelRefusalGetsItsOwnMessageRatherThanARawDump() {
         for operation in RemoteFSError.BucketLevelOperation.allCases {
             let error = RemoteFSError.bucketLevelRefused(
@@ -306,8 +309,7 @@ struct RemoteBrowserViewModelTests {
             // comes back as the key itself), and the raw dump is NOT what
             // came out.
             #expect(message != operation.refusalMessageKey)
-            #expect(message != String(
-                format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+            #expect(message != Self.defaultArmText(for: error))
         }
     }
 
@@ -323,8 +325,7 @@ struct RemoteBrowserViewModelTests {
 
         #expect(message == CoreL10n.string(key))
         #expect(message != key)
-        #expect(message != String(
-            format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+        #expect(message != Self.defaultArmText(for: error))
     }
 
     /// `.bucketListForbidden` reaches a BROWSE action too (Task 3 review,
@@ -337,8 +338,7 @@ struct RemoteBrowserViewModelTests {
         let message = RemoteBrowserViewModel.message(for: error, path: "/")
 
         #expect(message == CoreL10n.string("core.connect.s3BucketListForbidden"))
-        #expect(message != String(
-            format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)))
+        #expect(message != Self.defaultArmText(for: error))
     }
 
     /// The deliberate asymmetry to the test above (M18a final review): the
@@ -1737,5 +1737,61 @@ struct RemoteBrowserViewModelTests {
         vm.sortKey = .owner
 
         #expect(vm.items.map(\.name) == ["zdir", "afile.txt"])
+    }
+
+    // MARK: - No raw error reaches the banner (final review of 2026-09-19)
+
+    /// What `message(for:path:)`'s `default:` arm reads for `error` — the
+    /// text an arm of its own must NOT produce.
+    static func defaultArmText(for error: any Error) -> String {
+        String(
+            format: CoreL10n.string("core.error.unexpected %@"),
+            URLText.withoutUserinfo(DialSupport.reason(for: error)))
+    }
+
+    /// An error no arm names used to reach the banner — and, through
+    /// `load()`'s catch, the diagnostic log — as its whole description,
+    /// which prints the failing URL out of its `userInfo`, credential and
+    /// all. It now reads `DialSupport.reason(for:)`'s sentence (a foreign
+    /// error's localized sentence, never its description), with every URL's
+    /// userinfo cut out, inside the same localized frame. The credential
+    /// lives in `TransferErrorSecrecyTests`' named constants, and the leak
+    /// `Bool` is computed before its `#expect`.
+    @Test func anUnmappedErrorReachesTheBannerWithoutItsDescriptionOrUserinfo() {
+        let foreign = NSError(
+            domain: NSURLErrorDomain, code: URLError.badServerResponse.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey: "no answer from \(TransferErrorSecrecyTests.credentialURL)",
+                NSURLErrorFailingURLStringErrorKey: TransferErrorSecrecyTests.credentialURL,
+            ])
+        let message = RemoteBrowserViewModel.message(for: foreign, path: "/remote.bin")
+        let leaks = TransferErrorSecrecyTests.leaks(message)
+        let readsTheFilteredSentence = message == String(
+            format: CoreL10n.string("core.error.unexpected %@"),
+            "no answer from https://s3.example.test/macscp-seed/remote.bin")
+        #expect(leaks == false, "the banner carries the credential")
+        #expect(readsTheFilteredSentence)
+
+        let raw = TransferErrorSecrecyTests.lostConnectionCarryingTheCredential
+        let rawLeaks = TransferErrorSecrecyTests.leaks(RemoteBrowserViewModel.message(for: raw, path: "/"))
+        #expect(rawLeaks == false, "the banner carries the credential of a raw URLError")
+    }
+
+    /// The source guard, scoped to the body of `message(for:path:)` — the
+    /// file is large, and the rest of it is not a path to the banner. Read
+    /// with comments blanked and strings kept. Positives beside the
+    /// negative: the declaration is there, and the body still goes through
+    /// `DialSupport.reason(` and the userinfo filter.
+    @Test func noBrowserMessagePathRendersARawError() throws {
+        let file = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/Presentation/RemoteBrowserViewModel.swift")
+        let declaration = "static func message(for error: Error, path: String) -> String"
+        let body = try #require(
+            try TransferErrorSecrecyTests.body(opening: declaration, in: file),
+            "`\(declaration)` is gone — renamed?")
+        #expect(body.contains("\(String(describing: DialSupport.self)).reason("))
+        #expect(body.contains(TransferErrorSecrecyTests.filter))
+        let found = TransferErrorSecrecyTests.violations(in: body)
+        #expect(found.isEmpty, "\(found)")
     }
 }

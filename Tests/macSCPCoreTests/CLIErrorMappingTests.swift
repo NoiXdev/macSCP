@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -210,4 +211,125 @@ struct CLIErrorMappingTests {
         #expect(message.contains("could not be read"))
         #expect(message.contains("not changed"))
     }
+
+    // MARK: - No raw error reaches stderr (final review of 2026-09-19, the CLI fix)
+
+    /// A backend's own reason reaches stderr filtered — kept, because the CLI
+    /// is where a person or a script debugs a connection, but with every
+    /// URL's userinfo cut out, the way the transfer queue shows it. The
+    /// credential lives in `TransferErrorSecrecyTests`' named constants, and
+    /// each leak `Bool` is computed before its `#expect`.
+    @Test func aBackendsReasonReachesStderrWithoutUserinfo() {
+        let reason = "S3 request failed at \(TransferErrorSecrecyTests.credentialURL)"
+        let kept = "S3 request failed at https://s3.example.test/macscp-seed/remote.bin"
+        for error in [
+            RemoteFSError.connectionFailed(reason: reason), .protocolError(reason: reason),
+        ] {
+            let message = CLIErrorMapping.message(for: error)
+            let leaks = TransferErrorSecrecyTests.leaks(message)
+            let keepsTheReason = message.contains(kept)
+            #expect(leaks == false, "stderr carries the credential")
+            #expect(keepsTheReason, "stderr lost the backend's reason")
+        }
+        // The frames themselves are unchanged.
+        #expect(CLIErrorMapping.message(for: RemoteFSError.connectionFailed(reason: "x"))
+            == "Error: connection failed: x")
+        #expect(CLIErrorMapping.message(for: RemoteFSError.protocolError(reason: "x")) == "Error: x")
+    }
+
+    /// An error no arm names — a raw `URLError` a backend forgot to wrap —
+    /// used to reach stderr as its whole description, which prints the
+    /// failing URL out of its `userInfo`, credential and all. It now reads
+    /// `DialSupport.reason(for:)`'s sentence (a foreign error's localized
+    /// sentence, never its description), filtered, and exits as before.
+    @Test func anUnmappedErrorReachesStderrWithoutItsDescription() {
+        let raw = TransferErrorSecrecyTests.lostConnectionCarryingTheCredential
+        let message = CLIErrorMapping.message(for: raw)
+        let leaks = TransferErrorSecrecyTests.leaks(message)
+        let readsTheSentence =
+            message == "Error: " + URLText.withoutUserinfo(DialSupport.reason(for: raw))
+        #expect(leaks == false, "stderr carries the credential")
+        #expect(readsTheSentence)
+        #expect(CLIErrorMapping.exitCode(for: raw) == .connection)
+    }
+
+    /// The same fallback for an error whose localized sentence itself quotes
+    /// the URL: the filter is what stands between it and stderr.
+    @Test func anUnmappedErrorsOwnSentenceReachesStderrWithoutUserinfo() {
+        let foreign = NSError(
+            domain: NSURLErrorDomain, code: URLError.badServerResponse.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey: "no answer from \(TransferErrorSecrecyTests.credentialURL)",
+                NSURLErrorFailingURLStringErrorKey: TransferErrorSecrecyTests.credentialURL,
+            ])
+        let message = CLIErrorMapping.message(for: foreign)
+        let leaks = TransferErrorSecrecyTests.leaks(message)
+        let readsTheFilteredSentence =
+            message == "Error: no answer from https://s3.example.test/macscp-seed/remote.bin"
+        #expect(leaks == false, "stderr carries the credential")
+        #expect(readsTheFilteredSentence)
+    }
+
+    /// The case that fires in practice: an S3 endpoint whose secret holds a
+    /// `/` does not parse, and `URLText.withoutUserinfo` cannot clean it —
+    /// so the CLI filter alone would be false assurance here. The throw
+    /// sites carry a fixed sentence instead (`S3EndpointReason`), and that
+    /// is what reaches stderr.
+    @Test func anUnparseableS3EndpointReachesStderrWithoutTheCredential() {
+        let config = S3EndpointSecrecyTests.config(
+            endpoint: S3EndpointSecrecyTests.unparseableEndpoint, usePathStyle: true)
+        var message = ""
+        do {
+            _ = try S3FileSystem.signedRequest(.bucketRoot(bucket: "macscp-seed"), method: "GET", config: config)
+        } catch {
+            message = CLIErrorMapping.message(for: error)
+        }
+        let leaks = S3EndpointSecrecyTests.leaks(message)
+        let readsTheRefusal = message == "Error: connection failed: \(S3EndpointReason.unparseable)"
+        #expect(leaks == false, "stderr carries the endpoint's credential")
+        #expect(readsTheRefusal)
+    }
+
+    /// The source guard over `message(for:)`'s body, read with comments
+    /// blanked and strings KEPT (an interpolation is inside a literal):
+    /// no description, no interpolated error outside the two allowlisted
+    /// arms, no localized sentence and no backend `reason` that skips
+    /// `URLText.withoutUserinfo`.
+    ///
+    /// `PasswordCommandError` and `KeychainError` keep `\(error)`: neither
+    /// carries command output or a secret — the password command's stdout
+    /// never enters an error, and `KeychainError` is a status code. They are
+    /// allowed by type, and each allowed arm must still exist and still
+    /// interpolate, or the allowance is stale.
+    @Test func noCLIMessagePathRendersARawError() throws {
+        let body = try #require(
+            try TransferErrorSecrecyTests.body(opening: Self.declaration, in: Self.file),
+            "`\(Self.declaration)` is gone — renamed?")
+        #expect(body.contains(TransferErrorSecrecyTests.filter), "the mapping no longer filters")
+        let lines = body.split(separator: "\n").map(String.init)
+        var allowed: Set<String> = []
+        for type in Self.allowlisted {
+            let arm = "case is \(type):"
+            guard let index = lines.firstIndex(where: { $0.contains(arm) }) else {
+                Issue.record("the allowlisted arm `\(arm)` is gone — drop it from the allowlist")
+                continue
+            }
+            let next = lines[(index + 1)...].first { !$0.allSatisfy(\.isWhitespace) }
+            guard let next, next.contains("\\(error") else {
+                Issue.record("the allowlisted arm `\(arm)` no longer interpolates the error — drop it")
+                continue
+            }
+            allowed.insert(next)
+        }
+        var found = TransferErrorSecrecyTests.violations(in: body).filter { !allowed.contains($0) }
+        found += lines.filter { $0.contains("\\(reason") }
+        #expect(found.isEmpty, "\(found)")
+    }
+
+    static let declaration = "public static func message(for error: Error) -> String"
+    static let allowlisted = [
+        String(describing: PasswordCommandError.self), String(describing: KeychainError.self),
+    ]
+    static let file = SourceCorpus.url(of: .sources)
+        .appendingPathComponent("macSCPCore/CLI/CLIErrorMapping.swift")
 }

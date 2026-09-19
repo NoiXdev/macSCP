@@ -168,6 +168,37 @@ struct TransferErrorSecrecyTests {
         return found
     }
 
+    /// The body of the function whose declaration is `declaration` in `url`
+    /// — from its opening brace to the matching closing one — in the
+    /// comment-free view (strings kept), or `nil` when no such declaration
+    /// is there. The braces are matched in the code view, where comments
+    /// and strings are blanked, so a brace inside either cannot end the
+    /// body early; the two views are the same length (`SourceCorpus`), so
+    /// the span found in one is the span in the other.
+    ///
+    /// For guards over one function of a large file (`CLIErrorMapping`'s
+    /// and `RemoteBrowserViewModel`'s `message(for:…)`), so the rest of the
+    /// file is not what they read.
+    static func body(opening declaration: String, in url: URL) throws -> String? {
+        let commentFree = try SourceCorpus.commentFree(of: url)
+        let code = Array(try SourceCorpus.code(of: url))
+        guard let found = commentFree.range(of: declaration) else { return nil }
+        let text = Array(commentFree)
+        var index = commentFree.distance(from: commentFree.startIndex, to: found.upperBound)
+        while index < code.count, code[index] != "{" { index += 1 }
+        let start = index
+        var depth = 0
+        while index < code.count {
+            if code[index] == "{" { depth += 1 }
+            if code[index] == "}" {
+                depth -= 1
+                if depth == 0 { return String(text[start...index]) }
+            }
+            index += 1
+        }
+        return nil
+    }
+
     static let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 }

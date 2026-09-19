@@ -1251,9 +1251,11 @@ public final class RemoteBrowserViewModel {
         case RemoteFSError.bucketLevelRefused(let operation, _):
             return CoreL10n.string(operation.refusalMessageKey)
         // The second arm the same lesson asks for: a new `RemoteFSError`
-        // case needs an arm in both view models called `message(for:)` —
-        // this one's `default:` still dumps the case; the queue's no longer
-        // does, but reads a generic sentence for a case it missed.
+        // case needs an arm in both view models called `message(for:)`.
+        // Neither `default:` dumps the case any more (the queue's since fix
+        // round 1 of the 2026-09-19 small follow-ups' Task 1, this one's
+        // since that plan's final review), but each reads only a generic
+        // sentence for a case it missed.
         case RemoteFSError.crossBucketRenameRefused:
             return CoreL10n.string("core.connect.s3CrossBucketRename")
         // `.bucketListForbidden` is NOT connect-time only (Task 3 review,
@@ -1282,8 +1284,20 @@ public final class RemoteBrowserViewModel {
         case RemoteFSError.connectionFailed:
             return String(
                 format: CoreL10n.string("core.error.connectionLost %@"), DialSupport.reason(for: error))
+        // Never the error's own description (final review of the 2026-09-19
+        // small follow-ups): an `NSError`'s description prints its whole
+        // `userInfo`, the failing URL among it, and this text is written to
+        // the diagnostic log as well as the banner. `DialSupport.reason(for:)`
+        // renders any error as a fixed sentence or its localized sentence —
+        // the same mapper the two arms above hand this frame — and
+        // `URLText.withoutUserinfo` cuts the userinfo out of a URL that
+        // sentence quotes. It also turns what used to print as a bare case
+        // name (`jumpAuthenticationFailed`, `bucketListEmpty`) into a
+        // sentence, with no new catalogue key.
         default:
-            return String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error))
+            return String(
+                format: CoreL10n.string("core.error.unexpected %@"),
+                URLText.withoutUserinfo(DialSupport.reason(for: error)))
         }
     }
 }

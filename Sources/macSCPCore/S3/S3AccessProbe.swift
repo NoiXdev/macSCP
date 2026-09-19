@@ -119,11 +119,15 @@ struct S3AccessProbe: Sendable {
             request = try self.request(for: call)
         } catch {
             // Deliberately NOT the error's own text. Every error on this path
-            // is built by interpolating the configured endpoint — "Invalid S3
-            // endpoint: \(config.endpoint)" in the URL builders, "S3 endpoint
-            // has no host: \(config.endpoint)" in the signer — and that field
+            // used to be built by interpolating the configured endpoint —
+            // "Invalid S3 endpoint: <endpoint>" in the URL builders, "S3
+            // endpoint has no host: <endpoint>" in the signer — and that field
             // is ordinary input a credential travels in
-            // (`https://KEY:SECRET@host`, which no schema here strips).
+            // (`https://KEY:SECRET@host`, which no schema here strips). Since
+            // the final review of the 2026-09-19 small follow-ups (I-2) those
+            // reasons are fixed sentences (`S3EndpointReason`) that carry no
+            // endpoint; this row keeps its own sentence regardless, so what
+            // it prints does not depend on how those are worded.
             //
             // Measured 2026-09-03: a password containing `/` makes the whole
             // string an invalid URL, so this arm is exactly the one such an

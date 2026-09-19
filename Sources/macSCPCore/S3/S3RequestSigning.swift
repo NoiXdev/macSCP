@@ -1,5 +1,33 @@
 import Foundation
 
+/// Why an S3 endpoint could not be turned into a request — fixed sentences
+/// that name the part that failed and never its value (final review of the
+/// 2026-09-19 small follow-ups, I-2).
+///
+/// The endpoint is ordinary input that a credential travels in
+/// (`https://KEY:SECRET@host`, which no schema here strips), and these
+/// refusals fire for exactly such an endpoint: a `/` in the secret makes the
+/// whole string unparseable. The same `/` ends `URLText.withoutUserinfo`'s
+/// authority scan before the `@`, so a reason that carried the endpoint
+/// could not be cleaned by any filter further down — it reached the CLI's
+/// stderr and the connect form verbatim. `S3EndpointSecrecyTests` drives
+/// each refusal it can reach with such an endpoint and scans the backend's
+/// sources for any interpolated endpoint.
+enum S3EndpointReason {
+    /// The endpoint does not parse as a URL (`S3FileSystem`'s URL builders).
+    static let unparseable = "Invalid S3 endpoint: it is not a URL that can be read"
+    /// The endpoint parses but names no host to put the bucket in front of
+    /// (`S3FileSystem`'s virtual-hosted builders).
+    static let noHostForBucket = "Invalid S3 endpoint host: the URL names no host"
+    /// The endpoint parses, but no request URL could be built from it with
+    /// the bucket and key in place (`S3FileSystem`'s URL builders).
+    static let requestURLUnbuildable =
+        "Failed to build S3 request URL for endpoint: the bucket and key do not fit into it"
+    /// The URL a request is signed for has no host (`S3RequestSigning`,
+    /// `S3FileSystem.presignedURL`).
+    static let noHost = "S3 endpoint has no host"
+}
+
 /// The one place a signed S3 request is assembled: `Host`, `Authorization`
 /// and the signer's companion headers set on a `URLRequest` whose URL and
 /// signed canonical path/query are guaranteed to be the same ones.
@@ -29,7 +57,7 @@ enum S3RequestSigning {
         body: Data?, payloadHash: String, config: S3ConnectionConfig
     ) throws -> URLRequest {
         guard let host = url.host else {
-            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.noHost)
         }
         let hostHeader = url.port.map { "\(host):\($0)" } ?? host
 

@@ -125,9 +125,10 @@ struct ConnectFailureSecrecyTests {
     private static let deadPort = 1
 
     /// Checks both halves of the claim, because only one of them is about
-    /// the display: the error's OWN textual form (what a log, a `print`, or
-    /// the CLI's stderr fallback would render) and the message the connect
-    /// form publishes from it.
+    /// the display: the error's OWN textual form (what a log or a `print`
+    /// would render, and what the CLI's stderr fallback rendered until the
+    /// final review of the 2026-09-19 small follow-ups) and the message the
+    /// connect form publishes from it.
     @MainActor
     private func expectNoSecret(
         in error: Error, jumpEnabled: Bool = false,

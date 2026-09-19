@@ -938,13 +938,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// pairing lives (see `S3RequestShape`).
     private static func bucketListURL(config: S3ConnectionConfig) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
-            throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.unparseable)
         }
         components.percentEncodedPath = "/"
         components.percentEncodedQuery = nil
         guard let url = components.url else {
-            throw RemoteFSError.connectionFailed(
-                reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.requestURLUnbuildable)
         }
         return url
     }
@@ -1255,14 +1254,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
-            throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.unparseable)
         }
         if config.usePathStyle {
             components.percentEncodedPath = SigV4Signer.canonicalURI(
                 path: canonicalKeyPath(config: config, bucket: bucket, key: key))
         } else {
             guard let host = components.host else {
-                throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
+                throw RemoteFSError.connectionFailed(reason: S3EndpointReason.noHostForBucket)
             }
             components.host = "\(bucket).\(host)"
             components.percentEncodedPath = SigV4Signer.canonicalURI(
@@ -1272,7 +1271,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         components.percentEncodedQuery = queryPairs.isEmpty ? nil : SigV4Signer.canonicalQueryString(query: queryPairs)
 
         guard let url = components.url else {
-            throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.requestURLUnbuildable)
         }
         return url
     }
@@ -1371,13 +1370,13 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         config: S3ConnectionConfig, bucket: String, queryPairs: [(name: String, value: String)]
     ) throws -> URL {
         guard var components = S3FieldSchema.endpointComponents(config.endpoint) else {
-            throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.unparseable)
         }
         if config.usePathStyle {
             components.path = "/" + bucket
         } else {
             guard let host = components.host else {
-                throw RemoteFSError.connectionFailed(reason: "Invalid S3 endpoint host: \(config.endpoint)")
+                throw RemoteFSError.connectionFailed(reason: S3EndpointReason.noHostForBucket)
             }
             components.host = "\(bucket).\(host)"
             components.path = ""
@@ -1386,7 +1385,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         components.percentEncodedQuery = SigV4Signer.canonicalQueryString(query: queryPairs)
 
         guard let url = components.url else {
-            throw RemoteFSError.connectionFailed(reason: "Failed to build S3 request URL for endpoint: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.requestURLUnbuildable)
         }
         return url
     }
@@ -1430,7 +1429,7 @@ extension S3FileSystem: PresignedURLProvider {
         let addressed = try Self.addressed(
             .objectKey(bucket: bucket, key: objectKey), query: [], config: config)
         guard let host = addressed.url.host else {
-            throw RemoteFSError.connectionFailed(reason: "S3 endpoint has no host: \(config.endpoint)")
+            throw RemoteFSError.connectionFailed(reason: S3EndpointReason.noHost)
         }
         let hostHeader = addressed.url.port.map { "\(host):\($0)" } ?? host
         let signer = SigV4Signer(

@@ -265,6 +265,11 @@ public enum CLIErrorMapping {
         // and nothing read from it.
         case SSHKeyError.managedKeyStoreUnreadable:
             return "Error: " + DialSupport.reason(for: error)
+        // The two arms allowed to print the error itself, by type
+        // (`CLIErrorMappingTests.noCLIMessagePathRendersARawError`):
+        // neither carries a secret or command output — the password
+        // command's stdout never enters an error, and a `KeychainError` is a
+        // status code.
         case is PasswordCommandError:
             return "Error: --password-command failed: \(error)"
         case is KeychainError:
@@ -275,14 +280,18 @@ public enum CLIErrorMapping {
                 return "Error: authentication failed"
             case .jumpAuthenticationFailed:
                 return "Error: authentication to the jump host failed"
+            // A backend's reason is kept — the CLI is where a person or a
+            // script debugs a connection — but filtered, the way the
+            // transfer queue shows it: the backends compose it, and a URL
+            // they quote may carry `KEY:SECRET@`.
             case .connectionFailed(let reason):
-                return "Error: connection failed: \(reason)"
+                return "Error: connection failed: \(URLText.withoutUserinfo(reason))"
             case .notFound(let path):
                 return "Error: not found: \(path)"
             case .permissionDenied(let path):
                 return "Error: permission denied: \(path)"
             case .protocolError(let reason):
-                return "Error: \(reason)"
+                return "Error: \(URLText.withoutUserinfo(reason))"
             case .bucketListForbidden:
                 return "Error: this key may not list the account's buckets"
             case .bucketListEmpty:
@@ -296,33 +305,32 @@ public enum CLIErrorMapping {
                     + "macSCP does not move objects between buckets"
             }
         default:
-            // Stringifying an arbitrary, unmapped error is a FLOOR, not a
-            // guarantee, and this comment used to claim the opposite: that
-            // no error type reachable from a subcommand's `run()` carries
-            // user-supplied secret material in an associated value. That
-            // was measured false. A `URLError` from `URLSession` reached
-            // here through any WebDAV operation, and an `NSError`'s
-            // `description` prints its whole `userInfo` — including the
-            // failing URL verbatim, userinfo component and all, so a stored
-            // WebDAV session whose base URL carries `user:password@` handed
-            // that password to stderr through this line.
+            // Never the error's own description (final review of the
+            // 2026-09-19 small follow-ups). An `NSError`'s `description`
+            // prints its whole `userInfo` — the failing URL among it,
+            // userinfo component and all — so this line, which used to read
+            // `"Error: \(error)"`, handed a stored WebDAV session's
+            // `user:password@` to stderr whenever a `URLError` reached it.
+            // Measured, not assumed, on the WebDAV path while the wrap sat
+            // on its dial alone; the S3 download body broke the same wrapping
+            // habit until the plan's Task 1 (found on the transfer queue,
+            // `task-1-review.md`).
             //
-            // What makes the fallback safe is not a property of this switch
-            // but a habit at every throw site: each backend wraps foreign
-            // errors before they leave it (`WebDAVFileSystem.surfaceable`,
-            // `S3FileSystem`'s `localizedDescription` wrapping,
-            // `CitadelFileSystem`'s mapping). A backend that forgets is a
-            // leak here, and this fallback cannot tell the difference —
-            // which is exactly what happened on the WebDAV path, where the
-            // wrap sat on the dial alone while six other operations threw
-            // straight through.
+            // The old comment here said the fallback was safe only while
+            // every backend wraps a foreign error before it leaves — a habit
+            // at each throw site, not a property of this switch. It no
+            // longer rests on that habit: `DialSupport.reason(for:)` renders
+            // an unmapped error as a fixed sentence or, for a foreign one,
+            // as its localized sentence (never its description), and
+            // `URLText.withoutUserinfo` cuts the userinfo out of any URL that
+            // sentence quotes. That filter is a backstop with a documented
+            // hole (a credential holding `/` or whitespace), which is why
+            // the backends still wrap at the throw site and compose no text
+            // out of a typed endpoint (`S3EndpointReason`).
             //
-            // So: an error type that embeds user input, or a backend that
-            // rethrows a foreign one unwrapped, leaks to stderr through
-            // this line. Adding a case here is one fix; wrapping at the
-            // throw site is the better one, because this fallback is not
-            // the only thing that stringifies an error.
-            return "Error: \(error)"
+            // `DialSupport` rather than `CoreL10n`: CLI output stays plain
+            // English, and `DialSupport`'s sentences are English.
+            return "Error: \(URLText.withoutUserinfo(DialSupport.reason(for: error)))"
         }
     }
 }

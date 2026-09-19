@@ -183,13 +183,16 @@ struct S3AccessProbeTests {
     /// schema here strips.
     ///
     /// Such an endpoint is not a usable URL, and the errors that say so
-    /// interpolate it (`S3FileSystem`'s "Invalid S3 endpoint: …",
-    /// `S3RequestSigning`'s "S3 endpoint has no host: …"). This comment used
+    /// interpolated it (`S3FileSystem`'s "Invalid S3 endpoint: …",
+    /// `S3RequestSigning`'s "S3 endpoint has no host: …") until the final
+    /// review of the 2026-09-19 small follow-ups (I-2) made them fixed
+    /// sentences (`S3EndpointReason`, pinned by `S3EndpointSecrecyTests`).
+    /// This comment used
     /// to say that printing those through `DialSupport.reason(for:)` would
     /// hand the row to `URLText.withoutUserinfo`'s known hole (a password
     /// containing `/` ends the authority scan before the `@`) — true when
     /// written, false since `bd6ec81f`. Neither text ever reaches a row now:
-    /// `S3AccessProbe`'s own catch (`S3AccessProbe.swift:135`) returns a
+    /// `S3AccessProbe`'s own catch (`S3AccessProbe.swift:139`) returns a
     /// fixed `unusableEndpointReason` sentence instead of the error's
     /// message, and `DialSupport.reason(for:)`'s `RemoteFSError` arm would
     /// not print it either even if this path did reach it — `connectionFailed`

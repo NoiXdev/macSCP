@@ -128,10 +128,15 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// `NSErrorFailingURLStringKey`, verbatim, userinfo component included.
     /// Measured against a dead loopback port: the secret is present in
     /// `String(describing:)` and absent from `localizedDescription`. The
-    /// reachable sinks all stringify: the CLI's stderr fallback, the
-    /// transfer-failure text and the browse-error text. No attacker is
-    /// needed to reach them -- a timeout, a DNS failure or a dropped
-    /// connection during an ordinary session is enough.
+    /// reachable sinks all stringified when this was written: the CLI's
+    /// stderr fallback, the transfer-failure text and the browse-error
+    /// text. None of the three describes an error any more (the queue since
+    /// fix round 1 of the 2026-09-19 small follow-ups' Task 1, the other two
+    /// since that plan's final review), but wrapping here stays the defence:
+    /// their filter, `URLText.withoutUserinfo`, is a backstop with a
+    /// documented hole. No attacker is needed to reach them -- a timeout, a
+    /// DNS failure or a dropped connection during an ordinary session is
+    /// enough.
     ///
     /// Round 1 of this fix wrapped `connect` alone, which left `list`,
     /// `stat`, `readStream`, `delete`, `createDirectory` and `rename`
