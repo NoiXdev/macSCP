@@ -51,11 +51,10 @@ struct S3QueueCancelTests {
         #expect(answeredWhenCancelAllReturned == false)
         #expect(arrived == .signalled, "the abort was never sent")
         await cancel.task.value
-        // The item's status is not asserted: `S3FileSystem.send` maps any
-        // transport error, a cancellation included, to `connectionFailed`,
-        // so this item reads "Connection lost" — a pre-existing mapping this
-        // case is not about (recorded in the Task 2 report, fix round 2).
-        #expect(queue.items.first?.status.isRunning == false)
+        // A user's Cancel reads as cancelled, not as a lost connection: the
+        // part request's cancellation reaches the queue as one
+        // (`HTTPTransferCancelTests` drives every leg of it).
+        #expect(queue.items.first?.status == .cancelled)
 
         // The one caller that asks waits for the answer, and reads it.
         #expect(await fs.incompleteUploadMayRemain(at: "/big.bin") == false)

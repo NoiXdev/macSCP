@@ -90,3 +90,33 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         return (stream, http)
     }
 }
+
+/// How an HTTP backend hands a cancelled request's end to its caller.
+///
+/// The transfer queue recognises a cancellation by its type alone — `catch
+/// is CancellationError` in `TransferQueueViewModel.process` — which is what
+/// SFTP's read and write hand through (`CitadelFileSystem`). A `URLSession`
+/// request whose task is cancelled throws `URLError(.cancelled)` instead
+/// (measured 2026-09-19, both while `data(for:)` awaited a response and
+/// while a `bytes(for:)` body was mid-stream), and an HTTP backend that
+/// wrapped it — or a `CancellationError` — as a connection failure made a
+/// user's Cancel read "Connection lost".
+enum HTTPCancellation {
+    /// A `CancellationError` when `error` is how a cancelled request ended —
+    /// a `CancellationError`, or a `URLError(.cancelled)` thrown while the
+    /// current task is cancelled — and `nil` for anything else.
+    ///
+    /// The `URLError` counts only in a cancelled task, because the same
+    /// code also ends a request whose SESSION was ended under it (a
+    /// `disconnect()` cancelling its session) and, on WebDAV, one whose
+    /// challenge the session's delegate refused (`WebDAVSessionDelegate`).
+    /// Neither is a Cancel anyone pressed, and reading either as one would
+    /// hide a failure behind it.
+    static func cancellation(in error: any Error) -> CancellationError? {
+        if let cancellation = error as? CancellationError { return cancellation }
+        if let urlError = error as? URLError, urlError.code == .cancelled, Task.isCancelled {
+            return CancellationError()
+        }
+        return nil
+    }
+}

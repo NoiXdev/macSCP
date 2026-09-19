@@ -441,8 +441,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
         // The streaming counterpart of `send`, kept here rather than folded
         // into it because its return type differs; the two arms match it
-        // line for line, refused-redirect check included. A download runs on
-        // the same session and therefore under the same policy.
+        // line for line, refused-redirect check and cancellation included. A
+        // download runs on the same session and therefore under the same
+        // policy.
         let body: AsyncThrowingStream<Data, Error>
         let response: HTTPURLResponse
         do {
@@ -451,12 +452,13 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         } catch let error as RemoteFSError {
             throw error
         } catch {
+            if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
             if let refused = channel.refusedRedirect() { throw refused }
             throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
         }
         switch response.statusCode {
         case 200..<300:
-            return body
+            return Self.cancellable(body)
         case 416:
             return AsyncThrowingStream { $0.finish() }
         case 403:
@@ -466,6 +468,34 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         default:
             throw RemoteFSError.protocolError(reason: "S3 download failed with HTTP status \(response.statusCode)")
         }
+    }
+
+    /// `body`, with a cancelled request's end handed on as a
+    /// `CancellationError` (`HTTPCancellation`) — a Cancel mid-download
+    /// lands in the body, long after `readStream` returned, and `URLSession`
+    /// ends it with `URLError(.cancelled)`. Every other error passes through
+    /// unchanged, as it did before this wrapper existed: a body's transport
+    /// failure is not wrapped as `connectionFailed`.
+    ///
+    /// Pull-based, like the body it wraps: the `unfolding:` closure runs
+    /// only when the consumer asks, in the consumer's task — which is why
+    /// `HTTPCancellation` sees that task's cancellation.
+    ///
+    /// `nonisolated(unsafe)` on the same argument as
+    /// `URLSessionHTTPTransport.sendStreaming`'s iterator: this one is made
+    /// here, never stored or handed out, and advanced only by the closure
+    /// that produces the returned stream, which has a single consumer.
+    static func cancellable(
+        _ body: AsyncThrowingStream<Data, Error>
+    ) -> AsyncThrowingStream<Data, Error> {
+        nonisolated(unsafe) var iterator = body.makeAsyncIterator()
+        return AsyncThrowingStream(unfolding: {
+            do {
+                return try await iterator.next()
+            } catch {
+                throw HTTPCancellation.cancellation(in: error) ?? error
+            }
+        })
     }
 
     /// Delegates to `S3Uploader` (M13/T5). `mode` is ignored: Task 1's
@@ -725,6 +755,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             } catch let error as RemoteFSError {
                 throw error
             } catch {
+                if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
                 throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
             }
             guard (200..<300).contains(response.statusCode) else {

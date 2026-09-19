@@ -140,14 +140,19 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// operation added later gets this for free, and "which methods
     /// remembered to wrap" stops being a thing anyone has to know.
     ///
-    /// Two kinds of error pass through unchanged, and both are the app's
-    /// own vocabulary rather than the network's: `RemoteFSError`, already
-    /// mapped and already safe, and `CancellationError`, which the transfer
+    /// Two kinds of error are not wrapped, and both are the app's own
+    /// vocabulary rather than the network's: `RemoteFSError`, already
+    /// mapped and already safe, passes through unchanged, and a cancelled
+    /// request's end — a `CancellationError`, or the `URLError(.cancelled)`
+    /// a `URLSession` request throws when its task is cancelled — goes on
+    /// as a `CancellationError` (`HTTPCancellation`), which the transfer
     /// queue distinguishes from a failure and would report as one if it
-    /// were wrapped.
+    /// were wrapped. A `URLError(.cancelled)` in a task that is NOT
+    /// cancelled is still wrapped: it is also how a refused challenge ends
+    /// a request (`WebDAVSessionDelegate`), which is a failure.
     static func surfaceable(_ error: Error) -> Error {
         if let fsError = error as? RemoteFSError { return fsError }
-        if error is CancellationError { return error }
+        if let cancellation = HTTPCancellation.cancellation(in: error) { return cancellation }
         // `localizedDescription` is the localized sentence alone ("Could
         // not connect to the server."), which carries no URL and no
         // dictionary whose keys Foundation, not macSCP, decides.

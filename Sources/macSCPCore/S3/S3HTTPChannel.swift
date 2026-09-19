@@ -74,6 +74,12 @@ struct S3HTTPChannel: S3AbortChannel {
     /// endpoint tried to send them elsewhere. Checked on both outcomes
     /// because a refusal can also precede a genuine transport failure — a
     /// declined redirect whose 3xx body then fails to arrive.
+    ///
+    /// A cancelled request is the exception, and is read first: it reaches
+    /// the caller as a `CancellationError` (`HTTPCancellation`), so a user's
+    /// Cancel reads as cancelled rather than as a lost connection — and
+    /// rather than as a refused redirect, which is sticky for the session's
+    /// life and would otherwise explain every later Cancel too.
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         do {
             let result = try await transport.send(request)
@@ -82,6 +88,7 @@ struct S3HTTPChannel: S3AbortChannel {
         } catch let error as RemoteFSError {
             throw error
         } catch {
+            if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
             if let refused = refusedRedirect() { throw refused }
             throw RemoteFSError.connectionFailed(reason: "S3 request failed: \(error.localizedDescription)")
         }
