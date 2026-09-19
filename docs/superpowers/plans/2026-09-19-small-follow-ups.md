@@ -23,9 +23,9 @@
 
 **Row:** "S3: a user's Cancel of an upload or download can read \"Connection lost\"".
 
-- [ ] `S3FileSystem.send` (and every other place the S3 transport wraps errors — grep for the `connectionFailed` wrapping) passes a `CancellationError` and a `URLError.cancelled` through as the queue's cancellation, not `connectionFailed`. Read how the transfer queue recognises a cancellation for SFTP and match it exactly. Check WebDAV's transport for the same shape and fix it there too if present (state what you found).
-- [ ] Tests, red first: an injected transport throwing `CancellationError`, and one throwing `URLError(.cancelled)`, during an upload and a download → the queue item reads cancelled, not "Connection lost"; a real transport failure (`URLError(.networkConnectionLost)`) still reads "Connection lost". The throughput probe's and the multipart abort's handling of cancellation (2026-09-19) must stay as they are — run their suites.
-- [ ] Whole suite, zero warnings. Commit `fix(s3): a cancelled transfer reads as cancelled, not as a lost connection`.
+- [x] `S3FileSystem.send` (and every other place the S3 transport wraps errors — grep for the `connectionFailed` wrapping) passes a `CancellationError` and a `URLError.cancelled` through as the queue's cancellation, not `connectionFailed`. Read how the transfer queue recognises a cancellation for SFTP and match it exactly. Check WebDAV's transport for the same shape and fix it there too if present (state what you found).
+- [x] Tests, red first: an injected transport throwing `CancellationError`, and one throwing `URLError(.cancelled)`, during an upload and a download → the queue item reads cancelled, not "Connection lost"; a real transport failure (`URLError(.networkConnectionLost)`) still reads "Connection lost". The throughput probe's and the multipart abort's handling of cancellation (2026-09-19) must stay as they are — run their suites.
+- [x] Whole suite, zero warnings. Commit `fix(s3): a cancelled transfer reads as cancelled, not as a lost connection`.
 
 ---
 
@@ -33,10 +33,10 @@
 
 **Row:** "The flake `EditSessionManagerTests.twoFastChangesTriggerSingleUpload`".
 
-- [ ] Systematic debugging: read the test and `EditSessionManager`'s debounce/upload path; form a hypothesis about how two fast changes can yield two uploads (a timer, a file-system event coalescing boundary, a main-actor ordering); reproduce it deterministically (repeat the test under load, e.g. alongside a CPU-bound loop, and record the rate), then confirm the cause with the smallest instrumented change.
-- [ ] Fix the cause — in the product if the product can upload twice for one burst a user would consider one change, in the test if the test encodes a timing assumption (then the test must assert the property without a wall-clock ceiling). State which, and why.
-- [ ] Prove it: the reproduction's rate before and after (e.g. N of M under the same load).
-- [ ] Whole suite, zero warnings. Commit `fix(edit): …` or `test(edit): …` naming the cause.
+- [x] Systematic debugging: read the test and `EditSessionManager`'s debounce/upload path; form a hypothesis about how two fast changes can yield two uploads (a timer, a file-system event coalescing boundary, a main-actor ordering); reproduce it deterministically (repeat the test under load, e.g. alongside a CPU-bound loop, and record the rate), then confirm the cause with the smallest instrumented change.
+- [x] Fix the cause — in the product if the product can upload twice for one burst a user would consider one change, in the test if the test encodes a timing assumption (then the test must assert the property without a wall-clock ceiling). State which, and why.
+- [x] Prove it: the reproduction's rate before and after (e.g. N of M under the same load).
+- [x] Whole suite, zero warnings. Commit `fix(edit): …` or `test(edit): …` naming the cause.
 
 ---
 
@@ -44,15 +44,15 @@
 
 **Row:** "Task 2's deferred minors: the async key-tool surface" (its `SSHKeyConverter.waitForExit` item).
 
-- [ ] `SSHKeyConverter` (re-verify: `waitForExit(_:)` near `:116`) awaits its own `Process` with a private helper. Move it onto `SubprocessRunner` (`Sources/macSCPCore/Subprocess/`, `package` access, 2026-09-19) the way `SSHKeyGenerator`/`SSHKeyImporter` now use it; behaviour, error mapping and passphrase handling unchanged (read how the passphrase reaches `ssh-keygen` here and keep it exactly as private).
-- [ ] Tests: the existing converter tests green; the guard in `TestsNeverBlockThePoolGuardTests` (or a sibling) pins that no second runner shape remains in Sources (negative beside a positive that the converter uses the runner).
-- [ ] Whole suite, zero warnings. Commit `refactor(keys): the key converter awaits ssh-keygen through the shared runner`.
+- [x] `SSHKeyConverter` (re-verify: `waitForExit(_:)` near `:116`) awaits its own `Process` with a private helper. Move it onto `SubprocessRunner` (`Sources/macSCPCore/Subprocess/`, `package` access, 2026-09-19) the way `SSHKeyGenerator`/`SSHKeyImporter` now use it; behaviour, error mapping and passphrase handling unchanged (read how the passphrase reaches `ssh-keygen` here and keep it exactly as private).
+- [x] Tests: the existing converter tests green; the guard in `TestsNeverBlockThePoolGuardTests` (or a sibling) pins that no second runner shape remains in Sources (negative beside a positive that the converter uses the runner).
+- [x] Whole suite, zero warnings. Commit `refactor(keys): the key converter awaits ssh-keygen through the shared runner`.
 
 ---
 
 ### Task 4: Closeout
 
-- [ ] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-19** sentence leading the row with its commits (history kept after it); anything recorded as open gets its own row. This plan's step boxes ticked. Commit `docs(backlog): the small follow-ups of 2026-09-19 are recorded`.
+- [x] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-19** sentence leading the row with its commits (history kept after it); anything recorded as open gets its own row. This plan's step boxes ticked. Commit `docs(backlog): the small follow-ups of 2026-09-19 are recorded`.
 
 ## Self-review
 
