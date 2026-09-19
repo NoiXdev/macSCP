@@ -992,6 +992,53 @@ struct DiagnosticsViewModelTests {
             """)
     }
 
+    /// The resolve step's check words, each looked up under ITS OWN key — the
+    /// round trip `everyTraceOutcomeWordIsLookedUpUnderItsOwnKey` makes for
+    /// the trace, for the same reason: a swapped key changes no key set, and
+    /// only a rendered word that differs from Core's can show it.
+    @Test func everyNameCheckWordIsLookedUpUnderItsOwnKey() {
+        let check = DiagnosticNameColumn.check
+        let missing = "«no entry»"
+        let words: [(word: String, key: String)] = [
+            (DiagnosticNameColumn.resolvesBack, "diagnostics.names.check.resolvesBack"),
+            (DiagnosticNameColumn.doesNotResolveBack, "diagnostics.names.check.doesNotResolveBack"),
+            (DiagnosticNameColumn.notAName, "diagnostics.names.check.notAName"),
+            (DiagnosticNameColumn.noName, "diagnostics.names.check.noName"),
+            (DiagnosticNameColumn.noAnswer, "diagnostics.names.check.noAnswer"),
+        ]
+        for (word, key) in words {
+            let rendered = DiagnosticsPresentation.cell(word, column: check)
+            let underItsOwnKey = rendered == L10n.string(key, missing)
+            let differsFromWhatCoreComposed = rendered != word
+            #expect(underItsOwnKey, "`\(word)` must render as what \(key) resolves to. Got: \(rendered)")
+            #expect(differsFromWhatCoreComposed, """
+                the entry for \(key) must not be the word Core composed, or the assertion above \
+                is satisfied by a mapping that looks nothing up. Got: \(rendered)
+                """)
+        }
+    }
+
+    /// Only the check column is looked up. A name is what the resolver
+    /// answered and is copied through, even one that happens to spell a check
+    /// word; a resolver's own sentence in the check column is shown as it was
+    /// measured; and the three headers have entries of their own.
+    @Test func theNameTablesMeasuredCellsAreCopiedThrough() {
+        let spelled = DiagnosticNameColumn.noName
+        #expect(DiagnosticsPresentation.cell(spelled, column: DiagnosticNameColumn.name) == spelled)
+        #expect(
+            DiagnosticsPresentation.cell("192.0.2.1", column: DiagnosticNameColumn.address)
+                == "192.0.2.1")
+        let sentence = "nodename nor servname provided, or not known"
+        #expect(
+            DiagnosticsPresentation.cell(sentence, column: DiagnosticNameColumn.check) == sentence)
+        for key in DiagnosticNameColumn.all {
+            let title = DiagnosticsPresentation.columnTitle(key)
+            #expect(title != key.components(separatedBy: ".").last, """
+                \(key) must have an entry of its own, not degrade to the column's name: \(title)
+                """)
+        }
+    }
+
     @Test func aRowsDurationIsRenderedInTheReportsOwnFormat() {
         let step = Self.step(id: DiagnosticStepID.tcp)
         #expect(DiagnosticsPresentation.duration(of: step).contains("12"))

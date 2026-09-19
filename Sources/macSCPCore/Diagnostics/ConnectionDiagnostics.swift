@@ -214,6 +214,7 @@ public actor ConnectionDiagnostics {
     private let appVersion: String
     private let jump: DiagnosticJump?
     private let jumpDialer: DiagnosticJumpDialer
+    private let lookups: ResolveLookups
 
     /// - Parameters:
     ///   - secrets: where a contribution's credential comes from — the same
@@ -261,12 +262,16 @@ public actor ConnectionDiagnostics {
             descriptor: descriptor, values: values, secrets: secrets, sessionID: sessionID,
             jump: jump,
             jumpDialer: .live(knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory)),
+            lookups: .live,
             stepTimeout: stepTimeout, traceTimeout: traceTimeout, appVersion: appVersion)
     }
 
-    /// The same, with the jump's two dials injected — the suite's seam
-    /// (`DiagnosticJumpDialer`). The public initializer hands the real ones,
-    /// over the known-hosts store the app's own connect reads.
+    /// The same, with the jump's two dials and the resolve step's lookups
+    /// injected — the suite's seams (`DiagnosticJumpDialer`,
+    /// `ResolveLookups`). The public initializer hands the real ones: the
+    /// dials over the known-hosts store the app's own connect reads, and the
+    /// machine's resolver. `lookups` defaults to that resolver, so the cases
+    /// that are not about the resolve keep the walk they always had.
     init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -274,6 +279,7 @@ public actor ConnectionDiagnostics {
         sessionID: UUID? = nil,
         jump: DiagnosticJump?,
         jumpDialer: DiagnosticJumpDialer,
+        lookups: ResolveLookups = .live,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -284,6 +290,7 @@ public actor ConnectionDiagnostics {
         self.sessionID = sessionID
         self.jump = jump
         self.jumpDialer = jumpDialer
+        self.lookups = lookups
         self.stepTimeout = stepTimeout
         self.traceTimeout = traceTimeout
         self.appVersion = appVersion
@@ -699,19 +706,38 @@ public actor ConnectionDiagnostics {
 
     // MARK: - The universal steps
 
+    /// The resolve step — this Mac's lookup of `endpoint`, as `resolve` or
+    /// as `jump.resolve` — and then each address it found named
+    /// (`ResolveLookups`): a reverse lookup, and a forward lookup of that
+    /// name to see whether it leads back.
+    ///
+    /// **One budget for all of it.** The naming gets what the host lookup
+    /// left of `stepTimeout`, measured on the step's own clock, so a
+    /// resolve row never takes longer than a resolve row always could. A
+    /// lookup that does not answer inside it is a `no answer` cell and not
+    /// a `timedOut` row: the addresses were found, and they are what every
+    /// later step probes.
+    ///
+    /// **Never a verdict.** The row is `ok` whatever the names say — the
+    /// table beside the detail line reports them (`DiagnosticNameColumn`).
+    /// The detail line is the one it always was, so nothing that read it
+    /// reads anything new.
     private func resolve(
         _ endpoint: Endpoint, as id: String = DiagnosticStepID.resolve,
         _ observer: DiagnosticRunObserver
     ) async -> (DiagnosticStep, [ResolvedAddress]) {
         let timer = await Self.starting(id, announcedTo: observer)
-        let outcome = await HostResolver.resolve(
-            host: endpoint.host, port: endpoint.port, timeout: stepTimeout)
+        let clock = ContinuousClock()
+        let begun = clock.now
+        let outcome = await lookups.host(endpoint.host, endpoint.port, stepTimeout)
         switch outcome {
         case .resolved(let addresses):
             let detail = addresses
                 .map { "\($0.family.rawValue) \($0.text)" }
                 .joined(separator: ", ")
-            return (timer.finish(.ok, detail), addresses)
+            let left = stepTimeout - begun.duration(to: clock.now)
+            let names = await lookups.name(addresses, within: left)
+            return (timer.finish(.ok, detail, table: Self.namesTable(names)), addresses)
         case .failed(let reason):
             return (timer.finish(.failed(reason), ""), [])
         case .timedOut:

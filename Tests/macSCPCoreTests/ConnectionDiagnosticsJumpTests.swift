@@ -323,6 +323,34 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(rig.count("dialTarget") == 0)
     }
 
+    // MARK: - The jump's names
+
+    /// The jump's resolve is this Mac's lookup, the same step as a direct
+    /// walk's under the jump's id — so it names the jump's addresses and
+    /// checks the names resolve back, as `resolve` does
+    /// (`ResolveNamesTests`). The `contributions` scope with no contribution
+    /// walks that one step and nothing else: no scope in it runs a step of
+    /// the target half, so the jump is never dialled.
+    @Test func theJumpsResolveNamesTheJumpsAddresses() async throws {
+        let lookups = ResolveLookups(
+            reverse: { _, _ in .name("jump.invalid") },
+            forward: { _, _, _ in .addresses(["127.0.0.1"]) })
+
+        let report = await ConnectionDiagnostics(
+            descriptor: Self.descriptor(dial: nil), values: Self.targetValues(), secrets: nil,
+            jump: Self.agentJump(port: 1), jumpDialer: JumpRig().dialer, lookups: lookups,
+            stepTimeout: .seconds(30), appVersion: "test"
+        ).run(scope: .contributions)
+
+        #expect(report.steps.map(\.id) == [DiagnosticStepID.jumpResolve])
+        let resolve = try #require(report.steps.first)
+        #expect(resolve.outcome == .ok)
+        #expect(resolve.table?.columns == DiagnosticNameColumn.all)
+        #expect(resolve.table?.rows == [
+            ["127.0.0.1", "jump.invalid", DiagnosticNameColumn.resolvesBack]
+        ])
+    }
+
     // MARK: - The probes run on the jump host
 
     /// A jump host that runs no command — it refuses the channel or the

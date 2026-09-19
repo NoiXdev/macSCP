@@ -1170,6 +1170,15 @@
 "diagnostics.trace.outcome.silent" = "stumm";
 "diagnostics.trace.outcome.destination" = "Ziel";
 "diagnostics.trace.outcome.unreachable" = "nicht erreichbar (Code %@)";
+// Namenstabelle des Auflösungsschritts (2026-09-19): drei Spaltenüberschriften und die Wörter der Prüfspalte. Ein Name, der nicht zurückführt, wird berichtet, nie bewertet; Namen und Adressen werden nie übersetzt.
+"diagnostics.names.column.address" = "Adresse";
+"diagnostics.names.column.name" = "Name";
+"diagnostics.names.column.check" = "Prüfung";
+"diagnostics.names.check.resolvesBack" = "führt zurück";
+"diagnostics.names.check.doesNotResolveBack" = "führt nicht zurück";
+"diagnostics.names.check.notAName" = "Adresse statt Name";
+"diagnostics.names.check.noName" = "kein Name";
+"diagnostics.names.check.noAnswer" = "keine Antwort";
 "diagnostics.reason.noHost" = "Diese Verbindung nennt keinen Host.";
 "diagnostics.reason.nothingResolvedToProbe" = "Der Name löste zu keiner Adresse auf, es gab also nichts zu prüfen.";
 "diagnostics.reason.noSecret" = "Für diese Verbindung sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";

@@ -1172,6 +1172,15 @@
 "diagnostics.trace.outcome.silent" = "cisza";
 "diagnostics.trace.outcome.destination" = "cel";
 "diagnostics.trace.outcome.unreachable" = "nieosiągalny (kod %@)";
+// Tabela nazw kroku rozwiązywania nazw (2026-09-19): trzy nagłówki kolumn i słowa kolumny sprawdzenia. Nazwa, która nie prowadzi z powrotem do adresu, jest zgłaszana, nigdy oceniana; nazwy i adresy nigdy nie są tłumaczone.
+"diagnostics.names.column.address" = "Adres";
+"diagnostics.names.column.name" = "Nazwa";
+"diagnostics.names.column.check" = "Sprawdzenie";
+"diagnostics.names.check.resolvesBack" = "prowadzi z powrotem";
+"diagnostics.names.check.doesNotResolveBack" = "nie prowadzi z powrotem";
+"diagnostics.names.check.notAName" = "adres zamiast nazwy";
+"diagnostics.names.check.noName" = "brak nazwy";
+"diagnostics.names.check.noAnswer" = "brak odpowiedzi";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
 "diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";

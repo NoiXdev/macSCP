@@ -141,6 +141,55 @@ struct DiagnoseRenderingJSONObjectTests {
         #expect(hop["rtt"] == "2.0 ms")
         #expect(hop["outcome"] == DiagnosticTraceColumn.answered)
     }
+
+    /// The resolve step's name table is ADDED under a key of its own,
+    /// `names` — one object per address keyed by the table's own column
+    /// names, the way `hops` is built — and never under `hops`, which a
+    /// script reads as the trace's path. Every key the object had is still
+    /// there with the value it had.
+    @Test func aResolveStepsNamesAreAddedUnderTheirOwnKey() throws {
+        let table = DiagnosticTable(
+            columns: DiagnosticNameColumn.all,
+            rows: [
+                ["192.0.2.1", "v4.invalid", DiagnosticNameColumn.resolvesBack],
+                ["2001:db8::1", DiagnosticNameColumn.noNameCell, DiagnosticNameColumn.noName],
+            ])
+        let step = makeStep(id: "resolve", outcome: .ok, detail: "IPv4 192.0.2.1", table: table)
+        let object = DiagnoseRendering.jsonObject(for: step)
+
+        let names = try #require(object["names"] as? [[String: String]])
+        #expect(names == [
+            ["address": "192.0.2.1", "name": "v4.invalid", "check": "resolves back"],
+            ["address": "2001:db8::1", "name": "—", "check": "no name"],
+        ])
+        #expect(object["hops"] == nil)
+        #expect(Set(object.keys) == ["id", "outcome", "durationMs", "detail", "names"])
+        #expect(object["detail"] as? String == "IPv4 192.0.2.1")
+    }
+
+    /// And the trace keeps `hops`, and gains no `names`.
+    @Test func aTraceStepKeepsItsHopsAndCarriesNoNames() {
+        let table = DiagnosticTable(
+            columns: DiagnosticTraceColumn.all,
+            rows: [["1", "10.0.0.1", "2.0 ms", DiagnosticTraceColumn.answered]])
+        let object = DiagnoseRendering.jsonObject(for: makeStep(id: "trace", table: table))
+        #expect(object["hops"] != nil)
+        #expect(object["names"] == nil)
+    }
+
+    /// The text rows print the names under the resolve row, one per address,
+    /// the way a trace prints its hops.
+    @Test func aResolveStepsNamesAreIndentedUnderItsRow() throws {
+        let table = DiagnosticTable(
+            columns: DiagnosticNameColumn.all,
+            rows: [["192.0.2.1", "v4.invalid", DiagnosticNameColumn.resolvesBack]])
+        let rows = DiagnoseRendering.textRows(for: makeStep(id: "resolve", table: table))
+        #expect(rows.count == 2)
+        let named = try #require(rows.last)
+        #expect(named.hasPrefix(" "))
+        #expect(named.contains("v4.invalid"))
+        #expect(named.contains(DiagnosticNameColumn.resolvesBack))
+    }
 }
 
 @Suite("DiagnoseRendering.jsonSummary")

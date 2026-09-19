@@ -1173,6 +1173,15 @@
 "diagnostics.trace.outcome.silent" = "silencieux";
 "diagnostics.trace.outcome.destination" = "destination";
 "diagnostics.trace.outcome.unreachable" = "injoignable (code %@)";
+// Tableau des noms de l’étape de résolution (2026-09-19) : trois en-têtes de colonne et les mots de la colonne de vérification. Un nom qui ne ramène pas à l’adresse est signalé, jamais jugé ; noms et adresses ne sont jamais traduits.
+"diagnostics.names.column.address" = "Adresse";
+"diagnostics.names.column.name" = "Nom";
+"diagnostics.names.column.check" = "Vérification";
+"diagnostics.names.check.resolvesBack" = "ramène à l’adresse";
+"diagnostics.names.check.doesNotResolveBack" = "ne ramène pas à l’adresse";
+"diagnostics.names.check.notAName" = "une adresse, pas un nom";
+"diagnostics.names.check.noName" = "aucun nom";
+"diagnostics.names.check.noAnswer" = "pas de réponse";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
 "diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";

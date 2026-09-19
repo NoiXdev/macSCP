@@ -1169,6 +1169,15 @@
 "diagnostics.trace.outcome.silent" = "Silent";
 "diagnostics.trace.outcome.destination" = "Destination";
 "diagnostics.trace.outcome.unreachable" = "Unreachable (code %@)";
+// The resolve step's name table (2026-09-19): three column headers and the words of its check column. A name that does not resolve back is reported, never judged; names and addresses are never translated.
+"diagnostics.names.column.address" = "Address";
+"diagnostics.names.column.name" = "Name";
+"diagnostics.names.column.check" = "Check";
+"diagnostics.names.check.resolvesBack" = "Resolves back";
+"diagnostics.names.check.doesNotResolveBack" = "Does not resolve back";
+"diagnostics.names.check.notAName" = "An address, not a name";
+"diagnostics.names.check.noName" = "No name";
+"diagnostics.names.check.noAnswer" = "No answer";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
 "diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";

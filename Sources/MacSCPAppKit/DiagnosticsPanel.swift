@@ -236,10 +236,11 @@ struct DiagnosticsPanel: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            // The trace's hops, as the cells Core measured. Every other step
-            // carries no table and keeps the line above alone; the trace keeps
-            // it too, for the marker that says the walk stopped looking —
-            // which is a sentence about the check, not a hop.
+            // The trace's hops, and the resolve step's names, as the cells
+            // Core measured. Every other step carries no table and keeps the
+            // line above alone; the trace keeps it too, for the marker that
+            // says the walk stopped looking — which is a sentence about the
+            // check, not a hop — and the resolve keeps its address list.
             if let measured = step.table {
                 grid(measured)
             }

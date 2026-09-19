@@ -62,7 +62,8 @@ public enum DiagnoseRendering {
     /// `word(_:)`'s longest case, `"unavailable"`, sets the width; nothing is
     /// truncated if a future case's word runs longer.
     private static let outcomeColumnWidth = 11
-    /// What a hop row is indented under its step's own row.
+    /// What a table row — a hop, or a resolved address's name — is indented
+    /// under its step's own row.
     private static let hopIndent = "    "
 
     /// Pads `text` with trailing spaces to `width`, counting `Character`s —
@@ -84,10 +85,11 @@ public enum DiagnoseRendering {
     /// row of trailing spaces would be invisible here and visible wherever
     /// this text gets pasted.
     ///
-    /// A trace step's hops (`step.table`) follow as indented rows below the
-    /// step's own row — one row per hop, aligned to each other's column
-    /// widths, with no header row: this is a terse CLI line, not the
-    /// full report's table.
+    /// A step's table (`step.table`) follows as indented rows below the
+    /// step's own row — a trace's hops, one row per hop, and since
+    /// 2026-09-19 the resolve step's names, one row per address — aligned to
+    /// each other's column widths, with no header row: this is a terse CLI
+    /// line, not the full report's table.
     public static func textRows(for step: DiagnosticStep) -> [String] {
         let idField = padRight(step.id, to: idColumnWidth)
         let outcomeField = padRight(word(step.outcome), to: outcomeColumnWidth)
@@ -115,11 +117,12 @@ public enum DiagnoseRendering {
         }
     }
 
-    /// A trace's hop rows, indented and column-aligned to each other — the
-    /// same padding `DiagnosticReport.aligned(_:)` does for the pasted
-    /// report, minus the header row: `textRows` prints one row per hop, no
-    /// more, so a trace step with two hops renders exactly three lines in
-    /// total (its own row, then two).
+    /// A table's rows — a trace's hops, the resolve step's names — indented
+    /// and column-aligned to each other: the same padding
+    /// `DiagnosticReport.aligned(_:)` does for the pasted report, minus the
+    /// header row. `textRows` prints one line per table row, no more, so a
+    /// trace step with two hops renders exactly three lines in total (its own
+    /// row, then two).
     private static func alignedHopRows(_ table: DiagnosticTable) -> [String] {
         let rows = table.rows
         guard !rows.isEmpty else { return [] }
@@ -136,8 +139,17 @@ public enum DiagnoseRendering {
     }
 
     /// One JSON object per step: `id`, `outcome`, `reason` (absent for
-    /// `ok`/`timedOut`), `durationMs` (an integer), `detail`, and — for the
-    /// trace step only — `hops`.
+    /// `ok`/`timedOut`), `durationMs` (an integer), `detail`, and — for a
+    /// step that carries a table — `hops` or `names`: `names` for the resolve
+    /// step's name table (`DiagnosticNameColumn`), `hops` for every other
+    /// table, which today is a trace's.
+    ///
+    /// `names` was ADDED on 2026-09-19, when the resolve step (and
+    /// `jump.resolve`) began carrying a table: one object per address,
+    /// `address`/`name`/`check`, built from the table's own columns the way
+    /// `hops` is. It is a key of its own rather than a second meaning of
+    /// `hops` because a script reads `hops` as a path, and every step that
+    /// had `hops` before has it still.
     ///
     /// **`hops`'s shape is not what the brief guessed, and this is the
     /// documented deviation the brief calls for.** The brief's contract
@@ -170,12 +182,16 @@ public enum DiagnoseRendering {
             object["reason"] = reason
         }
         if let table = step.table {
-            object["hops"] = jsonHops(table)
+            let key = table.columns == DiagnosticNameColumn.all ? "names" : "hops"
+            object[key] = jsonRows(table)
         }
         return object
     }
 
-    private static func jsonHops(_ table: DiagnosticTable) -> [[String: String]] {
+    /// A table's rows as one object each, keyed by the table's own column
+    /// names — `DiagnosticReport.header(_:)`, the last component of each
+    /// catalogue key.
+    private static func jsonRows(_ table: DiagnosticTable) -> [[String: String]] {
         let keys = table.columns.map(DiagnosticReport.header)
         return table.rows.map { row in
             var hop: [String: String] = [:]

@@ -202,9 +202,11 @@ enum DurationText {
 
 /// A step's measurement when it is a GRID rather than a sentence.
 ///
-/// The trace is the one step that measures a list of things — its hops — and
+/// The trace was the first step to measure a list of things — its hops — and
 /// joining them into a detail line made the row people came to the panel for
-/// the one row they could not read. A renderer cannot split
+/// the one row they could not read. The resolve step is the second, since
+/// 2026-09-19: the name each address was given, and whether it leads back
+/// (`DiagnosticNameColumn`). A renderer cannot split
 /// `1 10.0.0.1 2.0 ms` back into cells without re-parsing text this module
 /// composed, so the step carries the cells apart and each renderer joins them
 /// its own way: aligned columns in the plain text, a Markdown table in the
@@ -258,11 +260,17 @@ public struct DiagnosticStep: Sendable, Equatable, Identifiable {
     /// .theSSHDialNeverPutsTheSecretInTheReport`.
     public let detail: String
     /// The rows this step measured, when it measured a list of things rather
-    /// than one — `nil` for every step but the trace.
+    /// than one — `nil` for every step but the three traces (`trace`,
+    /// `jump.trace`, `target.traceFromJump`), whose rows are hops, and the
+    /// two resolves this Mac makes (`resolve`, `jump.resolve`), whose rows
+    /// are the names of the addresses found. Counted 2026-09-19 at the three
+    /// places a step is finished with a table: `ConnectionDiagnostics`'s
+    /// `trace` and `resolve`, and `DiagnosticJumpStep.traceFromJump`.
     ///
     /// Beside `detail` rather than instead of it: the trace's detail keeps
     /// the markers that say the walk STOPPED LOOKING, which are statements
-    /// about the walk and not rows of it.
+    /// about the walk and not rows of it, and the resolve's keeps the address
+    /// list it always printed.
     public let table: DiagnosticTable?
 
     /// Every free-text field is stripped of URL userinfo on the way in.

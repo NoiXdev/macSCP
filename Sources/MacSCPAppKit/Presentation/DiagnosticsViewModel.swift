@@ -593,15 +593,40 @@ enum DiagnosticsPresentation {
     /// One cell of a step's table, in the reader's language where it is a word
     /// this project chose and byte for byte where it is a measurement.
     ///
-    /// The measured cells — a hop number, an address, a round trip — are
-    /// copied through for the same reason the detail line is: they are what
-    /// somebody pastes into a bug report, and a translated address is one its
-    /// reader cannot search for. Only the outcome column holds words Core
-    /// COMPOSED, and which column that is comes from the table's own key
-    /// rather than from a position a reordering would silently change.
+    /// The measured cells — a hop number, an address, a round trip, a name —
+    /// are copied through for the same reason the detail line is: they are
+    /// what somebody pastes into a bug report, and a translated address is
+    /// one its reader cannot search for. Two columns hold words Core
+    /// COMPOSED — the trace's outcome and the resolve step's name check —
+    /// and which columns those are comes from the table's own keys rather
+    /// than from a position a reordering would silently change.
     static func cell(_ text: String, column key: String) -> String {
-        guard key == DiagnosticTraceColumn.outcome else { return text }
-        return traceOutcome(text)
+        switch key {
+        case DiagnosticTraceColumn.outcome: return traceOutcome(text)
+        case DiagnosticNameColumn.check: return nameCheck(text)
+        default: return text
+        }
+    }
+
+    /// The resolve step's check word, looked up under its own key — the
+    /// shape `traceOutcome(_:)` has, for its reasons. Anything else in that
+    /// column is a resolver's own sentence (a lookup that failed rather than
+    /// answered) and is shown as measured.
+    private static func nameCheck(_ cell: String) -> String {
+        switch cell {
+        case DiagnosticNameColumn.resolvesBack:
+            return L10n.string("diagnostics.names.check.resolvesBack", cell)
+        case DiagnosticNameColumn.doesNotResolveBack:
+            return L10n.string("diagnostics.names.check.doesNotResolveBack", cell)
+        case DiagnosticNameColumn.notAName:
+            return L10n.string("diagnostics.names.check.notAName", cell)
+        case DiagnosticNameColumn.noName:
+            return L10n.string("diagnostics.names.check.noName", cell)
+        case DiagnosticNameColumn.noAnswer:
+            return L10n.string("diagnostics.names.check.noAnswer", cell)
+        default:
+            return cell
+        }
     }
 
     /// The trace's outcome word, looked up under its own key.

@@ -106,6 +106,16 @@ enum HostResolver {
             as: UTF8.self)
     }
 
+    /// An address's numeric presentation form: `getnameinfo` with
+    /// `NI_NUMERICHOST`, which never asks a resolver anything. `nil` for a
+    /// record `getnameinfo` cannot render, which the callers skip.
+    private static func numericText(_ raw: UnsafePointer<sockaddr>, _ length: socklen_t) -> String? {
+        var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        guard getnameinfo(raw, length, &name, socklen_t(NI_MAXHOST), nil, 0, NI_NUMERICHOST) == 0
+        else { return nil }
+        return text(from: name)
+    }
+
     /// Blocking. Only ever called on `BlockingProbe`'s private queue.
     private static func lookUp(host: String, port: Int, flags: Int32) -> HostResolverOutcome {
         var hints = addrinfo()
@@ -131,11 +141,7 @@ enum HostResolver {
             defer { node = current.pointee.ai_next }
             guard let raw = current.pointee.ai_addr else { continue }
             let length = current.pointee.ai_addrlen
-            var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            guard
-                getnameinfo(raw, length, &name, socklen_t(NI_MAXHOST), nil, 0, NI_NUMERICHOST) == 0
-            else { continue }
-            let text = Self.text(from: name)
+            guard let text = Self.numericText(raw, length) else { continue }
             // Duplicates are what a machine with several interfaces returns
             // for the same address; probing one twice would double the step's
             // duration and say nothing new.
@@ -151,5 +157,75 @@ enum HostResolver {
         // it is spelled.
         guard !addresses.isEmpty else { return .failed("no address returned") }
         return .resolved(addresses)
+    }
+}
+
+// MARK: - Naming an address
+
+extension HostResolver {
+    /// The name the machine's resolver gives an address, and whether that
+    /// name leads back to it — the two blocking halves of the resolve step's
+    /// name table (`ResolveLookups.live`). Both only ever run on
+    /// `BlockingProbe`'s private queue.
+    ///
+    /// **Reverse**: `getnameinfo` with `NI_NAMEREQD` and no other flag. The
+    /// flag is what makes it a question at all — without it `getnameinfo`
+    /// falls back to the numeric form, and "no name" would come back as the
+    /// address itself. No `NI_NOFQDN` (the whole name is the finding) and no
+    /// `NI_NUMERICHOST` (that is the resolve's own rendering, which asks
+    /// nobody). What answers is the machine's resolver, as for every other
+    /// lookup here — the hosts file and DNS's PTR records, in whatever order
+    /// the system resolver consults them. Which of the two named `127.0.0.1`
+    /// in `ResolveNamesTests` was not measured; that a name came back and
+    /// resolved back was.
+    static func reverseLookUp(_ address: ProbeSocketAddress) -> ResolveLookups.Reverse {
+        var name = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        let status = address.withSockaddr { raw, length in
+            getnameinfo(raw, length, &name, socklen_t(NI_MAXHOST), nil, 0, NI_NAMEREQD)
+        }
+        switch status {
+        case 0:
+            let text = text(from: name)
+            return text.isEmpty ? .noName : .name(text)
+        case EAI_NONAME:
+            return .noName
+        default:
+            return .failed(String(cString: gai_strerror(status)))
+        }
+    }
+
+    /// **Forward**: `getaddrinfo` for the name, in the address's own family
+    /// only, so confirming an IPv4 address asks for A records and never puts
+    /// an AAAA query on the wire for nothing. The same TCP hints as the
+    /// resolve, and no `ai_flags`: the name is resolved however the machine
+    /// resolves names, which is the question. Each answer in its numeric
+    /// form, the spelling `ResolvedAddress.text` has.
+    static func forwardLookUp(
+        _ name: String, family: ResolvedAddress.Family
+    ) -> ResolveLookups.Forward {
+        var hints = addrinfo()
+        hints.ai_family = family == .ipv6 ? AF_INET6 : AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        hints.ai_protocol = IPPROTO_TCP
+
+        var head: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(name, nil, &hints, &head)
+        defer { if let head { freeaddrinfo(head) } }
+        // "No such name" and "no record of this family" are both the name not
+        // leading back — findings about the name, not about the lookup.
+        if status == EAI_NONAME || status == EAI_NODATA { return .noAddress }
+        guard status == 0 else { return .failed(String(cString: gai_strerror(status))) }
+
+        var addresses: [String] = []
+        var node = head
+        while let current = node {
+            defer { node = current.pointee.ai_next }
+            guard let raw = current.pointee.ai_addr,
+                let text = numericText(raw, current.pointee.ai_addrlen),
+                !addresses.contains(text)
+            else { continue }
+            addresses.append(text)
+        }
+        return addresses.isEmpty ? .noAddress : .addresses(addresses)
     }
 }
