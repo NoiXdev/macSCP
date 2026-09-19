@@ -45,6 +45,9 @@ public final class EditSessionManager {
 
     /// Root temp directory for this session's edits, created lazily.
     private let sessionDirectory: URL
+    /// Whether `beginEditing` arms the kernel file watcher on the local copy.
+    /// Always `true` in the app; see the internal initializer.
+    private let watchesLocalFile: Bool
 
     // MARK: - Watcher state
 
@@ -103,16 +106,38 @@ public final class EditSessionManager {
     ///   - debounceInterval: coalescing window for file events (default 500 ms).
     ///   - sleep: injectable sleep hook (default `Task.sleep`); tests override it
     ///     to make debounce/reopen deterministic.
-    public init(
+    public convenience init(
         sessionID: UUID,
         queue: TransferQueueViewModel,
         debounceInterval: Duration = .milliseconds(500),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
+        self.init(
+            sessionID: sessionID, queue: queue,
+            debounceInterval: debounceInterval, sleep: sleep,
+            watchesLocalFile: true)
+    }
+
+    /// Internal, for tests. `watchesLocalFile: false` registers edits without
+    /// arming the kernel watcher on the local copy, so the only change
+    /// notifications are the `handleFileEvent` calls a test makes itself. With
+    /// the watcher armed, a test's own write to the local copy is one more
+    /// notification, delivered on the main queue at a moment the kernel and
+    /// the scheduler pick: before the debounce has fired it coalesces, after
+    /// it a second upload follows. That race made the upload-count tests in
+    /// `EditSessionManagerTests` flaky under load (2026-09-19).
+    init(
+        sessionID: UUID,
+        queue: TransferQueueViewModel,
+        debounceInterval: Duration,
+        sleep: @escaping @Sendable (Duration) async throws -> Void,
+        watchesLocalFile: Bool
+    ) {
         self.sessionID = sessionID
         self.queue = queue
         self.debounceInterval = debounceInterval
         self.sleep = sleep
+        self.watchesLocalFile = watchesLocalFile
         self.sessionDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("macscp-edit", isDirectory: true)
             .appendingPathComponent(sessionID.uuidString, isDirectory: true)
@@ -208,7 +233,9 @@ public final class EditSessionManager {
             remoteDirectory: RemotePath.parent(of: remotePath),
             uploadDestination: destinationForUploads)
         watchers[edit.id] = watcher
-        startDispatchSource(for: watcher)
+        if watchesLocalFile {
+            startDispatchSource(for: watcher)
+        }
 
         return localURL
     }
@@ -377,6 +404,28 @@ public final class EditSessionManager {
                 source: self.localFS, destination: destination,
                 remoteDirectory: remoteDirectory)
             self.finishUpload(editID: editID)
+        }
+    }
+
+    /// Suspends until `editID` has nothing left that could start an upload on
+    /// its own: its latest debounce has run, and no write-back is running or
+    /// queued behind one. Without a further file event, the edit's upload
+    /// count is final from here. Internal, for tests: they assert on that
+    /// final count rather than on the first moment a count is reached, which a
+    /// second upload arriving a beat later slips past. Returns at once for an
+    /// unknown or stopped edit.
+    func awaitWriteBacksSettled(editID: UUID) async {
+        while let watcher = watchers[editID] {
+            let debounce = watcher.debounceTask
+            await debounce?.value
+            // A debounce that fired has set `uploadTask`; a finishing upload
+            // may set it again (`finishUpload` with `uploadPending`).
+            if let upload = watcher.uploadTask {
+                await upload.value
+                continue
+            }
+            // A newer event re-armed the debounce while this one was awaited.
+            if watcher.debounceTask == debounce { return }
         }
     }
 

@@ -230,9 +230,10 @@ struct EditSessionManagerTests {
         let gate = TestSignal()
         let gated = GatedRemoteFileSystem(inner: remote, entered: entered, gate: gate)
         let queue = TransferQueueViewModel()
+        // No kernel watcher: see `twoFastChangesTriggerSingleUpload`.
         let manager = EditSessionManager(
             sessionID: UUID(), queue: queue,
-            debounceInterval: .zero, sleep: { _ in })
+            debounceInterval: .zero, sleep: { _ in }, watchesLocalFile: false)
 
         // First call starts the download and blocks on `gate` mid-`readStream`.
         async let first = manager.beginEditing(
@@ -260,13 +261,14 @@ struct EditSessionManagerTests {
         #expect(downloadCount(queue) == 1)
         #expect(manager.activeEdits.count == 1)
 
-        // Exactly one watcher: a single subsequent file change produces
-        // exactly ONE upload (two watchers on the same fd would double it).
+        // The one registered edit uploads once for a single change. The
+        // watcher count itself follows from `activeEdits.count == 1` above:
+        // `downloadAndRegister` adds the edit and its watcher together.
         let editID = try #require(manager.activeEdits.first?.id)
         try Data("v2".utf8).write(to: firstURL)
         manager.handleFileEvent(editID: editID)
 
-        await waitUntil { uploadCount(queue) == 1 }
+        await manager.awaitWriteBacksSettled(editID: editID)
         #expect(uploadCount(queue) == 1)
 
         await manager.stopAll()
@@ -278,9 +280,10 @@ struct EditSessionManagerTests {
         let content = Data("v1".utf8)
         let remote = makeRemote(name: "a.txt", content: content)
         let queue = TransferQueueViewModel()
+        // No kernel watcher: see `twoFastChangesTriggerSingleUpload`.
         let manager = EditSessionManager(
             sessionID: UUID(), queue: queue,
-            debounceInterval: .zero, sleep: { _ in })
+            debounceInterval: .zero, sleep: { _ in }, watchesLocalFile: false)
 
         let url = try await manager.beginEditing(
             remotePath: "/dir/a.txt", fileName: "a.txt",
@@ -292,9 +295,9 @@ struct EditSessionManagerTests {
         try Data("v2".utf8).write(to: url)
         manager.handleFileEvent(editID: editID)
 
-        await waitUntil { uploadCount(queue) == 1 }
+        await manager.awaitWriteBacksSettled(editID: editID)
         #expect(uploadCount(queue) == 1)
-        await waitUntil { queue.items.first(where: { $0.direction == .upload })?.status == .finished }
+        #expect(queue.items.first(where: { $0.direction == .upload })?.status == .finished)
         #expect(await remote.writtenData(at: "/dir/a.txt") == Data("v2".utf8))
 
         await manager.stopAll()
@@ -305,9 +308,15 @@ struct EditSessionManagerTests {
     @Test func twoFastChangesTriggerSingleUpload() async throws {
         let remote = makeRemote(name: "a.txt", content: Data("v1".utf8))
         let queue = TransferQueueViewModel()
+        // No kernel watcher: the two `handleFileEvent` calls below are the
+        // only change notifications. With one armed, the write below was a
+        // third, and whenever it reached the main queue after the zero-length
+        // debounce had fired it became a second upload (2026-09-19: 1 of 8
+        // sampled full runs; 14 of 5000 repetitions of this test next to 40
+        // CPU-bound processes).
         let manager = EditSessionManager(
             sessionID: UUID(), queue: queue,
-            debounceInterval: .zero, sleep: { _ in })
+            debounceInterval: .zero, sleep: { _ in }, watchesLocalFile: false)
 
         let url = try await manager.beginEditing(
             remotePath: "/dir/a.txt", fileName: "a.txt",
@@ -320,7 +329,10 @@ struct EditSessionManagerTests {
         manager.handleFileEvent(editID: editID)
         manager.handleFileEvent(editID: editID)
 
-        await waitUntil { uploadCount(queue) == 1 }
+        // The final count, not the first moment the count is 1: a surviving
+        // first debounce would set `uploadPending`, and its second upload is
+        // only enqueued once the first one has finished.
+        await manager.awaitWriteBacksSettled(editID: editID)
         #expect(uploadCount(queue) == 1)
 
         await manager.stopAll()
@@ -338,9 +350,10 @@ struct EditSessionManagerTests {
         let gated = GatedRemoteFileSystem(
             inner: remote, writeEntered: writeEntered, writeGate: writeGate)
         let queue = TransferQueueViewModel()
+        // No kernel watcher: see `twoFastChangesTriggerSingleUpload`.
         let manager = EditSessionManager(
             sessionID: UUID(), queue: queue,
-            debounceInterval: .zero, sleep: { _ in })
+            debounceInterval: .zero, sleep: { _ in }, watchesLocalFile: false)
 
         let url = try await manager.beginEditing(
             remotePath: "/dir/a.txt", fileName: "a.txt",
@@ -366,12 +379,10 @@ struct EditSessionManagerTests {
         // Release #1. Its completion must enqueue EXACTLY ONE more write-back,
         // which reads the latest ("v3") content — still never concurrent.
         writeGate.fire()
-        await waitUntil { uploadCount(queue) == 2 }
+        await manager.awaitWriteBacksSettled(editID: editID)
         #expect(uploadCount(queue) == 2)
-        await waitUntil {
-            queue.items.filter { $0.direction == .upload }
-                .allSatisfy { $0.status == .finished }
-        }
+        #expect(queue.items.filter { $0.direction == .upload }
+            .allSatisfy { $0.status == .finished })
         #expect(await gated.maxConcurrentWrites == 1)
         #expect(await gated.writeCallCount == 2)
         #expect(await remote.writtenData(at: "/dir/a.txt") == Data("v3".utf8))
