@@ -50,11 +50,11 @@ struct TunnelPresenceWiringGuardTests {
     private static let windowlessStartFiles = [dockFile, sheetFile]
 
     private static func text(of file: URL) throws -> String {
-        try String(contentsOf: file, encoding: .utf8)
+        try SourceCorpus.text(of: file)
     }
 
     private static func strict(_ file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try text(of: file))
+        try SourceCorpus.code(of: file)
     }
 
     private static func body(_ declaration: String, in file: URL) throws -> String {
@@ -236,13 +236,13 @@ struct TunnelPresenceWiringGuardTests {
         #expect(
             dock.contains("DockBadgePlan.label("),
             "the Dock badge no longer reads its label from the plan")
-        let withLiterals = try SwiftSource.blankingComments(try Self.text(of: Self.dockFile))
+        let withLiterals = try SourceCorpus.commentFree(of: Self.dockFile)
         #expect(
             !withLiterals.contains("badge = \"!\""),
             "the Dock badge controller composes its own failure marker")
 
         // And the plan is the only place the marker is spelled at all.
-        let planLiterals = try SwiftSource.blankingComments(try Self.text(of: Self.plansFile))
+        let planLiterals = try SourceCorpus.commentFree(of: Self.plansFile)
         #expect(
             planLiterals.contains("return \"!\""),
             "the badge plan no longer returns a failure marker — re-anchor this guard")
@@ -386,13 +386,14 @@ struct TunnelPresenceWiringGuardTests {
             appKitFile("MacSCPCommands.swift"), appKitFile("SettingsView.swift"),
         ]
         var keys: Set<String> = []
+        // `\s*` after the parenthesis: several of these calls wrap, and a
+        // pattern demanding the quote right after it silently finds a
+        // subset — the trap `TunnelMenuWiringGuardTests` documents.
+        // Compiled once, here, rather than once per scanned file.
+        let catalogueKeyCall = try Regex(#"L10n\.string\(\s*"((?:tunnel|settings\.general\.tunnelAutostart)[^"]*)""#)
         for file in files {
-            let source = try SwiftSource.blankingComments(try Self.text(of: file))
-            // `\s*` after the parenthesis: several of these calls wrap, and a
-            // pattern demanding the quote right after it silently finds a
-            // subset — the trap `TunnelMenuWiringGuardTests` documents.
-            let pattern = #"L10n\.string\(\s*"((?:tunnel|settings\.general\.tunnelAutostart)[^"]*)""#
-            for match in source.ranges(of: try Regex(pattern)) {
+            let source = try SourceCorpus.commentFree(of: file)
+            for match in source.ranges(of: catalogueKeyCall) {
                 let call = String(source[match])
                 guard let start = call.range(of: "\"") else { continue }
                 let rest = call[start.upperBound...]
@@ -444,10 +445,9 @@ struct TunnelPresenceWiringGuardTests {
         try swiftFiles(under: sourcesRoot)
     }
 
+    /// Read through `SourceCorpus`, which throws for a root it does not
+    /// hold where the enumerator this replaced answered `[]`.
     private static func swiftFiles(under root: URL) throws -> [URL] {
-        guard let walker = FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: nil)
-        else { return [] }
-        return walker.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        try SourceCorpus.files(under: root).filter { $0.pathExtension == "swift" }
     }
 }

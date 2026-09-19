@@ -33,8 +33,7 @@ struct FormInterceptWiringGuardTests {
     /// (`SwiftSource.blankingComments`): literals survive, as they did under
     /// the line-comment stripper this replaced on 2026-09-18.
     private static func strippedSource() throws -> String {
-        try SwiftSource.blankingComments(
-            try String(contentsOf: formSourceFile, encoding: .utf8))
+        try SourceCorpus.commentFree(of: formSourceFile)
     }
 
     /// The hook is still handed to the generic form. Without this, both

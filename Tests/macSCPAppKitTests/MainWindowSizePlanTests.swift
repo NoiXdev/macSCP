@@ -292,7 +292,7 @@ struct MainWindowSizePlanTests {
     private static let detailFile = sourceDir.appendingPathComponent("ContentView+Detail.swift")
 
     private static func code(of url: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.code(of: url)
     }
 
     private static func body(of anchor: String, in url: URL) throws -> String {
@@ -303,8 +303,7 @@ struct MainWindowSizePlanTests {
     }
 
     private static func occurrences(of needle: String) throws -> Int {
-        let files = try FileManager.default.contentsOfDirectory(
-            at: sourceDir, includingPropertiesForKeys: nil)
+        let files = try SourceCorpus.children(of: sourceDir)
         var count = 0
         for file in files where file.pathExtension == "swift" {
             count += try code(of: file).components(separatedBy: needle).count - 1
@@ -374,7 +373,7 @@ struct MainWindowSizePlanTests {
     /// than spelled: `var <name>: Bool { seed == nil }`.
     private static func primaryWindowProperty() throws -> String {
         let source = try code(of: contentViewFile)
-        let pattern = try NSRegularExpression(pattern: #"var (\w+): Bool \{ seed == nil \}"#)
+        let pattern = try CompiledPattern.regex(#"var (\w+): Bool \{ seed == nil \}"#)
         let match = try #require(pattern.firstMatch(
             in: source, range: NSRange(source.startIndex..., in: source)), """
                 ContentView.swift no longer declares the primary-window property as \
@@ -397,7 +396,7 @@ struct MainWindowSizePlanTests {
             ("func growToBrowserSize() {", 2),
             ("func handleWindowDidEndLiveResize(_ notification: Notification) {", 1),
         ]
-        let literal = try NSRegularExpression(pattern: #"isPrimaryWindow:\s*(true|false)\b"#)
+        let literal = try CompiledPattern.regex(#"isPrimaryWindow:\s*(true|false)\b"#)
         for (anchor, labels) in bodies {
             let body = try Self.body(of: anchor, in: Self.lifecycleFile)
             let passed = body.components(separatedBy: "isPrimaryWindow: \(property)").count - 1
@@ -428,10 +427,9 @@ struct MainWindowSizePlanTests {
         #expect(try Self.occurrences(of: "lastBrowserSize = ") == 1)
         // Declaration plus the two callers above.
         #expect(try Self.occurrences(of: "resizeWindow(") == 3)
-        let literalResize = try NSRegularExpression(pattern: #"resizeWindow\(\s*toWidth:\s*[0-9]"#)
+        let literalResize = try CompiledPattern.regex(#"resizeWindow\(\s*toWidth:\s*[0-9]"#)
         var literalCalls = 0
-        let files = try FileManager.default.contentsOfDirectory(
-            at: Self.sourceDir, includingPropertiesForKeys: nil)
+        let files = try SourceCorpus.children(of: Self.sourceDir)
         for file in files where file.pathExtension == "swift" {
             let code = try Self.code(of: file)
             literalCalls += literalResize.numberOfMatches(

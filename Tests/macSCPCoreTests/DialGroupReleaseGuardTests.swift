@@ -34,7 +34,7 @@ struct DialGroupReleaseGuardTests {
     private static let shutdown = "shutdownGracefully("
 
     private static func strict(_ file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     private static func body(_ signature: String, in source: String) -> String? {

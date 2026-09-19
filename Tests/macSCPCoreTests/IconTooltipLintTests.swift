@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property: that every icon in the app target has been DECIDED
@@ -194,7 +195,7 @@ struct IconTooltipLintTests {
         }
 
         for file in files {
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             let name = file.lastPathComponent
             let path = Self.repoRelativePath(of: file)
             for finding in Self.undecidedIcons(file: name, source: source) {
@@ -219,7 +220,7 @@ struct IconTooltipLintTests {
                 Issue.record("decorativeIcons names \(entry.file), which no longer exists")
                 continue
             }
-            let icons = Self.icons(in: Self.code(of: try String(contentsOf: file, encoding: .utf8)))
+            let icons = Self.icons(in: Self.code(of: try SourceCorpus.text(of: file)))
             #expect(
                 icons.contains { $0.symbol == entry.symbol },
                 "\(entry.file) no longer uses \(entry.symbol) — drop the decorativeIcons entry")
@@ -391,13 +392,8 @@ struct IconTooltipLintTests {
     }
 
     private static func swiftFiles() throws -> [URL] {
-        let enumerator = FileManager.default.enumerator(
-            at: appSources, includingPropertiesForKeys: nil)
-        var files: [URL] = []
-        while let url = enumerator?.nextObject() as? URL {
-            if url.pathExtension == "swift" { files.append(url) }
-        }
-        return files.sorted { $0.path < $1.path }
+        try SourceCorpus.files(under: appSources).filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
     }
 
     /// Every icon in `source` that neither has a `.help` within

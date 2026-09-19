@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards WHO may read `BrowserSession.showsFiles` (P2 terminal-chrome
@@ -41,14 +42,13 @@ struct PaneVisibilityOwnershipGuardTests {
     /// The guard: `SessionTab.swift` owns this property, nobody else touches
     /// it.
     @Test func onlySessionTabReadsShowsFilesOffTheSession() throws {
-        let files = try FileManager.default
-            .contentsOfDirectory(at: Self.appSources, includingPropertiesForKeys: nil)
+        let files = try SourceCorpus.children(of: Self.appSources)
             .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SessionTab.swift" }
         #expect(files.count > 1, "re-anchor: no App sources found to scan")
 
         var offenders: [String] = []
         for file in files {
-            let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
+            let lines = try SourceCorpus.text(of: file).components(separatedBy: "\n")
             for (index, line) in lines.enumerated() where Self.readsShowsFilesOffASession(line) {
                 offenders.append("\(file.lastPathComponent):\(index + 1)")
             }
@@ -81,11 +81,16 @@ struct PaneVisibilityOwnershipGuardTests {
     /// Whether `line` accesses `showsFiles` on a receiver whose name says
     /// "session". Deliberately literal, like the phase's other scanners.
     private static func readsShowsFilesOffASession(_ line: String) -> Bool {
+        // Every read found below starts at an occurrence of the needle, so a
+        // line without one is answered before it is split into characters —
+        // this runs over every line of the App target.
+        guard line.contains("showsFiles") else { return false }
         let characters = Array(line)
         let needle = Array("showsFiles")
         guard characters.count >= needle.count else { return false }
         for index in 0...(characters.count - needle.count) {
-            guard Array(characters[index..<(index + needle.count)]) == needle else { continue }
+            guard needle.isEmpty || characters[index] == needle[0],
+                characters[index..<(index + needle.count)].elementsEqual(needle) else { continue }
             // A member access, not the property's own declaration.
             guard index > 0, characters[index - 1] == "." else { continue }
             var start = index - 1

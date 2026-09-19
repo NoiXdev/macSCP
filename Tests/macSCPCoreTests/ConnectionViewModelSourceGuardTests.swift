@@ -70,8 +70,7 @@ struct ConnectionViewModelSourceGuardTests {
     private static let stateWritePattern = #"(?<![A-Za-z0-9_])_?state\s*=\s*(?!=)"#
 
     @Test func everyStateAssignmentIsOnTheAllowList() throws {
-        let stripped = try SwiftSource.stripCommentsAndStrings(
-            try String(contentsOf: Self.viewModelFile, encoding: .utf8))
+        let stripped = try SourceCorpus.code(of: Self.viewModelFile)
         let writes = try Self.stateWrites(in: stripped)
         var offenders: [String] = []
         let found = writes.count
@@ -98,8 +97,7 @@ struct ConnectionViewModelSourceGuardTests {
     /// `fail(_:kind:)` has to actually be what the allow-list assumes it
     /// is: the writer that sets the verdict before the state.
     @Test func theOneFailureWriterSetsTheVerdictFirst() throws {
-        let stripped = try SwiftSource.stripCommentsAndStrings(
-            try String(contentsOf: Self.viewModelFile, encoding: .utf8))
+        let stripped = try SourceCorpus.code(of: Self.viewModelFile)
         let normalized = stripped.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
         guard let bodyStart = normalized.firstIndex(where: {
@@ -160,7 +158,7 @@ struct ConnectionViewModelSourceGuardTests {
     /// for the allow-list to judge, and enough for a failure message to
     /// quote.
     private static func stateWrites(in stripped: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: stateWritePattern)
+        let regex = try CompiledPattern.regex(stateWritePattern)
         let range = NSRange(stripped.startIndex..., in: stripped)
         return regex.matches(in: stripped, range: range).compactMap { match in
             guard let matchRange = Range(match.range, in: stripped) else { return nil }

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of `SnippetActionSheet.swift`: the P3d keyboard
@@ -35,7 +36,7 @@ struct SnippetActionSheetKeyboardShortcutGuardTests {
     // MARK: - The guard
 
     @Test func insertCarriesExactlyDefaultAction() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let shortcuts = try Self.shortcutLines(forKey: "snippets.action.insert", in: source)
         #expect(shortcuts == [".keyboardShortcut(.defaultAction)"], """
             Insert must carry exactly \(".keyboardShortcut(.defaultAction)") (Return) — \
@@ -45,7 +46,7 @@ struct SnippetActionSheetKeyboardShortcutGuardTests {
     }
 
     @Test func executeCarriesExactlyCommandReturn() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let shortcuts = try Self.shortcutLines(forKey: "snippets.action.execute", in: source)
         #expect(shortcuts == [".keyboardShortcut(.return, modifiers: .command)"], """
             Execute must carry exactly ⌘Return — found \(shortcuts) instead. A bare Return \
@@ -54,7 +55,7 @@ struct SnippetActionSheetKeyboardShortcutGuardTests {
     }
 
     @Test func cancelCarriesNoExplicitShortcut() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let shortcuts = try Self.shortcutLines(forKey: "snippets.action.cancel", in: source)
         #expect(shortcuts.isEmpty, """
             Cancel should rely on \("role: .cancel") alone (the app-wide sheet convention \

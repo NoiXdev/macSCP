@@ -24,14 +24,9 @@ struct TabKeyPassphraseFillGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit")
 
     private static func blankedAppSources() throws -> [String: String] {
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: appRoot, includingPropertiesForKeys: nil)
-        else { return [:] }
         var files: [String: String] = [:]
-        for case let url as URL in enumerator where url.pathExtension == "swift" {
-            files[url.lastPathComponent] = try SwiftSource.blankingCommentsAndStrings(
-                String(contentsOf: url, encoding: .utf8))
+        for url in try SourceCorpus.files(under: appRoot) where url.pathExtension == "swift" {
+            files[url.lastPathComponent] = try SourceCorpus.code(of: url)
         }
         return files
     }

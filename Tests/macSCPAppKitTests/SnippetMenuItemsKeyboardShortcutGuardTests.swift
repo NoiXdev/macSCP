@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of `SnippetMenuItems.swift`: `.keyboardShortcut` may
@@ -48,7 +49,7 @@ struct SnippetMenuItemsKeyboardShortcutGuardTests {
     // MARK: - The guard
 
     @Test func keyboardShortcutAppearsOnlyInsideInsertButton() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let violations = Self.keyboardShortcutViolations(in: source)
         #expect(violations.isEmpty, """
             .keyboardShortcut found outside insertButton at line(s) \
@@ -65,7 +66,7 @@ struct SnippetMenuItemsKeyboardShortcutGuardTests {
     /// violations because zero calls were seen, not because the one real
     /// call is correctly placed.
     @Test func insertButtonStillCarriesTheShortcut() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(ofFunctionNamed: "insertButton", in: lines) else {
             Issue.record(

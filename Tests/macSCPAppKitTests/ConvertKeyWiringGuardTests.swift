@@ -666,7 +666,7 @@ struct ConvertKeyWiringGuardTests {
     /// catalog lookup of some unrelated key; the second alone would pass a
     /// `Text` built from a literal beside a correct lookup.
     @Test func theQuestionIsAConfirmationDialogBoundToTheRequest() throws {
-        let source = try String(contentsOf: Self.sheetsFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetsFile)
         let dialog = try Self.dialog(boundTo: "setRepointRequest", in: source)
         let violations = Self.dialogViolations(dialog)
         #expect(violations.isEmpty, """
@@ -1177,19 +1177,17 @@ struct ConvertKeyWiringGuardTests {
     /// target, so the target-wide count reads no list somebody maintains.
     private static func appTargetFiles() throws -> [URL] {
         let root = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        else { throw ScanError.anchorNotFound }
-        return walker.compactMap { $0 as? URL }
+        return try SourceCorpus.files(under: root)
             .filter { $0.pathExtension == "swift" }
             .sorted { $0.path < $1.path }
     }
 
     private static func strictSource(of file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     private static func strippedBody(after anchor: String, in file: URL) throws -> String {
-        try strippedBody(after: anchor, in: try String(contentsOf: file, encoding: .utf8))
+        try strippedBody(after: anchor, in: try SourceCorpus.text(of: file))
     }
 
     /// Everything from the anchor through the balanced-brace close of the

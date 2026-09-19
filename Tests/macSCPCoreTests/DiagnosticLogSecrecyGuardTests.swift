@@ -179,16 +179,11 @@ struct DiagnosticLogSecrecyGuardTests {
         let arguments: String
     }
 
-    private static func swiftFiles(under directory: URL) -> [URL] {
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: directory, includingPropertiesForKeys: nil)
-        else { return [] }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension == "swift" {
-            files.append(url)
-        }
-        return files
+    /// Every `.swift` file under `directory`, from `SourceCorpus` — the one
+    /// read of the tree per test process — which throws for a directory it
+    /// does not hold where the enumerator this replaced answered `[]`.
+    private static func swiftFiles(under directory: URL) throws -> [URL] {
+        try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
     }
 
     private static let marker = "DiagnosticLog.shared.log("
@@ -196,11 +191,19 @@ struct DiagnosticLogSecrecyGuardTests {
     /// Every `DiagnosticLog.shared.log(...)` call site under `Sources/`,
     /// each with its brace-balanced argument text — comments blanked,
     /// string literals (and what they interpolate) intact.
+    ///
+    /// Three checks read it and the tree does not change under a run, so it
+    /// is collected once per process (`callSitesScan`).
     private static func collectCallSites() throws -> [CallSite] {
+        try callSitesScan.get()
+    }
+
+    private static let callSitesScan = Result { try scanCallSites() }
+
+    private static func scanCallSites() throws -> [CallSite] {
         var sites: [CallSite] = []
-        for file in swiftFiles(under: sourcesRoot) {
-            let raw = try String(contentsOf: file, encoding: .utf8)
-            let stripped = try SwiftSource.stripComments(raw)
+        for file in try swiftFiles(under: sourcesRoot) {
+            let stripped = try SourceCorpus.commentFree(of: file)
             guard !stripped.contains("final class DiagnosticLog: Sendable") else { continue }
             sites.append(contentsOf: Self.callSites(in: stripped, file: file.lastPathComponent))
         }
@@ -275,13 +278,12 @@ struct DiagnosticLogSecrecyGuardTests {
     /// which is the property this check is supposed to have.
     private static func collectForwardedCallSites() throws -> [ForwardedSites] {
         var collected: [ForwardedSites] = []
-        for file in swiftFiles(under: sourcesRoot) {
-            let raw = try String(contentsOf: file, encoding: .utf8)
-            let stripped = try SwiftSource.stripComments(raw)
+        for file in try swiftFiles(under: sourcesRoot) {
+            let stripped = try SourceCorpus.commentFree(of: file)
             guard !stripped.contains("final class DiagnosticLog: Sendable") else { continue }
             let markers = Self.occurrences(of: marker, in: stripped)
             guard !markers.isEmpty else { continue }
-            let blanked = try SwiftSource.stripCommentsAndStrings(raw)
+            let blanked = try SourceCorpus.code(of: file)
             let walked = Self.walk(
                 stripped: stripped, blanked: blanked, file: file.lastPathComponent)
             // Filter on whether the walk NAMED a wrapper here, never on
@@ -432,7 +434,8 @@ struct DiagnosticLogSecrecyGuardTests {
         var i = 0
         let keyword = Array("func ")
         while i + keyword.count < chars.count {
-            guard Array(chars[i..<(i + keyword.count)]) == keyword else {
+            guard keyword.isEmpty || chars[i] == keyword[0],
+                chars[i..<(i + keyword.count)].elementsEqual(keyword) else {
                 i += 1
                 continue
             }
@@ -645,11 +648,11 @@ struct DiagnosticLogSecrecyGuardTests {
     /// literal assignment found anywhere returns an empty set, which the
     /// caller then has to treat as unresolved rather than silently "fine".
     private static func literalValues(assignedTo identifier: String) throws -> Set<String> {
+        let regexes = try Self.literalAssignmentRegexes(for: identifier)
         var values: Set<String> = []
-        for file in swiftFiles(under: sourcesRoot) {
-            let raw = try String(contentsOf: file, encoding: .utf8)
-            let stripped = try SwiftSource.stripComments(raw)
-            values.formUnion(try Self.literalValues(assignedTo: identifier, in: stripped))
+        for file in try swiftFiles(under: sourcesRoot) {
+            let stripped = try SourceCorpus.commentFree(of: file)
+            values.formUnion(Self.literalValues(matching: regexes, in: stripped))
         }
         return values
     }
@@ -660,14 +663,24 @@ struct DiagnosticLogSecrecyGuardTests {
     private static func literalValues(assignedTo identifier: String, in strippedText: String) throws
         -> Set<String>
     {
-        let patterns = [
+        Self.literalValues(matching: try Self.literalAssignmentRegexes(for: identifier), in: strippedText)
+    }
+
+    /// The two patterns for one identifier, compiled once per identifier
+    /// rather than once per scanned file.
+    private static func literalAssignmentRegexes(for identifier: String) throws -> [NSRegularExpression] {
+        try [
             #"\#(identifier)[ \t]*:[ \t]*(?:String[ \t]*=[ \t]*)?"([^"\n]*)""#,
             #"\#(identifier)[ \t]*=[ \t]*"([^"\n]*)""#,
-        ]
+        ].map { try CompiledPattern.regex($0) }
+    }
+
+    private static func literalValues(matching regexes: [NSRegularExpression], in strippedText: String)
+        -> Set<String>
+    {
         var values: Set<String> = []
         let range = NSRange(strippedText.startIndex..., in: strippedText)
-        for pattern in patterns {
-            let regex = try NSRegularExpression(pattern: pattern)
+        for regex in regexes {
             for match in regex.matches(in: strippedText, range: range) {
                 guard let valueRange = Range(match.range(at: 1), in: strippedText) else { continue }
                 values.insert(String(strippedText[valueRange]))

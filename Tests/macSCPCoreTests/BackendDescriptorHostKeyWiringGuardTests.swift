@@ -54,8 +54,7 @@ struct BackendDescriptorHostKeyWiringGuardTests {
         .appendingPathComponent("Sources/macSCPCore/Capabilities/BackendDescriptor.swift")
 
     private static func realDescriptors() throws -> [BackendDescriptorHostKeyScan.Descriptor] {
-        let source = try String(contentsOf: backendDescriptorFile, encoding: .utf8)
-        let stripped = try SwiftSource.stripCommentsAndStrings(source)
+        let stripped = try SourceCorpus.code(of: backendDescriptorFile)
         return try BackendDescriptorHostKeyScan.parse(stripped)
     }
 
@@ -252,8 +251,7 @@ enum BackendDescriptorHostKeyScan {
     /// Whether `word` appears in `text` as a whole identifier — a substring
     /// test would read `decider` inside a hypothetical `subDecider` too.
     static func mentionsWholeWord(_ word: String, in text: String) -> Bool {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"\b\#(NSRegularExpression.escapedPattern(for: word))\b"#)
+        guard let regex = try? CompiledPattern.regex(#"\b\#(NSRegularExpression.escapedPattern(for: word))\b"#)
         else { return false }
         let range = NSRange(text.startIndex..., in: text)
         return regex.firstMatch(in: text, range: range) != nil
@@ -262,8 +260,7 @@ enum BackendDescriptorHostKeyScan {
     private static func declaredAuthenticatesHostKey(
         in argsText: String, context: String
     ) throws -> Bool {
-        guard let regex = try? NSRegularExpression(
-            pattern: #"authenticatesHostKey:\s*(true|false)"#),
+        guard let regex = try? CompiledPattern.regex(#"authenticatesHostKey:\s*(true|false)"#),
             let match = regex.firstMatch(
                 in: argsText, range: NSRange(argsText.startIndex..., in: argsText)),
             let valueRange = Range(match.range(at: 1), in: argsText)
@@ -296,7 +293,8 @@ enum BackendDescriptorHostKeyScan {
         guard !pattern.isEmpty, start <= chars.count - pattern.count else { return nil }
         var i = start
         while i <= chars.count - pattern.count {
-            if Array(chars[i..<(i + pattern.count)]) == pattern { return i }
+            if pattern.isEmpty || chars[i] == pattern[0],
+                chars[i..<(i + pattern.count)].elementsEqual(pattern) { return i }
             i += 1
         }
         return nil

@@ -55,8 +55,7 @@ struct HostResolveWiringGuardTests {
     private static let chooseDeclaration = "func choose("
 
     private static func code(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static func body(of declaration: String, in source: String) throws -> String {

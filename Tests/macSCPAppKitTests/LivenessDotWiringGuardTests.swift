@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of `TabStripView.swift`'s `livenessDot` (connection-
@@ -50,7 +51,7 @@ struct LivenessDotWiringGuardTests {
     // MARK: - The three guarded claims, run against the real file
 
     @Test func theDotReadsTabLivenessThroughThePlan() throws {
-        let source = try String(contentsOf: Self.tabStripFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tabStripFile)
         let body = try Self.propertyBody(after: Self.anchor, in: source)
         #expect(body.contains("LivenessDotPlan.appearance(for: tab.liveness)"), """
             `livenessDot` no longer calls `LivenessDotPlan.appearance(for: tab.liveness)` — \
@@ -60,7 +61,7 @@ struct LivenessDotWiringGuardTests {
     }
 
     @Test func theDotCarriesBothHelpAndAccessibilityLabel() throws {
-        let source = try String(contentsOf: Self.tabStripFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tabStripFile)
         let body = try Self.propertyBody(after: Self.anchor, in: source)
         #expect(body.contains(".help("), """
             `livenessDot` no longer sets `.help(` — colour would be the only carrier of the \
@@ -73,7 +74,7 @@ struct LivenessDotWiringGuardTests {
     }
 
     @Test func theDotsColorHasNoLiteralInTheView() throws {
-        let source = try String(contentsOf: Self.tabStripFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tabStripFile)
         let body = try Self.propertyBody(after: Self.anchor, in: source)
         for literal in Self.forbiddenColorLiterals {
             #expect(!body.contains(literal), """
@@ -88,7 +89,7 @@ struct LivenessDotWiringGuardTests {
     /// if the anchor ever stops being unique, the three claims above could be
     /// scanning the wrong property silently.
     @Test func theAnchorAppearsExactlyOnceInTheRealFile() throws {
-        let source = try String(contentsOf: Self.tabStripFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tabStripFile)
         let count = source.components(separatedBy: Self.anchor).count - 1
         #expect(count == 1, """
             expected exactly 1 occurrence of `\(Self.anchor)` in TabStripView.swift, found \

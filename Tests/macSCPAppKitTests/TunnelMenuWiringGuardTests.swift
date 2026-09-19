@@ -128,28 +128,27 @@ struct TunnelMenuWiringGuardTests {
     private static let submenuAnchor = "if case .shown(let tunnelEntries) = tunnelPlan"
 
     private static func text(of file: URL) throws -> String {
-        try String(contentsOf: file, encoding: .utf8)
+        try SourceCorpus.text(of: file)
     }
 
     /// The submenu's body in both views: code only, and code plus literals.
     /// One range, sliced twice — see this suite's header for why that is
     /// safe.
     private static func submenuBodies() throws -> (strict: String, withLiterals: String) {
-        let raw = try text(of: sidebarFile)
-        let strict = try SwiftSource.blankingCommentsAndStrings(raw)
+        let strict = try SourceCorpus.code(of: sidebarFile)
         let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
             of: submenuAnchor, in: strict)
         return (
             TransferQueueBarCancelGuardTests.slice(range, of: strict),
             TransferQueueBarCancelGuardTests.slice(
-                range, of: try SwiftSource.blankingComments(raw))
+                range, of: try SourceCorpus.commentFree(of: sidebarFile))
         )
     }
 
     // MARK: - Source: the row draws what the plan says
 
     @Test func theRowAsksThePlanAndDecidesNothingItself() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.sidebarFile))
+        let strict = try SourceCorpus.code(of: Self.sidebarFile)
         #expect(
             strict.contains("SessionRowTunnelMenuPlan.build("),
             "the session row no longer builds a tunnel menu plan — re-anchor this guard")
@@ -193,16 +192,18 @@ struct TunnelMenuWiringGuardTests {
     /// same keys is `LocalizationParityTests`' standing job.
     @Test func everyTunnelKeyResolvesInTheCatalogue() throws {
         var keys: Set<String> = []
+        // Compiled once, here, rather than once per scanned file.
+        let tunnelKeyCall = try Regex(#"L10n\.string\(\s*"(tunnel\.[^"]+)""#)
         for file in [Self.sidebarFile, Self.sheetFile,
                      Self.appKitRoot.appendingPathComponent("TunnelHostKeyPrompt.swift")] {
-            let source = try SwiftSource.blankingComments(try Self.text(of: file))
+            let source = try SourceCorpus.commentFree(of: file)
             // `\s*` after the parenthesis, and it is load-bearing: a
             // `L10n.string(` whose key sits on the NEXT line is how six of
             // these keys are written (the call wraps), and a pattern
             // demanding the quote immediately after the parenthesis found 42
             // of the 48 while reporting success — counted 2026-09-06 against
             // the catalogue.
-            for match in source.ranges(of: try Regex(#"L10n\.string\(\s*"(tunnel\.[^"]+)""#)) {
+            for match in source.ranges(of: tunnelKeyCall) {
                 let call = String(source[match])
                 guard let start = call.range(of: "\"") else { continue }
                 let rest = call[start.upperBound...]
@@ -251,7 +252,7 @@ struct TunnelMenuWiringGuardTests {
     /// "nowhere outside the submenu" over a file that fires neither would
     /// pass while the feature was gone.
     @Test func aForwardingIsStartedOnlyFromInsideTheSubmenu() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.sidebarFile))
+        let strict = try SourceCorpus.code(of: Self.sidebarFile)
         let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
             of: Self.submenuAnchor, in: strict)
 
@@ -294,7 +295,7 @@ struct TunnelMenuWiringGuardTests {
         // below was satisfied by the declaration alone: deleting the real
         // call would have left this guard green.
         let callers = try Self.appKitFiles().filter { file in
-            try SwiftSource.blankingCommentsAndStrings(try Self.text(of: file))
+            try SourceCorpus.code(of: file)
                 .contains(".start(decider:")
         }.map(\.lastPathComponent).sorted()
 
@@ -321,7 +322,7 @@ struct TunnelMenuWiringGuardTests {
     /// list carries a default closure argument, so a brace-balanced read
     /// from the first `{` after the declaration scans that default value.
     @Test func theDialResolvesItsSecretThroughTheAppsOwnChain() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.managerFile))
+        let strict = try SourceCorpus.code(of: Self.managerFile)
         let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
             of: "return TunnelRunner(profile: profile, connect:", in: strict)
         let body = TransferQueueBarCancelGuardTests.slice(range, of: strict)
@@ -350,7 +351,7 @@ struct TunnelMenuWiringGuardTests {
     /// not satisfy it), and the two positives beside it assert that the file
     /// being scanned is one that acts at all.
     @Test func theSheetAsksTheManagerAndDialsNothing() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.sheetFile))
+        let strict = try SourceCorpus.code(of: Self.sheetFile)
         #expect(strict.contains("manager.start("), "the sheet no longer starts anything")
         #expect(strict.contains("manager.stop("), "the sheet no longer stops anything")
         for forbidden in ["TunnelConnection.connect(", "CitadelFileSystem.connect(", "TunnelRunner("] {
@@ -408,8 +409,7 @@ struct TunnelMenuWiringGuardTests {
     /// The window's side of it, read from source: exactly one `.sheet` shows
     /// either, and both live inside it.
     @Test func theWindowPresentsBothForwardingSheetsThroughOnePresentation() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(
-            try Self.text(of: Self.sheetsFile))
+        let strict = try SourceCorpus.code(of: Self.sheetsFile)
         for needle in ["TunnelProfilesSheet(", "TunnelHostKeyPromptView("] {
             #expect(
                 Self.positions(of: needle, in: strict).count == 1,
@@ -433,7 +433,7 @@ struct TunnelMenuWiringGuardTests {
     /// one that draws the question — nested inside itself, which is an
     /// ordinary presentation and not a second sheet on one presenter.
     @Test func theProfileSheetDrawsTheQuestionWhileItIsUp() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(try Self.text(of: Self.sheetFile))
+        let strict = try SourceCorpus.code(of: Self.sheetFile)
         #expect(
             Self.positions(of: "TunnelHostKeyPromptView(", in: strict).count == 1,
             "the profile sheet no longer draws the host-key question it can raise")
@@ -460,8 +460,7 @@ struct TunnelMenuWiringGuardTests {
     /// checked to BE the modifier it claims (the `updateModel` line that has
     /// always been there) before anything is claimed about the bridge.
     @Test func theWindowOpensItsBridgeOnAppearAndClosesItOnDisappear() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(
-            try Self.text(of: Self.lifecycleFile))
+        let strict = try SourceCorpus.code(of: Self.lifecycleFile)
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "func lifecycleAndToolbar<Content: View>(_ content: Content) -> some View",
             in: strict)
@@ -511,8 +510,7 @@ struct TunnelMenuWiringGuardTests {
     /// builds. The Core half — that `delete(_:)` tells its observers at all
     /// — is `TunnelStoreTests`'.
     @Test func theWindowRegistersTheManagersDeletionObserver() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(
-            try Self.text(of: Self.contentViewFile))
+        let strict = try SourceCorpus.code(of: Self.contentViewFile)
         #expect(
             strict.contains("SessionListViewModel("),
             "ContentView no longer builds a session list — re-anchor this guard")
@@ -524,16 +522,14 @@ struct TunnelMenuWiringGuardTests {
             """)
     }
 
-    /// Every `.swift` file of the App target, found rather than listed.
+    /// Every `.swift` file of the App target, found rather than listed: the
+    /// target's own directory and one level below it, read through
+    /// `SourceCorpus`.
     private static func appKitFiles() throws -> [URL] {
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: appKitRoot, includingPropertiesForKeys: nil)
-        let nested = try contents
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-            .flatMap {
-                try FileManager.default.contentsOfDirectory(
-                    at: $0, includingPropertiesForKeys: nil)
-            }
-        return (contents + nested).filter { $0.pathExtension == "swift" }
+        let base = SourceCorpus.key(appKitRoot) + "/"
+        return try SourceCorpus.files(under: appKitRoot).filter {
+            $0.pathExtension == "swift"
+                && SourceCorpus.key($0).dropFirst(base.count).split(separator: "/").count <= 2
+        }
     }
 }

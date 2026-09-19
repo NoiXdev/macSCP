@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -111,7 +112,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theFileBuildsItsRowsFromTheStoreAndTheCatalog() throws {
-        let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sessionsCommandFile)
         #expect(source.contains("SessionStore("), """
             SessionsCommand.swift no longer constructs a SessionStore( — the \
             positive anchor beside the negative check below has nothing to \
@@ -126,7 +127,7 @@ struct CLISessionsCommandGuardTests {
     // MARK: - Negative: none of secret, keychain or connection
 
     @Test func theFileNamesNoSecretKeychainOrConnectionAPI() throws {
-        let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sessionsCommandFile)
         let found = Self.forbiddenMatches(in: source)
         #expect(found.isEmpty, """
             SessionsCommand.swift names \(found) — listing saved sessions must \
@@ -220,7 +221,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theCompletionWrapperWiresTheCoreCompleter() throws {
-        let source = try String(contentsOf: Self.completionCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.completionCommandFile)
         #expect(source.contains("SessionNameCompleter.complete("), """
             SessionNameCompletion.swift no longer calls \
             SessionNameCompleter.complete( — the positive anchor beside the \
@@ -230,7 +231,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theCompletionWrapperNamesNoForbiddenAPI() throws {
-        let source = try String(contentsOf: Self.completionCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.completionCommandFile)
         let found = Self.forbiddenMatches(
             in: source, identifiers: Self.completionForbiddenIdentifiers)
         #expect(found.isEmpty, """
@@ -245,7 +246,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theCompletionCoreFileBuildsItsListFromTheCatalog() throws {
-        let source = try String(contentsOf: Self.completionCoreFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.completionCoreFile)
         #expect(source.contains("SessionCatalog("), """
             SessionNameCompleter.swift no longer constructs a SessionCatalog( \
             — the positive anchor beside the negative check below has \
@@ -254,7 +255,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theCompletionCoreFileNamesNoForbiddenAPI() throws {
-        let source = try String(contentsOf: Self.completionCoreFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.completionCoreFile)
         let found = Self.forbiddenMatches(
             in: source, identifiers: Self.completionForbiddenIdentifiers)
         #expect(found.isEmpty, """
@@ -272,7 +273,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theGroupTagWrapperWiresTheCoreCompleter() throws {
-        let source = try String(contentsOf: Self.groupTagCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.groupTagCommandFile)
         #expect(source.contains("GroupTagCompleter.completeGroups("), """
             GroupTagCompletion.swift no longer calls \
             GroupTagCompleter.completeGroups( — the positive anchor beside \
@@ -287,7 +288,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theGroupTagWrapperNamesNoForbiddenAPI() throws {
-        let source = try String(contentsOf: Self.groupTagCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.groupTagCommandFile)
         let found = Self.forbiddenMatches(
             in: source, identifiers: Self.completionForbiddenIdentifiers)
         #expect(found.isEmpty, """
@@ -302,7 +303,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theGroupTagCoreFileBuildsItsListFromTheCatalog() throws {
-        let source = try String(contentsOf: Self.groupTagCoreFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.groupTagCoreFile)
         #expect(source.contains("SessionCatalog("), """
             GroupTagCompleter.swift no longer constructs a SessionCatalog( — \
             the positive anchor beside the negative check below has nothing \
@@ -311,7 +312,7 @@ struct CLISessionsCommandGuardTests {
     }
 
     @Test func theGroupTagCoreFileNamesNoForbiddenAPI() throws {
-        let source = try String(contentsOf: Self.groupTagCoreFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.groupTagCoreFile)
         let found = Self.forbiddenMatches(
             in: source, identifiers: Self.completionForbiddenIdentifiers)
         #expect(found.isEmpty, """
@@ -404,27 +405,21 @@ struct CLISessionsCommandGuardTests {
     /// wiring would be as wrong as a missing one.
     @Test func everySessionTargetCommandCarriesTheCompletion() throws {
         let cliDirectory = Self.repoRoot.appendingPathComponent("Sources/MacSCPCLI")
-        // Recursive (`enumerator`, not `contentsOfDirectory`): `Sources/MacSCPCLI`
+        // Recursive (`files(under:)`, not `children(of:)`): `Sources/MacSCPCLI`
         // is flat today, but a future reorganization into subfolders (the
         // project already does this elsewhere, e.g.
         // `Sources/macSCPCore/Sessions/`) must not let a command file
         // silently escape this scan (final-branch-review finding,
         // 2026-09-02, minor).
-        guard let enumerator = FileManager.default.enumerator(
-            at: cliDirectory, includingPropertiesForKeys: nil)
-        else {
-            Issue.record("could not enumerate \(cliDirectory.path)")
-            return
-        }
-        let swiftFiles = enumerator.compactMap { $0 as? URL }
+        let swiftFiles = try SourceCorpus.files(under: cliDirectory)
             .filter { $0.pathExtension == "swift" }
         #expect(!swiftFiles.isEmpty, "found no .swift files under Sources/MacSCPCLI to scan")
 
         let targetCommandFiles = try swiftFiles.filter {
-            try String(contentsOf: $0, encoding: .utf8).contains("SessionReference.parse(")
+            try SourceCorpus.text(of: $0).contains("SessionReference.parse(")
         }
         let completingFiles = try swiftFiles.filter {
-            try String(contentsOf: $0, encoding: .utf8)
+            try SourceCorpus.text(of: $0)
                 .contains("completion: SessionNameCompletion.kind")
         }
         // `sessions` is in neither set, deliberately: it lists sessions by
@@ -441,7 +436,7 @@ struct CLISessionsCommandGuardTests {
             """)
 
         for file in targetCommandFiles {
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             let count = source.components(separatedBy: "completion: SessionNameCompletion.kind").count - 1
             #expect(count == 1, """
                 \(file.lastPathComponent) takes a session target but carries \

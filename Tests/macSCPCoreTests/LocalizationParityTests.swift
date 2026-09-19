@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -93,7 +94,7 @@ enum LocalizationCatalogs {
     }
 
     private static func captures(_ pattern: String, in text: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: pattern)
+        let regex = try CompiledPattern.regex(pattern)
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap {
             Range($0.range(at: 1), in: text).map { String(text[$0]) }
@@ -483,7 +484,7 @@ struct LocalizationParityTests {
     private static func specifiers(in string: String) -> [String] {
         // `%%` is a literal percent and consumes no argument.
         let text = string.replacingOccurrences(of: "%%", with: "")
-        let pattern = try? NSRegularExpression(pattern: "%(?:\\d+\\$)?(?:lld|ld|li|@|d|f|s)")
+        let pattern = try? CompiledPattern.regex("%(?:\\d+\\$)?(?:lld|ld|li|@|d|f|s)")
         guard let pattern else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return pattern.matches(in: text, range: range).compactMap {

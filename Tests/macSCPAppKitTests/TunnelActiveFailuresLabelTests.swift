@@ -72,9 +72,7 @@ import macSCPCore
         ("SessionSidebar.swift", "TunnelProfilesSheet.stateTooltip("),
     ])
     func everyStateSurfaceReadsTheTooltip(_ file: String, _ use: String) throws {
-        let raw = try String(
-            contentsOf: Self.appKitRoot.appendingPathComponent(file), encoding: .utf8)
-        let code = try SwiftSource.blankingCommentsAndStrings(raw)
+        let code = try SourceCorpus.code(of: Self.appKitRoot.appendingPathComponent(file))
         #expect(code.contains(use), "\(file) does not show the state's tooltip")
     }
 }

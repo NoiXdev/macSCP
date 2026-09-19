@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards WHERE `LivenessProbeRunner` is mounted (connection-liveness plan,
@@ -61,7 +62,7 @@ struct LivenessProbeMountGuardTests {
     // MARK: - The guarded placement, run against the real file
 
     @Test func theRunnerIsMountedInSplitLayout() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.propertyBody(after: Self.splitLayoutAnchor, in: source)
         #expect(body.contains(Self.mountCall), """
             `ContentView.splitLayout`'s body no longer mounts \
@@ -72,7 +73,7 @@ struct LivenessProbeMountGuardTests {
     }
 
     @Test func theRunnerIsNotMountedInDetail() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.propertyBody(after: Self.detailAnchor, in: source)
         #expect(!body.contains(Self.mountCall), """
             `ContentView.detail`'s body now mounts `\(Self.mountCall)` — \
@@ -83,7 +84,7 @@ struct LivenessProbeMountGuardTests {
     }
 
     @Test func theSplitLayoutAsksLivenessProbeCoverage() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.propertyBody(after: Self.splitLayoutAnchor, in: source)
         #expect(body.contains(Self.coverageCall), """
             `ContentView.splitLayout`'s body no longer calls             `\(Self.coverageCall)` — building the mounted tab list some             other way here would make coverage a decision this view makes             again, unobservable by `LivenessProbeCoverageTests`.
@@ -94,7 +95,7 @@ struct LivenessProbeMountGuardTests {
     /// guards: if either anchor ever stops being unique, this suite's
     /// placement claims could be scanning the wrong property silently.
     @Test func bothAnchorsAppearExactlyOnceInTheRealFile() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let splitLayoutCount = source.components(separatedBy: Self.splitLayoutAnchor).count - 1
         let detailCount = source.components(separatedBy: Self.detailAnchor).count - 1
         #expect(splitLayoutCount == 1, """

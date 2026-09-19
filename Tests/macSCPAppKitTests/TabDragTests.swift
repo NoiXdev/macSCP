@@ -391,10 +391,7 @@ struct CrossWindowDropWiringGuardTests {
         .deletingLastPathComponent()
 
     private static func strictSource(of path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(
-                contentsOf: repoRoot.appendingPathComponent(path),
-                encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(path))
     }
 
     /// The handler: it finds the source window's model through the registry
@@ -457,10 +454,7 @@ struct TabDetachOnDropOutsideGuardTests {
         .deletingLastPathComponent()
 
     private static func strictSource(of path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(
-                contentsOf: repoRoot.appendingPathComponent(path),
-                encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(path))
     }
 
     private static let dragSourcePath = "Sources/MacSCPAppKit/TabDragSourceView.swift"

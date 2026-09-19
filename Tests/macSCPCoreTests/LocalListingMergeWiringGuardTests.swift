@@ -56,9 +56,7 @@ struct LocalListingMergeWiringGuardTests {
     }
 
     private static func readStripped(_ relativePath: String) throws -> String {
-        let text = try String(
-            contentsOf: coreSourcesRoot.appendingPathComponent(relativePath), encoding: .utf8)
-        return try SwiftSource.stripCommentsAndStrings(text)
+        try SourceCorpus.code(of: coreSourcesRoot.appendingPathComponent(relativePath))
     }
 
     /// Positive: `load()`'s own body reaches `LocalMetadataSource
@@ -118,8 +116,7 @@ struct LocalListingMergeWiringGuardTests {
     /// (`PollingGuardTests`'s own copy finds every helper `func`, not one
     /// named declaration).
     private static func functionBody(named name: String, in source: String) throws -> String {
-        let pattern = try NSRegularExpression(
-            pattern: #"\bfunc\s+"# + NSRegularExpression.escapedPattern(for: name) + #"\s*\("#)
+        let pattern = try CompiledPattern.regex(#"\bfunc\s+"# + NSRegularExpression.escapedPattern(for: name) + #"\s*\("#)
         let nsrange = NSRange(source.startIndex..., in: source)
         guard let match = pattern.firstMatch(in: source, range: nsrange),
             let wholeRange = Range(match.range, in: source)
@@ -167,7 +164,7 @@ struct LocalListingMergeWiringGuardTests {
     /// but the scan should not assume that) must not be mistaken for the
     /// list's own closing bracket.
     private static func resourceValuesKeySet(in body: String) throws -> Set<String> {
-        let pattern = try NSRegularExpression(pattern: #"resourceValues\(\s*forKeys:\s*\["#)
+        let pattern = try CompiledPattern.regex(#"resourceValues\(\s*forKeys:\s*\["#)
         let nsrange = NSRange(body.startIndex..., in: body)
         guard let match = pattern.firstMatch(in: body, range: nsrange),
             let matchRange = Range(match.range, in: body)

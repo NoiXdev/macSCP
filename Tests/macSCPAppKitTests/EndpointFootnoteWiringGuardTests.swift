@@ -27,9 +27,7 @@ struct EndpointFootnoteWiringGuardTests {
     /// Comments only (`SwiftSource.blankingComments`): several checks below
     /// read catalog-key literals, which the strict mode would blank.
     private static func source(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingComments(
-            try String(
-                contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static func formView() throws -> String {
@@ -206,10 +204,8 @@ struct EndpointFootnoteWiringGuardTests {
     /// would be satisfied by a key that renders to the user as its own raw
     /// text, in every language at once.
     @Test func everyKeyTheseLinesNameIsInTheEnglishCatalog() throws {
-        let catalog = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let catalog = try SourceCorpus.text(of: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
         for key in Self.footnoteKeys + [Self.pathStyleHintKey] {
             #expect(catalog.contains("\"\(key)\" = "), """
                 en.lproj/Localizable.strings declares no \(key).

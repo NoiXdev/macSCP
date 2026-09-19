@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -33,7 +34,7 @@ struct SidebarDuplicateEntryWiringGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/SessionSidebar.swift")
 
     private static func sourceLines() throws -> [String] {
-        try String(contentsOf: Self.sourceFile, encoding: .utf8).components(separatedBy: "\n")
+        try SourceCorpus.text(of: Self.sourceFile).components(separatedBy: "\n")
     }
 
     /// Every line that speaks of duplicating, in either capitalization —

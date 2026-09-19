@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -935,7 +936,7 @@ struct CLISessionsStoreEditingGuardTests {
 
     @Test func theFieldOptionsFileExistsAndCarriesTheKindOwnershipTable() throws {
         #expect(FileManager.default.fileExists(atPath: Self.fieldOptionsFile.path))
-        let source = try String(contentsOf: Self.fieldOptionsFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.fieldOptionsFile)
         #expect(source.contains("ParsableArguments"), """
             SessionFieldOptions.swift declares no ParsableArguments — the \
             positive anchor beside the negative check below has nothing to \
@@ -949,7 +950,7 @@ struct CLISessionsStoreEditingGuardTests {
 
     @Test func theStoreEditingFileExistsAndReachesBothStores() throws {
         #expect(FileManager.default.fileExists(atPath: Self.storeEditingFile.path))
-        let source = try String(contentsOf: Self.storeEditingFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.storeEditingFile)
         #expect(source.contains("SessionStore("), """
             StoreEditing.swift no longer constructs a SessionStore( — the \
             positive anchor beside the negative check below has nothing to \
@@ -969,7 +970,7 @@ struct CLISessionsStoreEditingGuardTests {
 
     @Test func neitherStoreEditingFileNamesASecretAPI() throws {
         for file in [Self.fieldOptionsFile, Self.storeEditingFile] {
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             let found = Self.forbiddenMatches(in: source)
             #expect(found.isEmpty, """
                 \(file.lastPathComponent) names \(found) — sessions add/edit/rm \
@@ -993,7 +994,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// keeps `onlyTheStoreEditingFileWritesTheStores` true of it.
     @Test func theTunnelsCommandFileExistsAndDoesTheRealWork() throws {
         #expect(FileManager.default.fileExists(atPath: Self.tunnelsCommandFile.path))
-        let source = try String(contentsOf: Self.tunnelsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tunnelsCommandFile)
         #expect(source.contains("TunnelCarriers.refusal("), """
             TunnelsCommand.swift no longer names TunnelCarriers.refusal( — the \
             positive anchor beside the negative check below has nothing to \
@@ -1016,7 +1017,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// `Keychain`), so prose about the idea cannot read as a use of the
     /// thing.
     @Test func theTunnelsVerbsNameNoSecretAPI() throws {
-        let source = try String(contentsOf: Self.tunnelsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tunnelsCommandFile)
         let found = Self.forbiddenMatches(in: source)
         #expect(found.isEmpty, """
             TunnelsCommand.swift names \(found) — tunnels list/add/edit/rm take \
@@ -1031,7 +1032,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// would not be the one this claim is about.
     @Test func theTunnelStartFileExistsAndResolvesThroughTheSharedChain() throws {
         #expect(FileManager.default.fileExists(atPath: Self.tunnelStartCommandFile.path))
-        let source = try String(contentsOf: Self.tunnelStartCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tunnelStartCommandFile)
         #expect(source.contains("secretChain("), """
             TunnelStartCommand.swift no longer calls secretChain( — either it \
             stopped resolving a secret at all, or it grew a way of its own, \
@@ -1046,7 +1047,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// The negative: `tunnels start` reaches its secret only through the
     /// shared chain, never through a store or a prompt of its own.
     @Test func theTunnelStartVerbNamesNoSecretAPIOfItsOwn() throws {
-        let source = try String(contentsOf: Self.tunnelStartCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.tunnelStartCommandFile)
         let found = Self.forbiddenMatches(in: source)
         #expect(found.isEmpty, """
             TunnelStartCommand.swift names \(found) — tunnels start resolves \
@@ -1065,7 +1066,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// the file really declares the remove command, so a scan reading a
     /// renamed or empty file cannot report this absence as a pass.
     @Test func theVerbsThemselvesReadNothingFromStandardInput() throws {
-        let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sessionsCommandFile)
         #expect(source.contains("struct SessionsRemoveCommand"), """
             SessionsCommand.swift no longer declares SessionsRemoveCommand — \
             the positive anchor beside the negative check has nothing to \
@@ -1131,7 +1132,7 @@ struct CLISessionsStoreEditingGuardTests {
     /// one that swallowed the whole file, is reported as such rather than
     /// answering the question by accident.
     @Test func theRemoveCommandAsksOnTheTerminalBeforeDeleting() throws {
-        let source = try String(contentsOf: Self.sessionsCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sessionsCommandFile)
         let slice = try #require(
             Self.declarationSlice(of: "SessionsRemoveCommand", in: source),
             "SessionsCommand.swift declares no SessionsRemoveCommand")
@@ -1156,17 +1157,11 @@ struct CLISessionsStoreEditingGuardTests {
     /// rather than silently allowed.
     @Test func onlyTheStoreEditingFileWritesTheStores() throws {
         let cliDirectory = Self.repoRoot.appendingPathComponent("Sources/MacSCPCLI")
-        guard let enumerator = FileManager.default.enumerator(
-            at: cliDirectory, includingPropertiesForKeys: nil)
-        else {
-            Issue.record("could not enumerate \(cliDirectory.path)")
-            return
-        }
-        let swiftFiles = enumerator.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let swiftFiles = try SourceCorpus.files(under: cliDirectory).filter { $0.pathExtension == "swift" }
         #expect(!swiftFiles.isEmpty, "found no .swift files under Sources/MacSCPCLI to scan")
 
         let writers = try swiftFiles.filter { file in
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             return source.contains(".upsert(") || source.contains(".delete(id:")
         }
         #expect(

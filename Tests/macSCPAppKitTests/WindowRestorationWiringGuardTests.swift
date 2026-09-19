@@ -37,7 +37,7 @@ struct WindowRestorationWiringGuardTests {
         .appendingPathComponent("WindowRestorationStore.swift")
 
     private static func code(of url: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.code(of: url)
     }
 
     private static func body(_ declaration: String, in url: URL) throws -> String {

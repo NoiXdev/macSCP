@@ -186,8 +186,7 @@ struct ManagedKeyStoreUnreadableTests {
         let file = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/MacSCPCLI/SessionConnecting.swift")
-        let code = try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: file, encoding: .utf8))
+        let code = try SourceCorpus.code(of: file)
         let join = "\(String(describing: ManagedKeyPassphraseSecretSource.self))"
             + ".namingUnreadableStore(error, in: sources)"
         let start = try #require(code.range(of: "func connect("))

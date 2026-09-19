@@ -107,9 +107,8 @@ struct SessionSidebarErrorGuardTests {
     /// The two views of the sidebar this suite reads, both derived from one
     /// read of the file and both the same length as it (see `SwiftSource`).
     private static func sidebarViews() throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: sourceFile, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: sourceFile),
+                try SourceCorpus.commentFree(of: sourceFile))
     }
 
     private static func bannerBodies(

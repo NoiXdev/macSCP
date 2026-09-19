@@ -224,7 +224,7 @@ struct PKCS12ImportIsolationGuardTests {
     }
 
     private static func captures(_ pattern: String, in text: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: pattern)
+        let regex = try CompiledPattern.regex(pattern)
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap {
             Range($0.range(at: 1), in: text).map { String(text[$0]) }
@@ -296,14 +296,18 @@ struct PKCS12ImportIsolationGuardTests {
     /// Every Swift file under those roots, this one included — the walk
     /// has to reach it for `theScanReachesTheImportSite` to be able to say
     /// that excluding it excludes something.
+    ///
+    /// Listed through `SourceCorpus`, the one walk of `Tests/` per test
+    /// process. It throws for a root it does not hold, where the enumerator
+    /// this replaced skipped the root in silence; and it does not skip
+    /// hidden files, so it lists a superset of what that enumerator did.
+    /// The roots themselves are still derived from the disk and the
+    /// manifest above, and `theScanReachesTheImportSite` still checks the
+    /// result against a plain listing of each root.
     static func swiftFiles() throws -> [URL] {
         var files: [URL] = []
         for root in try testRoots() {
-            guard let walk = fileManager.enumerator(
-                at: root, includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles])
-            else { continue }
-            for case let url as URL in walk where url.pathExtension == "swift" {
+            for url in try SourceCorpus.files(under: root) where url.pathExtension == "swift" {
                 files.append(url.standardizedFileURL)
             }
         }
@@ -334,7 +338,7 @@ struct PKCS12ImportIsolationGuardTests {
     static func candidateFiles() throws -> [URL] {
         try swiftFiles().filter { url in
             url != ownFile
-                && ((try? String(contentsOf: url, encoding: .utf8))?
+                && ((try? SourceCorpus.text(of: url))?
                     .contains(importFunctionName) ?? true)
         }
     }
@@ -359,8 +363,7 @@ struct PKCS12ImportIsolationGuardTests {
     static func callSites(inSource source: String, file: String) throws -> [CallSite] {
         let stripped = try SwiftSource.stripCommentsAndStrings(source)
         let chars = Array(stripped)
-        let regex = try NSRegularExpression(
-            pattern: "(?<![A-Za-z0-9_])\(importFunctionName)(?![A-Za-z0-9_])")
+        let regex = try CompiledPattern.regex("(?<![A-Za-z0-9_])\(importFunctionName)(?![A-Za-z0-9_])")
         let range = NSRange(stripped.startIndex..., in: stripped)
         var sites: [CallSite] = []
         for match in regex.matches(in: stripped, range: range) {
@@ -533,8 +536,7 @@ struct PKCS12ImportIsolationGuardTests {
     /// "read the literal anyway".
     private static func unaccountedUse(of name: String, in stripped: String) throws -> String? {
         for (pattern, what) in unaccountedUsePatterns {
-            let regex = try NSRegularExpression(
-                pattern: pattern.replacingOccurrences(of: "NAME", with: name))
+            let regex = try CompiledPattern.regex(pattern.replacingOccurrences(of: "NAME", with: name))
             let range = NSRange(stripped.startIndex..., in: stripped)
             if regex.firstMatch(in: stripped, range: range) != nil { return what }
         }
@@ -542,8 +544,7 @@ struct PKCS12ImportIsolationGuardTests {
         // A plain assignment is accounted for only when what follows is a
         // dictionary literal — that is the one shape `dictionaryLiterals`
         // reads. `options = elsewhere`, `options = base.merging(…)`: not.
-        let assignment = try NSRegularExpression(
-            pattern: #"(?<![A-Za-z0-9_])\#(name)\s*(?::[^=\n]*)?=(?!=)"#)
+        let assignment = try CompiledPattern.regex(#"(?<![A-Za-z0-9_])\#(name)\s*(?::[^=\n]*)?=(?!=)"#)
         let chars = Array(stripped)
         let range = NSRange(stripped.startIndex..., in: stripped)
         for match in assignment.matches(in: stripped, range: range) {
@@ -567,8 +568,7 @@ struct PKCS12ImportIsolationGuardTests {
     private static func dictionaryLiterals(
         assignedTo name: String, in stripped: String
     ) throws -> [(start: Int, text: String)] {
-        let regex = try NSRegularExpression(
-            pattern: "(?<![A-Za-z0-9_])\(name)\\s*(?::[^=\\n]*)?=\\s*\\[")
+        let regex = try CompiledPattern.regex("(?<![A-Za-z0-9_])\(name)\\s*(?::[^=\\n]*)?=\\s*\\[")
         let range = NSRange(stripped.startIndex..., in: stripped)
         let chars = Array(stripped)
         return regex.matches(in: stripped, range: range).compactMap { match in
@@ -692,7 +692,7 @@ struct PKCS12ImportIsolationGuardTests {
     private static func allCallSites() throws -> [CallSite] {
         try candidateFiles().flatMap { url in
             try callSites(
-                inSource: try String(contentsOf: url, encoding: .utf8),
+                inSource: try SourceCorpus.text(of: url),
                 file: relativePath(of: url))
         }
     }

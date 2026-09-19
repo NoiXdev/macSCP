@@ -63,7 +63,7 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
     private static let dialNeedles = ["SSHClient.connect(", funnelCall]
 
     private static func sourceLines() throws -> [String] {
-        try String(contentsOf: citadelFileSystemFile, encoding: .utf8)
+        try SourceCorpus.text(of: citadelFileSystemFile)
             .components(separatedBy: "\n")
     }
 
@@ -131,9 +131,7 @@ struct CitadelFileSystemConnectTimeoutWiringGuardTests {
             (Self.citadelFileSystemFile, "CitadelFileSystem.swift"),
             (Self.forwardingConnectionFile, "SSHForwardingConnection.swift"),
         ] {
-            let lines = try SwiftSource.blankingCommentsAndStrings(
-                try String(contentsOf: file, encoding: .utf8)
-            ).components(separatedBy: "\n")
+            let lines = try SourceCorpus.code(of: file).components(separatedBy: "\n")
             let calls = Self.callStartLines(in: lines, calling: Self.sharedPathCall)
             #expect(calls.count == 1, """
                 expected 1 `\(Self.sharedPathCall)` call in \(name), found \

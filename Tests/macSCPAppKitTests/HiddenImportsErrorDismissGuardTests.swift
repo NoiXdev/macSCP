@@ -61,7 +61,7 @@ struct HiddenImportsErrorDismissGuardTests {
     private static let wiring = "onDismissHiddenImportsError: { dismissHiddenImportsError() }"
 
     private static func strictSource(of file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     // MARK: - The guard

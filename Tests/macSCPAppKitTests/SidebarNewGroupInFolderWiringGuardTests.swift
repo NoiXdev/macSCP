@@ -40,7 +40,7 @@ struct SidebarNewGroupInFolderWiringGuardTests {
     private static let sidebarPath = "Sources/MacSCPAppKit/SessionSidebar.swift"
 
     private static func raw() throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent(sidebarPath), encoding: .utf8)
+        try SourceCorpus.text(of: repoRoot.appendingPathComponent(sidebarPath))
     }
 
     /// Structural view: comments AND string literals blanked, for
@@ -48,7 +48,7 @@ struct SidebarNewGroupInFolderWiringGuardTests {
     /// code, so a symbol found in it was called, not described or quoted"
     /// (`SwiftSource`'s own doc comment).
     private static func code() throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try Self.raw())
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(sidebarPath))
     }
 
     /// Literal-keeping view: comments blanked, string literals kept, for the
@@ -57,7 +57,7 @@ struct SidebarNewGroupInFolderWiringGuardTests {
     /// would blank the very text being checked. Same reasoning
     /// `TunnelMenuWiringGuardTests` states for its own `L10n.string(` scans.
     private static func codeKeepingLiterals() throws -> String {
-        try SwiftSource.blankingComments(try Self.raw())
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(sidebarPath))
     }
 
     // MARK: - The folder row's own menu offers the entry

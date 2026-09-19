@@ -47,18 +47,13 @@ struct ChecksumColumnWiringGuardTests {
     /// go, string literals stay (as they did under the per-line `//` cut
     /// this replaced on 2026-09-18, which also cut a literal at its `//`).
     private static func code(at url: URL) throws -> String {
-        try SwiftSource.blankingComments(try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.commentFree(of: url)
     }
 
     /// Every `.swift` file under `Sources/`, found rather than listed.
     private static func swiftFiles() throws -> [URL] {
-        let enumerator = FileManager.default.enumerator(
-            at: sourcesRoot, includingPropertiesForKeys: nil)
-        var found: [URL] = []
-        while let url = enumerator?.nextObject() as? URL {
-            if url.pathExtension == "swift" { found.append(url) }
-        }
-        return found.sorted { $0.path < $1.path }
+        try SourceCorpus.files(under: sourcesRoot).filter { $0.pathExtension == "swift" }
+            .sorted { $0.path < $1.path }
     }
 
     /// The single file whose code DECLARES `name` as a type. Fails if it is
@@ -82,6 +77,10 @@ struct ChecksumColumnWiringGuardTests {
     /// reason this was a five-minute fix rather than a guard reading the
     /// wrong file.
     private static func declares(_ name: String, in text: String) -> Bool {
+        // Every declaration found below contains `name`, so a file that
+        // does not is answered by one search instead of five (this runs over
+        // every file of `Sources/`, once per type a check looks up).
+        guard text.contains(name) else { return false }
         let keywords = ["struct ", "final class ", "class ", "enum ", "actor "]
         for keyword in keywords {
             var searchStart = text.startIndex

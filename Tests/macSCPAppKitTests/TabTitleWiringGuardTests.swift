@@ -49,8 +49,7 @@ struct TabTitleWiringGuardTests {
     private static let windowTitle = ".navigationTitle(tabTitle(for:activeTab).windowTitle)"
 
     private static func code(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static func compact(_ text: String) -> String {
@@ -191,7 +190,7 @@ struct TabTitleWiringGuardTests {
     /// relative to the repository.
     private static func appSources() throws -> [String] {
         let directory = repoRoot.appendingPathComponent(appDirectory)
-        let files = try FileManager.default.subpathsOfDirectory(atPath: directory.path)
+        let files = try SourceCorpus.relativePaths(under: directory)
             .filter { $0.hasSuffix(".swift") }
             .map { "\(appDirectory)/\($0)" }
         #expect(files.contains(stripPath) && files.contains(detailPath), """

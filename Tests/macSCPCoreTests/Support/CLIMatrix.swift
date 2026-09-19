@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import Synchronization
 import Testing
@@ -1860,7 +1861,7 @@ extension CLIMatrix {
     /// `#filePath`, so the guard reads the very file the cases live in and
     /// cannot be pointed at a stale copy.
     static func drivenSubcommands(inFileAt path: String) throws -> Set<String> {
-        guard let source = try? String(contentsOfFile: path, encoding: .utf8),
+        guard let source = try? SourceCorpus.text(of: URL(fileURLWithPath: path)),
               !source.isEmpty else {
             throw CLIMatrixError.unreadableTestSource(path)
         }

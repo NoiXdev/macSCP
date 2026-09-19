@@ -348,7 +348,7 @@ struct TabContextMenuWiringGuardTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> String {
         try canonicalBody(
-            after: anchor, in: String(contentsOf: url, encoding: .utf8),
+            after: anchor, in: SourceCorpus.text(of: url),
             describing: url.path, sourceLocation: sourceLocation)
     }
 
@@ -411,7 +411,7 @@ struct TabContextMenuWiringGuardTests {
     /// decision produced, and would also mean this suite's extraction has
     /// been silently reading whichever one comes first.
     @Test func theMenuIsAttachedExactlyOnceInTheFile() throws {
-        let source = try Self.stripped(String(contentsOf: Self.sourceFile, encoding: .utf8))
+        let source = try Self.stripped(SourceCorpus.text(of: Self.sourceFile))
         let count = Self.occurrences(of: Self.anchor, in: source)
         #expect(count == 1, """
             expected exactly 1 `\(Self.anchor)` in \(Self.sourceFile.path), found \
@@ -429,7 +429,7 @@ struct TabContextMenuWiringGuardTests {
     @Test func theViewNeverAsksTheCoreDecisionItself() throws {
         let inStrip = Self.occurrences(
             of: Self.decisionCall,
-            in: try Self.stripped(String(contentsOf: Self.sourceFile, encoding: .utf8)))
+            in: try Self.stripped(SourceCorpus.text(of: Self.sourceFile)))
         #expect(inStrip == 0, """
             found \(inStrip) `\(Self.decisionCall)` in \(Self.sourceFile.path) — the \
             decision belongs where the model is, because two of its facts are \
@@ -438,7 +438,7 @@ struct TabContextMenuWiringGuardTests {
             """)
         let inHandler = Self.occurrences(
             of: Self.decisionCall,
-            in: try Self.stripped(String(contentsOf: Self.handlerFile, encoding: .utf8)))
+            in: try Self.stripped(SourceCorpus.text(of: Self.handlerFile)))
         #expect(inHandler == 1, """
             expected exactly 1 `\(Self.decisionCall)` in \(Self.handlerFile.path), found \
             \(inHandler) — that is where the strip's menu entries are answered. If the \
@@ -451,7 +451,7 @@ struct TabContextMenuWiringGuardTests {
     /// drawn ahead of the loop and the loop's collection is not something
     /// else.
     @Test func theMenuIteratesWhatItWasHandedAndNothingElse() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let menu = try Self.menu(in: source)
         #expect(menu.canonical.hasPrefix(Self.sanctionedIteration), """
             the context menu's body in \(Self.sourceFile.path) does not begin with \
@@ -465,7 +465,7 @@ struct TabContextMenuWiringGuardTests {
 
     /// V4: one item per entry, and no other kind of item beside it.
     @Test func theMenuDrawsExactlyOneItemPerEntry() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let menu = try Self.menu(in: source)
         let buttons = Self.occurrences(of: "Button(", in: menu.canonical)
         #expect(buttons == 1, """
@@ -555,7 +555,7 @@ struct TabContextMenuWiringGuardTests {
     /// V1, V2, V3: no branch, no narrowing of the list, no item suppressed
     /// into a greyed-out state.
     @Test func theMenuBodyMakesNoDecisionOfItsOwn() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let menu = try Self.menu(in: source)
         let found = Self.forbiddenTokens.intersection(menu.tokens).sorted()
         #expect(found.isEmpty, """
@@ -1098,7 +1098,7 @@ struct TabContextMenuWiringGuardTests {
 
         private static func canonicalStrip() throws -> String {
             try TabContextMenuWiringGuardTests.canonicalize(
-                String(contentsOf: stripFile, encoding: .utf8))
+                SourceCorpus.text(of: stripFile))
         }
 
         private static func occurrences(of needle: String, in haystack: String) -> Int {
@@ -1196,7 +1196,7 @@ struct TabContextMenuWiringGuardTests {
         /// precisely the shape that goes unnoticed.
         @Test func theDropHandsOverBothIdentitiesAndDoesNothingElse() throws {
             let body = try Self.dropBody(
-                in: String(contentsOf: Self.stripFile, encoding: .utf8))
+                in: SourceCorpus.text(of: Self.stripFile))
             #expect(body.contains(Self.sanctionedPayloadRead), """
                 the drop closure in \(Self.stripFile.path) does not ask \
                 `\(Self.sanctionedPayloadRead)` — the payload is being read some other \

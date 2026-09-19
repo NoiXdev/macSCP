@@ -121,8 +121,7 @@ struct S3QueueCancelTests {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
     static func code(_ path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: root.appendingPathComponent(path), encoding: .utf8))
+        try SourceCorpus.code(of: root.appendingPathComponent(path))
     }
 
     static let config = S3ConnectionConfig(

@@ -106,9 +106,8 @@ struct TransferQueueBarCancelGuardTests {
     /// blanks comments only, and exists for the two claims that are ABOUT a
     /// literal: which catalogue key a control takes its label from.
     private static func barViews() throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: sourceFile, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: sourceFile),
+                try SourceCorpus.commentFree(of: sourceFile))
     }
 
     /// Character offsets of the brace-balanced body that follows
@@ -236,8 +235,7 @@ struct TransferQueueBarCancelGuardTests {
     /// beside this very button, and a count that disagrees with the gate is
     /// the same defect wearing a number.
     @Test func theQueuesActivityPredicateIsTheRowsCancellablePredicate() throws {
-        let queue = try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: Self.queueFile, encoding: .utf8))
+        let queue = try SourceCorpus.code(of: Self.queueFile)
         // Positive anchor for the two body reads below: the file the scan
         // names must actually be the queue's own source. Computed first, so
         // a failure reports the claim rather than dumping the file.

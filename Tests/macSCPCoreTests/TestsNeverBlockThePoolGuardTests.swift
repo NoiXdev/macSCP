@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Holds the whole test corpus to CLAUDE.md's "Tests never block the
@@ -25,8 +26,8 @@ import Testing
 ///   which is what Task 1b does to it.
 /// - `theScannerSeesCodeAndIgnoresComments` plants both kinds of occurrence
 ///   in a synthetic source and requires exactly one of them to be found.
-/// - `theGuardsOwnSourceCarriesEveryPatternItLooksFor` reads THIS file off
-///   disk through the same enumeration the scan uses and requires every
+/// - `theGuardsOwnSourceCarriesEveryPatternItLooksFor` reads THIS file
+///   through the same corpus listing the scan uses and requires every
 ///   pattern to turn up in it, so "the scan found nothing" can never mean
 ///   "the scan read nothing".
 @Suite("Tests never block the cooperative pool")
@@ -142,7 +143,7 @@ struct TestsNeverBlockThePoolGuardTests {
     @Test func noTestSourceCarriesAnUnallowedBlockingWait() throws {
         var violations: [String] = []
         for file in try Self.testSources() where file != Self.ownRelativePath {
-            let source = Self.strippingComments(try String(contentsOf: Self.url(for: file), encoding: .utf8))
+            let source = Self.strippingComments(try SourceCorpus.text(of: Self.url(for: file)))
             let excused = Self.allowed[file] ?? []
             for pattern in BlockingWait.allCases
             where source.contains(pattern.rawValue) && !excused.contains(pattern) {
@@ -183,7 +184,7 @@ struct TestsNeverBlockThePoolGuardTests {
 
         let file = "macSCPCoreTests/Support/\(String(describing: SubprocessRunner.self)).swift"
         #expect(try Self.testSources().contains(file), "\(file) is not where the scan can see it")
-        let source = try String(contentsOf: Self.url(for: file), encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.url(for: file))
         #expect(source.contains("enum \(String(describing: SubprocessRunner.self))"))
     }
 
@@ -202,7 +203,7 @@ struct TestsNeverBlockThePoolGuardTests {
         for suite in suites {
             let file = "macSCPCoreTests/\(String(describing: suite)).swift"
             let source = Self.strippingComments(
-                try String(contentsOf: Self.url(for: file), encoding: .utf8))
+                try SourceCorpus.text(of: Self.url(for: file)))
             #expect(source.contains(call), "\(file) does not call \(call)")
         }
     }
@@ -219,7 +220,7 @@ struct TestsNeverBlockThePoolGuardTests {
                 continue
             }
             let source = Self.strippingComments(
-                try String(contentsOf: Self.url(for: file), encoding: .utf8))
+                try SourceCorpus.text(of: Self.url(for: file)))
             for pattern in patterns where !source.contains(pattern.rawValue) {
                 Issue.record("\(file) no longer carries \(pattern.rawValue) — drop it from `allowed`")
             }
@@ -268,7 +269,7 @@ struct TestsNeverBlockThePoolGuardTests {
         #expect(files.count > 200, "the scan enumerated only \(files.count) files")
 
         let source = Self.strippingComments(
-            try String(contentsOf: Self.url(for: Self.ownRelativePath), encoding: .utf8))
+            try SourceCorpus.text(of: Self.url(for: Self.ownRelativePath)))
         for pattern in BlockingWait.allCases {
             #expect(source.contains(pattern.rawValue), "\(pattern) is not in the guard's own source")
         }
@@ -308,14 +309,13 @@ struct TestsNeverBlockThePoolGuardTests {
         testsRoot.appendingPathComponent(relativePath)
     }
 
-    /// Every `.swift` file under `Tests/`, as paths relative to it.
+    /// Every `.swift` file under `Tests/`, as paths relative to it — listed
+    /// and later read through `SourceCorpus`, the one read of the tree per
+    /// test process, which throws where the walk it replaced did.
     private static func testSources() throws -> [String] {
         let prefix = testsRootPath + "/"
-        guard let walker = FileManager.default.enumerator(
-            at: testsRoot, includingPropertiesForKeys: nil)
-        else { throw GuardError("cannot enumerate \(testsRootPath)") }
-        return walker.compactMap { entry in
-            guard let url = entry as? URL, url.pathExtension == "swift" else { return nil }
+        return try SourceCorpus.files(under: testsRoot).compactMap { url in
+            guard url.pathExtension == "swift" else { return nil }
             let path = url.path(percentEncoded: false)
             guard path.hasPrefix(prefix) else { return nil }
             return String(path.dropFirst(prefix.count))
@@ -341,10 +341,5 @@ struct TestsNeverBlockThePoolGuardTests {
                 return line
             }
             .joined(separator: "\n")
-    }
-
-    private struct GuardError: Error, CustomStringConvertible {
-        let description: String
-        init(_ description: String) { self.description = description }
     }
 }

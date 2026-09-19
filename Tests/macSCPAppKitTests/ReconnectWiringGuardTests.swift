@@ -579,8 +579,7 @@ struct ReconnectWiringGuardTests {
         var unsanctioned: [String] = []
         for file in try Self.appSwiftFiles() {
             let relative = Self.relativePath(of: file)
-            let stripped = try SwiftSource.blankingCommentsAndStrings(
-                try String(contentsOf: file, encoding: .utf8))
+            let stripped = try SourceCorpus.code(of: file)
             let codeLines = stripped.split(separator: "\n", omittingEmptySubsequences: false)
                 .map { Self.normalized(String($0)) }
             for (index, code) in codeLines.enumerated() {
@@ -614,8 +613,7 @@ struct ReconnectWiringGuardTests {
     /// sanctioned one is riding on its allowance.
     @Test func everySanctionedSiteStillExistsExactlyAsOftenAsDeclared() throws {
         for site in Self.sanctionedSites {
-            let stripped = try SwiftSource.blankingCommentsAndStrings(
-                try String(contentsOf: Self.file(site.file), encoding: .utf8))
+            let stripped = try SourceCorpus.code(of: Self.file(site.file))
             let matches = stripped
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .filter { Self.normalized(String($0)) == site.code }
@@ -708,7 +706,7 @@ struct ReconnectWiringGuardTests {
     /// only. Shared by `everyImportIsPermitted` and its parser self-test so
     /// the two cannot disagree about what an import is.
     private static func importedModules(in stripped: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: importPattern)
+        let regex = try CompiledPattern.regex(importPattern)
         let range = NSRange(stripped.startIndex..., in: stripped)
         var modules: Set<String> = []
         for match in regex.matches(in: stripped, range: range) {
@@ -812,8 +810,7 @@ struct ReconnectWiringGuardTests {
     @Test func everyPackageTargetIsScannedOrExplicitlyExcluded() throws {
         let manifest = try String(
             contentsOf: Self.repoRoot.appendingPathComponent("Package.swift"), encoding: .utf8)
-        let regex = try NSRegularExpression(
-            pattern: #"\.(?:executableTarget|target)\(\s*name:\s*"([^"]+)""#)
+        let regex = try CompiledPattern.regex(#"\.(?:executableTarget|target)\(\s*name:\s*"([^"]+)""#)
         let range = NSRange(manifest.startIndex..., in: manifest)
         var targets: Set<String> = []
         for match in regex.matches(in: manifest, range: range) {
@@ -1146,8 +1143,7 @@ struct ReconnectWiringGuardTests {
         var seen: Set<String> = []
         var forbidden: [String] = []
         for file in try Self.appSwiftFiles() {
-            let stripped = try SwiftSource.blankingCommentsAndStrings(
-                try String(contentsOf: file, encoding: .utf8))
+            let stripped = try SourceCorpus.code(of: file)
             for module in try Self.importedModules(in: stripped) {
                 seen.insert(module)
                 if !Self.permittedImports.contains(module) {
@@ -1407,8 +1403,7 @@ struct ReconnectWiringGuardTests {
     ///    round-1 comment made about `fileprivate`.
     @Test func theDetailsTextHasNoWayOutOfItsOwnFile() throws {
         let file = Self.file("Sources/MacSCPAppKit/ConnectFailureDetails.swift")
-        let stripped = try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: file, encoding: .utf8))
+        let stripped = try SourceCorpus.code(of: file)
         #expect(stripped.contains("fileprivate let text: String"), """
             `ConnectFailureDetailText`'s storage is no longer `fileprivate let text: String`. \
             That declaration is what keeps the raw text from being NAMED outside this file.
@@ -1604,7 +1599,7 @@ struct ReconnectWiringGuardTests {
         (indicatorAnchor, "Sources/MacSCPAppKit/TabStripView.swift"),
     ])
     func everyAnchorAppearsExactlyOnceInItsRealFile(anchor: String, relativePath: String) throws {
-        let source = try String(contentsOf: Self.file(relativePath), encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.file(relativePath))
         let count = source.components(separatedBy: anchor).count - 1
         #expect(count == 1, """
             expected exactly 1 occurrence of `\(anchor)` in \(relativePath), found \(count) — \
@@ -1677,11 +1672,12 @@ struct ReconnectWiringGuardTests {
         let links = try symbolicLinks(under: scannedRoots + [sourcesDirectory])
         guard links.isEmpty else { throw ScanError.symbolicLinkInSources(links) }
         var files: [URL] = []
+        // Listed through `SourceCorpus`, which holds regular files only and
+        // throws for a root it does not hold; the symlink refusal above
+        // still reads the disk, because a link is exactly what the corpus
+        // does not hold.
         for root in scannedRoots {
-            guard let walker = FileManager.default.enumerator(
-                at: root, includingPropertiesForKeys: nil)
-            else { throw ScanError.anchorNotFound }
-            files += walker.compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+            files += try SourceCorpus.files(under: root).filter { $0.pathExtension == "swift" }
         }
         return files.sorted { $0.path < $1.path }
     }
@@ -1729,11 +1725,11 @@ struct ReconnectWiringGuardTests {
         return (attributes?[.type] as? FileAttributeType) == .typeSymbolicLink
     }
 
-    /// Compiled once per test that needs them, and `throws` rather than
-    /// force-unwrapping: a pattern that fails to compile must fail the
-    /// calling test loudly, not take the whole run down with it.
+    /// Compiled once per test process (`CompiledPattern`), and `throws`
+    /// rather than force-unwrapping: a pattern that fails to compile must
+    /// fail the calling test loudly, not take the whole run down with it.
     private static func chokePointDetectors() throws -> [(regex: NSRegularExpression, point: ChokePoint)] {
-        try chokePoints.map { (try NSRegularExpression(pattern: $0.pattern), $0) }
+        try chokePoints.map { (try CompiledPattern.regex($0.pattern), $0) }
     }
 
     /// What choke point this line touches, if any — the description, so a
@@ -1894,7 +1890,7 @@ struct ReconnectWiringGuardTests {
     }
 
     private static func strippedBody(after anchor: String, in file: URL) throws -> String {
-        let source = try String(contentsOf: file, encoding: .utf8)
+        let source = try SourceCorpus.text(of: file)
         return try strippedBody(after: anchor, in: source)
     }
 

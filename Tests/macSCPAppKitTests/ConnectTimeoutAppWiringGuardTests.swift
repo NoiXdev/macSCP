@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards the App-layer leg of the connect-timeout wiring:
@@ -58,7 +59,7 @@ struct ConnectTimeoutAppWiringGuardTests {
     // MARK: - The guard
 
     @Test func theConnectorClosureForwardsTheLiveConnectTimeout() throws {
-        let source = try String(contentsOf: Self.lifecycleFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.lifecycleFile)
         let lines = source.components(separatedBy: "\n")
         guard let arguments = Self.connectCallArguments(in: lines) else {
             Issue.record("""
@@ -87,7 +88,7 @@ struct ConnectTimeoutAppWiringGuardTests {
     /// if the anchor ever stops being unique, the guard above could be
     /// matching the wrong call site silently.
     @Test func theAnchorAppearsExactlyOnceInTheRealFile() throws {
-        let source = try String(contentsOf: Self.lifecycleFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.lifecycleFile)
         let count = source.components(separatedBy: Self.anchor).count - 1
         #expect(count == 1, """
             expected exactly 1 occurrence of `\(Self.anchor)` in \

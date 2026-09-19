@@ -194,9 +194,8 @@ import macSCPCore
     /// comment-blanked view keeps literals, so an interpolation such as a
     /// described kind inside a string is still visible to the negative.
     @Test func theLabelsTranslateAndNeverDescribeTheKind() throws {
-        let raw = try String(contentsOf: Self.sheetFile, encoding: .utf8)
-        let strict = try SwiftSource.blankingCommentsAndStrings(raw)
-        let withLiterals = try SwiftSource.blankingComments(raw)
+        let strict = try SourceCorpus.code(of: Self.sheetFile)
+        let withLiterals = try SourceCorpus.commentFree(of: Self.sheetFile)
 
         let stateStrict = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "static func stateLabel(_ state: TunnelState) -> String", in: strict)

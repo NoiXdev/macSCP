@@ -101,7 +101,7 @@ struct JumpSessionSummaryResolutionGuardTests {
     // MARK: - Scanner
 
     private static func blanked(_ file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     /// `name(` for every function in `source` whose body calls the fallback,

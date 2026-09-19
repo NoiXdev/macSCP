@@ -39,8 +39,7 @@ struct PermissionsSurfaceGuardTests {
     /// 2026-09-18 landed mid-literal there; the shared stripper parses the
     /// literal and leaves it whole.
     private static func source(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingComments(try String(
-            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static func occurrences(of needle: String, in text: String) -> Int {
@@ -54,7 +53,7 @@ struct PermissionsSurfaceGuardTests {
     /// it as no reading at all.
     private static func memberReadings(of name: String, in text: String) throws -> Int {
         let pattern = NSRegularExpression.escapedPattern(for: name) + "\\s*\\."
-        let regex = try NSRegularExpression(pattern: pattern)
+        let regex = try CompiledPattern.regex(pattern)
         return regex.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
     }
 

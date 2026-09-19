@@ -123,7 +123,7 @@ struct DiagnosticsNoDescribingGuardTests {
     @Test func noDiagnosticsFileDescribesAnErrorValue() throws {
         let files = try Self.diagnosticsSwiftFiles()
         let namedSources = try files.map {
-            (name: $0.lastPathComponent, source: try String(contentsOf: $0, encoding: .utf8))
+            (name: $0.lastPathComponent, source: try SourceCorpus.text(of: $0))
         }
         let offenders = try Self.offendersDescribingAnErrorValue(in: namedSources)
         #expect(offenders.isEmpty, """
@@ -143,7 +143,7 @@ struct DiagnosticsNoDescribingGuardTests {
     @Test func noDiagnosticsFileBuildsASentenceOutOfAnErrorValue() throws {
         let files = try Self.diagnosticsSwiftFiles()
         let namedSources = try files.map {
-            (name: $0.lastPathComponent, source: try String(contentsOf: $0, encoding: .utf8))
+            (name: $0.lastPathComponent, source: try SourceCorpus.text(of: $0))
         }
         let offenders = try Self.offendersInterpolatingAnErrorValue(in: namedSources)
         #expect(offenders.isEmpty, """
@@ -161,7 +161,7 @@ struct DiagnosticsNoDescribingGuardTests {
         // can never itself be read back as an offender. Driven through the
         // same function the negative above calls, so what is proven
         // sensitive is the guard's own scanning path.
-        let fixture = try String(contentsOf: Self.interpolationFixtureFile, encoding: .utf8)
+        let fixture = try SourceCorpus.text(of: Self.interpolationFixtureFile)
         let fixtureOffenders = try Self.offendersInterpolatingAnErrorValue(
             in: [(name: "ErrorInterpolationFixture.swift", source: fixture)])
         #expect(fixtureOffenders == ["ErrorInterpolationFixture.swift"], """
@@ -194,7 +194,7 @@ struct DiagnosticsNoDescribingGuardTests {
     /// is known to be reading the right file's actual content and not a
     /// stand-in that happens to contain no matches for any reason.
     @Test func theRuleIsStatedInDialProbesOwnDocComment() throws {
-        let source = try String(contentsOf: Self.dialProbesFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.dialProbesFile)
         #expect(source.contains(Self.ruleClause), """
             DialProbes.swift no longer states the rule this suite enforces \
             ("\(Self.ruleClause)") — either the doc comment moved or was \
@@ -325,23 +325,12 @@ struct DiagnosticsNoDescribingGuardTests {
     /// change that never touches this suite. Sorted for a stable failure
     /// message.
     private static func diagnosticsSwiftFiles() throws -> [URL] {
-        guard
-            let walk = FileManager.default.enumerator(
-                at: Self.diagnosticsDirectory, includingPropertiesForKeys: nil)
-        else {
-            // Fails closed, like the stripper: an unreadable directory is a
-            // scan that checked nothing, and reporting it as zero offenders
-            // would read exactly like a clean tree.
-            throw EnumerationError.directoryUnreadable
-        }
-        return walk.compactMap { $0 as? URL }
+        // Fails closed, like the stripper: `SourceCorpus` throws for a
+        // directory it does not hold, because a scan that checked nothing
+        // and reported zero offenders would read exactly like a clean tree.
+        try SourceCorpus.files(under: Self.diagnosticsDirectory)
             .filter { $0.pathExtension == "swift" }
             .sorted { $0.path < $1.path }
-    }
-
-    /// Raised when the guarded directory cannot be walked at all.
-    private enum EnumerationError: Error {
-        case directoryUnreadable
     }
 
     /// The names (not the full source) of every entry in `namedSources`
@@ -369,7 +358,7 @@ struct DiagnosticsNoDescribingGuardTests {
         try namedSources.compactMap { name, source in
             let text = try SwiftSource.stripComments(source)
             if text.contains(Self.describingInterpolation) { return name }
-            let bareInterpolation = try NSRegularExpression(pattern: Self.bareInterpolationPattern)
+            let bareInterpolation = try CompiledPattern.regex(Self.bareInterpolationPattern)
             let range = NSRange(text.startIndex..., in: text)
             let matched = bareInterpolation.matches(in: text, range: range).contains {
                 guard let identifier = Range($0.range(at: 1), in: text) else { return false }

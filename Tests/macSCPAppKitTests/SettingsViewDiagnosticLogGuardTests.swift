@@ -72,9 +72,8 @@ struct SettingsViewDiagnosticLogGuardTests {
     // MARK: - Source access
 
     private static func views(of file: URL) throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: file, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: file),
+                try SourceCorpus.commentFree(of: file))
     }
 
     private static func sectionBodies() throws -> (code: String, withLiterals: String) {
@@ -325,19 +324,34 @@ struct SettingsViewDiagnosticLogGuardTests {
     /// one is added) for `needle` in its STRIPPED (comments and string
     /// literals blanked) source, skipping `excludedFileName`. Returns the
     /// file names (not full paths) that contain it.
+    ///
+    /// The real tree is read through `SourceCorpus`, built once per test
+    /// process. The self-test below points this at a fixture tree it writes
+    /// to a temporary directory on purpose, which the corpus does not hold
+    /// and must not: that one is walked and read from disk. The choice is
+    /// made by where `directory` points (`SourceCorpus.covers`), so a
+    /// mistyped path under `Sources/` throws rather than reading nothing.
     private static func filesCalling(
         _ needle: String, in directory: URL, excluding excludedFileName: String
     ) throws -> [String] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: directory, includingPropertiesForKeys: nil)
-        else {
-            throw ScanError.directoryNotEnumerable(directory.path)
+        let files: [URL]
+        let blanked: (URL) throws -> String
+        if SourceCorpus.covers(directory) {
+            files = try SourceCorpus.files(under: directory)
+            blanked = { try SourceCorpus.code(of: $0) }
+        } else {
+            guard let enumerator = FileManager.default.enumerator(
+                at: directory, includingPropertiesForKeys: nil)
+            else {
+                throw ScanError.directoryNotEnumerable(directory.path)
+            }
+            files = enumerator.compactMap { $0 as? URL }
+            blanked = { try SwiftSource.blankingCommentsAndStrings(String(contentsOf: $0, encoding: .utf8)) }
         }
         var offenders: [String] = []
-        for case let url as URL in enumerator {
+        for url in files {
             guard url.pathExtension == "swift", url.lastPathComponent != excludedFileName else { continue }
-            let raw = try String(contentsOf: url, encoding: .utf8)
-            let code = try SwiftSource.blankingCommentsAndStrings(raw)
+            let code = try blanked(url)
             if code.contains(needle) {
                 offenders.append(url.lastPathComponent)
             }

@@ -125,7 +125,7 @@ struct ConnectingAttemptWiringGuardTests {
     }
 
     @Test func theSurfaceAnchorAppearsExactlyOnceInTheRealFile() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let count = source.components(separatedBy: Self.surfaceAnchor).count - 1
         #expect(count == 1, """
             expected exactly 1 occurrence of `\(Self.surfaceAnchor)` in \
@@ -235,11 +235,12 @@ struct ConnectingAttemptWiringGuardTests {
     // `LivenessDotWiringGuardTests` use. The extracted text is then run
     // through `SwiftSource.blankingCommentsAndStrings` before any caller sees it.
 
-    /// Convenience over `strippedBody(after:in:)` for the real file — reads
-    /// it fresh on every call rather than caching it, so a test run always
-    /// checks the file as it stands right now.
+    /// Convenience over `strippedBody(after:in:)` for the real file — read
+    /// through `SourceCorpus`, the snapshot of the tree taken once per test
+    /// process, so every check in a run reads the file as it stood when the
+    /// run began.
     private static func strippedBody(after anchor: String) throws -> String {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         return try strippedBody(after: anchor, in: source)
     }
 

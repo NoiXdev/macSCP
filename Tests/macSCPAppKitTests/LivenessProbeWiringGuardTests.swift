@@ -80,7 +80,7 @@ struct LivenessProbeWiringGuardTests {
     // MARK: - The five guarded claims, run against the real file
 
     @Test func theLoopReadsTheIntervalInsideItself() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         #expect(body.contains("settingsStore.keepAliveIntervalSeconds"), """
             the probe loop's body no longer reads \
@@ -91,7 +91,7 @@ struct LivenessProbeWiringGuardTests {
     }
 
     @Test func theLoopChecksKeepAliveEnabledBeforeReadingTheInterval() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         guard let enabledRange = body.range(of: "guard settingsStore.keepAliveEnabled else") else {
             Issue.record("""
@@ -117,7 +117,7 @@ struct LivenessProbeWiringGuardTests {
     }
 
     @Test func theLoopDecidesThroughLivenessProbePolicy() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         #expect(body.contains("LivenessProbePolicy.decide("), """
             the probe loop's body no longer calls `LivenessProbePolicy.decide(` — \
@@ -127,7 +127,7 @@ struct LivenessProbeWiringGuardTests {
     }
 
     @Test func giveUpDelegatesToOnGiveUp() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         guard let giveUpCase = Self.caseBody(named: ".giveUp", in: body) else {
             Issue.record("no `case .giveUp:` found inside the probe loop — re-anchor this guard.")
@@ -142,7 +142,7 @@ struct LivenessProbeWiringGuardTests {
     }
 
     @Test func theProbeArmGoesThroughTheGuardedStep() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let body = try Self.loopBody(after: Self.anchor, in: source)
         guard let probeCase = Self.caseBody(named: Self.probeCase, in: body) else {
             Issue.record("no `case \(Self.probeCase):` found inside the probe loop — re-anchor this guard.")
@@ -171,7 +171,7 @@ struct LivenessProbeWiringGuardTests {
     /// if the anchor ever stops being unique, the five claims this suite
     /// makes could be scanning the wrong loop silently.
     @Test func theAnchorAppearsExactlyOnceInTheRealFile() throws {
-        let source = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.detailFile)
         let count = source.components(separatedBy: Self.anchor).count - 1
         #expect(count == 1, """
             expected exactly 1 occurrence of `\(Self.anchor)` in \

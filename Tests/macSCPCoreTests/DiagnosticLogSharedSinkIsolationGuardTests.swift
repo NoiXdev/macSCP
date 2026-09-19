@@ -59,16 +59,10 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
 
     private static let marker = "DiagnosticLog.shared"
 
-    private static func swiftFiles(under directory: URL) -> [URL] {
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: directory, includingPropertiesForKeys: nil)
-        else { return [] }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension == "swift" {
-            files.append(url)
-        }
-        return files
+    /// Read through `SourceCorpus`, which throws for a directory it does
+    /// not hold where the enumerator this replaced answered `[]`.
+    private static func swiftFiles(under directory: URL) throws -> [URL] {
+        try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
     }
 
     /// The `@Suite(...)` attribute's own argument list, paren-balanced —
@@ -105,7 +99,8 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
         var results: [String] = []
         var i = 0
         while i <= chars.count - markerChars.count {
-            guard Array(chars[i..<(i + markerChars.count)]) == markerChars else {
+            guard markerChars.isEmpty || chars[i] == markerChars[0],
+                chars[i..<(i + markerChars.count)].elementsEqual(markerChars) else {
                 i += 1
                 continue
             }
@@ -148,18 +143,17 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
         var allowedFileIsSerialized = false
         var sawAllowedFile = false
 
-        for file in Self.swiftFiles(under: Self.testsRoot) {
-            let raw = try String(contentsOf: file, encoding: .utf8)
+        for file in try Self.swiftFiles(under: Self.testsRoot) {
+            let raw = try SourceCorpus.text(of: file)
             // Cheap pre-filter: stripping can only ever REMOVE occurrences
             // (a comment or string literal blanked to spaces), never
             // create one — so a file whose raw bytes never mention the
-            // marker at all cannot hold a real one either, and the
-            // (comparatively expensive, raw-string-aware) stripper below
-            // never has to run on the other several hundred files under
-            // `Tests/` that do not.
+            // marker at all cannot hold a real one either, and the blanked
+            // view below is never searched for the other several hundred
+            // files under `Tests/` that do not.
             guard raw.contains(Self.marker) else { continue }
 
-            let stripped = try SwiftSource.blankingCommentsAndStrings(raw)
+            let stripped = try SourceCorpus.code(of: file)
             let count = stripped.components(separatedBy: Self.marker).count - 1
 
             if file.lastPathComponent == Self.allowedFileName {
@@ -341,15 +335,14 @@ struct DiagnosticLogSharedSinkIsolationGuardTests {
     )
     func everyConfigureCallPassesATracedTempDirectory() throws {
         guard
-            let file = Self.swiftFiles(under: Self.testsRoot).first(where: {
+            let file = try Self.swiftFiles(under: Self.testsRoot).first(where: {
                 $0.lastPathComponent == Self.allowedFileName
             })
         else {
             Issue.record("\(Self.allowedFileName) was not found under Tests/")
             return
         }
-        let raw = try String(contentsOf: file, encoding: .utf8)
-        let stripped = try SwiftSource.blankingCommentsAndStrings(raw)
+        let stripped = try SourceCorpus.code(of: file)
 
         // Positive: the file's own temp-directory factory, found rather
         // than spelled — without exactly one, this scan cannot tell a safe

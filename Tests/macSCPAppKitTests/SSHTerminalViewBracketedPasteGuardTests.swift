@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards that `SSHTerminalView.makeNSView` actually wires
@@ -38,7 +39,7 @@ struct SSHTerminalViewBracketedPasteGuardTests {
     private enum ScanError: Error { case markerNotFound, unbalancedBraces }
 
     @Test func makeNSViewAssignsBracketedPasteQuery() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let body = try Self.functionBody(containing: "func makeNSView", in: source)
         #expect(body.contains("viewModel.bracketedPasteQuery = "), """
             makeNSView must assign `viewModel.bracketedPasteQuery` -- without it, \

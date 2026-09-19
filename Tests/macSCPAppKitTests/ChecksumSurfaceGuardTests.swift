@@ -46,8 +46,7 @@ struct ChecksumSurfaceGuardTests {
     /// 2026-09-18; before that, line comments only, so a `/* … */` naming one
     /// of these views could still satisfy a check). String literals stay.
     private static func source(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingComments(try String(
-            contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static let viewsPath = "Sources/MacSCPAppKit/ChecksumViews.swift"

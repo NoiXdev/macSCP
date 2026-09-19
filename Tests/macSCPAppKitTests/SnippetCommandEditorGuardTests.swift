@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards eleven properties of the snippet editor — `SnippetsSheet.swift`
@@ -153,7 +154,7 @@ struct SnippetCommandEditorGuardTests {
     ]
 
     @Test func allFiveAutomaticSubstitutionsAreExplicitlyDisabled() throws {
-        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.editorSourceFile)
         let body = try Self.functionBody(containing: "func makeNSView", in: source)
         for property in Self.requiredDisabledProperties {
             #expect(Self.disables(property, in: body), """
@@ -195,7 +196,7 @@ struct SnippetCommandEditorGuardTests {
     // MARK: - Finding 2: Tab traversal
 
     @Test func tabAndBacktabClaimFocusTraversalInsteadOfInsertingATab() throws {
-        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.editorSourceFile)
         let body = try Self.functionBody(containing: "doCommandBy selector", in: source)
         #expect(body.contains("#selector(NSResponder.insertTab(_:))"), """
             The Tab command selector must be matched explicitly in \
@@ -244,7 +245,7 @@ struct SnippetCommandEditorGuardTests {
     // MARK: - Finding 4: Return inserts a line break (insertNewline not claimed)
 
     @Test func insertNewlineIsNotClaimedInDoCommandBy() throws {
-        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.editorSourceFile)
         let body = try Self.functionBody(containing: "doCommandBy selector", in: source)
         #expect(!body.contains("#selector(NSResponder.insertNewline(_:))"), """
             The insertNewline: command selector must NOT be matched in \
@@ -306,7 +307,7 @@ struct SnippetCommandEditorGuardTests {
     /// editor call site and Save button included.
     @Test("the snippet editor saves on command-Return")
     func snippetEditorSavesOnCommandReturn() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private struct SnippetEditorView: View {", in: source)
         #expect(body.contains("SnippetCommandEditor("), """
@@ -336,7 +337,7 @@ struct SnippetCommandEditorGuardTests {
     // MARK: - Finding 4: accessibility label
 
     @Test func editorDeclaresAndWiresAnAccessibilityLabelParameter() throws {
-        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.editorSourceFile)
         #expect(source.contains("let accessibilityLabel: String"), """
             SnippetCommandEditor must declare an `accessibilityLabel: String` property -- \
             without one, there is nothing for makeNSView to hand VoiceOver.
@@ -358,7 +359,7 @@ struct SnippetCommandEditorGuardTests {
     /// that the editor is built there at all, and that the argument it gets
     /// is the row's own `commandLabel` local.
     @Test func sheetPassesTheSameLocalizedStringTheRowLabelUses() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         #expect(source.contains("FormRow(label: commandLabel)"), """
             Expected the command row to still be built as `FormRow(label: commandLabel)` -- if \
             this changed, the assertion below (that the editor gets the SAME `commandLabel`) \
@@ -395,7 +396,7 @@ struct SnippetCommandEditorGuardTests {
 
     @Test("isSaveDisabled also gates on the variables fault")
     func isSaveDisabledGatesOnVariablesFault() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var isSaveDisabled: Bool {", in: source)
         #expect(body.contains("variablesFault != nil"), """
@@ -453,7 +454,7 @@ struct SnippetCommandEditorGuardTests {
     /// of the brief names explicitly.
     @Test("the declaration fault runs all three checks")
     func theDeclarationFaultRunsAllThreeChecks() throws {
-        let source = try String(contentsOf: Self.presentationSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.presentationSourceFile)
         let body = try Self.functionBody(containing: "func snippetVariablesFault(", in: source)
         #expect(body.contains("SnippetVariable.isValidName("), """
             snippetVariablesFault must call SnippetVariable.isValidName -- an invalid variable \
@@ -480,7 +481,7 @@ struct SnippetCommandEditorGuardTests {
     /// calling it.
     @Test("the editor asks for the declaration fault")
     func theEditorAsksForTheDeclarationFault() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var variablesFault: SnippetVariablesFault? {", in: source)
         #expect(body.contains("snippetVariablesFault("), """
@@ -520,7 +521,7 @@ struct SnippetCommandEditorGuardTests {
     /// to compute `isSaveDisabled`.
     @Test("the variables section renders variablesFault, not only uses it to disable Save")
     func variablesSectionRendersTheError() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
         #expect(body.contains("if let variablesFault {"), """
@@ -558,7 +559,7 @@ struct SnippetCommandEditorGuardTests {
     /// than going quiet the way a `!contains` would.
     @Test("the variables section offers the placement-check waiver as a control")
     func variablesSectionOffersTheWaiver() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
         #expect(body.contains("isOn: $skipsPlacementCheck"), """
@@ -580,7 +581,7 @@ struct SnippetCommandEditorGuardTests {
     /// checkbox drawn, stored and ignored.
     @Test("the waiver reaches the check rather than being checked regardless")
     func theWaiverReachesTheCheck() throws {
-        let sheet = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let sheet = try SourceCorpus.text(of: Self.sheetSourceFile)
         let editorBody = try Self.functionBody(
             containing: "private var variablesFault: SnippetVariablesFault? {", in: sheet)
         #expect(editorBody.contains("skipsPlacementCheck: skipsPlacementCheck"), """
@@ -590,7 +591,7 @@ struct SnippetCommandEditorGuardTests {
             \(editorBody)
             """)
 
-        let presentation = try String(contentsOf: Self.presentationSourceFile, encoding: .utf8)
+        let presentation = try SourceCorpus.text(of: Self.presentationSourceFile)
         let faultBody = try Self.functionBody(
             containing: "func snippetVariablesFault(", in: presentation)
         #expect(faultBody.contains("skipsPlacementCheck: skipsPlacementCheck"), """
@@ -608,7 +609,7 @@ struct SnippetCommandEditorGuardTests {
     /// where the saved snippet is not, or the other way round.
     @Test("the draft the editor saves and tests carries the waiver")
     func theDraftCarriesTheWaiver() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var draftSnippet: Snippet {", in: source)
         #expect(body.contains("skipsPlaceholderPlacementCheck: skipsPlacementCheck"), """
@@ -662,7 +663,7 @@ struct SnippetCommandEditorGuardTests {
     /// name: a control that is present when it can do nothing.
     @Test("the variables section offers each bulk fold action only when it is possible")
     func variablesSectionGatesTheBulkFoldActions() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
         #expect(body.contains("if folding.offersExpandAll(rows) {"), """
@@ -688,7 +689,7 @@ struct SnippetCommandEditorGuardTests {
     /// something is wrong without saying what.
     @Test("a variable row consults the folding value for both of its questions")
     func variableRowConsultsTheFolding() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(containing: "private func variableRow(", in: source)
         #expect(body.contains("folding.isExpanded(row)"), """
             variableRow must ask the folding value whether this row is open -- otherwise the \
@@ -749,7 +750,7 @@ struct SnippetCommandEditorGuardTests {
     /// nothing.
     @Test("the variable row offers a way into the command, only where one belongs")
     func variableRowOffersTheInsertion() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(containing: "private func variableRow(", in: source)
         #expect(body.contains("snippetBelongsInCommandAsPlaceholder("), """
             variableRow must gate its insert control on \
@@ -770,7 +771,7 @@ struct SnippetCommandEditorGuardTests {
     /// the failure this pair catches.
     @Test("the completion list is built from the declarations, by the same rule")
     func theCompletionListAsksTheSameRule() throws {
-        let sheet = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let sheet = try SourceCorpus.text(of: Self.sheetSourceFile)
         let row = try Self.functionBody(
             containing: "FormRow(label: commandLabel) {", in: sheet)
         #expect(row.contains("variables: variables"), """
@@ -779,7 +780,7 @@ struct SnippetCommandEditorGuardTests {
             an error. Scanned row: \(row)
             """)
 
-        let editor = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let editor = try SourceCorpus.text(of: Self.editorSourceFile)
         let completions = try Self.functionBody(
             containing: "forPartialWordRange charRange: NSRange", in: editor)
         #expect(completions.contains("snippetPlaceholderCompletions("), """
@@ -828,7 +829,7 @@ struct SnippetCommandEditorGuardTests {
     /// Shown, and computed by the one function that decides it.
     @Test("the variables section shows the hint about an undeclared placeholder")
     func variablesSectionShowsTheUndeclaredHint() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let section = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
         #expect(section.contains("if let undeclaredPlaceholderHint {"), """
@@ -849,7 +850,7 @@ struct SnippetCommandEditorGuardTests {
     /// declared, but as an environment variable.
     @Test("the variables section shows the hint about an environment-declared placeholder")
     func variablesSectionShowsTheEnvironmentHint() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let section = try Self.functionBody(
             containing: "private var variablesSection: some View {", in: source)
         #expect(section.contains("if let environmentPlaceholderHint {"), """
@@ -872,7 +873,7 @@ struct SnippetCommandEditorGuardTests {
     /// quiet over a property that was renamed or deleted.
     @Test("the hint does not reach the Save gate")
     func theHintDoesNotGateSave() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
             containing: "private var isSaveDisabled: Bool {", in: source)
         #expect(body.contains("variablesFault != nil"), """
@@ -910,7 +911,7 @@ struct SnippetCommandEditorGuardTests {
     /// `placeholderIsReparsedByItsCommand`.
     @Test("the substitution's verdict still carries six cases")
     func theSubstitutionProblemStillCarriesSixCases() throws {
-        let source = try String(contentsOf: Self.substitutionSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.substitutionSourceFile)
         let body = try Self.functionBody(containing: "public enum Problem", in: source)
         #expect(Self.caseCount(in: body) == 6, """
             SnippetVariableSubstitution.Problem must still carry exactly six cases. The hint \
@@ -954,7 +955,7 @@ struct SnippetCommandEditorGuardTests {
     /// this negative is scanning still does the edit at all.
     @Test("the live insert path goes through NSTextView's own edit bracket")
     func theLiveInsertPathGoesThroughTextViewsOwnEditBracket() throws {
-        let source = try String(contentsOf: Self.editorSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.editorSourceFile)
         let body = try Self.functionBody(
             containing: "fileprivate func insertPlaceholder(named name: String) -> Bool {",
             in: source)

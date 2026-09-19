@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 
@@ -71,7 +72,7 @@ struct TerminalPanelInsetTests {
     // MARK: - The guard
 
     @Test func terminalSurfaceReadsTheSharedConstants() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.rangeOfCase(startingWith: "case .running, .opening:", in: lines) else {
             Issue.record("`case .running, .opening:` not found — re-anchor this guard")
@@ -86,7 +87,7 @@ struct TerminalPanelInsetTests {
     }
 
     @Test func endedBlockReadsTheSharedConstants() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.rangeOfCase(startingWith: "case .ended(", in: lines) else {
             Issue.record("`case .ended(` not found — re-anchor this guard")
@@ -101,7 +102,7 @@ struct TerminalPanelInsetTests {
     }
 
     @Test func headerReadsTheSharedConstants() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(ofBlockStartingWith: "var body: some View {", in: lines) else {
             Issue.record("`var body: some View {` not found — re-anchor this guard")
@@ -122,7 +123,7 @@ struct TerminalPanelInsetTests {
     /// calls were seen, not because all three real call sites are
     /// correctly coupled.
     @Test func allThreeReadersStillReferenceBothConstants() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let horizontalCount = Self.occurrenceCount(
             of: "DesignTokens.terminalPanelInsetHorizontal", in: source)
         let verticalCount = Self.occurrenceCount(
@@ -143,7 +144,7 @@ struct TerminalPanelInsetTests {
     /// `DesignTokens.swift` defines each name once, not once per
     /// would-be reader.
     @Test func designTokensDefinesEachConstantExactlyOnce() throws {
-        let source = try String(contentsOf: Self.designTokensFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.designTokensFile)
         let horizontalDefinitions = Self.occurrenceCount(
             of: "static let terminalPanelInsetHorizontal", in: source)
         let verticalDefinitions = Self.occurrenceCount(
@@ -174,7 +175,7 @@ struct TerminalPanelInsetTests {
     /// outside all three ranges, as opposed to simply never being scanned
     /// by accident.
     @Test func bannerPaddingLiesOutsideAllThreeReaderRanges() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         let bannerLines = lines.indices.filter { lines[$0].contains(".padding(.horizontal, 12)") }
         #expect(!bannerLines.isEmpty, "expected at least one unrelated `.padding(.horizontal, 12)` banner line")

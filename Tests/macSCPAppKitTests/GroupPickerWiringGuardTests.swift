@@ -62,15 +62,15 @@ struct GroupPickerWiringGuardTests {
     private static let builderCall = "\(GroupPickerEntries.self).build("
 
     private static func raw(_ path: String) throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent(path), encoding: .utf8)
+        try SourceCorpus.text(of: repoRoot.appendingPathComponent(path))
     }
 
     private static func code(_ path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try raw(path))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(path))
     }
 
     private static func codeKeepingLiterals(_ path: String) throws -> String {
-        try SwiftSource.blankingComments(try raw(path))
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(path))
     }
 
     // MARK: - Who reads the builder
@@ -80,11 +80,9 @@ struct GroupPickerWiringGuardTests {
     /// never call it are left out, so the map names the readers only.
     private static func appReaders() throws -> [String: Int] {
         let root = repoRoot.appendingPathComponent(appDirectory)
-        let enumerator = try #require(
-            FileManager.default.enumerator(atPath: root.path(percentEncoded: false)))
         var readers: [String: Int] = [:]
         var scanned = 0
-        while let relative = enumerator.nextObject() as? String {
+        for relative in try SourceCorpus.relativePaths(under: root) {
             guard relative.hasSuffix(".swift") else { continue }
             scanned += 1
             let path = "\(appDirectory)/\(relative)"

@@ -77,13 +77,12 @@ struct StoreReloadOnActivationGuardTests {
     /// call (CLAUDE.md, "Source-scanning guards read comments too"), and the
     /// files scanned below carry prose naming every needle used here.
     private static func strictSource(of file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     /// Capture group 1 of every match of `pattern` in `text`.
     private static func captures(of pattern: String, in text: String) throws -> [String] {
-        let regex = try NSRegularExpression(pattern: pattern)
+        let regex = try CompiledPattern.regex(pattern)
         let range = NSRange(text.startIndex..., in: text)
         return regex.matches(in: text, range: range).compactMap { match in
             Range(match.range(at: 1), in: text).map { String(text[$0]) }

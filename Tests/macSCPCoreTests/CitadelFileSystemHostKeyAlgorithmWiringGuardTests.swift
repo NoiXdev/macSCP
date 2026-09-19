@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -59,7 +60,7 @@ struct CitadelFileSystemHostKeyAlgorithmWiringGuardTests {
     private static let funnelCall = "\(funnelName)("
 
     private static func sourceLines() throws -> [String] {
-        try String(contentsOf: citadelFileSystemFile, encoding: .utf8)
+        try SourceCorpus.text(of: citadelFileSystemFile)
             .components(separatedBy: "\n")
     }
 

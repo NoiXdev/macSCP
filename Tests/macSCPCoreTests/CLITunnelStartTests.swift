@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -451,7 +452,7 @@ struct CLITunnelStartDeciderGuardTests {
     /// builds the runner — the function that dials, found by what it
     /// constructs rather than by its name.
     private static func composingBody() throws -> (source: String, body: String) {
-        let source = try String(contentsOf: startCommandFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: startCommandFile)
         let composing = CLISourceWalk.functionSlices(in: source)
             .filter { $0.body.contains("TunnelRunner(") }
         #expect(composing.count == 1, """
@@ -594,14 +595,13 @@ struct CLISourceWalk {
     private(set) var visitedCount = 0
 
     init(directory: URL) throws {
-        let files = try FileManager.default
-            .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        let files = try SourceCorpus.children(of: directory)
             .filter { $0.pathExtension == "swift" }
         guard !files.isEmpty else {
             throw CLISourceWalkError.noSources(directory.path(percentEncoded: false))
         }
         for file in files {
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             for slice in Self.functionSlices(in: source) {
                 slices[slice.name] = slice.body
                 declarations[slice.name] = slice.declaration
@@ -614,7 +614,7 @@ struct CLISourceWalk {
     /// The functions reachable from `file` whose declaration returns a
     /// `HostKeyDecider`.
     mutating func deciderBuilders(reachableFrom file: URL) throws -> Set<String> {
-        let source = try String(contentsOf: file, encoding: .utf8)
+        let source = try SourceCorpus.text(of: file)
         var frontier = Array(Self.calledNames(in: source))
         var seen = Set<String>()
         var builders = Set<String>()

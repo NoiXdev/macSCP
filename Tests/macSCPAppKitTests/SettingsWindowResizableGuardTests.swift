@@ -73,7 +73,7 @@ struct SettingsWindowResizableGuardTests {
     }
 
     private static func strict(_ file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     /// `SettingsView`'s own `var body: some View` — the FIRST occurrence in

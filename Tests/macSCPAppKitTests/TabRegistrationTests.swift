@@ -141,18 +141,16 @@ struct TabRegistrationWiringGuardTests {
     /// (`ContentView.swift`, `+Lifecycle`, `+Detail`).
     private static func contentViewFiles() throws -> [(name: String, source: String)] {
         let directory = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let names = try SourceCorpus.children(of: directory).map(\.lastPathComponent)
             .filter { $0.hasPrefix("ContentView") && $0.hasSuffix(".swift") }
             .sorted()
         return try names.map { name in
-            (name, try SwiftSource.blankingCommentsAndStrings(
-                String(contentsOf: directory.appendingPathComponent(name), encoding: .utf8)))
+            (name, try SourceCorpus.code(of: directory.appendingPathComponent(name)))
         }
     }
 
     private static func strictSource(of path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: repoRoot.appendingPathComponent(path), encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(path))
     }
 
     /// POSITIVE, first: the files this suite scans are really there, and

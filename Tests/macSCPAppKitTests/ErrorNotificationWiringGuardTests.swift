@@ -52,8 +52,7 @@ struct ErrorNotificationWiringGuardTests {
     }
 
     private static func views(_ relative: String) throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: path(relative), encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw), try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: path(relative)), try SourceCorpus.commentFree(of: path(relative)))
     }
 
     private static func body(of declaration: String, in source: String) throws -> String {
@@ -67,7 +66,7 @@ struct ErrorNotificationWiringGuardTests {
     /// Every App source file, blanked, by its path relative to the repo.
     private static func allAppCode() throws -> [(file: String, code: String)] {
         let directory = path(appSources)
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        let names = try SourceCorpus.children(of: directory).map(\.lastPathComponent)
             .filter { $0.hasSuffix(".swift") }
             .sorted()
         return try names.map { name in
@@ -84,7 +83,8 @@ struct ErrorNotificationWiringGuardTests {
         var result: [String] = []
         var index = 0
         while index + needleCharacters.count <= characters.count {
-            guard Array(characters[index..<(index + needleCharacters.count)]) == needleCharacters
+            guard needleCharacters.isEmpty || characters[index] == needleCharacters[0],
+                characters[index..<(index + needleCharacters.count)].elementsEqual(needleCharacters)
             else {
                 index += 1
                 continue

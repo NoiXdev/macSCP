@@ -60,9 +60,8 @@ struct SettingsSectionCatalogGuardTests {
     // MARK: - Source access
 
     private static func views() throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: settingsViewFile, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: settingsViewFile),
+                try SourceCorpus.commentFree(of: settingsViewFile))
     }
 
     private static func titleBodies() throws -> (code: String, withLiterals: String) {

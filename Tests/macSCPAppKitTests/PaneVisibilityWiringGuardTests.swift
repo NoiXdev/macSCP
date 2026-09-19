@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards that the pane-visibility PERSISTENCE wiring (P2 terminal-chrome
@@ -88,7 +89,7 @@ struct PaneVisibilityWiringGuardTests {
     /// been built for it (see `ContentView.restorePaneVisibility`'s own doc
     /// comment) — the restore call must live inside its body.
     @Test func connectRestoresPaneVisibility() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "in tab: SessionTab, stored: StoredSession, paneVisibility:",
@@ -135,7 +136,7 @@ struct PaneVisibilityWiringGuardTests {
     /// pins.
     @Test func everyToggleSiteIsFollowedByAPersist() throws {
         for (file, expected) in [(Self.lifecycleFile, 5), (Self.contentViewFile, 1)] {
-            let source = try String(contentsOf: file, encoding: .utf8)
+            let source = try SourceCorpus.text(of: file)
             let lines = source.components(separatedBy: "\n")
             let sites = Self.userToggleSiteEndLines(in: lines)
             #expect(sites.count == expected, """
@@ -164,7 +165,7 @@ struct PaneVisibilityWiringGuardTests {
     /// asserted too: a second toggle added inside that function would
     /// otherwise inherit the exemption without anyone deciding it should.
     @Test func scannerIgnoresTheRestorePathsOwnToggle() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let restore = Self.range(
             ofBlockStartingWith: "func restorePaneVisibility(", in: lines)
@@ -188,7 +189,7 @@ struct PaneVisibilityWiringGuardTests {
     /// DIFFERENT toggle (the transfers bar, not a pane) and must not be
     /// mistaken for a pane-visibility site.
     @Test func scannerIgnoresTheUnrelatedTransfersToggle() throws {
-        let source = try String(contentsOf: Self.lifecycleFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.lifecycleFile)
         #expect(source.contains("activeTab.transfersPanelVisible.toggle()"),
                 "re-anchor: the transfers toggle this test is about no longer exists in the file")
         let lines = source.components(separatedBy: "\n")
@@ -205,7 +206,7 @@ struct PaneVisibilityWiringGuardTests {
     /// rules out. `TabCommandsTests` pins what `canToggleTerminal` decides;
     /// this pins that the entry actually asks it.
     @Test func theTerminalMenuEntryIsDisabledByThePaneLock() throws {
-        let source = try String(contentsOf: Self.appFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.appFile)
         let lines = source.components(separatedBy: "\n")
         guard let button = lines.firstIndex(where: { $0.contains("\"menu.terminal.toggle\"") }) else {
             Issue.record("`menu.terminal.toggle` button not found — re-anchor this guard")
@@ -225,7 +226,7 @@ struct PaneVisibilityWiringGuardTests {
     /// `.onChange` is invisible in every other way: the menu would simply
     /// behave as it did before Fix 2.
     @Test func contentViewMirrorsThePaneLockIntoTabCommands() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: ".onChange(of: activeTabTerminalToggleIsUnlocked", in: lines)
@@ -249,7 +250,7 @@ struct PaneVisibilityWiringGuardTests {
     /// nothing about it — greying it out would take away the one way to
     /// reach a shell in that state.
     @Test func theExternalTerminalEntryIsNotGatedByThePaneLock() throws {
-        let source = try String(contentsOf: Self.appFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.appFile)
         let lines = source.components(separatedBy: "\n")
         guard let button = lines.firstIndex(
             where: { $0.contains("\"menu.terminal.openExternal\"") })

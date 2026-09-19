@@ -104,16 +104,14 @@ struct TransferQueueBarPathsGuardTests {
     /// of the file and both the same length as it (see `SwiftSource`), so a
     /// body span found in one can be sliced out of the other.
     private static func barViews() throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: barFile, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: barFile),
+                try SourceCorpus.commentFree(of: barFile))
     }
 
     /// The window that builds the bar. Only ever read structurally, so the
     /// strict view is the only one needed.
     private static func detailCode() throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: detailFile, encoding: .utf8))
+        try SourceCorpus.code(of: detailFile)
     }
 
     private static func bodies(

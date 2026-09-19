@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards call-site facts in `ContentView.swift` and `SnippetsSheet.swift`
@@ -85,7 +86,7 @@ struct SnippetVariablePromptWiringGuardTests {
     /// `SnippetAuditDetail.text(for: snippet)`, the exact literal shape that
     /// reads the template.
     @Test func sendSnippetAuditsTheTemplateNotTheResolvedCommand() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet,",
@@ -108,7 +109,7 @@ struct SnippetVariablePromptWiringGuardTests {
     /// after a `remembersLastValue` check has already excluded the
     /// declarations that never opted in.
     @Test func rememberOptedInValuesFiltersOnRemembersLastValueBeforeWriting() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "func rememberOptedInValues(for snippet: Snippet, values:",
@@ -240,7 +241,7 @@ struct SnippetVariablePromptWiringGuardTests {
     /// the prompt never appear: every declared value resolves to `''` and
     /// the command runs anyway, which is worse than not running it.
     @Test func triggerSnippetInterceptsASnippetThatDeclaresVariables() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",
@@ -272,7 +273,7 @@ struct SnippetVariablePromptWiringGuardTests {
     /// one Save writes. The second check below is why the move is not a
     /// weakening — `save()` must still be the thing that stores it.
     @Test func theSnippetEditorSavesTheEditedDeclarations() throws {
-        let source = try String(contentsOf: Self.sheetSourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "private var draftSnippet: Snippet {", in: lines)
@@ -381,7 +382,7 @@ struct SnippetVariablePromptWiringGuardTests {
     /// result is computed after the prompt is already scheduled protects
     /// nothing.
     @Test func triggerSnippetRefusesAnUnsurveyableCommandBeforeOpeningThePrompt() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(
             ofBlockStartingWith: "func triggerSnippet(_ snippet: Snippet, execute: Bool) {",

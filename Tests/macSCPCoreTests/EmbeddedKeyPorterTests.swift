@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -205,7 +206,7 @@ struct EmbeddedKeyPorterTests {
     /// `FileManager.default.contents(atPath:)`, and `Data.init(contentsOf:)` is
     /// `Data(contentsOf:)`.
     @Test func embedReadsNothingBeforeDecidingOwnership() throws {
-        let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.porterSource)
         switch Self.readsBeforeOwnership(inEmbedBodyOf: source) {
         case .anchorsLost(let why):
             Issue.record("\(why); re-anchor this source lint")
@@ -246,7 +247,7 @@ struct EmbeddedKeyPorterTests {
             "_ = FileManager\n            .default\n            .contents(atPath: keyPath)",
             "_ = try? String(\n            contentsOfFile: keyPath, encoding: .utf8)",
         ]
-        let source = try String(contentsOf: Self.porterSource, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.porterSource)
         let anchor = try #require(source.range(of: "guard let key = try store.key(forPath:"))
         for mutant in mutants {
             let mutated = source.replacingCharacters(

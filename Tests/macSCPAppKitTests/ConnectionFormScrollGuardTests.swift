@@ -138,7 +138,7 @@ struct ConnectionFormScrollGuardTests {
     }
 
     private static func realFileBody() throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: sourceFile, encoding: .utf8)
+        let raw = try SourceCorpus.text(of: sourceFile)
         return try bodySpan(of: try views(of: raw))
     }
 

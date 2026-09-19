@@ -201,8 +201,7 @@ struct QuitSequenceTests {
     /// call (CLAUDE.md, "Source-scanning guards read comments too"), and this
     /// file's own prose names every needle below.
     private static func strictSource(of file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     /// The character index of `needle`'s first occurrence in `text`, or
@@ -636,17 +635,10 @@ struct QuitSequenceTests {
 
     // MARK: - One owner for the stage names
 
-    /// Every `.swift` file under `Sources/`.
-    private static func swiftFiles(under directory: URL) -> [URL] {
-        guard
-            let enumerator = FileManager.default.enumerator(
-                at: directory, includingPropertiesForKeys: nil)
-        else { return [] }
-        var files: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension == "swift" {
-            files.append(url)
-        }
-        return files
+    /// Every `.swift` file under `Sources/`, from `SourceCorpus` (which
+    /// throws for a directory it does not hold).
+    private static func swiftFiles(under directory: URL) throws -> [URL] {
+        try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
     }
 
     /// The two `TeardownStage` cases are named in exactly two files: the
@@ -673,7 +665,7 @@ struct QuitSequenceTests {
         #expect(declaration.contains("case shutDownTerminal"))
 
         var naming: [String] = []
-        for file in Self.swiftFiles(under: Self.sourcesRoot) {
+        for file in try Self.swiftFiles(under: Self.sourcesRoot) {
             let source = try Self.strictSource(of: file)
             guard source.contains(".stopEditWatchers") || source.contains(".shutDownTerminal")
             else { continue }

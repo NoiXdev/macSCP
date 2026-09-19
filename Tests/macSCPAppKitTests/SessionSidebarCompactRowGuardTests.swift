@@ -100,8 +100,7 @@ struct SessionSidebarCompactRowGuardTests {
     }
 
     private static func strictSource() throws -> String {
-        let raw = try String(contentsOf: sidebarFile, encoding: .utf8)
-        return try SwiftSource.blankingCommentsAndStrings(raw)
+        return try SourceCorpus.code(of: sidebarFile)
     }
 
     private static func rowBody() throws -> String {

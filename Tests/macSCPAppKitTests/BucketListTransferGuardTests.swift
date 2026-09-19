@@ -76,7 +76,7 @@ struct BucketListTransferGuardTests {
     /// comment's tail). A long comment inside a window can push the gate
     /// out of it — a loud false red, never a silent pass.
     private static func strippedSource(_ url: URL) throws -> String {
-        try stripped(try String(contentsOf: url, encoding: .utf8))
+        try stripped(try SourceCorpus.text(of: url))
     }
 
     /// The one view every scan in this suite reads, so the self-tests below
@@ -129,7 +129,7 @@ struct BucketListTransferGuardTests {
             (Self.tableSourceFile, "BrowserContextMenu.entries("),
         ]
         for (url, anchor) in files {
-            let raw = try String(contentsOf: url, encoding: .utf8)
+            let raw = try SourceCorpus.text(of: url)
             let stripped = try Self.stripped(raw)
             let planted = try Self.stripped(raw + "\n// \(anchor)\n/* \(anchor) */\n")
             let alone = stripped.components(separatedBy: anchor).count - 1

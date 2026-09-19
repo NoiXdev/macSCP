@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -50,7 +51,7 @@ struct KnownHostsSortWiringGuardTests {
         .appendingPathComponent("Sources/MacSCPAppKit/KnownHostsSheet.swift")
 
     private static func sheetSource() throws -> String {
-        try String(contentsOf: sheetFile, encoding: .utf8)
+        try SourceCorpus.text(of: sheetFile)
     }
 
     private static func occurrences(of needle: String, in haystack: String) -> Int {

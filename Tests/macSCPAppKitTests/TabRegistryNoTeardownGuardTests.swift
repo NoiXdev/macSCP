@@ -154,8 +154,7 @@ struct TabRegistryNoTeardownGuardTests {
     /// about a call (CLAUDE.md, "Source-scanning guards read comments
     /// too").
     private static func strictSource(of file: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: file, encoding: .utf8))
+        try SourceCorpus.code(of: file)
     }
 
     // MARK: - NEGATIVE: none of the four names reach a move

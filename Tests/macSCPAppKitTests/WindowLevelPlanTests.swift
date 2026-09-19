@@ -55,11 +55,11 @@ struct WindowLevelPlanTests {
     }
 
     private static func code(of url: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.code(of: url)
     }
 
     private static func codeWithLiterals(of url: URL) throws -> String {
-        try SwiftSource.blankingComments(try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.commentFree(of: url)
     }
 
     private static func catalogKeys(_ locale: String) throws -> Set<String> {
@@ -89,14 +89,7 @@ struct WindowLevelPlanTests {
     /// `Resources/*.lproj` holds no `.swift` files, so the extension
     /// filter excludes it without a separate directory exclusion.
     private static func allAppKitSourceFiles() throws -> [URL] {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(
-            at: sourceDir, includingPropertiesForKeys: nil)
-        else {
-            throw CatalogError.unreadable(sourceDir.path)
-        }
-        return enumerator.compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "swift" }
+        try SourceCorpus.files(under: sourceDir).filter { $0.pathExtension == "swift" }
     }
 
     // MARK: - The menu item

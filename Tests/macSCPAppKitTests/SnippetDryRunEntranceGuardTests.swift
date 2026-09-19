@@ -196,10 +196,9 @@ struct SnippetDryRunEntranceGuardTests {
         #expect(catalogues.count == 4, "\(catalogues)")
 
         for catalogue in catalogues {
-            let table = try String(
-                contentsOf: Self.appSourceDirectory
-                    .appendingPathComponent("Resources/\(catalogue)/Localizable.strings"),
-                encoding: .utf8)
+            let table = try SourceCorpus.text(
+                of: Self.appSourceDirectory
+                    .appendingPathComponent("Resources/\(catalogue)/Localizable.strings"))
             for key in keys.sorted() {
                 #expect(table.contains("\"\(key)\" = "), "\(catalogue) is missing \(key)")
             }
@@ -324,23 +323,25 @@ struct SnippetDryRunEntranceGuardTests {
     // MARK: - Reading the tree
 
     private static func appSourceFiles() throws -> [URL] {
-        try FileManager.default.contentsOfDirectory(
-            at: appSourceDirectory, includingPropertiesForKeys: nil
-        )
+        try SourceCorpus.children(of: appSourceDirectory)
         .filter { $0.pathExtension == "swift" }
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     private static func strippedSource(named name: String) throws -> String {
-        try SwiftSource.blankingComments(
-            try String(
-                contentsOf: appSourceDirectory.appendingPathComponent(name), encoding: .utf8))
+        try SourceCorpus.commentFree(of: appSourceDirectory.appendingPathComponent(name))
     }
 
+    /// Reads the file's two views from `SourceCorpus`, blanked once per
+    /// test process. A file whose comment-only view does not contain the
+    /// marker at all is answered without the character walk: every call the
+    /// walk reports, and every `MarkerInsideALiteral` it throws, starts at an
+    /// occurrence of the marker in exactly that view.
     private static func calls(to marker: String, inFileAt url: URL) throws -> [String] {
-        let source = try String(contentsOf: url, encoding: .utf8)
+        let text = try SourceCorpus.commentFree(of: url)
+        guard text.contains(marker) else { return [] }
         do {
-            return try SnippetSourceScan.calls(to: marker, in: source)
+            return try SnippetSourceScan.calls(to: marker, text: text, code: try SourceCorpus.code(of: url))
         } catch var refused as SnippetSourceScan.MarkerInsideALiteral {
             refused.file = url.lastPathComponent
             throw refused
@@ -416,15 +417,25 @@ enum SnippetSourceScan {
     /// '\(L10n.string(' -- Sources`: 0, 2026-09-19) — a refusal costs
     /// nothing until one appears, and then it names the site.
     static func calls(to marker: String, in source: String) throws -> [String] {
-        let text = Array(try SwiftSource.blankingComments(source))
-        let code = Array(try SwiftSource.blankingCommentsAndStrings(source))
+        try calls(
+            to: marker, text: try SwiftSource.blankingComments(source),
+            code: try SwiftSource.blankingCommentsAndStrings(source))
+    }
+
+    /// The same scan over the two views already blanked — `SwiftSource`'s
+    /// `blankingComments` and `blankingCommentsAndStrings` of one source, as
+    /// `SourceCorpus` holds them for every file of the tree.
+    static func calls(to marker: String, text commentFree: String, code strict: String) throws -> [String] {
+        let text = Array(commentFree)
+        let code = Array(strict)
         guard text.count == code.count else { throw ViewsDisagree() }
         let needle = Array(marker)
         guard !needle.isEmpty else { return [] }
         var results: [String] = []
         var i = 0
         while i + needle.count <= text.count {
-            guard Array(text[i..<(i + needle.count)]) == needle else {
+            guard needle.isEmpty || text[i] == needle[0],
+                text[i..<(i + needle.count)].elementsEqual(needle) else {
                 i += 1
                 continue
             }

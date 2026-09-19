@@ -42,7 +42,7 @@ struct ReconnectFillFailureGuardTests {
     private static let failureText = "error.localizedDescription"
 
     @Test func anInPlaceConnectShowsAFillThatThrew() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let violations = try Self.violations(inSource: source)
         #expect(violations.isEmpty, """
             `connect(in:stored:paneVisibility:)` does not show a fill that threw the way the \

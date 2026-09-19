@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 
@@ -91,9 +92,7 @@ struct SheetOverflowMenuTests {
         .deletingLastPathComponent()
 
     private static func englishCatalog() throws -> String {
-        try String(
-            contentsOf: repoRoot.appendingPathComponent(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        try SourceCorpus.text(of: repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
     }
 }

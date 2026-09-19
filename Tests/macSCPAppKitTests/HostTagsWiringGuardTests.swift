@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards two host-tags wiring facts (P3a/T5, fix round 1) that a passing
@@ -60,7 +61,7 @@ struct HostTagsWiringGuardTests {
     // MARK: - Guard 1: the tag field's identity is pinned to the edited session
 
     @Test func tagFieldRowPinsIdentityToTheEditedSession() throws {
-        let source = try String(contentsOf: Self.formFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.formFile)
         let lines = source.components(separatedBy: "\n")
         guard let row = Self.range(ofBlockStartingWith: "FormRow(label: tagsLabel) {", in: lines) else {
             Issue.record("`FormRow(label: tagsLabel) {` not found — re-anchor this guard")
@@ -85,7 +86,7 @@ struct HostTagsWiringGuardTests {
     private static let saveCallAnchor = "return sessionListViewModel.save("
 
     @Test func theNewSessionSaveForwardsFormTagsToSave() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let lines = source.components(separatedBy: "\n")
         guard let call = Self.range(ofCallStartingWith: Self.saveCallAnchor, in: lines) else {
             Issue.record("`\(Self.saveCallAnchor)` not found — re-anchor this guard")
@@ -108,7 +109,7 @@ struct HostTagsWiringGuardTests {
     /// — which is exactly what splitting the save out of the dial was
     /// supposed to avoid.
     @Test func theAppHasExactlyOneNewSessionWrite() throws {
-        let source = try String(contentsOf: Self.contentViewFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.contentViewFile)
         let count = source.components(separatedBy: "sessionListViewModel.save(").count - 1
         #expect(count == 1, """
             expected exactly 1 `sessionListViewModel.save(` in ContentView.swift, \

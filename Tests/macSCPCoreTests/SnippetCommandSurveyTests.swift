@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -1024,7 +1025,7 @@ struct SnippetCommandSurveyTests {
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         let root = repoRoot.appendingPathComponent(relativePath)
-        let contents = try FileManager.default.subpathsOfDirectory(atPath: root.path)
+        let contents = try SourceCorpus.relativePaths(under: root)
         return contents
             .filter { $0.hasSuffix(".swift") }
             .map { root.appendingPathComponent($0) }
@@ -1033,7 +1034,7 @@ struct SnippetCommandSurveyTests {
     /// The lines of `file` that are not whole-line comments — so a doc
     /// comment may name what the code may not.
     private static func codeLines(of file: URL) throws -> [String] {
-        try String(contentsOf: file, encoding: .utf8)
+        try SourceCorpus.text(of: file)
             .components(separatedBy: "\n")
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
     }

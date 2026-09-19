@@ -51,7 +51,7 @@ struct RemoteFileTableTypeColumnGuardTests {
     /// (`SwiftSource.blankingComments`): the bucket-symbol check below reads
     /// the `"archivebox"` literal, which the strict mode would blank.
     private static func code() throws -> String {
-        try SwiftSource.blankingComments(try String(contentsOf: tableFile, encoding: .utf8))
+        try SourceCorpus.commentFree(of: tableFile)
     }
 
     // MARK: - The Type cell
@@ -99,10 +99,8 @@ struct RemoteFileTableTypeColumnGuardTests {
     /// Derived from `FileColumn.allCases` — not a hand-typed list, so a
     /// column added later is covered by this test without an edit to it.
     @Test func everyColumnHasAHeaderCatalogueKeyInTheEnglishCatalog() throws {
-        let catalog = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let catalog = try SourceCorpus.text(of: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
         for column in FileColumn.allCases {
             #expect(
                 catalog.contains("\"filetable.column.\(column.rawValue)\" ="),
@@ -115,10 +113,8 @@ struct RemoteFileTableTypeColumnGuardTests {
     /// in de/fr/pl) is `LocalizationParityTests`' job over every catalog in
     /// the tree, not re-implemented here.
     @Test func theBucketTooltipKeyIsDeclaredInTheEnglishCatalog() throws {
-        let catalog = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let catalog = try SourceCorpus.text(of: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
         #expect(catalog.contains("\"filetable.bucketTooltip\" ="))
     }
 

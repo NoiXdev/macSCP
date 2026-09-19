@@ -353,8 +353,10 @@ struct DiagnosticsDoorsGuardTests {
         var found: Set<String> = []
         for file in try swiftFiles(under: "Sources/macSCPCore") {
             let source = try strictSource(of: file)
-            for name in Set(matches(of: #"struct\s+(\w+)"#, in: source)) {
-                for body in bodies(after: "struct \(name)", in: source)
+            let names = Set(matches(of: #"struct\s+(\w+)"#, in: source))
+            let chars = names.isEmpty ? [] : Array(source)
+            for name in names {
+                for body in bodies(after: "struct \(name)", inCharacters: chars)
                 where body.contains("[[String]]") && body.contains(": [String]") {
                     found.insert(name)
                 }
@@ -1120,9 +1122,7 @@ struct DiagnosticsDoorsGuardTests {
         // The ordering this imposes — a catalogue key lands in the same
         // commit as its first use, never a commit earlier — is deliberate and
         // is written out on `diagnosticsKeysInSources` above.
-        let english = try String(
-            contentsOf: Self.url("Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let english = try SourceCorpus.text(of: Self.url("Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
         let inEnglish = Set(
             Self.matches(of: #""(diagnostics\.[A-Za-z0-9._]+)""#, in: english))
         #expect(ours == inEnglish, """
@@ -1131,10 +1131,8 @@ struct DiagnosticsDoorsGuardTests {
             only in en.lproj: \(inEnglish.subtracting(ours).sorted())
             """)
         for locale in ["en", "de", "fr", "pl"] {
-            let catalog = try String(
-                contentsOf: Self.url(
-                    "Sources/MacSCPAppKit/Resources/\(locale).lproj/Localizable.strings"),
-                encoding: .utf8)
+            let catalog = try SourceCorpus.text(of: Self.url(
+                    "Sources/MacSCPAppKit/Resources/\(locale).lproj/Localizable.strings"))
             for key in keys.sorted() {
                 #expect(catalog.contains("\"\(key)\""), """
                     \(locale).lproj/Localizable.strings is missing "\(key)", which the panel \
@@ -1590,13 +1588,11 @@ struct DiagnosticsDoorsGuardTests {
     }
 
     static func strictSource(of relativePath: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: url(relativePath), encoding: .utf8))
+        try SourceCorpus.code(of: url(relativePath))
     }
 
     static func literalSource(of relativePath: String) throws -> String {
-        try SwiftSource.blankingComments(
-            try String(contentsOf: url(relativePath), encoding: .utf8))
+        try SourceCorpus.commentFree(of: url(relativePath))
     }
 
     /// Every Swift file of the app target, so the entry derivation looks at
@@ -1610,11 +1606,9 @@ struct DiagnosticsDoorsGuardTests {
     /// fingerprints a type in Core.
     static func swiftFiles(under relativeRoot: String) throws -> [String] {
         let root = url(relativeRoot)
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        else { return [] }
         let base = repoRoot.standardizedFileURL.path + "/"
         var files: [String] = []
-        for case let fileURL as URL in walker where fileURL.pathExtension == "swift" {
+        for fileURL in try SourceCorpus.files(under: root) where fileURL.pathExtension == "swift" {
             let full = fileURL.standardizedFileURL.path
             files.append(full.hasPrefix(base) ? String(full.dropFirst(base.count)) : full)
         }
@@ -1627,8 +1621,7 @@ struct DiagnosticsDoorsGuardTests {
     /// two views' shared character indexing (`SwiftSource`'s length
     /// preservation) makes exact.
     static func text(of span: Span, view: SourceView = .strict) throws -> String {
-        let raw = try String(contentsOf: url(span.file), encoding: .utf8)
-        let strict = try SwiftSource.blankingCommentsAndStrings(raw)
+        let strict = try SourceCorpus.code(of: url(span.file))
         let region: Range<Int>
         switch span.kind {
         case .body:
@@ -1636,7 +1629,7 @@ struct DiagnosticsDoorsGuardTests {
         case .arguments:
             region = try argumentRange(after: span.anchor, in: strict, occurrence: span.occurrence)
         }
-        let source = view == .strict ? strict : try SwiftSource.blankingComments(raw)
+        let source = view == .strict ? strict : try SourceCorpus.commentFree(of: url(span.file))
         return String(Array(source)[region])
     }
 
@@ -1729,12 +1722,18 @@ struct DiagnosticsDoorsGuardTests {
 
     /// Every brace-balanced body that follows an occurrence of `keyword`.
     static func bodies(after keyword: String, in source: String) -> [String] {
-        let chars = Array(source)
+        bodies(after: keyword, inCharacters: Array(source))
+    }
+
+    /// `bodies(after:in:)` over a source already split into characters, so
+    /// a walk asking about many keywords in one file splits it once.
+    static func bodies(after keyword: String, inCharacters chars: [Character]) -> [String] {
         let needle = Array(keyword)
         var results: [String] = []
         var index = 0
         while index + needle.count <= chars.count {
-            guard Array(chars[index..<(index + needle.count)]) == needle else {
+            guard needle.isEmpty || chars[index] == needle[0],
+                chars[index..<(index + needle.count)].elementsEqual(needle) else {
                 index += 1
                 continue
             }
@@ -1768,7 +1767,8 @@ struct DiagnosticsDoorsGuardTests {
         var results: [Int] = []
         var index = 0
         while index + pattern.count <= chars.count {
-            if Array(chars[index..<(index + pattern.count)]) == pattern {
+            if pattern.isEmpty || chars[index] == pattern[0],
+                chars[index..<(index + pattern.count)].elementsEqual(pattern) {
                 results.append(index)
                 index += pattern.count
             } else {
@@ -1793,7 +1793,8 @@ struct DiagnosticsDoorsGuardTests {
         var results: [Range<Int>] = []
         var index = 0
         while index + needle.count <= chars.count {
-            guard Array(chars[index..<(index + needle.count)]) == needle else {
+            guard needle.isEmpty || chars[index] == needle[0],
+                chars[index..<(index + needle.count)].elementsEqual(needle) else {
                 index += 1
                 continue
             }
@@ -1922,14 +1923,11 @@ struct DiagnosticsDoorsGuardTests {
     /// which stayed green through anything.
     static func diagnosticsKeysInSources() throws -> Set<String> {
         let root = url("Sources")
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
-        else { throw ScanError.spanNotFound("Sources is not readable") }
         var keys: Set<String> = []
         var files = 0
-        for case let fileURL as URL in walker where fileURL.pathExtension == "swift" {
+        for fileURL in try SourceCorpus.files(under: root) where fileURL.pathExtension == "swift" {
             files += 1
-            let source = try SwiftSource.blankingComments(
-                try String(contentsOf: fileURL, encoding: .utf8))
+            let source = try SourceCorpus.commentFree(of: fileURL)
             keys.formUnion(matches(of: #""(diagnostics\.[A-Za-z0-9._]+)""#, in: source))
             keys.formUnion(interpolatedStepKeys(in: source))
         }
@@ -1952,8 +1950,10 @@ struct DiagnosticsDoorsGuardTests {
     /// moves the check with it.
     static func interpolatedStepKeys(in source: String) -> Set<String> {
         var keys: Set<String> = []
-        for name in matches(of: #"enum\s+(\w+)"#, in: source) {
-            for body in bodies(after: "enum \(name)", in: source) {
+        let names = matches(of: #"enum\s+(\w+)"#, in: source)
+        let chars = names.isEmpty ? [] : Array(source)
+        for name in names {
+            for body in bodies(after: "enum \(name)", inCharacters: chars) {
                 let prefixes = matches(of: #""(diagnostics\.[A-Za-z0-9._]*)\\\("#, in: body)
                 guard !prefixes.isEmpty else { continue }
                 // Dots are part of an id: the steps of a session behind a
@@ -1984,7 +1984,7 @@ struct DiagnosticsDoorsGuardTests {
 
     /// First capture group of every match, in source order.
     static func matches(of pattern: String, in source: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let regex = try? CompiledPattern.regex(pattern) else { return [] }
         let range = NSRange(source.startIndex..<source.endIndex, in: source)
         return regex.matches(in: source, range: range).compactMap { match in
             guard match.numberOfRanges > 1,

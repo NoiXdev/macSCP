@@ -73,7 +73,7 @@ struct SheetFacetWiringGuardTests {
 
     private static func strippedSource(_ fileName: String) throws -> String {
         let url = appSourceDirectory.appendingPathComponent(fileName)
-        return try SwiftSource.blankingComments(try String(contentsOf: url, encoding: .utf8))
+        return try SourceCorpus.commentFree(of: url)
     }
 
     /// The first `Self.<name>` written within `window` characters after
@@ -107,12 +107,10 @@ struct SheetFacetWiringGuardTests {
     // MARK: - The list of faceted sheets is the real one
 
     @Test func everySheetDrawingAFacetPickerIsListedHere() throws {
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: Self.appSourceDirectory, includingPropertiesForKeys: nil)
+        let contents = try SourceCorpus.children(of: Self.appSourceDirectory)
         var drawing: Set<String> = []
         for url in contents where url.pathExtension == "swift" {
-            let source = try SwiftSource.blankingComments(
-                try String(contentsOf: url, encoding: .utf8))
+            let source = try SourceCorpus.commentFree(of: url)
             // The view's own definition is not a sheet drawing it.
             guard url.lastPathComponent != "SheetFacetPicker.swift" else { continue }
             if source.contains("SheetFacetPicker(") {

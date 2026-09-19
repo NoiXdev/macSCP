@@ -248,7 +248,7 @@ struct ImportFromCyberduckGuardTests {
         _ = \ImportFromSourceViewModel.takeSecrets
 
         let filesConstructingAReader = try Self.appFiles().filter { url in
-            try Self.strict(String(contentsOf: url, encoding: .utf8))
+            try SourceCorpus.code(of: url)
                 .contains("CyberduckSecretReader(")
         }.map(\.lastPathComponent)
 
@@ -308,10 +308,9 @@ struct ImportFromCyberduckGuardTests {
         #expect(catalogs.count == 4, "\(catalogs)")
 
         for catalog in catalogs {
-            let table = try String(
-                contentsOf: Self.appSourceDirectory
-                    .appendingPathComponent("Resources/\(catalog)/Localizable.strings"),
-                encoding: .utf8)
+            let table = try SourceCorpus.text(
+                of: Self.appSourceDirectory
+                    .appendingPathComponent("Resources/\(catalog)/Localizable.strings"))
             for key in keys.sorted() {
                 #expect(table.contains("\"\(key)\" = "), "\(catalog) is missing \(key)")
             }
@@ -413,10 +412,7 @@ struct ImportFromCyberduckGuardTests {
     /// `Presentation/` holds the view model, and a scan that stopped at the
     /// top level would report an empty filter over half the target.
     private static func appFiles() throws -> [URL] {
-        guard let walker = FileManager.default.enumerator(
-            at: appSourceDirectory, includingPropertiesForKeys: nil)
-        else { return [] }
-        return walker.compactMap { $0 as? URL }
+        try SourceCorpus.files(under: appSourceDirectory)
             .filter { $0.pathExtension == "swift" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
@@ -426,13 +422,11 @@ struct ImportFromCyberduckGuardTests {
     }
 
     private static func strictSource(_ relativePath: String) throws -> String {
-        try strict(String(
-            contentsOf: appSourceDirectory.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.code(of: appSourceDirectory.appendingPathComponent(relativePath))
     }
 
     private static func literalSource(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingComments(String(
-            contentsOf: appSourceDirectory.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.commentFree(of: appSourceDirectory.appendingPathComponent(relativePath))
     }
 
     /// Every `L10n.string("<key>"` in source order, duplicates kept out by

@@ -53,8 +53,7 @@ struct WhatsNewWiringGuardTests {
     // MARK: - Source access
 
     private static func views(of url: URL) throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: url, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw), try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: url), try SourceCorpus.commentFree(of: url))
     }
 
     // MARK: - The launch path

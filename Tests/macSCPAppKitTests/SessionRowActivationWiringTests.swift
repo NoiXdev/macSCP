@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import MacSCPAppKit
@@ -532,7 +533,7 @@ struct SessionRowActivationWiringTests {
     /// One row per host-reaching effect since round 4 — an inert effect is
     /// exactly as invisible for the terminal entries as it was for connect.
     @Test func theSidebarIsHandedEffectsThatActuallyReachTheHost() throws {
-        let lines = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let lines = try SourceCorpus.text(of: Self.detailFile)
             .components(separatedBy: "\n")
         for wiring in Self.effectHandOvers {
             let handOvers = lines.indices.filter { index in
@@ -716,7 +717,7 @@ struct SessionRowActivationWiringTests {
     // Deliberately line-based, like the precedent guards' scanners.
 
     private static func sourceLines() throws -> [String] {
-        try String(contentsOf: Self.sourceFile, encoding: .utf8).components(separatedBy: "\n")
+        try SourceCorpus.text(of: Self.sourceFile).components(separatedBy: "\n")
     }
 
     /// A line that is neither blank nor a `//`/`///` comment — the scanners

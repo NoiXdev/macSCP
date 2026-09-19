@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 
@@ -40,13 +41,13 @@ struct SheetOverflowMenuWiringGuardTests {
     private static let sourceDirectory = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
 
     private static func source(_ name: String) throws -> String {
-        try String(contentsOf: sourceDirectory.appendingPathComponent(name), encoding: .utf8)
+        try SourceCorpus.text(of: sourceDirectory.appendingPathComponent(name))
     }
 
     /// Every Swift file of the app layer, sorted so failure messages read
     /// the same on every machine.
     private static func appKitSourceNames() throws -> [String] {
-        try FileManager.default.contentsOfDirectory(atPath: sourceDirectory.path)
+        try SourceCorpus.children(of: sourceDirectory).map(\.lastPathComponent)
             .filter { $0.hasSuffix(".swift") }
             .sorted()
     }

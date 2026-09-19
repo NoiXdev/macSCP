@@ -666,15 +666,13 @@ struct TabsWindowLifecycleTests {
     /// indistinguishable from that code to a scanner — is why every check
     /// below reads this view unless it is a claim about a literal.
     private static func code(of url: URL) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.code(of: url)
     }
 
     /// The literals-kept view, for the checks that are about a catalogue
     /// key — blanking it would delete the very thing being scanned.
     private static func codeWithLiterals(of url: URL) throws -> String {
-        try SwiftSource.blankingComments(
-            try String(contentsOf: url, encoding: .utf8))
+        try SourceCorpus.commentFree(of: url)
     }
 
     /// Everything between `anchor`'s own `{` and its matching `}`, by plain
@@ -1248,9 +1246,8 @@ struct TabsWindowLifecycleTests {
         // writes this (CLAUDE.md's rule on numbers in comments): before
         // Task 4 this was 1, and a return to that count means this guard's
         // number goes back down too.
-        let sources = try FileManager.default.contentsOfDirectory(
-            at: Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit"),
-            includingPropertiesForKeys: nil)
+        let sources = try SourceCorpus.children(
+            of: Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit"))
         var callSites = 0
         for file in sources where file.pathExtension == "swift" {
             callSites += Self.occurrences(

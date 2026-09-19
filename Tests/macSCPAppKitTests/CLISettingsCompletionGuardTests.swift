@@ -115,9 +115,8 @@ struct CLISettingsCompletionGuardTests {
     // MARK: - Source access
 
     private static func views(of file: URL) throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: file, encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw),
-                try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: file),
+                try SourceCorpus.commentFree(of: file))
     }
 
     private static func sectionBodies() throws -> (code: String, withLiterals: String) {
@@ -329,7 +328,7 @@ struct CLISettingsCompletionGuardTests {
         let keys = try Self.keysReadBySection()
         #expect(!keys.isEmpty, "the section reads no \(Self.keyPrefix)* key at all")
         let entries = try Self.catalog("de")
-        let polite = try NSRegularExpression(pattern: #"\b(?:Sie|Ihnen|Ihre?[mnrs]?)\b"#)
+        let polite = try CompiledPattern.regex(#"\b(?:Sie|Ihnen|Ihre?[mnrs]?)\b"#)
         var checked = 0
         for key in keys.sorted() {
             guard let value = entries[key] else { continue }

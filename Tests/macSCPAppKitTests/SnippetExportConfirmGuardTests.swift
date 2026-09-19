@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import MacSCPAppKit
 
@@ -44,7 +45,7 @@ struct SnippetExportConfirmGuardTests {
     // MARK: - The guard
 
     @Test func footerExportEntryNoLongerExportsDirectly() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let block = try Self.footerExportArm(in: source)
         #expect(!block.contains("performExport(visibleSnippets)"), """
             The footer's Export… entry must no longer call performExport( \
@@ -58,7 +59,7 @@ struct SnippetExportConfirmGuardTests {
     }
 
     @Test func confirmingButtonExportsTheResolvedScope() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         #expect(source.contains("performExport(pendingExport)"), """
             The confirmation alert's own button must call performExport( \
             with the resolved (pending) scope, not visibleSnippets again.
@@ -66,7 +67,7 @@ struct SnippetExportConfirmGuardTests {
     }
 
     @Test func footerExportArmResolvesThroughListExportScope() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let block = try Self.footerExportArm(in: source)
         #expect(block.contains("ListExportScope.resolve("), """
             The footer's Export… arm must resolve its scope via \
@@ -83,7 +84,7 @@ struct SnippetExportConfirmGuardTests {
     /// is `SheetOverflowMenuWiringGuardTests`' job -- it holds for every
     /// sheet, not only this one.
     @Test func theExportEntryIsOfferedOnlyWhenSnippetsCanExport() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let construction = try Self.footerMenuConstruction(in: source)
         #expect(construction.contains("snippetsCanExport("), """
             The footer's three-dot menu must decide its Export… entry with \
@@ -93,7 +94,7 @@ struct SnippetExportConfirmGuardTests {
     }
 
     @Test func performExportWithExactlyTheSnippetStillAppearsInTheFile() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         #expect(source.contains("performExport([snippet])"), """
             The exact call performExport([snippet]) must still appear \
             somewhere in SnippetsSheet.swift. This is a file-wide check: it \

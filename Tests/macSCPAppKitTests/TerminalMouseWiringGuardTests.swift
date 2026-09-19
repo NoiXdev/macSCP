@@ -54,8 +54,7 @@ struct TerminalMouseWiringGuardTests {
     ]
 
     private static func views(_ relative: String) throws -> (code: String, withLiterals: String) {
-        let raw = try String(contentsOf: path(relative), encoding: .utf8)
-        return (try SwiftSource.blankingCommentsAndStrings(raw), try SwiftSource.blankingComments(raw))
+        return (try SourceCorpus.code(of: path(relative)), try SourceCorpus.commentFree(of: path(relative)))
     }
 
     private static func body(of declaration: String, in source: String) throws -> String {
@@ -222,11 +221,10 @@ struct TerminalMouseWiringGuardTests {
     /// else the property is not even named.
     @Test func noProductionFileReassignsTheCopyPasteboard() throws {
         let sources = Self.path("Sources")
-        let enumerator = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
         var scanned = 0
         var declaringFileSeen = false
-        for case let url as URL in enumerator where url.pathExtension == "swift" {
-            let code = try SwiftSource.blankingCommentsAndStrings(String(contentsOf: url, encoding: .utf8))
+        for url in try SourceCorpus.files(under: sources) where url.pathExtension == "swift" {
+            let code = try SourceCorpus.code(of: url)
             scanned += 1
             #expect(!Self.assignsCopyPasteboard(code), "\(url.lastPathComponent) reassigns copyPasteboard")
             if url.lastPathComponent == Self.terminalViewFileName {

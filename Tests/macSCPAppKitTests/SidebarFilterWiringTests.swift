@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -488,7 +489,7 @@ struct SidebarFilterWiringTests {
     /// stay green for a `showsTagFilterBar: true` at the call site — the
     /// setting would persist perfectly and reach nothing.
     @Test func theSidebarIsHandedTheSettingItselfRatherThanAConstant() throws {
-        let lines = try String(contentsOf: Self.detailFile, encoding: .utf8)
+        let lines = try SourceCorpus.text(of: Self.detailFile)
             .components(separatedBy: "\n")
         let handsOverTheSetting = lines.contains {
             $0.trimmingCharacters(in: .whitespaces)
@@ -730,11 +731,11 @@ struct SidebarFilterWiringTests {
     // Deliberately line-based, like the four precedent guards' scanners.
 
     private static func sourceLines() throws -> [String] {
-        try String(contentsOf: Self.sourceFile, encoding: .utf8).components(separatedBy: "\n")
+        try SourceCorpus.text(of: Self.sourceFile).components(separatedBy: "\n")
     }
 
     private static func barSourceLines() throws -> [String] {
-        try String(contentsOf: Self.barFile, encoding: .utf8).components(separatedBy: "\n")
+        try SourceCorpus.text(of: Self.barFile).components(separatedBy: "\n")
     }
 
     /// Every non-comment line that puts a `.count` and the digits of

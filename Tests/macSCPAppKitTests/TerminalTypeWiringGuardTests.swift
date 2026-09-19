@@ -33,17 +33,17 @@ struct TerminalTypeWiringGuardTests {
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
     private static func raw(_ path: String) throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent(path), encoding: .utf8)
+        try SourceCorpus.text(of: repoRoot.appendingPathComponent(path))
     }
 
     /// Comments AND strings blanked: structure only.
     private static func code(_ path: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(raw(path))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(path))
     }
 
     /// Comments blanked, string literals kept: what the code actually says.
     private static func withLiterals(_ path: String) throws -> String {
-        try SwiftSource.blankingComments(raw(path))
+        try SourceCorpus.commentFree(of: repoRoot.appendingPathComponent(path))
     }
 
     private static func openIfNeededBody() throws -> (code: String, withLiterals: String) {

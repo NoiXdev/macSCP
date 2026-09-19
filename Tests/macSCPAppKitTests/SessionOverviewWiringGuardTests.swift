@@ -146,7 +146,7 @@ struct SessionOverviewWiringGuardTests {
     }
 
     private static func raw(_ relativePath: String) throws -> String {
-        try String(contentsOf: url(relativePath), encoding: .utf8)
+        try SourceCorpus.text(of: url(relativePath))
     }
 
     /// The two views one file is read in: comments AND literals blanked for
@@ -187,7 +187,7 @@ struct SessionOverviewWiringGuardTests {
     private static func wiring() throws -> String {
         try DiagnosticsDoorsGuardTests.argumentSpan(
             after: "\(viewTypeName)(",
-            in: try SwiftSource.blankingCommentsAndStrings(try raw(detailPath)),
+            in: try SourceCorpus.code(of: Self.url(detailPath)),
             occurrence: 1)
     }
 
@@ -211,7 +211,7 @@ struct SessionOverviewWiringGuardTests {
     /// another branch would have been read by nothing and every action check
     /// below would have gone on describing the first one.
     @Test func theDetailPaneShowsTheOverviewExactlyOnce() throws {
-        let detail = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.detailPath))
+        let detail = try SourceCorpus.code(of: Self.url(Self.detailPath))
         let count = Self.occurrences(of: "\(Self.viewTypeName)(", in: detail)
         #expect(count == 1, """
             \(Self.detailPath) constructs \(Self.viewTypeName)( \(count) times, expected \
@@ -363,7 +363,7 @@ struct SessionOverviewWiringGuardTests {
     /// on a body that no longer dials at all it would report satisfaction
     /// over nothing.
     @Test func theOverviewsSnippetRunDialsThroughTheSidebarConnectAndNothingElse() throws {
-        let source = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let source = try SourceCorpus.code(of: Self.url(Self.contentViewPath))
         // The signature spans lines since fix round 1 (it returns the
         // query), so the anchor is the name and its open paren; the first
         // `{` after it is still the body's.
@@ -396,9 +396,8 @@ struct SessionOverviewWiringGuardTests {
     /// Two positives before the two negatives, since a dialog that lost its
     /// answer entirely carries no wrong argument either.
     @Test func theOpenAnywayAnswerCarriesWhatTheQueryWasAskedWith() throws {
-        let raw = try Self.raw(Self.sheetsPath)
-        let sheets = try SwiftSource.blankingCommentsAndStrings(raw)
-        let withLiterals = try SwiftSource.blankingComments(raw)
+        let sheets = try SourceCorpus.code(of: Self.url(Self.sheetsPath))
+        let withLiterals = try SourceCorpus.commentFree(of: Self.url(Self.sheetsPath))
         #expect(withLiterals.contains("tabs.alreadyOpen.openAnyway"), """
             \(Self.sheetsPath) no longer draws the "Open Anyway" answer — the query then has \
             no way to go ahead at all, and the argument checks below are about a button that \
@@ -430,7 +429,7 @@ struct SessionOverviewWiringGuardTests {
     /// all is a source claim, while what it decides is
     /// `SnippetAfterConnectSequenceTests`' job on the real method.
     @Test func thePendingRunIsDeliveredByAViewThatWatchesTheTab() throws {
-        let detail = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.detailPath))
+        let detail = try SourceCorpus.code(of: Self.url(Self.detailPath))
         #expect(detail.contains("PendingSnippetRunner("), """
             \(Self.detailPath) no longer mounts PendingSnippetRunner( — a snippet armed by Run \
             is then never delivered, and the button connects and goes quiet.
@@ -463,7 +462,7 @@ struct SessionOverviewWiringGuardTests {
     /// after `case .running:`, or removed all read as "no arm to search",
     /// and only the explicit check below says which one is true this run.
     @Test func deliveringToAnEndedShellPresentsTerminalUnavailable() throws {
-        let file = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let file = try SourceCorpus.code(of: Self.url(Self.contentViewPath))
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "func deliverPendingSnippetRun(on tab: SessionTab)", in: file)
         #expect(body.contains("case .ended:"), """
@@ -503,7 +502,7 @@ struct SessionOverviewWiringGuardTests {
     /// while still calling `triggerSnippet(` and while the menus still read
     /// the bridge through `@FocusedValue`.
     @Test func theSnippetMenuBridgeReachesOnlyTheFocusedWindow() throws {
-        let lifecycle = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.lifecyclePath))
+        let lifecycle = try SourceCorpus.code(of: Self.url(Self.lifecyclePath))
         // Anchored on the ASSIGNMENT PLUS ITS BRACE, not on the assignment
         // alone (fix round 1). `declarationBodyRange` opens its span at the
         // first `{` after the text it is given, so a revert to the
@@ -542,12 +541,12 @@ struct SessionOverviewWiringGuardTests {
             window and reached through @FocusedValue, so being the front window is already \
             the precondition for this closure being called at all.
             """)
-        let commands = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.commandsPath))
+        let commands = try SourceCorpus.code(of: Self.url(Self.commandsPath))
         #expect(commands.contains("@FocusedValue"), """
             MacSCPCommands.swift no longer reads the bridge through @FocusedValue — the \
             negative above would then be forbidding a guard that nothing had replaced.
             """)
-        let contentView = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.contentViewPath))
+        let contentView = try SourceCorpus.code(of: Self.url(Self.contentViewPath))
         let trigger = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "func triggerSnippet(_ snippet: Snippet, execute: Bool)", in: contentView)
         #expect(trigger.contains("SnippetVariableSubstitution"), """
@@ -747,7 +746,7 @@ struct SessionOverviewWiringGuardTests {
         for file in try DiagnosticsDoorsGuardTests.appTargetFiles() {
             let count = Self.occurrences(
                 of: "recordConnectFailed(",
-                in: try SwiftSource.blankingCommentsAndStrings(try Self.raw(file)))
+                in: try SourceCorpus.code(of: Self.url(file)))
             sites.append(contentsOf: Array(repeating: file, count: count))
         }
         #expect(sites.count == 1, """
@@ -801,7 +800,7 @@ struct SessionOverviewWiringGuardTests {
     /// (`model.facts` is mapped into `lines`) and the point is that it
     /// reaches the model, not which members it happens to touch this month.
     @Test func theSecretScanReadsAFileThatRendersTheModel() throws {
-        let modelSource = try SwiftSource.blankingCommentsAndStrings(try Self.raw(Self.modelPath))
+        let modelSource = try SourceCorpus.code(of: Self.url(Self.modelPath))
         let members = Set(
             DiagnosticsDoorsGuardTests.matches(
                 of: #"public let (\w+):"#, in: modelSource))
@@ -861,8 +860,7 @@ struct SessionOverviewWiringGuardTests {
     /// field secret, or a renamed describing call would leave the negatives
     /// passing over patterns that match nothing anywhere.
     @Test func everySecretPatternMatchesTheFixture() throws {
-        let fixture = try SwiftSource.blankingCommentsAndStrings(
-            try Self.raw(Self.leakFixturePath))
+        let fixture = try SourceCorpus.code(of: Self.url(Self.leakFixturePath))
         let ids = Self.secretFieldIDs()
         #expect(!ids.isEmpty, """
             no backend declares a secret field at all — the derivation feeding \
@@ -891,7 +889,7 @@ struct SessionOverviewWiringGuardTests {
     /// here. A list would be a second copy of a vocabulary that lives in
     /// another target, and it is the copy that stops growing.
     static func factLabelIDs() throws -> Set<String> {
-        let source = try SwiftSource.blankingComments(try raw(modelPath))
+        let source = try SourceCorpus.commentFree(of: Self.url(modelPath))
         return Set(DiagnosticsDoorsGuardTests.matches(of: #"label\("([\w.]+)"\)"#, in: source))
     }
 

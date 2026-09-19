@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of `SnippetsSheet.swift`: the snippet row's
@@ -36,7 +37,7 @@ struct SnippetRowExportMenuGuardTests {
     // MARK: - The guard
 
     @Test func rowMenuOffersEditExportDeleteInThatOrder() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let order = try Self.entryOrder(in: source)
         #expect(order == ["snippets.edit", "snippets.export", "snippets.delete"], """
             The row's .contextMenu must offer Edit -> Export -> Delete in that \
@@ -45,7 +46,7 @@ struct SnippetRowExportMenuGuardTests {
     }
 
     @Test func exportEntrySelectsTheRowThenExportsExactlyIt() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let block = try Self.exportButtonBlock(in: source)
         #expect(block.contains("selectedID = snippet.id"), """
             The row's Export entry must set selectedID first, so it always \
@@ -58,7 +59,7 @@ struct SnippetRowExportMenuGuardTests {
     }
 
     @Test func exportLabelKeyBelongsToTheRowAlone() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let count = Self.occurrenceCount(of: "\"snippets.export\"", in: source)
         #expect(count == 1, """
             "snippets.export" must appear exactly once in SnippetsSheet.swift \

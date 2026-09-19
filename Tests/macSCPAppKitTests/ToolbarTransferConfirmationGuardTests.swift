@@ -52,7 +52,7 @@ struct ToolbarTransferConfirmationGuardTests {
     // MARK: - 1-3. The buttons, the plan branch, the confirm action
 
     @Test func theToolbarButtonsReachTheTransferOnlyThroughThePlan() throws {
-        let source = try String(contentsOf: Self.transfersFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.transfersFile)
         let violations = try Self.transfersViolations(source)
         #expect(violations.isEmpty, "the toolbar transfer wiring is broken: \(violations)")
     }
@@ -60,7 +60,7 @@ struct ToolbarTransferConfirmationGuardTests {
     // MARK: - 4. The question
 
     @Test func theQuestionIsAConfirmationDialogBoundToTheRequest() throws {
-        let source = try String(contentsOf: Self.sheetsFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sheetsFile)
         let violations = try Self.dialogViolations(source)
         #expect(violations.isEmpty, "the toolbar transfer question is wired wrong: \(violations)")
     }

@@ -31,8 +31,7 @@ struct GenerateKeyCaptionWiringGuardTests {
     /// Comments only (`SwiftSource.blankingComments`): the scan below reads
     /// the `"keys.notConnectable"` LITERAL, which the strict mode would blank.
     private static func strippedSource() throws -> String {
-        try SwiftSource.blankingComments(
-            try String(contentsOf: sheetSourceFile, encoding: .utf8))
+        try SourceCorpus.commentFree(of: sheetSourceFile)
     }
 
     /// Every range of the catalog-key literal in `source`, in order.

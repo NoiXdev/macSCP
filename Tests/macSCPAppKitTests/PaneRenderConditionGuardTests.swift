@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 /// Guards ONE property of `ContentView+Detail.swift`'s `detail`
@@ -65,7 +66,7 @@ struct PaneRenderConditionGuardTests {
     // MARK: - The guard
 
     @Test func detailDoesNotReadTheRawBooleansAsRenderConditions() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(ofBlockStartingWith: "var detail: some View {", in: lines) else {
             Issue.record("`var detail: some View {` not found — re-anchor this guard")
@@ -87,7 +88,7 @@ struct PaneRenderConditionGuardTests {
     /// wrong reason: zero violations because zero conditions were seen, not
     /// because both real ones are correctly wired.
     @Test func detailStillGatesBothHalvesOnTheAssembledVisibility() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(ofBlockStartingWith: "var detail: some View {", in: lines) else {
             Issue.record("`var detail: some View {` not found — re-anchor this guard")
@@ -109,7 +110,7 @@ struct PaneRenderConditionGuardTests {
     /// suggests it fully closes, but it does rule out the specific case of
     /// `visibility` being computed some other way inside `detail`.
     @Test func detailAssemblesVisibilityFromEffectivePaneVisibility() throws {
-        let source = try String(contentsOf: Self.sourceFile, encoding: .utf8)
+        let source = try SourceCorpus.text(of: Self.sourceFile)
         let lines = source.components(separatedBy: "\n")
         guard let range = Self.range(ofBlockStartingWith: "var detail: some View {", in: lines) else {
             Issue.record("`var detail: some View {` not found — re-anchor this guard")

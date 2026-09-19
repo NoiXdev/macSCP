@@ -58,8 +58,7 @@ struct CLIConnectionScopeTests {
         let file = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/MacSCPCLI/SessionConnecting.swift")
-        let code = try SwiftSource.blankingCommentsAndStrings(
-            String(contentsOf: file, encoding: .utf8))
+        let code = try SourceCorpus.code(of: file)
         let start = try #require(code.range(of: "func withConnection("))
         let end = code.range(of: "\nfunc ", range: start.upperBound..<code.endIndex)?.lowerBound
             ?? code.endIndex

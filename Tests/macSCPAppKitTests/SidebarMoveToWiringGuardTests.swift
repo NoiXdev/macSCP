@@ -61,11 +61,11 @@ struct SidebarMoveToWiringGuardTests {
     private static let sidebarPath = "Sources/MacSCPAppKit/SessionSidebar.swift"
 
     private static func raw() throws -> String {
-        try String(contentsOf: repoRoot.appendingPathComponent(sidebarPath), encoding: .utf8)
+        try SourceCorpus.text(of: repoRoot.appendingPathComponent(sidebarPath))
     }
 
     private static func code() throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(try raw())
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(sidebarPath))
     }
 
     private static func occurrences(of needle: String, in text: String) -> Int {

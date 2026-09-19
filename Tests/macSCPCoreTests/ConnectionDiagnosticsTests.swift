@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import MacSCPTestSupport
 import Testing
 
 @testable import macSCPCore
@@ -1536,10 +1537,8 @@ struct ConnectionDiagnosticsTests {
     /// holds the other three languages to the same list, so equality here is
     /// equality with all four.
     @Test func everyReasonKeyTheTypeHandsOutIsExactlyWhatTheCatalogCarries() throws {
-        let catalog = try String(
-            contentsOf: Self.repositoryURL(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let catalog = try SourceCorpus.text(of: Self.repositoryURL(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
         let inCatalog = Set(
             Self.matches(of: #""(diagnostics\.reason\.[A-Za-z0-9._]+)""#, in: catalog))
 
@@ -1567,7 +1566,7 @@ struct ConnectionDiagnosticsTests {
 
     /// First capture group of every match, in source order.
     private static func matches(of pattern: String, in source: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let regex = try? CompiledPattern.regex(pattern) else { return [] }
         let range = NSRange(source.startIndex..<source.endIndex, in: source)
         return regex.matches(in: source, range: range).compactMap { match in
             guard match.numberOfRanges > 1, let found = Range(match.range(at: 1), in: source)

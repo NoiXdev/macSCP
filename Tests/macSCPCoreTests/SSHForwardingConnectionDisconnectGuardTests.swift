@@ -35,8 +35,7 @@ struct SSHForwardingConnectionDisconnectGuardTests {
         .appendingPathComponent("Sources/macSCPCore/SSH/SSHForwardingConnection.swift")
 
     @Test func disconnectReleasesTheGroupOnlyAfterTheLoginTimer() throws {
-        let strict = try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: Self.file, encoding: .utf8))
+        let strict = try SourceCorpus.code(of: Self.file)
         let body = try #require(
             Self.body(of: "func disconnect()", in: strict),
             "no `func disconnect()` body in SSHForwardingConnection.swift — re-anchor this guard")

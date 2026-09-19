@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 import macSCPCore
 
@@ -156,10 +157,8 @@ struct ChecksumColumnTests {
     /// emptied. What has to be true is that the key is declared — the four
     /// translations are then held to it by `LocalizationParityTests`.
     @Test func bothChecksumHeaderKeysAreDeclaredInTheEnglishCatalog() throws {
-        let catalog = try String(
-            contentsOf: Self.repoRoot.appendingPathComponent(
-                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"),
-            encoding: .utf8)
+        let catalog = try SourceCorpus.text(of: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"))
 
         #expect(catalog.contains("\"filetable.column.\(FileColumn.checksum.rawValue)\" ="))
         #expect(catalog.contains("\"filetable.column.checksum.withAlgorithm %@\" ="))

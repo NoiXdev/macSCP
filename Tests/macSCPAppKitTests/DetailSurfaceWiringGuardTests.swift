@@ -60,8 +60,7 @@ struct DetailSurfaceWiringGuardTests {
     private static let seamType = "(@MainActor () -> SessionTab)?"
 
     private static func code(_ relativePath: String) throws -> String {
-        try SwiftSource.blankingCommentsAndStrings(
-            try String(contentsOf: repoRoot.appendingPathComponent(relativePath), encoding: .utf8))
+        try SourceCorpus.code(of: repoRoot.appendingPathComponent(relativePath))
     }
 
     private static func body(of declaration: String, in source: String) throws -> String {
@@ -136,7 +135,7 @@ struct DetailSurfaceWiringGuardTests {
     private static func reads(of fact: String, in text: String) -> Int {
         guard fact.hasPrefix("."), fact.last?.isLetter == true else { return occurrences(of: fact, in: text) }
         let pattern = NSRegularExpression.escapedPattern(for: fact) + "(?![A-Za-z0-9_])"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return -1 }
+        guard let regex = try? CompiledPattern.regex(pattern) else { return -1 }
         return regex.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
     }
 
@@ -254,7 +253,7 @@ struct DetailSurfaceWiringGuardTests {
         let identifier = "[A-Za-z_][A-Za-z0-9_]*"
         let pattern = "(?:^|[,(])\\s*(\(identifier))(?:\\s+\(identifier))?\\s*:\\s*"
             + NSRegularExpression.escapedPattern(for: type)
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        guard let regex = try? CompiledPattern.regex(pattern) else { return [] }
         let range = NSRange(parameters.startIndex..., in: parameters)
         return regex.matches(in: parameters, range: range).compactMap { match in
             Range(match.range(at: 1), in: parameters).map { String(parameters[$0]) }
