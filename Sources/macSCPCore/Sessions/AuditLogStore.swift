@@ -29,9 +29,16 @@ import Foundation
 /// ONE cache and ONE serial queue per session directory, not independent
 /// copies — a `struct` would have silently defeated the cache.
 public final class AuditLogStore: @unchecked Sendable {
-    static let maxEntriesPerSession = 1000
+    /// The documented production value (M9b design spec). Every real caller
+    /// (`MacSCPApp`, `SessionOverviewView`, …) constructs with the default
+    /// `init(directory:)` and gets exactly this; only tests that need a
+    /// small cap to keep a rolling-eviction test linear pass `maxEntries`
+    /// explicitly. `AuditLogStoreTests.productionDefaultCapIs1000` pins this
+    /// value itself.
+    public static let maxEntriesPerSession = 1000
 
     private let directory: URL
+    private let maxEntries: Int
     private let queue = DispatchQueue(label: "dev.noidee.macscp.auditlog")
     /// In-memory mirror of each session's on-disk log. Only ever read/written
     /// from blocks running ON `queue`.
@@ -49,8 +56,13 @@ public final class AuditLogStore: @unchecked Sendable {
     /// replace the whole on-disk history rather than append to it.
     private var partiallyRead: Set<UUID> = []
 
-    public init(directory: URL) {
+    /// `maxEntries` defaults to the production cap (`maxEntriesPerSession`);
+    /// only tests pass a smaller value, to keep a rolling-eviction test's
+    /// event count — and so its runtime — independent of the production
+    /// cap. No production call site passes this argument.
+    public init(directory: URL, maxEntries: Int = AuditLogStore.maxEntriesPerSession) {
         self.directory = directory
+        self.maxEntries = maxEntries
     }
 
     public static var defaultDirectory: URL {
@@ -61,7 +73,8 @@ public final class AuditLogStore: @unchecked Sendable {
         directory.appendingPathComponent("\(sessionID.uuidString).json")
     }
 
-    /// Appends `event` for `sessionID`, capped at `maxEntriesPerSession`.
+    /// Appends `event` for `sessionID`, capped at `maxEntries` (the
+    /// production default is `maxEntriesPerSession`; see `init`).
     /// Cheap on the caller: only a closure hand-off to `queue`, no disk I/O
     /// on this thread. The cache and the on-disk file are updated together,
     /// on `queue`, so a later `events(for:)`/`clear`/`deleteLog` (which use
@@ -72,8 +85,8 @@ public final class AuditLogStore: @unchecked Sendable {
             loadIfNeeded(sessionID)
             var events = cache[sessionID] ?? []
             events.append(event)
-            if events.count > Self.maxEntriesPerSession {
-                events.removeFirst(events.count - Self.maxEntriesPerSession)
+            if events.count > maxEntries {
+                events.removeFirst(events.count - maxEntries)
             }
             cache[sessionID] = events
             persist(events, for: sessionID)

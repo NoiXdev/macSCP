@@ -28,17 +28,36 @@ struct AuditLogStoreTests {
         #expect(store.events(for: UUID()).isEmpty)
     }
 
+    /// Exercises the same rolling-eviction property the production cap
+    /// (`AuditLogStore.maxEntriesPerSession`, 1000) enforces, but at a small
+    /// injected cap: this test's runtime is O(smallCap), not
+    /// O(productionCap), because it appends `smallCap + 1` events rather
+    /// than 1001. The production value itself is pinned separately by
+    /// `productionDefaultCapIs1000` below.
     @Test func rollingCapKeepsNewest() throws {
-        let (store, dir) = try makeStore()
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("audit-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
+        let smallCap = 5
+        let store = AuditLogStore(directory: dir, maxEntries: smallCap)
         let id = UUID()
-        for index in 0...AuditLogStore.maxEntriesPerSession {  // one over the cap
+        for index in 0...smallCap {  // one over the cap
             store.append(event("e\(index)"), for: id)
         }
         let events = store.events(for: id)
-        #expect(events.count == AuditLogStore.maxEntriesPerSession)
+        #expect(events.count == smallCap)
         #expect(events.first?.detail == "e1")   // oldest ("e0") evicted
-        #expect(events.last?.detail == "e\(AuditLogStore.maxEntriesPerSession)")
+        #expect(events.last?.detail == "e\(smallCap)")
+    }
+
+    /// Pins the documented production default (M9b design spec, and the
+    /// task-3 brief for the 2026-09-19 CI-starvation plan): every real
+    /// caller relies on `init(directory:)`'s default `maxEntries` equalling
+    /// this constant. `rollingCapKeepsNewest` above no longer exercises this
+    /// value directly, so it needs its own pin.
+    @Test func productionDefaultCapIs1000() {
+        #expect(AuditLogStore.maxEntriesPerSession == 1000)
     }
 
     @Test func clearAndDeleteRemoveEverything() throws {
