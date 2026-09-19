@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import NIOCore
 import Testing
 @testable import macSCPCore
@@ -868,6 +869,81 @@ struct ConnectFailureSecrecyTests {
             await expectNoSecret(in: error, what)
         }
     }
+
+    // MARK: - No raw error reaches the connect form (backlog closeout, mirroring 277d7eca)
+
+    /// `failedState`'s `.connectionFailed(let reason)` arm used to
+    /// interpolate any backend's reason unfiltered — the same shape
+    /// `277d7eca` closed for the CLI and the browser, left open here and
+    /// recorded in the BACKLOG row this suite closes. The reason now passes
+    /// through `URLText.withoutUserinfo`, the same filter the CLI and the
+    /// transfer queue apply. The credential lives in
+    /// `TransferErrorSecrecyTests`'s named constants, and the leak `Bool` is
+    /// computed before its `#expect` (CLAUDE.md, "A value a test must not
+    /// leak has two exits").
+    @MainActor
+    @Test func aConnectionFailedReasonReachesTheFormWithoutUserinfo() {
+        let reason = "S3 request failed at \(TransferErrorSecrecyTests.credentialURL)"
+        let kept = "S3 request failed at https://s3.example.test/macscp-seed/remote.bin"
+        guard case .failed(let message, _) = ConnectionViewModel.failedState(
+            for: RemoteFSError.connectionFailed(reason: reason))
+        else {
+            Issue.record("failedState did not publish a failure")
+            return
+        }
+        let leaks = TransferErrorSecrecyTests.leaks(message)
+        let keepsTheReason = message.contains(kept)
+        #expect(leaks == false, "the connect form carries the credential")
+        #expect(keepsTheReason, "the connect form lost the backend's reason")
+    }
+
+    /// An error no arm names — a raw `URLError` a backend forgot to wrap —
+    /// used to reach the form's `default:` arm as `String(describing:
+    /// error)`, which prints the failing URL out of its `userInfo`,
+    /// credential and all. It now reads `DialSupport.reason(for:)`'s
+    /// sentence (a foreign error's localized sentence, never its
+    /// description), filtered the same way.
+    @MainActor
+    @Test func anUnmappedErrorReachesTheFormWithoutItsDescriptionOrUserinfo() {
+        let raw = TransferErrorSecrecyTests.lostConnectionCarryingTheCredential
+        guard case .failed(let message, _) = ConnectionViewModel.failedState(for: raw) else {
+            Issue.record("failedState did not publish a failure")
+            return
+        }
+        let leaks = TransferErrorSecrecyTests.leaks(message)
+        let readsTheFilteredSentence = message == String(
+            format: CoreL10n.string("core.error.unexpected %@"),
+            URLText.withoutUserinfo(DialSupport.reason(for: raw)))
+        #expect(leaks == false, "the connect form carries the credential")
+        #expect(readsTheFilteredSentence)
+    }
+
+    /// The source guard over `failedState`'s body, read through
+    /// `SourceCorpus` with comments blanked and strings kept (an
+    /// interpolation sits inside a string literal). No description, no
+    /// interpolation of the caught error, and no localized sentence that
+    /// skips `URLText.withoutUserinfo` on the same line — except the one
+    /// line allowed by type: `AgentError.refused` carries no associated
+    /// value, so `String(describing: AgentError.refused)` renders the fixed
+    /// case name, a compile-time literal, never anything the caught error
+    /// carries. The positive check pins the allowance to that exact line,
+    /// so a rename or a payload later added to `.refused` turns this red
+    /// instead of leaving a stale allowance that matches nothing.
+    @Test func noFailedStateArmRendersARawError() throws {
+        let body = try #require(
+            try TransferErrorSecrecyTests.body(opening: Self.failedStateDeclaration, in: Self.connectionViewModelFile),
+            "`\(Self.failedStateDeclaration)` is gone — renamed?")
+        #expect(body.contains(TransferErrorSecrecyTests.filter), "failedState no longer filters a reason")
+        #expect(body.contains(Self.allowedRefusedLine), "the allowlisted AgentError.refused line is gone — drop the allowance")
+        let found = TransferErrorSecrecyTests.violations(in: body)
+            .filter { !$0.contains(Self.allowedRefusedLine) }
+        #expect(found.isEmpty, "\(found)")
+    }
+
+    private static let failedStateDeclaration = "static func failedState("
+    private static let allowedRefusedLine = "String(describing: AgentError.refused)"
+    private static let connectionViewModelFile = SourceCorpus.url(of: .sources)
+        .appendingPathComponent("macSCPCore/Presentation/ConnectionViewModel.swift")
 }
 
 /// The WebDAV operations `webdavOperationFailureCarriesNoSecret` drives.

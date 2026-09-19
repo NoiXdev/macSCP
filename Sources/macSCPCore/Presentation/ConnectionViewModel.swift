@@ -2255,9 +2255,16 @@ public final class ConnectionViewModel {
         case RemoteFSError.connectionFailed(let reason)
             where jumpEnabled && reason.contains("channelSetupRejected"):
             return .failed(message: CoreL10n.string("core.connect.jumpTunnelRejected"), field: nil)
+        // Never the reason unfiltered (backlog closeout, "Raw error text
+        // can still reach the CLI and the browser banner", the part
+        // 277d7eca left open): a URL-shaped backend composes this text out
+        // of what the user typed, and `URLText.withoutUserinfo` is the same
+        // filter the CLI and the transfer queue apply to it.
         case RemoteFSError.connectionFailed(let reason):
             return .failed(
-                message: String(format: CoreL10n.string("core.connect.connectionFailed %@"), reason),
+                message: String(
+                    format: CoreL10n.string("core.connect.connectionFailed %@"),
+                    URLText.withoutUserinfo(reason)),
                 field: nil)
         // Agent errors (M10d/T4): `.socketUnavailable`/`.noIdentities` are
         // their OWN honest, localized conditions (spec §2/§5) -- never
@@ -2447,9 +2454,18 @@ public final class ConnectionViewModel {
         // wrong, and the credentials worked.
         case SFTPStartError.noResponse:
             return .failed(message: CoreL10n.string("core.connect.sftpUnavailable"), field: nil)
+        // Never the error's own description (same backlog closeout,
+        // mirroring the CLI's and the browser's `default:` fix in
+        // `277d7eca`): an `NSError`'s description prints its whole
+        // `userInfo`, the failing URL among it. `DialSupport.reason(for:)`
+        // renders any error as a fixed or localized sentence, never its
+        // description, and `URLText.withoutUserinfo` cuts the userinfo out
+        // of a URL that sentence quotes.
         default:
             return .failed(
-                message: String(format: CoreL10n.string("core.error.unexpected %@"), String(describing: error)),
+                message: String(
+                    format: CoreL10n.string("core.error.unexpected %@"),
+                    URLText.withoutUserinfo(DialSupport.reason(for: error))),
                 field: nil)
         }
     }
