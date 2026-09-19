@@ -40,7 +40,11 @@ struct DiagnoseCommand: AsyncParsableCommand {
             --scope throughput is the one check that writes: it uploads a \
             test file of --payload-mib MiB to the session's start folder, \
             downloads it, compares it and deletes it, and it runs only when \
-            asked for by name, never as part of complete.
+            asked for by name, never as part of complete. Ctrl-C during it \
+            stops the run and still deletes the file; the exit code then \
+            follows the rows kept, 0 when they are ok. A second Ctrl-C \
+            leaves without waiting for the delete, names the file on \
+            stderr, and exits 16, because the file may still be there.
             """)
 
     @OptionGroup var options: DiagnoseOptions

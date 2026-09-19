@@ -168,7 +168,10 @@ enum ThroughputProbe {
     /// Writes `line` to the diagnostic log, under `transfer`: the throughput
     /// test's own record that a file of this app's may remain on a server.
     /// The line names the file and the folder and nothing else — no host, no
-    /// login, no secret.
+    /// secret, no credential. The folder is the session's start folder,
+    /// which on SFTP is usually `/home/<login>`, so the line can carry the
+    /// login's NAME through that path; it never carries anything that
+    /// authenticates.
     static func logLeftover(_ line: String) {
         DiagnosticLog.shared.log(.error, "transfer", line)
     }
@@ -258,7 +261,8 @@ enum ThroughputProbe {
         }
         // Asked only of an upload that did not finish: an S3 multipart
         // upload whose abort did not confirm leaves parts no listing shows
-        // and no `delete` reaches (`S3MultipartAbortUnconfirmed`).
+        // and no `delete` reaches (`S3MultipartAbortInFlight`). This is the
+        // one caller that WAITS for that abort's answer; the queue never does.
         let incompleteUpload =
             legs.isEmpty ? await fileSystem.incompleteUploadMayRemain(at: path) : false
         let removal = await remove(path, from: fileSystem, within: cleanupBoundSeconds)
@@ -270,8 +274,9 @@ enum ThroughputProbe {
         // Whoever is watching. A panel that was closed mid-run is watching
         // nothing, and a cancelled walk keeps this row only because it says
         // this (`ConnectionDiagnostics.contributions(_:_:into:)`); the log
-        // is the record that outlives both. Name and folder only — the
-        // folder is the session's own, and nothing here names a login.
+        // is the record that outlives both. Name and folder only, no secret
+        // or credential — though the folder, the session's start folder, is
+        // often `/home/<login>` and so can carry the login's name.
         if mayHaveLeftAFile(step) {
             note(
                 "throughput test file may remain on the server: name=\(name) folder=\(directory) "

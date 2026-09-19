@@ -32,11 +32,17 @@ import Foundation
 ///   asked of it (a path, a permission, a remote-side error).
 /// - `conflict`: a local precondition the command itself enforces was not
 ///   met (e.g. a name already in use).
-/// - `diagnosis`: `macscp-cli diagnose` finished its walk, but at least one
-///   step's outcome was `failed` or `timedOut` — a `skipped` or
+/// - `diagnosis`: `macscp-cli diagnose` returned its report, and at least
+///   one step's outcome was `failed` or `timedOut` — a `skipped` or
 ///   `unavailable` step alone does not set this, only a step that actually
 ///   found something wrong with the server or the path to it
-///   (`DiagnoseRendering.exitCode(for:)`).
+///   (`DiagnoseRendering.exitCode(for:)`). The report may be a cancelled
+///   one: a `--scope throughput` run stopped by Ctrl-C exits by the rows it
+///   kept, so 0 when they are ok, and 16 when its kept row says the test
+///   file may remain. Also set with NO failed step at all: a throughput run
+///   ABANDONED by a second Ctrl-C, before its removal confirmed, exits 16
+///   because a file of this app's may be on the server
+///   (`DiagnoseForegroundRun.exitCode(for:)`).
 public enum CLIExitCode: Int32, Equatable, Sendable {
     case success = 0
     case usage = 2
