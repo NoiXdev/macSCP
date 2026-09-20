@@ -196,7 +196,32 @@ final class LoopbackHTTPStub: @unchecked Sendable {
 
         let listenerFD = fd
         let canned = self.responses
-        DispatchQueue.global().async { [weak self] in
+        // A `Thread` of its own, and NOT `DispatchQueue.global().async`.
+        //
+        // Measured 2026-09-20, after CI run 35487755989 went red on
+        // `InternetSpeedLiveTransportTests` with four
+        // `NSURLErrorDomain -1001 "The request timed out."` — including on
+        // requests with no body at all, which no buffer explanation
+        // reaches. Reproduced locally by parking 512 blocks on
+        // `DispatchQueue.global()` before making a stub: a plain `GET`
+        // against it failed after **10.007520708 s**, the client's whole
+        // timeout, with exactly that error. With the thread below, the
+        // same experiment answers in 0.02 s.
+        //
+        // The mechanism: `listen(fd, 8)` above means the KERNEL completes
+        // the TCP handshake into the backlog, so a client connects
+        // successfully and then waits for a server that has not been given
+        // a thread yet. This loop blocks in `accept` for the life of the
+        // stub, so it is exactly the kind of occupant CLAUDE.md's
+        // `DetachedProbe` note warns about — "enough simultaneously
+        // blocked ones would delay this block too" — and a three-core
+        // runner running the whole suite in parallel is where that stops
+        // being theoretical. A `Thread` is created by the kernel when it is
+        // started and queues behind nothing.
+        //
+        // `stop()` still ends it the same way: closing the listener makes
+        // `accept` return -1 and the loop returns, which ends the thread.
+        let loop = Thread { [weak self] in
             // Served strictly one at a time, so the counter needs no lock:
             // this loop is the only thing that reads or writes it.
             var served = 0
@@ -214,6 +239,8 @@ final class LoopbackHTTPStub: @unchecked Sendable {
                 served += 1
             }
         }
+        loop.name = "LoopbackHTTPStub:\(port)"
+        loop.start()
     }
 
     private var stopped: Bool {
@@ -232,12 +259,30 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         close(listener)
     }
 
-    /// Reads the request head, then writes the canned response, and returns
-    /// the head it read. The read matters for pacing first of all — a
-    /// client whose request is never consumed can see the close as a
-    /// connection error instead of as the response it was sent — and the
-    /// returned text is what lets a test assert on the headers that
-    /// arrived.
+    /// Reads the request head AND the body it announces, then writes the
+    /// canned response, and returns the head it read. The read matters for
+    /// pacing first of all — a client whose request is never consumed can
+    /// see the close as a connection error instead of as the response it
+    /// was sent — and the returned text is what lets a test assert on the
+    /// headers that arrived.
+    ///
+    /// **Why the body is drained** (measured 2026-09-20). It was not, and
+    /// the head read simply stopped at the blank line. A client whose body
+    /// is larger than the socket buffers then blocks mid-send for ever,
+    /// and the unread bytes still queued at `close` make the kernel send
+    /// RST instead of FIN — so the response it was already sent is lost.
+    /// A 4 MiB upload against the old stub failed in 0.028 s with
+    /// `NSURLErrorDomain -1005 "The network connection was lost."`
+    /// (`_kCFStreamErrorCodeKey=32`, EPIPE). With the drain below the same
+    /// upload completes. Nothing here depended on a buffer size afterwards,
+    /// which is what a test whose body "fits in the socket buffer" was
+    /// depending on without saying so.
+    ///
+    /// Only a `Content-Length` body is drained. That is every body any
+    /// caller of this stub sends — `URLSession` sets the header for a
+    /// `Data` body and for `upload(for:from:)` — and it is what keeps the
+    /// suites that send NO body reading exactly what they read before: for
+    /// them `bodyLength` is `nil` and this reads not one extra byte.
     private static func serve(_ client: Int32, _ response: [UInt8]) -> String {
         defer { close(client) }
         var seen = [UInt8]()
@@ -248,6 +293,8 @@ final class LoopbackHTTPStub: @unchecked Sendable {
             seen.append(byte)
             if seen.count >= 4, Array(seen.suffix(4)) == Array("\r\n\r\n".utf8) { break }
         }
+        let head = String(decoding: seen, as: UTF8.self)
+        drainBody(client, announcedBy: head)
         var written = 0
         response.withUnsafeBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
@@ -257,7 +304,31 @@ final class LoopbackHTTPStub: @unchecked Sendable {
                 written += count
             }
         }
-        return String(decoding: seen, as: UTF8.self)
+        return head
+    }
+
+    /// Reads and discards the `Content-Length` bytes `head` announces, in
+    /// blocks rather than one byte at a time — a mebibyte of
+    /// single-byte `read`s is a mebibyte of syscalls.
+    ///
+    /// Bounded at 64 MiB, which is far more than any test here sends and
+    /// far less than a runaway: a `Content-Length` this stub cannot
+    /// satisfy ends the read rather than the process.
+    private static func drainBody(_ client: Int32, announcedBy head: String) {
+        guard let value = headerValue("Content-Length", in: head), let length = Int(value),
+            length > 0
+        else { return }
+        var remaining = min(length, 64 * 1024 * 1024)
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while remaining > 0 {
+            let wanted = min(remaining, buffer.count)
+            let count = buffer.withUnsafeMutableBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return 0 }
+                return read(client, base, wanted)
+            }
+            guard count > 0 else { return }
+            remaining -= count
+        }
     }
 
     enum StubError: Error {

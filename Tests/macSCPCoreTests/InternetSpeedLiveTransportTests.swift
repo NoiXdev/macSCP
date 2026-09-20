@@ -55,11 +55,19 @@ struct InternetSpeedLiveTransportTests {
             """
     }
 
-    /// A body small enough to sit in the socket buffer, so the stub — which
-    /// reads a request head and not a body — can still answer it. The size
-    /// is irrelevant to what is asserted: what matters is that a body
-    /// exists and that it does not reach the far origin.
-    static let bodyBytes = 512
+    /// The body a real upload leg sends, and deliberately far larger than
+    /// any socket buffer.
+    ///
+    /// It was 512 bytes, with a comment saying "small enough to sit in the
+    /// socket buffer" — which is a dependency on a number nobody here
+    /// chooses, and the stub it depended on never drained a body at all.
+    /// Measured 2026-09-20: 4 MiB against that stub failed in 0.028 s with
+    /// `NSURLErrorDomain -1005`, because the client blocked mid-send and
+    /// the unread bytes turned the close into an RST. `LoopbackHTTPStub`
+    /// drains a `Content-Length` body now, and this size is what keeps
+    /// that honest: a stub that stopped draining would be red here rather
+    /// than only on a machine with smaller buffers.
+    static let bodyBytes = DiagnosticInternetSpeedSettings.defaultUploadBytes
 
     /// A service on the loopback stub, in the shape
     /// `InternetSpeedService.cloudflare` has. `host` is what a row would
