@@ -1059,18 +1059,24 @@ extension ContentView {
     /// — so its absence here follows the identical rule, not a special case.
     @ViewBuilder
     func terminalPanel(_ session: BrowserSession) -> some View {
+        // Resolved ONCE for the whole panel and handed down from here
+        // (fix round 1): the header strip, the frame the surface sits in
+        // and the "shell ended" message are one surface, and two of them
+        // resolving separately is how they drift apart.
+        let theme = settingsStore.resolvedTerminalTheme
         VStack(spacing: 0) {
             TerminalPanelHeader(
                 hostTitle: activeTab.displayTitle,
                 snippets: tabCommands.snippetsLoad.snippets,
                 supportsShell: activeTabSupportsShell,
+                theme: theme,
                 onRunSnippet: { snippet, execute in triggerSnippet(snippet, execute: execute) }
             )
             ZStack {
                 // The frame the terminal surface sits inset within, so it
                 // follows the chosen theme rather than staying deep sea
                 // around, say, a light one (plan of 2026-09-19, Task 3).
-                settingsStore.resolvedTerminalTheme.background.swiftUIColor
+                theme.background.swiftUIColor
                 switch session.terminal.state {
                 case .running, .opening:
                     SSHTerminalView(
@@ -1103,8 +1109,7 @@ extension ContentView {
                             // On the frame above, so it follows the theme
                             // with it — a fixed text colour here would go
                             // invisible on a light theme's background.
-                            .foregroundStyle(
-                                settingsStore.resolvedTerminalTheme.foreground.swiftUIColor)
+                            .foregroundStyle(theme.foreground.swiftUIColor)
                         Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
                     }
                     // Already 14/8 before the rest of the panel was unified
@@ -2630,6 +2635,18 @@ private struct TerminalPanelHeader: View {
     /// `SessionRowSnippetMenuPlan.build`'s `.active` case passes for the
     /// identical reason.
     let supportsShell: Bool
+    /// The panel's resolved terminal theme (fix round 1, review
+    /// Important #3). Passed IN rather than resolved here, so this strip
+    /// and the surface below it cannot end up painted from two different
+    /// reads — `terminalPanel(_:)` resolves it once for both.
+    ///
+    /// It reaches the snippet popover too, which hangs off this view's
+    /// button: a popover in deep-sea green over a light terminal reads as
+    /// a different app's window. The one thing in that popover NOT painted
+    /// from it is `SheetSearchField` — a shared control five other sheets
+    /// render, with nothing to do with a terminal; giving it a theme would
+    /// mean a terminal-coloured search field everywhere else too.
+    let theme: TerminalTheme
     let onRunSnippet: (Snippet, Bool) -> Void
 
     @State private var isSnippetPopoverPresented = false
@@ -2657,7 +2674,7 @@ private struct TerminalPanelHeader: View {
         HStack(spacing: 8) {
             Text(hostTitle)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                .foregroundStyle(theme.foreground.swiftUIColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
@@ -2667,7 +2684,7 @@ private struct TerminalPanelHeader: View {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+            .foregroundStyle(theme.foreground.swiftUIColor)
             .help(L10n.string("terminal.snippets.button", "Snippets"))
             .popover(isPresented: $isSnippetPopoverPresented) {
                 snippetPopover
@@ -2683,7 +2700,16 @@ private struct TerminalPanelHeader: View {
         // them again the way it did before this change.
         .padding(.horizontal, DesignTokens.terminalPanelInsetHorizontal)
         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
-        .background(Color(nsColor: DesignTokens.terminalBackground))
+        .background(theme.background.swiftUIColor)
+    }
+
+    /// The popover's secondary text — headings, the empty-state line and
+    /// the hover line. `.secondary` would resolve against the SYSTEM
+    /// appearance, which on a themed background is the one place the two
+    /// can disagree: grey-on-grey in dark mode over a light theme. Derived
+    /// from the theme's own foreground instead.
+    private var secondaryOnTheme: Color {
+        theme.foreground.swiftUIColor.opacity(0.62)
     }
 
     /// The flat-list popover (P3d, Task 3) — the fourth trigger surface,
@@ -2725,7 +2751,7 @@ private struct TerminalPanelHeader: View {
                     ? L10n.string("snippets.empty", "No snippets yet.")
                     : L10n.string("snippets.noMatches", "No matches."))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryOnTheme)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
             } else {
@@ -2735,7 +2761,7 @@ private struct TerminalPanelHeader: View {
                             if let tag = section.tag {
                                 Text(tag)
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(secondaryOnTheme)
                                     .padding(.top, 4)
                             }
                             ForEach(section.rows) { row in
@@ -2762,6 +2788,7 @@ private struct TerminalPanelHeader: View {
         }
         .padding(12)
         .frame(width: 280)
+        .background(theme.background.swiftUIColor)
         .sheet(item: $actionSheetSnippet) { snippet in
             // Task 2's action window, reused verbatim. Insert/Execute both
             // dismiss the sheet AND the popover itself — matching what a
@@ -2867,8 +2894,7 @@ private struct TerminalPanelHeader: View {
         Text(row.displayName)
             .font(.system(size: 12))
             .foregroundStyle(
-                Color(nsColor: DesignTokens.terminalText)
-                    .opacity(row.isDisabled ? 0.45 : 1))
+                theme.foreground.swiftUIColor.opacity(row.isDisabled ? 0.45 : 1))
             .lineLimit(1)
             .truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2948,7 +2974,7 @@ private struct TerminalPanelHeader: View {
         }
         return Text(text)
             .font(.system(.caption, design: .monospaced))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(secondaryOnTheme)
             .lineLimit(1)
             .truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)

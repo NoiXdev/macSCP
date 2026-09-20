@@ -30,11 +30,18 @@ enum TerminalThemeLabel {
         }
     }
 
+    /// The catalogue key for the imported row's fallback word. Exposed
+    /// like `key(for:)` above so the catalogue guard can READ it rather
+    /// than spell it a second time — a literal there is a copy of a name,
+    /// waiting for a rename (CLAUDE.md, "Guards that name what they
+    /// watch").
+    static let importedKey = "terminal.theme.imported"
+
     /// The row for the imported theme: its file's name, or a translated
     /// word when the file's name yielded nothing usable
     /// (`ITermColorsImport.themeName(forFileNamed:)` answers `nil` then).
     static func importedText(name: String?) -> String {
-        name ?? L10n.string("terminal.theme.imported", "Imported theme")
+        name ?? L10n.string(importedKey, "Imported theme")
     }
 }
 

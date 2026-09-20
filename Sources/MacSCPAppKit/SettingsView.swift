@@ -981,12 +981,22 @@ private struct TerminalSettingsTab: View {
     /// not a fragment of the file — can reach the screen through it.
     @State private var themeImportRefused = false
 
-    /// The file type the picker offers. There is no registered type for
+    /// The file types the picker offers. There is no registered type for
     /// `.itermcolors`, so the system's dynamic type for that extension is
-    /// what filters the panel; `.propertyList` is the fallback, since that
-    /// is what such a file is.
-    private static let iTermColorsType: UTType =
-        UTType(filenameExtension: "itermcolors") ?? .propertyList
+    /// the first entry.
+    ///
+    /// `.propertyList` is offered BESIDE it, not as a fallback: an earlier
+    /// version wrote `?? .propertyList`, which could never be reached —
+    /// `UTType(filenameExtension:)` answers `nil` only for a string that
+    /// is not a usable extension at all, and this literal is one (review
+    /// of 2026-09-20, Minor #9). Offering both instead widens the panel to
+    /// a colour file that arrived without its extension, which costs
+    /// nothing: the picker is not the gate. `ITermColorsImport` is, and it
+    /// refuses anything that is not a colour file whatever the panel let
+    /// through.
+    private static let iTermColorsTypes: [UTType] = [
+        UTType(filenameExtension: "itermcolors"), .propertyList,
+    ].compactMap { $0 }
 
     /// One selectable fixed-pitch font family in the font popup.
     ///
@@ -1153,9 +1163,6 @@ private struct TerminalSettingsTab: View {
                             ) {
                                 store.importedTerminalTheme = nil
                                 store.importedTerminalThemeName = nil
-                                if store.terminalThemeChoice == .imported {
-                                    store.terminalThemeChoice = .default
-                                }
                             }
                         }
                     }
@@ -1199,11 +1206,8 @@ private struct TerminalSettingsTab: View {
         .padding(.vertical)
         .fileImporter(
             isPresented: $themeImporterPresented,
-            allowedContentTypes: [Self.iTermColorsType]
-        ) { result in
-            guard case .success(let url) = result else { return }
-            importTheme(from: url)
-        }
+            allowedContentTypes: Self.iTermColorsTypes,
+            onCompletion: themeImportResult)
         .alert(
             L10n.string("settings.terminal.theme.refused.title", "Import failed"),
             isPresented: $themeImportRefused
@@ -1224,6 +1228,19 @@ private struct TerminalSettingsTab: View {
     /// terminal resolves, so a choice shows here before a shell is open.
     private var previewTheme: TerminalTheme {
         store.resolvedTerminalTheme
+    }
+
+    /// What the picker's outcome does. A cancellation is silent — the
+    /// user closed a panel, nothing happened — but a FAILURE is not the
+    /// same thing and no longer falls out of the same `guard` (review of
+    /// 2026-09-20, Minor #9): it raises the same fixed sentence a refused
+    /// file does, because from where the user sits those two are one
+    /// event, "that file did not become a theme".
+    private func themeImportResult(_ result: Result<URL, any Error>) {
+        switch result {
+        case .success(let url): importTheme(from: url)
+        case .failure: themeImportRefused = true
+        }
     }
 
     /// Reads a picked `.itermcolors` file, stores the colours it carries

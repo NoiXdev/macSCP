@@ -30,6 +30,7 @@ struct TerminalThemeWiringGuardTests {
         .deletingLastPathComponent()
 
     private static let terminalViewPath = "Sources/MacSCPAppKit/SSHTerminalView.swift"
+    private static let panelPath = "Sources/MacSCPAppKit/ContentView+Detail.swift"
     private static let installerPath = "Sources/MacSCPAppKit/TerminalThemePresentation.swift"
     private static let settingsViewPath = "Sources/MacSCPAppKit/SettingsView.swift"
     private static let catalogLocales = ["en", "de", "fr", "pl"]
@@ -114,6 +115,48 @@ struct TerminalThemeWiringGuardTests {
         #expect(foreground.lowerBound < palette.lowerBound)
     }
 
+    // MARK: - The whole panel is one surface
+
+    /// Fix round 1, review Important #3 and Minor #10. Positive: every
+    /// place the terminal panel paints itself — the frame the surface sits
+    /// in, the "shell ended" message, the header strip and the snippet
+    /// popover that hangs off it — reads the SAME resolved theme.
+    @Test func everySurfaceOfTheTerminalPanelReadsTheResolvedTheme() throws {
+        let code = try Self.code(Self.panelPath)
+        let reads = TransferQueueBarCancelGuardTests.occurrenceCount(
+            of: "settingsStore.resolvedTerminalTheme", in: code)
+        #expect(reads == 1, """
+            expected exactly one read of settingsStore.resolvedTerminalTheme \
+            in \(Self.panelPath) — resolved once in terminalPanel and \
+            handed on from there, so no two parts of one panel can resolve \
+            differently — found \(reads).
+            """)
+        #expect(code.contains("TerminalPanelHeader(") && code.contains("theme: theme"), """
+            \(Self.panelPath) no longer hands TerminalPanelHeader the theme \
+            it resolved.
+            """)
+        #expect(code.contains("let theme: TerminalTheme"), """
+            TerminalPanelHeader in \(Self.panelPath) does not take a theme.
+            """)
+        for painted in [
+            "theme.background.swiftUIColor",
+            "theme.foreground.swiftUIColor",
+        ] {
+            #expect(code.contains(painted), "\(Self.panelPath) no longer paints \(painted)")
+        }
+    }
+
+    /// Negative, beside the positive above: no fixed terminal colour is
+    /// left anywhere in that file. A single surviving token is exactly the
+    /// half-themed panel this round exists to close — a dark strip above a
+    /// light terminal.
+    @Test func theTerminalPanelNamesNoFixedTerminalColour() throws {
+        let code = try Self.code(Self.panelPath)
+        for token in ["DesignTokens.terminalBackground", "DesignTokens.terminalText"] {
+            #expect(!code.contains(token), "\(Self.panelPath) still reads \(token)")
+        }
+    }
+
     // MARK: - Settings chooses and imports
 
     @Test func settingsBindsTheGlobalChoiceAndListsThePresets() throws {
@@ -144,6 +187,31 @@ struct TerminalThemeWiringGuardTests {
         #expect(code.contains("startAccessingSecurityScopedResource()"), """
             \(Self.settingsViewPath) reads a picked file without the \
             security-scoped access every other picker here does.
+            """)
+    }
+
+    /// Fix round 1, review Minor #9: a picker that FAILS is not a picker
+    /// the user cancelled. Both used to fall out of the same `guard`, so a
+    /// real failure left the Settings pane looking as if nothing had been
+    /// asked for. The two outcomes are now spelled separately, in a named
+    /// function this can read.
+    @Test func aPickerFailureIsToldApartFromACancellation() throws {
+        let literals = try Self.withLiterals(Self.settingsViewPath)
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: "private func themeImportResult(", in: literals)
+        let body = TransferQueueBarCancelGuardTests.slice(range, of: literals)
+        #expect(body.contains("case .success(let url)"), """
+            themeImportResult in \(Self.settingsViewPath) no longer reads the \
+            picked URL.
+            """)
+        #expect(body.contains("case .failure"), """
+            themeImportResult in \(Self.settingsViewPath) does not name the \
+            failure case — a real picker failure would be dropped as \
+            silently as a cancellation.
+            """)
+        #expect(body.contains("themeImportRefused = true"), """
+            themeImportResult in \(Self.settingsViewPath) does not raise the \
+            refusal flag for a failure.
             """)
     }
 
@@ -210,7 +278,7 @@ struct TerminalThemeWiringGuardTests {
             found no settings.terminal.theme… key in \(Self.settingsViewPath)
             """)
 
-        let wanted = labelKeys.union(settingsKeys).union(["terminal.theme.imported"])
+        let wanted = labelKeys.union(settingsKeys).union([TerminalThemeLabel.importedKey])
         for locale in Self.catalogLocales {
             let catalog = try Self.catalog(locale)
             let missing = wanted.filter { (catalog[$0] ?? "").isEmpty }.sorted()
@@ -221,7 +289,9 @@ struct TerminalThemeWiringGuardTests {
                 L10n.string(TerminalThemeLabel.key(for: preset), "ZZ-UNRESOLVED-ZZ")
                     != "ZZ-UNRESOLVED-ZZ")
         }
-        #expect(L10n.string("terminal.theme.imported", "ZZ-UNRESOLVED-ZZ") != "ZZ-UNRESOLVED-ZZ")
+        #expect(
+            L10n.string(TerminalThemeLabel.importedKey, "ZZ-UNRESOLVED-ZZ")
+                != "ZZ-UNRESOLVED-ZZ")
     }
 
     /// The imported row falls back to a translated word only when the

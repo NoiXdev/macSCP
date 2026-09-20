@@ -125,6 +125,77 @@ struct ITermColorsImportTests {
         #expect(xml == binary)
     }
 
+    // MARK: - The shape a real export has
+
+    /// "Nightingale" — my own palette, written into the shape a real
+    /// iTerm2 export has (fix round 1, review Important #2): THREE keys per
+    /// colour (plain, ` (Dark)`, ` (Light)`), the eight extra colours
+    /// iTerm2 writes, and `Alpha Component` plus `Color Space` beside the
+    /// three components in every entry. The variants carry deliberately
+    /// different values, so this can say which key won.
+    private static let nightingalePlain: [UInt32] = [
+        0x12161B, 0xD2686B, 0x8FB973, 0xD9A45C, 0x6E92C4, 0xA77FBE, 0x5FAFAF, 0xC3C7CB,
+        0x4A5159, 0xE88C8E, 0xA9CE8E, 0xE8BE7E, 0x8FAEDA, 0xC2A0D6, 0x86C9C9, 0xE6E9ED,
+    ]
+    /// The same sixteen with every channel 40 higher (clamped at 255) —
+    /// what the ` (Dark)` keys carry.
+    private static let nightingaleDark: [UInt32] = [
+        0x3A3E43, 0xFA9093, 0xB7E19B, 0xFFCC84, 0x96BAEC, 0xCFA7E6, 0x87D7D7, 0xEBEFF3,
+        0x727981, 0xFFB4B6, 0xD1F6B6, 0xFFE6A6, 0xB7D6FF, 0xEAC8FE, 0xAEF1F1, 0xFFFFFF,
+    ]
+
+    /// Positive control for the two tests below: the fixture really does
+    /// have that shape. Without this, a fixture quietly rewritten into the
+    /// simple shape would leave both of them passing while proving nothing
+    /// about a real export.
+    @Test func theRealShapedFixtureReallyHasThatShape() throws {
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        let parsed = try PropertyListSerialization.propertyList(
+            from: try Self.fixture("nightingale.itermcolors"), options: [], format: &format)
+        let entries = try #require(parsed as? [String: Any])
+        for name in (0..<16).map({ "Ansi \($0) Color" })
+            + ["Background Color", "Foreground Color", "Cursor Color"]
+        {
+            for key in [name, "\(name) (Dark)", "\(name) (Light)"] {
+                let entry = try #require(entries[key] as? [String: Any], "\(key) is missing")
+                #expect(entry["Alpha Component"] != nil, "\(key) carries no Alpha Component")
+                #expect(entry["Color Space"] as? String == "P3", "\(key) is not in P3")
+            }
+        }
+        for extra in [
+            "Badge Color", "Bold Color", "Cursor Guide Color", "Cursor Text Color",
+            "Link Color", "Match Background Color", "Selected Text Color", "Selection Color",
+        ] {
+            #expect(entries[extra] != nil, "\(extra) is not in the fixture")
+        }
+    }
+
+    /// The property the feature exists for: a file shaped the way iTerm2
+    /// writes them parses, and the PLAIN key is the one that wins.
+    @Test func aFileShapedLikeARealExportParsesToItsPlainKeys() throws {
+        let theme = try ITermColorsImport.theme(from: Self.fixture("nightingale.itermcolors"))
+        #expect(theme.ansi == Self.nightingalePlain.map(TerminalColor.init))
+        #expect(theme.background == TerminalColor(0x12161B))
+        #expect(theme.foreground == TerminalColor(0xC3C7CB))
+        #expect(theme.cursor == TerminalColor(0xF0C674))
+        // Negative beside that positive: no ` (Dark)` value reached the
+        // theme, so "the plain key wins" is a measurement and not a
+        // coincidence of two keys carrying the same colour.
+        let dark = Set(Self.nightingaleDark.map(TerminalColor.init))
+        #expect(theme.ansi.allSatisfy { !dark.contains($0) })
+    }
+
+    /// A file that carries ONLY the variants is read rather than refused,
+    /// and ` (Dark)` is preferred over ` (Light)` — the terminal is a dark
+    /// surface by default, and a theme has no appearance to switch on.
+    @Test func aFileWithOnlyVariantsFallsBackToTheDarkOnes() throws {
+        let theme = try ITermColorsImport.theme(from: Self.fixture("variants-only.itermcolors"))
+        #expect(theme.ansi == Self.nightingaleDark.map(TerminalColor.init))
+        #expect(theme.background == TerminalColor(0x3A3E43))
+        #expect(theme.foreground == TerminalColor(0xEBEFF3))
+        #expect(theme.cursor == TerminalColor(0xFFEE9C))
+    }
+
     // MARK: - Components out of range
 
     /// Clamped, not refused: a wide-gamut export legitimately carries

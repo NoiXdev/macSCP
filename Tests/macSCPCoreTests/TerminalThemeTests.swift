@@ -324,6 +324,59 @@ struct TerminalThemeTests {
         #expect(store.resolvedTerminalTheme == TerminalThemePreset.default.theme)
     }
 
+    /// Fix round 1, review Minor #7: the CHOICE falls back too, not only
+    /// the resolution. A `settings.json` naming `imported` with nothing
+    /// stored under it used to leave the Settings picker with a selection
+    /// no row carries — the terminal showed the default preset while the
+    /// picker showed nothing at all.
+    @Test @MainActor func namingTheImportWithNothingStoredReadsAsTheDefaultChoice() throws {
+        let (_, directory) = try freshStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "{\"terminalTheme\":\"imported\"}".write(
+            to: directory.appendingPathComponent("settings.json"), atomically: true,
+            encoding: .utf8)
+        let store = SettingsStore(directory: directory)
+        #expect(store.terminalThemeChoice == .preset(.default))
+        #expect(store.resolvedTerminalTheme == TerminalThemePreset.default.theme)
+
+        // Positive beside it: with a theme actually stored, the same raw
+        // value still reads as `.imported`.
+        store.importedTerminalTheme = Self.sampleImportedTheme
+        store.terminalThemeChoice = .imported
+        let reloaded = SettingsStore(directory: directory)
+        #expect(reloaded.terminalThemeChoice == .imported)
+    }
+
+    /// Removing the import takes the stored choice with it, so nothing is
+    /// left naming a theme that is gone.
+    @Test @MainActor func removingTheImportAlsoClearsAChoiceThatNamedIt() throws {
+        let (store, directory) = try freshStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        store.importedTerminalTheme = Self.sampleImportedTheme
+        store.terminalThemeChoice = .imported
+        store.importedTerminalTheme = nil
+
+        let restarted = SettingsStore(directory: directory)
+        #expect(restarted.terminalThemeChoice == .preset(.default))
+        let text = try String(
+            contentsOf: directory.appendingPathComponent("settings.json"), encoding: .utf8)
+        #expect(!text.contains("\"imported\""))
+    }
+
+    /// Removing the import while a PRESET is chosen leaves that preset
+    /// alone — the clearing above is scoped to a choice that named the
+    /// import, not a blanket reset.
+    @Test @MainActor func removingTheImportLeavesAChosenPresetAlone() throws {
+        let (store, directory) = try freshStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        store.importedTerminalTheme = Self.sampleImportedTheme
+        store.terminalThemeChoice = .preset(.paper)
+        store.importedTerminalTheme = nil
+
+        let restarted = SettingsStore(directory: directory)
+        #expect(restarted.terminalThemeChoice == .preset(.paper))
+    }
+
     // MARK: - A theme to import
 
     /// Colours that are none of the presets', so a test that expects the

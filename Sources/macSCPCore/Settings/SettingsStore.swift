@@ -357,12 +357,24 @@ public final class SettingsStore {
     /// hand edit — reads as `TerminalThemeChoice.default`, the look the
     /// terminal has always had, rather than propagating `nil`. Same shape
     /// as `terminalType` above.
+    ///
+    /// `.imported` with nothing stored under `terminalImportedTheme` reads
+    /// as the default too. `TerminalTheme.resolved(choice:imported:)` would
+    /// paint the terminal correctly either way, but the CHOICE is what the
+    /// Settings picker binds to, and a choice no row carries leaves that
+    /// picker showing nothing at all (review of 2026-09-20, Minor #7). So
+    /// the fallback happens here, once, rather than at each surface.
     public var terminalThemeChoice: TerminalThemeChoice {
         get {
-            guard case .string(let value)? = raw[Keys.terminalTheme] else {
+            guard case .string(let value)? = raw[Keys.terminalTheme],
+                let choice = TerminalThemeChoice(rawValue: value)
+            else {
                 return TerminalThemeChoice.default
             }
-            return TerminalThemeChoice(rawValue: value) ?? .default
+            if choice == .imported, importedTerminalTheme == nil {
+                return .default
+            }
+            return choice
         }
         set {
             raw[Keys.terminalTheme] = .string(newValue.rawValue)
@@ -385,6 +397,15 @@ public final class SettingsStore {
         }
         set {
             raw[Keys.terminalImportedTheme] = newValue?.settingsValue
+            // Forgetting the import takes a choice that NAMED it with it,
+            // so nothing is left on disk pointing at a theme that is gone.
+            // Scoped deliberately: a chosen preset is none of this
+            // setter's business.
+            if newValue == nil, case .string(TerminalThemeChoice.importedRawValue)? =
+                raw[Keys.terminalTheme]
+            {
+                raw[Keys.terminalTheme] = .string(TerminalThemeChoice.default.rawValue)
+            }
             persist()
         }
     }

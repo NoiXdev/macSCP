@@ -11,6 +11,33 @@ import Foundation
 /// is committed here, so nothing in the tree carries somebody else's
 /// licence.
 ///
+/// **What a real export carries beyond that, and what happens to it**
+/// (measured for fix round 1 against the structure of a published scheme,
+/// and written into `Fixtures/ITermColors/nightingale.itermcolors` in that
+/// shape):
+///
+/// - **Three keys per colour** — the plain name, `… (Dark)` and
+///   `… (Light)`. The plain key wins; the variants are the fallback, in
+///   that order, for a file that carries only them. A theme here is one
+///   global setting with no appearance to switch on, so `(Dark)` is
+///   preferred over `(Light)`: the terminal is a dark surface by default.
+/// - **Eight more colours** — `Badge Color`, `Bold Color`,
+///   `Cursor Guide Color`, `Cursor Text Color`, `Link Color`,
+///   `Match Background Color`, `Selected Text Color`, `Selection Color`.
+///   A `TerminalTheme` has nowhere to put them, so they are ignored.
+/// - **`Alpha Component`** in every entry. IGNORED: every colour here is
+///   opaque. A terminal surface that let the desktop through is not
+///   something this app offers, and a half-transparent ANSI colour is not
+///   something the emulator's palette can express.
+/// - **`Color Space`**, typically `P3`. Ignored: the components are read
+///   as sRGB. Measured cost (review of 2026-09-20): zero for neutrals,
+///   ΔE00 ≈ 1.5–5 for mid-saturation entries, and nothing at all for
+///   fully saturated ones, whose correct conversion clamps back to the
+///   values already being read.
+///
+/// The reader takes only the names above and looks at nothing else, so a
+/// key it has never heard of costs nothing.
+///
 /// **Nothing in the file is trusted.** It is a document a user picked out
 /// of a download folder, so:
 ///
@@ -141,10 +168,20 @@ public enum ITermColorsImport {
         return theme
     }
 
+    /// One colour by name, preferring the plain key and falling back to
+    /// the `(Dark)` and then the `(Light)` variant a real export writes
+    /// beside it. All three are looked up before anything is read, so a
+    /// file that carries only variants is read rather than refused; the
+    /// FIRST key that is present is the one used, and if that one is
+    /// malformed the file is refused rather than quietly falling through
+    /// to the next — a half-read colour is not better than a refusal.
     private static func color(
         named name: String, in entries: [String: Any]
     ) throws(Refusal) -> TerminalColor {
-        guard let raw = entries[name] else { throw .missingColor }
+        let candidates = [name, "\(name) (Dark)", "\(name) (Light)"]
+        guard let raw = candidates.lazy.compactMap({ entries[$0] }).first else {
+            throw .missingColor
+        }
         guard let components = raw as? [String: Any] else { throw .malformedColor }
         let red = try component(components["Red Component"])
         let green = try component(components["Green Component"])

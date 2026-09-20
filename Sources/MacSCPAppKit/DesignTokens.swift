@@ -58,9 +58,19 @@ enum DesignTokens {
 
     /// Terminal background: deep sea (#0F1E2B) — deliberately NOT dynamic,
     /// the terminal is a "dark console" in both light and dark mode.
+    ///
+    /// NO LONGER what the terminal is painted with. Since themes (plan of
+    /// 2026-09-19, Task 3) every surface of the terminal panel reads
+    /// `SettingsStore.resolvedTerminalTheme`, and these two values live on
+    /// as `TerminalThemePreset.macSCP`'s background and foreground — which
+    /// is what keeps the default preset the look the terminal has always
+    /// had. Kept here because `SSHTerminalViewSizingTests` builds a panel
+    /// of its own to measure against, where the colour is beside the
+    /// point.
     static let terminalBackground = NSColor(
         srgbRed: 0x0F / 255, green: 0x1E / 255, blue: 0x2B / 255, alpha: 1)
-    /// Terminal text/caret: phosphor (#7BD88F).
+    /// Terminal text/caret: phosphor (#7BD88F). Same note as
+    /// `terminalBackground` above: the live terminal no longer reads it.
     static let terminalText = NSColor(
         srgbRed: 0x7B / 255, green: 0xD8 / 255, blue: 0x8F / 255, alpha: 1)
 
