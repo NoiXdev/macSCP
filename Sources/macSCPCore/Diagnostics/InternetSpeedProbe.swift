@@ -344,7 +344,8 @@ final class InternetSpeedRedirectDelegate: NSObject, URLSessionTaskDelegate, @un
 /// **What a request carries**, stated here and printed in every row
 /// (`carriesNothing`). What THIS code sets: a method, one of the two URLs
 /// `InternetSpeedEndpoints` spells, `Accept-Encoding: identity` so the
-/// bytes counted are the bytes that crossed, and — for the upload — a
+/// bytes counted are the bytes that crossed, `Accept-Language: *` so no
+/// language of the reader's travels, and — for the upload — a
 /// `Content-Type` and a body of pseudorandom bytes from
 /// `ThroughputPattern`. No cookie, no `Authorization`, no referrer, no host
 /// name of the user's, no session id, no path.
@@ -355,12 +356,13 @@ final class InternetSpeedRedirectDelegate: NSObject, URLSessionTaskDelegate, @un
 /// see. Measured on the wire 2026-09-20 (macOS 25.6.0, CFNetwork
 /// 3860.700.1): `Host`, `Cache-Control: no-cache` from this step's cache
 /// policy, `Accept: */*`, a `User-Agent` of the process name plus the
-/// CFNetwork and Darwin versions, `Accept-Language` carrying the viewer's
-/// preferred languages, and `Connection: keep-alive`. None of it is session
-/// data; `Accept-Language` is the one item that is about the PERSON rather
-/// than the request, and it is the same header every web page they open
-/// receives. `InternetSpeedLiveTransportTests
-/// .theHeadOnTheWireCarriesOursAndNoCredential` is the case one layer down.
+/// CFNetwork and Darwin versions, and `Connection: keep-alive`. None of it
+/// is about the person. It added `Accept-Language` from the system's
+/// languages too, until that header was set here instead — see
+/// `baseRequest(_:timeout:)`.
+/// `InternetSpeedLiveTransportTests.theHeadOnTheWireCarriesOursAndNoCredential`
+/// is the case one layer down, and it builds its requests through the
+/// builders below rather than beside them.
 ///
 /// **Reported, never judged**, like the throughput step: a rate is a number
 /// in a row. Nothing here decides that a line is fast enough.
@@ -378,7 +380,7 @@ enum InternetSpeedProbe {
     /// asking about; `URLSession`'s own additions are listed in this type's
     /// doc comment and carry nothing of the session either.
     static let carriesNothing =
-        "the requests carry no session, host, user name, credential or cookie"
+        "the requests carry no session, host, user name, credential, cookie or language"
 
     /// The whole measurement, finished as a row by `timer`.
     ///
@@ -537,12 +539,28 @@ enum InternetSpeedProbe {
     /// ephemeral session's own refusal — belt and braces, because the
     /// suite's transport is not a `URLSession` and this is the object the
     /// suite inspects.
+    ///
+    /// **`Accept-Language: *` is set rather than left to Foundation**, and
+    /// it is the one header here that exists to say LESS. Left alone,
+    /// `URLSession` fills it from the system's preferred languages —
+    /// measured on the wire 2026-09-20 as `de-DE,de;q=0.9` — which is a
+    /// fact about the PERSON, and this step's whole promise is that it
+    /// sends none. `*` is RFC 9110's "any language will do": true of a
+    /// request whose response is counted and never read, and the same
+    /// value whoever is running the app.
+    ///
+    /// `User-Agent` is deliberately left as Foundation writes it. It names
+    /// the process and the CFNetwork and Darwin versions — this app's own
+    /// identity and this Mac's OS build, not the person's — and a request
+    /// that hid what program made it would be the kind of thing a service
+    /// is entitled to refuse.
     private static func baseRequest(_ url: URL, timeout: Duration) -> URLRequest {
         var request = URLRequest(
             url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
             timeoutInterval: timeout.seconds)
         request.httpShouldHandleCookies = false
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.setValue("*", forHTTPHeaderField: "Accept-Language")
         return request
     }
 

@@ -61,20 +61,29 @@ struct InternetSpeedLiveTransportTests {
     /// exists and that it does not reach the far origin.
     static let bodyBytes = 512
 
-    static func request(_ url: String, body: Data? = nil) -> URLRequest {
-        var request = URLRequest(
-            url: URL(string: url)!, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
-            timeoutInterval: 10)
-        request.httpShouldHandleCookies = false
-        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+    /// A service on the loopback stub, in the shape
+    /// `InternetSpeedService.cloudflare` has. `host` is what a row would
+    /// print and takes no part in a request.
+    static func endpoints(port: Int) -> InternetSpeedEndpoints {
+        InternetSpeedEndpoints(
+            host: "127.0.0.1:\(port)",
+            downloadURL: URL(string: "http://127.0.0.1:\(port)/__down")!,
+            uploadURL: URL(string: "http://127.0.0.1:\(port)/__up")!,
+            sizing: .query(name: "bytes"))
+    }
+
+    /// The request the PRODUCT builds, not one this file assembles beside
+    /// it. Both requests go through `InternetSpeedProbe`'s own builders, so
+    /// what reaches the wire below is what a real run sends and not a
+    /// second copy of it — the failure mode CLAUDE.md's "Comments that
+    /// describe other code" names, applied to a fixture.
+    static func request(port: Int, bytes: Int = 1, body: Data? = nil) -> URLRequest {
         if let body {
-            request.httpMethod = "POST"
-            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-        } else {
-            request.httpMethod = "GET"
+            return InternetSpeedProbe.uploadRequest(
+                endpoints(port: port), body: body, timeout: .seconds(10))
         }
-        return request
+        return InternetSpeedProbe.downloadRequest(
+            endpoints(port: port), bytes: bytes, timeout: .seconds(10))
     }
 
     // MARK: - Away from the origin: refused, and nothing is sent there
@@ -99,8 +108,7 @@ struct InternetSpeedLiveTransportTests {
         do {
             _ = try await InternetSpeedTransport.live.perform(
                 Self.request(
-                    "http://127.0.0.1:\(service.port)/__up",
-                    body: Data(repeating: 0x5A, count: Self.bodyBytes)))
+                    port: service.port, body: Data(repeating: 0x5A, count: Self.bodyBytes)))
         } catch {
             thrown = error
         }
@@ -137,7 +145,7 @@ struct InternetSpeedLiveTransportTests {
         var thrown: (any Error)?
         do {
             _ = try await InternetSpeedTransport.live.perform(
-                Self.request("http://127.0.0.1:\(service.port)/__down?bytes=1"))
+                Self.request(port: service.port))
         } catch {
             thrown = error
         }
@@ -163,7 +171,7 @@ struct InternetSpeedLiveTransportTests {
         defer { service.stop() }
 
         let bytes = try await InternetSpeedTransport.live.perform(
-            Self.request("http://127.0.0.1:\(service.port)/__down?bytes=4242"))
+            Self.request(port: service.port, bytes: 4242))
 
         #expect(bytes == 4242)
         try await service.waitForRequests(atLeast: 2)
@@ -181,29 +189,38 @@ struct InternetSpeedLiveTransportTests {
     /// Measured here on 2026-09-20, macOS 25.6.0 / CFNetwork 3860.700.1:
     /// Foundation added `Host`, `Cache-Control: no-cache` (from this
     /// step's cache policy), `Accept: */*`, `User-Agent` (the process name
-    /// plus the CFNetwork and Darwin versions), `Accept-Language` (the
-    /// viewer's preferred languages) and `Connection: keep-alive`. None of
-    /// it is session data; `Accept-Language` is the one thing on that list
-    /// that is about the person rather than about the request, and it is
-    /// the same header every web page they open receives.
+    /// plus the CFNetwork and Darwin versions) and `Connection:
+    /// keep-alive`. It also added `Accept-Language`, filled from the
+    /// system's preferred languages — `de-DE,de;q=0.9` on the machine this
+    /// was measured on — which is the one thing on that list that is about
+    /// the PERSON rather than about the request. This step's promise is
+    /// that it says nothing about the person or the session, so that
+    /// header is now set explicitly to `*` and Foundation fills nothing
+    /// in: `*` is RFC 9110's "any language will do", which is true, and it
+    /// is the same value whoever is running the app.
     ///
     /// The exact set is Foundation's and moves with the OS, so what is
-    /// asserted is not that list: it is that OUR two headers arrive and
-    /// that the two a credential would travel in do not. The positive half
-    /// is there so the negative half cannot pass by reading nothing
-    /// (CLAUDE.md, "Guards that name what they watch").
+    /// asserted is not that list: it is that OUR headers arrive with the
+    /// values this code chose, and that the two a credential would travel
+    /// in do not. The positive half is there so the negative half cannot
+    /// pass by reading nothing (CLAUDE.md, "Guards that name what they
+    /// watch").
     @Test func theHeadOnTheWireCarriesOursAndNoCredential() async throws {
         let stub = try LoopbackHTTPStub(response: Self.ok(bytes: 2))
         defer { stub.stop() }
 
         _ = try await InternetSpeedTransport.live.perform(
-            Self.request("http://127.0.0.1:\(stub.port)/__down?bytes=2"))
+            Self.request(port: stub.port, bytes: 2))
 
         try await stub.waitForRequests(atLeast: 1)
         let head = try #require(stub.requests.first)
         #expect(head.hasPrefix("GET /__down?bytes=2 "), "\(head)")
         #expect(LoopbackHTTPStub.headerValue("Accept-Encoding", in: head) == "identity", "\(head)")
         #expect(LoopbackHTTPStub.headerValue("Host", in: head) == "127.0.0.1:\(stub.port)")
+        // Not a language of anybody's. A `!contains("de")` here would be a
+        // negative check that passes on whichever machine happens not to
+        // speak it; an equality cannot.
+        #expect(LoopbackHTTPStub.headerValue("Accept-Language", in: head) == "*", "\(head)")
         #expect(LoopbackHTTPStub.headerValue("Authorization", in: head) == nil, "\(head)")
         #expect(LoopbackHTTPStub.headerValue("Cookie", in: head) == nil, "\(head)")
     }

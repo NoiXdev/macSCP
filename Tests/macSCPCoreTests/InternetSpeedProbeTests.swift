@@ -110,7 +110,9 @@ struct InternetSpeedProbeTests {
         let download = try #require(sent.first)
         #expect(download.method == "GET")
         #expect(download.url == "https://speed.cloudflare.com/__down?bytes=1000")
-        #expect(download.headers == ["Accept-Encoding": "identity"], "\(download.headers)")
+        #expect(
+            download.headers == ["Accept-Encoding": "identity", "Accept-Language": "*"],
+            "\(download.headers)")
         #expect(download.body == nil)
 
         let upload = try #require(sent.last)
@@ -118,7 +120,8 @@ struct InternetSpeedProbeTests {
         #expect(upload.url == "https://speed.cloudflare.com/__up")
         #expect(
             upload.headers == [
-                "Accept-Encoding": "identity", "Content-Type": "application/octet-stream",
+                "Accept-Encoding": "identity", "Accept-Language": "*",
+                "Content-Type": "application/octet-stream",
             ], "\(upload.headers)")
         // Generated from the seed and nothing else — the same pattern the
         // throughput test writes to the user's own server, which is derived
@@ -157,8 +160,9 @@ struct InternetSpeedProbeTests {
         let download = try #require(transport.sent.first)
         #expect(download.url == "https://mensura.cdn-apple.com/api/v1/gm/large")
         #expect(
-            download.headers == ["Accept-Encoding": "identity", "Range": "bytes=0-999"],
-            "\(download.headers)")
+            download.headers == [
+                "Accept-Encoding": "identity", "Accept-Language": "*", "Range": "bytes=0-999",
+            ], "\(download.headers)")
         #expect(try #require(transport.sent.last).url == "https://mensura.cdn-apple.com/api/v1/gm/slurp")
     }
 
