@@ -140,6 +140,12 @@ struct ConnectionDiagnosticsJumpTests {
             // (`ConnectionDiagnostics.throughput(_:)`), through its own seam
             // — so the walk dials no jump connection for it.
             expected = [DiagnosticStepID.jumpResolve, DiagnosticStepID.throughput]
+        case .internet:
+            // The one scope with no jump half AND no resolve: it measures
+            // this Mac's link to a third-party service, so a walk through a
+            // jump host is the same single row a direct walk produces
+            // (`DiagnosticScope.measuresTheSession`).
+            expected = [DiagnosticStepID.internet]
         }
         #expect(report.steps.map(\.id) == expected, "\(scope.rawValue): \(report.steps.map(\.id))")
         #expect(report.scope == scope)

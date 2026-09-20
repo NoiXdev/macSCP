@@ -756,7 +756,8 @@ struct DiagnosticsViewModelTests {
         let model = DiagnosticsViewModel(
             target: DiagnosticsTarget(
                 name: "Test session", kind: .ssh, values: values, sessionID: nil, jump: nil),
-            secrets: nil, throughput: { DiagnosticThroughputSettings() })
+            secrets: nil, throughput: { DiagnosticThroughputSettings() },
+            internetSpeed: { DiagnosticInternetSpeedSettings(service: .off) })
 
         #expect(model.endpoint == Endpoint(host: "example.test", port: 2222), """
             the endpoint is `descriptor.endpoint(values)`, known before the first probe — \
@@ -877,7 +878,7 @@ struct DiagnosticsViewModelTests {
         #expect(DiagnosticsPresentation.detail(of: step) == step.detail)
     }
 
-    /// Five scopes, five names, none of them the raw case.
+    /// Every scope, its own name, none of them the raw case.
     @Test func everyScopeHasItsOwnNameInTheMenu() {
         let names = DiagnosticScope.allCases.map(DiagnosticsPresentation.scopeName)
         #expect(Set(names).count == DiagnosticScope.allCases.count, """
@@ -887,6 +888,48 @@ struct DiagnosticsViewModelTests {
         #expect(names.allSatisfy { !$0.isEmpty })
         #expect(DiagnosticsPresentation.scopeName(.complete) != DiagnosticScope.complete.rawValue, """
             the entries come out of the catalog, not out of the enum's spelling
+            """)
+    }
+
+    /// Every internet speed service reads as its own entry in the Settings
+    /// picker, and `off` — the one of the three that is a word rather than
+    /// a company — comes out of the catalog rather than out of the enum's
+    /// spelling.
+    ///
+    /// The two company names deliberately do NOT get that second check:
+    /// "Cloudflare" and "Apple" are the same in all four catalogs and are
+    /// ALLOWED to equal their `rawValue` up to capitalization, so requiring
+    /// them to differ would be requiring a translation nobody should make.
+    @Test func everyInternetSpeedServiceHasItsOwnNameInSettings() {
+        let names = InternetSpeedService.allCases.map(
+            DiagnosticsPresentation.internetSpeedServiceName)
+        #expect(Set(names).count == InternetSpeedService.allCases.count, """
+            each service must read as its own entry — two entries with one name is a picker \
+            whose user cannot tell which third party they chose: \(names)
+            """)
+        #expect(names.allSatisfy { !$0.isEmpty })
+        #expect(
+            DiagnosticsPresentation.internetSpeedServiceName(.off)
+                != InternetSpeedService.off.rawValue,
+            "the entries come out of the catalog, not out of the enum's spelling")
+    }
+
+    /// The panel's internet notice names the service that is chosen right
+    /// now, and the sizes it would move — read off the model, so a service
+    /// changed under an open panel changes the sentence.
+    @Test func theInternetNoticeNamesTheServiceTheModelWouldUse() {
+        let chosen = ServiceChoice(.apple)
+        let model = DiagnosticsViewModel(
+            name: "n", internetSpeed: chosen.reader,
+            runner: { _, _ in DiagnosticReport(endpoint: nil, steps: [], appVersion: "test") })
+
+        #expect(model.internetSpeedService == .apple)
+        #expect(DiagnosticsViewModel.internetSpeedDownloadText == "10 MiB")
+        #expect(DiagnosticsViewModel.internetSpeedUploadText == "1 MiB")
+
+        chosen.set(.off)
+        #expect(model.internetSpeedService == .off, """
+            the service is read at every access, not captured when the panel opened
             """)
     }
 
@@ -1152,6 +1195,26 @@ struct DiagnosticsViewModelTests {
                 return waiter
             }
             pending?.resume()
+        }
+    }
+}
+
+/// The Settings choice, as something the case above can change AFTER the
+/// model has captured the reader — which is the property it is about. A
+/// class with a lock rather than a captured `var`: a `var` mutated after a
+/// `@Sendable` closure captured it is a warning, and this project builds
+/// with none.
+final class ServiceChoice: @unchecked Sendable {
+    private let lock = NSLock()
+    private var service: InternetSpeedService
+
+    init(_ service: InternetSpeedService) { self.service = service }
+
+    func set(_ service: InternetSpeedService) { lock.withLock { self.service = service } }
+
+    var reader: @MainActor @Sendable () -> DiagnosticInternetSpeedSettings {
+        { [self] in
+            DiagnosticInternetSpeedSettings(service: lock.withLock { service })
         }
     }
 }

@@ -49,6 +49,12 @@
 "settings.throughput.header" = "Durchsatztest";
 "settings.throughput.payload" = "Größe der Testdatei";
 "settings.throughput.footer" = "Der Durchsatztest in der Verbindungsdiagnose lädt eine Datei dieser Größe auf den Server hoch, lädt sie wieder herunter und löscht sie.";
+"settings.internetSpeed.header" = "Internet-Geschwindigkeitstest";
+"settings.internetSpeed.service" = "Dienst für den Geschwindigkeitstest";
+"settings.internetSpeed.service.cloudflare" = "Cloudflare";
+"settings.internetSpeed.service.apple" = "Apple";
+"settings.internetSpeed.service.off" = "Aus";
+"settings.internetSpeed.footer" = "Der Internet-Geschwindigkeitstest in der Verbindungsdiagnose misst die Leitung dieses Macs gegen den gewählten Dienst, nicht deinen Server. Er sendet nur erzeugte Daten — keinen Servernamen, keinen Benutzernamen, kein Passwort — und bei Aus wird niemand kontaktiert.";
 "settings.transfers.presignedExpiry.header" = "S3-Freigabe-Links";
 "settings.transfers.presignedExpiry" = "Standard-Ablaufzeit für Freigabe-Links";
 
@@ -1255,6 +1261,18 @@
 "diagnostics.reason.throughputBytesDiffer" = "Die zurückgelesene Datei ist nicht die geschriebene.";
 "diagnostics.reason.throughputFileLeftBehind" = "Die Testdatei ist möglicherweise auf dem Server geblieben – ihr Name steht in den Details. Der nächste Durchsatztest versucht, sie zu entfernen; lehnt der Server erneut ab, entferne sie von Hand.";
 "diagnostics.throughput.notice" = "Lädt eine Testdatei in den Startordner dieser Verbindung hoch, lädt sie wieder herunter, vergleicht sie und löscht sie. Die Größe stellst du in den Einstellungen unter Übertragungen ein; die Bandbreiten-Limits dort gelten.";
+// Der Internet-Geschwindigkeitstest (2026-09-20): Bereich und Schritt, die vier Spaltentitel seiner Tabelle, seine drei Gründe und die zwei Hinweise des Panels. Die Richtungswörter sind die des Durchsatztests. Byte-Zahlen, Zeiten und Raten sind Messwerte und werden nie übersetzt.
+"diagnostics.scope.internet" = "Internetgeschwindigkeit";
+"diagnostics.step.internet" = "Internetgeschwindigkeit";
+"diagnostics.internet.column.direction" = "Richtung";
+"diagnostics.internet.column.bytes" = "Bytes";
+"diagnostics.internet.column.duration" = "Zeit";
+"diagnostics.internet.column.rate" = "Rate";
+"diagnostics.reason.internetSpeedOff" = "Der Internet-Geschwindigkeitstest ist in den Einstellungen ausgeschaltet, es wurde nichts gesendet.";
+"diagnostics.reason.internetSpeedTooSlow" = "Der Dienst wurde nicht innerhalb des Zeitlimits dieses Schritts fertig.";
+"diagnostics.reason.internetSpeedNoBytes" = "Der Dienst hat keine Daten gesendet.";
+"diagnostics.internet.notice" = "Misst die Internetverbindung dieses Macs gegen %1$@: lädt %2$@ herunter und %3$@ hoch, jeweils erzeugte Daten. Nichts über diese Verbindung wird gesendet — kein Server, kein Benutzername, kein Passwort. Den Dienst wählst du in den Einstellungen unter Übertragungen.";
+"diagnostics.internet.notice.off" = "Der Internet-Geschwindigkeitstest ist in den Einstellungen unter Übertragungen ausgeschaltet.";
 
 /* Import aus einem anderen Programm — Cyberduck (2026-09-03). Menüeintrag,
    Vorschau-Sheet, die beiden Schalter und die Gruppenauswahl, dazu die

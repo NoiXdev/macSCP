@@ -38,13 +38,22 @@ public enum DiagnoseUsageError: Error, Equatable, Sendable {
     /// authenticate — asked without a session, they produce a row saying
     /// nothing was measured and nothing else.
     ///
+    /// `internet` is on the permitted side for a different reason from the
+    /// other three there, and the difference matters: it is not that a bare
+    /// endpoint can run it, but that it runs against NO target at all. The
+    /// command refuses a session and a `--host` for it in
+    /// `DiagnoseCommand.validate()`, as a `ValidationError` exiting 64,
+    /// before this function is ever asked about it. Answering
+    /// `scopeNeedsASession` here would be the opposite of true.
+    ///
     /// An exhaustive switch, so a new `DiagnosticScope` cannot reach the CLI
     /// until someone decides which side of this it is on — as the sixth,
-    /// `throughput`, was decided on 2026-09-19.
+    /// `throughput`, was decided on 2026-09-19, and the seventh,
+    /// `internet`, on 2026-09-20.
     public static func refusal(forEndpointScope scope: DiagnosticScope) -> DiagnoseUsageError? {
         switch scope {
         case .dial, .contributions, .throughput: return .scopeNeedsASession(scope)
-        case .complete, .ping, .trace: return nil
+        case .complete, .ping, .trace, .internet: return nil
         }
     }
 }

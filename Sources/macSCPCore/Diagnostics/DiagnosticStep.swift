@@ -92,6 +92,11 @@ public enum DiagnosticStepID {
     /// The throughput test (`DiagnosticScope.throughput`): a payload written
     /// to the server over the session's own protocol and read back.
     public static let throughput = "throughput"
+    /// The internet speed test (`DiagnosticScope.internet`): a payload
+    /// downloaded from and uploaded to a third-party service named in
+    /// Settings. The one step that measures NOTHING of the session — see
+    /// `InternetSpeedProbe`.
+    public static let internet = "internet"
 
     /// The steps of a session behind a jump host (`DiagnosticJump`): the jump
     /// itself first, from this Mac, then the target as the jump reaches it.

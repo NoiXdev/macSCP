@@ -7,9 +7,11 @@ import Foundation
 /// whole 20 s budget walking silence, for a reader who only wanted to know
 /// whether anything answers on the port. A scope is that reader saying so.
 ///
-/// The resolve step is in every scope and is not listed below: every other
-/// step probes an ADDRESS, so a scope that skipped the lookup would have
-/// nothing to point at.
+/// The resolve step is in every scope that measures the session, and is not
+/// listed below: every other step of such a walk probes an ADDRESS, so a
+/// scope that skipped the lookup would have nothing to point at. `.internet`
+/// is the one scope that measures no session, and it runs no resolve either
+/// (`measuresTheSession`).
 ///
 /// **Through a jump host** each scope covers both halves: the jump's own
 /// steps under the phase they share with a direct walk, and each `target.`
@@ -25,16 +27,19 @@ import Foundation
 /// (`diagnostics.scope.<rawValue>`), which is why the cases are named for
 /// what the user picks rather than for the step ids they expand into.
 ///
-/// **`.throughput` is the one scope `.complete` does not include.** Every
-/// other step reads; the throughput test WRITES a file to the user's server,
-/// moves up to 256 MiB each way, and removes it again. Decided for the
-/// maintainer in the plan of 2026-09-19: something that moves data on the
-/// user's server runs only when it is chosen by name, never as part of
-/// "everything".
+/// **Two scopes are not in `.complete`, and for two different reasons.**
+/// `.throughput` WRITES a file to the user's server, moves up to 256 MiB
+/// each way, and removes it again — decided for the maintainer in the plan
+/// of 2026-09-19: something that moves data on the user's server runs only
+/// when it is chosen by name, never as part of "everything". `.internet`
+/// talks to a THIRD PARTY, which is the other thing nobody should be given
+/// without asking for it. Counted 2026-09-20: two, and `runs(_:)`'s
+/// `.complete` arm names exactly those two.
 public enum DiagnosticScope: String, CaseIterable, Sendable {
-    /// Everything that only reads: the resolve, the TCP connection attempt,
-    /// the ICMP echo, the backend's own dial, the network trace and the
-    /// backend's contributions. Not the throughput test (see above).
+    /// Everything that only reads THIS SESSION: the resolve, the TCP
+    /// connection attempt, the ICMP echo, the backend's own dial, the
+    /// network trace and the backend's contributions. Neither the
+    /// throughput test nor the internet speed test (see above).
     case complete
     /// Is anything there: the resolve, the TCP connection attempt and the
     /// ICMP echo. Behind a jump host it also dials the jump and reads the
@@ -55,6 +60,15 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     /// authenticates, so it reads the session's secret; behind a jump host
     /// it reads the jump's too, because its connection goes through it.
     case throughput
+    /// How fast is this Mac's line: the internet speed test, and NOTHING
+    /// else — not even the resolve every other scope runs. It measures the
+    /// link between this Mac and a service named in Settings
+    /// (`InternetSpeedProbe`), so a lookup of the session's host would be a
+    /// measurement of something this scope is not about, and a host name in
+    /// a report that gets pasted into a public issue for a run that never
+    /// touched it. Reads no secret, opens no connection to the server, and
+    /// sends nothing of the session anywhere.
+    case internet
 
     /// A step a scope is allowed to leave out.
     ///
@@ -71,6 +85,7 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
         case trace
         case contributions
         case throughput
+        case internet
     }
 
     /// Whether this scope runs a step that resolves a secret — the dial, the
@@ -99,7 +114,7 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
     func runs(_ step: OptionalStep) -> Bool {
         switch self {
         case .complete:
-            return step != .throughput
+            return step != .throughput && step != .internet
         case .ping:
             return step == .tcp || step == .icmp
         case .trace:
@@ -110,8 +125,35 @@ public enum DiagnosticScope: String, CaseIterable, Sendable {
             return step == .contributions
         case .throughput:
             return step == .throughput
+        case .internet:
+            return step == .internet
         }
     }
+
+    /// Whether this scope measures the SESSION at all.
+    ///
+    /// True for every scope but one. `.internet` measures this Mac's link
+    /// to a third-party service and nothing else, which is why it is the
+    /// one scope that does not run the resolve step — the step whose
+    /// absence from `OptionalStep` says "there is no scope that omits it".
+    ///
+    /// DERIVED from `runs(.internet)` rather than written as
+    /// `self != .internet`, and that is not a stylistic choice. The walk
+    /// branches on THIS property and never on `runs(.internet)`, so with
+    /// the two written separately `runs(.internet)` governed nothing:
+    /// measured 2026-09-20 with a probe that made `.complete` run the
+    /// internet step, which turned the enumeration red and left
+    /// `theCompleteScopeSendsNoRequestToAnySpeedService` — the case that is
+    /// actually about the Run button — green over a walk that still sent
+    /// nothing. Derived, a scope that gains the internet step gains the
+    /// branch that runs it, and that case is the one that fails.
+    ///
+    /// It says, as a consequence, that a scope cannot both run the internet
+    /// step and measure the session. That is the design: the step sends
+    /// nothing of the session anywhere, and a walk that mixed the two would
+    /// put a server's name in the header of a row about somebody's
+    /// broadband.
+    public var measuresTheSession: Bool { !runs(.internet) }
 }
 
 /// The trace table's four columns — as catalogue keys, which is what a
@@ -241,6 +283,9 @@ public actor ConnectionDiagnostics {
     private let lookups: ResolveLookups
     private let throughputSettings: DiagnosticThroughputSettings
     private let throughputOpener: DiagnosticThroughputOpener
+    private let internetSpeedSettings: DiagnosticInternetSpeedSettings
+    private let internetSpeedTransport: InternetSpeedTransport
+    private let internetSpeedClock: @Sendable () -> ContinuousClock.Instant
 
     /// - Parameters:
     ///   - secrets: where a contribution's credential comes from — the same
@@ -283,6 +328,13 @@ public actor ConnectionDiagnostics {
     ///     panel passes its settings and the shared buckets, the CLI its
     ///     `--payload-mib`; a caller that never offers the scope says so with
     ///     `DiagnosticThroughputSettings()`.
+    ///   - internetSpeed: which third-party service the internet speed test
+    ///     measures against (`DiagnosticInternetSpeedSettings`). REQUIRED,
+    ///     with no default, for `throughput:`'s reason and one more: the
+    ///     default service is Cloudflare, so a caller that forgot this
+    ///     parameter would compile and then talk to a third party a user
+    ///     who chose `off` had switched off. The panel passes the service
+    ///     from Settings, `macscp-cli diagnose` its `--speed-service`.
     public init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -290,6 +342,7 @@ public actor ConnectionDiagnostics {
         sessionID: UUID? = nil,
         jump: DiagnosticJump?,
         throughput: DiagnosticThroughputSettings,
+        internetSpeed: DiagnosticInternetSpeedSettings,
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -299,6 +352,7 @@ public actor ConnectionDiagnostics {
             jump: jump,
             jumpDialer: .live(knownHosts: KnownHostsStore(directory: SessionStore.defaultDirectory)),
             lookups: .live, throughput: throughput, throughputOpener: .live,
+            internetSpeed: internetSpeed, internetSpeedTransport: .live,
             stepTimeout: stepTimeout, traceTimeout: traceTimeout, appVersion: appVersion)
     }
 
@@ -311,6 +365,14 @@ public actor ConnectionDiagnostics {
     /// `lookups` and `throughputOpener` default to those, so the cases that
     /// are not about the resolve or the throughput test keep the walk they
     /// always had.
+    ///
+    /// `internetSpeed` is the one default that is NOT the shipping value:
+    /// it defaults to `.off`, where the public initializer requires the
+    /// service to be named. A test that reaches `.internet` without saying
+    /// which service would otherwise send two real requests to Cloudflare
+    /// from the suite, and `DiagnosticScope.allCases` is iterated by four
+    /// cases in this target alone. Off is the only default here that cannot
+    /// leave this process.
     init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -321,6 +383,12 @@ public actor ConnectionDiagnostics {
         lookups: ResolveLookups = .live,
         throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(),
         throughputOpener: DiagnosticThroughputOpener = .live,
+        internetSpeed: DiagnosticInternetSpeedSettings = DiagnosticInternetSpeedSettings(
+            service: .off),
+        internetSpeedTransport: InternetSpeedTransport = .live,
+        internetSpeedClock: @escaping @Sendable () -> ContinuousClock.Instant = {
+            ContinuousClock().now
+        },
         stepTimeout: Duration = .seconds(5),
         traceTimeout: Duration = .seconds(20),
         appVersion: String = "unknown"
@@ -334,6 +402,9 @@ public actor ConnectionDiagnostics {
         self.lookups = lookups
         self.throughputSettings = throughput
         self.throughputOpener = throughputOpener
+        self.internetSpeedSettings = internetSpeed
+        self.internetSpeedTransport = internetSpeedTransport
+        self.internetSpeedClock = internetSpeedClock
         self.stepTimeout = stepTimeout
         self.traceTimeout = traceTimeout
         self.appVersion = appVersion
@@ -397,6 +468,15 @@ public actor ConnectionDiagnostics {
     public func run(
         scope: DiagnosticScope = .complete, observer: DiagnosticRunObserver
     ) async -> DiagnosticReport {
+        // BEFORE the endpoint is read, and before the jump branch: the
+        // internet scope measures this Mac's link to a third-party service
+        // and nothing of the session, so a session with no host runs it
+        // exactly as a session with one does, and a session behind a jump
+        // host does not reach the jump for it.
+        if !scope.measuresTheSession {
+            return await internetSpeedWalk(scope, observer)
+        }
+
         guard let endpoint = descriptor.endpoint(values) else {
             // Not `failed`: nothing was measured and nothing is wrong with
             // the server. The form is incomplete, and the row has to say that
@@ -521,6 +601,44 @@ public actor ConnectionDiagnostics {
             await walk.append(step)
         }
         return walk.report(.complete)
+    }
+
+    // MARK: - The internet speed test
+
+    /// The whole of a `.internet` walk: one step, and no `Walk`.
+    ///
+    /// No `Walk` because `Walk` carries an endpoint, and this report has
+    /// none to carry — deliberately. The report is the artifact a user
+    /// pastes into a public issue, and this run measured nothing about the
+    /// session: naming its host and its jump host in the header of a
+    /// measurement that never touched either would put somebody's server
+    /// name into an issue about their broadband. `DiagnosticReport` already
+    /// renders a missing endpoint by omitting the line, and the `Scope:
+    /// internet` line says why it is missing.
+    ///
+    /// The cancellation shape is the walk's own: the row is published only
+    /// if the task is still alive when the step returns, so a cut-short
+    /// measurement is never reported. Nothing of this step lives past it —
+    /// there is no file on anybody's server to name — so, unlike the
+    /// throughput row, there is no row a cancel keeps.
+    private func internetSpeedWalk(
+        _ scope: DiagnosticScope, _ observer: DiagnosticRunObserver
+    ) async -> DiagnosticReport {
+        func report(_ steps: [DiagnosticStep], _ completion: DiagnosticReport.Completion)
+            -> DiagnosticReport
+        {
+            DiagnosticReport(
+                endpoint: nil, jump: nil, steps: steps, appVersion: appVersion,
+                completion: completion, scope: scope)
+        }
+        guard !Task.isCancelled else { return report([], .cancelled(afterSteps: 0)) }
+        let timer = await Self.starting(DiagnosticStepID.internet, announcedTo: observer)
+        let step = await InternetSpeedProbe.measure(
+            settings: internetSpeedSettings, transport: internetSpeedTransport,
+            now: internetSpeedClock, timer: timer)
+        guard !Task.isCancelled else { return report([], .cancelled(afterSteps: 0)) }
+        await observer.onStep(step)
+        return report([step], .complete)
     }
 
     // MARK: - The throughput test

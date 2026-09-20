@@ -275,7 +275,8 @@ struct ICMPEchoTests {
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
             values: FieldValues(), secrets: nil, jump: nil,
-            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(5)
+            throughput: DiagnosticThroughputSettings(),
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(5)
         ).run()
 
         #expect(
@@ -301,7 +302,8 @@ struct ICMPEchoTests {
             descriptor: Self.probeDescriptor(
                 endpoint: Endpoint(host: "not-a-numeric-address", port: 22)),
             values: FieldValues(), secrets: nil, jump: nil,
-            throughput: DiagnosticThroughputSettings(), stepTimeout: .seconds(2)
+            throughput: DiagnosticThroughputSettings(),
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(2)
         ).run()
 
         guard let icmp = report.steps.first(where: { $0.id == DiagnosticStepID.icmp }) else {

@@ -51,6 +51,12 @@
 "settings.throughput.header" = "Test de débit";
 "settings.throughput.payload" = "Taille du fichier de test";
 "settings.throughput.footer" = "Le test de débit du diagnostic de connexion envoie un fichier de cette taille au serveur, le télécharge puis le supprime.";
+"settings.internetSpeed.header" = "Test de vitesse Internet";
+"settings.internetSpeed.service" = "Service du test de vitesse";
+"settings.internetSpeed.service.cloudflare" = "Cloudflare";
+"settings.internetSpeed.service.apple" = "Apple";
+"settings.internetSpeed.service.off" = "Désactivé";
+"settings.internetSpeed.footer" = "Le test de vitesse Internet du diagnostic de connexion mesure la ligne de ce Mac face au service choisi, pas votre serveur. Il n’envoie que des données générées — aucun nom de serveur, aucun nom d’utilisateur, aucun mot de passe — et Désactivé signifie qu’aucun service n’est contacté.";
 "settings.transfers.presignedExpiry.header" = "Liens de partage S3";
 "settings.transfers.presignedExpiry" = "Expiration par défaut des liens de partage";
 
@@ -1258,6 +1264,18 @@
 "diagnostics.reason.throughputBytesDiffer" = "Le fichier relu n’est pas le fichier écrit.";
 "diagnostics.reason.throughputFileLeftBehind" = "Le fichier de test est peut-être resté sur le serveur — son nom figure dans les détails. Le prochain test de débit tente de le supprimer ; si le serveur refuse encore, supprimez-le à la main.";
 "diagnostics.throughput.notice" = "Envoie un fichier de test dans le dossier de départ de cette connexion, le télécharge, le compare et le supprime. Sa taille se règle sous Transferts dans les Réglages, et les limites de bande passante qui s’y trouvent s’appliquent.";
+// Le test de vitesse Internet (2026-09-20) : sa portée et son étape, les quatre titres de colonnes de son tableau, ses trois raisons et les deux avis du panneau. Les mots de sens sont ceux du test de débit. Les nombres d’octets, les durées et les débits sont des mesures et ne sont jamais traduits.
+"diagnostics.scope.internet" = "Vitesse Internet";
+"diagnostics.step.internet" = "Vitesse Internet";
+"diagnostics.internet.column.direction" = "Sens";
+"diagnostics.internet.column.bytes" = "Octets";
+"diagnostics.internet.column.duration" = "Durée";
+"diagnostics.internet.column.rate" = "Débit";
+"diagnostics.reason.internetSpeedOff" = "Le test de vitesse Internet est désactivé dans les Réglages ; rien n’a été envoyé.";
+"diagnostics.reason.internetSpeedTooSlow" = "Le service de test de vitesse n’a pas terminé dans le délai de cette étape.";
+"diagnostics.reason.internetSpeedNoBytes" = "Le service de test de vitesse n’a envoyé aucune donnée.";
+"diagnostics.internet.notice" = "Mesure la connexion Internet de ce Mac face à %1$@ : télécharge %2$@ et envoie %3$@ de données générées. Rien de cette connexion n’est envoyé — ni serveur, ni nom d’utilisateur, ni mot de passe. Le service se choisit sous Transferts dans les Réglages.";
+"diagnostics.internet.notice.off" = "Le test de vitesse Internet est désactivé sous Transferts dans les Réglages.";
 
 /* Import depuis un autre programme — Cyberduck (2026-09-03). L’entrée de
    menu, la feuille d’aperçu, les deux interrupteurs et le sélecteur de

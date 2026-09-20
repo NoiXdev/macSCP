@@ -81,7 +81,8 @@ extension ContentView {
         diagnostics.present(
             DiagnosticsViewModel(
                 target: target, secrets: diagnosticsSecrets(for: target),
-                throughput: diagnosticsThroughput),
+                throughput: diagnosticsThroughput,
+                internetSpeed: diagnosticsInternetSpeed),
             for: source.tabID)
     }
 
@@ -96,6 +97,16 @@ extension ContentView {
                 payloadMiB: settingsStore.throughputPayloadMiB,
                 uploadThrottle: bandwidthLimiter.uploadBucket,
                 downloadThrottle: bandwidthLimiter.downloadBucket)
+        }
+    }
+
+    /// Which service the internet speed test measures against, read when a
+    /// run starts and whenever the panel's notice is drawn: the setting,
+    /// and nothing else. Nothing of the session is carried in — that is the
+    /// whole point of the step (`InternetSpeedProbe`).
+    var diagnosticsInternetSpeed: @MainActor @Sendable () -> DiagnosticInternetSpeedSettings {
+        { [settingsStore] in
+            DiagnosticInternetSpeedSettings(service: settingsStore.internetSpeedService)
         }
     }
 

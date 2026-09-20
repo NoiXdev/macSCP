@@ -161,23 +161,32 @@ struct CLIErrorMappingTests {
         #expect(CLIErrorMapping.message(for: error).contains(scope.rawValue))
     }
 
-    /// The positive half of the check above: the three scopes a bare
+    /// The positive half of the check above: the four scopes a bare
     /// endpoint may run are not refused. Without this, a `refusal` that
     /// returned an error for everything would still satisfy the case above.
-    @Test(arguments: [DiagnosticScope.complete, .ping, .trace])
+    ///
+    /// `internet` is on this list for a different reason from the other
+    /// three, which `DiagnoseUsageError.refusal(forEndpointScope:)` states:
+    /// it is not that a bare endpoint can run it, but that it runs against
+    /// no target at all, so the command refuses a session AND a `--host`
+    /// for it before this function is asked.
+    @Test(arguments: [DiagnosticScope.complete, .ping, .trace, .internet])
     func aScopeAnEndpointCanRunIsNotRefused(scope: DiagnosticScope) {
         #expect(DiagnoseUsageError.refusal(forEndpointScope: scope) == nil)
     }
 
     /// Every scope is on exactly one of the two lists above — derived from
-    /// `allCases` rather than from the two enumerations, so a sixth scope
+    /// `allCases` rather than from the two enumerations, so an eighth scope
     /// turns this red instead of quietly joining neither.
+    ///
+    /// Counted 2026-09-20, when `internet` made seven: three refused
+    /// (`dial`, `contributions`, `throughput`), four not.
     @Test func everyScopeIsEitherRefusedOrPermitted() {
         let refused = DiagnosticScope.allCases.filter {
             DiagnoseUsageError.refusal(forEndpointScope: $0) != nil
         }
         #expect(refused.count == 3, "refused: \(refused.map(\.rawValue))")
-        #expect(DiagnosticScope.allCases.count == 6)
+        #expect(DiagnosticScope.allCases.count == 7)
     }
 
     /// An unreadable forwarding store exits the way an unreadable SESSION

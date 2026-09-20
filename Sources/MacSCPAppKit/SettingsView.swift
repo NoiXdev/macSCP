@@ -752,6 +752,45 @@ private struct TransfersSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            // The internet speed test's SERVICE — the maintainer's answer
+            // of 2026-09-19, and the only thing about that test a user
+            // chooses. Beside the throughput test because the two are the
+            // pair of speed tests in Connection diagnostics and a reader
+            // looking for one finds the other; what each measures is what
+            // separates them, and the footers say so.
+            //
+            // A Picker over `InternetSpeedService.allCases` — a closed set,
+            // never a URL field (`InternetSpeedService` says why) — named
+            // through `DiagnosticsPresentation`, which is exhaustive, so a
+            // service added to the set does not compile until it has a
+            // name in four catalogs.
+            Section {
+                Picker(
+                    L10n.string("settings.internetSpeed.service", "Speed test service"),
+                    selection: Binding(
+                        get: { store.internetSpeedService },
+                        set: { store.internetSpeedService = $0 }
+                    )
+                ) {
+                    ForEach(InternetSpeedService.allCases, id: \.self) { service in
+                        Text(DiagnosticsPresentation.internetSpeedServiceName(service))
+                            .tag(service)
+                    }
+                }
+            } header: {
+                Text(L10n.string("settings.internetSpeed.header", "Internet speed test"))
+            } footer: {
+                Text(L10n.string(
+                    "settings.internetSpeed.footer",
+                    """
+                    The internet speed test in Connection diagnostics measures this Mac's \
+                    line against the chosen service, not your server. It sends generated \
+                    data only — no server name, no user name, no password — and Off means \
+                    it contacts nobody.
+                    """))
+                    .foregroundStyle(.secondary)
+            }
+
             // Checksums live here because computing one IS a transfer: it
             // reads the whole file on the far side, takes minutes on a
             // large one, and is asked for and cancelled like any other.

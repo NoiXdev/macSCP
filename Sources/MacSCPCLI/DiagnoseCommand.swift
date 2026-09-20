@@ -44,8 +44,22 @@ struct DiagnoseCommand: AsyncParsableCommand {
             stops the run and still deletes the file; the exit code then \
             follows the rows kept, 0 when they are ok. A second Ctrl-C \
             leaves without waiting for the delete, names the file on \
-            stderr, and exits 16, because the file may still be there.
+            stderr, and exits 16, because the file may still be there. \
+            --scope internet is the one check that measures no server at \
+            all: it downloads \(mebibytes(DiagnosticInternetSpeedSettings.defaultDownloadBytes)) \
+            from and uploads \(mebibytes(DiagnosticInternetSpeedSettings.defaultUploadBytes)) to \
+            the service named by --speed-service and reports the two rates. Name no \
+            session and no --host with it — it has no target — and it \
+            sends nothing about any session, login or host to that service. \
+            --speed-service off contacts nobody; the app's own setting is \
+            not read here, so a test switched off in the app is switched \
+            off here only when this flag says so.
             """)
+
+    /// A byte count as whole mebibytes, for the help above — read off Core's
+    /// own constants so the sentence cannot claim a payload the step does
+    /// not move.
+    private static func mebibytes(_ bytes: Int) -> String { "\(bytes / (1024 * 1024)) MiB" }
 
     @OptionGroup var options: DiagnoseOptions
 
@@ -75,6 +89,21 @@ struct DiagnoseCommand: AsyncParsableCommand {
         help: "Size of the --scope throughput test file in MiB, 1 to 256. Defaults to 8.")
     var payloadMib: Int?
 
+    /// Which service `--scope internet` measures against. Optional for
+    /// `--payload-mib`'s reason — so `validate()` can tell "not given" from
+    /// "given with another scope" — and the default is the app's own
+    /// (`DiagnosticInternetSpeedSettings.defaultService`), applied in
+    /// `run()`.
+    ///
+    /// A NAME, never a URL: the set is closed (`InternetSpeedService`), for
+    /// the reason that type's doc comment gives.
+    @Option(
+        name: .long,
+        help: """
+            Which service --scope internet measures against. Defaults to cloudflare.
+            """)
+    var speedService: InternetSpeedService?
+
     /// The ARGUMENT SHAPE only: exactly one target, and the two options that
     /// describe the `--host` form are not accepted without it.
     ///
@@ -85,6 +114,24 @@ struct DiagnoseCommand: AsyncParsableCommand {
     /// from `run()` as a `DiagnoseUsageError`, which is the only way it
     /// reaches `CLIErrorMapping` (see that type's doc comment).
     func validate() throws {
+        // `--scope internet` has no target and refuses one. It measures the
+        // link between this Mac and a third-party service
+        // (`InternetSpeedProbe`); a session name or a `--host` beside it
+        // would name something nothing in the run reads, and an argument
+        // that is silently ignored is the shape this command already
+        // refuses for `--port` and `--kind`.
+        guard scope.measuresTheSession else {
+            guard session == nil, host == nil else {
+                throw ValidationError(
+                    "--scope internet measures this Mac's internet connection and no server; "
+                        + "name no session and no --host with it.")
+            }
+            guard port == nil, kind == nil else {
+                throw ValidationError("--port and --kind describe --host.")
+            }
+            try validateSpeedOptions()
+            return
+        }
         switch (session, host) {
         case (nil, nil):
             throw ValidationError("Name a stored session, or pass --host.")
@@ -105,6 +152,18 @@ struct DiagnoseCommand: AsyncParsableCommand {
                 throw ValidationError(
                     "--payload-mib must be between \(range.lowerBound) and \(range.upperBound).")
             }
+        }
+        try validateSpeedOptions()
+    }
+
+    /// The one option that describes `--scope internet`, refused beside any
+    /// other scope — `--payload-mib`'s rule, for the other speed test.
+    ///
+    /// Called from BOTH arms of `validate()` above, because the internet
+    /// arm returns before reaching the end of it.
+    private func validateSpeedOptions() throws {
+        if speedService != nil, scope.measuresTheSession {
+            throw ValidationError("--speed-service describes --scope internet.")
         }
     }
 
@@ -143,6 +202,14 @@ struct DiagnoseCommand: AsyncParsableCommand {
         // command prints if a second Ctrl-C leaves before the run could.
         let throughput = DiagnosticThroughputSettings(
             payloadMiB: payloadMib ?? DiagnosticThroughputSettings.defaultPayloadMiB)
+        // The service is a FLAG here and not the app's setting, for the
+        // reason the bandwidth comment below gives: this binary reads no
+        // settings file. So a user who switched the test off in the app has
+        // to say `--speed-service off` on the command line too — stated in
+        // the docs, because a privacy choice that does not carry across is
+        // the kind of thing a user assumes did.
+        let internetSpeed = DiagnosticInternetSpeedSettings(
+            service: speedService ?? DiagnosticInternetSpeedSettings.defaultService)
         // No bandwidth bucket: this binary paces no transfer — `put` and
         // `get` run unthrottled, and the app's limits live in a settings
         // file the command line does not read (`SettingsStore
@@ -154,7 +221,8 @@ struct DiagnoseCommand: AsyncParsableCommand {
             secrets: target.secrets,
             sessionID: target.sessionID,
             jump: target.jump,
-            throughput: throughput)
+            throughput: throughput,
+            internetSpeed: internetSpeed)
         // No `appVersion`: this binary reports none. It has no bundle to
         // read `CFBundleShortVersionString` from (the App's `SettingsView`
         // does that, and Core deliberately does not), and no `version:` in
@@ -227,6 +295,17 @@ struct DiagnoseCommand: AsyncParsableCommand {
     /// values the probes read, and — for a stored session only — the secret
     /// chain and the Keychain slot it answers for.
     private func resolveTarget() throws -> Target {
+        // `--scope internet` has no target, and `validate()` has already
+        // refused one. Nothing of this value is read by that walk — it
+        // measures this Mac's link to a service and never looks at the
+        // descriptor, the values or the secrets — so the placeholder is a
+        // shape the initializer needs, not a session anything dials.
+        guard scope.measuresTheSession else {
+            let descriptor = BackendDescriptor.descriptor(for: .ssh)
+            return Target(
+                descriptor: descriptor, values: FieldValues(), secrets: nil, sessionID: nil,
+                jump: nil)
+        }
         if let host {
             if let refusal = DiagnoseUsageError.refusal(forEndpointScope: scope) { throw refusal }
             let descriptor = BackendDescriptor.descriptor(for: kind ?? .ssh)

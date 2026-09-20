@@ -1202,6 +1202,35 @@ struct SettingsStoreTests {
         #expect(DiagnosticThroughputSettings().payloadBytes == 8 * 1024 * 1024)
     }
 
+    /// The internet speed test's service: Cloudflare by default — the
+    /// maintainer's answer of 2026-09-19 — a name and never a URL, stored
+    /// as the name, read back by a fresh store, and falling back to the
+    /// default for a value this build does not know.
+    @Test func theInternetSpeedServiceDefaultsToCloudflareAndRoundTrips() throws {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.internetSpeedService == .cloudflare)
+        #expect(store.internetSpeedService == DiagnosticInternetSpeedSettings.defaultService)
+
+        store.internetSpeedService = .off
+        #expect(try persistedRaw(dir)["internetSpeedService"] == .string("off"))
+        #expect(SettingsStore(directory: dir).internetSpeedService == .off)
+
+        store.internetSpeedService = .apple
+        #expect(SettingsStore(directory: dir).internetSpeedService == .apple)
+
+        // A hand-edited file naming something this build has no endpoints
+        // for reads as the default rather than as nothing — a diagnosis
+        // that could not run because a file was edited would be the worse
+        // answer. The value below is deliberately not a service name; the
+        // positive checks above prove the reader is not simply constant.
+        var raw = try persistedRaw(dir)
+        raw["internetSpeedService"] = .string("a-service-this-build-does-not-know")
+        try JSONEncoder().encode(raw).write(to: fileURL(dir))
+        #expect(SettingsStore(directory: dir).internetSpeedService == .cloudflare)
+    }
+
     @Test func reconnectDefaultsToOfferingOnly() {
         let dir = makeTempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -134,7 +134,43 @@ struct DiagnosticsPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
             }
+            // The one choice that talks to a THIRD PARTY says so where it
+            // is chosen, before Run is pressed — which service, how much,
+            // and that nothing of this connection travels with it. The
+            // throughput notice above is the same sentence for the other
+            // direction of the same worry.
+            if model.scope == .internet {
+                Text(Self.internetNotice(model.internetSpeedService))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
         }
+    }
+
+    /// What the internet speed test's notice says for the service that is
+    /// chosen right now — a different sentence for `off`, because "measures
+    /// against Off" is not a sentence and because a switched-off test sends
+    /// nothing at all, which is the thing the reader wants confirmed.
+    private static func internetNotice(_ service: InternetSpeedService) -> String {
+        guard service != .off else {
+            return L10n.string(
+                "diagnostics.internet.notice.off",
+                "The internet speed test is switched off under Transfers in Settings.")
+        }
+        return String(
+            format: L10n.string(
+                "diagnostics.internet.notice",
+                """
+                Measures this Mac's internet connection against %1$@: downloads %2$@ and \
+                uploads %3$@ of generated data. Nothing about this connection is sent — no \
+                server, no user name, no password. The service is chosen under Transfers in \
+                Settings.
+                """),
+            DiagnosticsPresentation.internetSpeedServiceName(service),
+            DiagnosticsViewModel.internetSpeedDownloadText,
+            DiagnosticsViewModel.internetSpeedUploadText)
     }
 
     @ViewBuilder

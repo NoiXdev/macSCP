@@ -88,6 +88,7 @@ public final class SettingsStore {
         static let keepAliveIntervalSeconds = "keepAliveIntervalSeconds"
         static let connectTimeoutSeconds = "connectTimeoutSeconds"
         static let throughputPayloadMiB = "throughputPayloadMiB"
+        static let internetSpeedService = "internetSpeedService"
         static let sidebarWidth = "sidebarWidth"
         static let sidebarTagFilterEnabled = "sidebarTagFilterEnabled"
         static let sidebarCompact = "sidebarCompact"
@@ -124,6 +125,12 @@ public final class SettingsStore {
         /// throughput test's, and a second copy here could drift from the
         /// one the CLI's `--payload-mib` is checked against.
         static let throughputPayloadMiB = DiagnosticThroughputSettings.defaultPayloadMiB
+        /// Cloudflare, read off the diagnosis's own settings type for
+        /// `throughputPayloadMiB`'s reason — the maintainer's answer of
+        /// 2026-09-19 is recorded there, and a second copy here could
+        /// drift from the one `macscp-cli diagnose --speed-service`
+        /// defaults to.
+        static let internetSpeedService = DiagnosticInternetSpeedSettings.defaultService
         static let sidebarWidth = 190
         static let sidebarTagFilterEnabled = true
         static let sidebarCompact = false
@@ -879,6 +886,31 @@ public final class SettingsStore {
     /// instance so the Settings stepper is built from the same two numbers.
     public nonisolated static let throughputPayloadMiBRange =
         DiagnosticThroughputSettings.payloadMiBRange
+
+    /// Which third-party service the internet speed test measures against
+    /// (`DiagnosticScope.internet`), or `off` for none — the maintainer's
+    /// answer of 2026-09-19.
+    ///
+    /// A NAME from a closed set, never a URL: a stored URL is a stored URL
+    /// somebody's imported file could have written, and this step's whole
+    /// safety argument is that where a request goes is decided in one place
+    /// in Core (`InternetSpeedService.endpoints`). A hand-edited
+    /// settings.json holding a name this build does not know falls back to
+    /// the default rather than to nothing, the way `checksumAlgorithm`
+    /// does — the alternative is a diagnosis that cannot run because a file
+    /// was edited.
+    public var internetSpeedService: InternetSpeedService {
+        get {
+            guard case .string(let value)? = raw[Keys.internetSpeedService] else {
+                return Defaults.internetSpeedService
+            }
+            return InternetSpeedService(rawValue: value) ?? Defaults.internetSpeedService
+        }
+        set {
+            raw[Keys.internetSpeedService] = .string(newValue.rawValue)
+            persist()
+        }
+    }
 
     /// The same default as the instance property above, reachable without a
     /// `SettingsStore` instance. `MacSCPCLI` never reads user settings at

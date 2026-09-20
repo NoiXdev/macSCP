@@ -50,8 +50,9 @@ public enum DiagnoseRendering {
     }
 
     /// `id`, padded with spaces to width 14 — wide enough for every id of a
-    /// direct walk (`DiagnosticStepID`'s six — `throughput`, the longest,
-    /// is 10 — and the `jump.` ids of a walk
+    /// direct walk (`DiagnosticStepID`'s seven — `throughput`, the longest,
+    /// is 10, and `internet`, added 2026-09-20, is 8 — and the `jump.` ids
+    /// of a walk
     /// through a jump host) with room for a contribution's own, without
     /// truncating one that runs longer. The five `target.` ids do run longer
     /// (`target.tcpViaJump` 17, `target.resolveOnJump` 20,
@@ -142,10 +143,21 @@ public enum DiagnoseRendering {
 
     /// One JSON object per step: `id`, `outcome`, `reason` (absent for
     /// `ok`/`timedOut`), `durationMs` (an integer), `detail`, and — for a
-    /// step that carries a table — `hops`, `names` or `throughput`: `names`
-    /// for the resolve step's name table (`DiagnosticNameColumn`),
-    /// `throughput` for the throughput step's (`DiagnosticThroughputColumn`),
-    /// `hops` for every other table, which today is a trace's.
+    /// step that carries a table — `hops`, `names`, `throughput` or
+    /// `internet`: `names` for the resolve step's name table
+    /// (`DiagnosticNameColumn`), `throughput` for the throughput step's
+    /// (`DiagnosticThroughputColumn`), `internet` for the internet speed
+    /// test's (`DiagnosticInternetSpeedColumn`), `hops` for every other
+    /// table, which today is a trace's.
+    ///
+    /// `internet` was ADDED on 2026-09-20 with the internet speed test: one
+    /// object per direction that finished,
+    /// `direction`/`bytes`/`duration`/`rate` — the throughput table's five
+    /// columns minus `limit`, which is a bandwidth limit of this app's and
+    /// applies to nothing the internet step sends. A key of its own rather
+    /// than a second meaning of `throughput`, for the reason `names` is one:
+    /// a script that reads `throughput` reads it as a measurement of the
+    /// user's server, and this is not one.
     ///
     /// `throughput` was ADDED on 2026-09-19 with the throughput step: one
     /// object per direction that finished, `direction`/`bytes`/`duration`/
@@ -198,6 +210,7 @@ public enum DiagnoseRendering {
             switch table.columns {
             case DiagnosticNameColumn.all: key = "names"
             case DiagnosticThroughputColumn.all: key = "throughput"
+            case DiagnosticInternetSpeedColumn.all: key = "internet"
             default: key = "hops"
             }
             object[key] = jsonRows(table)

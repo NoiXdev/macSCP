@@ -49,6 +49,12 @@
 "settings.throughput.header" = "Throughput test";
 "settings.throughput.payload" = "Test file size";
 "settings.throughput.footer" = "The throughput test in Connection diagnostics uploads a file of this size to the server, downloads it and deletes it.";
+"settings.internetSpeed.header" = "Internet speed test";
+"settings.internetSpeed.service" = "Speed test service";
+"settings.internetSpeed.service.cloudflare" = "Cloudflare";
+"settings.internetSpeed.service.apple" = "Apple";
+"settings.internetSpeed.service.off" = "Off";
+"settings.internetSpeed.footer" = "The internet speed test in Connection diagnostics measures this Mac’s line against the chosen service, not your server. It sends generated data only — no server name, no user name, no password — and Off means it contacts nobody.";
 "settings.transfers.presignedExpiry.header" = "S3 Share Links";
 "settings.transfers.presignedExpiry" = "Default share-link expiry";
 
@@ -1254,6 +1260,18 @@
 "diagnostics.reason.throughputBytesDiffer" = "The file read back is not the file written.";
 "diagnostics.reason.throughputFileLeftBehind" = "The test file may have been left on the server — its name is in the details. The next throughput test tries to remove it; if the server refuses again, remove it by hand.";
 "diagnostics.throughput.notice" = "Uploads a test file to this connection’s start folder, downloads it, compares it and deletes it. Its size is set under Transfers in Settings, and the bandwidth limits there apply.";
+// The internet speed test (2026-09-20): its scope and step, its table's four column headers, its three reasons and the panel's two notices. The direction words are the throughput test's own. Byte counts, times and rates are measurements and are never translated.
+"diagnostics.scope.internet" = "Internet speed";
+"diagnostics.step.internet" = "Internet speed";
+"diagnostics.internet.column.direction" = "Direction";
+"diagnostics.internet.column.bytes" = "Bytes";
+"diagnostics.internet.column.duration" = "Time";
+"diagnostics.internet.column.rate" = "Rate";
+"diagnostics.reason.internetSpeedOff" = "The internet speed test is switched off in Settings, so nothing was sent.";
+"diagnostics.reason.internetSpeedTooSlow" = "The speed test service did not finish inside this step’s time limit.";
+"diagnostics.reason.internetSpeedNoBytes" = "The speed test service sent no data.";
+"diagnostics.internet.notice" = "Measures this Mac’s internet connection against %1$@: downloads %2$@ and uploads %3$@ of generated data. Nothing about this connection is sent — no server, no user name, no password. The service is chosen under Transfers in Settings.";
+"diagnostics.internet.notice.off" = "The internet speed test is switched off under Transfers in Settings.";
 
 /* Import from another program — Cyberduck (2026-09-03). The menu entry, the
    preview sheet, the two switches and the group picker, plus the field names

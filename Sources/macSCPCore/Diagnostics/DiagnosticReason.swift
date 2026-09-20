@@ -123,6 +123,29 @@ public enum DiagnosticReason {
     /// upload at all — so the panel's sentence says "tries", and "by hand".
     static let throughputFileLeftBehind = "the test file may have been left on the server"
 
+    /// The internet speed test's service is `off` in Settings. Nothing was
+    /// sent: the guard that produces this sentence runs before a request is
+    /// built (`InternetSpeedProbe.measure`).
+    static let internetSpeedOff = "the internet speed test is switched off in settings"
+    /// One leg of the internet speed test did not finish inside its bound
+    /// (`DiagnosticInternetSpeedSettings.defaultLegTimeout`). `unavailable`
+    /// and never `failed`: a slow line to a free third-party service is not
+    /// a finding about the user's server.
+    static let internetSpeedTooSlow =
+        "the speed service did not finish inside this step's bound"
+    /// The service answered without sending a single byte — a redirect to
+    /// an empty body, a proxy's interception page of zero length. There is
+    /// no rate to compute from it.
+    static let internetSpeedNoBytes = "the speed service sent no bytes"
+
+    /// One leg of the internet speed test failed, with whatever the
+    /// transport said. Composed, like `traceHopUnreachable`, so it carries
+    /// no catalogue key: the service's own sentence is the content, and the
+    /// panel shows such a reason exactly as it was measured.
+    static func internetSpeedLegFailed(_ direction: String, _ reason: String) -> String {
+        "the \(direction) leg of the speed test failed: \(reason)"
+    }
+
     /// A refusal with any other reason code. Composed, like
     /// `traceHopUnreachable`, so it carries no catalogue key and the panel
     /// shows it as measured.
@@ -270,6 +293,9 @@ public enum DiagnosticReason {
         throughputNeedsAFolder: "diagnostics.reason.throughputNeedsAFolder",
         throughputBytesDiffer: "diagnostics.reason.throughputBytesDiffer",
         throughputFileLeftBehind: "diagnostics.reason.throughputFileLeftBehind",
+        internetSpeedOff: "diagnostics.reason.internetSpeedOff",
+        internetSpeedTooSlow: "diagnostics.reason.internetSpeedTooSlow",
+        internetSpeedNoBytes: "diagnostics.reason.internetSpeedNoBytes",
         ICMPEcho.noIPv6RouteReason: "diagnostics.reason.noIPv6Route",
         NetworkTrace.ipv6UnmeasuredReason: "diagnostics.reason.ipv6TraceUnmeasured",
         NetworkTrace.notIPv4Reason: "diagnostics.reason.traceNeedsIPv4",

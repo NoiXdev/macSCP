@@ -201,11 +201,20 @@ final class DiagnosticsViewModel: Identifiable {
 
     @ObservationIgnored private let appVersion: String
 
+    /// Reads the internet speed test's settings — asked afresh wherever the
+    /// answer is used, never cached, for the reason the convenience
+    /// initializer below gives about the run.
+    @ObservationIgnored private let internetSpeed:
+        @MainActor @Sendable () -> DiagnosticInternetSpeedSettings
+
     init(
         name: String,
         endpoint: Endpoint? = nil,
         jumpEndpoint: Endpoint? = nil,
         appVersion: String = DiagnosticsViewModel.bundleVersion,
+        internetSpeed: @escaping @MainActor @Sendable () -> DiagnosticInternetSpeedSettings = {
+            DiagnosticInternetSpeedSettings()
+        },
         runner: @escaping Runner,
         copy: @escaping (String) -> Void = DiagnosticsViewModel.writeToPasteboard
     ) {
@@ -213,9 +222,29 @@ final class DiagnosticsViewModel: Identifiable {
         self.endpoint = endpoint
         self.jumpEndpoint = jumpEndpoint
         self.appVersion = appVersion
+        self.internetSpeed = internetSpeed
         self.runner = runner
         self.copy = copy
     }
+
+    /// Which service the internet speed test would measure against if it
+    /// were started right now — what the panel's notice names, so the
+    /// reader sees which third party is about to be contacted BEFORE they
+    /// press Run.
+    ///
+    /// Read through the closure at every access rather than stored: the
+    /// setting can change under an open panel, which is the same argument
+    /// the run makes for reading it per run.
+    var internetSpeedService: InternetSpeedService { internetSpeed().service }
+
+    /// The download and upload sizes the internet speed test moves, as the
+    /// panel's notice prints them. Whole mebibytes, from Core's own
+    /// constants — a unit abbreviation and not prose, the rule the
+    /// bandwidth fields' "KB/s" already follows.
+    static let internetSpeedDownloadText =
+        "\(DiagnosticInternetSpeedSettings.defaultDownloadBytes / (1024 * 1024)) MiB"
+    static let internetSpeedUploadText =
+        "\(DiagnosticInternetSpeedSettings.defaultUploadBytes / (1024 * 1024)) MiB"
 
     /// The production runner: the universal probes plus this backend's own,
     /// through the descriptor seam.
@@ -223,6 +252,11 @@ final class DiagnosticsViewModel: Identifiable {
     /// `appVersion` is read here and not in Core — Core touches no bundle
     /// (`DiagnosticReport.appVersion`'s own doc comment) — the same way
     /// `SettingsView` and `UpdateCheckModel` read it.
+    ///
+    /// `internetSpeed` is asked the same way and for the same reason — the
+    /// service is a setting a user can change while the panel is open, and
+    /// a run started after they switched it off must not talk to the
+    /// service they switched off.
     ///
     /// `throughput` is asked at the START of every run, not once here: the
     /// payload size is a setting and the bandwidth buckets come and go as the
@@ -233,7 +267,8 @@ final class DiagnosticsViewModel: Identifiable {
     /// pressed (`DiagnosticsTarget`).
     convenience init(
         target: DiagnosticsTarget, secrets: (any SecretSource)?,
-        throughput: @escaping @MainActor @Sendable () -> DiagnosticThroughputSettings
+        throughput: @escaping @MainActor @Sendable () -> DiagnosticThroughputSettings,
+        internetSpeed: @escaping @MainActor @Sendable () -> DiagnosticInternetSpeedSettings
     ) {
         let descriptor = BackendDescriptor.descriptor(for: target.kind)
         let version = Self.bundleVersion
@@ -248,10 +283,12 @@ final class DiagnosticsViewModel: Identifiable {
             endpoint: descriptor.endpoint(target.values),
             jumpEndpoint: target.jump?.endpoint,
             appVersion: version,
+            internetSpeed: internetSpeed,
             runner: { scope, observer in
                 let diagnostics = ConnectionDiagnostics(
                     descriptor: descriptor, values: values, secrets: secrets,
                     sessionID: sessionID, jump: jump, throughput: await throughput(),
+                    internetSpeed: await internetSpeed(),
                     appVersion: version)
                 return await diagnostics.run(scope: scope, observer: observer)
             })
@@ -593,6 +630,27 @@ enum DiagnosticsPresentation {
             return L10n.string("diagnostics.scope.contributions", "Protocol probes")
         case .throughput:
             return L10n.string("diagnostics.scope.throughput", "Throughput")
+        case .internet:
+            return L10n.string("diagnostics.scope.internet", "Internet speed")
+        }
+    }
+
+    /// What Settings calls one internet speed service.
+    ///
+    /// A switch and not a key composed from `rawValue`, for `scopeName`'s
+    /// reason: `DiagnosticsDoorsGuardTests` reads the keys the SOURCES
+    /// spell, and an interpolated key is invisible to it. `cloudflare` and
+    /// `apple` are company names and read the same in the four catalogs;
+    /// `off` does not, which is why all three go through a catalogue key
+    /// rather than the first two being printed as they are spelled.
+    static func internetSpeedServiceName(_ service: InternetSpeedService) -> String {
+        switch service {
+        case .cloudflare:
+            return L10n.string("settings.internetSpeed.service.cloudflare", "Cloudflare")
+        case .apple:
+            return L10n.string("settings.internetSpeed.service.apple", "Apple")
+        case .off:
+            return L10n.string("settings.internetSpeed.service.off", "Off")
         }
     }
 
@@ -615,21 +673,30 @@ enum DiagnosticsPresentation {
     /// what somebody pastes into a bug report, and a translated address is
     /// one its reader cannot search for. Two columns hold words Core
     /// COMPOSED — the trace's outcome, the resolve step's name check and
-    /// the throughput test's direction — and which columns those are comes
+    /// the direction column of the throughput and internet speed tables —
+    /// and which columns those are comes
     /// from the table's own keys rather than from a position a reordering
     /// would silently change.
     static func cell(_ text: String, column key: String) -> String {
         switch key {
         case DiagnosticTraceColumn.outcome: return traceOutcome(text)
         case DiagnosticNameColumn.check: return nameCheck(text)
-        case DiagnosticThroughputColumn.direction: return throughputDirection(text)
+        case DiagnosticThroughputColumn.direction, DiagnosticInternetSpeedColumn.direction:
+            return throughputDirection(text)
         default: return text
         }
     }
 
-    /// The throughput test's direction word, looked up under its own key —
-    /// the shape `nameCheck(_:)` has. The byte count, the time, the rate and
-    /// the limit beside it are measurements and are copied through.
+    /// The direction word of the throughput test's table and of the
+    /// internet speed test's, looked up under its own key — the shape
+    /// `nameCheck(_:)` has. The byte count, the time, the rate and the
+    /// limit beside it are measurements and are copied through.
+    ///
+    /// ONE lookup for both tables because there is one pair of words:
+    /// `DiagnosticInternetSpeedColumn.up`/`.down` ARE the throughput
+    /// column's, taken and not copied (that type says why), so a `switch`
+    /// over the internet spellings beside this one would be two cases that
+    /// can never disagree and one more place to forget.
     private static func throughputDirection(_ cell: String) -> String {
         switch cell {
         case DiagnosticThroughputColumn.up:
