@@ -141,6 +141,7 @@ struct DiagnoseCommand: AsyncParsableCommand {
             guard port == nil, kind == nil else {
                 throw ValidationError("--port and --kind describe --host.")
             }
+            try validatePayloadOption()
             try validateSpeedOptions()
             return
         }
@@ -155,17 +156,30 @@ struct DiagnoseCommand: AsyncParsableCommand {
         if host == nil, port != nil || kind != nil {
             throw ValidationError("--port and --kind describe --host.")
         }
-        if let payloadMib {
-            guard scope == .throughput else {
-                throw ValidationError("--payload-mib describes --scope throughput.")
-            }
-            let range = DiagnosticThroughputSettings.payloadMiBRange
-            guard range.contains(payloadMib) else {
-                throw ValidationError(
-                    "--payload-mib must be between \(range.lowerBound) and \(range.upperBound).")
-            }
-        }
+        try validatePayloadOption()
         try validateSpeedOptions()
+    }
+
+    /// The one option that describes `--scope throughput`: refused beside
+    /// any other scope, and in range inside that one.
+    ///
+    /// Called from BOTH arms of `validate()` above, for exactly the reason
+    /// `validateSpeedOptions()` below is: the internet arm returns before
+    /// reaching the end of it. Until 2026-09-20 this was written inline at
+    /// the end, so `--scope internet --payload-mib 5` was accepted and the
+    /// value read by nobody — the shape the internet arm's own comment
+    /// refuses `--port` and `--kind` for, and one the released reference
+    /// page already described as refused (final review, I-3).
+    private func validatePayloadOption() throws {
+        guard let payloadMib else { return }
+        guard scope == .throughput else {
+            throw ValidationError("--payload-mib describes --scope throughput.")
+        }
+        let range = DiagnosticThroughputSettings.payloadMiBRange
+        guard range.contains(payloadMib) else {
+            throw ValidationError(
+                "--payload-mib must be between \(range.lowerBound) and \(range.upperBound).")
+        }
     }
 
     /// The one option that describes `--scope internet`: REQUIRED with
