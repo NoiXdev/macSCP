@@ -958,3 +958,265 @@ itself.
 **Review date:** at the next release and before the next fork change (as
 above — neither of these two is a fork, so neither carries its own
 review clock).
+
+## Measured 2026-09-20 — what upstream offers for SSH compression
+
+The BACKLOG row "SSH compression as a setting and a session flag
+(maintainer wishlist)" carries the maintainer's answer of 2026-09-19:
+check upstream first, then decide on a fork change. This is that check.
+No product code and no fork was changed for it.
+
+### apple/swift-nio-ssh: `["none"]`, and nobody has ever asked
+
+The fork checkout (`.build/checkouts/swift-nio-ssh`, `0cab3b23`, tag
+`0.3.10`) offers exactly one compression method in each direction, as a
+literal, not as a configuration property:
+
+- `Sources/NIOSSH/Key Exchange/SSHKeyExchangeStateMachine.swift:114-115`
+  — `compressionAlgorithmsClientToServer: ["none"]`,
+  `compressionAlgorithmsServerToClient: ["none"]`, written in
+  `createKeyExchangeMessage()` beside `self.supportedEncryptionAlgorithms`
+  (`:103`) and `self.supportedHostKeyAlgorithms` (`:109`), which *are*
+  properties.
+
+`apple/swift-nio-ssh` `main` at **`89714f64` (2026-09-14)** has the same
+two literals, at `:138-139` (read with
+`gh api repos/apple/swift-nio-ssh/contents/…`). Apple's latest release is
+**0.15.0, 2026-07-28**.
+
+Counted in the fork checkout on 2026-09-20,
+`grep -rn -i "compress\|zlib" --include="*.swift" Sources/ Tests/`:
+**16 lines**, and none of them is an implementation — 8 in
+`Sources/NIOSSH/SSHMessages.swift` (the two KEXINIT fields at `:108-109`,
+the read at `:593-594`, the construction at `:614-615`, the write at
+`:1266-1267`), 2 the literals above, 6 in tests. The wire format carries
+the lists; nothing consumes them.
+
+GitHub search, same day (`gh api search/issues`, `gh api search/code`):
+
+| Query against `repo:apple/swift-nio-ssh` | Result |
+|---|---|
+| issues+PRs, any state, `compression` | **0** |
+| issues+PRs, any state, `compress` | **0** |
+| issues+PRs, any state, `zlib` | **0** |
+| issues+PRs, any state, `gzip` | **0** |
+| issues+PRs, all time (denominator) | 248 |
+| open now | 41 (17 PRs, 24 issues) |
+| control: `rsa` / `key` on the same index | 14 / 50 |
+| code search `compression` | 4 files — the four listed above |
+| code search `zlib` | **0** |
+
+The controls are there because a zero from a search index is only
+evidence if the index answers. It does.
+
+### orlandos-nl/Citadel: nothing of its own, and nothing to attach it to
+
+Citadel checkout (`.build/checkouts/Citadel`, `186b1a80`, tag
+`0.12.1-noix.3`), same grep over `Sources/`: **1 line**, and it is
+`Sources/Citadel/OpenSSHKey.swift:490`, the word "uncompressed" in a
+comment about an X9.63 point. Not compression.
+
+Citadel has no packet layer to put a compressor in: it drives NIOSSH's
+handler (`Sources/Citadel/Client.swift:182`, `:214`, `:253`;
+`Sources/Citadel/Server.swift:324`), and its whole algorithm surface is
+`SSHAlgorithms` (`Sources/Citadel/Client.swift:59`) with
+`transportProtectionSchemes` (`:70`) and `keyExchangeAlgorithms`
+(`:73`). There is no compression member, and there is nothing for one to
+select as long as swift-nio-ssh offers only `"none"`.
+
+| Query against `repo:orlandos-nl/Citadel` | Result |
+|---|---|
+| issues+PRs, any state, `compression` / `compress` / `zlib` / `gzip` | **0 / 0 / 0 / 0** |
+| issues+PRs, all time (denominator) | 142 |
+| open now | 13 PRs, 18 issues |
+| control: `sftp` | 27 |
+| code search `compression` / `zlib` | **0 / 0** |
+
+Citadel upstream `main` is at `ae8562f8` (2026-04-04); latest release
+0.12.1 (2026-04-04).
+
+### What a fork change would cost
+
+Measured in the fork checkout at `0.3.10`. Seven pieces, counted while
+writing this list. Only one of them exists today — the wire format,
+point 1's neighbour in `SSHMessages.swift` — and the outbound one is
+missing in a way that is public API.
+
+1. **The offered lists** — `SSHKeyExchangeStateMachine.swift:114-115`,
+   two literals to turn into a configured list. Cheap.
+2. **Negotiation ignores the peer's lists entirely.**
+   `negotiatedAlgorithms(_:)` (`SSHKeyExchangeStateMachine.swift:366-383`)
+   reads key exchange, host key, encryption and MAC, and never touches
+   `message.compressionAlgorithmsClientToServer` or its
+   server-to-client twin. `struct NegotiationResult`
+   (`SSHKeyExchangeStateMachine.swift:574`) has four members and would
+   grow a fifth — and it travels through eight state cases of the same
+   file (`:42`, `:45`, `:48`, `:51`, `:54`, `:57`, `:60`, `:63`).
+3. **Configuration.** `SSHClientConfiguration`
+   (`Sources/NIOSSH/SSHClientConfiguration.swift:16`) exposes
+   `transportProtectionSchemes` (`:27`) and `keyExchangeAlgorithms`
+   (`:30`) and no compression property; a client-visible setting means a
+   new public property there and its mirror in
+   `Sources/NIOSSH/SSHServerConfiguration.swift`.
+4. **Outbound: there is no seam at the payload level.**
+   `SSHPacketSerializer.serialize(message:to:)`
+   (`Sources/NIOSSH/SSHPacketSerializer.swift:39`) has two paths, and
+   neither produces a payload buffer a compressor could take:
+   - `.cleartext` writes the message straight into the frame after the
+     length/padding placeholders (`:64-65`), so the payload never exists
+     on its own;
+   - `.encrypted` (`:83-86`) wraps the message in
+     `NIOSSHEncryptablePayload` and hands it to
+     `NIOSSHTransportProtection.encryptPacket`. That payload is opaque
+     (`Sources/NIOSSH/SSHEncryptablePacketPayload.swift:23-25` — its own
+     doc comment calls it "entirely opaque to the user") and is
+     serialized *inside* the protection implementation, through
+     `writeEncryptablePayload`
+     (`Sources/NIOSSH/TransportProtection/AESGCM.swift:136`).
+
+   RFC 4253 §6.2 (read, not measured) compresses the payload before
+   padding and encryption, with `packet_length` and `mac` computed from
+   the compressed payload — exactly the point where this code has already handed control to a
+   `public protocol` (`TransportProtection/SSHTransportProtection.swift:47`,
+   `encryptPacket` at `:93`). So either `NIOSSHEncryptablePayload` learns
+   to carry pre-serialized bytes, or every `encryptPacket` implementation
+   learns about compression. The first changes the public API of a type
+   whose documented property is that it has none; the second changes a
+   public protocol's contract. Both are source-breaking for out-of-tree
+   transport protection schemes, of which this project ships none and
+   upstream cannot know.
+5. **Inbound: there is a seam, and it is narrow.**
+   `SSHPacketParser.parseCiphertext` (`Sources/NIOSSH/SSHPacketParser.swift:228`)
+   takes the content buffer back from `decryptAndVerifyRemainingPacket`
+   (`:234`) and immediately requires `readSSHMessage()` to consume it
+   exactly (`content.readableBytes == 0`, `:235`). Decompression goes
+   between those two lines, and that invariant moves behind it. Same
+   shape in `parsePlaintext` (`:209`, slice at `:218`, invariant at
+   `:219`).
+6. **Per-direction state, and the rekey.** A zlib stream is
+   per-direction state with the same lifetime as the protection object,
+   installed at NEWKEYS — `SSHPacketSerializer.addEncryption(_:)`
+   (`:28`) and `SSHPacketParser.addEncryption(_:)` (`:63`) are where it
+   would go.
+7. **The authentication boundary**, needed by the only method OpenSSH
+   actually offers (below): a client sees it at
+   `Sources/NIOSSH/Connection State Machine/SSHConnectionStateMachine.swift:325-326`
+   (`case .userAuthSuccess: let result = try state.receiveUserAuthSuccess()`).
+
+**macSCP's own side is zero.** `grep -rn -i "compression\|zlib"
+--include="*.swift" Sources/` in this checkout on 2026-09-20 returns
+**one** line — `Sources/MacSCPAppKit/PathBar.swift:635`, an AppKit
+content-compression priority. Unrelated, and the only hit.
+
+### The forks' distance from upstream, measured the same day
+
+`gh api repos/apple/swift-nio-ssh/compare/apple:main...NoiXdev:citadel2`
+returns **404**: GitHub records `Joannis/swift-nio-ssh` with
+`parent: null`, so the chain apple → Joannis → Wellz26 → NoiXdev is not
+one fork network and the compare API cannot cross it. The numbers below
+therefore come from the clone-and-merge-base method (both remotes
+fetched into an empty repository), which is what the 2026-08-26 entry
+above used as well.
+
+| swift-nio-ssh | 2026-08-26 | **2026-09-20** |
+|---|---|---|
+| merge base with `apple/main` | `b0591e4c`, 2022-04-21 | `b0591e4c`, 2022-04-21 |
+| fork ahead of the base | 76 | **83** |
+| upstream ahead of the base (never arrives here) | 91 | **92** |
+
+Of those 92 upstream commits, the number whose subject mentions
+compression or zlib: **0**. `git grep -i "compress\|zlib" upstream/main
+-- Sources/` returns 13 lines: the same KEXINIT fields, the same two
+`["none"]` literals, and three comments about the *uncompressed* payload
+size (`Constants.swift:25`, `SSHClientConfiguration.swift:37`,
+`SSHServerConfiguration.swift:40`).
+
+Citadel, via the compare API (same fork network, so it works):
+`compare/orlandos-nl:main...NoiXdev:0.12.1-noix.3` → **ahead 5, behind
+0**; `compare/NoiXdev:noix...orlandos-nl:main` → behind 5, ahead 0.
+Unchanged from the 2026-09-10 check.
+
+**Fork check, run in the same pass** (the rule above says write the
+count and the date even when the count is zero):
+
+- **apple/swift-nio-ssh** (fork branch `citadel2` at `0cab3b23`, the
+  same commit `.build/checkouts` holds): commits on `main` since
+  2026-09-10: **1** —
+  `89714f64`, 2026-09-14, "Delete SECURITY.md (#248)". Classified: noise
+  (a file deletion in favour of the org-wide policy), not security, not
+  correctness, not feature. Published advisories: **1** —
+  GHSA-998x-vgvp-xwpc / CVE-2026-43798, critical, 2026-07-17, patched
+  upstream in 0.14.1. Carried by the fork, verified this day rather than
+  remembered: `Sources/NIOSSH/Keys And Signatures/NIOSSHSignature.swift:338`
+  is `private init(r:s:pointSize:) throws` and `:348` throws
+  `"ECDSA signature mpint exceeds curve point size"` — the guard upstream
+  added in `31cdc3c`. Nothing to cherry-pick.
+- **orlandos-nl/Citadel**: commits on `main` since 2026-09-10: **0**.
+  Published advisories: **0**.
+- **Retirable?** No, unchanged: upstream carries neither the RSA-SHA2 PR
+  nor `hostKeyAlgorithmNames` / `userAuthAlgorithmName`, and Citadel
+  upstream has not moved since 0.12.1.
+
+### OpenSSH's side: only the delayed method, and that is the whole point
+
+Measured on this machine (OpenSSH_10.3p1, LibreSSL 3.3.6) and against
+`openssh/openssh-portable` master `eabf1987` (2026-09-20):
+
+- `ssh -Q compression` → `none`, `zlib@openssh.com`. Plain `zlib` is
+  **not** in the list.
+- `myproposal.h:98` → `#define KEX_DEFAULT_COMP "none,zlib@openssh.com"`.
+  Same answer from the source.
+- `PROTOCOL` §1.2 describes `zlib@openssh.com` as the zlib algorithm of
+  RFC 4253 with the start of compression delayed until authentication has
+  completed, so that compression code is not exposed to unauthenticated
+  peers. Read, not measured against a running server.
+- `ssh_config(5)` on this machine: `Compression` is yes/no, default
+  **no**. `sshd_config(5)`: compression is enabled after the user has
+  authenticated successfully, argument `yes`, `delayed` ("a legacy
+  synonym for yes") or `no`, default **yes**.
+
+Why the distinction decides the shape of any client work here: offering
+plain `zlib` means running an inflate over peer-supplied bytes before the
+peer has proven anything — the pre-authentication attack surface the
+delayed method exists to remove — and it buys no interoperability,
+because the OpenSSH default proposal does not contain `zlib` at all. So
+the only method worth implementing is `zlib@openssh.com`, and that is
+precisely the method that needs the authentication boundary threaded down
+into the transport (point 7 above), which swift-nio-ssh's packet layer
+does not expose today. A client that implemented the easy half would
+either be insecure or talk to nothing.
+
+### Recommendation — the maintainer decides
+
+**Do not fork for this now.** Grounds, all from the numbers above:
+upstream has no implementation, no open PR, no open issue, and across
+248 issues and PRs all time has never had one; Citadel has nothing to
+attach a setting to; the change would be the first compression
+implementation in swift-nio-ssh, touching negotiation, two public
+configuration types, and either a public protocol or a public opaque
+type; and it would land on a fork that is already 92 commits behind a
+merge base from 2022, which is the distance every future rebase has to
+carry.
+
+**What is not measured, and should be before any of this is
+reconsidered:** what compression would actually save on this app's
+traffic. SFTP moves file bytes that are frequently already compressed,
+and the terminal channel is small. No such measurement was made here —
+a comparison of `scp` with and without `-C` against the Docker rig would
+be the cheap version of it, and it was not run.
+
+Three courses the maintainer can take:
+
+1. **Hold the row and ask upstream** (recommended): open an issue on
+   `apple/swift-nio-ssh` asking whether `zlib@openssh.com` is in scope.
+   There is no such issue today — that count is 0, measured above — so
+   asking costs nothing and turns a zero into an answer. Revisit when
+   upstream replies.
+2. **Close the row as won't-do**, on the grounds that OpenSSH's own
+   client default is `Compression no` and the benefit is unmeasured.
+3. **Fork anyway**, in which case it is scheduled *after* the rebase
+   debt, not before, is written as an upstream PR candidate from the
+   first commit (CLAUDE.md, "Upstream what the fork carries"), and
+   implements `zlib@openssh.com` only.
+
+**Review date:** at the next release and before the next fork change.
