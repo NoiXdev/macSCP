@@ -1019,9 +1019,12 @@ comment about an X9.63 point. Not compression.
 Citadel has no packet layer to put a compressor in: it drives NIOSSH's
 handler (`Sources/Citadel/Client.swift:182`, `:214`, `:253`;
 `Sources/Citadel/Server.swift:324`), and its whole algorithm surface is
-`SSHAlgorithms` (`Sources/Citadel/Client.swift:59`) with
-`transportProtectionSchemes` (`:70`) and `keyExchangeAlgorithms`
-(`:73`). There is no compression member, and there is nothing for one to
+`SSHAlgorithms` (`Sources/Citadel/Client.swift:59`) with three members:
+`transportProtectionSchemes` (`:70`), `keyExchangeAlgorithms` (`:73`)
+and `publicKeyAlgorihtms` (`:75`, spelled as in the source), applied
+together at `:78-80`. This sentence named two of the three until the
+answered-wishes final review counted them (2026-09-20, M-1). There is no
+compression member, and there is nothing for one to
 select as long as swift-nio-ssh offers only `"none"`.
 
 | Query against `repo:orlandos-nl/Citadel` | Result |
