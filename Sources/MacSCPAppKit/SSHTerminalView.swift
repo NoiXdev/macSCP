@@ -10,6 +10,8 @@ struct SSHTerminalView: NSViewRepresentable {
     let viewModel: TerminalPanelViewModel
     /// Terminal appearance settings (M9d): font family/size and cursor
     /// style/blink, applied in `makeNSView` and kept live in `updateNSView`.
+    /// Since the plan of 2026-09-19 (Task 3) the surface's colours come
+    /// from here too — the resolved theme, never a fixed pair of tokens.
     let settingsStore: SettingsStore
     /// The snippets offered by right-clicking the terminal surface (Task 9)
     /// — the same model the panel's header popover renders, built by the
@@ -28,11 +30,9 @@ struct SSHTerminalView: NSViewRepresentable {
         let terminal = MacSCPTerminalView(frame: .zero)
         terminal.terminalDelegate = context.coordinator
         terminal.font = resolvedFont()
-        terminal.nativeBackgroundColor = DesignTokens.terminalBackground
-        terminal.nativeForegroundColor = DesignTokens.terminalText
-        terminal.caretColor = DesignTokens.terminalText
-        // setupOptions sets the layer color only once — re-apply it after a color change:
-        terminal.layer?.backgroundColor = DesignTokens.terminalBackground.cgColor
+        let theme = settingsStore.resolvedTerminalTheme
+        TerminalThemeInstaller.apply(theme, to: terminal)
+        context.coordinator.appliedTheme = theme
 
         let cursorStyle = Self.cursorStyle(
             for: settingsStore.terminalCursorStyle, blink: settingsStore.terminalCursorBlink)
@@ -90,6 +90,16 @@ struct SSHTerminalView: NSViewRepresentable {
         if context.coordinator.appliedCursorStyle != desiredCursorStyle {
             terminal.getTerminal().setCursorStyle(desiredCursorStyle)
             context.coordinator.appliedCursorStyle = desiredCursorStyle
+        }
+
+        // Gated like the two above, and for the same kind of reason:
+        // installing a palette rebuilds all 256 entries and redraws the
+        // whole surface, which is not something a sibling's state change
+        // should trigger.
+        let desiredTheme = settingsStore.resolvedTerminalTheme
+        if context.coordinator.appliedTheme != desiredTheme {
+            TerminalThemeInstaller.apply(desiredTheme, to: terminal)
+            context.coordinator.appliedTheme = desiredTheme
         }
 
         // Two plain flags read at the moment of a click, so assigning them
@@ -190,6 +200,11 @@ struct SSHTerminalView: NSViewRepresentable {
         /// SwiftUI re-render doesn't reissue `setCursorStyle` (and restart
         /// the blink animation) when nothing actually changed.
         var appliedCursorStyle: CursorStyle?
+        /// Last theme applied to the terminal (plan of 2026-09-19, Task 3)
+        /// — compared against the resolved one in `updateNSView`, so a
+        /// routine re-render does not reinstall a palette that did not
+        /// change.
+        var appliedTheme: TerminalTheme?
         /// Model the attached right-click menu was built from (Task 9) —
         /// compared in `updateNSView` so a routine SwiftUI re-render does
         /// not throw away a menu the user may have open right now.

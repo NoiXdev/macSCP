@@ -72,6 +72,17 @@
 "terminal.type.xterm-256color" = "xterm-256color (256 kolorów)";
 "terminal.type.xterm" = "xterm (8 kolorów)";
 "terminal.type.vt100" = "vt100 (bez kolorów)";
+"settings.terminal.theme.header" = "Kolory";
+"settings.terminal.theme" = "Motyw";
+"settings.terminal.theme.import" = "Importuj kolory iTerm2…";
+"settings.terminal.theme.forget" = "Usuń import";
+"settings.terminal.theme.footer" = "Motyw ustala tło, tekst, kursor oraz szesnaście kolorów, o które programy na serwerze proszą po numerze. Możesz zaimportować plik kolorów wyeksportowany z iTerm2 (plik z rozszerzeniem .itermcolors); macSCP zachowuje kolory, a nie plik. Przechowywany jest tylko jeden import naraz.";
+"settings.terminal.theme.refused.title" = "Import nie powiódł się";
+"settings.terminal.theme.refused" = "Nie udało się odczytać tego pliku jako pliku kolorów iTerm2. Wyeksportuj motyw z iTerm2 ponownie i wybierz zapisany plik .itermcolors.";
+"terminal.theme.macSCP" = "macSCP (ciemny)";
+"terminal.theme.midnight" = "Północ (ciemny)";
+"terminal.theme.paper" = "Papier (jasny)";
+"terminal.theme.imported" = "Zaimportowany motyw";
 "settings.terminal.target.header" = "Terminal zewnętrzny";
 "settings.terminal.target" = "Otwieraj sesje w";
 "settings.terminal.target.builtIn" = "Wbudowany terminal";

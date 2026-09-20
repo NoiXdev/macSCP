@@ -70,6 +70,17 @@
 "terminal.type.xterm-256color" = "xterm-256color (256 Farben)";
 "terminal.type.xterm" = "xterm (8 Farben)";
 "terminal.type.vt100" = "vt100 (keine Farben)";
+"settings.terminal.theme.header" = "Farben";
+"settings.terminal.theme" = "Farbschema";
+"settings.terminal.theme.import" = "iTerm2-Farben importieren…";
+"settings.terminal.theme.forget" = "Import entfernen";
+"settings.terminal.theme.footer" = "Ein Farbschema legt den Hintergrund, die Schrift, den Cursor und die sechzehn Farben fest, die Programme auf dem Server über ihre Nummer anfordern. Du kannst eine von iTerm2 exportierte Farbdatei importieren (eine Datei mit der Endung .itermcolors); macSCP behält die Farben, nicht die Datei. Es wird immer nur ein Import aufbewahrt.";
+"settings.terminal.theme.refused.title" = "Import fehlgeschlagen";
+"settings.terminal.theme.refused" = "Diese Datei ließ sich nicht als iTerm2-Farbdatei lesen. Exportiere das Farbschema in iTerm2 erneut und wähle die .itermcolors-Datei, die dabei entsteht.";
+"terminal.theme.macSCP" = "macSCP (dunkel)";
+"terminal.theme.midnight" = "Mitternacht (dunkel)";
+"terminal.theme.paper" = "Papier (hell)";
+"terminal.theme.imported" = "Importiertes Farbschema";
 "settings.terminal.target.header" = "Externes Terminal";
 "settings.terminal.target" = "Sitzungen öffnen in";
 "settings.terminal.target.builtIn" = "Eingebautes Terminal";

@@ -163,7 +163,11 @@ struct TerminalTypeWiringGuardTests {
     /// The keys a file looks up with `L10n.string(` and a string literal as
     /// its first argument — on the same line or the next — read off the
     /// source rather than typed here.
-    private static func lookedUpKeys(in source: String, prefix: String = "") -> Set<String> {
+    ///
+    /// Not `private`: `TerminalThemeWiringGuardTests` asks the same
+    /// question of the same file, and a second copy of this scanner would
+    /// be a second thing to keep in step.
+    static func lookedUpKeys(in source: String, prefix: String = "") -> Set<String> {
         var keys = Set<String>()
         var rest = Substring(source)
         while let open = rest.range(of: "L10n.string(") {

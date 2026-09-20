@@ -972,6 +972,22 @@ private struct OpenWithSettingsTab: View {
 private struct TerminalSettingsTab: View {
     @Bindable var store: SettingsStore
 
+    /// Drives the `.itermcolors` picker (plan of 2026-09-19, Task 3) —
+    /// same `.fileImporter` pattern as the default-editor picker.
+    @State private var themeImporterPresented = false
+    /// Set when an import was refused. ONE flag, not a message: every
+    /// refusal `ITermColorsImport` can return is shown as the same fixed
+    /// sentence, so nothing a picked file contains — not a parser message,
+    /// not a fragment of the file — can reach the screen through it.
+    @State private var themeImportRefused = false
+
+    /// The file type the picker offers. There is no registered type for
+    /// `.itermcolors`, so the system's dynamic type for that extension is
+    /// what filters the panel; `.propertyList` is the fallback, since that
+    /// is what such a file is.
+    private static let iTermColorsType: UTType =
+        UTType(filenameExtension: "itermcolors") ?? .propertyList
+
     /// One selectable fixed-pitch font family in the font popup.
     ///
     /// `family` is what's shown to the user; `fontName` is the RESOLVABLE
@@ -1102,6 +1118,55 @@ private struct TerminalSettingsTab: View {
                         "The name the server is told (TERM); it decides which features programs on the server use. The terminal itself does not change. Applies to the next shell that opens; a session can choose its own in its editor."))
                         .foregroundStyle(.secondary)
                 }
+
+                // Themes (plan of 2026-09-19, Task 3). One global choice —
+                // the shipped presets, plus the imported theme once one
+                // has been imported. The imported row appears only when
+                // there IS one: a row that selects nothing would resolve
+                // back to the default preset and read as a broken choice.
+                Section {
+                    Picker(
+                        L10n.string("settings.terminal.theme", "Theme"),
+                        selection: $store.terminalThemeChoice
+                    ) {
+                        ForEach(TerminalThemePreset.allCases, id: \.self) { preset in
+                            Text(TerminalThemeLabel.text(for: preset))
+                                .tag(TerminalThemeChoice.preset(preset))
+                        }
+                        if store.importedTerminalTheme != nil {
+                            Text(TerminalThemeLabel.importedText(
+                                name: store.importedTerminalThemeName))
+                                .tag(TerminalThemeChoice.imported)
+                        }
+                    }
+
+                    HStack {
+                        Button(L10n.string(
+                            "settings.terminal.theme.import", "Import iTerm2 Colors…")
+                        ) {
+                            themeImporterPresented = true
+                        }
+                        if store.importedTerminalTheme != nil {
+                            Spacer()
+                            Button(L10n.string(
+                                "settings.terminal.theme.forget", "Remove Import")
+                            ) {
+                                store.importedTerminalTheme = nil
+                                store.importedTerminalThemeName = nil
+                                if store.terminalThemeChoice == .imported {
+                                    store.terminalThemeChoice = .default
+                                }
+                            }
+                        }
+                    }
+                } header: {
+                    Text(L10n.string("settings.terminal.theme.header", "Colors"))
+                } footer: {
+                    Text(L10n.string(
+                        "settings.terminal.theme.footer",
+                        "A theme sets the background, the text, the cursor and the sixteen colors programs on the server ask for by number. You can import a color file exported by iTerm2 (a file ending in .itermcolors); macSCP keeps the colors, not the file. Only one import is kept at a time."))
+                        .foregroundStyle(.secondary)
+                }
             }
             .formStyle(.grouped)
 
@@ -1110,16 +1175,76 @@ private struct TerminalSettingsTab: View {
             // on the same colors the real terminal uses. Kept outside the
             // Form/Section grid (it isn't a label/control row) but aligned
             // to the same horizontal inset as the grouped sections above.
-            Text(verbatim: "deploy@web-01:~ $ ls -la")
-                .font(previewFont)
-                .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: DesignTokens.terminalBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .padding(.horizontal)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verbatim: "deploy@web-01:~ $ ls -la")
+                    .font(previewFont)
+                    .foregroundStyle(previewTheme.foreground.swiftUIColor)
+                // The sixteen ANSI colours as swatches, in ANSI order —
+                // the half of a theme the line above cannot show, and the
+                // half an imported file mostly consists of.
+                HStack(spacing: 3) {
+                    ForEach(Array(previewTheme.ansi.enumerated()), id: \.offset) { _, color in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(color.swiftUIColor)
+                            .frame(width: 14, height: 10)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(previewTheme.background.swiftUIColor)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal)
         }
         .padding(.vertical)
+        .fileImporter(
+            isPresented: $themeImporterPresented,
+            allowedContentTypes: [Self.iTermColorsType]
+        ) { result in
+            guard case .success(let url) = result else { return }
+            importTheme(from: url)
+        }
+        .alert(
+            L10n.string("settings.terminal.theme.refused.title", "Import failed"),
+            isPresented: $themeImportRefused
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            // ONE sentence for every refusal. `ITermColorsImport.Refusal`
+            // distinguishes five, but which one it was is a fact about a
+            // file macSCP did not write, and the remedy is the same for
+            // all five.
+            Text(L10n.string(
+                "settings.terminal.theme.refused",
+                "That file could not be read as an iTerm2 color file. Export the theme from iTerm2 again and pick the .itermcolors file it writes."))
+        }
+    }
+
+    /// The theme the preview above paints itself with: exactly what the
+    /// terminal resolves, so a choice shows here before a shell is open.
+    private var previewTheme: TerminalTheme {
+        store.resolvedTerminalTheme
+    }
+
+    /// Reads a picked `.itermcolors` file, stores the colours it carries
+    /// and selects them. On any refusal nothing is stored, nothing is
+    /// selected, and the alert above goes up.
+    ///
+    /// The name is taken from the FILE's name, never from its contents —
+    /// a picked file cannot choose what macSCP calls it in a picker.
+    private func importTheme(from url: URL) {
+        // The picked file may sit outside this app's container — the same
+        // access dance `ContentView.handleImportFileSelection` documents.
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        guard let theme = try? ITermColorsImport.theme(contentsOf: url) else {
+            themeImportRefused = true
+            return
+        }
+        store.importedTerminalTheme = theme
+        store.importedTerminalThemeName = ITermColorsImport.themeName(
+            forFileNamed: url.lastPathComponent)
+        store.terminalThemeChoice = .imported
     }
 }
 

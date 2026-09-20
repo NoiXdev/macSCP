@@ -70,6 +70,9 @@ public final class SettingsStore {
         static let terminalCopyOnSelect = "terminalCopyOnSelect"
         static let terminalPasteOnRightClick = "terminalPasteOnRightClick"
         static let terminalType = "terminalType"
+        static let terminalTheme = "terminalTheme"
+        static let terminalImportedTheme = "terminalImportedTheme"
+        static let terminalImportedThemeName = "terminalImportedThemeName"
         static let notificationsEnabled = "notificationsEnabled"
         static let updateCheckEnabled = "updateCheckEnabled"
         static let lastUpdateCheck = "lastUpdateCheck"
@@ -343,6 +346,64 @@ public final class SettingsStore {
             raw[Keys.terminalType] = .string(newValue.rawValue)
             persist()
         }
+    }
+
+    /// Which theme the terminal is painted with (plan of 2026-09-19, "The
+    /// answered wishes", Task 3): one of the shipped presets, or the
+    /// imported one. GLOBAL — there is no per-session override, decided in
+    /// the task brief.
+    ///
+    /// A raw value this build does not know — a later build's preset, or a
+    /// hand edit — reads as `TerminalThemeChoice.default`, the look the
+    /// terminal has always had, rather than propagating `nil`. Same shape
+    /// as `terminalType` above.
+    public var terminalThemeChoice: TerminalThemeChoice {
+        get {
+            guard case .string(let value)? = raw[Keys.terminalTheme] else {
+                return TerminalThemeChoice.default
+            }
+            return TerminalThemeChoice(rawValue: value) ?? .default
+        }
+        set {
+            raw[Keys.terminalTheme] = .string(newValue.rawValue)
+            persist()
+        }
+    }
+
+    /// The theme read out of the `.itermcolors` file the user last
+    /// imported, or `nil` when none has been. Stored as colours, in this
+    /// same `settings.json` — an imported theme is a handful of hex values,
+    /// not a file worth keeping a copy of, and keeping it here means it
+    /// travels with the rest of the settings.
+    ///
+    /// Storing a theme does not select it; `terminalThemeChoice` does that.
+    /// Assigning `nil` forgets the import.
+    public var importedTerminalTheme: TerminalTheme? {
+        get {
+            guard let value = raw[Keys.terminalImportedTheme] else { return nil }
+            return TerminalTheme(settingsValue: value)
+        }
+        set {
+            raw[Keys.terminalImportedTheme] = newValue?.settingsValue
+            persist()
+        }
+    }
+
+    /// What to call the imported theme — the name of the file it came from,
+    /// already stripped of its extension and of anything unprintable by
+    /// `ITermColorsImport.themeName(forFileNamed:)`. `nil` when the file's
+    /// name yielded nothing usable; the App then shows a translated word
+    /// instead. Persisted like `terminalFontName`.
+    public var importedTerminalThemeName: String? {
+        get { stringValue(for: Keys.terminalImportedThemeName) }
+        set { setString(newValue, for: Keys.terminalImportedThemeName) }
+    }
+
+    /// The theme the terminal is actually painted with, resolved from the
+    /// two properties above. The App reads THIS — no surface resolves the
+    /// choice itself, so there is one place the fallbacks live.
+    public var resolvedTerminalTheme: TerminalTheme {
+        TerminalTheme.resolved(choice: terminalThemeChoice, imported: importedTerminalTheme)
     }
 
     /// Whether macSCP posts a macOS notification when a connection is lost,

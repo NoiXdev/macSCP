@@ -1067,7 +1067,10 @@ extension ContentView {
                 onRunSnippet: { snippet, execute in triggerSnippet(snippet, execute: execute) }
             )
             ZStack {
-                Color(nsColor: DesignTokens.terminalBackground)
+                // The frame the terminal surface sits inset within, so it
+                // follows the chosen theme rather than staying deep sea
+                // around, say, a light one (plan of 2026-09-19, Task 3).
+                settingsStore.resolvedTerminalTheme.background.swiftUIColor
                 switch session.terminal.state {
                 case .running, .opening:
                     SSHTerminalView(
@@ -1097,7 +1100,11 @@ extension ContentView {
                     VStack(spacing: 8) {
                         Text(message ?? L10n.string("terminal.ended", "Shell ended."))
                             .font(.system(size: 12))
-                            .foregroundStyle(Color(nsColor: DesignTokens.terminalText))
+                            // On the frame above, so it follows the theme
+                            // with it — a fixed text colour here would go
+                            // invisible on a light theme's background.
+                            .foregroundStyle(
+                                settingsStore.resolvedTerminalTheme.foreground.swiftUIColor)
                         Button(L10n.string("terminal.reopen", "Reopen")) { session.terminal.openIfNeeded() }
                     }
                     // Already 14/8 before the rest of the panel was unified
