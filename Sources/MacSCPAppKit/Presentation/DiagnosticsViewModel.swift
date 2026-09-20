@@ -405,11 +405,25 @@ final class DiagnosticsViewModel: Identifiable {
     /// the header, so a partial paste cannot be read as a walk whose missing
     /// steps were measured and found absent.
     ///
-    /// `nil` before the first row, and for a session with no endpoint to
-    /// name. The second of those is about what a MID-RUN snapshot is worth,
-    /// not about a fabricated header: a walk with no endpoint stops at its
-    /// first row, so its only report is the one Core builds and publishes,
-    /// and there is nothing this branch could add to it.
+    /// `nil` before the first row, for a session with no endpoint to name,
+    /// and for a walk that measures no session at all. The second of those
+    /// is about what a MID-RUN snapshot is worth, not about a fabricated
+    /// header: a walk with no endpoint stops at its first row, so its only
+    /// report is the one Core builds and publishes, and there is nothing
+    /// this branch could add to it.
+    ///
+    /// The third is privacy, and it is gated on the WALKING scope rather
+    /// than on having an endpoint to print (final review, I-4). `.internet`
+    /// measures this Mac's link to a third party and touches neither the
+    /// user's server nor their jump host, so a header naming either would
+    /// "put somebody's server name into an issue about their broadband" —
+    /// `ConnectionDiagnostics.internetSpeedWalk`'s own words, and the
+    /// reason Core builds that walk's finished report with `endpoint: nil`.
+    /// Gating on `let endpoint` left a window between the one row landing
+    /// here and Core's report being published in which Copy pasted exactly
+    /// that. The same argument as the paragraph above applies to what is
+    /// lost: that walk publishes one row and returns, so its only report is
+    /// Core's.
     ///
     /// The fabrication that used to be the reason here is gone from the other
     /// end: Core's endpointless report carries no endpoint at all, and both
@@ -424,7 +438,7 @@ final class DiagnosticsViewModel: Identifiable {
     /// that were measured and found absent.
     var copyableReport: DiagnosticReport? {
         if let report { return report }
-        guard !steps.isEmpty, let endpoint else { return nil }
+        guard !steps.isEmpty, walkingScope.measuresTheSession, let endpoint else { return nil }
         return DiagnosticReport(
             endpoint: endpoint, jump: jumpEndpoint, steps: steps, appVersion: appVersion,
             completion: .running, scope: walkingScope)

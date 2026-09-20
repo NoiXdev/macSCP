@@ -324,6 +324,83 @@ struct DiagnosticsViewModelTests {
         await model.runTask?.value
     }
 
+    /// The server this case points its model at, and the jump in front of
+    /// it. NAMED CONSTANTS, never written into an expectation's expression:
+    /// `#expect` reports the source text of what it checks, so a host
+    /// spelled inside one reaches the failure output — the exit CLAUDE.md's
+    /// "A value a test must not leak has two exits, not one" is about. Both
+    /// Bools below are computed before their expectation, and no failure
+    /// message interpolates what was copied.
+    private static let unmeasuredHost = "unmeasured-server.invalid"
+    private static let unmeasuredPort = 2222
+    private static let unmeasuredJumpHost = "unmeasured-jump.invalid"
+    private static let unmeasuredJumpPort = 2022
+
+    /// A mid-run copy names the server only when the walk measured it.
+    ///
+    /// The defect (final review, I-4): the snapshot branch gated on `let
+    /// endpoint`, not on whether the WALK touches a session. So Copy during
+    /// an `.internet` run — which measures this Mac's link to a third party
+    /// and nothing else — pasted a header naming the user's `host:port` and
+    /// jump host over a measurement that touched neither. That is verbatim
+    /// what `ConnectionDiagnostics.internetSpeedWalk`'s own doc comment
+    /// forbids, and Core builds the finished report with `endpoint: nil` for
+    /// exactly this reason.
+    ///
+    /// Read while the runner is parked, so nothing has healed: the window is
+    /// between the row landing on the main actor and the report being
+    /// published, and the published report is Core's, which never carried
+    /// the host.
+    ///
+    /// The `.ping` arm is the POSITIVE beside the negative. Without it a
+    /// build that copied nothing at all, or spelled the host differently
+    /// from what the check looks for, would read as this rule holding. The
+    /// expectation is DERIVED from `scope.measuresTheSession` rather than
+    /// written per case, so a scope that changes sides changes this case
+    /// with it.
+    @Test(arguments: [
+        (DiagnosticScope.internet, DiagnosticStepID.internet),
+        (DiagnosticScope.ping, DiagnosticStepID.icmp),
+    ])
+    func aMidRunCopyNamesTheServerOnlyWhenTheWalkMeasuredIt(
+        scope: DiagnosticScope, stepID: String
+    ) async {
+        let emitted = [Self.step(id: stepID)]
+        let clipboard = Clipboard()
+        let model = DiagnosticsViewModel(
+            name: "Test session",
+            endpoint: Endpoint(host: Self.unmeasuredHost, port: Self.unmeasuredPort),
+            jumpEndpoint: Endpoint(host: Self.unmeasuredJumpHost, port: Self.unmeasuredJumpPort),
+            appVersion: "0.0.0-test",
+            runner: { _, observer in
+                for step in emitted { await observer.onStep(step) }
+                // A park the cancel below ends, not a deadline anything here
+                // asserts on.
+                try? await Task.sleep(for: .seconds(600))
+                return Self.report(emitted)
+            },
+            copy: { [clipboard] text in clipboard.write(text) })
+        model.scope = scope
+        model.run()
+        await Self.yieldUntil("the row arrives") { model.steps.count == emitted.count }
+
+        model.copyPlainText()
+        model.copyMarkdown()
+        let copied = clipboard.written.joined(separator: "\n")
+        let namesTheServer =
+            copied.contains(Self.unmeasuredHost) || copied.contains(Self.unmeasuredJumpHost)
+            || copied.contains(String(Self.unmeasuredPort))
+            || copied.contains(String(Self.unmeasuredJumpPort))
+        #expect(namesTheServer == scope.measuresTheSession, """
+            a mid-run copy of \(scope.rawValue) must name the session's server only when the \
+            walk measures it — a walk that measured this Mac's line must put no host and no \
+            port on the pasteboard
+            """)
+
+        model.cancel()
+        await model.runTask?.value
+    }
+
     // MARK: - Rows as they arrive
 
     /// The rows appear while the walk is still walking.
