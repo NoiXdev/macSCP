@@ -198,8 +198,11 @@ public enum LoginResolver {
     /// It used to be the other way round, and that was the defect: the
     /// fallback applied only to an EMPTY hop slot, so a stale value left in
     /// one went on winning over the key's real passphrase — and could not be
-    /// corrected, because the save guard beside it skipped the write
-    /// (`SessionSecretPolicy.echoesStoredManagedPassphrase`).
+    /// corrected, because the save guard beside it skipped every write into
+    /// the hop's slot whenever the managed key had a passphrase at all (then
+    /// `SessionSecretPolicy.usesStoredManagedPassphrase`; the guard now
+    /// compares against what a fill put in the field, and both it and the
+    /// probe it used are gone).
     ///
     /// `ManagedKeyPassphrase.resolve` is therefore asked with NOTHING typed,
     /// which is what makes the key win. That argument means a value a person

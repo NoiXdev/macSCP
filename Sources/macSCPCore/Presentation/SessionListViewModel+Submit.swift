@@ -142,7 +142,14 @@ extension SessionListViewModel {
             form.jumpUsername = resolved.login.username
             form.jumpAuthChoice = ConnectionViewModel.authChoice(for: resolved.login.authKind)
             form.jumpKeyPath = resolved.login.keyPath ?? ""
-            form.jumpPassword = resolved.login.secret ?? ""
+            // Through `fillJumpPassphrase`, as every jump fill is: the
+            // referenced session's login is managed-key-preferring
+            // (`resolvedJump(for:)`), so what lands here can be a key's own
+            // passphrase. A jump in this mode owns no slot, so nothing writes
+            // it today — but the save guard's invariant is that NO fill
+            // leaves an unremembered value in the field, and
+            // `JumpPassphraseFillGuardTests` holds the tree to it.
+            form.fillJumpPassphrase(resolved.login.secret ?? "")
             return nil
         } catch LoginResolveError.missingJumpSession {
             return .jumpSessionMissing

@@ -2023,6 +2023,13 @@ extension ContentView {
         let jumpSelectedLoginSetID: UUID?
         let jumpSourceMode: ConnectionViewModel.JumpSourceMode
         let jumpSessionID: UUID?
+        /// What a jump fill put in the passphrase field, carried beside the
+        /// field itself: `values` travels wholesale below, which bypasses
+        /// `jumpPassword`'s own setter, so the memory of the fill would
+        /// otherwise be lost while the value survived — and the next save
+        /// would copy a managed key's passphrase into the hop's own slot,
+        /// which the session export reads.
+        let filledJumpPassphrase: String?
 
         init(_ form: ConnectionViewModel) {
             kind = form.kind
@@ -2036,6 +2043,7 @@ extension ContentView {
             jumpSelectedLoginSetID = form.jumpSelectedLoginSetID
             jumpSourceMode = form.jumpSourceMode
             jumpSessionID = form.jumpSessionID
+            filledJumpPassphrase = form.filledJumpPassphrase
         }
 
         /// `kind` first: its `didSet` resets `values` to the backend's
@@ -2052,6 +2060,9 @@ extension ContentView {
             form.jumpSelectedLoginSetID = jumpSelectedLoginSetID
             form.jumpSourceMode = jumpSourceMode
             form.jumpSessionID = jumpSessionID
+            // After `values`, which carries the field this is about; the
+            // target refuses a memory its field does not match.
+            form.adoptFilledJumpPassphrase(filledJumpPassphrase)
             // An intent about a different submission — see
             // `saveAsSession(from:)`'s doc comment.
             form.saveAsNewLoginSet = false

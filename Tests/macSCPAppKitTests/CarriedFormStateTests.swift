@@ -23,6 +23,11 @@ import Testing
 @Suite("Carried form state")
 @MainActor
 struct CarriedFormStateTests {
+    /// Passphrases in named constants, compared into a `Bool` before any
+    /// expectation, so a failure message carries neither value nor spelling.
+    private static let filledPassphrase = "carried-fill-value"
+    private static let typedPassphrase = "carried-typed-value"
+
     private func makeForm() -> ConnectionViewModel {
         ConnectionViewModel(connector: { _, _ in
             fatalError("not exercised by these tests — nothing here dials")
@@ -47,6 +52,49 @@ struct CarriedFormStateTests {
         form.jumpUsername = "jump-tim"
         form.jumpPassword = "jump-geheim"
         return form
+    }
+
+    /// What a jump fill put in the passphrase field travels with the field
+    /// (re-review of fix round 1). `apply(to:)` writes `values` wholesale,
+    /// which bypasses `jumpPassword`'s own setter, so a carry that took the
+    /// field alone would hand the target a managed key's passphrase with
+    /// nothing saying a fill put it there — and the next save would write it
+    /// into the hop's own slot, which the session export reads.
+    @Test func theRememberedFillTravelsWithTheField() {
+        let source = makeRunningForm()
+        source.jumpAuthChoice = .privateKey
+        source.jumpKeyPath = "/keys/hop"
+        source.fillJumpPassphrase(Self.filledPassphrase)
+
+        let carried = ContentView.CarriedFormState(source)
+        let target = makeForm()
+        target.exitEditMode()
+        carried.apply(to: target)
+
+        let fieldTravelled = target.jumpPassword == Self.filledPassphrase
+        let memoryTravelled = target.filledJumpPassphrase == Self.filledPassphrase
+        #expect(fieldTravelled, "the filled passphrase did not survive the carry")
+        #expect(memoryTravelled, "the field survived the carry but the memory of the fill did not")
+    }
+
+    /// The other half: a value the user TYPED is not claimed as a fill by the
+    /// carry, so it is still saved for the hop.
+    @Test func aTypedJumpPassphraseIsNotClaimedAsAFillByTheCarry() {
+        let source = makeRunningForm()
+        source.jumpAuthChoice = .privateKey
+        source.jumpKeyPath = "/keys/hop"
+        source.fillJumpPassphrase(Self.filledPassphrase)
+        source.jumpPassword = Self.typedPassphrase
+
+        let carried = ContentView.CarriedFormState(source)
+        let target = makeForm()
+        target.exitEditMode()
+        carried.apply(to: target)
+
+        let fieldTravelled = target.jumpPassword == Self.typedPassphrase
+        let nothingIsClaimedAsAFill = target.filledJumpPassphrase == nil
+        #expect(fieldTravelled, "the typed passphrase did not survive the carry")
+        #expect(nothingIsClaimedAsAFill, "the carry read a typed passphrase as the fill's own")
     }
 
     /// The finding this type was written for: the hop survives the carry.

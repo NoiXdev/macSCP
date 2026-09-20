@@ -184,6 +184,20 @@ public final class SessionListViewModel {
     /// secret path, and the same holds for a `.webdav` session's password
     /// (M21, bug-fix round after Task 9).
     ///
+    /// `filledJumpPassphrase` is what a jump FILL put in the form's
+    /// passphrase field (`ConnectionViewModel.filledJumpPassphrase`), and a
+    /// `jumpSecret` equal to it is that fill's own echo: already stored under
+    /// the managed key's `key.id`, and not copied into the hop's slot as
+    /// well. It DEFAULTS TO NIL, which means "nothing filled the field, so
+    /// whatever is in it was typed" — the fail-open half of the rule, and
+    /// deliberately so: dropping what a person typed is unrecoverable, where
+    /// a copy that is never read is not (`LoginResolver
+    /// .preferringManagedKeyPassphrase` makes the key's own slot win). A
+    /// caller that has a form and omits it therefore writes a secret it
+    /// should not; both App call sites pass it (`ContentView
+    /// .persistFormAsSession`, the edit sheet's save in
+    /// `ContentView+Detail`).
+    ///
     /// `values` (M23/T7) replaces the flat host/port/username triple plus the
     /// per-protocol `s3:`/`webdav:` parameters: the backend's own adapter
     /// writes its own fields, so this method no longer needs to know that S3
@@ -278,6 +292,11 @@ public final class SessionListViewModel {
             // referenced session owns it. Enforcing that HERE, not only at the
             // call sites, keeps a future caller from silently copying the
             // resolved secret into this jump's otherwise unused slot.
+            //
+            // The last clause is the other half, and it is NOT enforced here:
+            // it can only compare what the caller hands over, and a caller
+            // that passes no `filledJumpPassphrase` gets a write. See the doc
+            // comment above for why that default is the safer way round.
             if let jump, jump.loginSetID == nil, jump.sessionID == nil,
                jump.authKind != .agent, let jumpSecret, !jumpSecret.isEmpty,
                jumpSecret != filledJumpPassphrase {
@@ -664,7 +683,9 @@ public final class SessionListViewModel {
     /// existing Keychain secret untouched; a non-empty value overwrites it.
     /// `jumpSecret` (M10c) is the same "unchanged when nil/empty" semantics
     /// for a MANUAL `updated.jump`'s own slot; slot hygiene for an orphaned
-    /// old jump secret runs the same as in `save`.
+    /// old jump secret runs the same as in `save`. `filledJumpPassphrase` is
+    /// that method's parameter with that method's meaning, including its
+    /// fail-open `nil` — see `save`'s doc comment.
     public func updateSession(
         _ updated: StoredSession, newSecret: String?, jumpSecret: String? = nil,
         filledJumpPassphrase: String? = nil

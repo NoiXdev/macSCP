@@ -420,6 +420,58 @@ struct JumpManagedKeyPassphraseTests {
         #expect(rememberedFillCleared, "the remembered fill outlived the auth kind it came from")
     }
 
+    /// The saved-connection fill (`resolveJumpSession`) goes through the same
+    /// door as the other three, so no fill leaves a managed key's passphrase
+    /// in the field with nothing remembering that it put it there. Nothing
+    /// reachable wrote it — a session-mode jump owns no slot — but the
+    /// invariant the save guard is argued from has to be true, not nearly
+    /// true.
+    @Test func theSavedConnectionFillIsRememberedLikeEveryOther() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.dir) }
+        let bastion = try #require(fixture.vm.save(
+            name: "bastion",
+            values: sshValues(
+                host: "bastion.invalid", username: "u", authKind: .privateKey,
+                keyPath: fixture.keyPath),
+            password: ""))
+
+        let form = makeForm()
+        form.jumpSourceMode = .session
+        form.jumpSessionID = bastion.id
+        #expect(fixture.vm.resolveJumpSession(form: form) == nil)
+        let theFillReachedTheField = form.jumpPassword == Self.managedPassphrase
+        let remembered = form.filledJumpPassphrase == Self.managedPassphrase
+        #expect(theFillReachedTheField, "the saved-connection fill did not reach the field")
+        #expect(remembered, "the saved-connection fill was not remembered")
+
+        // And its echo is refused exactly as every other fill's is, at a
+        // manual hop -- the shape that does own a slot.
+        let spec = hopSpec(keyPath: fixture.keyPath)
+        let saved = try #require(saveThroughHop(
+            fixture, spec, jumpSecret: form.jumpPassword, filled: form.filledJumpPassphrase))
+        let slotEmpty = try fixture.secrets.password(for: spec.secretID) == nil
+        let exportCarriesNothing = exportedJumpPassword(fixture.vm, saved) == nil
+        #expect(slotEmpty, "the saved-connection fill's echo was written into a hop's own slot")
+        #expect(exportCarriesNothing, "the export carried the saved-connection fill's value")
+    }
+
+    /// `adoptFilledJumpPassphrase` refuses a memory the field does not hold.
+    /// That is the one thing a carry between two forms can get wrong — it
+    /// copies `values` wholesale, so the field and the memory of it arrive by
+    /// different routes — and the reason it is not a plain assignment.
+    @Test func aRememberedFillIsRefusedWhenTheFieldDoesNotHoldIt() throws {
+        let form = makeForm()
+        form.jumpPassword = Self.typedCorrection
+        form.adoptFilledJumpPassphrase(Self.managedPassphrase)
+        let refused = form.filledJumpPassphrase == nil
+        #expect(refused, "a form claimed a fill its own field does not hold")
+
+        form.adoptFilledJumpPassphrase(Self.typedCorrection)
+        let accepted = form.filledJumpPassphrase == Self.typedCorrection
+        #expect(accepted, "a form refused a fill its own field does hold")
+    }
+
     /// Typing over what the fill put there ends the fill — the form-level
     /// half of the correction path, and the reason the save's comparison is
     /// enough. Any write to the field that is not the fill's own value drops

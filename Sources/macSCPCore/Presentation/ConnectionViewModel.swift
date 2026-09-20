@@ -469,13 +469,31 @@ public final class ConnectionViewModel {
 
     /// Fills the jump passphrase field from a resolution and remembers what
     /// was put there. Every jump fill in the App and in Core goes through
-    /// this, so the two halves cannot come apart.
+    /// this, so the two halves cannot come apart — a universal claim about
+    /// the rest of the tree, and therefore one a guard keeps true rather than
+    /// a comment: `JumpPassphraseFillGuardTests` refuses any write to a
+    /// form's `jumpPassword` outside this file that is not a clear.
     ///
     /// The field is written FIRST: its own setter ends any previous fill, and
     /// this one is recorded after it.
     public func fillJumpPassphrase(_ value: String) {
         jumpPassword = value
         filledJumpPassphrase = value.isEmpty ? nil : value
+    }
+
+    /// Takes over a remembered fill from another form, for a carry that
+    /// copies `values` wholesale and so bypasses `jumpPassword`'s own setter
+    /// (`ContentView.CarriedFormState.apply(to:)`).
+    ///
+    /// Refuses to claim anything the field does not actually hold: a stale
+    /// memory over a field holding something else would make the save skip a
+    /// value somebody typed. `nil`, empty, or a mismatch clears instead.
+    public func adoptFilledJumpPassphrase(_ value: String?) {
+        guard let value, !value.isEmpty, value == jumpPassword else {
+            filledJumpPassphrase = nil
+            return
+        }
+        filledJumpPassphrase = value
     }
 
     /// Drops a filled passphrase, and the field with it while the field still
