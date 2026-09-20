@@ -1273,6 +1273,7 @@
 "diagnostics.reason.internetSpeedOff" = "Test szybkości internetu jest wyłączony w Ustawieniach, więc nic nie zostało wysłane.";
 "diagnostics.reason.internetSpeedTooSlow" = "Usługa testu szybkości nie zakończyła się w limicie czasu tego kroku.";
 "diagnostics.reason.internetSpeedNoBytes" = "Usługa testu szybkości nie wysłała żadnych danych.";
+"diagnostics.reason.internetSpeedRedirectRefused" = "Usługa testu szybkości próbowała przekierować żądanie na inny serwer. Nic tam nie wysłano — szczegóły podają oba adresy.";
 "diagnostics.internet.notice" = "Mierzy połączenie internetowe tego Maca względem %1$@: pobiera %2$@ i wysyła %3$@ wygenerowanych danych. Nic o tym połączeniu nie jest wysyłane — żaden serwer, nazwa użytkownika ani hasło. Usługę wybiera się w Ustawieniach w sekcji Transfery.";
 "diagnostics.internet.notice.off" = "Test szybkości internetu jest wyłączony w Ustawieniach w sekcji Transfery.";
 

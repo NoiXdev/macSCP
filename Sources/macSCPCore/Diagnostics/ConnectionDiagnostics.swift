@@ -366,13 +366,18 @@ public actor ConnectionDiagnostics {
     /// are not about the resolve or the throughput test keep the walk they
     /// always had.
     ///
-    /// `internetSpeed` is the one default that is NOT the shipping value:
-    /// it defaults to `.off`, where the public initializer requires the
-    /// service to be named. A test that reaches `.internet` without saying
-    /// which service would otherwise send two real requests to Cloudflare
-    /// from the suite, and `DiagnosticScope.allCases` is iterated by four
-    /// cases in this target alone. Off is the only default here that cannot
-    /// leave this process.
+    /// **Two parameters here are about not reaching the network from the
+    /// suite, and they are deliberately asymmetric.** `internetSpeed`
+    /// defaults to `.off`, where the public initializer requires the
+    /// service to be named: a test that reaches `.internet` without saying
+    /// which service would otherwise send two real requests to Cloudflare,
+    /// and `DiagnosticScope.allCases` is iterated by four cases in this
+    /// target alone. `internetSpeedTransport` has NO default at all —
+    /// `.live` was one until the review of 2026-09-20, which is one-sided:
+    /// a caller that names a service and forgets the transport reaches the
+    /// network by omission, and omission is exactly what a default invites.
+    /// Required, that cannot be written. The public initializer above is
+    /// the one place `.live` is named.
     init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -385,7 +390,7 @@ public actor ConnectionDiagnostics {
         throughputOpener: DiagnosticThroughputOpener = .live,
         internetSpeed: DiagnosticInternetSpeedSettings = DiagnosticInternetSpeedSettings(
             service: .off),
-        internetSpeedTransport: InternetSpeedTransport = .live,
+        internetSpeedTransport: InternetSpeedTransport,
         internetSpeedClock: @escaping @Sendable () -> ContinuousClock.Instant = {
             ContinuousClock().now
         },

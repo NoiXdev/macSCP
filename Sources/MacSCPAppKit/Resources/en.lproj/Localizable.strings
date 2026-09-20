@@ -1270,6 +1270,7 @@
 "diagnostics.reason.internetSpeedOff" = "The internet speed test is switched off in Settings, so nothing was sent.";
 "diagnostics.reason.internetSpeedTooSlow" = "The speed test service did not finish inside this step’s time limit.";
 "diagnostics.reason.internetSpeedNoBytes" = "The speed test service sent no data.";
+"diagnostics.reason.internetSpeedRedirectRefused" = "The speed test service tried to send the request to another server. Nothing was sent there — the details name both.";
 "diagnostics.internet.notice" = "Measures this Mac’s internet connection against %1$@: downloads %2$@ and uploads %3$@ of generated data. Nothing about this connection is sent — no server, no user name, no password. The service is chosen under Transfers in Settings.";
 "diagnostics.internet.notice.off" = "The internet speed test is switched off under Transfers in Settings.";
 

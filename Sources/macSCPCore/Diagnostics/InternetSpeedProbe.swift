@@ -188,7 +188,8 @@ struct InternetSpeedTransport: Sendable {
     /// for an upload.
     var perform: @Sendable (URLRequest) async throws -> Int
 
-    /// The live one: an EPHEMERAL `URLSession` per request.
+    /// The live one: an EPHEMERAL `URLSession` per request, with a
+    /// redirect delegate.
     ///
     /// Ephemeral for what it does not have. It shares no cookie jar, no
     /// credential storage and no cache with anything else in the process,
@@ -197,6 +198,23 @@ struct InternetSpeedTransport: Sendable {
     /// served out of a cache and reported as a transfer that never
     /// happened — which Apple's download URL invites, since it answers
     /// `Cache-Control: max-age=86400` (measured 2026-09-20).
+    ///
+    /// **The delegate is what keeps the closed set closed.** Without one,
+    /// Foundation follows redirects — measured for the S3 path on
+    /// 2026-08-28 and written down as `S3RedirectDecision`. A 30x from the
+    /// service, or from anything that can answer for it, would then send
+    /// the next request — and on a 307 or 308 the upload body with it — to
+    /// a host that response chose, including an `http://` downgrade or a
+    /// private address. The whole argument of `InternetSpeedService` is
+    /// that one property decides where a request goes; without this
+    /// delegate, the far end decides instead.
+    ///
+    /// The refusal is read BEFORE the status, because refusing a redirect
+    /// is not an error at the `URLSession` level: the 3xx is handed back as
+    /// if it were the answer, and would otherwise be reported as a plain
+    /// "HTTP 307" with nothing saying a redirect was declined. Same
+    /// arrangement, and the same reason, as
+    /// `S3RedirectSessionDelegate.lastRefusedRedirect`.
     static let live = InternetSpeedTransport { request in
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieAcceptPolicy = .never
@@ -205,16 +223,20 @@ struct InternetSpeedTransport: Sendable {
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         let session = URLSession(configuration: configuration)
         defer { session.finishTasksAndInvalidate() }
+        let redirects = InternetSpeedRedirectDelegate()
         if let body = request.httpBody {
             // `upload(for:from:)` wants the body OFF the request, and
             // rejects one that carries both.
             var post = request
             post.httpBody = nil
-            let (_, response) = try await session.upload(for: post, from: body)
+            let (_, response) = try await session.upload(
+                for: post, from: body, delegate: redirects)
+            try redirects.throwIfRefused()
             try check(response)
             return body.count
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: redirects)
+        try redirects.throwIfRefused()
         try check(response)
         return data.count
     }
@@ -235,11 +257,76 @@ struct InternetSpeedTransport: Sendable {
 /// project's own and carries the status the service sent.
 enum InternetSpeedRefusal: Error, Equatable, LocalizedError {
     case status(Int)
+    /// The service answered a redirect pointing away from its own origin,
+    /// and nothing was sent there. Both origins travel with the case, as
+    /// text, for `S3RedirectDecision.refuse`'s reason: a reader told only
+    /// "it did not work" cannot tell that the service tried to send their
+    /// upload somewhere else, and that is the fact worth having.
+    case redirect(from: String, to: String)
 
     var errorDescription: String? {
         switch self {
         case .status(let code): return "the service answered HTTP \(code)"
+        case .redirect(let from, let to): return "a redirect from \(from) to \(to) was refused"
         }
+    }
+}
+
+/// The internet speed test's answer to "the service wants to send this
+/// request somewhere else": it asks `S3RedirectDecision` and carries out
+/// the answer.
+///
+/// **The rule is reused, not rewritten.** `S3RedirectDecision.decide` is
+/// the measurement this repository already made (2026-08-28) and the only
+/// place origin comparison is spelled: same scheme, host and port by
+/// RFC 6454, with `https` → `http` counting as foreign, and a failure to
+/// read either side counting as foreign too. A second copy of that rule
+/// here would be a second thing to keep in step, and this project's rule
+/// about second copies applies to policies as much as to comments. What is
+/// NOT reused is the carrying-out: S3 re-signs a same-origin hop because
+/// Foundation strips its `Authorization`; this step signs nothing and
+/// carries nothing, so Foundation's own proposed request is followed as it
+/// stands.
+///
+/// `@unchecked Sendable` for `S3RedirectSessionDelegate`'s reason: the one
+/// piece of mutable state is a recorded refusal behind an `NSLock`.
+final class InternetSpeedRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var refusal: InternetSpeedRefusal?
+
+    /// Throws the first refused redirect, if there was one. Sticky and
+    /// first-wins: the first refusal is what explains any that follow.
+    func throwIfRefused() throws {
+        let refusal = lock.withLock { self.refusal }
+        if let refusal { throw refusal }
+    }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        // The origin being LEFT is the one that answered, not the one first
+        // asked, so a chain of same-origin hops is judged hop by hop —
+        // `S3RedirectSessionDelegate` reads it the same way.
+        let current = response.url ?? task.currentRequest?.url ?? task.originalRequest?.url
+        guard let current, let target = request.url else {
+            record(.redirect(from: "an unreadable origin", to: "an unreadable target"))
+            completionHandler(nil)
+            return
+        }
+        guard case .refuse(let from, let to) = S3RedirectDecision.decide(from: current, to: target)
+        else {
+            completionHandler(request)
+            return
+        }
+        record(.redirect(from: from, to: to))
+        completionHandler(nil)
+    }
+
+    private func record(_ refusal: InternetSpeedRefusal) {
+        lock.withLock { if self.refusal == nil { self.refusal = refusal } }
     }
 }
 
@@ -255,12 +342,25 @@ enum InternetSpeedRefusal: Error, Equatable, LocalizedError {
 /// a session's field values into a request.
 ///
 /// **What a request carries**, stated here and printed in every row
-/// (`carriesNothing`): a method, one of the two URLs `InternetSpeedEndpoints`
-/// spells, `Accept-Encoding: identity` so the bytes counted are the bytes
-/// that crossed, and — for the upload — a body of pseudorandom bytes from
-/// `ThroughputPattern`. No cookie, no `Authorization`, no user agent of our
-/// own, no referrer, no host name of the user's, no session id, no path.
-/// `theRequestCarriesNothingOfTheSession` holds the whole request to that.
+/// (`carriesNothing`). What THIS code sets: a method, one of the two URLs
+/// `InternetSpeedEndpoints` spells, `Accept-Encoding: identity` so the
+/// bytes counted are the bytes that crossed, and — for the upload — a
+/// `Content-Type` and a body of pseudorandom bytes from
+/// `ThroughputPattern`. No cookie, no `Authorization`, no referrer, no host
+/// name of the user's, no session id, no path.
+/// `InternetSpeedProbeTests.theRequestsCarryNothingOfTheSession` holds the
+/// `URLRequest`'s whole header dictionary to that, by equality.
+///
+/// **`URLSession` adds its own on the way out**, which that case cannot
+/// see. Measured on the wire 2026-09-20 (macOS 25.6.0, CFNetwork
+/// 3860.700.1): `Host`, `Cache-Control: no-cache` from this step's cache
+/// policy, `Accept: */*`, a `User-Agent` of the process name plus the
+/// CFNetwork and Darwin versions, `Accept-Language` carrying the viewer's
+/// preferred languages, and `Connection: keep-alive`. None of it is session
+/// data; `Accept-Language` is the one item that is about the PERSON rather
+/// than the request, and it is the same header every web page they open
+/// receives. `InternetSpeedLiveTransportTests
+/// .theHeadOnTheWireCarriesOursAndNoCredential` is the case one layer down.
 ///
 /// **Reported, never judged**, like the throughput step: a rate is a number
 /// in a row. Nothing here decides that a line is fast enough.
@@ -273,6 +373,10 @@ enum InternetSpeedProbe {
     /// The sentence every row prints about its own requests. A constant
     /// because the panel and the report both show it and neither may
     /// paraphrase it.
+    ///
+    /// It says what this app puts in a request, which is what a reader is
+    /// asking about; `URLSession`'s own additions are listed in this type's
+    /// doc comment and carry nothing of the session either.
     static let carriesNothing =
         "the requests carry no session, host, user name, credential or cookie"
 
@@ -300,9 +404,10 @@ enum InternetSpeedProbe {
             return timer.finish(.unavailable(DiagnosticReason.internetSpeedOff), "")
         }
 
-        let download = downloadRequest(endpoints, bytes: settings.downloadBytes)
+        let download = downloadRequest(
+            endpoints, bytes: settings.downloadBytes, timeout: settings.legTimeout)
         let body = ThroughputPattern.bytes(seed: seed, offset: 0, count: settings.uploadBytes)
-        let upload = uploadRequest(endpoints, body: body)
+        let upload = uploadRequest(endpoints, body: body, timeout: settings.legTimeout)
 
         var parts = [
             "\(settings.service.rawValue); \(endpoints.host); "
@@ -310,12 +415,15 @@ enum InternetSpeedProbe {
         ]
         var legs: [Leg] = []
         var refusal: String?
+        var notes: [String] = []
 
         switch await run(
             DiagnosticInternetSpeedColumn.down, download, transport, settings.legTimeout, now)
         {
         case .measured(let leg): legs.append(leg)
-        case .refused(let reason): refusal = reason
+        case .refused(let reason, let note):
+            refusal = reason
+            if let note { notes.append(note) }
         }
         // Stops at the first leg that did not finish. A service that
         // refused the download will refuse the upload, and asking anyway
@@ -326,11 +434,14 @@ enum InternetSpeedProbe {
                 DiagnosticInternetSpeedColumn.up, upload, transport, settings.legTimeout, now)
             {
             case .measured(let leg): legs.append(leg)
-            case .refused(let reason): refusal = reason
+            case .refused(let reason, let note):
+                refusal = reason
+                if let note { notes.append(note) }
             }
         }
         if let refusal {
             parts.append(refusal)
+            parts.append(contentsOf: notes)
         }
         return timer.finish(
             refusal.map(DiagnosticOutcome.unavailable) ?? .ok,
@@ -347,21 +458,29 @@ enum InternetSpeedProbe {
     }
 
     /// How one leg ended: measured, or refused with the sentence the row
-    /// reports. Not `Result`, because the failure side is a REASON — a
-    /// sentence a reader is shown — and `Result`'s failure side must be an
-    /// `Error`, which would mean wrapping a sentence in a type nothing
-    /// throws and nothing catches.
+    /// reports and, where there is more to say than the sentence carries,
+    /// a note for the detail line. Not `Result`, because the failure side
+    /// is a REASON — a sentence a reader is shown — and `Result`'s failure
+    /// side must be an `Error`, which would mean wrapping a sentence in a
+    /// type nothing throws and nothing catches.
     enum LegOutcome: Sendable {
         case measured(Leg)
-        case refused(String)
+        case refused(String, note: String?)
     }
 
-    /// What one bounded request answered: the byte count, or the
-    /// transport's sentence. Carried out of `DetachedProbe.run`, so
-    /// `Sendable`.
+    /// What one bounded request answered: the byte count, the transport's
+    /// sentence, or a redirect this step refused. Carried out of
+    /// `DetachedProbe.run`, so `Sendable`.
+    ///
+    /// The redirect is its own case rather than another sentence: it is the
+    /// one transport failure with a FIXED reason (the panel renders it in
+    /// the reader's language) and a variable note (the two origins), and
+    /// collapsing it into `failed` would make the row say "the download leg
+    /// failed: …" about a refusal this app made on purpose.
     private enum Answer: Sendable {
         case bytes(Int)
         case failed(String)
+        case redirectRefused(from: String, to: String)
     }
 
     /// One leg, bounded.
@@ -379,6 +498,8 @@ enum InternetSpeedProbe {
         let answer = await DetachedProbe.run(timeout: timeout) { () -> Answer in
             do {
                 return .bytes(try await transport.perform(request))
+            } catch InternetSpeedRefusal.redirect(let from, let to) {
+                return .redirectRefused(from: from, to: to)
             } catch {
                 return .failed(DialSupport.reason(for: error))
             }
@@ -389,11 +510,18 @@ enum InternetSpeedProbe {
             // The deadline, or the user's Cancel. The walk drops the row on
             // a cancel (`ConnectionDiagnostics`), so what this sentence
             // reaches a reader as is the deadline.
-            return .refused(DiagnosticReason.internetSpeedTooSlow)
+            return .refused(DiagnosticReason.internetSpeedTooSlow, note: nil)
+        case .redirectRefused(let from, let to)?:
+            return .refused(
+                DiagnosticReason.internetSpeedRedirectRefused,
+                note: "the \(direction) leg was redirected: \(from) → \(to)")
         case .failed(let reason)?:
-            return .refused(DiagnosticReason.internetSpeedLegFailed(direction, reason))
+            return .refused(
+                DiagnosticReason.internetSpeedLegFailed(direction, reason), note: nil)
         case .bytes(let bytes)?:
-            guard bytes > 0 else { return .refused(DiagnosticReason.internetSpeedNoBytes) }
+            guard bytes > 0 else {
+                return .refused(DiagnosticReason.internetSpeedNoBytes, note: nil)
+            }
             return .measured(Leg(direction: direction, bytes: bytes, duration: elapsed))
         }
     }

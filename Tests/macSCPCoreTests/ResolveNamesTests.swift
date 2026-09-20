@@ -519,7 +519,8 @@ struct ResolveNamesTests {
             jumpDialer: DiagnosticJumpDialer(
                 connectJump: { _, _ in throw RemoteFSError.protocolError(reason: "unused") },
                 dialTarget: { _, _ in throw RemoteFSError.protocolError(reason: "unused") }),
-            lookups: lookups, stepTimeout: stepTimeout, appVersion: "test"
+            lookups: lookups, internetSpeedTransport: .neverAsked,
+            stepTimeout: stepTimeout, appVersion: "test"
         ).run(scope: .dial)
     }
 

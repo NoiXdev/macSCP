@@ -233,6 +233,7 @@ struct ConnectionDiagnosticsJumpRigTests {
                 login: .init(username: "testuser", authKind: .password, keyPath: nil),
                 secret: { RigSecretSource.password }),
             jumpDialer: .live(knownHosts: knownHosts),
+            internetSpeedTransport: .neverAsked,
             stepTimeout: stepTimeout, appVersion: "test")
     }
 }

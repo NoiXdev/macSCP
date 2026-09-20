@@ -609,7 +609,8 @@ struct ThroughputProbeTests {
             jump: jump, jumpDialer: JumpDialerThatIsNeverCalled.dialer,
             lookups: ResolveLookups(reverse: { _, _ in nil }, forward: { _, _, _ in nil }),
             throughput: throughput,
-            throughputOpener: opener.opener, appVersion: "test")
+            throughputOpener: opener.opener, internetSpeedTransport: .neverAsked,
+            appVersion: "test")
     }
 }
 

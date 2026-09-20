@@ -1274,6 +1274,7 @@
 "diagnostics.reason.internetSpeedOff" = "Le test de vitesse Internet est désactivé dans les Réglages ; rien n’a été envoyé.";
 "diagnostics.reason.internetSpeedTooSlow" = "Le service de test de vitesse n’a pas terminé dans le délai de cette étape.";
 "diagnostics.reason.internetSpeedNoBytes" = "Le service de test de vitesse n’a envoyé aucune donnée.";
+"diagnostics.reason.internetSpeedRedirectRefused" = "Le service de test de vitesse a voulu rediriger la requête vers un autre serveur. Rien ne lui a été envoyé — les détails nomment les deux.";
 "diagnostics.internet.notice" = "Mesure la connexion Internet de ce Mac face à %1$@ : télécharge %2$@ et envoie %3$@ de données générées. Rien de cette connexion n’est envoyé — ni serveur, ni nom d’utilisateur, ni mot de passe. Le service se choisit sous Transferts dans les Réglages.";
 "diagnostics.internet.notice.off" = "Le test de vitesse Internet est désactivé sous Transferts dans les Réglages.";
 

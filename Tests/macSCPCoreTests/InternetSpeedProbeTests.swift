@@ -83,8 +83,14 @@ struct InternetSpeedProbeTests {
 
     // MARK: - What a request carries
 
-    /// The whole of both requests, field by field: the method, the URL, every
-    /// header, and where the body came from.
+    /// Both `URLRequest`s, field by field: the method, the URL, every
+    /// header THIS code sets, and where the body came from.
+    ///
+    /// One layer, named: `URLSession` adds `Host`, `Accept`, `User-Agent`,
+    /// `Accept-Language`, `Cache-Control` and `Connection` of its own on
+    /// the way out, which a case holding the `URLRequest` cannot see.
+    /// `InternetSpeedLiveTransportTests.theHeadOnTheWireCarriesOursAndNoCredential`
+    /// is the case that reads the head a server really receives.
     ///
     /// The negative half — no credential, no host of the user's, no session —
     /// is asserted as an EQUALITY over the header dictionary rather than as a
@@ -118,6 +124,24 @@ struct InternetSpeedProbeTests {
         // throughput test writes to the user's own server, which is derived
         // from a number and carries no text at all.
         #expect(upload.body == ThroughputPattern.bytes(seed: 7, offset: 0, count: 500))
+    }
+
+    /// The leg's bound reaches the request layer. `URLRequest`'s own
+    /// timeout is not what bounds a leg — `DetachedProbe` is, and it bounds
+    /// a slow drip that Foundation's idle timeout would not — but a
+    /// settable field that silently does not reach the request is a field
+    /// whose value is a lie, and a request left running past the bound that
+    /// abandoned it is a request still holding a socket.
+    @Test func eachRequestCarriesTheLegsOwnBound() async throws {
+        let transport = RecordingTransport()
+
+        _ = await InternetSpeedProbe.measure(
+            settings: Self.settings(download: 1000, upload: 500, legTimeout: .seconds(7)),
+            transport: transport.transport, seed: 7, timer: Self.timer())
+
+        #expect(transport.sent.map(\.timeoutSeconds) == [7, 7], """
+            \(transport.sent.map(\.timeoutSeconds))
+            """)
     }
 
     /// Apple asks for its size with a range over a fixed body, not in the
@@ -229,6 +253,29 @@ struct InternetSpeedProbeTests {
         #expect(transport.sent.count == 1, "the upload ran after the download was abandoned")
     }
 
+    /// A refused redirect is its own reason, not the transport's sentence:
+    /// a fixed one, so the panel can render it in the reader's language,
+    /// and the two origins go into the detail beside the service that was
+    /// asked — so the row names WHO was asked and where they tried to send
+    /// it, which is the whole point of refusing loudly
+    /// (`S3RedirectDecision.refuse`).
+    @Test func aRefusedRedirectReadsUnavailableWithItsOwnReason() async throws {
+        let transport = RecordingTransport(answer: { _ in
+            throw InternetSpeedRefusal.redirect(
+                from: "https://speed.cloudflare.com:443", to: "http://10.0.0.1:80")
+        })
+
+        let step = await InternetSpeedProbe.measure(
+            settings: Self.settings(download: 1000, upload: 500),
+            transport: transport.transport, seed: 7, timer: Self.timer())
+
+        #expect(step.outcome == .unavailable(DiagnosticReason.internetSpeedRedirectRefused))
+        #expect(step.detail.contains("speed.cloudflare.com"), "\(step.detail)")
+        #expect(step.detail.contains("http://10.0.0.1:80"), "\(step.detail)")
+        #expect(step.detail.contains(InternetSpeedService.cloudflare.rawValue), "\(step.detail)")
+        #expect(transport.sent.count == 1, "the upload was asked after a refused redirect")
+    }
+
     /// A service that answers with nothing has no rate to report.
     @Test func aServiceThatSendsNoBytesReadsUnavailable() async throws {
         let transport = RecordingTransport(answer: { _ in 0 })
@@ -327,6 +374,70 @@ struct InternetSpeedProbeTests {
         #expect(transport.sent.isEmpty, "\(transport.sent.map(\.url))")
     }
 
+    // MARK: - Cancelling the walk
+
+    /// Cancelled BEFORE the step starts: no row, no announcement, and the
+    /// report says how far it got. Nothing of this step outlives it —
+    /// there is no file on anybody's server to name — so, unlike the
+    /// throughput row, there is no row a cancel keeps.
+    @Test func aWalkCancelledBeforeTheStepAnnouncesNothingAndMeasuresNothing() async throws {
+        let transport = RecordingTransport()
+        let diagnostics = Self.diagnostics(transport: transport, service: .cloudflare)
+        let starts = StepStarts()
+        let entered = AsyncSignal()
+        let parked = AsyncSignal()
+
+        let run = Task {
+            entered.signal()
+            // Returns `.cancelled` the moment the test cancels this task,
+            // so the walk below begins in an already-cancelled task —
+            // deterministically, rather than by racing `cancel()` against
+            // the walk's first line.
+            _ = await parked.wait()
+            return await diagnostics.run(scope: .internet, observer: starts.observer)
+        }
+        #expect(await entered.wait() == .signalled)
+        run.cancel()
+        let report = await run.value
+
+        #expect(report.steps.isEmpty)
+        #expect(report.completion == .cancelled(afterSteps: 0))
+        #expect(starts.announced.isEmpty, "\(starts.announced)")
+        #expect(transport.sent.isEmpty, "a cancelled walk sent a request anyway")
+    }
+
+    /// Cancelled while the step is in flight: the step is announced and
+    /// finishes — its own bound sees the cancellation — but the row is
+    /// never published, because a cut-short measurement must not be
+    /// reported as one.
+    ///
+    /// The transport PARKS on a latch nobody raises, so nothing here
+    /// finishes on its own while the cancellation races it.
+    @Test func aWalkCancelledDuringTheStepKeepsNoRow() async throws {
+        let reached = AsyncSignal()
+        let parked = AsyncSignal()
+        let transport = RecordingTransport(answer: { _ in
+            reached.signal()
+            _ = await parked.wait()
+            return 0
+        })
+        let diagnostics = Self.diagnostics(transport: transport, service: .cloudflare)
+        let starts = StepStarts()
+
+        let run = Task { await diagnostics.run(scope: .internet, observer: starts.observer) }
+        #expect(await reached.wait() == .signalled)
+        run.cancel()
+        let report = await run.value
+
+        #expect(report.steps.isEmpty, "\(report.steps.map(\.id))")
+        #expect(report.completion == .cancelled(afterSteps: 0))
+        // The positive check beside those two: the step really was
+        // announced and really was reached, so the empty list above is a
+        // dropped row and not a walk that never started.
+        #expect(starts.announced == [DiagnosticStepID.internet], "\(starts.announced)")
+        #expect(transport.sent.count == 1, "\(transport.sent.count)")
+    }
+
     /// The CLI's JSON gains a key and renames none: the internet table
     /// arrives under `internet`, built from the table's own column names.
     @Test func theCLIJSONCarriesTheTableUnderItsOwnKey() async throws {
@@ -382,6 +493,32 @@ struct InternetSpeedProbeTests {
     }
 }
 
+/// The step ids a walk announced, in order.
+final class StepStarts: Sendable {
+    private let ids = Mutex<[String]>([])
+
+    var announced: [String] { ids.withLock { $0 } }
+
+    var observer: DiagnosticRunObserver {
+        DiagnosticRunObserver(onStepStarted: { [self] id, _ in ids.withLock { $0.append(id) } })
+    }
+}
+
+extension InternetSpeedTransport {
+    /// The transport for a suite that runs no `.internet` scope.
+    ///
+    /// `ConnectionDiagnostics`'s internal initializer requires a transport
+    /// with no default, so that a caller cannot reach `.live` by omission
+    /// (that initializer's doc comment says why). What such a caller means
+    /// is "nothing asks this", and this value SAYS so: it records an issue
+    /// before it throws, so a suite that starts asking finds out loudly
+    /// rather than reading a refusal as an ordinary failure.
+    static let neverAsked = InternetSpeedTransport { _ in
+        Issue.record("a suite that runs no internet speed test reached its transport")
+        throw RemoteFSError.protocolError(reason: "no internet speed test in this suite")
+    }
+}
+
 /// What one request looked like, in fields — never the `URLRequest`, so a
 /// case can compare a whole header dictionary for equality and a value can
 /// be printed in a failure message without anything of a session in it.
@@ -390,12 +527,14 @@ struct SentSpeedRequest: Sendable, Equatable {
     let url: String
     let headers: [String: String]
     let body: Data?
+    let timeoutSeconds: TimeInterval
 
     init(_ request: URLRequest) {
         method = request.httpMethod ?? "GET"
         url = request.url?.absoluteString ?? ""
         headers = request.allHTTPHeaderFields ?? [:]
         body = request.httpBody
+        timeoutSeconds = request.timeoutInterval
     }
 }
 

@@ -118,6 +118,7 @@ struct ThroughputRigTests {
                     config: ssh, connectTimeout: .seconds(Int64(seconds)),
                     knownHosts: knownHosts, onUnknownHostKey: .refusing)
             },
+            internetSpeedTransport: .neverAsked,
             stepTimeout: .seconds(20), appVersion: "test")
     }
 

@@ -1271,6 +1271,7 @@
 "diagnostics.reason.internetSpeedOff" = "Der Internet-Geschwindigkeitstest ist in den Einstellungen ausgeschaltet, es wurde nichts gesendet.";
 "diagnostics.reason.internetSpeedTooSlow" = "Der Dienst wurde nicht innerhalb des Zeitlimits dieses Schritts fertig.";
 "diagnostics.reason.internetSpeedNoBytes" = "Der Dienst hat keine Daten gesendet.";
+"diagnostics.reason.internetSpeedRedirectRefused" = "Der Geschwindigkeitstest-Dienst wollte die Anfrage an einen anderen Server weiterleiten. Dorthin wurde nichts gesendet — die Details nennen beide.";
 "diagnostics.internet.notice" = "Misst die Internetverbindung dieses Macs gegen %1$@: lädt %2$@ herunter und %3$@ hoch, jeweils erzeugte Daten. Nichts über diese Verbindung wird gesendet — kein Server, kein Benutzername, kein Passwort. Den Dienst wählst du in den Einstellungen unter Übertragungen.";
 "diagnostics.internet.notice.off" = "Der Internet-Geschwindigkeitstest ist in den Einstellungen unter Übertragungen ausgeschaltet.";
 

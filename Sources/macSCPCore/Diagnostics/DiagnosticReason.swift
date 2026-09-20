@@ -123,10 +123,17 @@ public enum DiagnosticReason {
     /// upload at all — so the panel's sentence says "tries", and "by hand".
     static let throughputFileLeftBehind = "the test file may have been left on the server"
 
-    /// The internet speed test's service is `off` in Settings. Nothing was
-    /// sent: the guard that produces this sentence runs before a request is
-    /// built (`InternetSpeedProbe.measure`).
-    static let internetSpeedOff = "the internet speed test is switched off in settings"
+    /// The internet speed test's service is `off`. Nothing was sent: the
+    /// guard that produces this sentence runs before a request is built
+    /// (`InternetSpeedProbe.measure`).
+    ///
+    /// Says WHAT is true and not WHERE it was chosen, because the two
+    /// surfaces differ: in the app the service is a setting, on the command
+    /// line it is `--speed-service off`, and a sentence naming Settings
+    /// would be wrong on the surface that has none. The panel's own
+    /// catalogue entry does name Settings — it is only ever shown in the
+    /// app.
+    static let internetSpeedOff = "the internet speed test is switched off"
     /// One leg of the internet speed test did not finish inside its bound
     /// (`DiagnosticInternetSpeedSettings.defaultLegTimeout`). `unavailable`
     /// and never `failed`: a slow line to a free third-party service is not
@@ -137,6 +144,14 @@ public enum DiagnosticReason {
     /// an empty body, a proxy's interception page of zero length. There is
     /// no rate to compute from it.
     static let internetSpeedNoBytes = "the speed service sent no bytes"
+    /// The speed service answered a redirect pointing away from its own
+    /// origin, and nothing was sent there
+    /// (`InternetSpeedRedirectDelegate`). About the service and about this
+    /// step's own rule, not about the user's server — so `unavailable`,
+    /// like every other way this step declines to report a rate. The
+    /// detail names both origins.
+    static let internetSpeedRedirectRefused =
+        "the speed service tried to send the request to another server, and it was refused"
 
     /// One leg of the internet speed test failed, with whatever the
     /// transport said. Composed, like `traceHopUnreachable`, so it carries
@@ -296,6 +311,7 @@ public enum DiagnosticReason {
         internetSpeedOff: "diagnostics.reason.internetSpeedOff",
         internetSpeedTooSlow: "diagnostics.reason.internetSpeedTooSlow",
         internetSpeedNoBytes: "diagnostics.reason.internetSpeedNoBytes",
+        internetSpeedRedirectRefused: "diagnostics.reason.internetSpeedRedirectRefused",
         ICMPEcho.noIPv6RouteReason: "diagnostics.reason.noIPv6Route",
         NetworkTrace.ipv6UnmeasuredReason: "diagnostics.reason.ipv6TraceUnmeasured",
         NetworkTrace.notIPv4Reason: "diagnostics.reason.traceNeedsIPv4",

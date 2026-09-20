@@ -170,7 +170,8 @@ struct ConnectionDiagnosticsJumpTests {
 
         let report = await ConnectionDiagnostics(
             descriptor: Self.descriptor(dial: Self.okDial()), values: values, secrets: nil,
-            jump: nil, jumpDialer: rig.dialer, appVersion: "test"
+            jump: nil, jumpDialer: rig.dialer, internetSpeedTransport: .neverAsked,
+            appVersion: "test"
         ).run()
 
         #expect(report.steps.map(\.id) == [
@@ -350,6 +351,7 @@ struct ConnectionDiagnosticsJumpTests {
         let report = await ConnectionDiagnostics(
             descriptor: Self.descriptor(dial: nil), values: Self.targetValues(), secrets: nil,
             jump: Self.agentJump(port: 1), jumpDialer: JumpRig().dialer, lookups: lookups,
+            internetSpeedTransport: .neverAsked,
             // Roomy, not tight: the names get what the host lookup left of
             // this budget, and CI run 35455555028 (`231b549d`) read
             // `no answer` here with 30 s — the three-core runner's pool
@@ -638,6 +640,7 @@ struct ConnectionDiagnosticsJumpTests {
         let diagnostics = ConnectionDiagnostics(
             descriptor: Self.descriptor(dial: Self.okDial()), values: Self.targetValues(),
             secrets: nil, jump: Self.agentJump(port: listener.port), jumpDialer: rig.dialer,
+            internetSpeedTransport: .neverAsked,
             stepTimeout: stepBudget, traceTimeout: .seconds(50), appVersion: "test")
 
         let run = Task { await diagnostics.run(scope: .trace) }
@@ -887,6 +890,7 @@ struct ConnectionDiagnosticsJumpTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: Self.targetValues(), secrets: nil,
             jump: jump, jumpDialer: .live(knownHosts: KnownHostsStore(directory: directory)),
+            internetSpeedTransport: .neverAsked,
             // Roomy: the claim is that the refused dial's row carries no
             // secret, and a starved runner that let 10 s pass first would
             // read `timedOut` and fail the guard below for the wrong reason.
@@ -1208,6 +1212,7 @@ struct ConnectionDiagnosticsJumpTests {
             throughputOpener: RecordingOpener(
                 fileSystem: InMemoryThroughputFileSystem(home: "/home/testuser")
             ).opener,
+            internetSpeedTransport: .neverAsked,
             stepTimeout: stepTimeout, appVersion: "test")
     }
 

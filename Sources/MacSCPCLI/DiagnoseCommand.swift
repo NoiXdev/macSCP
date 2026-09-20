@@ -51,9 +51,10 @@ struct DiagnoseCommand: AsyncParsableCommand {
             the service named by --speed-service and reports the two rates. Name no \
             session and no --host with it — it has no target — and it \
             sends nothing about any session, login or host to that service. \
-            --speed-service off contacts nobody; the app's own setting is \
-            not read here, so a test switched off in the app is switched \
-            off here only when this flag says so.
+            --speed-service is REQUIRED with it and has no default: this \
+            binary reads no settings file, so a test switched off in the \
+            app cannot be switched off here by anything but naming it. \
+            --speed-service off contacts nobody.
             """)
 
     /// A byte count as whole mebibytes, for the help above — read off Core's
@@ -89,18 +90,29 @@ struct DiagnoseCommand: AsyncParsableCommand {
         help: "Size of the --scope throughput test file in MiB, 1 to 256. Defaults to 8.")
     var payloadMib: Int?
 
-    /// Which service `--scope internet` measures against. Optional for
-    /// `--payload-mib`'s reason — so `validate()` can tell "not given" from
-    /// "given with another scope" — and the default is the app's own
-    /// (`DiagnosticInternetSpeedSettings.defaultService`), applied in
-    /// `run()`.
+    /// Which service `--scope internet` measures against.
+    ///
+    /// Optional in the TYPE and required in `validate()`, which is not the
+    /// same thing as having a default: `--payload-mib` is optional so the
+    /// check can tell "not given" from "given with another scope", and this
+    /// needs both that and its own refusal for "not given with the scope
+    /// that needs it".
+    ///
+    /// **It has no default on purpose** (review of 2026-09-20, Minor 4).
+    /// This binary reads no settings file — the rule
+    /// `SettingsStore.defaultConnectTimeoutSeconds` states — so a user who
+    /// set the service to `off` in the app gets no such protection here.
+    /// Defaulting to Cloudflare would mean a privacy choice silently not
+    /// carrying across a surface; requiring the name means the person
+    /// running the command names the third party on the surface they are
+    /// using, and `off` is one of the names.
     ///
     /// A NAME, never a URL: the set is closed (`InternetSpeedService`), for
     /// the reason that type's doc comment gives.
     @Option(
         name: .long,
         help: """
-            Which service --scope internet measures against. Defaults to cloudflare.
+            Which service --scope internet measures against. Required with that scope.
             """)
     var speedService: InternetSpeedService?
 
@@ -156,13 +168,22 @@ struct DiagnoseCommand: AsyncParsableCommand {
         try validateSpeedOptions()
     }
 
-    /// The one option that describes `--scope internet`, refused beside any
-    /// other scope — `--payload-mib`'s rule, for the other speed test.
+    /// The one option that describes `--scope internet`: REQUIRED with
+    /// that scope and refused beside any other. `--payload-mib`'s rule for
+    /// the second half, and `speedService`'s own doc comment for the first.
     ///
     /// Called from BOTH arms of `validate()` above, because the internet
     /// arm returns before reaching the end of it.
     private func validateSpeedOptions() throws {
-        if speedService != nil, scope.measuresTheSession {
+        guard scope.measuresTheSession else {
+            guard speedService != nil else {
+                throw ValidationError(
+                    "--scope internet needs --speed-service: name the service to measure "
+                        + "against, or --speed-service off to contact nobody.")
+            }
+            return
+        }
+        if speedService != nil {
             throw ValidationError("--speed-service describes --scope internet.")
         }
     }
@@ -204,12 +225,12 @@ struct DiagnoseCommand: AsyncParsableCommand {
             payloadMiB: payloadMib ?? DiagnosticThroughputSettings.defaultPayloadMiB)
         // The service is a FLAG here and not the app's setting, for the
         // reason the bandwidth comment below gives: this binary reads no
-        // settings file. So a user who switched the test off in the app has
-        // to say `--speed-service off` on the command line too — stated in
-        // the docs, because a privacy choice that does not carry across is
-        // the kind of thing a user assumes did.
+        // settings file. `validate()` has already required the flag for
+        // `--scope internet`, so the fallback below is reached only by a
+        // scope that runs no internet step and therefore never asks — it is
+        // a shape the initializer needs, not a default anybody gets.
         let internetSpeed = DiagnosticInternetSpeedSettings(
-            service: speedService ?? DiagnosticInternetSpeedSettings.defaultService)
+            service: speedService ?? .off)
         // No bandwidth bucket: this binary paces no transfer — `put` and
         // `get` run unthrottled, and the app's limits live in a settings
         // file the command line does not read (`SettingsStore
