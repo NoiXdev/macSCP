@@ -147,6 +147,11 @@ struct TransferQueueViewModelTests {
         private var entityTags: [String: String]
         /// How often `entityTag` was asked, per path.
         private(set) var entityTagCallCounts: [String: Int] = [:]
+        /// Per-path failure injection for `entityTag`: an HTTP backend's
+        /// validator read is a request of its own, and a request can fail
+        /// where the `stat` before it did not. Empty by default, so every
+        /// pre-existing use answers out of `entityTags` as before.
+        private var entityTagFailures: [String: Error]
         /// The most recent NON-NIL `ifMatching` a read carried, per path. A
         /// read that carried no precondition leaves no entry, so "carried no
         /// precondition" is `readsWithPrecondition == 0` — an absent key on
@@ -175,10 +180,12 @@ struct TransferQueueViewModelTests {
             concurrency: ConcurrencyTracker? = nil,
             supportsAppendResume: Bool = true,
             entityTags: [String: String] = [:],
+            entityTagFailures: [String: Error] = [:],
             preWritten: [String: Data] = [:],
             statFailures: [String: Error] = [:]
         ) {
             self.entityTags = entityTags
+            self.entityTagFailures = entityTagFailures
             self.written = preWritten
             self.statFailures = statFailures
             self.reads = reads
@@ -215,6 +222,7 @@ struct TransferQueueViewModelTests {
 
         func entityTag(path: String) async throws -> String? {
             entityTagCallCounts[path, default: 0] += 1
+            if let failure = entityTagFailures[path] { throw failure }
             return entityTags[path]
         }
 
@@ -2310,6 +2318,60 @@ struct TransferQueueViewModelTests {
         await waitUntil { vm.items[0].status == .finished }
 
         #expect(await local3.lastIfMatching["/a.txt"] == "validator-after")
+        #expect(await local3.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await remote3.writeModes["/ziel/a.txt"] == .append)
+        #expect(await remote3.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
+    /// The other half of the re-read above: it can FAIL. The validator read
+    /// is a request of its own on both HTTP backends, so an attempt that
+    /// starts over can lose it to the same dropped connection that is about
+    /// to interrupt the transfer. A read that throws answers nothing — and
+    /// reporting "nothing" would replace a validator the queue had earned
+    /// with `nil`, leaving the attempt AFTER this one resuming at a non-zero
+    /// offset with no precondition at all: the splice this plan exists to
+    /// prevent.
+    @Test func aValidatorReReadThatFailsLeavesTheCarriedOneStanding() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: "validator-before")
+
+        // Retry 2: the partial file is gone (so the attempt starts over from
+        // zero and re-reads the validator), and that re-read throws. The
+        // object itself has NOT changed — the source still holds
+        // "validator-before" — so the carried value is still the true one.
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let local2 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full, started: started2, gate: gate2,
+                                    failWith: RemoteFSError.connectionFailed(reason: "lost again"))],
+            entityTags: ["/a.txt": "validator-before"],
+            entityTagFailures: ["/a.txt": RemoteFSError.connectionFailed(reason: "validator read lost")])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        try await started2.wait()
+        gate2.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+        // The positive beside the negatives: the re-read really was attempted,
+        // so what follows measures a re-read that FAILED and not one that was
+        // never made.
+        #expect(await local2.entityTagCallCounts["/a.txt"] == 1)
+        #expect(await local2.readsWithPrecondition == 0)
+        #expect(await local2.readOffsets["/a.txt"] == 0)
+
+        // Retry 3: a partial file exists again, and resuming into it is
+        // correct. It must still carry the validator retry 2 could not
+        // re-read — a resume with no precondition is what this refuses.
+        let local3 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-before"])
+        let remote3 = QueueTestFS(reads: ["/ziel/a.txt": .init(content: partial)])
+
+        vm.retryInterrupted(source: local3, destination: remote3)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await local3.readsWithPrecondition == 1)
+        #expect(await local3.lastIfMatching["/a.txt"] == "validator-before")
         #expect(await local3.readOffsets["/a.txt"] == UInt64(chunk))
         #expect(await remote3.writeModes["/ziel/a.txt"] == .append)
         #expect(await remote3.writtenData(at: "/ziel/a.txt")?.count == chunk)

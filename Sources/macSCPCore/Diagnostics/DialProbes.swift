@@ -490,7 +490,7 @@ public enum DialSupport {
     /// `internal`, not `private`: `TunnelFailureKindTests` (`@testable
     /// import macSCPCore`) reads this table directly to assert its
     /// coverage is exact — see that suite's
-    /// `everyErrnoUpToELASTHasATableEntry` — because `errnoText(for:)`'s
+    /// `everyErrnoFromOneThroughELASTHasATableEntry` — because `errnoText(for:)`'s
     /// own `guard let … else { return text }` degrades a missing entry
     /// silently rather than failing loud, which is precisely the shape a
     /// scan of the table's own KEYS has to catch instead.

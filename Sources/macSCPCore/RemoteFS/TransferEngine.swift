@@ -212,10 +212,45 @@ public enum TransferEngine {
             // refused as "the file changed" where resuming was exactly right.
             //
             // Only reached when a validator was carried in; the fresh-probe
-            // branch above already answered for the current object. `try?` is
-            // the same best-effort policy `statWithEntityTag` states.
+            // branch above already answered for the current object.
+            //
+            // A re-read that THROWS leaves `attemptValidator` alone, and that
+            // is a deliberate choice between two wrong answers, because a
+            // failed read says nothing about the object: on both HTTP
+            // backends the validator is a request of its own, so it is lost
+            // to exactly the dropped connection that is about to interrupt
+            // this attempt. Reporting `nil` would replace a validator the
+            // queue had earned — `TransferQueueViewModel` seeds its box with
+            // the job's carried value precisely so silence cannot do that —
+            // and the attempt after this one would then resume at a non-zero
+            // offset with no precondition: a splice, silently. Carrying the
+            // stale value forward is the other wrong answer, and it is the
+            // one to prefer: its worst case is the refusal the fix above
+            // exists to avoid ("the file changed" where resuming was right),
+            // which costs a transfer and corrupts nothing.
+            //
+            // A re-read that SUCCEEDS with `nil` is not that case: the object
+            // really has no validator now, and `nil` is the true answer.
+            //
+            // This is the one place `statWithEntityTag` is deliberately NOT
+            // used, although it would fold this request into the `stat` above
+            // and halve the metadata cost of this branch. Its extension
+            // default composes the two requirements under a `try?`, so a
+            // throw and a genuine `nil` arrive here as the same answer — and
+            // telling those two apart is the whole of the decision below.
+            // The doubling is paid only on this branch (a carried validator
+            // whose partial file has vanished), never per file of a queued
+            // directory.
             if onSourceValidator != nil, resumeOffset == 0, expectedSourceValidator != nil {
-                attemptValidator = try? await source.entityTag(path: sourcePath)
+                do {
+                    attemptValidator = try await source.entityTag(path: sourcePath)
+                } catch {
+                    DiagnosticLog.shared.log(
+                        .info, "transfer",
+                        "validator re-read failed path=\(destinationPath) "
+                            + "keeping the carried one",
+                        reason: error)
+                }
             }
 
             // Resume identity (resume-identity plan, Task 2): the validator

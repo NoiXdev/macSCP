@@ -171,7 +171,7 @@ struct TunnelSecretSourcesTests {
         defer { rig.tearDown() }
         let chain = TunnelSecretSources.chain(
             for: rig.session(authKind: .agent), keys: rig.keys, secrets: rig.secrets)
-        #expect(chain.sources.isEmpty)
+        #expect(chain.sources.map(\.label).isEmpty)
         // The positive beside the negative: `.kinds` is empty for the SAME
         // reason `.sources` is, not by coincidence — the two are built in
         // lockstep (`SecretChain`, `CLISecretSources.swift`).
