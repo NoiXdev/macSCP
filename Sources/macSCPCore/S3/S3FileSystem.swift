@@ -863,16 +863,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 extraHeaders: ["Content-MD5": md5], body: body,
                 payloadHash: SigV4Signer.hexSHA256(body))
 
-            let data: Data
-            let response: HTTPURLResponse
-            do {
-                (data, response) = try await channel.transport.send(request)
-            } catch let error as RemoteFSError {
-                throw error
-            } catch {
-                if let cancellation = HTTPCancellation.cancellation(in: error) { throw cancellation }
-                throw S3HTTPChannel.connectionFailure(error)
-            }
+            let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
                 throw Self.mapErrorStatus(response.statusCode, path: path)
             }

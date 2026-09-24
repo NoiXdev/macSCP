@@ -178,4 +178,98 @@ struct S3RedirectControlTests {
             second.acceptedConnections == 0,
             "the foreign origin accepted \(second.acceptedConnections) connection(s)")
     }
+
+    // MARK: - The batch delete: the same policy, not a bypass
+
+    private static func statusOnly(_ status: String) -> String {
+        """
+        HTTP/1.1 \(status)\r
+        Content-Length: 0\r
+        Connection: close\r
+        \r
+
+        """
+    }
+
+    private static func xml(_ body: String) -> String {
+        """
+        HTTP/1.1 200 OK\r
+        Content-Type: application/xml\r
+        Content-Length: \(body.utf8.count)\r
+        Connection: close\r
+        \r
+        \(body)
+        """
+    }
+
+    /// `deleteTree`'s batch `DeleteObjects` used to go out on
+    /// `channel.transport.send` directly, bypassing `S3HTTPChannel.perform`
+    /// and the `refusedRedirect()` ask that lives there — so a redirect
+    /// refused during the batch delete surfaced as "S3 request failed with
+    /// HTTP status 302" instead of as the refusal
+    /// `foreignOriginRedirectIsRefused` above pins for every other request.
+    /// This is the same measurement, aimed at that one call site.
+    ///
+    /// Five responses on the first stub, in the order `deleteTree` makes
+    /// them: `connect`'s own `ListObjectsV2` probe, `deleteLookup`'s `HEAD`
+    /// (404 — not a plain object) and its one-key list (something is
+    /// there, so this is a directory), `allObjectKeys`' full listing (one
+    /// key to batch), and finally the batch `POST ?delete` itself —
+    /// answered with a redirect to a foreign origin instead of a
+    /// `DeleteResult`.
+    @Test("a redirect during the batch delete is refused, not reported as an HTTP status")
+    func batchDeleteRedirectIsRefused() async throws {
+        let second = try LoopbackHTTPStub(response: LoopbackHTTPStub.emptyBucketListing)
+        defer { second.stop() }
+
+        let oneKeyListing = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                <IsTruncated>false</IsTruncated>
+                <CommonPrefixes><Prefix>d/</Prefix></CommonPrefixes>
+            </ListBucketResult>
+            """
+        let allKeysListing = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                <IsTruncated>false</IsTruncated>
+                <Contents><Key>d/a</Key><Size>0</Size></Contents>
+            </ListBucketResult>
+            """
+
+        let first = try LoopbackHTTPStub(responses: [
+            LoopbackHTTPStub.emptyBucketListing,  // connect's own probe
+            Self.statusOnly("404 Not Found"),  // deleteLookup's HEAD: not an object
+            Self.xml(oneKeyListing),  // deleteLookup's one-key list: something's there
+            Self.xml(allKeysListing),  // allObjectKeys: the subtree to batch
+            Self.redirect(to: "http://127.0.0.1:\(second.port)\(Self.hopPath)"),  // the batch POST itself
+        ])
+        defer { first.stop() }
+
+        let fs = try await S3FileSystem.connect(Self.config(port: first.port))
+
+        var caught: Error?
+        do { try await fs.deleteTree(at: "/d") } catch { caught = error }
+        try await first.waitForRequests(atLeast: 5)
+
+        // Positive first, same reasoning as the test above: the refusal
+        // could only be a refusal on a redirect that really went out.
+        #expect(first.requests.count == 5, "the batch delete did not reach the endpoint")
+
+        let error = try #require(caught as? RemoteFSError)
+        guard case .connectionFailed(let reason) = error else {
+            Issue.record("expected .connectionFailed (a refused redirect), got \(error)")
+            return
+        }
+        #expect(reason.contains("http://127.0.0.1:\(first.port)"),
+                "the refusal does not name the configured endpoint: \(reason)")
+        #expect(reason.contains("http://127.0.0.1:\(second.port)"),
+                "the refusal does not name where the batch delete was being sent: \(reason)")
+
+        // The negative this test exists for: the foreign origin never saw
+        // the batch delete.
+        #expect(
+            second.acceptedConnections == 0,
+            "the foreign origin accepted \(second.acceptedConnections) connection(s)")
+    }
 }
