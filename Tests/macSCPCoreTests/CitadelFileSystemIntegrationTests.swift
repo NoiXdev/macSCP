@@ -1293,11 +1293,25 @@ struct CitadelFileSystemIntegrationTests {
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
 
+        // The rig's own host keys, read out of the containers. This case is
+        // the one in this file whose SUBJECT is the TOFU path — both hops
+        // unknown, asked twice, both remembered — so it cannot dial with
+        // `HostKeyDecider.refusing` the way its neighbours here now do. What
+        // it can do is answer only for the keys the rig actually holds,
+        // instead of accepting whatever arrives.
+        let rigKeys = try await Self.rigHostKeyEntries()
         let asked = CallCounterBox()
         let fs1 = try await connectWithRetry {
             try await CitadelFileSystem.connect(
                 config: config, connectTimeout: .seconds(30), knownHosts: store,
-                onUnknownHostKey: .asking { _ in asked.increment(); return true })
+                onUnknownHostKey: .asking { candidate in
+                    asked.increment()
+                    return rigKeys.contains {
+                        $0.host == candidate.host.lowercased() && $0.port == candidate.port
+                            && $0.keyType == candidate.keyType
+                            && $0.publicKeyBase64 == candidate.publicKeyBase64
+                    }
+                })
         }
         let items = try await fs1.list(path: "/")
         #expect(!items.isEmpty)
@@ -1308,9 +1322,12 @@ struct CitadelFileSystemIntegrationTests {
         #expect(try store.find(host: "sshd2", port: 2222) != nil)
         await fs1.disconnect()
 
+        // Never consulted — both keys are remembered by now. It refuses
+        // rather than accepts, so a regression that DOES consult it fails the
+        // dial instead of quietly re-learning the key.
         let fs2 = try await CitadelFileSystem.connect(
             config: config, connectTimeout: .seconds(30), knownHosts: store,
-            onUnknownHostKey: .asking { _ in asked.increment(); return true })
+            onUnknownHostKey: .asking { _ in asked.increment(); return false })
         await fs2.disconnect()
         #expect(asked.value == 2)   // both keys remembered — no second prompt
     }
@@ -1322,14 +1339,17 @@ struct CitadelFileSystemIntegrationTests {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let store = KnownHostsStore(directory: dir)
+        // The rig's real keys, so the dial reaches AUTHENTICATION because
+        // both hops are KNOWN — not because a decider waved them through.
+        let store = try await Self.rigKnownHosts(in: dir)
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("WRONG")))
 
         await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
             _ = try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
     }
 
@@ -1374,14 +1394,17 @@ struct CitadelFileSystemIntegrationTests {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-jump-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let store = KnownHostsStore(directory: dir)
+        // The rig's real keys: the clean connect succeeds because both hops
+        // are KNOWN, and nothing in this case accepts an unknown key.
+        let store = try await Self.rigKnownHosts(in: dir)
         let config = try SSHConnectionConfig(
             host: "sshd2", port: 2222, username: "testuser", auth: .password("testpass"),
             jump: .init(host: "127.0.0.1", port: 2222, username: "testuser", auth: .password("testpass")))
 
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
         await fs.disconnect()
         #expect(try store.find(host: "sshd2", port: 2222) != nil)
@@ -1566,27 +1589,26 @@ struct CitadelFileSystemIntegrationTests {
         }
     }
 
-    /// A known-hosts store holding the rig's own host keys, read out of the
-    /// containers — so the matrix dials with `HostKeyDecider.refusing` and no
-    /// accepting decider exists anywhere in it. An unrecorded key refuses the
-    /// dial (`rejectedByUser`), a different one is a hard stop (`mismatch`);
-    /// either fails the case loudly.
+    /// The rig's own host keys, read out of the containers, one entry per
+    /// name each server is reached by.
     ///
     /// Ed25519, because both servers offer all three types the image
     /// generates and every client here negotiates Ed25519 (see the host-key
     /// services' comment in `docker/test-server/compose.yml`). Each server is
-    /// recorded under both names it is reached by: its published port on
+    /// listed under both names it is reached by: its published port on
     /// 127.0.0.1, and its service name on the internal port 2222.
     ///
-    /// Static and internal since the jump diagnosis's rig case
-    /// (`ConnectionDiagnosticsJumpRigTests`) dials the same two servers under
-    /// the same refusing decider.
-    static func rigKnownHosts(in directory: URL) async throws -> KnownHostsStore {
-        let store = KnownHostsStore(directory: directory)
+    /// Separate from `rigKnownHosts(in:)` because one case needs the KEYS
+    /// rather than a seeded store: `jumpConnectListsOverHop` is the one test
+    /// here whose subject IS the TOFU path, so it cannot dial with
+    /// `HostKeyDecider.refusing`, and it answers with these instead of
+    /// accepting whatever key arrives.
+    static func rigHostKeyEntries() async throws -> [KnownHostKey] {
         let servers: [(container: String, names: [(host: String, port: Int)])] = [
             ("macscp-test-sshd", [("127.0.0.1", 2222), ("sshd", 2222)]),
             ("macscp-test-sshd-2", [("127.0.0.1", 2223), ("sshd2", 2222)]),
         ]
+        var entries: [KnownHostKey] = []
         for server in servers {
             let result = try await SubprocessRunner.run(
                 URL(fileURLWithPath: "/usr/local/bin/docker"),
@@ -1598,10 +1620,26 @@ struct CitadelFileSystemIntegrationTests {
                     reason: "\(server.container) host key unreadable: \(result.stdoutText)")
             }
             for name in server.names {
-                try store.upsert(KnownHostKey(
+                entries.append(KnownHostKey(
                     host: name.host, port: name.port,
                     keyType: String(fields[0]), publicKeyBase64: String(fields[1])))
             }
+        }
+        return entries
+    }
+
+    /// A known-hosts store holding `rigHostKeyEntries()` — so its callers dial
+    /// with `HostKeyDecider.refusing` and no accepting decider exists anywhere
+    /// in them. An unrecorded key refuses the dial (`rejectedByUser`), a
+    /// different one is a hard stop (`mismatch`); either fails the case loudly.
+    ///
+    /// Static and internal since the jump diagnosis's rig case
+    /// (`ConnectionDiagnosticsJumpRigTests`) dials the same two servers under
+    /// the same refusing decider.
+    static func rigKnownHosts(in directory: URL) async throws -> KnownHostsStore {
+        let store = KnownHostsStore(directory: directory)
+        for entry in try await rigHostKeyEntries() {
+            try store.upsert(entry)
         }
         return store
     }
@@ -1847,11 +1885,15 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-session-jump-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        // The rig's real keys, so the two-hop dial this case exists to prove
+        // succeeds because both hops are KNOWN, not because a decider
+        // accepted them.
+        let store = try await Self.rigKnownHosts(in: khDir)
 
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
         let items = try await fs.list(path: "/")
         #expect(!items.isEmpty)
