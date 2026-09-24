@@ -66,22 +66,70 @@ struct CLIErrorMappingTests {
         #expect(message == "Error: --password-command failed: commandFailed(status: 1)")
     }
 
-    /// The chain this tool actually walks has four links
-    /// (`secretSources(for:passwordCommand:keychainStore:keyStore:)`,
-    /// `Sources/macSCPCore/Sessions/CLISecretSources.swift`):
-    /// `--password-command`, the environment, the keychain, and — last, for
-    /// an SSH private-key session — the managed key's own passphrase slot.
-    /// `.secretRequired` carries none of that back (it is a bare case), so
-    /// this mapping cannot say which links THIS invocation actually
-    /// consulted — only which places the tool is capable of looking. The
-    /// sentence therefore names all four, always; it must never claim to
-    /// have looked somewhere the chain could not have reached, which is why
-    /// the fixed places listed here are exactly the four `CLISecretSources
-    /// .swift` builds, no more and no fewer.
-    @Test func secretRequiredMessageNamesAllFourLinksOfTheChain() {
-        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired)
+    // MARK: - `.secretRequired`'s per-invocation "checked" sentence
+    //
+    // `StoredSessionConnectionError.secretRequired(checked:)` carries which
+    // of the chain's four possible links (`SecretSourceKind`,
+    // `CLISecretSources.swift`) THIS invocation actually walked, in the
+    // order it walked them — read off the real `[any SecretSource]` array
+    // at the two call sites that build one (`TunnelConnection.connect`,
+    // `SessionConnecting.connect`), not guessed at here. Each case below is
+    // a whole-string equality, not `.contains`, so dropping a clause,
+    // reordering the four, or falling back to a wrong subset fails
+    // directly. Four shapes, matching what `CLISecretSources.swift` and the
+    // App's `TunnelSecretSources.chain` can actually produce: all four
+    // links (a CLI session with `--password-command` AND a private key);
+    // the keychain alone (the App's own minimum — its chain never carries
+    // `--password-command` or an environment variable); a private-key
+    // session's two-link chain (App or CLI, keychain then the managed key's
+    // passphrase); and a three-link CLI chain with `--password-command`
+    // but no private key.
+
+    @Test func secretRequiredMessageNamesAllFourWhenAllFourWereChecked() {
+        let checked: [SecretSourceKind] = [.passwordCommand, .environment, .keychain, .managedKeyPassphrase]
+        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired(checked: checked))
         #expect(message == "Error: no secret available (checked --password-command, "
             + "the environment, the keychain, and the managed key's passphrase)")
+    }
+
+    /// The App's own chain (`TunnelSecretSources.chain(for:keys:secrets:)`)
+    /// for a session with no managed private key: the keychain is the only
+    /// link it ever holds. Pins the one-item shape, which carries neither a
+    /// comma nor an "and".
+    @Test func secretRequiredMessageNamesOnlyTheKeychainWhenThatWasTheWholeChain() {
+        let message = CLIErrorMapping.message(
+            for: StoredSessionConnectionError.secretRequired(checked: [.keychain]))
+        #expect(message == "Error: no secret available (checked the keychain)")
+    }
+
+    /// A middle shape: two links, joined with "and" and no comma (the
+    /// App's chain for a private-key session, or the CLI's own last two
+    /// links).
+    @Test func secretRequiredMessageJoinsTwoLinksWithAndAndNoComma() {
+        let message = CLIErrorMapping.message(
+            for: StoredSessionConnectionError.secretRequired(checked: [.keychain, .managedKeyPassphrase]))
+        #expect(message == "Error: no secret available (checked the keychain and the managed key's passphrase)")
+    }
+
+    /// A second middle shape: three links, Oxford comma before the "and" —
+    /// the CLI's own chain with `--password-command` given but no private
+    /// key.
+    @Test func secretRequiredMessageJoinsThreeLinksWithAnOxfordComma() {
+        let checked: [SecretSourceKind] = [.passwordCommand, .environment, .keychain]
+        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired(checked: checked))
+        #expect(message == "Error: no secret available (checked --password-command, "
+            + "the environment, and the keychain)")
+    }
+
+    /// `checked` is empty only when a caller built the config with no
+    /// chain at all (`StoredSessionConnectionConfig.build`'s own default —
+    /// not a real call site failing to say what it did; both call sites
+    /// that actually exist always pass their real chain). Naming zero
+    /// places, or falling back to all four, would each claim something
+    /// that did not happen — so the parenthetical is left off instead.
+    @Test func secretRequiredMessageDropsTheParentheticalWhenNothingWasChecked() {
+        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired(checked: []))
+        #expect(message == "Error: no secret available")
     }
 
     // MARK: - The S3 bucket-list outcomes (Task 3 review, I-2)

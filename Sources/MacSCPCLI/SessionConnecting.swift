@@ -102,7 +102,8 @@ func connect(
     if options.verbose, let secret {
         OutputFormatter.note("secret source: \(secret.sourceLabel)")
     }
-    let config = try StoredSessionConnectionConfig.build(for: session, secret: secret?.value)
+    let config = try StoredSessionConnectionConfig.build(
+        for: session, secret: secret?.value, checkedSources: sources)
     // Since M22/T10 the backend opens its OWN connection (no central
     // dispatcher): SSH keeps its TOFU host-key decider, and the certificate
     // decider refuses by default — the CLI has no interactive certificate

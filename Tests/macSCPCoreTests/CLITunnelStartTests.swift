@@ -406,7 +406,8 @@ struct CLITunnelStartExitTests {
     /// describe other code": a number or an enumeration copied elsewhere
     /// is what drifts, not what is asked for by reference).
     @Test func aConfirmationPrefersTheDialsOwnMessage() {
-        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired)
+        let message = CLIErrorMapping.message(
+            for: StoredSessionConnectionError.secretRequired(checked: [.environment, .keychain]))
         #expect(TunnelExit.note(for: .needsConfirmation, dialMessage: message) == message)
     }
 

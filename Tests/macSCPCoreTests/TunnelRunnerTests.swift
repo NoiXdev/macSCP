@@ -524,7 +524,7 @@ struct TunnelRunnerTests {
     /// by hand.
     @Test func aSessionWithNoSecretNeedsConfirmation() async throws {
         let connections = TunnelFakeConnections()
-        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired)
+        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired(checked: []))
         let runner = TunnelRunner(
             profile: localProfile(), connect: connections.connect,
             runtimes: TunnelFakeRuntimes(boundPort: 8080), sleeper: TunnelRecordedSleeper().sleep)
@@ -686,7 +686,7 @@ struct TunnelRunnerTests {
     /// start the tunnel again" story was dead, and nothing said so.
     @Test func aRunnerThatNeedsConfirmationCanBeStartedAgainWithoutStopping() async throws {
         let connections = TunnelFakeConnections()
-        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired)
+        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired(checked: []))
         let runtimes = TunnelFakeRuntimes(boundPort: 8080)
         let runner = TunnelRunner(
             profile: localProfile(), connect: connections.connect,

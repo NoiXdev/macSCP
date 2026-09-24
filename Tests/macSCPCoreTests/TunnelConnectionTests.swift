@@ -62,7 +62,10 @@ struct TunnelConnectionTests {
         let session = sshSession(name: "rig", host: "127.0.0.1", port: 2222, username: "testuser")
         let store = KnownHostsStore(directory: directory)
 
-        await #expect(throws: StoredSessionConnectionError.secretRequired) {
+        // `secrets: []` here — an empty chain, not a real one — so `checked`
+        // comes back empty too; this test is about the ERROR CASE
+        // propagating unchanged, not about which chain produced it.
+        await #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
             _ = try await TunnelConnection.connect(
                 session: session, secrets: [], knownHosts: store, decider: .refusing)
         }

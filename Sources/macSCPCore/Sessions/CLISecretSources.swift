@@ -226,6 +226,44 @@ public func secretSources(
     return sources
 }
 
+/// One of the four places a secret chain built by this file, or by the
+/// App's own `TunnelSecretSources.chain(for:keys:secrets:)` (which shares
+/// these same four source types, in a different subset and order), can ever
+/// hold — named as a fixed PLACE, never a value. No path, no
+/// environment-variable name, nothing an individual source's own `label`
+/// could carry (`EnvironmentSecretSource.label`, for one, names the
+/// variable itself) — that is the whole reason this exists instead of
+/// reusing `label`: a `.secretRequired` refusal's message is built from
+/// this, and it must never be able to interpolate anything that could carry
+/// a secret's name, let alone its value.
+public enum SecretSourceKind: Equatable, Sendable, CaseIterable {
+    case passwordCommand
+    case environment
+    case keychain
+    case managedKeyPassphrase
+}
+
+/// Which of the four kinds `sources` actually holds, in the order given —
+/// read from each element's CONCRETE TYPE, never from its `label`. This is
+/// what a `.secretRequired` refusal (`StoredSessionConnectionConfig
+/// .build(for:secret:checkedSources:)`) names as "checked": the chain a
+/// caller actually built, not a second, hand-maintained description of one.
+/// A source type this function does not recognize is silently skipped
+/// rather than guessed at — there are only ever these four in this
+/// module, and a fifth would need a fifth case here before it could be
+/// named honestly.
+public func secretSourceKinds(in sources: [any SecretSource]) -> [SecretSourceKind] {
+    sources.compactMap { source -> SecretSourceKind? in
+        switch source {
+        case is PasswordCommandSecretSource: return .passwordCommand
+        case is EnvironmentSecretSource: return .environment
+        case is KeychainSecretSource: return .keychain
+        case is ManagedKeyPassphraseSecretSource: return .managedKeyPassphrase
+        default: return nil
+        }
+    }
+}
+
 /// The CLI's secret chain as the one source `ConnectionDiagnostics` takes:
 /// the first source that answers non-empty wins, the same rule
 /// `SecretResolver` applies.

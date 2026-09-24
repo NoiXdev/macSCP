@@ -46,14 +46,17 @@ struct StoredSessionConnectionConfigTests {
         #expect(ssh.auth == .password("hunter2"))
     }
 
+    /// No `checkedSources` passed — `build`'s own default, `[]` — so the
+    /// error's `checked` is empty too: this test is about the REFUSAL, not
+    /// about which chain produced it (that is `CLIErrorMappingTests`' job).
     @Test func passwordAuthWithoutASecretThrows() {
-        #expect(throws: StoredSessionConnectionError.secretRequired) {
+        #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
             try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: nil)
         }
     }
 
     @Test func passwordAuthWithAnEmptySecretThrows() {
-        #expect(throws: StoredSessionConnectionError.secretRequired) {
+        #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
             try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: "")
         }
     }
@@ -112,7 +115,7 @@ struct StoredSessionConnectionConfigTests {
     }
 
     @Test func s3WithoutASecretThrows() {
-        #expect(throws: StoredSessionConnectionError.secretRequired) {
+        #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
             try StoredSessionConnectionConfig.build(for: makeS3Session(), secret: nil)
         }
     }

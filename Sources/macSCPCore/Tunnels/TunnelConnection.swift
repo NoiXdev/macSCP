@@ -88,7 +88,8 @@ public enum TunnelConnection {
             throw refusal
         }
         let secret = try SecretResolver(sources: secrets).resolve(for: session.id)
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: secret?.value)
+        let config = try StoredSessionConnectionConfig.build(
+            for: session, secret: secret?.value, checkedSources: secrets)
         guard case .ssh(let ssh) = config else {
             // Unreachable while `TunnelCarriers.carries` agrees with the
             // `ConnectionConfig` case each kind builds: the refusal above

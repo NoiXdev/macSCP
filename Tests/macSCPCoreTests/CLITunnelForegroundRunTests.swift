@@ -154,7 +154,13 @@ struct CLITunnelForegroundRunTests {
     @Test func aSessionWithNoSecretLeavesWithTen() async throws {
         let record = TunnelDialFailureRecord()
         let connections = TunnelFakeConnections()
-        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired)
+        // `[.environment, .keychain]` — a representative CLI chain shape
+        // (no `--password-command`, no private key), not the empty case;
+        // the whole-string content of this sentence is
+        // `CLIErrorMappingTests`' job, this test only needs the dial's own
+        // error to reach stderr unchanged.
+        let checked: [SecretSourceKind] = [.environment, .keychain]
+        connections.failAttempts([1], with: StoredSessionConnectionError.secretRequired(checked: checked))
         let runner = TunnelRunner(
             profile: localProfile(), connect: recording(connections.connect, into: record),
             runtimes: TunnelFakeRuntimes(boundPort: 8080),
@@ -167,7 +173,10 @@ struct CLITunnelForegroundRunTests {
 
         #expect(code == .auth)
         #expect(out.lines == ["connecting", "needs confirmation"])
-        #expect(out.notes == [CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired)])
+        #expect(
+            out.notes == [
+                CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired(checked: checked))
+            ])
     }
 
     /// The same state, a different cause: an unknown key the decider refused
