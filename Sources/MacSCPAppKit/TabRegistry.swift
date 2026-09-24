@@ -431,7 +431,8 @@ final class TabRegistry {
     /// registry must never be what keeps a window's view model alive, and
     /// this type performs no `deinit` cleanup (see the type's doc comment).
     /// `unregisterSessionList(for:)` on the window's close path is what makes
-    /// the ordinary case immediate.
+    /// the ordinary case immediate — that is the close path's call, not the
+    /// only one; see that function's own comment.
     ///
     /// Idempotent and order-stable, like every other registration here: a
     /// window calls it on every setup pass, the last call wins, and the
@@ -443,8 +444,19 @@ final class TabRegistry {
         sessionListsByWindow[window] = WeakSessionList(list: list)
     }
 
-    /// Forgets `window`'s session list. Called from the window's close path —
-    /// a window that is going away is not one to hand a reload to.
+    /// Forgets `window`'s session list.
+    ///
+    /// **Two callers under `Sources/`, counted 2026-09-24** (the tests call
+    /// it too), deliberately of different kinds, so nothing close-path-only
+    /// belongs in this body. The first is
+    /// the window's own close path (`ContentView+Lifecycle`): a window that
+    /// is going away is not one to hand a reload to. The second is
+    /// `sessionList(for:)` below, on an ORDINARY READ — a read that finds a
+    /// dead weak slot forgets it here, and that read happens whenever a
+    /// shell opens in a window whose view model went away without
+    /// unregistering. A log line, a teardown notification or a describer
+    /// sweep added here would fire on that read too; the place for anything
+    /// that means "this window is closing" is the close path itself.
     func unregisterSessionList(for window: WindowID) {
         sessionListsByWindow[window] = nil
         sessionListWindowOrder.removeAll { $0 == window }

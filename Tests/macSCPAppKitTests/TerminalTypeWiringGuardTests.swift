@@ -16,6 +16,17 @@ import macSCPCore
 /// that name what they watch"). The names a literal could spell are read
 /// off `TerminalType.allCases`, not typed here a second time.
 ///
+/// **The spelled literals here are WHITESPACE-EXACT.** Every `contains(…)`
+/// below matches source text verbatim, so a reformat that wraps a call after
+/// an argument label, or changes its indentation, turns a check red although
+/// nothing it guards has moved. That is the accepted cost of pinning a
+/// spelling Swift gives no way to derive — another type's method and
+/// argument names are not readable at run time — and failing loudly is the
+/// property worth keeping. So: read such a red against the diff first. If
+/// the wiring is intact and only its layout moved, the fix is to re-spell
+/// the literal, not to loosen it into something that would also match the
+/// defect.
+///
 /// Known blind spots: SOURCE TEXT only. Nothing here renders a view, so it
 /// cannot say the picker is legible or where it sits; the behaviour of the
 /// resolver and of the panel is `TerminalTypeTests`' (Core).
