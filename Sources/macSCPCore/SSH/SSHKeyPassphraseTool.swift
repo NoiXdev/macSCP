@@ -111,18 +111,33 @@ public enum SSHKeyPassphraseTool {
     ///
     /// Beside the original deliberately, not in a temporary directory: a
     /// rename has to stay on one file system to be the atomic step this
-    /// depends on. Nothing in macSCP enumerates the managed key directory —
-    /// every reader of it addresses a file by name through
-    /// `ManagedKeyStore.privateKeyURL(for:)` (counted 2026-09-24: no
-    /// `contentsOfDirectory` call anywhere touches it) — so a copy that
-    /// outlives a crash is invisible to the app rather than a stray key in a
-    /// list.
+    /// depends on.
     ///
-    /// The one thing the restore cannot promise is a file system that will not
-    /// rename. If the move back fails, the copy is deliberately LEFT BEHIND
-    /// rather than removed — at that point it is the only intact key there is,
-    /// and deleting it to tidy up would be the very loss this function exists
-    /// to prevent.
+    /// What that costs, stated no wider than it was measured (2026-09-24, by
+    /// reading every `contentsOfDirectory` call in `Sources/`): no KEY-MANAGING
+    /// code lists the directory — `ManagedKeyStore`, `EmbeddedKeyPorter`,
+    /// `GenerateKeyForm` and the keys sheet each address a file by name through
+    /// `ManagedKeyStore.privateKeyURL(for:)` — so a leftover copy is not a
+    /// stray key in any list macSCP builds OF KEYS. The exception is
+    /// `LocalFileSystem.listNamesAndKinds`, the app's ordinary local browser:
+    /// it enumerates whatever directory the user opens, without
+    /// `.skipsHiddenFiles`, so a user who browses to the key folder would see
+    /// the copy by name. An earlier version of this comment claimed no
+    /// enumeration anywhere reaches it, which was a whole-tree negative — the
+    /// shape CLAUDE.md warns goes stale in silence — and it was already false
+    /// when it was written.
+    ///
+    /// A copy outlives the run in exactly two cases, since every ordinary
+    /// ending removes or restores it: a HARD crash, and a `rename` the file
+    /// system refuses. The second is the one thing the restore cannot promise,
+    /// and there the copy is deliberately LEFT BEHIND rather than removed — at
+    /// that point it is the only intact key there is, and deleting it to tidy
+    /// up would be the very loss this function exists to prevent.
+    ///
+    /// Nothing sweeps a copy that survives either way, on purpose: it holds the
+    /// same key material at the same 0600 mode as the file beside it, so it is
+    /// no more exposed than the key it protected, and the user documentation
+    /// says where to find it and what it is.
     ///
     /// Not `private` only so `SSHKeyPassphraseToolTests` can hand in a
     /// `rewrite` that damages the file deterministically: racing a real
@@ -152,19 +167,39 @@ public enum SSHKeyPassphraseTool {
         try? FileManager.default.removeItem(at: backup)
     }
 
-    /// Puts `backup` back at `url`. See the invariant above for why a failed
-    /// move leaves the copy in place instead of cleaning it up.
+    /// Puts `backup` back at `url` in ONE step, with `rename(2)`.
+    ///
+    /// Not `FileManager.moveItem`, which refuses an existing destination and so
+    /// needs a `removeItem` before it — and that pair is the same defect this
+    /// whole function exists to prevent, moved one step later: between the
+    /// remove and the move the key exists only under the rollback name, and a
+    /// crash, a power loss or a kill inside that window leaves nothing at all
+    /// at the key's own path. `rename(2)` removes the destination and links the
+    /// source over it as a single operation, so there is no instant at which
+    /// the path is empty; both files are in the same directory, which is what
+    /// keeps it on one file system and off `EXDEV`. `FileManager.replaceItemAt`
+    /// would also close the window, but it moves the original aside into a
+    /// temporary of its own choosing first, and the original here is precisely
+    /// the damaged file there is no reason to keep.
+    ///
+    /// **The window is gone, not tested.** There is no seam between `rename`'s
+    /// entry and its return to interrupt, and a test that killed the process
+    /// hoping to land inside one syscall would measure the machine, not the
+    /// code. What IS pinned is the behaviour that the remove-then-move version
+    /// needed the remove for: `rewritingWithRollback`'s cases restore over a
+    /// destination file that exists, which `moveItem` alone would have refused.
+    ///
+    /// A `rename` that fails leaves the copy where it is rather than cleaning
+    /// it up — see the invariant on `rewritingWithRollback` for why.
     private static func restore(_ backup: URL, to url: URL) {
-        try? FileManager.default.removeItem(at: url)
-        do {
-            try FileManager.default.moveItem(at: backup, to: url)
-        } catch {
-            return
-        }
-        // `copyItem` carries the mode across, so this only makes the 0600
-        // invariant explicit the way the generator and the converter do.
+        let source = backup.path(percentEncoded: false)
+        let destination = url.path(percentEncoded: false)
+        guard rename(source, destination) == 0 else { return }
+        // `copyItem` carries the mode across and `rename` keeps it, so this
+        // only makes the 0600 invariant explicit the way the generator and the
+        // converter do.
         try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
+            [.posixPermissions: 0o600], ofItemAtPath: destination)
     }
 
     /// The file-system path of `url`, once it is known to name an existing
