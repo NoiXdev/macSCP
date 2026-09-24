@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 import Testing
 
 @testable import macSCPCore
@@ -186,11 +187,39 @@ import Testing
         #expect(DialSupport.reason(for: row.error) == row.sentence)
     }
 
-    /// A foreign error is `unknown`, and its log text is still what it was.
+    /// A foreign error is `unknown`, and its log text is still what it was:
+    /// reduced to `localizedDescription`, never rebuilt through
+    /// `String(describing:)`. Two exits, so two checks — the positive pins
+    /// what the sentence IS, the negative beside it pins what it is NOT; an
+    /// `NSError` whose `localizedDescription` and `String(describing:)`
+    /// render differently is the one case that can tell the two paths
+    /// apart, so the negative would actually fail if `classify` ever
+    /// switched to describing.
     @Test func aForeignErrorIsUnknownAndKeepsItsDescription() {
         let error = NSError(domain: "test.domain", code: 7)
+        let sentence = DialSupport.reason(for: error)
+        let matchesLocalizedDescription = sentence == error.localizedDescription
+        let matchesDescribing = sentence == String(describing: error)
         #expect(DialSupport.failureKind(for: error) == .unknown)
-        #expect(DialSupport.reason(for: error) == error.localizedDescription)
+        #expect(matchesLocalizedDescription)
+        #expect(!matchesDescribing)
+    }
+
+    /// An `IOError` carrying an errno outside the three the local-bind path
+    /// names its own case for reads that errno's C macro name in the
+    /// sentence — the gap `docs/BACKLOG.md` records (recorded 2026-09-19)
+    /// as still logging the bare bridged text "The operation couldn’t be
+    /// completed. (NIOCore.IOError error 1.)", a case index nobody could
+    /// act on, for any errno besides the two the row above it named.
+    /// `EINVAL` is not one of `LocalForwardListener.bindFailure`'s three
+    /// named errnos (`EADDRINUSE`, `EADDRNOTAVAIL`, `EACCES`), so a raw
+    /// `IOError(errnoCode: EINVAL, ...)` reaches `classify`'s fall-through
+    /// exactly the way an unrecognized bind failure would.
+    @Test func anIOErrorOutsideTheThreeNamedErrnosReadsItsErrnoName() {
+        let error = IOError(errnoCode: EINVAL, reason: "bind")
+        let sentence = DialSupport.reason(for: error)
+        #expect(sentence.contains("EINVAL"))
+        #expect(DialSupport.failureKind(for: error) == .unknown)
     }
 
     /// Where a kind's payload is everything its sentence needs, the log's
