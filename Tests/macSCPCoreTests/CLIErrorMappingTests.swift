@@ -66,6 +66,24 @@ struct CLIErrorMappingTests {
         #expect(message == "Error: --password-command failed: commandFailed(status: 1)")
     }
 
+    /// The chain this tool actually walks has four links
+    /// (`secretSources(for:passwordCommand:keychainStore:keyStore:)`,
+    /// `Sources/macSCPCore/Sessions/CLISecretSources.swift`):
+    /// `--password-command`, the environment, the keychain, and — last, for
+    /// an SSH private-key session — the managed key's own passphrase slot.
+    /// `.secretRequired` carries none of that back (it is a bare case), so
+    /// this mapping cannot say which links THIS invocation actually
+    /// consulted — only which places the tool is capable of looking. The
+    /// sentence therefore names all four, always; it must never claim to
+    /// have looked somewhere the chain could not have reached, which is why
+    /// the fixed places listed here are exactly the four `CLISecretSources
+    /// .swift` builds, no more and no fewer.
+    @Test func secretRequiredMessageNamesAllFourLinksOfTheChain() {
+        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired)
+        #expect(message == "Error: no secret available (checked --password-command, "
+            + "the environment, the keychain, and the managed key's passphrase)")
+    }
+
     // MARK: - The S3 bucket-list outcomes (Task 3 review, I-2)
 
     /// None of the three S3 cases had a test, so their sentences had never

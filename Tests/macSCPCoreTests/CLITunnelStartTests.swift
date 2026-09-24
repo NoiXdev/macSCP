@@ -400,9 +400,13 @@ struct CLITunnelStartExitTests {
                 == "Error: host key unknown; rerun with --accept-new")
     }
 
+    /// The dial message itself is `CLIErrorMapping`'s own sentence, not a
+    /// second copy of it — a second literal here is exactly what went stale
+    /// the last time this chain grew a link (CLAUDE.md, "Comments that
+    /// describe other code": a number or an enumeration copied elsewhere
+    /// is what drifts, not what is asked for by reference).
     @Test func aConfirmationPrefersTheDialsOwnMessage() {
-        let message = "Error: no secret available (checked --password-command, "
-            + "the environment, and the keychain)"
+        let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired)
         #expect(TunnelExit.note(for: .needsConfirmation, dialMessage: message) == message)
     }
 

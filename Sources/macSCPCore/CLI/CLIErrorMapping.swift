@@ -254,8 +254,18 @@ public enum CLIErrorMapping {
                 return "Error: the stored session is missing its "
                     + "\(BackendDescriptor.descriptor(for: kind).badgeLabelDefault) configuration"
             case .secretRequired:
+                // `.secretRequired` is a bare case (`StoredSessionConnectionConfig
+                // .swift`) — nothing about which links THIS invocation actually
+                // walked reaches this `switch`, only the fact that none of them
+                // produced a secret. So this cannot single out a subset for one
+                // session and a different subset for another; it names all four
+                // links `secretSources(for:passwordCommand:keychainStore:keyStore:)`
+                // (`CLISecretSources.swift`) can ever hold, in the chain's own
+                // order, every time — the same choice this message already made
+                // for `--password-command` (named even when the flag was never
+                // passed) before this case grew a fourth link.
                 return "Error: no secret available (checked --password-command, "
-                    + "the environment, and the keychain)"
+                    + "the environment, the keychain, and the managed key's passphrase)"
             case .incompleteConfiguration(let field):
                 return "Error: the stored session's \(field) is missing or invalid"
             }
