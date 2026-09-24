@@ -218,8 +218,38 @@ import Testing
     @Test func anIOErrorOutsideTheThreeNamedErrnosReadsItsErrnoName() {
         let error = IOError(errnoCode: EINVAL, reason: "bind")
         let sentence = DialSupport.reason(for: error)
-        #expect(sentence.contains("EINVAL"))
+        // The whole shape, not just the name: `strerror`'s own text stays
+        // in the sentence beside the macro name, the "<text> (<NAME>)"
+        // form `errnoText(for:)`'s doc comment promises and
+        // `TunnelFailureKind`'s EADDRNOTAVAIL/EACCES sentences already
+        // use. `strerror(EINVAL)` on Darwin is "Invalid argument" —
+        // pinned directly rather than only via `.contains`, so a fix that
+        // dropped the `strerror` half and kept only the bare macro name
+        // would still be caught here.
+        #expect(sentence == "Invalid argument (EINVAL)")
         #expect(DialSupport.failureKind(for: error) == .unknown)
+    }
+
+    /// The positive beside `errnoText(for:)`'s own silent-miss shape: its
+    /// `guard let name = errnoNames[code] else { return text }` degrades a
+    /// missing table entry to plain `strerror` text with no parenthetical
+    /// and no failure — invisible to `anIOErrorOutsideTheThreeNamedErrnosReadsItsErrnoName`
+    /// above, which only ever asks about `EINVAL`. This scans the table's
+    /// own KEYS instead: every errno from 1 through `ELAST` (107 on this
+    /// SDK, `<sys/errno.h>`'s own "must be equal largest errno" sentinel)
+    /// must resolve. Derived, not transcribed, so it stays exact if the
+    /// SDK's errno range ever grows — `errnoNames` had to become
+    /// `internal` for this suite's `@testable import macSCPCore` to reach
+    /// it; nothing else reads it from outside `DialProbes.swift`.
+    ///
+    /// Run red first (recorded in the Task 4 fix-round-1 report): with
+    /// `ENOSR: "ENOSR",` deleted from `errnoNames` by hand, this test
+    /// failed at `code == 98` with `DialSupport.errnoNames[98] != nil` →
+    /// false; restoring the entry turned it green again.
+    @Test func everyErrnoFromOneThroughELASTHasATableEntry() {
+        for code in CInt(1)...ELAST {
+            #expect(DialSupport.errnoNames[code] != nil, "no table entry for errno \(code)")
+        }
     }
 
     /// Where a kind's payload is everything its sentence needs, the log's

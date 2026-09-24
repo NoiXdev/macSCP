@@ -224,11 +224,15 @@ public enum DialSupport {
     /// configuration it was dialling with. NIO's `IOError` is the one
     /// exception, added for the row `docs/BACKLOG.md` records under "A
     /// forwarding's local-bind failure other than EADDRINUSE/
-    /// EADDRNOTAVAIL/EACCES still logs a bare errno number, not its name":
-    /// it carries only an `errnoCode` (no configuration, no endpoint, no
-    /// path), so rendering it stays inside this function's own rule —
-    /// `Self.strerrnoText(for:)` calls `strerror`, never `localizedDescription`
-    /// or `String(describing:)`, on that one closed, secret-free field.
+    /// EADDRNOTAVAIL/EACCES still logs a bare errno number, not its name".
+    /// The safety argument does NOT rest on what `IOError` holds — it
+    /// holds a free-form `failureDescription` too (`NIOCore/IO.swift`,
+    /// surfaced through `.description` and the deprecated `.reason`), the
+    /// exact shape this function's own rule exists to keep out. It rests
+    /// on what `Self.errnoText(for:)` READS: only `ioError.errnoCode`, an
+    /// `Int32` with no free text attached, through `strerror` — never
+    /// `ioError.description`, never `.localizedDescription`, never
+    /// `String(describing:)`.
     ///
     /// English, like every other sentence this module produces: the report is
     /// a paste artifact. The panel is the localized surface, and Task 4 owns
@@ -439,7 +443,7 @@ public enum DialSupport {
             // `NSError` (the `default:` arm) produced the same "The
             // operation couldn't be completed. (NIOCore.IOError error
             // 1.)" every other foreign error used to before this switch
-            // existed — a case index, not the refusal. `strerrnoText(for:)`
+            // existed — a case index, not the refusal. `errnoText(for:)`
             // renders the errno itself: `strerror`'s human sentence, plus
             // the C macro name (`Self.errnoNames`) when this table knows
             // it. The kind stays `.unknown`, like every error a forwarding
@@ -448,7 +452,7 @@ public enum DialSupport {
             // sentence into their OWN kind (`bindFailed`,
             // `channelOpenFailed`, `pumpFailed`) at the call site; nothing
             // here decides which.
-            return (.unknown, Self.strerrnoText(for: ioError.errnoCode))
+            return (.unknown, Self.errnoText(for: ioError.errnoCode))
         default:
             return (.unknown, (error as NSError).localizedDescription)
         }
@@ -462,7 +466,7 @@ public enum DialSupport {
     /// (it may be overwritten by the next call on the same thread), but
     /// this function copies it into a Swift `String` before returning, so
     /// nothing here holds the pointer past that copy.
-    private static func strerrnoText(for code: CInt) -> String {
+    private static func errnoText(for code: CInt) -> String {
         let text = strerror(code).map { String(cString: $0) } ?? "errno \(code)"
         guard let name = Self.errnoNames[code] else { return text }
         return "\(text) (\(name))"
@@ -482,7 +486,15 @@ public enum DialSupport {
     /// twice under `#if`/`#else` (45, same as `ENOTSUP`, or 102): only one
     /// definition is ever compiled in, and on this project's Darwin target
     /// it is 102, distinct from `ENOTSUP`'s 45.
-    private static let errnoNames: [CInt: String] = [
+    ///
+    /// `internal`, not `private`: `TunnelFailureKindTests` (`@testable
+    /// import macSCPCore`) reads this table directly to assert its
+    /// coverage is exact — see that suite's
+    /// `everyErrnoUpToELASTHasATableEntry` — because `errnoText(for:)`'s
+    /// own `guard let … else { return text }` degrades a missing entry
+    /// silently rather than failing loud, which is precisely the shape a
+    /// scan of the table's own KEYS has to catch instead.
+    static let errnoNames: [CInt: String] = [
         EPERM: "EPERM", ENOENT: "ENOENT", ESRCH: "ESRCH", EINTR: "EINTR", EIO: "EIO",
         ENXIO: "ENXIO", E2BIG: "E2BIG", ENOEXEC: "ENOEXEC", EBADF: "EBADF",
         ECHILD: "ECHILD", EDEADLK: "EDEADLK", ENOMEM: "ENOMEM", EACCES: "EACCES",
