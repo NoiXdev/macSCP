@@ -949,6 +949,24 @@
 "keys.rename" = "Renommer…";
 "keys.rename.title" = "Renommer la clé";
 "keys.rename.error" = "Impossible de renommer la clé.";
+"keys.passphrase.field" = "Phrase secrète";
+"keys.passphrase.correct" = "Corriger la phrase secrète enregistrée…";
+"keys.passphrase.correct.title" = "Corriger la phrase secrète enregistrée";
+"keys.passphrase.correct.explain" = "Saisissez la phrase secrète qui ouvre cette clé. macSCP la vérifie avant de l'enregistrer, et le fichier de clé lui-même n'est pas modifié.";
+"keys.passphrase.correct.error.notStored" = "La phrase secrète est correcte, mais n'a pas pu être enregistrée. Le fichier de clé n'a pas été modifié — réessayez.";
+"keys.passphrase.change" = "Changer la phrase secrète de la clé…";
+"keys.passphrase.change.title" = "Changer la phrase secrète de la clé";
+"keys.passphrase.change.explain" = "Le fichier de clé est réécrit. Ensuite, seule la nouvelle phrase secrète l'ouvre, et macSCP retient la nouvelle.";
+"keys.passphrase.change.old" = "Phrase secrète actuelle";
+"keys.passphrase.change.new" = "Nouvelle phrase secrète";
+"keys.passphrase.change.confirm" = "Confirmer la nouvelle phrase secrète";
+"keys.passphrase.change.submit" = "Changer";
+"keys.passphrase.change.error.oldDoesNotOpen" = "La phrase secrète actuelle n'ouvre pas cette clé. Rien n'a été changé.";
+"keys.passphrase.change.notStored" = "Le fichier de clé utilise désormais la nouvelle phrase secrète — seule celle-ci l'ouvre à partir de maintenant. macSCP n'a pas pu finir de l'enregistrer et pourrait la redemander à la prochaine connexion.";
+"keys.passphrase.error.doesNotOpen" = "Cette phrase secrète n'ouvre pas cette clé. Rien n'a été enregistré.";
+"keys.passphrase.error.notManaged" = "Le fichier de cette clé ne se trouve pas dans le dossier de clés de macSCP : macSCP n'y touchera pas.";
+"keys.passphrase.error.timedOut" = "La vérification de la clé a pris trop de temps et a été interrompue. Rien n'a été changé.";
+"keys.passphrase.error.failed" = "Quelque chose s'est mal passé. Rien n'a été changé.";
 
 /* Réglages — Section « Ligne de commande » (raccourci macscp-cli) */
 "settings.section.cli" = "Ligne de commande";

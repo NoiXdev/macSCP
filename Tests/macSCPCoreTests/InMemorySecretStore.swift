@@ -45,20 +45,25 @@ final class InMemorySecretStore: SecretStore, @unchecked Sendable {
 /// keychain, a denied prompt, a transient `errSecInteractionNotAllowed`.
 /// Each path can fail independently, because the failures mean different
 /// things: a failing READ must never be mistaken for "there is no secret"
-/// (M19 finding 4), while a failing DELETE is the one case where a stale
-/// credential really can survive a replace and the user has to be told.
+/// (M19 finding 4), a failing DELETE is the one case where a stale
+/// credential really can survive a replace and the user has to be told, and
+/// a failing SAVE is what leaves a key file re-encrypted with a passphrase
+/// the app could not write down (`ChangeKeyPassphraseForm`, 2026-09-24).
 final class UnreliableSecretStore: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [UUID: String] = [:]
     let failsReads: Bool
     let failsDeletes: Bool
+    let failsSaves: Bool
 
-    init(failsReads: Bool = false, failsDeletes: Bool = false) {
+    init(failsReads: Bool = false, failsDeletes: Bool = false, failsSaves: Bool = false) {
         self.failsReads = failsReads
         self.failsDeletes = failsDeletes
+        self.failsSaves = failsSaves
     }
 
     func savePassword(_ password: String, for sessionID: UUID) throws {
+        if failsSaves { throw KeychainError(status: -25308) }
         lock.lock(); defer { lock.unlock() }
         storage[sessionID] = password
     }

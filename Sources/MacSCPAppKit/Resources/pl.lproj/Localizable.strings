@@ -948,6 +948,24 @@
 "keys.rename" = "Zmień nazwę…";
 "keys.rename.title" = "Zmień nazwę klucza";
 "keys.rename.error" = "Nie udało się zmienić nazwy klucza.";
+"keys.passphrase.field" = "Hasło";
+"keys.passphrase.correct" = "Popraw zapisane hasło…";
+"keys.passphrase.correct.title" = "Popraw zapisane hasło";
+"keys.passphrase.correct.explain" = "Wpisz hasło, które otwiera ten klucz. macSCP sprawdzi je przed zapisaniem, a sam plik klucza pozostanie bez zmian.";
+"keys.passphrase.correct.error.notStored" = "Hasło jest poprawne, ale nie udało się go zapisać. Plik klucza nie został zmieniony — spróbuj ponownie.";
+"keys.passphrase.change" = "Zmień hasło klucza…";
+"keys.passphrase.change.title" = "Zmień hasło klucza";
+"keys.passphrase.change.explain" = "Plik klucza zostanie zapisany na nowo. Potem otworzy go tylko nowe hasło, a macSCP zapamięta nowe.";
+"keys.passphrase.change.old" = "Obecne hasło";
+"keys.passphrase.change.new" = "Nowe hasło";
+"keys.passphrase.change.confirm" = "Potwierdź nowe hasło";
+"keys.passphrase.change.submit" = "Zmień";
+"keys.passphrase.change.error.oldDoesNotOpen" = "Obecne hasło nie otwiera tego klucza. Nic nie zostało zmienione.";
+"keys.passphrase.change.notStored" = "Plik klucza używa teraz nowego hasła — od tej pory tylko ono go otwiera. macSCP nie zdołał go zapisać do końca, więc może o nie zapytać przy następnym połączeniu.";
+"keys.passphrase.error.doesNotOpen" = "To hasło nie otwiera tego klucza. Nic nie zostało zapisane.";
+"keys.passphrase.error.notManaged" = "Plik tego klucza nie znajduje się w folderze kluczy macSCP, więc macSCP go nie ruszy.";
+"keys.passphrase.error.timedOut" = "Sprawdzanie klucza trwało zbyt długo i zostało przerwane. Nic nie zostało zmienione.";
+"keys.passphrase.error.failed" = "Coś poszło nie tak. Nic nie zostało zmienione.";
 
 /* Ustawienia — sekcja „Wiersz poleceń" (skrót macscp-cli) */
 "settings.section.cli" = "Wiersz poleceń";

@@ -946,6 +946,24 @@
 "keys.rename" = "Umbenennen…";
 "keys.rename.title" = "Schlüssel umbenennen";
 "keys.rename.error" = "Der Schlüssel konnte nicht umbenannt werden.";
+"keys.passphrase.field" = "Passphrase";
+"keys.passphrase.correct" = "Gespeicherte Passphrase korrigieren…";
+"keys.passphrase.correct.title" = "Gespeicherte Passphrase korrigieren";
+"keys.passphrase.correct.explain" = "Gib die Passphrase ein, die diesen Schlüssel öffnet. macSCP prüft sie vor dem Speichern; die Schlüsseldatei selbst wird nicht verändert.";
+"keys.passphrase.correct.error.notStored" = "Die Passphrase stimmt, konnte aber nicht gespeichert werden. Die Schlüsseldatei wurde nicht verändert — versuche es noch einmal.";
+"keys.passphrase.change" = "Passphrase des Schlüssels ändern…";
+"keys.passphrase.change.title" = "Passphrase des Schlüssels ändern";
+"keys.passphrase.change.explain" = "Dabei wird die Schlüsseldatei neu geschrieben. Danach öffnet nur noch die neue Passphrase den Schlüssel, und macSCP merkt sich die neue.";
+"keys.passphrase.change.old" = "Aktuelle Passphrase";
+"keys.passphrase.change.new" = "Neue Passphrase";
+"keys.passphrase.change.confirm" = "Neue Passphrase bestätigen";
+"keys.passphrase.change.submit" = "Ändern";
+"keys.passphrase.change.error.oldDoesNotOpen" = "Die aktuelle Passphrase öffnet diesen Schlüssel nicht. Es wurde nichts geändert.";
+"keys.passphrase.change.notStored" = "Die Schlüsseldatei nutzt jetzt die neue Passphrase — ab sofort öffnet nur noch diese den Schlüssel. macSCP konnte sie nicht fertig speichern und fragt womöglich bei der nächsten Verbindung danach.";
+"keys.passphrase.error.doesNotOpen" = "Diese Passphrase öffnet den Schlüssel nicht. Es wurde nichts gespeichert.";
+"keys.passphrase.error.notManaged" = "Die Datei dieses Schlüssels liegt nicht im eigenen Schlüsselordner von macSCP — macSCP fasst sie nicht an.";
+"keys.passphrase.error.timedOut" = "Die Prüfung des Schlüssels hat zu lange gedauert und wurde abgebrochen. Es wurde nichts geändert.";
+"keys.passphrase.error.failed" = "Da ist etwas schiefgegangen. Es wurde nichts geändert.";
 
 /* Einstellungen — Bereich „Kommandozeile" (macscp-cli-Verknüpfung) */
 "settings.section.cli" = "Kommandozeile";

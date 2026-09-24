@@ -945,6 +945,24 @@
 "keys.rename" = "Rename…";
 "keys.rename.title" = "Rename Key";
 "keys.rename.error" = "Couldn't rename the key.";
+"keys.passphrase.field" = "Passphrase";
+"keys.passphrase.correct" = "Correct the stored passphrase…";
+"keys.passphrase.correct.title" = "Correct the Stored Passphrase";
+"keys.passphrase.correct.explain" = "Type the passphrase that opens this key. macSCP checks it before saving it, and the key file itself is not changed.";
+"keys.passphrase.correct.error.notStored" = "The passphrase is right, but it couldn't be saved. The key file was not changed — try again.";
+"keys.passphrase.change" = "Change the key's passphrase…";
+"keys.passphrase.change.title" = "Change the Key's Passphrase";
+"keys.passphrase.change.explain" = "This rewrites the key file. Afterwards only the new passphrase opens it, and macSCP remembers the new one.";
+"keys.passphrase.change.old" = "Current passphrase";
+"keys.passphrase.change.new" = "New passphrase";
+"keys.passphrase.change.confirm" = "Confirm new passphrase";
+"keys.passphrase.change.submit" = "Change";
+"keys.passphrase.change.error.oldDoesNotOpen" = "The current passphrase doesn't open this key. Nothing was changed.";
+"keys.passphrase.change.notStored" = "The key file now uses the new passphrase — from now on only that opens it. macSCP couldn't finish saving it, so it may be asked for on the next connection.";
+"keys.passphrase.error.doesNotOpen" = "That passphrase doesn't open this key. Nothing was saved.";
+"keys.passphrase.error.notManaged" = "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.";
+"keys.passphrase.error.timedOut" = "Checking the key took too long and was stopped. Nothing was changed.";
+"keys.passphrase.error.failed" = "Something went wrong. Nothing was changed.";
 
 /* Settings — Command Line section (macscp-cli shortcut installer) */
 "settings.section.cli" = "Command Line";

@@ -1,7 +1,9 @@
-/// How long `SSHKeyGenerator`, `SSHKeyImporter` and `SSHKeyConverter` let
-/// one `ssh-keygen` run last before `SubprocessRunner` ends it (all three
-/// read it, counted 2026-09-19; the converter since Task 3 of the
-/// small-follow-ups plan).
+/// How long `SSHKeyGenerator`, `SSHKeyImporter`, `SSHKeyConverter` and
+/// `SSHKeyPassphraseTool` let one `ssh-keygen` run last before
+/// `SubprocessRunner` ends it (all four read it, counted 2026-09-24 as
+/// `timeout: KeyToolBound.keygen`; the converter since Task 3 of the
+/// small-follow-ups plan, the passphrase tool since the two managed-key
+/// passphrase actions).
 ///
 /// There was no bound before these waits went through the runner: a stuck
 /// `ssh-keygen` held its caller forever. The runner requires one, so this is

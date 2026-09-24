@@ -49,6 +49,17 @@ struct SSHKeysSheet: View {
     /// case there needs one but this one-target-only sheet doesn't).
     @State private var renameTarget: ManagedKey?
 
+    /// Drives the "Correct the stored passphrase" sub-sheet — the key's own
+    /// identity again, for the reason `renameTarget` gives.
+    @State private var correctPassphraseTarget: ManagedKey?
+
+    /// Drives the "Change the key's passphrase" sub-sheet. Deliberately a
+    /// SECOND target rather than a mode on the first: one of the two rewrites
+    /// the key file and the other cannot, and a single sheet with a switch
+    /// would put one press between them (maintainer's answer, 2026-09-24:
+    /// "both, as two separate actions").
+    @State private var changePassphraseTarget: ManagedKey?
+
     /// Drives the delete `confirmationDialog` — non-nil means "confirm
     /// deleting this key".
     @State private var keyPendingDelete: ManagedKey?
@@ -178,6 +189,17 @@ struct SSHKeysSheet: View {
         }
         .sheet(item: $renameTarget) { key in
             RenameKeySheet(key: key, store: store) { reload() }
+        }
+        .sheet(item: $correctPassphraseTarget) { key in
+            CorrectKeyPassphraseSheet(key: key, store: store) {
+                reload()
+                errorMessage = nil
+            }
+        }
+        .sheet(item: $changePassphraseTarget) { key in
+            ChangeKeyPassphraseSheet(key: key, store: store) { outcome in
+                reportPassphraseChange(outcome)
+            }
         }
         .fileExporter(
             isPresented: $isExporting,
@@ -344,8 +366,38 @@ struct SSHKeysSheet: View {
         Button(L10n.string("keys.exportPublic", "Export public key…")) { exportPublicKey(key) }
         Button(L10n.string("keys.exportPrivate", "Export private key…")) { exportPrivateTarget = key }
         Button(L10n.string("keys.rename", "Rename…")) { renameTarget = key }
+        Button(L10n.string("keys.passphrase.correct", "Correct the stored passphrase…")) {
+            correctPassphraseTarget = key
+        }
+        .disabled(!Self.canCorrectPassphrase(key, in: store))
+        Button(L10n.string("keys.passphrase.change", "Change the key's passphrase…")) {
+            changePassphraseTarget = key
+        }
+        .disabled(!Self.canChangePassphrase(key, in: store))
         Divider()
         Button(L10n.string("keys.delete", "Delete"), role: .destructive) { keyPendingDelete = key }
+    }
+
+    /// When "Correct the stored passphrase" applies: the key FILE is
+    /// encrypted, so there is a passphrase for macSCP to be remembering
+    /// wrongly, AND the metadata names a file inside the key directory, so
+    /// there is something to verify the typed value against. For an
+    /// unencrypted key there is nothing to store — the action is greyed
+    /// rather than absent, because "this key has no passphrase" is the
+    /// answer the user came for.
+    static func canCorrectPassphrase(_ key: ManagedKey, in store: ManagedKeyStore) -> Bool {
+        key.hasPassphrase && store.privateKeyURL(for: key) != nil
+    }
+
+    /// When "Change the key's passphrase" applies: whenever the metadata
+    /// names a file inside the key directory. An UNENCRYPTED key is included
+    /// on purpose — the action then encrypts it, leaving the current
+    /// passphrase field empty — so the only thing greyed here is an entry
+    /// whose `fileName` addresses no file macSCP owns
+    /// (`ManagedKeyStore.privateKeyURL(for:)` refuses it), which takes a
+    /// hand-edited `managed_keys.json` to produce.
+    static func canChangePassphrase(_ key: ManagedKey, in store: ManagedKeyStore) -> Bool {
+        store.privateKeyURL(for: key) != nil
     }
 
     @ViewBuilder
@@ -409,6 +461,25 @@ struct SSHKeysSheet: View {
                 "keys.passphrase.notStored",
                 "The key was saved, but its passphrase wasn't. It will be asked for on the next connection.")
         }
+    }
+
+    /// Refreshes the list after the key file's passphrase was changed, and
+    /// says so when the file was rewritten but macSCP could not finish
+    /// writing the new passphrase down.
+    ///
+    /// The note belongs HERE, not in the sheet that did the work: that sheet
+    /// dismisses itself on the same run, and the change must not be offered a
+    /// second time just to surface a remark about the first one — the same
+    /// reasoning `reportKeyOutcome(keptPassphrase:)` above spells out. It is
+    /// not phrased as a failure, because it is not one: the key file really
+    /// does use the new passphrase now.
+    private func reportPassphraseChange(_ outcome: ChangeKeyPassphraseForm.Outcome) {
+        reload()
+        errorMessage = outcome == .changedButNotStored
+            ? L10n.string(
+                "keys.passphrase.change.notStored",
+                "The key file now uses the new passphrase \u{2014} from now on only that opens it. macSCP couldn't finish saving it, so it may be asked for on the next connection.")
+            : nil
     }
 
     private func copyPublicKey(_ key: ManagedKey) {
@@ -989,6 +1060,231 @@ private struct RenameKeySheet: View {
             dismiss()
         } catch {
             errorMessage = L10n.string("keys.rename.error", "Couldn't rename the key.")
+        }
+    }
+}
+
+/// "Correct the stored passphrase" (2026-09-24): one field, and the key FILE
+/// is never opened for writing.
+///
+/// It exists because a managed key's stored passphrase wins over one typed for
+/// a jump hop (since 2026-09-20), which left a wrong or missing stored value
+/// with nowhere to be corrected — the typed one was saved and then never
+/// consulted. The typed value is proved against the key file
+/// (`ssh-keygen -y`) before it replaces anything, so pressing Save with a
+/// guess cannot destroy a passphrase that was right.
+///
+/// The fields, the latch and the run live in `CorrectKeyPassphraseForm`
+/// (Core), where `KeyPassphraseFormsTests` can edit the field mid-run and
+/// cancel one — the same split `GenerateKeySheet` uses, and for the same
+/// reason: `ssh-keygen` is awaited, so the field stays live while it runs.
+private struct CorrectKeyPassphraseSheet: View {
+    let key: ManagedKey
+    let store: ManagedKeyStore
+    let onCorrected: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var form = CorrectKeyPassphraseForm()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.string("keys.passphrase.correct.title", "Correct the Stored Passphrase"))
+                .font(.title3.bold())
+            Text(L10n.string(
+                "keys.passphrase.correct.explain",
+                "Type the passphrase that opens this key. macSCP checks it before saving it, and the key file itself is not changed."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Fixed while `ssh-keygen` runs: the run works from the value it
+            // started with, and a field that went on accepting edits would
+            // show a passphrase the sheet is not checking.
+            let passphraseLabel = L10n.string("keys.passphrase.field", "Passphrase")
+            KeyFieldRow(label: passphraseLabel) {
+                SecureField(passphraseLabel, text: $form.passphrase, prompt: Text(verbatim: ""))
+            }
+            .disabled(form.isRunning)
+
+            if let message = form.failure.map(Self.message(for:)) {
+                Text(message).font(.caption).foregroundStyle(.red).lineLimit(3)
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.string("common.cancel", "Cancel")) {
+                    form.cancel()
+                    dismiss()
+                }
+                    .buttonStyle(.polished)
+                Button(L10n.string("common.save", "Save")) { save() }
+                    .buttonStyle(.polishedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(form.isSaveDisabled)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .textFieldStyle(.roundedBorder)
+        // However the sheet goes away — Cancel, Escape, the parent closing —
+        // a run still in flight is cancelled. Nothing has been written at
+        // that point either way; see the form's own `cancel`.
+        .onDisappear { form.cancel() }
+    }
+
+    @MainActor private func save() {
+        guard let task = form.start(key: key, store: store, secrets: KeychainSecretStore())
+        else { return }
+        Task { @MainActor in
+            if case .stored = await task.value {
+                onCorrected()
+                dismiss()
+            }
+        }
+    }
+
+    /// A fixed message per failure — never the underlying error (same
+    /// reasoning as `GenerateKeySheet.message(for:)`).
+    private static func message(for failure: CorrectKeyPassphraseForm.Failure) -> String {
+        switch failure {
+        case .doesNotOpenTheKey:
+            return L10n.string(
+                "keys.passphrase.error.doesNotOpen",
+                "That passphrase doesn't open this key. Nothing was saved.")
+        case .notManaged:
+            return L10n.string(
+                "keys.passphrase.error.notManaged",
+                "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.")
+        case .notStored:
+            return L10n.string(
+                "keys.passphrase.correct.error.notStored",
+                "The passphrase is right, but it couldn't be saved. The key file was not changed \u{2014} try again.")
+        case .timedOut:
+            return L10n.string(
+                "keys.passphrase.error.timedOut",
+                "Checking the key took too long and was stopped. Nothing was changed.")
+        case .failed:
+            return L10n.string("keys.passphrase.error.failed", "Something went wrong. Nothing was changed.")
+        }
+    }
+}
+
+/// "Change the key's passphrase" (2026-09-24): the current passphrase, a new
+/// one and its confirmation, and `ssh-keygen -p` over the key file itself.
+///
+/// The sibling sheet above changes nothing on disk; this one is irreversible,
+/// which is why the two are separate actions rather than one sheet with a
+/// switch. The current passphrase is proved first, so a mistyped one is
+/// reported as itself instead of as a broken run, and the stored value follows
+/// the file in the same operation — including the case where it cannot, which
+/// `SSHKeysSheet.reportPassphraseChange(_:)` says out loud.
+///
+/// The fields, the latch and the run live in `ChangeKeyPassphraseForm` (Core).
+private struct ChangeKeyPassphraseSheet: View {
+    let key: ManagedKey
+    let store: ManagedKeyStore
+    /// Called with how the run ended, not merely that it ended: the parent
+    /// has to tell `.changed` from `.changedButNotStored`, and only the
+    /// parent survives this sheet's dismissal to say so.
+    let onChanged: (ChangeKeyPassphraseForm.Outcome) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var form = ChangeKeyPassphraseForm()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.string("keys.passphrase.change.title", "Change the Key's Passphrase"))
+                .font(.title3.bold())
+            Text(L10n.string(
+                "keys.passphrase.change.explain",
+                "This rewrites the key file. Afterwards only the new passphrase opens it, and macSCP remembers the new one."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Fixed while `ssh-keygen` runs, for the reason the sibling sheet
+            // above gives — with more at stake here, since the run rewrites
+            // the key file with the values it started from.
+            Group {
+                let oldLabel = L10n.string("keys.passphrase.change.old", "Current passphrase")
+                KeyFieldRow(label: oldLabel) {
+                    SecureField(oldLabel, text: $form.oldPassphrase, prompt: Text(verbatim: ""))
+                }
+                let newLabel = L10n.string("keys.passphrase.change.new", "New passphrase")
+                KeyFieldRow(label: newLabel) {
+                    SecureField(newLabel, text: $form.newPassphrase, prompt: Text(verbatim: ""))
+                }
+                let confirmLabel = L10n.string(
+                    "keys.passphrase.change.confirm", "Confirm new passphrase")
+                KeyFieldRow(label: confirmLabel) {
+                    SecureField(confirmLabel, text: $form.newPassphraseConfirm, prompt: Text(verbatim: ""))
+                }
+            }
+            .disabled(form.isRunning)
+
+            if form.passphrasesMismatch && !form.newPassphraseConfirm.isEmpty {
+                Text(L10n.string("keys.generate.passphrase.mismatch", "Passphrases don't match."))
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            if let message = form.failure.map(Self.message(for:)) {
+                Text(message).font(.caption).foregroundStyle(.red).lineLimit(3)
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.string("common.cancel", "Cancel")) {
+                    form.cancel()
+                    dismiss()
+                }
+                    .buttonStyle(.polished)
+                Button(L10n.string("keys.passphrase.change.submit", "Change")) { change() }
+                    .buttonStyle(.polishedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(form.isSaveDisabled)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .textFieldStyle(.roundedBorder)
+        // Cancelling past the rewrite does not undo it — the form documents
+        // why nothing could — so this only stops a run that has not reached
+        // `ssh-keygen -p` yet.
+        .onDisappear { form.cancel() }
+    }
+
+    @MainActor private func change() {
+        guard let task = form.start(key: key, store: store, secrets: KeychainSecretStore())
+        else { return }
+        Task { @MainActor in
+            let outcome = await task.value
+            // Both of these mean the key file was rewritten, which is why
+            // they leave the sheet: only a `.failed` or a `.cancelled` is
+            // something to try again here.
+            if outcome == .changed || outcome == .changedButNotStored {
+                onChanged(outcome)
+                dismiss()
+            }
+        }
+    }
+
+    /// A fixed message per failure — never the underlying error.
+    private static func message(for failure: ChangeKeyPassphraseForm.Failure) -> String {
+        switch failure {
+        case .notManaged:
+            return L10n.string(
+                "keys.passphrase.error.notManaged",
+                "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.")
+        case .oldDoesNotOpenTheKey:
+            return L10n.string(
+                "keys.passphrase.change.error.oldDoesNotOpen",
+                "The current passphrase doesn't open this key. Nothing was changed.")
+        case .timedOut:
+            return L10n.string(
+                "keys.passphrase.error.timedOut",
+                "Checking the key took too long and was stopped. Nothing was changed.")
+        case .failed:
+            return L10n.string("keys.passphrase.error.failed", "Something went wrong. Nothing was changed.")
         }
     }
 }

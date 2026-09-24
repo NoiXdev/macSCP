@@ -67,8 +67,12 @@ public enum ManagedKeyPassphrase {
     /// authoritative (`SessionSecretPolicy.usesStoredManagedPassphrase`). For a
     /// key imported from a login-set export that carried no secrets, the flag
     /// is true and the slot does not exist: trusting the flag there discards
-    /// the passphrase the user types on every save, with no other UI anywhere
-    /// to store it, so the user retypes it on every connect forever.
+    /// the passphrase the user types on every save, so the user retypes it on
+    /// every connect. There IS somewhere else to store it now — the key
+    /// manager's "Correct the stored passphrase" action
+    /// (`CorrectKeyPassphraseForm`, 2026-09-24), which fills exactly this
+    /// slot — but that is a place the user has to go find, not a reason to
+    /// discard what they already typed here.
     ///
     /// `false` for a path macSCP does not manage, which is what the caller
     /// wants: an external key's passphrase belongs in the session's or login
