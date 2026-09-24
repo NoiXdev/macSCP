@@ -385,9 +385,13 @@ public final class ConnectionViewModel {
     /// the same typed error, so the message, the failure kind and
     /// `lastFailureReason` all come from it.
     ///
-    /// The jump hop's key is not considered: its fill
-    /// (`LoginResolver.preferringManagedKeyPassphrase`) keeps no record,
-    /// and `passphraseRequired` names no hop.
+    /// The jump hop's key is not considered, and that is unchanged by the
+    /// hop's fill now keeping the fact
+    /// (`ResolvedLogin.unreadableStoreHidTheKey`, 2026-09-24): what stops it
+    /// here is the OTHER half, that `passphraseRequired` names no hop, so a
+    /// form cannot tell whose key a failure was about. The hop's fact is
+    /// named where the hop is measured on its own — the jump's diagnosis,
+    /// `DiagnosticJump.missingSecretReason`.
     private func namingUnreadableStore(_ error: any Error) -> any Error {
         guard case .passphraseRequired? = error as? SSHKeyError,
             authChoice == .privateKey, password.isEmpty,

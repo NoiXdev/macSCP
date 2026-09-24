@@ -54,15 +54,35 @@ public struct ResolvedLogin: Equatable, Sendable {
     public var authKind: StoredSession.AuthKind
     public var keyPath: String?
     public var secret: String?
+    /// Whether `managed_keys.json` could not be read while `keyPath` lies in
+    /// the managed key directory — so the key's own passphrase slot could not
+    /// be looked up, and `secret` above is whatever the hop's own slot held,
+    /// which may be nothing.
+    ///
+    /// The FACT, not a verdict: it says nothing about whether the key is
+    /// encrypted, nor whether the dial will need a passphrase at all — the
+    /// store that would have said so is the one that could not be read. And
+    /// nothing of the store's contents: this is a `Bool`, and the sentences
+    /// built from it name the file and nothing else.
+    ///
+    /// Carried since 2026-09-24, because "there is no secret" and "the secret
+    /// could not be looked up" are different problems and the user can act on
+    /// only one of them. Set by `preferringManagedKeyPassphrase(_:keys:
+    /// secrets:)` alone — the one function here that reads the key store —
+    /// and `false` on every login the resolver builds from a set or a spec.
+    /// The jump's diagnosis is where it becomes a sentence
+    /// (`DiagnosticJump.missingSecretReason`).
+    public var unreadableStoreHidTheKey: Bool
 
     public init(
         username: String, authKind: StoredSession.AuthKind,
-        keyPath: String?, secret: String?
+        keyPath: String?, secret: String?, unreadableStoreHidTheKey: Bool = false
     ) {
         self.username = username
         self.authKind = authKind
         self.keyPath = keyPath
         self.secret = secret
+        self.unreadableStoreHidTheKey = unreadableStoreHidTheKey
     }
 }
 
@@ -225,20 +245,33 @@ public enum LoginResolver {
         let keyPath = (login.keyPath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyPath.isEmpty else { return login }
         // The unreadable-store fact (`Resolution.unreadableStoreHidTheKey`)
-        // is dropped here, deliberately: `ResolvedLogin` has no field for it,
-        // three separate jump fills copy this login into a form, and the
-        // dial's `passphraseRequired` names no hop — a jump's fact would name
-        // the store for a target key it never hid. The target's fill names
-        // it (`ConnectionViewModel.fillManagedKeyPassphrase(store:secrets:)`).
-        let managed = ManagedKeyPassphrase.resolve(
-            keyPath: keyPath, typed: "", store: keys, secrets: secrets
-        ).passphrase
+        // used to be dropped here, and a hop then said "no secret" whether
+        // there was none or `managed_keys.json` could not be read — two
+        // problems, one sentence, and only one of them is the user's to fix
+        // by saving a credential. It is carried since 2026-09-24, on
+        // `ResolvedLogin.unreadableStoreHidTheKey`.
+        //
+        // Four call sites read this function, counted 2026-09-24: the three
+        // jump fills in Core, which reach it through `SessionListViewModel
+        // .withManagedKeyPassphrase(_:)`, and `DiagnosticJump.stored`, which
+        // is the one that turns the fact into a sentence
+        // (`DiagnosticJump.missingSecretReason`). Of the three fills, two
+        // return the login and copy the fact by carrying it; the third
+        // (`fillJumpForm`) writes into a form, which has fields and no place
+        // for a fact — its own comment says what it does instead.
+        let resolution = ManagedKeyPassphrase.resolve(
+            keyPath: keyPath, typed: "", store: keys, secrets: secrets)
+        var result = login
+        // The fact is about the LOOKUP, not about whether the lookup was
+        // needed, so it rides along whatever the passphrase turned out to be
+        // — including the case below, where the hop's own slot already held
+        // one and nothing here changes what the hop dials with.
+        result.unreadableStoreHidTheKey = resolution.unreadableStoreHidTheKey
         // Nothing from the key — including the unreadable store above, which
         // answers the (empty) typed value — leaves the hop's own slot exactly
         // as the overloads read it.
-        guard !managed.isEmpty else { return login }
-        var result = login
-        result.secret = managed
+        guard !resolution.passphrase.isEmpty else { return result }
+        result.secret = resolution.passphrase
         return result
     }
 

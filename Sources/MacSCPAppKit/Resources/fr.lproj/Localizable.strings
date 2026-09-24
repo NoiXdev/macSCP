@@ -1259,6 +1259,7 @@
 "diagnostics.reason.jumpUnresolvable" = "L’hôte relais n’a pas pu être déterminé à partir des réglages de cette connexion — la connexion ou l’identifiant auquel il renvoie n’existe peut-être plus.";
 "diagnostics.reason.jumpNotReached" = "Non mesuré : l’hôte relais n’a pas été atteint.";
 "diagnostics.reason.noJumpSecret" = "Aucun identifiant n’est enregistré pour l’hôte relais. Enregistrez-en un, puis relancez la vérification.";
+"diagnostics.reason.jumpManagedKeyStoreUnreadable" = "La phrase secrète de la clé de l’hôte relais n’a pas pu être recherchée : la liste des clés gérées (managed_keys.json) n’a pas pu être lue. Vérifiez le fichier, puis relancez la vérification.";
 "diagnostics.reason.managedKeyStoreUnreadable" = "La phrase secrète de la clé n’a pas pu être recherchée : la liste des clés gérées (managed_keys.json) n’a pas pu être lue. Vérifiez le fichier, puis relancez la vérification.";
 "diagnostics.reason.jumpForwardingProhibited" = "L’hôte relais ne transfère pas de connexions pour cet identifiant.";
 "diagnostics.reason.jumpCouldNotConnect" = "L’hôte relais n’a pas pu joindre la cible — le nom n’y est pas résolu, ou rien n’accepte de connexion sur le port.";

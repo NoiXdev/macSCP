@@ -687,7 +687,7 @@ public actor ConnectionDiagnostics {
                 let jumpSecret: String
                 switch DialSupport.dialSecret(
                     usesAgent: jump.login.authKind == .agent,
-                    missing: DiagnosticReason.noJumpSecret, jump.secret)
+                    missing: jump.missingSecretReason, jump.secret)
                 {
                 case .secret(let resolved): jumpSecret = resolved
                 case .unanswered(let outcome): return timer.finish(outcome, "")
@@ -892,7 +892,7 @@ public actor ConnectionDiagnostics {
         let timer = await Self.starting(DiagnosticStepID.jumpDial, announcedTo: observer)
         let secret: String
         switch DialSupport.dialSecret(
-            usesAgent: jump.login.authKind == .agent, missing: DiagnosticReason.noJumpSecret,
+            usesAgent: jump.login.authKind == .agent, missing: jump.missingSecretReason,
             jump.secret)
         {
         case .secret(let resolved): secret = resolved

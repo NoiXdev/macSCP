@@ -604,11 +604,12 @@ public enum DialSupport {
     ///
     /// For the TARGET's lookup only — `DiagnosticContribution.sshConnect`
     /// and `DiagnosticJumpStep.dialViaJump`, two call sites, counted
-    /// 2026-09-18. A jump's secret is not looked up through a managed-key
-    /// link: `DiagnosticJump.stored` resolves it with `LoginResolver
-    /// .preferringManagedKeyPassphrase`, which drops the resolver's
-    /// unreadable-store fact (its own comment says why) and hands back only
-    /// a secret, so `noJumpSecret` has no fact to name.
+    /// 2026-09-18 and again 2026-09-24. A jump's secret is not looked up
+    /// through a managed-key link at all: `DiagnosticJump.stored` resolves it
+    /// with `LoginResolver.preferringManagedKeyPassphrase`, so the same fact
+    /// about a HOP's key arrives by its own route
+    /// (`ResolvedLogin.unreadableStoreHidTheKey`) and is named by the hop's
+    /// own `DiagnosticJump.missingSecretReason`, under its own reason.
     static func missingSecretReason(_ missing: String, secrets: (any SecretSource)?) -> String {
         guard let secrets,
             ManagedKeyPassphraseSecretSource.unreadableStoreHidAKey(in: [secrets])

@@ -1143,6 +1143,116 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(rig.count("dialTarget") == 0, "\(rig.events)")
     }
 
+    /// The JUMP hop's own secret lookup tells an unreadable
+    /// `managed_keys.json` apart from a hop that simply has nothing stored
+    /// (2026-09-24). Until then both came back as `noJumpSecret`: one
+    /// sentence for two problems, and only one of them is the user's to fix
+    /// by saving a credential.
+    ///
+    /// All three sites that look the jump's secret up, counted 2026-09-24 —
+    /// `ConnectionDiagnostics.dialJump`, `ConnectionDiagnostics.throughput`
+    /// and `DiagnosticJumpStep.dialViaJump`. The control is the same
+    /// unreadable store with a key path it could never have held: the store
+    /// hid nothing there, so the hop reads as `noJumpSecret` exactly as it
+    /// always did.
+    @Test(arguments: JumpSecretSite.allCases)
+    func aHopBehindAnUnreadableKeyStoreIsNotToldItSimplyHasNoSecret(
+        site: JumpSecretSite
+    ) async throws {
+        let rig = try CorruptManagedKeyStoreRig()
+        defer { rig.tearDown() }
+
+        let hidden = try await Self.jumpSecretOutcome(
+            site: site, jump: Self.storedJump(over: rig, inTheKeyDirectory: true))
+        let elsewhere = try await Self.jumpSecretOutcome(
+            site: site, jump: Self.storedJump(over: rig, inTheKeyDirectory: false))
+
+        #expect(elsewhere == .skipped(DiagnosticReason.noJumpSecret))
+        #expect(
+            hidden == .skipped(DiagnosticReason.jumpManagedKeyStoreUnreadable),
+            "the hop was told it has no secret, for a store that could not be read")
+    }
+
+    /// Neither sentence carries anything of the key, the store or the hop:
+    /// the fact is that the store could not be read, not what is in it.
+    /// Every comparison is computed into a `Bool` first, so a failure message
+    /// cannot print the value it is about (CLAUDE.md, "A value a test must
+    /// not leak has two exits").
+    @Test func neitherJumpSecretSentenceCarriesASecretAPathOrTheStore() throws {
+        let rig = try CorruptManagedKeyStoreRig()
+        defer { rig.tearDown() }
+        let sentences = [
+            DiagnosticReason.noJumpSecret, DiagnosticReason.jumpManagedKeyStoreUnreadable,
+        ]
+
+        // The positive anchor: the two sentences are there, and they differ.
+        #expect(sentences.allSatisfy { !$0.isEmpty })
+        #expect(Set(sentences).count == sentences.count)
+
+        for sentence in sentences {
+            let carriesThePassphrase = sentence.contains(CorruptManagedKeyStoreRig.keyPassphrase)
+            let carriesTheStore = sentence.contains(CorruptManagedKeyStoreRig.storeContent)
+            let carriesTheKeyPath = sentence.contains(rig.managedKeyPath)
+            let carriesTheKeyDirectory =
+                sentence.contains(rig.keys.keyDirectory.path(percentEncoded: false))
+            #expect(carriesThePassphrase == false)
+            #expect(carriesTheStore == false)
+            #expect(carriesTheKeyPath == false)
+            #expect(carriesTheKeyDirectory == false)
+        }
+    }
+
+    /// Which of the three jump-secret lookups a case measures.
+    enum JumpSecretSite: String, CaseIterable, CustomTestStringConvertible {
+        case jumpDial, throughput, targetDialViaJump
+        var testDescription: String { rawValue }
+    }
+
+    /// That site's row, run over a fresh fake so no case shares a rig.
+    private static func jumpSecretOutcome(
+        site: JumpSecretSite, jump: DiagnosticJump
+    ) async -> DiagnosticOutcome? {
+        let rig = JumpRig()
+        switch site {
+        case .jumpDial:
+            let report = await diagnostics(jump: jump, rig: rig).run(scope: .dial)
+            return report.steps.first { $0.id == DiagnosticStepID.jumpDial }?.outcome
+        case .throughput:
+            let report = await diagnostics(jump: jump, rig: rig).run(scope: .throughput)
+            return report.steps.first { $0.id == DiagnosticStepID.throughput }?.outcome
+        case .targetDialViaJump:
+            let context = DiagnosticJumpStep.Context(
+                connection: FakeJumpConnection(rig: rig), jump: jump,
+                target: Endpoint(host: targetHost, port: targetPort), values: targetValues(),
+                diagnostic: DiagnosticContext(secrets: nil, sessionID: nil, timeout: .seconds(5)),
+                dialer: rig.dialer, budget: .seconds(5), transcript: JumpProbeTranscript())
+            return await DiagnosticJumpStep.dialViaJump.measure(
+                context,
+                DiagnosticStepTimer(
+                    id: DiagnosticStepID.targetDialViaJump, titleKey: "diagnostics.step.probe")
+            ).outcome
+        }
+    }
+
+    /// A stored session whose jump is a private-key hop over `rig`'s
+    /// unreadable store, with nothing in the hop's own slot. The key path
+    /// lies in the store's key directory, or beside it — the difference
+    /// between a key the store would have managed and one it never could.
+    private static func storedJump(
+        over rig: CorruptManagedKeyStoreRig, inTheKeyDirectory: Bool
+    ) throws -> DiagnosticJump {
+        let session = StoredSession(
+            id: UUID(), name: "through-a-hop",
+            ssh: StoredSSHConfig(
+                host: targetHost, port: targetPort, username: "testuser",
+                jump: StoredSession.JumpSpec(
+                    host: "127.0.0.1", port: 1, username: "hop", authKind: .privateKey,
+                    keyPath: inTheKeyDirectory ? rig.managedKeyPath : rig.unmanagedKeyPath)))
+        return try #require(
+            DiagnosticJump.stored(
+                for: session, sets: [], sessions: [session], secrets: rig.secrets, keys: rig.keys))
+    }
+
     // MARK: - The report names both halves
 
     @Test func theReportNamesTheJumpInBothRenderingsAndTheJSON() throws {

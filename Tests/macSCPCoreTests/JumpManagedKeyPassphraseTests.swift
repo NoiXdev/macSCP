@@ -210,6 +210,168 @@ struct JumpManagedKeyPassphraseTests {
         #expect(unchanged)
     }
 
+    // MARK: - The unreadable-store fact leaves the fallback (2026-09-24)
+
+    /// A view model over a store whose `managed_keys.json` cannot be read,
+    /// and a session whose jump is a private-key hop at one of the rig's two
+    /// key paths. Nothing is in the hop's own slot unless a case puts it
+    /// there.
+    private struct CorruptFixture {
+        let rig: CorruptManagedKeyStoreRig
+        let vm: SessionListViewModel
+
+        func session(inTheKeyDirectory: Bool) -> StoredSession {
+            StoredSession(
+                id: UUID(), name: "hop-session",
+                ssh: StoredSSHConfig(
+                    host: "target.invalid", username: "u",
+                    jump: StoredSession.JumpSpec(
+                        host: "hop.invalid", username: "hop", authKind: .privateKey,
+                        keyPath: inTheKeyDirectory
+                            ? rig.managedKeyPath : rig.unmanagedKeyPath)))
+        }
+
+        func tearDown() { rig.tearDown() }
+    }
+
+    private func makeCorruptFixture() throws -> CorruptFixture {
+        let rig = try CorruptManagedKeyStoreRig()
+        return CorruptFixture(
+            rig: rig,
+            vm: SessionListViewModel(
+                store: SessionStore(directory: rig.directory), secrets: rig.secrets,
+                auditStore: AuditLogStore(directory: rig.directory),
+                loginSetStore: LoginSetStore(directory: rig.directory), keys: rig.keys))
+    }
+
+    /// The fallback carries the fact that `managed_keys.json` could not be
+    /// read for a key the store would have managed. It used to drop it, and a
+    /// hop then said "no secret" whether there was none or the store could
+    /// not be read — two problems, one sentence, and the user can act on only
+    /// one of them.
+    ///
+    /// Three answers, one key path: the store unreadable and the key inside
+    /// its key directory; the same store and a key beside it, which the store
+    /// could never have held; and the store readable again.
+    @Test func theFallbackCarriesAnUnreadableStoreThatHidTheKey() throws {
+        let rig = try CorruptManagedKeyStoreRig()
+        defer { rig.tearDown() }
+        let hidden = LoginResolver.preferringManagedKeyPassphrase(
+            login(keyPath: rig.managedKeyPath, secret: nil), keys: rig.keys, secrets: rig.secrets)
+        let elsewhere = LoginResolver.preferringManagedKeyPassphrase(
+            login(keyPath: rig.unmanagedKeyPath, secret: nil), keys: rig.keys, secrets: rig.secrets)
+        try rig.repairStore()
+        let readable = LoginResolver.preferringManagedKeyPassphrase(
+            login(keyPath: rig.managedKeyPath, secret: nil), keys: rig.keys, secrets: rig.secrets)
+
+        #expect(hidden != readable, "an unreadable store left no trace on the resolved login")
+        #expect(hidden.unreadableStoreHidTheKey)
+        #expect(elsewhere.unreadableStoreHidTheKey == false)
+        #expect(readable.unreadableStoreHidTheKey == false)
+        #expect(elsewhere.keyPath == rig.unmanagedKeyPath)
+    }
+
+    /// The fact is about the LOOKUP, not about whether the lookup was needed:
+    /// it rides along even when the hop's own slot answered, which the secret
+    /// below shows is still what the hop dials with.
+    @Test func theFactRidesAlongWhenTheHopsOwnSlotAnswered() throws {
+        let rig = try CorruptManagedKeyStoreRig()
+        defer { rig.tearDown() }
+        let input = login(keyPath: rig.managedKeyPath, secret: Self.ownPassphrase)
+
+        let resolved = LoginResolver.preferringManagedKeyPassphrase(
+            input, keys: rig.keys, secrets: rig.secrets)
+
+        let keptOwn = resolved.secret == Self.ownPassphrase
+        #expect(keptOwn, "an unreadable managed key store cost the hop its own passphrase")
+        #expect(resolved != input, "the hop's own slot answered and the fact was dropped")
+        #expect(resolved.unreadableStoreHidTheKey)
+        #expect(input.unreadableStoreHidTheKey == false)
+    }
+
+    /// The two jump fills that hand a `ResolvedLogin` on copy the fact
+    /// through — `SessionListViewModel.resolvedJumpLogin(for:)` and
+    /// `resolvedJump(for:)`, two of the three fills that reach the fallback
+    /// through `withManagedKeyPassphrase(_:)` (counted 2026-09-24; the third,
+    /// `fillJumpForm(_:from:)`, writes into a form and is its own case
+    /// below).
+    @Test func theTwoFillsThatReturnALoginCopyTheFactThrough() throws {
+        let fixture = try makeCorruptFixture()
+        defer { fixture.tearDown() }
+
+        let hiddenLogin = try fixture.vm.resolvedJumpLogin(
+            for: fixture.session(inTheKeyDirectory: true))
+        let elsewhereLogin = try fixture.vm.resolvedJumpLogin(
+            for: fixture.session(inTheKeyDirectory: false))
+        let hiddenResolved = try fixture.vm.resolvedJump(
+            for: fixture.session(inTheKeyDirectory: true))
+        let elsewhereResolved = try fixture.vm.resolvedJump(
+            for: fixture.session(inTheKeyDirectory: false))
+        let hidden = try #require(hiddenLogin)
+        let elsewhere = try #require(elsewhereLogin)
+        let hiddenJump = try #require(hiddenResolved)
+        let elsewhereJump = try #require(elsewhereResolved)
+
+        // The positive anchor beside each negative: the fill resolved the key
+        // path it was asked about at all.
+        #expect(hidden.keyPath == fixture.rig.managedKeyPath)
+        #expect(hidden.unreadableStoreHidTheKey)
+        #expect(elsewhere.keyPath == fixture.rig.unmanagedKeyPath)
+        #expect(elsewhere.unreadableStoreHidTheKey == false)
+        #expect(hiddenJump.login.keyPath == fixture.rig.managedKeyPath)
+        #expect(hiddenJump.login.unreadableStoreHidTheKey)
+        #expect(elsewhereJump.login.keyPath == fixture.rig.unmanagedKeyPath)
+        #expect(elsewhereJump.login.unreadableStoreHidTheKey == false)
+    }
+
+    /// The third fill, and the decision of 2026-09-24: the tab's own jump
+    /// fill writes the passphrase and nothing else — a form has fields, not
+    /// facts — and it writes NO diagnostic-log line for the store either. The
+    /// store is named where the hop is measured on its own, in the jump's
+    /// diagnosis.
+    ///
+    /// The positive anchor beside that negative: the same fill over a
+    /// READABLE store that manages the key puts the key's passphrase in the
+    /// field, so a fill that stopped filling anything would be seen here.
+    @Test func theTabsJumpFillWritesThePassphraseAndNoStoreFact() throws {
+        let fixture = try makeCorruptFixture()
+        defer { fixture.tearDown() }
+        let set = LoginSet(
+            name: "hop", username: "u", authKind: .privateKey,
+            keyPath: fixture.rig.managedKeyPath)
+        fixture.vm.saveLoginSet(set, secret: nil)
+        let form = makeForm()
+        form.jumpLoginMode = .set
+        form.jumpSelectedLoginSetID = set.id
+
+        #expect(fixture.vm.resolveJumpLoginSet(form: form) == nil)
+
+        let filledNothing = form.jumpPassword.isEmpty
+        #expect(filledNothing, "the unreadable store's fill put something in the field")
+        #expect(form.jumpKeyPath == fixture.rig.managedKeyPath)
+
+        // The positive anchor: the same fill, over a store that CAN be read
+        // and manages that key, puts the key's own passphrase in the field.
+        // Without it the two negatives above would also pass a fill that
+        // stopped filling anything at all.
+        let key = ManagedKey(
+            name: "hop-key", comment: "", type: .ed25519, fingerprint: "SHA256:x",
+            publicKeyOpenSSH: "ssh-ed25519 AAAA", createdAt: Date(timeIntervalSince1970: 0),
+            hasPassphrase: true,
+            fileName: URL(fileURLWithPath: fixture.rig.managedKeyPath).lastPathComponent)
+        try fixture.rig.repairStore()
+        try fixture.rig.keys.add(key)
+        try fixture.rig.secrets.savePassword(Self.managedPassphrase, for: key.id)
+        let readable = makeForm()
+        readable.jumpLoginMode = .set
+        readable.jumpSelectedLoginSetID = set.id
+
+        #expect(fixture.vm.resolveJumpLoginSet(form: readable) == nil)
+
+        let filledTheKeys = readable.jumpPassword == Self.managedPassphrase
+        #expect(filledTheKeys, "a readable store's fill left the passphrase field empty")
+    }
+
     // MARK: - The fallback reaches the jump config
 
     @Test func aJumpBoundToASetWithAnEmptySlotDialsWithTheManagedKeysPassphrase() throws {

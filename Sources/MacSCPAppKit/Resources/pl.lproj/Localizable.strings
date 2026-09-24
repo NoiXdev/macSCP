@@ -1258,6 +1258,7 @@
 "diagnostics.reason.jumpUnresolvable" = "Nie udało się ustalić hosta pośredniczącego z ustawień tego połączenia — połączenie lub dane logowania, na które wskazuje, mogą już nie istnieć.";
 "diagnostics.reason.jumpNotReached" = "Nie zmierzono: host pośredniczący nie został osiągnięty.";
 "diagnostics.reason.noJumpSecret" = "Dla hosta pośredniczącego nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";
+"diagnostics.reason.jumpManagedKeyStoreUnreadable" = "Nie udało się odnaleźć hasła klucza hosta pośredniczącego: nie udało się odczytać listy zarządzanych kluczy (managed_keys.json). Sprawdź plik i uruchom sprawdzenie ponownie.";
 "diagnostics.reason.managedKeyStoreUnreadable" = "Nie udało się odnaleźć hasła klucza: nie udało się odczytać listy zarządzanych kluczy (managed_keys.json). Sprawdź plik i uruchom sprawdzenie ponownie.";
 "diagnostics.reason.jumpForwardingProhibited" = "Host pośredniczący nie przekazuje połączeń dla tego loginu.";
 "diagnostics.reason.jumpCouldNotConnect" = "Host pośredniczący nie mógł połączyć się z celem — nazwa nie jest tam rozwiązywana albo nic nie przyjmuje połączeń na tym porcie.";

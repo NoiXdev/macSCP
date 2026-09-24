@@ -1256,6 +1256,7 @@
 "diagnostics.reason.jumpUnresolvable" = "Der Jump-Host ließ sich aus den Einstellungen dieser Verbindung nicht ermitteln — die Verbindung oder Anmeldung, auf die er verweist, gibt es vielleicht nicht mehr.";
 "diagnostics.reason.jumpNotReached" = "Nicht gemessen: Der Jump-Host wurde nicht erreicht.";
 "diagnostics.reason.noJumpSecret" = "Für den Jump-Host sind keine Zugangsdaten gespeichert. Speichere sie und starte die Prüfung erneut.";
+"diagnostics.reason.jumpManagedKeyStoreUnreadable" = "Die Passphrase des Schlüssels für den Jump-Host konnte nicht nachgeschlagen werden: Die Liste der verwalteten Schlüssel (managed_keys.json) konnte nicht gelesen werden. Prüfe die Datei und starte die Prüfung erneut.";
 "diagnostics.reason.managedKeyStoreUnreadable" = "Die Passphrase des Schlüssels konnte nicht nachgeschlagen werden: Die Liste der verwalteten Schlüssel (managed_keys.json) konnte nicht gelesen werden. Prüfe die Datei und starte die Prüfung erneut.";
 "diagnostics.reason.jumpForwardingProhibited" = "Der Jump-Host leitet für diese Anmeldung keine Verbindungen weiter.";
 "diagnostics.reason.jumpCouldNotConnect" = "Der Jump-Host konnte das Ziel nicht erreichen — der Name löst sich dort nicht auf, oder auf dem Port nimmt niemand an.";

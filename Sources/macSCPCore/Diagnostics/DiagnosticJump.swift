@@ -1,5 +1,6 @@
 import Foundation
 import NIOCore
+import Synchronization
 
 /// The jump host a session reaches its target through, as a diagnosis needs
 /// it: where the jump is, who logs in there, and where that login's secret is
@@ -44,6 +45,15 @@ public struct DiagnosticJump: Sendable {
     /// The jump hop's secret, looked up when a dial asks. `nil` for a hop
     /// with nothing stored; throws whatever the store throws.
     let secret: @Sendable () throws -> String?
+    /// What the last `secret()` saw of the managed key store. Written by the
+    /// lookup itself, which is a non-mutating `@Sendable` closure and so
+    /// cannot reach a stored property — the reason
+    /// `ManagedKeyPassphraseSecretSource` keeps its own answer in a box too.
+    ///
+    /// `private`, and set only by the two builders below, both in this file:
+    /// a jump built by anyone else has no lookup of its own to record
+    /// anything, and answers `noJumpSecret` exactly as it always did.
+    private var lastRead = LastJumpStoreRead()
 
     public init(
         endpoint: Endpoint?, login: Login,
@@ -52,6 +62,25 @@ public struct DiagnosticJump: Sendable {
         self.endpoint = endpoint
         self.login = login
         self.secret = secret
+    }
+
+    /// Why this hop's dial has no secret: `DiagnosticReason.noJumpSecret`, or
+    /// `.jumpManagedKeyStoreUnreadable` when the last lookup found
+    /// `managed_keys.json` unreadable for a key in the managed key directory.
+    ///
+    /// Read AFTER the lookup, the same rule `DialSupport
+    /// .missingSecretReason(_:secrets:)` states for the target's half:
+    /// `dialSecret(usesAgent:missing:_:)` takes `missing` as an autoclosure
+    /// and evaluates it only once the lookup has answered nothing, and the
+    /// lookup records what it saw while it ran. Evaluated first, this would
+    /// read the record of a previous walk, or none at all.
+    ///
+    /// Three call sites, counted 2026-09-24: `ConnectionDiagnostics.dialJump`,
+    /// `ConnectionDiagnostics.throughput` and `DiagnosticJumpStep.dialViaJump`
+    /// — the three places a jump's secret is looked up.
+    var missingSecretReason: String {
+        lastRead.hidTheKey.withLock { $0 }
+            ? DiagnosticReason.jumpManagedKeyStoreUnreadable : DiagnosticReason.noJumpSecret
     }
 
     /// The jump of a session that has one but whose jump could not be read.
@@ -97,7 +126,8 @@ extension DiagnosticJump {
         }
         let host = shape.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let referencingID = session.id
-        return DiagnosticJump(
+        let lastRead = LastJumpStoreRead()
+        var jump = DiagnosticJump(
             endpoint: host.isEmpty ? nil : Endpoint(host: host, port: shape.port),
             login: Login(
                 username: shape.login.username, authKind: shape.login.authKind,
@@ -106,10 +136,17 @@ extension DiagnosticJump {
                 let resolved = try LoginResolver.resolveJump(
                     spec: spec, sets: sets, secrets: secrets, sessions: sessions,
                     referencingSessionID: referencingID)
-                return LoginResolver.preferringManagedKeyPassphrase(
-                    resolved.login, keys: keys, secrets: secrets
-                ).secret
+                let preferred = LoginResolver.preferringManagedKeyPassphrase(
+                    resolved.login, keys: keys, secrets: secrets)
+                // The fallback carries the unreadable-store fact out of the
+                // resolver (`ResolvedLogin.unreadableStoreHidTheKey`); this
+                // is where it is kept, for `missingSecretReason` to read once
+                // the lookup has answered.
+                lastRead.hidTheKey.withLock { $0 = preferred.unreadableStoreHidTheKey }
+                return preferred.secret
             })
+        jump.lastRead = lastRead
+        return jump
     }
 
     /// The jump a connection FORM describes — a tab's — or `nil` when the
@@ -155,15 +192,22 @@ extension DiagnosticJump {
             authKind: authKind,
             keyPath: authKind == .privateKey && !keyPath.isEmpty ? keyPath : nil)
         let noSecret: @Sendable () throws -> String? = { nil }
-        let secret: @Sendable () throws -> String?
+        let adopted: DiagnosticJump?
         if let stored, let endpoint, stored.endpoint == endpoint,
             stored.login.username == login.username, stored.login.authKind == login.authKind
         {
-            secret = stored.secret
+            adopted = stored
         } else {
-            secret = noSecret
+            adopted = nil
         }
-        return DiagnosticJump(endpoint: endpoint, login: login, secret: secret)
+        var jump = DiagnosticJump(
+            endpoint: endpoint, login: login, secret: adopted?.secret ?? noSecret)
+        // The fact rides with the lookup it came from: a form that took the
+        // stored jump's secret takes what that lookup records too, so its
+        // dial names the store for the same read. A form that took nothing
+        // has no lookup, and no fact.
+        if let adopted { jump.lastRead = adopted.lastRead }
+        return jump
     }
 }
 
@@ -440,7 +484,7 @@ struct DiagnosticJumpStep: Sendable {
         let jumpSecret: String
         switch DialSupport.dialSecret(
             usesAgent: context.jump.login.authKind == .agent,
-            missing: DiagnosticReason.noJumpSecret, context.jump.secret)
+            missing: context.jump.missingSecretReason, context.jump.secret)
         {
         case .secret(let secret): jumpSecret = secret
         case .unanswered(let outcome): return timer.finish(outcome, "")
@@ -456,6 +500,15 @@ struct DiagnosticJumpStep: Sendable {
             return timer.finish(.failed(DialSupport.reason(for: error)), "")
         }
     }
+}
+
+/// The reference-type box behind `DiagnosticJump.missingSecretReason`: the
+/// hop's secret lookup is a non-mutating `@Sendable` closure and cannot write
+/// to a struct's stored property. The same shape, and for the same reason, as
+/// `ManagedKeyPassphraseSecretSource`'s own `LastStoreRead`; a `Mutex`, so the
+/// class is plainly `Sendable`.
+final class LastJumpStoreRead: Sendable {
+    let hidTheKey = Mutex(false)
 }
 
 // MARK: - A refused channel, read

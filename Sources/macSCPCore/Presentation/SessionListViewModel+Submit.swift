@@ -99,6 +99,22 @@ extension SessionListViewModel {
         // whatever the set's slot holds, as every other jump fill does.
         // Through `fillJumpPassphrase`, so a save can tell this value from
         // one somebody typed.
+        //
+        // The fallback also answers whether `managed_keys.json` could not be
+        // read (`ResolvedLogin.unreadableStoreHidTheKey`), and this fill
+        // deliberately keeps none of it — decision of 2026-09-24. It is the
+        // one of the three jump fills with nowhere to put a fact: a form has
+        // fields. Nor does it write a diagnostic-log line, which is the other
+        // way the fact could have been kept. The chain's link
+        // (`ManagedKeyPassphraseSecretSource.secret(for:)`) logs one because
+        // its `nil` is the last word on that read — nothing downstream can
+        // tell it from "no key is managed"; here it is not the last word, the
+        // store is named where the hop is measured on its own
+        // (`DiagnosticReason.jumpManagedKeyStoreUnreadable`), which is a
+        // sentence the user can act on rather than a line in a log. And the
+        // link's sentence names the decode error's TYPE, which
+        // `ManagedKeyPassphrase.Resolution` does not carry, so a line written
+        // here would be a second, weaker sentence about the same fact.
         form.fillJumpPassphrase(withManagedKeyPassphrase(login).secret ?? "")
     }
 

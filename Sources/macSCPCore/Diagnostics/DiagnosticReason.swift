@@ -41,7 +41,9 @@ public enum DiagnosticReason {
     /// lies in the managed key directory — `noSecret`, with the reason the
     /// chain came back empty. Only the session's own dial reports it: a
     /// jump's secret is not looked up through that link (see
-    /// `DialSupport.missingSecretReason(_:secrets:)`).
+    /// `DialSupport.missingSecretReason(_:secrets:)`), and says
+    /// `jumpManagedKeyStoreUnreadable` below for the same fact about its own
+    /// key.
     static let managedKeyStoreUnreadable =
         "the managed key store (managed_keys.json) could not be read, so the key's passphrase was not looked up"
     /// The S3 dial has no endpoint URL to probe.
@@ -60,8 +62,21 @@ public enum DiagnosticReason {
     /// all and a reader must not take the row for a finding about it.
     static let jumpNotReached = "the jump host was not reached"
     /// The jump's dial needs a credential and its own slot held none — the
-    /// jump's counterpart of `noSecret`, which names the session's.
+    /// jump's counterpart of `noSecret`, which names the session's. Said only
+    /// when there is nothing to name beyond that; when the hop's lookup came
+    /// back empty because the key store could not be read, the reason below
+    /// is said instead (`DiagnosticJump.missingSecretReason`).
     static let noJumpSecret = "no secret available for the jump host"
+    /// The jump's dial needs a credential, its own slot held none, and the
+    /// hop's managed-key lookup found `managed_keys.json` unreadable for a
+    /// key that lies in the managed key directory — `noJumpSecret`, with the
+    /// reason the lookup came back empty. The jump's counterpart of
+    /// `managedKeyStoreUnreadable`, which names the session's own.
+    ///
+    /// Names the file and nothing else: not the key, not its path, not a line
+    /// of what the file holds. The fact is that it could not be read.
+    static let jumpManagedKeyStoreUnreadable =
+        "the managed key store (managed_keys.json) could not be read, so the jump host's key passphrase was not looked up"
     /// `target.tcpViaJump`'s channel open was refused with reason code 1: the
     /// jump host does not forward connections for this login at all
     /// (`AllowTcpForwarding`, a `ForceCommand`, a restricted account).
@@ -293,6 +308,7 @@ public enum DiagnosticReason {
         jumpUnresolvable: "diagnostics.reason.jumpUnresolvable",
         jumpNotReached: "diagnostics.reason.jumpNotReached",
         noJumpSecret: "diagnostics.reason.noJumpSecret",
+        jumpManagedKeyStoreUnreadable: "diagnostics.reason.jumpManagedKeyStoreUnreadable",
         jumpForwardingProhibited: "diagnostics.reason.jumpForwardingProhibited",
         jumpCouldNotConnect: "diagnostics.reason.jumpCouldNotConnect",
         jumpProbeHostRefused: "diagnostics.reason.jumpProbeHostRefused",
