@@ -1238,7 +1238,16 @@ struct ConnectionDiagnosticsJumpTests {
     func aJumpSecretSentenceIsOneLiteralWithNothingMeasuredInIt(
         name: String, sentence: String
     ) throws {
-        let source = try SourceCorpus.text(
+        // `commentFree`, not `text`: comments blanked, string literals kept
+        // verbatim — the one view that lets this scan mean what it says. A
+        // comment quoting this very pattern is indistinguishable from the
+        // declaration to a scanner (CLAUDE.md, "Source-scanning guards read
+        // comments too", 1), and it was: measured 2026-09-24, a decoy
+        // comment above the real declaration bound the first match to the
+        // comment, and the check compared a sentence nobody ships. The
+        // stricter `code` view is wrong here for the opposite reason — it
+        // blanks the literal, which is the thing under test.
+        let source = try SourceCorpus.commentFree(
             of: SourceCorpus.url(of: .sources)
                 .appendingPathComponent("macSCPCore/Diagnostics/DiagnosticReason.swift"))
 
