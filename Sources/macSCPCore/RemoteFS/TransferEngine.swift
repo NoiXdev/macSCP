@@ -91,6 +91,34 @@ public enum TransferEngine {
     ///     behaves exactly like a fresh transfer. `false` (default) leaves
     ///     behavior byte-for-byte identical to pre-M5d: unconditional
     ///     `.overwrite` from offset 0.
+    ///   - expectedSourceValidator: The source validator (an opaque entity
+    ///     tag from `RemoteFileSystem.entityTag(path:)`) that the partial file
+    ///     at the destination was produced from — the resume-identity plan's
+    ///     whole point. It is sent to the source ONLY when this call actually
+    ///     resumes (`resumeOffset > 0`); a fresh transfer has no partial file
+    ///     to be wrong about and sends nothing. A source that holds a
+    ///     different object refuses the read rather than appending a second
+    ///     object's tail onto the first object's head. `nil` (default) is the
+    ///     pre-plan behaviour exactly: no precondition, whatever the offset.
+    ///   - onSourceValidator: Called at most ONCE, before the source stream is
+    ///     opened, with the validator THIS attempt is tied to — so a caller
+    ///     that has to retry later can hand the same value back as
+    ///     `expectedSourceValidator`. "At most once": a call that returns
+    ///     early because the destination is already complete opens no stream
+    ///     and reports nothing. The value reported is
+    ///     `expectedSourceValidator` when the caller supplied one (a resume
+    ///     carries its original validator forward; re-reading would tie a
+    ///     second interruption to whatever the source holds NOW, which is the
+    ///     object swap this mechanism exists to catch), and otherwise
+    ///     whatever `source.entityTag(path:)` answers. A caller that passes
+    ///     nothing here is charged no round trip for it — which is every call
+    ///     site that predates this plan.
+    ///
+    ///     A callback rather than a return value or an `inout` box because
+    ///     the value is needed on the path where this call THROWS: a
+    ///     transfer that is interrupted mid-stream never returns, and an
+    ///     `inout` cannot cross into the unstructured task the queue runs
+    ///     this in. `onProgress`'s shape, for the same reason.
     ///   - throttle: Shared bandwidth bucket (M6a); `nil` (default) means
     ///     unlimited — no throttling at all. Callers that want to pace a
     ///     direction pass ONE `BandwidthBucket` shared across all of that
@@ -112,9 +140,11 @@ public enum TransferEngine {
         from source: any RemoteFileSystem, sourcePath: String,
         to destination: any RemoteFileSystem, destinationDirectory: String, fileName: String,
         resume: Bool = false,
+        expectedSourceValidator: String? = nil,
         direction: TransferDirection? = nil,
         throttle: BandwidthBucket? = nil,
         secondaryThrottle: BandwidthBucket? = nil,
+        onSourceValidator: (@Sendable (String?) -> Void)? = nil,
         onProgress: @escaping @Sendable (TransferProgress) -> Void
     ) async throws {
         let destinationPath = RemotePath.join(destinationDirectory, fileName)
@@ -156,7 +186,35 @@ public enum TransferEngine {
                 }
             }
 
-        let input = try await source.readStream(path: sourcePath, fromOffset: resumeOffset)
+            // Resume identity (resume-identity plan, Task 2): the validator this
+            // attempt is tied to, decided BEFORE the stream is opened and
+            // reported to the caller so a later retry can hand it back.
+            //
+            // `try?`: a source that cannot answer a validator is not a reason
+            // to fail a download that would otherwise work — it degrades to
+            // "no validator", which is what SFTP and the local file system
+            // answer anyway, without any I/O at all. A failure that is really
+            // the connection going away resurfaces at the read below, with
+            // its own error.
+            var attemptValidator = expectedSourceValidator
+            if onSourceValidator != nil, attemptValidator == nil {
+                attemptValidator = try? await source.entityTag(path: sourcePath)
+            }
+            onSourceValidator?(attemptValidator)
+
+            // The three-argument read ONLY where a precondition means
+            // something: an actual resume, with a validator to hold the source
+            // to. Every other case takes the two-argument call this has always
+            // made, so no conformer's behaviour changes unless a validator is
+            // really being carried.
+            let input: AsyncThrowingStream<Data, Error>
+            if resumeOffset > 0, let expectedSourceValidator {
+                input = try await source.readStream(
+                    path: sourcePath, fromOffset: resumeOffset,
+                    ifMatching: expectedSourceValidator)
+            } else {
+                input = try await source.readStream(path: sourcePath, fromOffset: resumeOffset)
+            }
 
         // Counting intermediary, pull-based: the destination pulls chunk by
         // chunk, nothing is buffered beyond a single chunk.

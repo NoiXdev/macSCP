@@ -141,6 +141,24 @@ struct TransferQueueViewModelTests {
         /// (protocol default), so every pre-existing `QueueTestFS` use is
         /// unaffected. Tests that need an S3-like destination pass `false`.
         let supportsAppendResume: Bool
+        /// Entity tags per path (resume-identity plan, Task 2) — the stand-in
+        /// for what an HTTP backend reads off the object. Empty by default,
+        /// which is the protocol default (`entityTag` answers `nil`).
+        private var entityTags: [String: String]
+        /// How often `entityTag` was asked, per path.
+        private(set) var entityTagCallCounts: [String: Int] = [:]
+        /// The most recent NON-NIL `ifMatching` a read carried, per path. A
+        /// read that carried no precondition leaves no entry, so "carried no
+        /// precondition" is `readsWithPrecondition == 0` — an absent key on
+        /// its own would also be what a read that never happened looks like.
+        private(set) var lastIfMatching: [String: String] = [:]
+        /// Number of reads that carried a precondition, across all paths.
+        private(set) var readsWithPrecondition = 0
+
+        /// The reason a refused read reports, DERIVED from the constant the
+        /// product really produces rather than spelled a second time here: a
+        /// literal copy would keep matching after the real one was reworded.
+        static let sourceChangedReason = S3FileSystem.sourceChangedReason
 
         init(
             reads: [String: Read],
@@ -150,8 +168,12 @@ struct TransferQueueViewModelTests {
             listEntered: TestSignal? = nil, listGate: TestSignal? = nil,
             listGates: [String: TestSignal] = [:],
             concurrency: ConcurrencyTracker? = nil,
-            supportsAppendResume: Bool = true
+            supportsAppendResume: Bool = true,
+            entityTags: [String: String] = [:],
+            preWritten: [String: Data] = [:]
         ) {
+            self.entityTags = entityTags
+            self.written = preWritten
             self.reads = reads
             self.listings = listings
             self.statEntered = statEntered
@@ -181,6 +203,29 @@ struct TransferQueueViewModelTests {
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
             let name = String(path.split(separator: "/").last ?? Substring(path))
             return RemoteFileItem(name: name, path: path, kind: .file, size: UInt64(read.content.count))
+        }
+
+        func entityTag(path: String) async throws -> String? {
+            entityTagCallCounts[path, default: 0] += 1
+            return entityTags[path]
+        }
+
+        /// Mirrors what a real HTTP backend does with a precondition: a read
+        /// that carries one is refused when this double's own validator has
+        /// moved on since, with the product's own reason. A read that carries
+        /// none is never refused, whatever validator the double holds.
+        func readStream(
+            path: String, fromOffset offset: UInt64, ifMatching tag: String?
+        ) async throws -> AsyncThrowingStream<Data, Error> {
+            readOffsets[path] = offset
+            if let tag {
+                readsWithPrecondition += 1
+                lastIfMatching[path] = tag
+                if let current = entityTags[path], current != tag {
+                    throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
+                }
+            }
+            return try await readStream(path: path, fromOffset: offset)
         }
 
         func readStream(
@@ -2037,6 +2082,124 @@ struct TransferQueueViewModelTests {
 
         // Engine received resume:true → offset read on the source, append on
         // the destination, only the tail written.
+        #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await remote2.writeModes["/ziel/a.txt"] == .append)
+        #expect(await remote2.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
+    // MARK: - Resume identity (resume-identity plan, Task 2)
+
+    /// Builds the interrupted first attempt of `/a.txt`: a full source that
+    /// drops the connection on its first chunk pull, against an empty
+    /// destination. Returns the queue with `items[0] == .interrupted`.
+    private func interruptedDownload(
+        of content: Data, sourceValidator: String?
+    ) async throws -> TransferQueueViewModel {
+        let started = TestSignal(); let gate = TestSignal()
+        let source = QueueTestFS(
+            reads: ["/a.txt": .init(content: content, started: started, gate: gate,
+                                    failWith: RemoteFSError.connectionFailed(reason: "lost"))],
+            entityTags: sourceValidator.map { ["/a.txt": $0] } ?? [:])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started.wait()
+        gate.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+        return vm
+    }
+
+    /// The defect this plan closes: the file was REPLACED on the server while
+    /// the transfer was interrupted. The retry carries the validator its first
+    /// attempt started on, the source refuses it, the item fails — and the
+    /// partial file is left exactly as it was, snapshotted BEFORE the retry.
+    @Test func aRetryRefusesToResumeIntoAFileThatChangedOnTheServer() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: "validator-before")
+
+        // New session refs: the source now answers a DIFFERENT validator — the
+        // object at that path is not the one the partial file came from.
+        let local2 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-after"])
+        let remote2 = QueueTestFS(
+            reads: ["/ziel/a.txt": .init(content: partial)],
+            preWritten: ["/ziel/a.txt": partial])
+
+        // Read the partial file BEFORE the retry, not after: a retry that
+        // healed the file by rewriting it from zero would leave an "unchanged"
+        // reading if both reads happened after it.
+        let partialBefore = await remote2.writtenData(at: "/ziel/a.txt")
+
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { if case .failed = vm.items[0].status { return true }; return false }
+
+        guard case .failed(let message) = vm.items[0].status else {
+            Issue.record("the retry should have failed, was \(String(describing: vm.items[0].status))")
+            return
+        }
+        let namesTheChangedSource = message.contains(QueueTestFS.sourceChangedReason)
+        #expect(namesTheChangedSource)
+
+        // The partial file is untouched: no write of any kind reached it, and
+        // its bytes are the ones snapshotted above.
+        #expect(await remote2.writtenData(at: "/ziel/a.txt") == partialBefore)
+        #expect(await remote2.writeModes["/ziel/a.txt"] == nil)
+        // Positives beside those absences: the retry really was a resume from
+        // the partial size, and it really carried the first attempt's
+        // validator. Without these, a retry that never reached the source —
+        // or one that silently restarted from zero and then failed for some
+        // other reason — would satisfy the two checks above.
+        #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await local2.lastIfMatching["/a.txt"] == "validator-before")
+    }
+
+    /// The counter-probe: the same shape, with the source still holding the
+    /// object the partial file came from. The retry resumes and completes,
+    /// appending only the tail.
+    @Test func aRetryIntoTheUnchangedFileResumesAndCompletes() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: "validator-before")
+
+        let local2 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-before"])
+        let remote2 = QueueTestFS(reads: ["/ziel/a.txt": .init(content: partial)])
+
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await local2.lastIfMatching["/a.txt"] == "validator-before")
+        #expect(await remote2.writeModes["/ziel/a.txt"] == .append)
+        #expect(await remote2.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
+    /// A source that has no validator at all — SFTP, the local file system,
+    /// every conformer that takes the protocol default — retries exactly as it
+    /// did before this plan: no precondition is carried, and the resume runs.
+    @Test func aRetryFromASourceWithoutAValidatorResumesExactlyAsBefore() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: nil)
+
+        let local2 = QueueTestFS(reads: ["/a.txt": .init(content: full)])
+        let remote2 = QueueTestFS(reads: ["/ziel/a.txt": .init(content: partial)])
+
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await local2.readsWithPrecondition == 0)
+        // Positives beside that absence: the resume ran, from the partial size.
         #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
         #expect(await remote2.writeModes["/ziel/a.txt"] == .append)
         #expect(await remote2.writtenData(at: "/ziel/a.txt")?.count == chunk)

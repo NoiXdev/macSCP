@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Synchronization
 
 /// How a destination conflict (file already exists) is resolved.
 /// Binding for the UI layer (M5b/T4).
@@ -420,6 +421,21 @@ public final class TransferQueueViewModel {
         /// every reconstruction site (retry, interrupt-retain) threads it
         /// instead of silently resetting to the default.
         let isEditUpload: Bool
+        /// The source validator the interrupted attempt started on
+        /// (resume-identity plan, Task 2) — `nil` for a fresh enqueue and for
+        /// every source that has none (SFTP, the local file system). Set only
+        /// on the job RETAINED at `.interrupted`, from what the engine
+        /// reported for that attempt, and handed back to the engine by
+        /// `retryInterrupted` so the resumed read is tied to the object the
+        /// partial file came from.
+        ///
+        /// It lives on the job rather than on `Item` because the job is what
+        /// an interrupted item already remembers everything else through —
+        /// its post-rename effective name, its two paths — and because this
+        /// is transfer mechanics with nothing to display. Putting it on
+        /// `Item` would add it to a public, `Equatable` type that has no
+        /// reader for it.
+        let expectedSourceValidator: String?
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
@@ -428,7 +444,8 @@ public final class TransferQueueViewModel {
             onCompleted: (@MainActor () async -> Void)?, resume: Bool = false,
             bypassConflictCheck: Bool = false,
             destinationTabID: UUID? = nil, crossRemote: Bool = false,
-            isEditUpload: Bool = false
+            isEditUpload: Bool = false,
+            expectedSourceValidator: String? = nil
         ) {
             self.id = id
             self.source = source
@@ -443,6 +460,7 @@ public final class TransferQueueViewModel {
             self.destinationTabID = destinationTabID
             self.crossRemote = crossRemote
             self.isEditUpload = isEditUpload
+            self.expectedSourceValidator = expectedSourceValidator
         }
     }
 
@@ -706,7 +724,18 @@ public final class TransferQueueViewModel {
     ///
     /// The re-enqueued jobs carry `resume: true` (engine continues from the
     /// destination offset) and BYPASS the queue's conflict check by design —
-    /// resuming IS the conflict decision (documented). Items flip back to
+    /// resuming IS the conflict decision (documented).
+    ///
+    /// They also carry the source validator the interrupted attempt started on
+    /// (resume-identity plan, Task 2), so the resumed read is tied to the
+    /// object the partial file came from. A source that now holds a different
+    /// object refuses the read, and the item fails with that refusal's reason
+    /// — beside the range refusal, and for the same reason: the partial file
+    /// is left exactly as it is, and nothing silently restarts it from zero. A
+    /// source with no validator (SFTP, the local file system) retries exactly
+    /// as it did before.
+    ///
+    /// Items flip back to
     /// `.queued`; group membership is NOT revived (an interrupted tree item
     /// retries as an individual — the group already fired or died with the
     /// disconnect). Retry jobs have no waiter: the original `enqueueAndWait`
@@ -728,7 +757,8 @@ public final class TransferQueueViewModel {
                 fileName: retained.fileName, direction: retained.direction,
                 onCompleted: nil, resume: true,
                 destinationTabID: retained.destinationTabID, crossRemote: retained.crossRemote,
-                isEditUpload: retained.isEditUpload)
+                isEditUpload: retained.isEditUpload,
+                expectedSourceValidator: retained.expectedSourceValidator)
             order.append(id)
             setStatus(id, .queued)   // terminal → non-terminal: no group accounting
         }
@@ -1101,14 +1131,31 @@ public final class TransferQueueViewModel {
         // pulled out here so the diagnostic log's "transfer start" line
         // knows which way this job runs.
         let direction = job.direction
+        // Resume identity (resume-identity plan, Task 2): the validator this
+        // attempt is tied to, as the engine reports it — the object's own for
+        // a first attempt, the carried-forward one for a resume. `Mutex`
+        // rather than a captured `var`: the engine's callback is `@Sendable`
+        // and fires on the transfer task below, while the only reader is this
+        // `@MainActor` method after that task has settled.
+        //
+        // Read in exactly one place: the `.interrupted` arm, which is the only
+        // arm that retains a job for a later `retryInterrupted`. Every other
+        // outcome drops the job, so the validator has nowhere to go and
+        // nothing to be wrong about.
+        let attemptValidator = Mutex<String?>(nil)
+        let expectedSourceValidator = job.expectedSourceValidator
         let transfer = Task<Void, Error> {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,
                 to: destination, destinationDirectory: destinationDirectory, fileName: fileName,
                 resume: resume,
+                expectedSourceValidator: expectedSourceValidator,
                 direction: direction,
                 throttle: throttle,
                 secondaryThrottle: secondaryThrottle,
+                onSourceValidator: { validator in
+                    attemptValidator.withLock { $0 = validator }
+                },
                 onProgress: { progressContinuation.yield($0) }
             )
         }
@@ -1194,7 +1241,11 @@ public final class TransferQueueViewModel {
                     // retained job can never carry isEditUpload == true
                     // today — forwarded anyway so a future reclassification
                     // cannot silently drop the flag (M9b/T2 review).
-                    isEditUpload: job.isEditUpload)
+                    isEditUpload: job.isEditUpload,
+                    // The validator this attempt started on — what makes the
+                    // retry a resume of THIS object rather than of whatever
+                    // now sits at that path.
+                    expectedSourceValidator: attemptValidator.withLock { $0 })
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
             }

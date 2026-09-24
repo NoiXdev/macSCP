@@ -62,9 +62,53 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     private var listGates: [String: Bool] = [:]
     private var listGateHooks: [String: @Sendable () -> Void] = [:]
 
-    init(tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:]) {
+    /// Entity tags per path (resume-identity plan, Task 2), the test-double
+    /// stand-in for what an HTTP backend reads off the object. Empty by
+    /// default, which is the protocol default (`entityTag` answers `nil`)
+    /// and leaves every pre-existing use of this double unchanged.
+    private let entityTags: [String: String]
+    /// How often `entityTag` was asked, per path — lets a test prove that a
+    /// caller who did not ask for the validator was not charged a round trip
+    /// for it.
+    private(set) var entityTagCallCounts: [String: Int] = [:]
+    /// The most recent NON-NIL `ifMatching` a read carried, per path. A read
+    /// that carried no precondition leaves no entry, so "no precondition" is
+    /// `readsWithPrecondition == 0` rather than an absent key, which would
+    /// also read as "the read never happened".
+    private(set) var lastIfMatching: [String: String] = [:]
+    /// Number of reads that carried a precondition, across all paths.
+    private(set) var readsWithPrecondition = 0
+
+    init(
+        tree: [String: [RemoteFileItem]] = [:], files: [String: Data] = [:],
+        entityTags: [String: String] = [:]
+    ) {
         self.tree = tree
         self.files = files
+        self.entityTags = entityTags
+    }
+
+    func entityTag(path: String) async throws -> String? {
+        entityTagCallCounts[path, default: 0] += 1
+        return entityTags[path]
+    }
+
+    /// Mirrors what a real HTTP backend does with `If-Match`: a read that
+    /// carries a precondition is refused when the object's own validator has
+    /// moved on, with the SAME reason the product produces — derived from
+    /// `S3FileSystem`, not spelled a second time here. A read that carries no
+    /// precondition is never refused, whatever the double currently holds.
+    func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        if let tag {
+            readsWithPrecondition += 1
+            lastIfMatching[path] = tag
+            if let current = entityTags[path], current != tag {
+                throw RemoteFSError.protocolError(reason: S3FileSystem.sourceChangedReason)
+            }
+        }
+        return try await readStream(path: path, fromOffset: offset)
     }
 
     /// Test-only configuration of the mock's login-landing home (M9d/T1).

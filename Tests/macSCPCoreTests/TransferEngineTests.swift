@@ -379,6 +379,208 @@ struct TransferEngineTests {
         #expect(await destination.writtenData == content)
     }
 
+    // MARK: - Resume identity (resume-identity plan, Task 2)
+
+    private func makeTaggedSource(content: Data, tag: String) -> MockRemoteFileSystem {
+        MockRemoteFileSystem(
+            tree: ["/": [RemoteFileItem(
+                name: "quelle.bin", path: "/quelle.bin", kind: .file,
+                size: UInt64(content.count))]],
+            files: ["/quelle.bin": content],
+            entityTags: ["/quelle.bin": tag]
+        )
+    }
+
+    private func makePartialDestination(existing: Data) -> MockRemoteFileSystem {
+        MockRemoteFileSystem(
+            tree: ["/ziel": [RemoteFileItem(
+                name: "quelle.bin", path: "/ziel/quelle.bin", kind: .file,
+                size: UInt64(existing.count))]],
+            files: ["/ziel/quelle.bin": existing]
+        )
+    }
+
+    /// Everything the destination currently HOLDS at the transfer path, which
+    /// is not what `writtenData(at:)` answers -- that one reports only what
+    /// the latest `write` call appended. A test that has to prove a partial
+    /// file was left untouched needs the file, not the increment.
+    private func destinationBytes(_ fileSystem: MockRemoteFileSystem) async throws -> Data {
+        var bytes = Data()
+        for try await chunk in try await fileSystem.readStream(path: "/ziel/quelle.bin") {
+            bytes.append(chunk)
+        }
+        return bytes
+    }
+
+    /// A resume that was handed the validator its first attempt started on
+    /// sends that validator to the source -- and, the object being the one it
+    /// started on, finishes exactly as a resume without one does.
+    @Test func aResumeCarriesTheExpectedValidatorToTheSource() async throws {
+        let content = Data((0..<(TransferChunk.size * 3)).map { UInt8($0 % 241) })
+        let resumeOffset = TransferChunk.size
+        let firstAttemptValidator = "first-attempt-validator"
+        let source = makeTaggedSource(content: content, tag: firstAttemptValidator)
+        let destination = makePartialDestination(existing: Data(content.prefix(resumeOffset)))
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true, expectedSourceValidator: firstAttemptValidator,
+            onProgress: { _ in }
+        )
+
+        #expect(await source.readsWithPrecondition == 1)
+        #expect(await source.lastIfMatching["/quelle.bin"] == firstAttemptValidator)
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .append)
+        let merged = try await destinationBytes(destination)
+        #expect(merged == content)
+    }
+
+    /// The defect this plan exists for: the object was replaced between the
+    /// interrupted attempt and the retry. The read is refused, and NOTHING is
+    /// added to the partial file -- the bytes are snapshotted BEFORE the call
+    /// that must not change them.
+    @Test func aResumeIntoAChangedSourceIsRefusedAndAddsNothing() async throws {
+        let content = Data((0..<(TransferChunk.size * 3)).map { UInt8($0 % 241) })
+        let resumeOffset = TransferChunk.size
+        let validatorTheAttemptStartedOn = "validator-before"
+        let source = makeTaggedSource(content: content, tag: "validator-after")
+        let destination = makePartialDestination(existing: Data(content.prefix(resumeOffset)))
+
+        let bytesBefore = try await destinationBytes(destination)
+
+        await #expect(
+            throws: RemoteFSError.protocolError(reason: S3FileSystem.sourceChangedReason)
+        ) {
+            try await TransferEngine.copyFile(
+                from: source, sourcePath: "/quelle.bin",
+                to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+                resume: true, expectedSourceValidator: validatorTheAttemptStartedOn,
+                onProgress: { _ in }
+            )
+        }
+
+        let bytesAfter = try await destinationBytes(destination)
+        #expect(bytesAfter == bytesBefore)
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == nil)
+        // Positive beside the two negatives above: the refused attempt really
+        // was a resume, and it really carried the first attempt's validator --
+        // without this, a call that never reached the source at all would
+        // satisfy both of them.
+        #expect(await source.lastIfMatching["/quelle.bin"] == validatorTheAttemptStartedOn)
+        #expect(await source.readsWithPrecondition == 1)
+    }
+
+    /// A fresh transfer never asks the source to validate anything, whatever
+    /// the caller hands it: there is no partial file to be wrong about.
+    @Test func aFreshCopySendsNoPreconditionEvenWhenGivenAValidator() async throws {
+        let content = Data((0..<(TransferChunk.size + 512)).map { UInt8($0 % 241) })
+        let source = makeTaggedSource(content: content, tag: "some-validator")
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: false, expectedSourceValidator: "some-validator",
+            onProgress: { _ in }
+        )
+
+        #expect(await source.readsWithPrecondition == 0)
+        // Positive: the transfer itself ran, whole and from scratch.
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .overwrite)
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+    }
+
+    /// A caller that asks to be told reads the source's validator once, before
+    /// the stream is opened, and is told exactly that.
+    @Test func theValidatorOfTheAttemptIsReportedToTheCaller() async throws {
+        let content = Data(repeating: 0x2B, count: TransferChunk.size)
+        let objectValidator = "the-object-as-it-is"
+        let source = makeTaggedSource(content: content, tag: objectValidator)
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+        let recorder = ValidatorRecorder()
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            onSourceValidator: { recorder.record($0) },
+            onProgress: { _ in }
+        )
+
+        #expect(recorder.reported == [objectValidator])
+        #expect(await source.entityTagCallCounts["/quelle.bin"] == 1)
+    }
+
+    /// A resume reports back the validator it was HANDED, and does not read
+    /// the source's current one. Re-reading here would tie a second
+    /// interruption to whatever the source holds now -- which is the object
+    /// swap this whole mechanism exists to catch.
+    @Test func aResumeReportsTheValidatorItWasHandedWithoutReadingItAgain() async throws {
+        let content = Data((0..<(TransferChunk.size * 2)).map { UInt8($0 % 241) })
+        let resumeOffset = TransferChunk.size
+        let carriedValidator = "carried-validator"
+        let source = makeTaggedSource(content: content, tag: carriedValidator)
+        let destination = makePartialDestination(existing: Data(content.prefix(resumeOffset)))
+        let recorder = ValidatorRecorder()
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true, expectedSourceValidator: carriedValidator,
+            onSourceValidator: { recorder.record($0) },
+            onProgress: { _ in }
+        )
+
+        #expect(recorder.reported == [carriedValidator])
+        #expect(await source.entityTagCallCounts["/quelle.bin"] == nil)
+        // Positive beside that absence: the resume itself happened.
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .append)
+    }
+
+    /// A caller that does not ask to be told pays no round trip for it. Every
+    /// call site that predates this plan is such a caller.
+    @Test func aCallerThatDoesNotAskForTheValidatorIsNotChargedForIt() async throws {
+        let content = Data(repeating: 0x3C, count: TransferChunk.size)
+        let source = makeTaggedSource(content: content, tag: "unread-validator")
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            onProgress: { _ in }
+        )
+
+        #expect(await source.entityTagCallCounts["/quelle.bin"] == nil)
+        // Positive beside that absence: the copy ran.
+        #expect(await destination.writtenData(at: "/ziel/quelle.bin") == content)
+    }
+
+    /// A source that has no validator at all -- SFTP, the local file system,
+    /// every conformer that takes the protocol default -- reports none and
+    /// resumes exactly as it did before this plan.
+    @Test func aSourceWithoutAValidatorReportsNoneAndResumesAsBefore() async throws {
+        let content = Data((0..<(TransferChunk.size * 2)).map { UInt8($0 % 241) })
+        let resumeOffset = TransferChunk.size
+        let source = makeSource(content: content)
+        let destination = makePartialDestination(existing: Data(content.prefix(resumeOffset)))
+        let recorder = ValidatorRecorder()
+
+        try await TransferEngine.copyFile(
+            from: source, sourcePath: "/quelle.bin",
+            to: destination, destinationDirectory: "/ziel", fileName: "quelle.bin",
+            resume: true,
+            onSourceValidator: { recorder.record($0) },
+            onProgress: { _ in }
+        )
+
+        #expect(recorder.reported == [nil])
+        #expect(await source.readsWithPrecondition == 0)
+        // Positive beside both absences: the resume ran and produced the file.
+        #expect(await destination.writeModes["/ziel/quelle.bin"] == .append)
+        let merged = try await destinationBytes(destination)
+        #expect(merged == content)
+    }
+
     /// Waits for the task's result without ever awaiting the task itself:
     /// a regression that never cancels leaves this poll unsatisfied, and the
     /// suite's `.timeLimit` ends it as a red naming the test rather than as
@@ -398,6 +600,24 @@ struct TransferEngineTests {
         // that here would let an unreachable path pass the test it broke.
         guard let result = box.value else { throw OutcomeVanished() }
         return result
+    }
+}
+
+/// Records what `copyFile` reported as the validator of the attempt it
+/// started. Lock-protected rather than an actor, for the same reason
+/// `ProgressRecorder` below is: the callback is synchronous.
+private final class ValidatorRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _reported: [String?] = []
+    var reported: [String?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _reported
+    }
+    func record(_ validator: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        _reported.append(validator)
     }
 }
 
