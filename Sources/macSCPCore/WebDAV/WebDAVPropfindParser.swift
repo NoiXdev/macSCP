@@ -19,9 +19,7 @@ public enum WebDAVPropfindParser {
 
         var items: [RemoteFileItem] = []
         for entry in delegate.entries {
-            guard let href = entry.href,
-                  let url = URL(string: href, relativeTo: base.url(forPath: "/", isDirectory: true)),
-                  let path = base.path(forURL: url.absoluteURL),
+            guard let path = resolvedPath(of: entry, base: base),
                   path != normalized(requestedPath)
             else { continue }
             let name = path == "/" ? "/" : String(path.split(separator: "/").last ?? "")
@@ -52,7 +50,30 @@ public enum WebDAVPropfindParser {
         try parsed(data).entries.first?.isCollection
     }
 
-    /// One XML pass, shared by both readers above.
+    /// The `getetag` of the response describing `path`, exactly as the
+    /// server wrote it — quotes, and a weak validator's `W/` prefix,
+    /// included. It goes back out as an `If-Match` header value, where both
+    /// are part of the syntax (RFC 9110 8.8.3), so nothing here parses it.
+    ///
+    /// `nil` when no response describes `path`, or when the one that does
+    /// carries no `getetag` (or carries it in a non-2xx propstat). That is
+    /// not an error: it means a resumed read of the resource cannot be
+    /// checked, and the caller decides what to do about that.
+    ///
+    /// Its own reader rather than a field on `parse(_:base:requestedPath:)`'s
+    /// items, for the same reason `firstResourceIsCollection` is its own:
+    /// `parse` EXCLUDES the requested resource, which is exactly the one a
+    /// depth-0 PROPFIND answers with and exactly the one being asked about.
+    public static func entityTag(_ data: Data, base: WebDAVURL, at path: String) throws -> String? {
+        let wanted = normalized(path)
+        for entry in try parsed(data).entries
+        where resolvedPath(of: entry, base: base) == wanted {
+            return entry.eTag
+        }
+        return nil
+    }
+
+    /// One XML pass, shared by the three readers above.
     private static func parsed(_ data: Data) throws -> Delegate {
         let delegate = Delegate()
         let parser = XMLParser(data: data)
@@ -63,6 +84,18 @@ public enum WebDAVPropfindParser {
                 reason: "WebDAV PROPFIND response is not valid XML")
         }
         return delegate
+    }
+
+    /// The browser path an entry's `href` addresses, or `nil` when the href
+    /// is missing, unparseable, or points outside the session root
+    /// (`WebDAVURL.path(forURL:)` decides the last one). Shared by both
+    /// readers above so the two cannot disagree about which response
+    /// describes which path.
+    private static func resolvedPath(of entry: Entry, base: WebDAVURL) -> String? {
+        guard let href = entry.href,
+              let url = URL(string: href, relativeTo: base.url(forPath: "/", isDirectory: true))
+        else { return nil }
+        return base.path(forURL: url.absoluteURL)
     }
 
     private static func normalized(_ path: String) -> String {
@@ -76,6 +109,7 @@ public enum WebDAVPropfindParser {
         var isCollection = false
         var contentLength: UInt64?
         var lastModified: Date?
+        var eTag: String?
     }
 
     /// Properties parsed from the propstat currently being read, held back
@@ -94,6 +128,7 @@ public enum WebDAVPropfindParser {
         var isCollection = false
         var contentLength: UInt64?
         var lastModified: Date?
+        var eTag: String?
         var statusIsOK = true
     }
 
@@ -144,11 +179,18 @@ public enum WebDAVPropfindParser {
                 pending.contentLength = UInt64(value)
             case "getlastmodified":
                 pending.lastModified = httpDate.date(from: value)
+            case "getetag":
+                // Kept as text, deliberately: the value is handed back to a
+                // server as an `If-Match`, so its quotes and a weak
+                // validator's `W/` are syntax, not decoration. An empty
+                // element is no validator rather than an empty one.
+                pending.eTag = value.isEmpty ? nil : value
             case "propstat":
                 if pending.statusIsOK {
                     if pending.isCollection { current?.isCollection = true }
                     if let length = pending.contentLength { current?.contentLength = length }
                     if let modified = pending.lastModified { current?.lastModified = modified }
+                    if let eTag = pending.eTag { current?.eTag = eTag }
                 }
             case "response":
                 if let entry = current { entries.append(entry) }

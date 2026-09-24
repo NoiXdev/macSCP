@@ -3,10 +3,11 @@ import Foundation
 /// The WebDAV requests this app sends, built in one place.
 ///
 /// `PROPFIND` in particular has a BODY, and that body is a promise: it names
-/// exactly the three properties `WebDAVPropfindParser` reads. A second copy
-/// of it — one in the file system, one in a probe — is a second promise that
-/// can drift from the parser without anything failing, which is why the two
-/// callers share this one.
+/// exactly the four properties `WebDAVPropfindParser` reads — counted in the
+/// tree in the pass that added `getetag`. A second copy of it — one in the
+/// file system, one in a probe — is a second promise that can drift from the
+/// parser without anything failing, which is why the two callers share this
+/// one.
 enum WebDAVRequest {
     /// An explicit prop set rather than `allprop`: `allprop` invites servers
     /// to return large, irrelevant property sets (Nextcloud especially).
@@ -14,7 +15,7 @@ enum WebDAVRequest {
         """
         <?xml version="1.0" encoding="utf-8"?>
         <d:propfind xmlns:d="DAV:"><d:prop>
-          <d:resourcetype/><d:getcontentlength/><d:getlastmodified/>
+          <d:resourcetype/><d:getcontentlength/><d:getlastmodified/><d:getetag/>
         </d:prop></d:propfind>
         """.utf8)
 

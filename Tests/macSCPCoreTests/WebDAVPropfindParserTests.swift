@@ -45,6 +45,71 @@ struct WebDAVPropfindParserTests {
     </D:multistatus>
     """.utf8)
 
+    // MARK: - getetag (2026-09-24, Task 1)
+
+    /// A `multistatus` for one file whose `getetag` is `etag` written
+    /// verbatim — the caller escapes its own quotes, so a weak validator and
+    /// a strong one can both be spelled here.
+    private func singleResponse(etag: String) -> Data {
+        Data("""
+        <?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:">
+          <d:response><d:href>/dav/a.txt</d:href>
+            <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>12</d:getcontentlength>
+              <d:getetag>\(etag)</d:getetag></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+        </d:multistatus>
+        """.utf8)
+    }
+
+    /// `getetag` is read, and its value comes back as the server wrote it —
+    /// quotes included, because that is what an `If-Match` header carries.
+    @Test func readsGetetagForTheAddressedResource() throws {
+        let tag = try WebDAVPropfindParser.entityTag(
+            singleResponse(etag: "&quot;6f2b1a4c&quot;"), base: base, at: "/a.txt")
+
+        #expect(tag == "\"6f2b1a4c\"")
+    }
+
+    /// A response that carries no `getetag` has no validator. `nil`, and the
+    /// positive check beside it: the same body DOES describe the resource,
+    /// so the `nil` is about the property and not about a missed entry.
+    @Test func aResponseWithoutGetetagHasNoValidator() throws {
+        let withoutETag = Data("""
+        <?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:">
+          <d:response><d:href>/dav/a.txt</d:href>
+            <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>12</d:getcontentlength></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+        </d:multistatus>
+        """.utf8)
+
+        let tag = try WebDAVPropfindParser.entityTag(withoutETag, base: base, at: "/a.txt")
+        let items = try WebDAVPropfindParser.parse(withoutETag, base: base, requestedPath: "/")
+
+        #expect(tag == nil)
+        #expect(items.map(\.path) == ["/a.txt"])
+    }
+
+    /// A WEAK validator (`W/"..."`, RFC 9110 8.8.3) is carried through
+    /// exactly as it arrived. Stripping the `W/` would turn it into a strong
+    /// one and claim a byte-for-byte guarantee the server never made; the
+    /// backend sends it back as it stands and lets the server judge it.
+    @Test func aWeakValidatorIsCarriedThroughAsItArrived() throws {
+        let tag = try WebDAVPropfindParser.entityTag(
+            singleResponse(etag: "W/&quot;6f2b1a4c&quot;"), base: base, at: "/a.txt")
+
+        #expect(tag == "W/\"6f2b1a4c\"")
+    }
+
+    /// A path no response in the body describes has no validator either.
+    @Test func aPathThatIsNotInTheBodyHasNoValidator() throws {
+        let tag = try WebDAVPropfindParser.entityTag(
+            singleResponse(etag: "&quot;6f2b1a4c&quot;"), base: base, at: "/b.txt")
+
+        #expect(tag == nil)
+    }
+
     @Test func parsesApacheListingWithoutTheCollectionItself() throws {
         let items = try WebDAVPropfindParser.parse(
             apacheListing, base: base, requestedPath: "/")

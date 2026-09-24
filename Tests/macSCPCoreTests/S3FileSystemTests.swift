@@ -2008,6 +2008,146 @@ struct S3FileSystemTests {
         }
     }
 
+    // MARK: - A resumed download can tell the object apart (2026-09-24, Task 1)
+
+    /// The validator these cases carry, written once in both spellings: a
+    /// listing escapes the quotes, a header does not, and the whole point of
+    /// `entityTag` is that the two readings agree.
+    private static let listedETagXML = "&quot;598d4c200461b81522a3328565c25f7c&quot;"
+    private static let listedETag = "\"598d4c200461b81522a3328565c25f7c\""
+
+    /// The entity tag is the listing's `<ETag>` text as it arrived, quotes
+    /// and all — it goes straight back out as an `If-Match` value, where the
+    /// quotes are part of the syntax (RFC 9110 8.8.3), so nothing here parses
+    /// or strips them. The checksum reader above is the one that takes it
+    /// apart, and it is a different question with a different answer.
+    @Test func theEntityTagIsTheListedETagAsItArrived() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(listingXML(etag: Self.listedETagXML).utf8), httpResponse(status: 200))
+        ])
+
+        let tag = try await fs.entityTag(path: "/a.txt")
+
+        #expect(tag == Self.listedETag)
+    }
+
+    /// A "directory" is a `CommonPrefixes` row, which carries no ETag at
+    /// all. `nil` is the answer, and it is not an error — a caller reads it
+    /// as "a resumed read of this cannot be checked".
+    @Test func aPrefixHasNoEntityTagAndThatIsNotAnError() async throws {
+        let (fs, _) = try await connect(responses: [
+            (Data(rootListingXML.utf8), httpResponse(status: 200))
+        ])
+
+        let tag = try await fs.entityTag(path: "/sub")
+
+        #expect(tag == nil)
+    }
+
+    /// A resumed read carries the validator taken before the interrupted
+    /// attempt, on exactly one request: the ranged GET that fetches bytes.
+    @Test func aResumedReadSendsTheValidatorOnceOnTheRangedGET() async throws {
+        let tail = Data((16..<64).map { UInt8($0) })
+        let (fs, transport) = try await connect(responses: [
+            (tail, httpResponse(status: 206, headers: ["Content-Range": "bytes 16-63/64"])),
+        ])
+
+        var received = Data()
+        for try await chunk in try await fs.readStream(
+            path: "/big.bin", fromOffset: 16, ifMatching: Self.listedETag
+        ) {
+            received.append(chunk)
+        }
+
+        #expect(received == tail)
+        let carrying = await transport.requests.filter {
+            $0.value(forHTTPHeaderField: "If-Match") == Self.listedETag
+        }
+        #expect(carrying.count == 1)
+        // `If-Match` stays out of the signed header set, for the same reason
+        // `Range` does (see `readStreamRequestsRangeAndYieldsChunkedBytes`):
+        // `SignedHeaders=` spells its names in lowercase, so the substring
+        // only appears there if the header were folded into the signature.
+        let auth = try #require(await transport.requests.last).value(
+            forHTTPHeaderField: "Authorization") ?? ""
+        let authNamesTheValidator = auth.contains("if-match")
+        #expect(authNamesTheValidator == false)
+    }
+
+    /// The whole point of the header: the store says the object is not the
+    /// one the interrupted attempt was reading, and the read is refused with
+    /// the reason that says so. Nothing comes back to append — the call
+    /// throws instead of returning a stream.
+    @Test func aChangedObjectIsRefusedWithItsOwnReasonAndNoBody() async throws {
+        let replacement = Data((0..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [(replacement, httpResponse(status: 412))])
+
+        await expectSourceChangedRefusal {
+            _ = try await fs.readStream(
+                path: "/big.bin", fromOffset: 16, ifMatching: Self.listedETag)
+        }
+    }
+
+    /// No validator, no header. The positive check beside the negative one:
+    /// the request this asserts about really is the resumed GET, which its
+    /// `Range` proves.
+    @Test func aResumedReadWithoutAValidatorSendsNoIfMatch() async throws {
+        let tail = Data((16..<64).map { UInt8($0) })
+        let (fs, transport) = try await connect(responses: [
+            (tail, httpResponse(status: 206, headers: ["Content-Range": "bytes 16-63/64"])),
+        ])
+
+        for try await _ in try await fs.readStream(
+            path: "/big.bin", fromOffset: 16, ifMatching: nil) {}
+
+        let download = try #require(await transport.requests.last)
+        #expect(download.value(forHTTPHeaderField: "Range") == "bytes=16-")
+        #expect(download.value(forHTTPHeaderField: "If-Match") == nil)
+    }
+
+    /// A fresh read has no partial file to protect, so it sends no validator
+    /// even when the caller has one. A precondition here could only turn a
+    /// perfectly good full download into a failure.
+    @Test func aFreshReadSendsNoIfMatchEvenWithAValidator() async throws {
+        let object = Data((0..<64).map { UInt8($0) })
+        let (fs, transport) = try await connect(responses: [(object, httpResponse(status: 200))])
+
+        for try await _ in try await fs.readStream(
+            path: "/big.bin", fromOffset: 0, ifMatching: Self.listedETag) {}
+
+        let download = try #require(await transport.requests.last)
+        #expect(download.value(forHTTPHeaderField: "Range") == "bytes=0-")
+        #expect(download.value(forHTTPHeaderField: "If-Match") == nil)
+    }
+
+    /// The validator is an addition, not a replacement: a server that
+    /// answers a resumed read with the WHOLE object is still refused by the
+    /// `Range` check, whether or not a precondition was sent.
+    @Test func aResumedReadWithAValidatorStillRefusesAnIgnoredRange() async throws {
+        let object = Data((0..<64).map { UInt8($0) })
+        let (fs, _) = try await connect(responses: [(object, httpResponse(status: 200))])
+
+        await expectRangeRefusal {
+            _ = try await fs.readStream(
+                path: "/big.bin", fromOffset: 16, ifMatching: Self.listedETag)
+        }
+    }
+
+    private func expectSourceChangedRefusal(
+        sourceLocation: SourceLocation = #_sourceLocation, _ read: () async throws -> Void
+    ) async {
+        do {
+            try await read()
+            Issue.record("the changed object was not refused", sourceLocation: sourceLocation)
+        } catch RemoteFSError.protocolError(let reason) {
+            #expect(reason == S3FileSystem.sourceChangedReason, sourceLocation: sourceLocation)
+        } catch {
+            Issue.record(
+                "refused with \(error), not the changed-object refusal",
+                sourceLocation: sourceLocation)
+        }
+    }
+
     /// The positive check beside it: with the toggle OFF the reported path
     /// is unchanged, because there the browser path and the key really are
     /// the same string.

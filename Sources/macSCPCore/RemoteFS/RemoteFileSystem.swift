@@ -24,6 +24,41 @@ public protocol RemoteFileSystem: Sendable {
     /// like the plain `readStream(path:)`. Offset at or beyond EOF yields an
     /// empty stream (no error).
     func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error>
+    /// Streams the file starting at `offset`, but only while the remote
+    /// object still carries the validator `ifMatching` — an entity tag a
+    /// caller took from `entityTag(path:)` BEFORE the transfer that is now
+    /// being resumed. A backend that can check it and finds it stale throws
+    /// rather than handing back a body: appending the tail of a REPLACED
+    /// object to the head of the old one produces a file of exactly the
+    /// right length and entirely wrong contents, which nothing downstream
+    /// can notice. `nil` asks for no check, and so does `offset == 0` —
+    /// a fresh read has no partial file to protect.
+    ///
+    /// Why this is not a cycle with `readStream(path:fromOffset:)`: BOTH
+    /// spellings are protocol requirements, so both dispatch through the
+    /// witness table. The extension below defaults this one to the
+    /// two-argument one; a conformer that overrides only the two-argument
+    /// one therefore lands in its own implementation and stops. A backend
+    /// that can check the validator — `S3FileSystem` and
+    /// `WebDAVFileSystem` — overrides BOTH, its two-argument one
+    /// delegating here with `nil`, so the extension's default is out of
+    /// the picture for it entirely. The one spelling that would recurse is
+    /// a conformer overriding the two-argument one by calling this one
+    /// while taking the default for this one; nothing here does that, and
+    /// it is the thing to check when a backend grows a validator.
+    func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error>
+    /// A validator for the entry at `path` AS IT IS NOW, to be handed back
+    /// to `readStream(path:fromOffset:ifMatching:)` when a download of it is
+    /// resumed. The raw header text the server wrote — quotes, and a weak
+    /// validator's `W/` prefix, included — because it goes straight back out
+    /// as a header value and is never parsed here.
+    ///
+    /// `nil` when this backend has no validator for that entry, which is
+    /// NOT an error: it means a resumed read of it cannot be checked, and
+    /// the caller decides what to do about that.
+    func entityTag(path: String) async throws -> String?
     /// Writes the chunk stream as a file. `.overwrite` truncates/creates;
     /// `.append` opens (or creates) and appends starting at the file's
     /// current end.
@@ -106,6 +141,22 @@ extension RemoteFileSystem {
     public func readStream(path: String) async throws -> AsyncThrowingStream<Data, Error> {
         try await readStream(path: path, fromOffset: 0)
     }
+
+    /// Default: no validator check. Every backend that cannot evaluate one
+    /// takes this and reads exactly as it did before. See the requirement's
+    /// own comment above for why calling the two-argument spelling from
+    /// here does not recurse.
+    public func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await readStream(path: path, fromOffset: offset)
+    }
+
+    /// Default: no validator. True of SSH, of the local disk and of every
+    /// test double; the two HTTP backends are the overriders, because HTTP
+    /// is where a validator both exists (`ETag`, `getetag`) and can be sent
+    /// back (`If-Match`).
+    public func entityTag(path: String) async throws -> String? { nil }
 
     /// Convenience over `write(path:mode:contents:)` with `.overwrite` — kept
     /// so existing call sites (TransferEngine, tests) compile unchanged.

@@ -283,6 +283,20 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         try await listedEntry(at: path).item
     }
 
+    /// The raw `<ETag>` the listing carries for `path`, as it arrived —
+    /// quotes included, because it goes straight back out as an `If-Match`
+    /// header value (RFC 9110 8.8.3) and is never parsed here. The checksum
+    /// reader (`remoteChecksum(forFileAt:algorithm:)`) takes the same text
+    /// apart; that is a different question with a different answer, and an
+    /// opaque ETag that the checksum reader refuses is a perfectly good
+    /// validator here.
+    ///
+    /// `nil` for anything that is not an object — a `CommonPrefixes`
+    /// "directory", a bucket, the root — which is not an error.
+    public func entityTag(path: String) async throws -> String? {
+        try await listedEntry(at: path).eTag
+    }
+
     /// One entry of a listing, plus the raw `<ETag>` text the listing
     /// carried for it. `eTag` is `nil` for anything that is not an object —
     /// a `CommonPrefixes` "directory", or the bucket root.
@@ -433,13 +447,32 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// it is never part of the SigV4-signed header set — AWS does not
     /// require `Range` to be signed, and signing it here would just be
     /// extra surface for a byte-identical-header bug with no benefit.
+    /// `If-Match` is set in the same place and for the same reason.
+    ///
+    /// The two-argument spelling delegates to the three-argument one with no
+    /// validator. This is the pairing `RemoteFileSystem` describes: this
+    /// backend overrides BOTH requirements, so the protocol extension's
+    /// default — the one that would call back into this function — is never
+    /// reached from here, and there is no cycle.
     public func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
+        try await readStream(path: path, fromOffset: offset, ifMatching: nil)
+    }
+
+    public func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         try refuseBucketLevelOperation(.readStream, path: path)
         let (bucket, key) = try mode.resolve(path: path)
         var request = try buildSignedRequest(
             bucket: bucket, method: "GET", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+        // Only a RESUME carries the precondition: a fresh read has no
+        // partial file to protect, so a 412 there could only turn a
+        // perfectly good download into a failure.
+        if offset > 0, let tag {
+            request.setValue(tag, forHTTPHeaderField: "If-Match")
+        }
 
         // The streaming counterpart of `send`, kept here rather than folded
         // into it because its return type differs; the two arms match it
@@ -475,6 +508,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 throw RemoteFSError.protocolError(reason: Self.rangeIgnoredReason)
             }
             return Self.wrappingTransportErrors(body)
+        case 412:
+            // The `If-Match` above did not hold: the object is no longer the
+            // one the interrupted attempt was reading. Not a transport
+            // failure and not a bare status report — the one outcome this
+            // precondition exists to name.
+            throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
         case 416:
             return AsyncThrowingStream { $0.finish() }
         case 403:
@@ -491,6 +530,16 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// follow-ups, I-3).
     static let rangeIgnoredReason =
         "S3 did not answer with the byte range asked for, so the download was not resumed"
+
+    /// Why a resumed download was refused: the object is no longer the one
+    /// the interrupted attempt was reading. The request carried `If-Match`
+    /// with the entity tag taken before that attempt, and the store answered
+    /// 412 — so the partial file on disk is the head of an object that no
+    /// longer exists, and appending this one's tail to it would make a file
+    /// of exactly the right length and entirely wrong contents. Nothing was
+    /// appended.
+    static let sourceChangedReason =
+        "The file changed on the server since the interrupted download, so nothing was added to the partial file"
 
     /// Whether `response` carries the bytes from `offset` on: a 206 whose
     /// `Content-Range` (`bytes <first>-<last>/<length>`, RFC 9110 §14.4)

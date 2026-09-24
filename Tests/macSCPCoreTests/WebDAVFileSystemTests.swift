@@ -208,6 +208,155 @@ struct WebDAVFileSystemTests {
         #expect(transport.requests.first?.url?.absoluteString == "https://dav.example.com/dav/")
     }
 
+    // MARK: - A resumed download can tell the resource apart (2026-09-24, Task 1)
+
+    /// The validator these cases carry, in both spellings: a PROPFIND body
+    /// escapes the quotes, an `If-Match` header does not.
+    private static let resourceETagXML = "&quot;6f2b1a4c&quot;"
+    private static let resourceETag = "\"6f2b1a4c\""
+
+    private var singleWithETag: Data {
+        Data("""
+        <?xml version="1.0"?>
+        <d:multistatus xmlns:d="DAV:">
+          <d:response><d:href>/dav/a.txt</d:href>
+            <d:propstat><d:prop><d:resourcetype/><d:getcontentlength>12</d:getcontentlength>
+              <d:getetag>\(Self.resourceETagXML)</d:getetag></d:prop>
+              <d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+        </d:multistatus>
+        """.utf8)
+    }
+
+    /// The validator comes from a depth-0 PROPFIND on the resource itself,
+    /// read as the server wrote it.
+    @Test func theEntityTagComesFromADepthZeroPropfind() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: singleWithETag, headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        let tag = try await fs.entityTag(path: "/a.txt")
+
+        #expect(tag == Self.resourceETag)
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "PROPFIND")
+        #expect(request.value(forHTTPHeaderField: "Depth") == "0")
+    }
+
+    /// A server that reports no `getetag` for the resource has no validator
+    /// to offer. `nil`, not an error.
+    @Test func aResourceWithoutAGetetagHasNoEntityTag() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: listing, headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        let tag = try await fs.entityTag(path: "/a.txt")
+
+        #expect(tag == nil)
+    }
+
+    /// A resumed read carries the validator on exactly one request — the
+    /// ranged GET that fetches bytes.
+    @Test func aResumedReadSendsTheValidatorOnceOnTheRangedGET() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 206, body: Data("tail".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        var received = Data()
+        for try await chunk in try await fs.readStream(
+            path: "/a.txt", fromOffset: 8, ifMatching: Self.resourceETag
+        ) {
+            received.append(chunk)
+        }
+
+        #expect(String(data: received, encoding: .utf8) == "tail")
+        let carrying = transport.requests.filter {
+            $0.value(forHTTPHeaderField: "If-Match") == Self.resourceETag
+        }
+        #expect(carrying.count == 1)
+    }
+
+    /// 412 on a GET is the one thing the precondition exists to report: the
+    /// resource changed, so nothing is handed back to append. It must NOT
+    /// read as `mapStatus`'s 412 — that one is a MOVE's `Overwrite: F`, and
+    /// "The destination already exists" would be a false sentence here.
+    @Test func aChangedResourceIsRefusedWithItsOwnReasonAndNoBody() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 412, body: Data("replacement".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        do {
+            _ = try await fs.readStream(
+                path: "/a.txt", fromOffset: 8, ifMatching: Self.resourceETag)
+            Issue.record("the changed resource was not refused")
+        } catch RemoteFSError.protocolError(let reason) {
+            #expect(reason == WebDAVFileSystem.sourceChangedReason)
+        } catch {
+            Issue.record("refused with \(error), not the changed-resource refusal")
+        }
+    }
+
+    /// No validator, no header. The `Range` beside it is the positive check
+    /// that this request really is the resumed GET.
+    @Test func aResumedReadWithoutAValidatorSendsNoIfMatch() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 206, body: Data("tail".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        for try await _ in try await fs.readStream(
+            path: "/a.txt", fromOffset: 8, ifMatching: nil) {}
+
+        let request = try #require(transport.requests.first)
+        #expect(request.value(forHTTPHeaderField: "Range") == "bytes=8-")
+        #expect(request.value(forHTTPHeaderField: "If-Match") == nil)
+    }
+
+    /// A fresh read has no partial file to protect, so it sends no
+    /// precondition even when the caller holds one — and no `Range` either,
+    /// which is the positive check that this is the fresh GET.
+    @Test func aFreshReadSendsNoIfMatchEvenWithAValidator() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 200, body: Data("whole".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        var received = Data()
+        for try await chunk in try await fs.readStream(
+            path: "/a.txt", fromOffset: 0, ifMatching: Self.resourceETag
+        ) {
+            received.append(chunk)
+        }
+
+        #expect(String(data: received, encoding: .utf8) == "whole")
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "GET")
+        #expect(request.value(forHTTPHeaderField: "Range") == nil)
+        #expect(request.value(forHTTPHeaderField: "If-Match") == nil)
+    }
+
+    /// The validator is an addition, not a replacement: a server that
+    /// ignores `Range` and answers 200 with the whole body still has its
+    /// head dropped, precondition or not.
+    @Test func aResumedReadWithAValidatorStillDropsAnIgnoredRangesHead() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 200, body: Data("headtail".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        var received = Data()
+        for try await chunk in try await fs.readStream(
+            path: "/a.txt", fromOffset: 4, ifMatching: Self.resourceETag
+        ) {
+            received.append(chunk)
+        }
+
+        #expect(String(data: received, encoding: .utf8) == "tail")
+    }
+
     @Test func readStreamSendsARangeHeaderWhenResuming() async throws {
         let transport = FakeHTTPTransport(replies: [
             .init(status: 206, body: Data("tail".utf8), headers: ["Accept-Ranges": "bytes"])

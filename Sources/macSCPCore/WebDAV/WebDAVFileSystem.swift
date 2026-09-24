@@ -278,15 +278,47 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         return data
     }
 
+    /// The validator the server reports for `path` right now: the
+    /// `getetag` of a depth-0 PROPFIND on the resource, as the server wrote
+    /// it. `nil` when that response carries no `getetag` — not every server
+    /// reports one, and a resource without a validator is not an error.
+    public func entityTag(path: String) async throws -> String? {
+        let data = try await propfind(path: path, depth: "0", isDirectory: false)
+        return try WebDAVPropfindParser.entityTag(data, base: base, at: path)
+    }
+
+    /// The two-argument spelling, delegating to the three-argument one with
+    /// no validator. This is the pairing `RemoteFileSystem` describes: this
+    /// backend overrides BOTH requirements, so the protocol extension's
+    /// default — the one that would call back into this function — is never
+    /// reached from here, and there is no cycle.
     public func readStream(
         path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await readStream(path: path, fromOffset: offset, ifMatching: nil)
+    }
+
+    public func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
     ) async throws -> AsyncThrowingStream<Data, Error> {
         var request = URLRequest(url: base.url(forPath: path, isDirectory: false))
         request.httpMethod = "GET"
         if offset > 0 {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+            // Only a RESUME carries the precondition: a fresh read has no
+            // partial file to protect, so a 412 there could only turn a
+            // perfectly good download into a failure.
+            if let tag {
+                request.setValue(tag, forHTTPHeaderField: "If-Match")
+            }
         }
         let (body, response) = try await sendStreaming(request)
+        if response.statusCode == 412 {
+            // Read BEFORE `mapStatus`, which maps 412 to the precondition a
+            // MOVE sets. Here the precondition is the `If-Match` above, and
+            // the sentence has to say what it means.
+            throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
+        }
         try Self.mapStatus(response.statusCode, path: path, method: "GET")
         // A server that ignores Range answers 200 with the WHOLE body. Handing
         // that to a caller who asked for byte N onward would append the head a
@@ -296,6 +328,19 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         guard offset > 0, response.statusCode != 206 else { return body }
         return Self.dropping(offset, from: body)
     }
+
+    /// Why a resumed download was refused: the resource is no longer the one
+    /// the interrupted attempt was reading. The request carried `If-Match`
+    /// with the entity tag taken before that attempt, and the server
+    /// answered 412 — so appending this body to the partial file on disk
+    /// would produce the old resource's head followed by the new one's tail,
+    /// at exactly the length a size check expects. Nothing was appended.
+    ///
+    /// Its own constant, read before `mapStatus`, because `mapStatus` maps
+    /// 412 to the precondition a MOVE sets (`Overwrite: F` — "The
+    /// destination already exists"), which says something false about a GET.
+    static let sourceChangedReason =
+        "The file changed on the server since the interrupted download, so nothing was added to the partial file"
 
     /// Discards the first `count` bytes of a stream. The head may span several
     /// chunks, so this tracks a running total rather than trimming only the
