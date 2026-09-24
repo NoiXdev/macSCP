@@ -7,7 +7,10 @@ import Foundation
 /// `applyFrameAutosaveKeepingItsDisplay(to:)` and
 /// `handleWindowDidEndLiveResize(_:)` — five functions, counted in the pass
 /// that writes this; nothing here touches a window, so every answer is a
-/// value `MainWindowSizePlanTests` can check.
+/// value `MainWindowSizePlanTests` can check. A decision left inline in
+/// `ContentView` instead is a decision nothing measures: the launch-time
+/// gate `restoresAtLaunch(nameBefore:nameNow:)` spent one commit there, and
+/// deleting it left the whole suite green (review round 1).
 ///
 /// **What went wrong before**, read from the code (not reproduced in a
 /// running app): the primary window's frame autosave name stays set for its
@@ -177,6 +180,31 @@ enum MainWindowSizePlan {
         guard numbers.count == tokens.count, numbers.count >= 4 else { return nil }
         guard numbers[2] > 0, numbers[3] > 0 else { return nil }
         return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+    }
+
+    /// Whether setting the autosave name just now can have applied a stored
+    /// frame — i.e. whether `launchFrameToRestore` below has anything to
+    /// decide about.
+    ///
+    /// AppKit applies the stored frame when a window is given a NON-EMPTY
+    /// autosave name it did not already carry, and only then. Both halves
+    /// are load-bearing, and each was planted on its own against the tree
+    /// that had this decision inline (review round 1), with the whole suite
+    /// green either way:
+    ///
+    /// - Without `nameNow != nameBefore` every ordinary body update looks
+    ///   like a restore, because `WindowAccessor` calls back on each one.
+    ///   A user who drags the primary window then has it snapped back to
+    ///   the stored frame on the next repaint.
+    /// - Without `!nameNow.isEmpty` the shrink's suspension counts as one,
+    ///   and setting the empty name applies no frame at all.
+    ///
+    /// Four ordered pairs can be asked about, counted in the pass that
+    /// writes this: `ContentView.applyFrameAutosave(to:)` sets nothing but
+    /// `frameAutosaveName`'s two answers, so each name is the primary one
+    /// or the empty string.
+    static func restoresAtLaunch(nameBefore: String, nameNow: String) -> Bool {
+        nameNow != nameBefore && !nameNow.isEmpty
     }
 
     /// The frame to put the window back at after its autosave name was set

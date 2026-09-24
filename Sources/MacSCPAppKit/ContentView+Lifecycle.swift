@@ -1026,9 +1026,13 @@ extension ContentView {
     /// size and the next connect (next build of 2026-09-17, Task 3): AppKit
     /// writes a named window's frame on every move and resize, so without
     /// the suspension the shrink is the frame a relaunch comes back at. See
-    /// `MainWindowSizePlan`. Set only on a change: `WindowAccessor` calls
-    /// this on every ordinary body update, and the answer is almost always
-    /// the name the window already has.
+    /// `MainWindowSizePlan`. Set only on a change: this runs on every
+    /// ordinary body update — `windowChrome(_:)`'s `WindowAccessor` reaches
+    /// it through `applyFrameAutosaveKeepingItsDisplay(to:)` below — and the
+    /// answer is almost always the name the window already has. The other
+    /// two callers are `shrinkIfPristine()` and `growToBrowserSize()`, which
+    /// call it once each, right after moving `frameAutosaveSuspended`; three
+    /// callers in all, counted in the pass that writes this.
     func applyFrameAutosave(to window: NSWindow?) {
         guard isPrimaryWindow, let window else { return }
         let name = MainWindowSizePlan.frameAutosaveName(
@@ -1061,15 +1065,20 @@ extension ContentView {
     /// defaults rather than from `SettingsStore` because that is where
     /// AppKit's own autosave lives.
     ///
-    /// Gated on the name actually CHANGING to a non-empty one. This runs on
-    /// every ordinary body update too, and on those the name is already the
-    /// one the window carries, so nothing was applied and there is nothing
-    /// to put back — without the gate a body update after the user moved
-    /// the window would drag it back to the stored frame. An empty name is
-    /// the suspension (`MainWindowSizePlan.frameAutosaveName`), which
-    /// applies no frame either.
+    /// Whether the name just set can have applied a stored frame at all is
+    /// `MainWindowSizePlan.restoresAtLaunch(nameBefore:nameNow:)`, which is
+    /// why the name is read on both sides of the call. It was an inline
+    /// `guard` for one commit, and review round 1 measured what that cost:
+    /// deleting it, and dropping half of it, each left the whole suite
+    /// green while snapping a window the user had dragged back to the
+    /// stored frame on the next repaint.
     func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {
-        guard let window else { return }
+        // `isPrimaryWindow` ahead of the defaults read, not only inside
+        // `applyFrameAutosave(to:)` (review round 1): without it every body
+        // update of every seeded window builds the key and reads the
+        // defaults for an answer the gate below always rejects. It is
+        // `seed == nil` over a `let`, so it cannot change mid-session.
+        guard isPrimaryWindow, let window else { return }
         let stored = MainWindowSizePlan.storedFrame(
             descriptor: UserDefaults.standard.string(
                 forKey: MainWindowSizePlan.frameDefaultsKey(
@@ -1077,7 +1086,8 @@ extension ContentView {
         let nameBefore = window.frameAutosaveName
         applyFrameAutosave(to: window)
         let nameNow = window.frameAutosaveName
-        guard nameNow != nameBefore, !nameNow.isEmpty else { return }
+        guard MainWindowSizePlan.restoresAtLaunch(nameBefore: nameBefore, nameNow: nameNow)
+        else { return }
         if let restored = MainWindowSizePlan.launchFrameToRestore(
             stored: stored, applied: window.frame, screens: NSScreen.screens.map(\.frame)) {
             window.setFrame(restored, display: true, animate: false)

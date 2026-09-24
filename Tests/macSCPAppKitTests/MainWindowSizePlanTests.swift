@@ -225,6 +225,45 @@ struct MainWindowSizePlanTests {
             stored: stored, applied: appliedOnMain, screens: [Self.builtIn]) == nil)
     }
 
+    /// The gate on the launch-time put-back, as a value.
+    ///
+    /// Review round 1: this decision was the one of the four in that change
+    /// that stayed inline in `ContentView`, and it is the one that can move
+    /// a window a user is holding. Measured against the committed tree:
+    /// deleting it left 93 of 93 green with two unused-variable warnings as
+    /// the only signal, and dropping only its `!=` half left 93 of 93 green
+    /// with no warning at all — while snapping the primary window back to
+    /// the stored frame on every repaint.
+    ///
+    /// AppKit applies the stored frame when a window is given a NON-EMPTY
+    /// autosave name it did not already carry, and only then. The two names
+    /// are read from the plan rather than spelled, and they are all there
+    /// is: `applyFrameAutosave(to:)` sets nothing but `frameAutosaveName`'s
+    /// two answers, so the four ordered pairs below are the whole domain —
+    /// counted in the pass that writes this.
+    @Test func onlyANewNonEmptyAutosaveNameCanHaveAppliedAStoredFrame() {
+        let suspended = MainWindowSizePlan.frameAutosaveName(
+            frameAutosaveSuspended: true, primaryName: ContentView.primaryFrameAutosaveName)
+        let writing = MainWindowSizePlan.frameAutosaveName(
+            frameAutosaveSuspended: false, primaryName: ContentView.primaryFrameAutosaveName)
+        #expect(suspended != writing, """
+            the plan's two autosave names are the same string, so the four pairs below are \
+            not four cases — re-anchor this test.
+            """)
+        // The first resolve at launch: no name yet, the primary name set
+        // now, so AppKit has just applied whatever was stored under it.
+        #expect(MainWindowSizePlan.restoresAtLaunch(nameBefore: suspended, nameNow: writing))
+        // An ordinary body update. `WindowAccessor` calls back on every one
+        // of them, and the name the plan asks for is the one the window
+        // already carries, so nothing was applied and nothing is put back.
+        // This is the case the dropped `!=` half let through.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: writing, nameNow: writing))
+        // `shrinkIfPristine()`: the suspension reaches the window. Setting
+        // the EMPTY name applies no frame, so there is nothing to put back.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: suspended, nameNow: suspended))
+        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: writing, nameNow: suspended))
+    }
+
     /// AppKit's autosave descriptor is `"x y w h sx sy sw sh"` — the
     /// window's frame followed by the screen's. Only the first four are
     /// read; a descriptor that is not all numbers is not parsed past, since
@@ -241,8 +280,16 @@ struct MainWindowSizePlanTests {
         #expect(MainWindowSizePlan.storedFrame(descriptor: "1600 100 0 900 1512 0 1920 1080") == nil)
     }
 
-    /// The defaults key AppKit itself uses, so the app reads the frame
-    /// AppKit wrote rather than one of its own.
+    /// The key helper's FORMAT, against a second copy of it written here —
+    /// which catches a typo in the helper and nothing else (review round 1:
+    /// this comment used to claim the app therefore reads the frame AppKit
+    /// wrote, which is an AppKit fact no pure suite can reach). That the
+    /// format is the one AppKit actually uses rests on
+    /// `ContentView.resizeWindow(toWidth:height:)`'s recorded note, and on
+    /// the maintainer's sight check; nothing here runs a window.
+    ///
+    /// The name comes from the real static property, not from a third copy
+    /// of the string.
     @Test func theStoredFrameIsReadUnderAppKitsOwnDefaultsKey() {
         #expect(MainWindowSizePlan.frameDefaultsKey(autosaveName: ContentView.primaryFrameAutosaveName)
             == "NSWindow Frame " + ContentView.primaryFrameAutosaveName)
@@ -502,6 +549,12 @@ struct MainWindowSizePlanTests {
         #expect(resolve.contains("animate: false"), "the launch-time put-back must not animate")
         let read = try #require(Self.offset(of: "MainWindowSizePlan.storedFrame(", in: resolve))
         let apply = try #require(Self.offset(of: "applyFrameAutosave(to: window)", in: resolve))
+        let gate = try #require(
+            Self.offset(of: "MainWindowSizePlan.restoresAtLaunch(", in: resolve), """
+                applyFrameAutosaveKeepingItsDisplay(to:) no longer asks the plan whether a \
+                stored frame was applied at all. Review round 1: with that decision inline, \
+                deleting it and dropping half of it each left this whole suite green.
+                """)
         let decide = try #require(
             Self.offset(of: "MainWindowSizePlan.launchFrameToRestore(", in: resolve))
         let restore = try #require(Self.offset(of: "window.setFrame(", in: resolve))
@@ -509,8 +562,24 @@ struct MainWindowSizePlanTests {
             the stored frame must be read before the autosave name is set — after it, AppKit \
             has written the frame it applied over the one being read.
             """)
-        #expect(apply < decide && decide < restore,
-            "the put-back is decided and applied after the name is set")
+        #expect(apply < gate && gate < decide && decide < restore,
+            "the gate is asked after the name is set and before the put-back is decided")
+        // The gate is only a gate if it is asked about the name from BEFORE
+        // the call and the name from after it. Both reads are pinned — two
+        // of them, counted in the pass that writes this — one on each side
+        // of `applyFrameAutosave(to: window)`, and the arguments are named
+        // so a call passing the same read twice cannot stand in for them.
+        let reads = resolve.components(separatedBy: "window.frameAutosaveName").count - 1
+        #expect(reads == 2, """
+            applyFrameAutosaveKeepingItsDisplay(to:) reads window.frameAutosaveName \(reads) \
+            times, not the two the gate compares.
+            """)
+        let firstRead = try #require(Self.offset(of: "window.frameAutosaveName", in: resolve))
+        #expect(firstRead < apply, "the name before the call must be read before the call")
+        #expect(resolve.contains("nameBefore: nameBefore, nameNow: nameNow"), """
+            the gate is no longer asked about the two names read around \
+            applyFrameAutosave(to: window) — re-anchor this guard.
+            """)
         let detail = try Self.code(of: Self.detailFile)
         #expect(detail.contains("applyFrameAutosaveKeepingItsDisplay(to: $0)"), """
             ContentView+Detail.swift's WindowAccessor no longer calls \
