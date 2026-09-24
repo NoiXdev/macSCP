@@ -71,9 +71,15 @@ struct CLIErrorMappingTests {
     // `StoredSessionConnectionError.secretRequired(checked:)` carries which
     // of the chain's four possible links (`SecretSourceKind`,
     // `CLISecretSources.swift`) THIS invocation actually walked, in the
-    // order it walked them — read off the real `[any SecretSource]` array
-    // at the two call sites that build one (`TunnelConnection.connect`,
-    // `SessionConnecting.connect`), not guessed at here. Each case below is
+    // order it walked them — tagged by the chain builder itself
+    // (`secretSources(...)`/`TunnelSecretSources.chain(...)`, `SecretChain`,
+    // fix round 2) at the moment each link is appended, not derived here or
+    // anywhere downstream. `CLISecretSourcesTests
+    // .aPrivateKeySessionsChainEndsWithTheManagedKeysSlot` is the
+    // end-to-end companion to the cases below: it walks the real builder
+    // for the four-link shape and asserts this same rendered sentence,
+    // so the source-to-kind step has coverage beyond a hand-built literal.
+    // Each case below is
     // a whole-string equality, not `.contains`, so dropping a clause,
     // reordering the four, or falling back to a wrong subset fails
     // directly. Four shapes, matching what `CLISecretSources.swift` and the
@@ -121,12 +127,13 @@ struct CLIErrorMappingTests {
             + "the environment, and the keychain)")
     }
 
-    /// `checked` is empty only when a caller built the config with no
-    /// chain at all (`StoredSessionConnectionConfig.build`'s own default —
-    /// not a real call site failing to say what it did; both call sites
-    /// that actually exist always pass their real chain). Naming zero
-    /// places, or falling back to all four, would each claim something
-    /// that did not happen — so the parenthetical is left off instead.
+    /// `checked` is empty only when a caller passes `checkedSources: []`
+    /// explicitly (`StoredSessionConnectionConfig.build` takes no default
+    /// since fix round 2 — every one of its ~25 non-production call sites
+    /// states `[]` outright, and both real call sites always pass their
+    /// actual chain). Naming zero places, or falling back to all four,
+    /// would each claim something that did not happen — so the
+    /// parenthetical is left off instead.
     @Test func secretRequiredMessageDropsTheParentheticalWhenNothingWasChecked() {
         let message = CLIErrorMapping.message(for: StoredSessionConnectionError.secretRequired(checked: []))
         #expect(message == "Error: no secret available")

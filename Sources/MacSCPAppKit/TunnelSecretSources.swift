@@ -37,17 +37,24 @@ enum TunnelSecretSources {
     ///   - keys: the managed-key store the App holds (`ContentView
     ///     .managedKeyStore` in production, a temp directory in tests).
     ///   - secrets: the Keychain, or a fake.
+    /// Returns a `SecretChain` (fix round 2 of the CLI "secret required"
+    /// message task): `.kinds` is appended in the same statement as each
+    /// `sources.append`, below, the same reason `secretSources(for:
+    /// passwordCommand:keychainStore:keyStore:)` (Core) does — so the two
+    /// arrays cannot desynchronize, and nothing downstream has to re-derive
+    /// which places this chain holds by switching on a source's type.
     static func chain(
         for session: StoredSession, keys: ManagedKeyStore, secrets: any SecretStore
-    ) -> [any SecretSource] {
+    ) -> SecretChain {
         let descriptor = BackendDescriptor.descriptor(for: session.kind)
         // The same question `secretSources(for:passwordCommand:)` asks first,
         // and for the same reason: an agent login needs no secret, so a
         // broken Keychain read must not be able to fail a dial that never
         // wanted one.
-        guard descriptor.requiresSecret(descriptor.sessionValues(session)) else { return [] }
+        guard descriptor.requiresSecret(descriptor.sessionValues(session)) else { return SecretChain() }
 
         var sources: [any SecretSource] = [KeychainSecretSource(store: secrets)]
+        var kinds: [SecretSourceKind] = [.keychain]
         if session.ssh?.authKind == .privateKey, let keyPath = session.ssh?.keyPath,
             !keyPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
@@ -55,7 +62,8 @@ enum TunnelSecretSources {
                 ManagedKeyPassphraseSecretSource(
                     keyPath: keyPath.trimmingCharacters(in: .whitespacesAndNewlines),
                     keys: keys, secrets: secrets))
+            kinds.append(.managedKeyPassphrase)
         }
-        return sources
+        return SecretChain(sources: sources, kinds: kinds)
     }
 }

@@ -112,7 +112,7 @@ struct LegacyStoreCompatibilityTests {
         let dav = try #require(sessions.first { $0.kind == .webdav })
 
         guard case .webdav(let viaStore) = try StoredSessionConnectionConfig.build(
-            for: dav, secret: "s") else {
+            for: dav, secret: "s", checkedSources: []) else {
             Issue.record("expected a WebDAV config")
             return
         }

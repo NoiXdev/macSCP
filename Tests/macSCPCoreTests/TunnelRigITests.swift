@@ -43,7 +43,7 @@ struct TunnelRigITests {
                 authKind: .password)
             let carrier = try await connectWithRetry {
                 try await TunnelConnection.connect(
-                    session: session, secrets: [RigSecret()],
+                    session: session, secrets: SecretChain(sources: [RigSecret()]),
                     knownHosts: KnownHostsStore(directory: carrierHosts),
                     decider: .asking { _ in true })
             }
@@ -130,7 +130,7 @@ struct TunnelRigITests {
                 authKind: .password)
             let carrier = try await connectWithRetry {
                 try await TunnelConnection.connect(
-                    session: session, secrets: [RigSecret()],
+                    session: session, secrets: SecretChain(sources: [RigSecret()]),
                     knownHosts: KnownHostsStore(directory: carrierHosts),
                     decider: .asking { _ in true })
             }
@@ -202,7 +202,7 @@ struct TunnelRigITests {
                 authKind: .password)
             let carrier = try await connectWithRetry {
                 try await TunnelConnection.connect(
-                    session: session, secrets: [RigSecret()],
+                    session: session, secrets: SecretChain(sources: [RigSecret()]),
                     knownHosts: KnownHostsStore(directory: carrierHosts),
                     decider: .asking { _ in true })
             }
@@ -311,7 +311,7 @@ struct TunnelRigITests {
                 authKind: .password)
             let carrier = try await connectWithRetry {
                 try await TunnelConnection.connect(
-                    session: session, secrets: [RigSecret()],
+                    session: session, secrets: SecretChain(sources: [RigSecret()]),
                     knownHosts: KnownHostsStore(directory: carrierHosts),
                     decider: .asking { _ in true })
             }
@@ -381,7 +381,7 @@ struct TunnelRigITests {
                 authKind: .password)
             let carrier = try await connectWithRetry {
                 try await TunnelConnection.connect(
-                    session: session, secrets: [RigSecret()],
+                    session: session, secrets: SecretChain(sources: [RigSecret()]),
                     knownHosts: KnownHostsStore(directory: carrierHosts),
                     decider: .asking { _ in true })
             }
@@ -434,7 +434,7 @@ struct TunnelRigITests {
                 profile: profile,
                 connect: { decider in
                     try await TunnelConnection.connect(
-                        session: session, secrets: [RigSecret()],
+                        session: session, secrets: SecretChain(sources: [RigSecret()]),
                         knownHosts: KnownHostsStore(directory: carrierHosts), decider: decider)
                 })
             let states = TunnelStateCollector(runner.states)
@@ -491,7 +491,7 @@ struct TunnelRigITests {
                 profile: profile,
                 connect: { decider in
                     try await TunnelConnection.connect(
-                        session: session, secrets: [RigSecret()],
+                        session: session, secrets: SecretChain(sources: [RigSecret()]),
                         knownHosts: KnownHostsStore(directory: carrierHosts), decider: decider)
                 })
             let states = TunnelStateCollector(runner.states)

@@ -61,7 +61,7 @@ struct ForwardingWithoutSFTPITests {
         let session = Self.session()
         let race = try await raceAgainstSFTPRefusal {
             let connection = try await TunnelConnection.connect(
-                session: session, secrets: [NoSFTPRigSecret()],
+                session: session, secrets: SecretChain(sources: [NoSFTPRigSecret()]),
                 knownHosts: KnownHostsStore(directory: knownHosts),
                 decider: .asking { _ in true })
             await connection.disconnect()
@@ -117,7 +117,7 @@ struct ForwardingWithoutSFTPITests {
             profile: profile,
             connect: { decider in
                 try await TunnelConnection.connect(
-                    session: session, secrets: [NoSFTPRigSecret()],
+                    session: session, secrets: SecretChain(sources: [NoSFTPRigSecret()]),
                     knownHosts: KnownHostsStore(directory: knownHosts), decider: decider)
             })
         let states = TunnelStateCollector(runner.states)
@@ -230,7 +230,7 @@ struct ForwardingWithoutSFTPITests {
         let raised: (any Error)?
         do {
             let connection = try await TunnelConnection.connect(
-                session: Self.session(), secrets: [NoSFTPRigSecret()],
+                session: Self.session(), secrets: SecretChain(sources: [NoSFTPRigSecret()]),
                 knownHosts: store,
                 decider: .asking { _ in
                     asked.increment()

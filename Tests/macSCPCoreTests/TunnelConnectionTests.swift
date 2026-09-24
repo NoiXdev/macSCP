@@ -20,7 +20,7 @@ struct TunnelConnectionTests {
 
         await #expect(throws: TunnelRefusal.notSSH(session: "objects", connectionKind: .s3)) {
             _ = try await TunnelConnection.connect(
-                session: session, secrets: [FixedSecret("secret-access-key")],
+                session: session, secrets: SecretChain(sources: [FixedSecret("secret-access-key")]),
                 knownHosts: store, decider: .refusing)
         }
     }
@@ -45,7 +45,7 @@ struct TunnelConnectionTests {
 
         let thrown = await #expect(throws: TunnelRefusal.self) {
             _ = try await TunnelConnection.connect(
-                session: session, secrets: [FixedSecret("unused")],
+                session: session, secrets: SecretChain(sources: [FixedSecret("unused")]),
                 knownHosts: store, decider: .refusing)
         }
         #expect(thrown == refusal)
@@ -62,12 +62,12 @@ struct TunnelConnectionTests {
         let session = sshSession(name: "rig", host: "127.0.0.1", port: 2222, username: "testuser")
         let store = KnownHostsStore(directory: directory)
 
-        // `secrets: []` here — an empty chain, not a real one — so `checked`
-        // comes back empty too; this test is about the ERROR CASE
+        // `SecretChain()` here — an empty chain, not a real one — so
+        // `checked` comes back empty too; this test is about the ERROR CASE
         // propagating unchanged, not about which chain produced it.
         await #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
             _ = try await TunnelConnection.connect(
-                session: session, secrets: [], knownHosts: store, decider: .refusing)
+                session: session, secrets: SecretChain(), knownHosts: store, decider: .refusing)
         }
     }
 }

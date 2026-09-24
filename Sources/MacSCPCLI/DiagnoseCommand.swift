@@ -355,7 +355,7 @@ struct DiagnoseCommand: AsyncParsableCommand {
                 jump: nil)
         }
 
-        let (stored, sources) = try resolveSession(sessionReference, options: options)
+        let (stored, chain) = try resolveSession(sessionReference, options: options)
         let descriptor = BackendDescriptor.descriptor(for: stored.kind)
         // `editBaseline` then `sessionValues`, the same pair the app's own
         // entry merges (`ContentView.showDiagnostics`) and the same one
@@ -368,7 +368,7 @@ struct DiagnoseCommand: AsyncParsableCommand {
         return Target(
             descriptor: descriptor,
             values: values,
-            secrets: ChainedSecretSource(sources),
+            secrets: ChainedSecretSource(chain.sources),
             sessionID: stored.secretSlot,
             jump: try jump(of: stored))
     }

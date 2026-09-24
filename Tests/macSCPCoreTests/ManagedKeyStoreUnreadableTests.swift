@@ -79,17 +79,18 @@ struct ManagedKeyStoreUnreadableTests {
         defer { rig.tearDown() }
         let managed = rig.chain(keyPath: rig.managedKeyPath)
         let unmanaged = rig.chain(keyPath: rig.unmanagedKeyPath)
-        _ = try SecretResolver(sources: managed).resolve(for: UUID())
-        _ = try SecretResolver(sources: unmanaged).resolve(for: UUID())
+        _ = try SecretResolver(sources: managed.sources).resolve(for: UUID())
+        _ = try SecretResolver(sources: unmanaged.sources).resolve(for: UUID())
 
         #expect(
-            Self.renamed(SSHKeyError.passphraseRequired, in: managed)
+            Self.renamed(SSHKeyError.passphraseRequired, in: managed.sources)
                 == .managedKeyStoreUnreadable)
-        #expect(Self.renamed(SSHKeyError.passphraseRequired, in: unmanaged) == .passphraseRequired)
-        #expect(Self.renamed(SSHKeyError.wrongPassphrase, in: managed) == .wrongPassphrase)
+        #expect(
+            Self.renamed(SSHKeyError.passphraseRequired, in: unmanaged.sources) == .passphraseRequired)
+        #expect(Self.renamed(SSHKeyError.wrongPassphrase, in: managed.sources) == .wrongPassphrase)
         #expect(Self.renamed(SSHKeyError.passphraseRequired, in: []) == .passphraseRequired)
         let foreign = ManagedKeyPassphraseSecretSource.namingUnreadableStore(
-            RemoteFSError.authenticationFailed, in: managed)
+            RemoteFSError.authenticationFailed, in: managed.sources)
         #expect(foreign as? RemoteFSError == .authenticationFailed)
     }
 
@@ -100,9 +101,10 @@ struct ManagedKeyStoreUnreadableTests {
         defer { rig.tearDown() }
         try rig.repairStore()
         let chain = rig.chain(keyPath: rig.managedKeyPath)
-        _ = try SecretResolver(sources: chain).resolve(for: UUID())
+        _ = try SecretResolver(sources: chain.sources).resolve(for: UUID())
 
-        #expect(Self.renamed(SSHKeyError.passphraseRequired, in: chain) == .passphraseRequired)
+        #expect(
+            Self.renamed(SSHKeyError.passphraseRequired, in: chain.sources) == .passphraseRequired)
     }
 
     /// A diagnosis holds the chain as one `ChainedSecretSource`; the fact is
@@ -110,7 +112,7 @@ struct ManagedKeyStoreUnreadableTests {
     @Test func theFactIsFoundThroughAChainedSource() throws {
         let rig = try CorruptManagedKeyStoreRig()
         defer { rig.tearDown() }
-        let chained = ChainedSecretSource(rig.chain(keyPath: rig.managedKeyPath))
+        let chained = ChainedSecretSource(rig.chain(keyPath: rig.managedKeyPath).sources)
         _ = try chained.secret(for: UUID())
 
         #expect(ManagedKeyPassphraseSecretSource.unreadableStoreHidAKey(in: [chained]))
@@ -188,7 +190,7 @@ struct ManagedKeyStoreUnreadableTests {
             .appendingPathComponent("Sources/MacSCPCLI/SessionConnecting.swift")
         let code = try SourceCorpus.code(of: file)
         let join = "\(String(describing: ManagedKeyPassphraseSecretSource.self))"
-            + ".namingUnreadableStore(error, in: sources)"
+            + ".namingUnreadableStore(error, in: chain.sources)"
         let start = try #require(code.range(of: "func connect("))
         let end = try #require(code.range(of: "func withConnection(", range: start.upperBound..<code.endIndex))
         let body = code[start.upperBound..<end.lowerBound]
@@ -207,7 +209,7 @@ struct ManagedKeyStoreUnreadableTests {
         let step = await DiagnosticContribution.sshConnect.run(
             rig.values(keyPath: rig.managedKeyPath),
             DiagnosticContext(
-                secrets: ChainedSecretSource(rig.chain(keyPath: rig.managedKeyPath)),
+                secrets: ChainedSecretSource(rig.chain(keyPath: rig.managedKeyPath).sources),
                 sessionID: UUID(), timeout: .seconds(5)))
 
         #expect(step.outcome == .skipped(DiagnosticReason.managedKeyStoreUnreadable))
@@ -222,7 +224,7 @@ struct ManagedKeyStoreUnreadableTests {
         let step = await DiagnosticContribution.sshConnect.run(
             rig.values(keyPath: rig.unmanagedKeyPath),
             DiagnosticContext(
-                secrets: ChainedSecretSource(rig.chain(keyPath: rig.unmanagedKeyPath)),
+                secrets: ChainedSecretSource(rig.chain(keyPath: rig.unmanagedKeyPath).sources),
                 sessionID: UUID(), timeout: .seconds(5)))
 
         #expect(step.outcome == .skipped(DiagnosticReason.noSecret))
@@ -285,9 +287,12 @@ struct CorruptManagedKeyStoreRig {
     }
 
     /// The forwarding's chain shape: the session's own slot, then the
-    /// managed key's.
-    func chain(keyPath: String) -> [any SecretSource] {
-        [KeychainSecretSource(store: secrets), managedLink(keyPath: keyPath)]
+    /// managed key's — the same shape `TunnelSecretSources.chain` (App)
+    /// builds, so `.kinds` matches it too.
+    func chain(keyPath: String) -> SecretChain {
+        SecretChain(
+            sources: [KeychainSecretSource(store: secrets), managedLink(keyPath: keyPath)],
+            kinds: [.keychain, .managedKeyPassphrase])
     }
 
     /// A private-key session on loopback. The port is never reached: the key

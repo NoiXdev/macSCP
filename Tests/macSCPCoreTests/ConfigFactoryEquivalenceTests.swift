@@ -39,7 +39,7 @@ import Testing
             session = webdavSession(name: "cloud")
         }
 
-        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: secret)
+        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: secret, checkedSources: [])
         let descriptor = BackendDescriptor.descriptor(for: kind)
         let viaFactory = try descriptor.makeConfig(descriptor.sessionValues(session), secret)
         #expect(viaBuild == viaFactory)
@@ -50,7 +50,7 @@ import Testing
     /// configs depending on which path reads it.
     @Test func buildAgreesWithTheFactoryOnAPaddedS3Session() throws {
         let session = s3Session(name: "archive", config: s3Stored(padded: true))
-        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: "s3cr3t")
+        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: "s3cr3t", checkedSources: [])
         let descriptor = BackendDescriptor.descriptor(for: .s3)
         let viaFactory = try descriptor.makeConfig(descriptor.sessionValues(session), "s3cr3t")
         #expect(viaBuild == viaFactory)
@@ -76,7 +76,7 @@ import Testing
     @Test func buildAgreesWithTheFactoryOnAPaddedSSHSession() throws {
         let session = sshSession(
             name: "prod", host: "  prod.example.com  ", port: 2222, username: "  deploy  ")
-        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: "hunter2")
+        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: "hunter2", checkedSources: [])
         let descriptor = BackendDescriptor.descriptor(for: .ssh)
         let viaFactory = try descriptor.makeConfig(descriptor.sessionValues(session), "hunter2")
         #expect(viaBuild == viaFactory)
@@ -96,7 +96,7 @@ import Testing
             config: StoredWebDAVConfig(
                 baseURL: "  https://cloud.example.com/remote.php/dav  ",
                 username: "  tim  ", useNextcloudPath: false))
-        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: nil, checkedSources: [])
         let descriptor = BackendDescriptor.descriptor(for: .webdav)
         let viaFactory = try descriptor.makeConfig(descriptor.sessionValues(session), "")
         #expect(viaBuild == viaFactory)
@@ -112,7 +112,7 @@ import Testing
         let session = sshSession(
             name: "prod", host: "prod.example.com", username: "deploy",
             authKind: .privateKey, keyPath: "/keys/id_ed25519")
-        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: nil, checkedSources: [])
         let descriptor = BackendDescriptor.descriptor(for: .ssh)
         let viaFactory = try descriptor.makeConfig(descriptor.sessionValues(session), "")
         #expect(viaBuild == viaFactory)

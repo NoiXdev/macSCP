@@ -150,6 +150,54 @@ public struct KeychainSecretSource: SecretSource {
     }
 }
 
+/// One of the four places a secret chain can ever hold a link — named as a
+/// fixed PLACE, never a value. No case carries a path, an environment
+/// variable's name, or anything else an individual source's own `label`
+/// could carry (`EnvironmentSecretSource.label`, for one, names the
+/// variable itself) — that is the whole reason this exists instead of
+/// reusing `label`: a `.secretRequired` refusal's message is built from a
+/// list of these, and it must never be able to interpolate anything that
+/// could carry a secret's name, let alone its value.
+public enum SecretSourceKind: Equatable, Sendable, CaseIterable {
+    case passwordCommand
+    case environment
+    case keychain
+    case managedKeyPassphrase
+}
+
+/// A secret chain together with the record of which places it holds, kept
+/// as one value so the two can never drift apart.
+///
+/// Fix round 2 replaced a `secretSourceKinds(in sources:)` that derived
+/// `kinds` AFTER the fact, by switching on each source's concrete type. That
+/// switch was not total (`default: return nil` on a type it didn't
+/// recognize) and nothing enforced that it stay in sync with which types a
+/// chain builder actually appends — the fix round 2 coordinator's own
+/// scoped re-review planted `EnvironmentSecretSource -> .managedKeyPassphrase`
+/// in it and reported six test files, 122 tests, staying green, because
+/// nothing exercised the mapping against a real chain. Its own doc
+/// comment's "there are only ever these four in this module" was also
+/// false the moment it was written: `ChainedSecretSource` (below) is a
+/// fifth `SecretSource` conformer in this same file, just not a LINK — it
+/// wraps a chain rather than appending to one.
+///
+/// This type removes the problem instead of guarding it: `sources` and
+/// `kinds` are built in lockstep, appended together at each step of
+/// `secretSources(for:passwordCommand:keychainStore:keyStore:)` (and the
+/// App's own `TunnelSecretSources.chain(for:keys:secrets:)`, which produces
+/// the same shape from a different subset/order of links) — there is no
+/// separate step that could tag one wrong or drop one silently, and no
+/// type-based mapping to keep total as conformers are added.
+public struct SecretChain: Sendable {
+    public let sources: [any SecretSource]
+    public let kinds: [SecretSourceKind]
+
+    public init(sources: [any SecretSource] = [], kinds: [SecretSourceKind] = []) {
+        self.sources = sources
+        self.kinds = kinds
+    }
+}
+
 /// Builds the staged secret sources for a stored session, in the ORDER the
 /// M20 design fixes as a security decision: an explicit `--password-command`
 /// wins over everything; the environment variable is the CI path (the
@@ -181,25 +229,32 @@ public struct KeychainSecretSource: SecretSource {
 /// chain for that case. `SecretResolver` walking an empty chain harmlessly
 /// resolves to `nil`, so callers don't need a separate "does this session
 /// need a secret" branch of their own.
+///
+/// Returns a `SecretChain` (fix round 2) rather than a bare
+/// `[any SecretSource]`: `kinds` is appended in the same statement as each
+/// `sources.append`, below, so the two arrays cannot desynchronize.
 public func secretSources(
     for session: StoredSession,
     passwordCommand: String?,
     keychainStore: any SecretStore = KeychainSecretStore(),
     keyStore: ManagedKeyStore = ManagedKeyStore(directory: SessionStore.defaultDirectory)
-) -> [any SecretSource] {
+) -> SecretChain {
     let descriptor = BackendDescriptor.descriptor(for: session.kind)
     // Read through the BACKEND'S OWN adapter, never a shared one: SSH's
     // answer depends on `authKind`, a column S3 and WebDAV sessions do not
     // fill meaningfully, so asking the wrong adapter is how the agent-auth
     // guard would silently invert for them.
-    guard descriptor.requiresSecret(descriptor.sessionValues(session)) else { return [] }
+    guard descriptor.requiresSecret(descriptor.sessionValues(session)) else { return SecretChain() }
 
     var sources: [any SecretSource] = []
+    var kinds: [SecretSourceKind] = []
     if let command = passwordCommand {
         sources.append(PasswordCommandSecretSource(command: command))
+        kinds.append(.passwordCommand)
     }
     if let variableName = descriptor.secretEnvironmentVariable {
         sources.append(EnvironmentSecretSource(variableName: variableName))
+        kinds.append(.environment)
     }
     // The comfortable source at a workstation: the very same
     // keychain items the app writes. macOS asks the user for consent the
@@ -210,6 +265,7 @@ public func secretSources(
     // shipped, Developer-ID-signed binary keeps it across invocations while
     // a locally rebuilt, ad-hoc-signed one has to be confirmed again.
     sources.append(KeychainSecretSource(store: keychainStore))
+    kinds.append(.keychain)
     // After the session's own slot, for a private-key session only: a key the
     // app manages keeps its passphrase under the KEY's id, and a session
     // using it carries no copy of its own when that slot holds one (the
@@ -221,47 +277,10 @@ public func secretSources(
         if !trimmed.isEmpty {
             sources.append(
                 ManagedKeyPassphraseSecretSource(keyPath: trimmed, keys: keyStore, secrets: keychainStore))
+            kinds.append(.managedKeyPassphrase)
         }
     }
-    return sources
-}
-
-/// One of the four places a secret chain built by this file, or by the
-/// App's own `TunnelSecretSources.chain(for:keys:secrets:)` (which shares
-/// these same four source types, in a different subset and order), can ever
-/// hold — named as a fixed PLACE, never a value. No path, no
-/// environment-variable name, nothing an individual source's own `label`
-/// could carry (`EnvironmentSecretSource.label`, for one, names the
-/// variable itself) — that is the whole reason this exists instead of
-/// reusing `label`: a `.secretRequired` refusal's message is built from
-/// this, and it must never be able to interpolate anything that could carry
-/// a secret's name, let alone its value.
-public enum SecretSourceKind: Equatable, Sendable, CaseIterable {
-    case passwordCommand
-    case environment
-    case keychain
-    case managedKeyPassphrase
-}
-
-/// Which of the four kinds `sources` actually holds, in the order given —
-/// read from each element's CONCRETE TYPE, never from its `label`. This is
-/// what a `.secretRequired` refusal (`StoredSessionConnectionConfig
-/// .build(for:secret:checkedSources:)`) names as "checked": the chain a
-/// caller actually built, not a second, hand-maintained description of one.
-/// A source type this function does not recognize is silently skipped
-/// rather than guessed at — there are only ever these four in this
-/// module, and a fifth would need a fifth case here before it could be
-/// named honestly.
-public func secretSourceKinds(in sources: [any SecretSource]) -> [SecretSourceKind] {
-    sources.compactMap { source -> SecretSourceKind? in
-        switch source {
-        case is PasswordCommandSecretSource: return .passwordCommand
-        case is EnvironmentSecretSource: return .environment
-        case is KeychainSecretSource: return .keychain
-        case is ManagedKeyPassphraseSecretSource: return .managedKeyPassphrase
-        default: return nil
-        }
-    }
+    return SecretChain(sources: sources, kinds: kinds)
 }
 
 /// The CLI's secret chain as the one source `ConnectionDiagnostics` takes:

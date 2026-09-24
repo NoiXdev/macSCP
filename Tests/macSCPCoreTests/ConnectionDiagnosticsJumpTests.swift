@@ -1127,7 +1127,7 @@ struct ConnectionDiagnosticsJumpTests {
             connection: FakeJumpConnection(rig: rig), jump: Self.agentJump(port: 1),
             target: Endpoint(host: Self.targetHost, port: Self.targetPort), values: values,
             diagnostic: DiagnosticContext(
-                secrets: ChainedSecretSource(store.chain(keyPath: keyPath)), sessionID: UUID(),
+                secrets: ChainedSecretSource(store.chain(keyPath: keyPath).sources), sessionID: UUID(),
                 timeout: .seconds(5)),
             dialer: rig.dialer, budget: .seconds(5), transcript: JumpProbeTranscript())
 

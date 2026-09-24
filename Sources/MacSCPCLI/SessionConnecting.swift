@@ -55,7 +55,7 @@ extension GlobalOptions: SecretChainOptions {}
 /// resolving the secret is NOT part of the shared head.
 func resolveSession(
     _ reference: SessionReference, options: some SecretChainOptions
-) throws -> (session: StoredSession, sources: [any SecretSource]) {
+) throws -> (session: StoredSession, chain: SecretChain) {
     let store = SessionStore(directory: SessionStore.defaultDirectory)
     let session = try reference.resolve(in: try store.all())
     return (session, secretChain(for: session, options: options))
@@ -86,7 +86,7 @@ func resolveSession(
 /// this is pure argument plumbing, no branching of its own.
 func secretChain(
     for session: StoredSession, options: some SecretChainOptions
-) -> [any SecretSource] {
+) -> SecretChain {
     secretSources(for: session, passwordCommand: options.passwordCommand)
 }
 
@@ -97,13 +97,13 @@ func connect(
     to reference: SessionReference,
     options: GlobalOptions
 ) async throws -> any RemoteFileSystem {
-    let (session, sources) = try resolveSession(reference, options: options)
-    let secret = try SecretResolver(sources: sources).resolve(for: session.id)
+    let (session, chain) = try resolveSession(reference, options: options)
+    let secret = try SecretResolver(sources: chain.sources).resolve(for: session.id)
     if options.verbose, let secret {
         OutputFormatter.note("secret source: \(secret.sourceLabel)")
     }
     let config = try StoredSessionConnectionConfig.build(
-        for: session, secret: secret?.value, checkedSources: sources)
+        for: session, secret: secret?.value, checkedSources: chain.kinds)
     // Since M22/T10 the backend opens its OWN connection (no central
     // dispatcher): SSH keeps its TOFU host-key decider, and the certificate
     // decider refuses by default — the CLI has no interactive certificate
@@ -121,7 +121,7 @@ func connect(
         // A missing passphrase for a key in the managed key directory, when
         // the chain's managed-key link found `managed_keys.json` unreadable,
         // is rethrown naming the store (`CLIErrorMapping` prints it).
-        throw ManagedKeyPassphraseSecretSource.namingUnreadableStore(error, in: sources)
+        throw ManagedKeyPassphraseSecretSource.namingUnreadableStore(error, in: chain.sources)
     }
 }
 

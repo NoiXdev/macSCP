@@ -96,11 +96,12 @@ struct TunnelSecretSourcesTests {
 
         let chain = TunnelSecretSources.chain(
             for: session, keys: rig.keys, secrets: rig.secrets)
-        let resolved = try SecretResolver(sources: chain).resolve(for: session.id)
+        let resolved = try SecretResolver(sources: chain.sources).resolve(for: session.id)
 
         let isThePassphrase = resolved?.value == Self.passphrase
         #expect(isThePassphrase, "the managed key's stored passphrase did not reach the dial")
         #expect(resolved?.sourceLabel == "managed key passphrase")
+        #expect(chain.kinds == [.keychain, .managedKeyPassphrase])
     }
 
     /// The session's own slot comes first — the same precedence
@@ -117,7 +118,7 @@ struct TunnelSecretSourcesTests {
 
         let chain = TunnelSecretSources.chain(
             for: session, keys: rig.keys, secrets: rig.secrets)
-        let resolved = try SecretResolver(sources: chain).resolve(for: session.id)
+        let resolved = try SecretResolver(sources: chain.sources).resolve(for: session.id)
 
         let isTheSessionSecret = resolved?.value == sessionSecret
         #expect(isTheSessionSecret)
@@ -136,7 +137,7 @@ struct TunnelSecretSourcesTests {
         let session = rig.session()
         let labels = TunnelSecretSources.chain(
             for: session, keys: rig.keys, secrets: rig.secrets
-        ).map(\.label)
+        ).sources.map(\.label)
 
         // The two forbidden labels are DERIVED from the source types
         // themselves, not spelled here (fix round 2): a renamed label would
@@ -170,7 +171,11 @@ struct TunnelSecretSourcesTests {
         defer { rig.tearDown() }
         let chain = TunnelSecretSources.chain(
             for: rig.session(authKind: .agent), keys: rig.keys, secrets: rig.secrets)
-        #expect(chain.isEmpty)
+        #expect(chain.sources.isEmpty)
+        // The positive beside the negative: `.kinds` is empty for the SAME
+        // reason `.sources` is, not by coincidence — the two are built in
+        // lockstep (`SecretChain`, `CLISecretSources.swift`).
+        #expect(chain.kinds.isEmpty)
     }
 
     /// A password session has no key path, so no key source is built — the
@@ -178,9 +183,9 @@ struct TunnelSecretSourcesTests {
     @Test func aPasswordSessionReadsOnlyItsOwnSlot() throws {
         let rig = try Rig()
         defer { rig.tearDown() }
-        let labels = TunnelSecretSources.chain(
-            for: rig.session(authKind: .password), keys: rig.keys, secrets: rig.secrets
-        ).map(\.label)
-        #expect(labels == [KeychainSecretSource(store: rig.secrets).label])
+        let chain = TunnelSecretSources.chain(
+            for: rig.session(authKind: .password), keys: rig.keys, secrets: rig.secrets)
+        #expect(chain.sources.map(\.label) == [KeychainSecretSource(store: rig.secrets).label])
+        #expect(chain.kinds == [.keychain])
     }
 }

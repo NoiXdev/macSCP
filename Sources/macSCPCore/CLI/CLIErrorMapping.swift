@@ -296,22 +296,26 @@ public enum CLIErrorMapping {
             case .secretRequired(let checked):
                 // `checked` names exactly which of the chain's four possible
                 // links (`SecretSourceKind`, `CLISecretSources.swift`) THIS
-                // invocation actually walked, in the order it walked them —
-                // read off the caller's own `[any SecretSource]` array
-                // (`StoredSessionConnectionConfig.build(for:secret:
-                // checkedSources:)`, populated by `TunnelConnection.connect`
-                // and `SessionConnecting.connect` from a local already in
-                // scope there). So this names only what ran: a session with
+                // invocation actually walked, in the order it walked them.
+                // Since fix round 2 this mapping does no deriving at all:
+                // `checked` is `StoredSessionConnectionConfig.build(for:
+                // secret:checkedSources:)`'s own argument, passed straight
+                // through from `.secretRequired(checked:)`'s payload — and
+                // THAT argument is tagged by the chain builder itself
+                // (`secretSources(...)`/`TunnelSecretSources.chain(...)`,
+                // `SecretChain`) at the moment each link is appended, not
+                // reconstructed anywhere downstream by switching on a
+                // source's type. So this names only what ran: a session with
                 // no `--password-command` and no private key does not hear
                 // that either was checked, and a run where all four ran
                 // still hears all four — never fewer than were searched,
                 // never a place that was not. `checked` is empty only when a
-                // caller built the config directly with no chain at all
-                // (`build`'s own default, kept for callers — mostly tests —
-                // that never exercise this case); `secretRequiredMessage`
-                // renders that by omitting the parenthetical rather than
-                // naming zero places or falling back to all four, since
-                // either would claim a place was tried that was not.
+                // caller passed `checkedSources: []` explicitly to `build`
+                // (no default since fix round 2 — every call site states its
+                // answer); `secretRequiredMessage` renders that by omitting
+                // the parenthetical rather than naming zero places or
+                // falling back to all four, since either would claim a place
+                // was tried that was not.
                 return Self.secretRequiredMessage(checked: checked)
             case .incompleteConfiguration(let field):
                 return "Error: the stored session's \(field) is missing or invalid"

@@ -71,7 +71,7 @@ struct WebDAVRegistrationTests {
             config: StoredWebDAVConfig(
                 baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true))
 
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: "app-password")
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: "app-password", checkedSources: [])
 
         guard case .webdav(let webdav) = config else {
             Issue.record("expected .webdav, got \(config)")
@@ -105,7 +105,7 @@ struct WebDAVRegistrationTests {
             config: StoredWebDAVConfig(
                 baseURL: "https://cloud.example.com", username: "tim", useNextcloudPath: true))
 
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil, checkedSources: [])
 
         guard case .webdav(let webdav) = config else {
             Issue.record("expected .webdav, got \(config)")

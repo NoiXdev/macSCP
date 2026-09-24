@@ -173,7 +173,7 @@ struct TunnelStartCommand: AsyncParsableCommand {
         // Read out of `options` before the dial closure captures anything:
         // it is `@Sendable`, and these values are, where the command value
         // is not (`DiagnoseCommand.run()`'s own note).
-        let secrets = secretChain(for: session, options: options)
+        let chain = secretChain(for: session, options: options)
         let knownHosts = KnownHostsStore(directory: SessionStore.defaultDirectory)
         let dialFailure = TunnelDialFailureRecord()
         let runner = TunnelRunner(
@@ -185,7 +185,7 @@ struct TunnelStartCommand: AsyncParsableCommand {
                 try await dialFailure.dialing {
                     try await TunnelConnection.connect(
                         session: session,
-                        secrets: secrets,
+                        secrets: chain,
                         knownHosts: knownHosts,
                         decider: hostKey,
                         connectTimeoutSeconds: SettingsStore.defaultConnectTimeoutSeconds)

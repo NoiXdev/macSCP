@@ -52,12 +52,13 @@ struct CLISecretSourcesSchemaTests {
     /// order as SSH's, and the same variable name (WebDAV authenticates with a
     /// plain password, so no third name was invented for it).
     @Test func aWebDAVSessionUsesTheSSHVariableNameInTheSameOrder() {
-        let sources = secretSources(
+        let chain = secretSources(
             for: makeSession(kind: .webdav), passwordCommand: "echo x",
             keychainStore: InMemorySecretStore())
-        #expect(sources.map(\.label) == [
+        #expect(chain.sources.map(\.label) == [
             "--password-command", "environment variable MACSCP_PASSWORD", "keychain",
         ])
+        #expect(chain.kinds == [.passwordCommand, .environment, .keychain])
     }
 
     /// The conversion the CLI now performs before asking `requiresSecret`:

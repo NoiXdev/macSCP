@@ -24,15 +24,20 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
     ///
     /// `checked` names which of the chain's four possible links
     /// (`SecretSourceKind`, `CLISecretSources.swift`) this attempt actually
-    /// walked, in the order it walked them — read off the caller's own
-    /// `[any SecretSource]` array by `secretSourceKinds(in:)`, never
-    /// reconstructed here. It names PLACES only: never a value, a path, or
-    /// an environment variable's name. Empty only when a caller passed no
-    /// `checkedSources` to `build` at all (`build`'s default, kept for the
-    /// many call sites — mostly tests — that build a session directly with
-    /// a literal secret and never exercise this case); `CLIErrorMapping`
-    /// renders that case by omitting the parenthetical entirely rather than
-    /// naming zero places or guessing at four.
+    /// walked, in the order it walked them. It is the caller's own
+    /// `checkedSources` argument to `build`, passed straight through — since
+    /// fix round 2 there is no derivation step here at all: the caller's
+    /// chain builder (`secretSources(for:passwordCommand:keychainStore:
+    /// keyStore:)`, or the App's `TunnelSecretSources.chain(for:keys:
+    /// secrets:)`) tags each link's kind at the moment it appends it
+    /// (`SecretChain`, `CLISecretSources.swift`), so this can only ever
+    /// carry what the caller actually built. It names PLACES only: never a
+    /// value, a path, or an environment variable's name. Empty only when a
+    /// caller passed `checkedSources: []` explicitly (the many call sites —
+    /// mostly tests — that build a session directly from a literal `secret`
+    /// and never exercise this case); `CLIErrorMapping` renders that case by
+    /// omitting the parenthetical entirely rather than naming zero places or
+    /// guessing at four.
     case secretRequired(checked: [SecretSourceKind])
     /// A field the stored session needs is blank or unparsable — which field
     /// is named by its ENGLISH label (`ConnectionField.labelDefault`), not a
@@ -62,18 +67,23 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
 /// session reachable by `name:/path` — is fully supported.
 public enum StoredSessionConnectionConfig {
     /// - Parameters:
-    ///   - checkedSources: the secret chain the caller actually walked to
-    ///     produce `secret` — `TunnelConnection.connect`'s `secrets` or
-    ///     `SessionConnecting.connect`'s `sources`, both already in scope at
-    ///     their call sites. Read only to name which PLACES a
-    ///     `.secretRequired` refusal tried (`secretSourceKinds(in:)`,
-    ///     `CLISecretSources.swift`) — never to re-resolve or re-check
-    ///     anything. Defaults to empty for the many callers (mostly tests)
-    ///     that build a session directly from a literal `secret` and never
-    ///     reach `.secretRequired` at all.
+    ///   - checkedSources: which places the caller's chain actually held
+    ///     when it produced `secret` — `TunnelConnection.connect`'s
+    ///     `secrets.kinds` or `SessionConnecting.connect`'s `chain.kinds`,
+    ///     both already in scope at their call sites (`SecretChain`,
+    ///     `CLISecretSources.swift`). Named straight into
+    ///     `.secretRequired(checked:)` if that is thrown — never
+    ///     re-derived, re-resolved, or re-checked. No default (fix round
+    ///     2): the 25 call sites (counted by `grep -c
+    ///     'checkedSources: \[\]'` across `Sources/`/`Tests/` at the time
+    ///     of this edit) that build a session directly from a literal
+    ///     `secret` and never reach `.secretRequired` pass `[]` explicitly,
+    ///     so a future THIRD production caller cannot silently forget this
+    ///     and get the parenthetical-free rendering without it showing up
+    ///     as a compile error demanding a decision.
     public static func build(
         for session: StoredSession, secret: String?,
-        checkedSources: [any SecretSource] = []
+        checkedSources: [SecretSourceKind]
     ) throws -> ConnectionConfig {
         guard session.loginSetID == nil else {
             throw StoredSessionConnectionError.loginSetSessionsNotSupported
@@ -136,8 +146,7 @@ public enum StoredSessionConnectionConfig {
         // justified above.
         let secretField = descriptor.visibleSecretField(for: session)
         if secretField?.isRequired == true, secret?.isEmpty != false {
-            throw StoredSessionConnectionError.secretRequired(
-                checked: secretSourceKinds(in: checkedSources))
+            throw StoredSessionConnectionError.secretRequired(checked: checkedSources)
         }
         // `requireSecrets: false` because the secret is not IN `values` -- it
         // arrives as the parameter and was just checked above. This call is

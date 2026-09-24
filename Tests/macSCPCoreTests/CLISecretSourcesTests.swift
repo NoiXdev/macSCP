@@ -170,29 +170,35 @@ struct SecretSourcesCompositionTests {
 
     @Test func sshOrderIsPasswordCommandThenEnvironmentThenKeychain() {
         let session = makeSession(kind: .ssh)
-        let sources = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
-        #expect(sources.map(\.label) == [
+        #expect(chain.sources.map(\.label) == [
             "--password-command", "environment variable MACSCP_PASSWORD", "keychain",
         ])
+        // `.kinds` alongside `.sources` — the two are built in lockstep
+        // (`SecretChain`, fix round 2), so this is what a `.secretRequired`
+        // refusal for this exact chain would name as "checked".
+        #expect(chain.kinds == [.passwordCommand, .environment, .keychain])
     }
 
     @Test func sshWithoutPasswordCommandSkipsStraightToEnvironmentThenKeychain() {
         let session = makeSession(kind: .ssh)
-        let sources = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: nil, keychainStore: InMemorySecretStore())
-        #expect(sources.map(\.label) == [
+        #expect(chain.sources.map(\.label) == [
             "environment variable MACSCP_PASSWORD", "keychain",
         ])
+        #expect(chain.kinds == [.environment, .keychain])
     }
 
     @Test func s3OrderUsesTheAWSConventionalVariableName() {
         let session = makeSession(kind: .s3)
-        let sources = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
-        #expect(sources.map(\.label) == [
+        #expect(chain.sources.map(\.label) == [
             "--password-command", "environment variable AWS_SECRET_ACCESS_KEY", "keychain",
         ])
+        #expect(chain.kinds == [.passwordCommand, .environment, .keychain])
     }
 
     /// The agent is an authentication METHOD, not a secret source (M20
@@ -201,7 +207,7 @@ struct SecretSourcesCompositionTests {
     /// it, let alone fail the connect.
     @Test func agentAuthSSHSessionYieldsAnEmptyChainEvenWithPasswordCommandSet() {
         let session = makeSession(kind: .ssh, authKind: .agent)
-        let sources = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: "echo x", keychainStore: InMemorySecretStore())
         // Asserted on `label`, never on the sources themselves: a failing
         // `#expect` renders the whole expression into the message, and an
@@ -209,7 +215,8 @@ struct SecretSourcesCompositionTests {
         // by default -- so `#expect(sources.isEmpty)` would print the machine's
         // AWS_SECRET_ACCESS_KEY into an archived public CI log the one time it
         // ever goes red. `label` is structurally incapable of carrying a value.
-        #expect(sources.map(\.label).isEmpty)
+        #expect(chain.sources.map(\.label).isEmpty)
+        #expect(chain.kinds.isEmpty)
     }
 
     /// The guard is keyed on `kind`/`authKind`, not merely "is agent set
@@ -219,10 +226,11 @@ struct SecretSourcesCompositionTests {
     /// meaningful for this kind).
     @Test func s3SessionAlwaysNeedsASecretRegardlessOfAuthKind() {
         let session = makeSession(kind: .s3, authKind: .agent)
-        let sources = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: nil, keychainStore: InMemorySecretStore())
         // Same reason as above: `label`, never the sources themselves.
-        #expect(!sources.map(\.label).isEmpty)
+        #expect(!chain.sources.map(\.label).isEmpty)
+        #expect(!chain.kinds.isEmpty)
     }
 }
 
@@ -431,22 +439,51 @@ struct SecretSourcesManagedKeyTests {
         }
 
         func resolve(_ session: StoredSession) throws -> ResolvedSecret? {
-            let chain = secretSources(
+            let sources = secretSources(
                 for: session, passwordCommand: nil, keychainStore: secrets, keyStore: keys)
+                .sources
                 .filter { !$0.label.hasPrefix("environment variable") }
-            return try SecretResolver(sources: chain).resolve(for: session.id)
+            return try SecretResolver(sources: sources).resolve(for: session.id)
         }
     }
 
+    /// The chain's FOUR-link shape — `--password-command` given, a
+    /// private-key session with a managed key path — asserted end to end:
+    /// the real `secretSources(...)` builder's `.kinds`, and the sentence
+    /// `CLIErrorMapping` renders from them. This is the coverage fix round 2
+    /// asked for: every other place that pins the rendered sentence
+    /// (`CLIErrorMappingTests`) hand-builds its `[SecretSourceKind]`
+    /// literal, so none of them would have caught a builder that appended
+    /// the wrong kind for a link, or the reviewer's own planted violation
+    /// (`EnvironmentSecretSource -> .managedKeyPassphrase`) — this test
+    /// walks the actual builder instead.
+    ///
+    /// Red first, recorded: temporarily changed this file's
+    /// `secretSources(...)`, in `CLISecretSources.swift`, so the
+    /// environment link's `kinds.append(.environment)` read
+    /// `kinds.append(.managedKeyPassphrase)` instead (the direct equivalent
+    /// of the reviewer's planted mismatch, applied where kinds are now
+    /// actually tagged). Reran this test: failed —
+    /// `chain.kinds == [.passwordCommand, .managedKeyPassphrase, .keychain,
+    /// .managedKeyPassphrase]` against the expected four DISTINCT kinds, and
+    /// the message assertion failed too (`"the managed key's passphrase"`
+    /// appearing twice, `"the environment"` not at all). Reverted; reran
+    /// green.
     @Test func aPrivateKeySessionsChainEndsWithTheManagedKeysSlot() throws {
         let rig = try Rig()
         defer { rig.tearDown() }
-        let sources = secretSources(
+        let chain = secretSources(
             for: rig.session(authKind: .privateKey, keyPath: rig.managedPath),
             passwordCommand: "echo x", keychainStore: rig.secrets, keyStore: rig.keys)
-        #expect(sources.map(\.label) == [
+        #expect(chain.sources.map(\.label) == [
             "--password-command", "environment variable MACSCP_PASSWORD", "keychain", Self.managedLabel,
         ])
+        #expect(chain.kinds == [.passwordCommand, .environment, .keychain, .managedKeyPassphrase])
+
+        let message = CLIErrorMapping.message(
+            for: StoredSessionConnectionError.secretRequired(checked: chain.kinds))
+        #expect(message == "Error: no secret available (checked --password-command, "
+            + "the environment, the keychain, and the managed key's passphrase)")
     }
 
     @Test func theSessionsOwnSlotAnswersFirst() throws {
@@ -552,10 +589,10 @@ struct SecretSourcesManagedKeyTests {
         try rig.secrets.savePassword(Self.keyPassphrase, for: rig.keyID)
         // A password session carrying a stale key path must still not reach it.
         let session = rig.session(authKind: .password, keyPath: rig.managedPath)
-        let labels = secretSources(
+        let chain = secretSources(
             for: session, passwordCommand: nil, keychainStore: rig.secrets, keyStore: rig.keys)
-            .map(\.label)
-        #expect(labels.contains(Self.managedLabel) == false)
+        #expect(chain.sources.map(\.label).contains(Self.managedLabel) == false)
+        #expect(chain.kinds.contains(.managedKeyPassphrase) == false)
         let resolvedNothing = try rig.resolve(session) == nil
         #expect(resolvedNothing, "a password session resolved the managed key's passphrase")
         #expect(rig.secrets.readIDs.contains(rig.keyID) == false, "the managed key's slot was read")

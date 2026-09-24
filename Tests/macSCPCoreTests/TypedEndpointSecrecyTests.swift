@@ -467,7 +467,7 @@ struct TypedEndpointSecrecyTests {
                     accessKeyID: "AKIA", region: "eu-central-1", endpoint: endpoint,
                     bucket: "bucket", usePathStyle: true))
             do {
-                _ = try StoredSessionConnectionConfig.build(for: session, secret: "SK")
+                _ = try StoredSessionConnectionConfig.build(for: session, secret: "SK", checkedSources: [])
                 outcomes.append("built")
             } catch StoredSessionConnectionError.incompleteConfiguration(let field) {
                 outcomes.append("incomplete:\(field)")

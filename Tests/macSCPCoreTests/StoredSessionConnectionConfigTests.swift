@@ -38,7 +38,7 @@ struct StoredSessionConnectionConfigTests {
     }
 
     @Test func passwordAuthBuildsAnSSHConfigWithTheResolvedSecret() throws {
-        let config = try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: "hunter2")
+        let config = try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: "hunter2", checkedSources: [])
         guard case .ssh(let ssh) = config else { Issue.record("expected .ssh"); return }
         #expect(ssh.host == "example.com")
         #expect(ssh.port == 22)
@@ -46,24 +46,24 @@ struct StoredSessionConnectionConfigTests {
         #expect(ssh.auth == .password("hunter2"))
     }
 
-    /// No `checkedSources` passed — `build`'s own default, `[]` — so the
-    /// error's `checked` is empty too: this test is about the REFUSAL, not
-    /// about which chain produced it (that is `CLIErrorMappingTests`' job).
+    /// `checkedSources: []` — this test is about the REFUSAL, not about
+    /// which chain produced it (that is `CLIErrorMappingTests`' job, and
+    /// `SecretSourcesToCheckedTests`' below).
     @Test func passwordAuthWithoutASecretThrows() {
         #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
-            try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: nil)
+            try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: nil, checkedSources: [])
         }
     }
 
     @Test func passwordAuthWithAnEmptySecretThrows() {
         #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
-            try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: "")
+            try StoredSessionConnectionConfig.build(for: makeSSHSession(), secret: "", checkedSources: [])
         }
     }
 
     @Test func privateKeyAuthBuildsAnSSHConfigWithTheKeyPathAndPassphrase() throws {
         let session = makeSSHSession(authKind: .privateKey, keyPath: "/keys/id_ed25519")
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: "passphrase")
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: "passphrase", checkedSources: [])
         guard case .ssh(let ssh) = config else { Issue.record("expected .ssh"); return }
         #expect(ssh.auth == .privateKey(keyPath: "/keys/id_ed25519", passphrase: "passphrase"))
     }
@@ -73,7 +73,7 @@ struct StoredSessionConnectionConfigTests {
     /// onward, mirroring `ConnectionViewModel.connectSSH()`'s own rule.
     @Test func privateKeyAuthWithNoSecretMeansAnUnencryptedKey() throws {
         let session = makeSSHSession(authKind: .privateKey, keyPath: "/keys/id_ed25519")
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil, checkedSources: [])
         guard case .ssh(let ssh) = config else { Issue.record("expected .ssh"); return }
         #expect(ssh.auth == .privateKey(keyPath: "/keys/id_ed25519", passphrase: nil))
     }
@@ -81,14 +81,14 @@ struct StoredSessionConnectionConfigTests {
     @Test func privateKeyAuthWithoutAKeyPathThrows() {
         let session = makeSSHSession(authKind: .privateKey, keyPath: nil)
         #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Key path")) {
-            try StoredSessionConnectionConfig.build(for: session, secret: "passphrase")
+            try StoredSessionConnectionConfig.build(for: session, secret: "passphrase", checkedSources: [])
         }
     }
 
     @Test func privateKeyAuthWithAnEmptyKeyPathThrows() {
         let session = makeSSHSession(authKind: .privateKey, keyPath: "   ")
         #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Key path")) {
-            try StoredSessionConnectionConfig.build(for: session, secret: "passphrase")
+            try StoredSessionConnectionConfig.build(for: session, secret: "passphrase", checkedSources: [])
         }
     }
 
@@ -98,13 +98,13 @@ struct StoredSessionConnectionConfigTests {
     /// entirely, but this function must not depend on that).
     @Test func agentAuthNeedsNoSecret() throws {
         let session = makeSSHSession(authKind: .agent)
-        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil)
+        let config = try StoredSessionConnectionConfig.build(for: session, secret: nil, checkedSources: [])
         guard case .ssh(let ssh) = config else { Issue.record("expected .ssh"); return }
         #expect(ssh.auth == .agent)
     }
 
     @Test func s3BuildsAConfigFromTheStoredFieldsAndTheResolvedSecret() throws {
-        let config = try StoredSessionConnectionConfig.build(for: makeS3Session(), secret: "secretkey")
+        let config = try StoredSessionConnectionConfig.build(for: makeS3Session(), secret: "secretkey", checkedSources: [])
         guard case .s3(let s3) = config else { Issue.record("expected .s3"); return }
         #expect(s3.accessKeyID == "AKID")
         #expect(s3.secretAccessKey == "secretkey")
@@ -116,23 +116,23 @@ struct StoredSessionConnectionConfigTests {
 
     @Test func s3WithoutASecretThrows() {
         #expect(throws: StoredSessionConnectionError.secretRequired(checked: [])) {
-            try StoredSessionConnectionConfig.build(for: makeS3Session(), secret: nil)
+            try StoredSessionConnectionConfig.build(for: makeS3Session(), secret: nil, checkedSources: [])
         }
     }
 
     @Test func s3WithoutStoredConfigurationThrows() {
         #expect(throws: StoredSessionConnectionError.missingBackendConfiguration(kind: .s3)) {
-            try StoredSessionConnectionConfig.build(for: makeS3Session(withConfig: false), secret: "secretkey")
+            try StoredSessionConnectionConfig.build(for: makeS3Session(withConfig: false), secret: "secretkey", checkedSources: [])
         }
     }
 
     @Test func aLoginSetBoundSessionThrowsRegardlessOfKind() {
         let setID = UUID()
         #expect(throws: StoredSessionConnectionError.loginSetSessionsNotSupported) {
-            try StoredSessionConnectionConfig.build(for: makeSSHSession(loginSetID: setID), secret: "hunter2")
+            try StoredSessionConnectionConfig.build(for: makeSSHSession(loginSetID: setID), secret: "hunter2", checkedSources: [])
         }
         #expect(throws: StoredSessionConnectionError.loginSetSessionsNotSupported) {
-            try StoredSessionConnectionConfig.build(for: makeS3Session(loginSetID: setID), secret: "secretkey")
+            try StoredSessionConnectionConfig.build(for: makeS3Session(loginSetID: setID), secret: "secretkey", checkedSources: [])
         }
     }
 
@@ -165,7 +165,7 @@ struct StoredSessionConnectionConfigTests {
                 accessKeyID: "AKID", region: "", endpoint: "https://minio.example.com",
                 bucket: "my-bucket", usePathStyle: true))
         #expect(throws: StoredSessionConnectionError.incompleteConfiguration(field: "Region")) {
-            try StoredSessionConnectionConfig.build(for: session, secret: "secretkey")
+            try StoredSessionConnectionConfig.build(for: session, secret: "secretkey", checkedSources: [])
         }
     }
 
@@ -177,14 +177,14 @@ struct StoredSessionConnectionConfigTests {
         var session = sshSession(name: "broken")
         session.ssh = nil
         #expect(throws: StoredSessionConnectionError.missingBackendConfiguration(kind: .ssh)) {
-            try StoredSessionConnectionConfig.build(for: session, secret: "pw")
+            try StoredSessionConnectionConfig.build(for: session, secret: "pw", checkedSources: [])
         }
     }
 
     @Test func aSessionWithAJumpThrows() {
         let jump = StoredSession.JumpSpec(host: "bastion.example.com", username: "jump")
         #expect(throws: StoredSessionConnectionError.jumpSessionsNotSupported) {
-            try StoredSessionConnectionConfig.build(for: makeSSHSession(jump: jump), secret: "hunter2")
+            try StoredSessionConnectionConfig.build(for: makeSSHSession(jump: jump), secret: "hunter2", checkedSources: [])
         }
     }
 }

@@ -38,9 +38,15 @@ public enum TunnelConnection {
     ///
     /// - Parameters:
     ///   - secrets: the chain to walk for this session's secret, in
-    ///     precedence order — what `secretSources(for:passwordCommand:)`
-    ///     builds. An empty chain resolves to no secret, which the mapping
-    ///     then refuses or accepts according to the session's auth kind.
+    ///     precedence order — what `secretSources(for:passwordCommand:)` or
+    ///     the App's `TunnelSecretSources.chain(for:keys:secrets:)` builds.
+    ///     An empty chain resolves to no secret, which the mapping then
+    ///     refuses or accepts according to the session's auth kind.
+    ///     `SecretChain` (fix round 2) rather than a bare
+    ///     `[any SecretSource]`: it carries `.kinds` alongside `.sources`,
+    ///     tagged by the builder at the moment each link was appended, which
+    ///     is what lets `.secretRequired` name exactly what ran without this
+    ///     function re-deriving it.
     ///   - decider: the host-key decider for UNKNOWN keys. A tunnel started
     ///     from a window hands in the window's (it may prompt); an autostart
     ///     hands in `.refusing`. A key MISMATCH never reaches it — that stays
@@ -52,7 +58,7 @@ public enum TunnelConnection {
     /// mismatch hard stop `decider` names is the tab's code, not a copy.
     public static func connect(
         session: StoredSession,
-        secrets: [any SecretSource],
+        secrets: SecretChain,
         knownHosts: KnownHostsStore,
         decider: HostKeyDecider,
         connectTimeoutSeconds: Int = SettingsStore.defaultConnectTimeoutSeconds
@@ -87,9 +93,9 @@ public enum TunnelConnection {
         if let refusal = TunnelCarriers.refusalError(for: session) {
             throw refusal
         }
-        let secret = try SecretResolver(sources: secrets).resolve(for: session.id)
+        let secret = try SecretResolver(sources: secrets.sources).resolve(for: session.id)
         let config = try StoredSessionConnectionConfig.build(
-            for: session, secret: secret?.value, checkedSources: secrets)
+            for: session, secret: secret?.value, checkedSources: secrets.kinds)
         guard case .ssh(let ssh) = config else {
             // Unreachable while `TunnelCarriers.carries` agrees with the
             // `ConnectionConfig` case each kind builds: the refusal above
@@ -113,7 +119,7 @@ public enum TunnelConnection {
             // because `managed_keys.json` would not read is named as that,
             // not as a missing passphrase — the chain's managed-key link is
             // the one that saw it.
-            throw ManagedKeyPassphraseSecretSource.namingUnreadableStore(error, in: secrets)
+            throw ManagedKeyPassphraseSecretSource.namingUnreadableStore(error, in: secrets.sources)
         }
     }
 }

@@ -649,7 +649,7 @@ struct CLIMatrix: Sendable {
     /// below is over the built `ConnectionConfig`, so it is exhaustive for
     /// the same reason `fixture(for:name:)` is.
     func connect() async throws -> any RemoteFileSystem {
-        switch try StoredSessionConnectionConfig.build(for: session, secret: secret) {
+        switch try StoredSessionConnectionConfig.build(for: session, secret: secret, checkedSources: []) {
         case .ssh(let ssh):
             return try await CitadelFileSystem.connect(
                 config: ssh, connectTimeout: .seconds(30),
