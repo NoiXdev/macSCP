@@ -74,9 +74,9 @@ public enum StoredSessionConnectionConfig {
     ///     `CLISecretSources.swift`). Named straight into
     ///     `.secretRequired(checked:)` if that is thrown — never
     ///     re-derived, re-resolved, or re-checked. No default (fix round
-    ///     2): the 25 call sites (counted by `grep -c
-    ///     'checkedSources: \[\]'` across `Sources/`/`Tests/` at the time
-    ///     of this edit) that build a session directly from a literal
+    ///     2): the 26 call sites (`grep -rn 'checkedSources: \[\]'
+    ///     Sources/ Tests/` minus its four prose mentions, recounted
+    ///     2026-09-24) that build a session directly from a literal
     ///     `secret` and never reach `.secretRequired` pass `[]` explicitly,
     ///     so a future THIRD production caller cannot silently forget this
     ///     and get the parenthetical-free rendering without it showing up
