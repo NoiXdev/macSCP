@@ -2267,6 +2267,54 @@ struct TransferQueueViewModelTests {
         #expect(await local3.lastIfMatching["/a.txt"] == "validator-before")
     }
 
+    /// A carried validator describes the PARTIAL FILE, so it stops being true
+    /// the moment there is no partial file. An attempt whose destination has
+    /// gone re-downloads from zero with no precondition — correctly — but it
+    /// is then reading the object as it is NOW, and that is the validator it
+    /// must report. Carrying the old one forward would have the attempt after
+    /// it send a precondition for an object that no longer exists, against a
+    /// partial built from the current one: refused as "the file changed"
+    /// where resuming was exactly right.
+    @Test func anAttemptThatRestartsFromZeroReportsTheObjectItActuallyRead() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: "validator-before")
+
+        // Retry 2: the partial file is gone, so this attempt starts over from
+        // zero — against a source that has meanwhile been replaced. It reads
+        // one chunk and the connection drops again.
+        let started2 = TestSignal(); let gate2 = TestSignal()
+        let local2 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full, started: started2, gate: gate2,
+                                    failWith: RemoteFSError.connectionFailed(reason: "lost again"))],
+            entityTags: ["/a.txt": "validator-after"])
+        let remote2 = QueueTestFS(reads: [:])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        try await started2.wait()
+        gate2.fire()
+        await waitUntil { vm.items[0].status == .interrupted }
+        // It really did start over: no precondition was sent, because there
+        // was no partial file to protect.
+        #expect(await local2.readsWithPrecondition == 0)
+        #expect(await local2.readOffsets["/a.txt"] == 0)
+
+        // Retry 3: a partial file exists again, and the source still holds the
+        // object retry 2 read. Resuming is correct, and must not be refused.
+        let local3 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-after"])
+        let remote3 = QueueTestFS(reads: ["/ziel/a.txt": .init(content: partial)])
+
+        vm.retryInterrupted(source: local3, destination: remote3)
+        await waitUntil { vm.items[0].status == .finished }
+
+        #expect(await local3.lastIfMatching["/a.txt"] == "validator-after")
+        #expect(await local3.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await remote3.writeModes["/ziel/a.txt"] == .append)
+        #expect(await remote3.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
     // MARK: - 39
 
     /// `cancelAll` cancels queued/running items but does NOT sweep `.interrupted`

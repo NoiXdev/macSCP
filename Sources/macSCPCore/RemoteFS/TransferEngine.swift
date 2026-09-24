@@ -201,12 +201,30 @@ public enum TransferEngine {
                 }
             }
 
+            // A carried validator describes the PARTIAL FILE, so it stops
+            // being true the moment there is no partial file (fix round 2,
+            // Minor 1). `resumeOffset == 0` — the destination was absent, or
+            // the caller asked for no resume — means this attempt reads the
+            // object as it is NOW, from zero, and sends no precondition
+            // either way. Reporting the old validator would have the attempt
+            // AFTER this one send a precondition for an object that may no
+            // longer exist, against a partial built from the current one:
+            // refused as "the file changed" where resuming was exactly right.
+            //
+            // Only reached when a validator was carried in; the fresh-probe
+            // branch above already answered for the current object. `try?` is
+            // the same best-effort policy `statWithEntityTag` states.
+            if onSourceValidator != nil, resumeOffset == 0, expectedSourceValidator != nil {
+                attemptValidator = try? await source.entityTag(path: sourcePath)
+            }
+
             // Resume identity (resume-identity plan, Task 2): the validator
-            // this attempt is tied to, read above with the size and reported
-            // here — BEFORE the stream is opened, so a later retry can hand it
-            // back. A caller that is not told has nothing to retry with, which
-            // is why the queue reads its own carried value as the floor rather
-            // than treating silence as "no validator".
+            // this attempt is tied to, read with the size above (or re-read
+            // just now) and reported here — BEFORE the stream is opened, so a
+            // later retry can hand it back. A caller that is not told has
+            // nothing to retry with, which is why the queue reads its own
+            // carried value as the floor rather than treating silence as "no
+            // validator".
             onSourceValidator?(attemptValidator)
 
             // The three-argument read ONLY where a precondition means

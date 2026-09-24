@@ -2184,9 +2184,6 @@ struct S3FileSystemTests {
         }
     }
 
-    /// The positive check beside it: with the toggle OFF the reported path
-    /// is unchanged, because there the browser path and the key really are
-    /// the same string.
     // MARK: - One metadata read per transfer (Task 2 fix round 1, Important 2)
 
     /// `stat` and `entityTag` are the SAME listing of the parent, and the
@@ -2231,6 +2228,9 @@ struct S3FileSystemTests {
         #expect(reported.value == Self.listedETag)
     }
 
+    /// The positive check beside it: with the toggle OFF the reported path
+    /// is unchanged, because there the browser path and the key really are
+    /// the same string.
     @Test func withTheToggleOffAnErrorNamesTheSamePathAsBefore() async throws {
         let (fs, _) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
