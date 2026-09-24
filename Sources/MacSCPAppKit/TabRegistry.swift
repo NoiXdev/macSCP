@@ -450,6 +450,54 @@ final class TabRegistry {
         sessionListWindowOrder.removeAll { $0 == window }
     }
 
+    /// The session list `window` registered, or `nil` when it registered
+    /// none — and also when the model it registered has gone away without
+    /// unregistering, which is what the weak storage makes possible. A dead
+    /// slot is dropped here rather than left to answer `nil` forever, the
+    /// same way `allSessionLists()` and `model(for:)` drop one; the window is
+    /// never resurrected, because resurrecting it would mean holding a
+    /// strong reference, and this registry holds none.
+    ///
+    /// Asking about ONE window, which `allSessionLists()` cannot answer: a
+    /// tab reads the sessions of the window holding it now (see
+    /// `sessionsOfWindowHolding(_:)` below), and a sweep over every window
+    /// would have to pick one of them, which is the whole defect this
+    /// accessor exists to end.
+    func sessionList(for window: WindowID) -> SessionListViewModel? {
+        guard let slot = sessionListsByWindow[window] else { return nil }
+        guard let list = slot.list else {
+            unregisterSessionList(for: window)
+            return nil
+        }
+        return list
+    }
+
+    /// The stored sessions of the window that currently holds the tab `id` —
+    /// what a per-session setting of that tab is looked up in, read at the
+    /// moment it is needed rather than captured when the tab was built.
+    ///
+    /// **Empty is "ask the global setting", never "ask another window".**
+    /// Three states answer empty and they are deliberately not distinguished:
+    /// `id` is `nil` (the tab is gone), the registry holds the tab in no
+    /// window (parked mid-move, waiting for a window that has not appeared),
+    /// or the window holding it registered no session list any more (it
+    /// closed). A lookup that fell back to some OTHER window's list would
+    /// answer with a setting the user last edited somewhere else, and one
+    /// that kept a closed window's list alive would contradict this type's
+    /// rule that it never keeps a window's view model alive. The caller's
+    /// resolver — `TerminalType.resolved(sessionOverride:global:)` for the
+    /// terminal type — turns an empty list into the global setting on its
+    /// own, because no session in it can match.
+    ///
+    /// Nothing about windows travels the other way: Core is handed a plain
+    /// `[StoredSession]` and never learns that a window exists.
+    func sessionsOfWindowHolding(_ id: UUID?) -> [StoredSession] {
+        guard let id, let window = windowHolding(id),
+              let list = sessionList(for: window)
+        else { return [] }
+        return list.sessions
+    }
+
     /// Every open window's session list, in the order the windows appeared.
     ///
     /// Handing them over is all this does — the caller is what calls

@@ -1838,8 +1838,17 @@ struct ContentView: View {
         // editor then reaches the next shell of this connection too. An
         // unsaved connection has no stored session and uses the global
         // setting. `[weak tab]`: the panel lives inside `tab.session`.
+        //
+        // The sessions are asked of the registry — the window holding this
+        // tab NOW — rather than captured from this window's own
+        // `sessionListViewModel` (plan of 2026-09-24, Task 6). A captured
+        // list is the window the tab was BUILT in: a tab dragged into
+        // another window kept reading it, and once that window closed it
+        // read a list nothing reloads again. An empty answer — tab gone,
+        // tab parked between windows, window closed — means the global
+        // setting, never another window's list; see
+        // `TabRegistry.sessionsOfWindowHolding(_:)`.
         let settings = settingsStore
-        let sessionList = sessionListViewModel
         tab.session = BrowserSession(
             id: sessionID,
             localFS: LocalFileSystem(fetchesOwnerGroup: wantsOwnerGroup, stuckPaths: stuckPaths),
@@ -1853,7 +1862,8 @@ struct ContentView: View {
                 terminalType: { [weak tab] in
                     TerminalType.resolved(
                         sessionOverride: TerminalType.sessionOverride(
-                            of: tab?.activeStoredSessionID, in: sessionList.sessions),
+                            of: tab?.activeStoredSessionID,
+                            in: TabRegistry.shared.sessionsOfWindowHolding(tab?.id)),
                         global: settings.terminalType)
                 },
                 openShell: { term, cols, rows in

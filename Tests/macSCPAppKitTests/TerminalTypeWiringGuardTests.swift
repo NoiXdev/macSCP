@@ -32,6 +32,16 @@ struct TerminalTypeWiringGuardTests {
     private static let pickerPath = "Sources/MacSCPAppKit/SessionEditorTerminalTypePicker.swift"
     private static let catalogLocales = ["en", "de", "fr", "pl"]
 
+    /// How far past `TerminalPanelViewModel(` the checks below read. Measured
+    /// 2026-09-24 in the comment- and string-blanked view: the
+    /// `terminalType:` closure ends 380 characters past the call's opening
+    /// parenthesis, so this window clears it with room for the closure to
+    /// grow. The rest of the window falls inside the `openShell:` closure
+    /// that follows, which cannot answer for any of the checks — counted in
+    /// the same measurement, it names none of `terminalType`, `TerminalType`,
+    /// `TabRegistry`, `settings.terminalType` or `activeStoredSessionID`.
+    private static let argumentWindow = 600
+
     private static func raw(_ path: String) throws -> String {
         try SourceCorpus.text(of: repoRoot.appendingPathComponent(path))
     }
@@ -94,7 +104,7 @@ struct TerminalTypeWiringGuardTests {
     /// the compiler would accept a construction that forgot it. The one
     /// construction in the app must pass it, and must build it from the
     /// session's override and the global setting through the one resolver.
-    /// Read within the first 400 characters after the call opens — the
+    /// Read within `argumentWindow` characters after the call opens — the
     /// closure is the first argument, and `openShell:` follows it.
     @Test func theAppBuildsThePanelWithTheResolver() throws {
         let code = try Self.code(Self.contentViewPath)
@@ -105,7 +115,7 @@ struct TerminalTypeWiringGuardTests {
             \(Self.contentViewPath), found \(constructions).
             """)
         guard let start = code.range(of: "TerminalPanelViewModel(") else { return }
-        let arguments = code[start.upperBound...].prefix(400)
+        let arguments = code[start.upperBound...].prefix(Self.argumentWindow)
         #expect(arguments.contains("terminalType:"), """
             ContentView builds TerminalPanelViewModel without `terminalType:` \
             — every shell would open with the default name.
@@ -122,6 +132,30 @@ struct TerminalTypeWiringGuardTests {
                 && arguments.contains("tab?.activeStoredSessionID"), """
             ContentView's terminalType: closure does not look the override up \
             through the tab's connected stored session.
+            """)
+    }
+
+    /// A tab's terminal type follows the TAB, not the window it was built
+    /// in (plan of 2026-09-24, Task 6): the sessions the override is looked
+    /// up in come from the registry, asked for the window holding the tab at
+    /// the moment the shell opens. The whole composition is pinned, argument
+    /// names included, because that is what a capture of one window's
+    /// `SessionListViewModel` would displace — the shape this closure had
+    /// before, which kept reading the first window's list for the tab's whole
+    /// life. A rename of the accessor turns this check red rather than
+    /// letting it go quiet; the lookup's BEHAVIOUR is
+    /// `TerminalTypeWindowScopeTests`' (`TabRegistryTests.swift`).
+    @Test func theResolverReadsTheSessionsOfTheWindowHoldingTheTab() throws {
+        let code = try Self.code(Self.contentViewPath)
+        guard let start = code.range(of: "TerminalPanelViewModel(") else {
+            Issue.record("\(Self.contentViewPath) builds no TerminalPanelViewModel at all")
+            return
+        }
+        let arguments = code[start.upperBound...].prefix(Self.argumentWindow)
+        #expect(arguments.contains("in: TabRegistry.shared.sessionsOfWindowHolding(tab?.id)"), """
+            ContentView's terminalType: closure does not look the session \
+            list up through the window currently holding the tab — a tab \
+            moved to another window would keep reading its first window's.
             """)
     }
 
