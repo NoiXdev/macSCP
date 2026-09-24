@@ -305,18 +305,27 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         request.httpMethod = "GET"
         if offset > 0 {
             request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
-            // Only a RESUME carries the precondition: a fresh read has no
-            // partial file to protect, so a 412 there could only turn a
-            // perfectly good download into a failure.
-            if let tag {
-                request.setValue(tag, forHTTPHeaderField: "If-Match")
-            }
+        }
+        // Only a RESUME carries the precondition: a fresh read has no
+        // partial file to protect, so a 412 there could only turn a
+        // perfectly good download into a failure. One `let` decides both
+        // whether the header goes out and whether a 412 coming back is this
+        // precondition's answer, so the two cannot drift apart.
+        let validatorSent: String? = offset > 0 ? tag : nil
+        if let validatorSent {
+            request.setValue(validatorSent, forHTTPHeaderField: "If-Match")
         }
         let (body, response) = try await sendStreaming(request)
-        if response.statusCode == 412 {
+        if response.statusCode == 412, validatorSent != nil {
             // Read BEFORE `mapStatus`, which maps 412 to the precondition a
             // MOVE sets. Here the precondition is the `If-Match` above, and
             // the sentence has to say what it means.
+            //
+            // GUARDED, because a 412 can also come back from a read that
+            // sent no precondition at all. Saying "the file changed on the
+            // server" there would be a claim about something nobody asked,
+            // so that one goes on to `mapStatus` — where a 412 went before
+            // this precondition existed.
             throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
         }
         try Self.mapStatus(response.statusCode, path: path, method: "GET")

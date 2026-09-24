@@ -469,9 +469,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
         // Only a RESUME carries the precondition: a fresh read has no
         // partial file to protect, so a 412 there could only turn a
-        // perfectly good download into a failure.
-        if offset > 0, let tag {
-            request.setValue(tag, forHTTPHeaderField: "If-Match")
+        // perfectly good download into a failure. One `let` decides both
+        // whether the header goes out and whether a 412 coming back is this
+        // precondition's answer, so the two cannot drift apart.
+        let validatorSent: String? = offset > 0 ? tag : nil
+        if let validatorSent {
+            request.setValue(validatorSent, forHTTPHeaderField: "If-Match")
         }
 
         // The streaming counterpart of `send`, kept here rather than folded
@@ -508,11 +511,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 throw RemoteFSError.protocolError(reason: Self.rangeIgnoredReason)
             }
             return Self.wrappingTransportErrors(body)
-        case 412:
+        case 412 where validatorSent != nil:
             // The `If-Match` above did not hold: the object is no longer the
             // one the interrupted attempt was reading. Not a transport
             // failure and not a bare status report — the one outcome this
             // precondition exists to name.
+            //
+            // GUARDED, because a 412 can also come back from a read that
+            // sent no precondition at all (another header, a proxy, a store
+            // of its own accord). Saying "the file changed on the server"
+            // there would be a claim about something nobody asked, so that
+            // one falls through to `default:` and is reported as the status
+            // it is.
             throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
         case 416:
             return AsyncThrowingStream { $0.finish() }

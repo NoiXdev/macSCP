@@ -2133,6 +2133,42 @@ struct S3FileSystemTests {
         }
     }
 
+    /// A 412 can come back from a read that sent no precondition at all —
+    /// a fresh read, or a resume with no validator to send. Neither is this
+    /// refusal: telling the user their file changed on the server would be a
+    /// claim about something nobody asked the store about. Both shapes fall
+    /// through to the generic status mapping instead.
+    @Test func aTwelveTwelveNoPreconditionAskedForIsNotTheChangedObjectRefusal() async throws {
+        let fresh = try await reasonFor412(offset: 0, tag: Self.listedETag)
+        let unvalidatedResume = try await reasonFor412(offset: 16, tag: nil)
+
+        let freshReportedAsChanged = fresh == S3FileSystem.sourceChangedReason
+        let resumeReportedAsChanged = unvalidatedResume == S3FileSystem.sourceChangedReason
+        #expect(freshReportedAsChanged == false)
+        #expect(resumeReportedAsChanged == false)
+        // The positive beside the two negatives: each refusal still names the
+        // status that came back, so a case that stopped reaching the 412 at
+        // all — or stopped refusing — fails here rather than passing quietly.
+        #expect(fresh.contains("412"))
+        #expect(unvalidatedResume.contains("412"))
+    }
+
+    /// The `reason` a 412 produces for a read of this shape. Records an issue
+    /// and returns an empty string if the read was not refused at all, which
+    /// fails the `contains` checks above.
+    private func reasonFor412(
+        offset: UInt64, tag: String?, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws -> String {
+        let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 412))])
+        do {
+            _ = try await fs.readStream(path: "/big.bin", fromOffset: offset, ifMatching: tag)
+            Issue.record("the 412 was not refused at all", sourceLocation: sourceLocation)
+            return ""
+        } catch RemoteFSError.protocolError(let reason) {
+            return reason
+        }
+    }
+
     private func expectSourceChangedRefusal(
         sourceLocation: SourceLocation = #_sourceLocation, _ read: () async throws -> Void
     ) async {

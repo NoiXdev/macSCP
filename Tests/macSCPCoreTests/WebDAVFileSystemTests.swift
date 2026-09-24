@@ -245,6 +245,12 @@ struct WebDAVFileSystemTests {
 
     /// A server that reports no `getetag` for the resource has no validator
     /// to offer. `nil`, not an error.
+    ///
+    /// Two positives beside that negative, because on its own it would stay
+    /// green if the reader stopped resolving the response for `/a.txt`
+    /// entirely: the request really was the depth-0 PROPFIND for this
+    /// resource, and the SAME body still yields the resource's other
+    /// properties. The `nil` is therefore about the missing property.
     @Test func aResourceWithoutAGetetagHasNoEntityTag() async throws {
         let transport = FakeHTTPTransport(replies: [
             .init(status: 207, body: listing, headers: [:])
@@ -254,6 +260,65 @@ struct WebDAVFileSystemTests {
         let tag = try await fs.entityTag(path: "/a.txt")
 
         #expect(tag == nil)
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "PROPFIND")
+        #expect(request.value(forHTTPHeaderField: "Depth") == "0")
+
+        // Two replies, because `stat` retries with the opposite URL shape
+        // when the first PROPFIND resolves nothing — without the second the
+        // failure a broken reader produces would be about the fixture
+        // running dry rather than about the entry not resolving.
+        let second = FakeHTTPTransport(replies: [
+            .init(status: 207, body: listing, headers: [:]),
+            .init(status: 207, body: listing, headers: [:]),
+        ])
+        let item = try await WebDAVFileSystem(config: config, transport: second)
+            .stat(path: "/a.txt")
+        #expect(item.size == 12)
+    }
+
+    /// A 412 can come back from a read that sent no precondition at all — a
+    /// fresh read, or a resume with no validator to send. Neither is this
+    /// refusal: telling the user their file changed on the server would be a
+    /// claim about something nobody asked the server about. Both shapes fall
+    /// through to `mapStatus`, which is where a 412 went before.
+    @Test func aTwelveTwelveNoPreconditionAskedForIsNotTheChangedResourceRefusal() async throws {
+        let fresh = try await refusalFor412(offset: 0, tag: Self.resourceETag)
+        let unvalidatedResume = try await refusalFor412(offset: 8, tag: nil)
+
+        let freshReportedAsChanged = fresh.reason == WebDAVFileSystem.sourceChangedReason
+        let resumeReportedAsChanged =
+            unvalidatedResume.reason == WebDAVFileSystem.sourceChangedReason
+        #expect(freshReportedAsChanged == false)
+        #expect(resumeReportedAsChanged == false)
+        // The positive beside the two negatives: each read really did reach
+        // the transport, and really did send no precondition — so a case
+        // that stopped issuing the GET cannot pass these.
+        #expect(fresh.sentNoValidator)
+        #expect(unvalidatedResume.sentNoValidator)
+    }
+
+    /// The `reason` a 412 produces for a read of this shape, and whether the
+    /// GET that met it carried no `If-Match`. Records an issue and reports an
+    /// empty reason if the read was not refused at all.
+    private func refusalFor412(
+        offset: UInt64, tag: String?, sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws -> (reason: String, sentNoValidator: Bool) {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 412, body: Data("replacement".utf8), headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+        var reason = ""
+        do {
+            _ = try await fs.readStream(path: "/a.txt", fromOffset: offset, ifMatching: tag)
+            Issue.record("the 412 was not refused at all", sourceLocation: sourceLocation)
+        } catch RemoteFSError.protocolError(let refusal) {
+            reason = refusal
+        }
+        let sent = transport.requests
+        let sentNoValidator = sent.count == 1
+            && sent[0].value(forHTTPHeaderField: "If-Match") == nil
+        return (reason, sentNoValidator)
     }
 
     /// A resumed read carries the validator on exactly one request — the

@@ -88,9 +88,11 @@ public enum WebDAVPropfindParser {
 
     /// The browser path an entry's `href` addresses, or `nil` when the href
     /// is missing, unparseable, or points outside the session root
-    /// (`WebDAVURL.path(forURL:)` decides the last one). Shared by both
-    /// readers above so the two cannot disagree about which response
-    /// describes which path.
+    /// (`WebDAVURL.path(forURL:)` decides the last one). Shared by
+    /// `parse(_:base:requestedPath:)` and `entityTag(_:base:at:)` — the two
+    /// readers above that map an href to a path, and not
+    /// `firstResourceIsCollection(_:)`, which reads document order instead —
+    /// so the two cannot disagree about which response describes which path.
     private static func resolvedPath(of entry: Entry, base: WebDAVURL) -> String? {
         guard let href = entry.href,
               let url = URL(string: href, relativeTo: base.url(forPath: "/", isDirectory: true))
