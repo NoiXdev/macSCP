@@ -178,6 +178,76 @@ struct MainWindowSizePlanTests {
         #expect(MainWindowSizePlan.frameToRestore(beforeResume: before, afterResume: before) == nil)
     }
 
+    // MARK: - The launch-time restore
+
+    /// The two displays the launch-time cases below are measured against:
+    /// a built-in one at the origin and an external one to its right.
+    private static let builtIn = CGRect(x: 0, y: 0, width: 1512, height: 982)
+    private static let external = CGRect(x: 1512, y: 0, width: 1920, height: 1080)
+
+    /// The launch-time twin of `frameToRestore` above, and the decision this
+    /// task had to take: a window that has just been created has no earlier
+    /// frame of its own — only the placeholder AppKit chose for it — so "its
+    /// own display" is the STORED frame's display, and the frame to put back
+    /// is the stored frame itself.
+    @Test func aStoredFrameAppliedOntoTheMainDisplayIsPutBackOnItsOwn() {
+        let stored = CGRect(x: 1600, y: 100, width: 1400, height: 900)
+        let appliedOnMain = CGRect(x: 88, y: 100, width: 1400, height: 900)
+        #expect(MainWindowSizePlan.launchFrameToRestore(
+            stored: stored, applied: appliedOnMain, screens: [Self.builtIn, Self.external])
+            == stored)
+    }
+
+    /// The stored frame was already on the main display, so AppKit applied
+    /// it unchanged: nothing to put back, and the window is not touched.
+    @Test func aStoredFrameAlreadyOnTheMainDisplayIsLeftAlone() {
+        let stored = CGRect(x: 100, y: 60, width: 1400, height: 900)
+        #expect(MainWindowSizePlan.launchFrameToRestore(
+            stored: stored, applied: stored, screens: [Self.builtIn, Self.external]) == nil)
+    }
+
+    /// A first launch has nothing stored. The frame the window has then is
+    /// the placeholder AppKit chose, which is not a frame to restore to.
+    @Test func withNothingStoredTheWindowStaysWhereAppKitPutIt() {
+        let placeholder = CGRect(x: 0, y: 0, width: 700, height: 460)
+        #expect(MainWindowSizePlan.launchFrameToRestore(
+            stored: nil, applied: placeholder, screens: [Self.builtIn, Self.external]) == nil)
+    }
+
+    /// The display the frame was saved on is not attached any more, so no
+    /// attached screen shows any part of it. AppKit's placement is then the
+    /// only visible one, and putting the stored frame back would open the
+    /// window where nobody can see it.
+    @Test func aStoredFrameOnADisplayThatIsGoneIsLeftWhereAppKitPutIt() {
+        let stored = CGRect(x: 1600, y: 100, width: 1400, height: 900)
+        let appliedOnMain = CGRect(x: 88, y: 100, width: 1400, height: 900)
+        #expect(MainWindowSizePlan.launchFrameToRestore(
+            stored: stored, applied: appliedOnMain, screens: [Self.builtIn]) == nil)
+    }
+
+    /// AppKit's autosave descriptor is `"x y w h sx sy sw sh"` — the
+    /// window's frame followed by the screen's. Only the first four are
+    /// read; a descriptor that is not all numbers is not parsed past, since
+    /// dropping a token would read the next number as this field.
+    @Test func theStoredFrameIsReadFromAppKitsAutosaveDescriptor() {
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "1600 100 1400 900 1512 0 1920 1080")
+            == CGRect(x: 1600, y: 100, width: 1400, height: 900))
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "-1920 -200 1400 900 -1920 -200 1920 1080")
+            == CGRect(x: -1920, y: -200, width: 1400, height: 900))
+        #expect(MainWindowSizePlan.storedFrame(descriptor: nil) == nil)
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "") == nil)
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "1600 100 1400") == nil)
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "1600 x 1400 900 1512") == nil)
+        #expect(MainWindowSizePlan.storedFrame(descriptor: "1600 100 0 900 1512 0 1920 1080") == nil)
+    }
+
+    /// The defaults key AppKit itself uses, so the app reads the frame
+    /// AppKit wrote rather than one of its own.
+    @Test func theStoredFrameIsReadUnderAppKitsOwnDefaultsKey() {
+        #expect(MainWindowSizePlan.frameDefaultsKey(autosaveName: ContentView.primaryFrameAutosaveName)
+            == "NSWindow Frame " + ContentView.primaryFrameAutosaveName)
+    }
+
     // MARK: - Walks: what quit stores, what a relaunch connects to
 
     /// The one AppKit fact, modelled: with a name, every frame change is
@@ -415,6 +485,41 @@ struct MainWindowSizePlanTests {
             #expect(body.contains("isFullScreen:") && body.contains("styleMask.contains(.fullScreen)"),
                 "\(anchor) no longer tells the plan whether the window is in full screen")
         }
+    }
+
+    /// The launch-time restore in `ContentView`'s own wiring. Order is the
+    /// whole of it: the stored descriptor is read BEFORE the name is set,
+    /// because from that moment AppKit writes the applied frame over it, and
+    /// the put-back is decided by the plan and applied without animation
+    /// AFTER it. The negative — `ContentView+Detail.swift` no longer calls
+    /// the bare `applyFrameAutosave(` from its `WindowAccessor`, which is
+    /// the call that left the launch unguarded — has its positive beside it.
+    @Test func theLaunchResolveRestoresThroughThePlan() throws {
+        let resolve = try Self.body(
+            of: "func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {",
+            in: Self.lifecycleFile)
+        #expect(resolve.contains("MainWindowSizePlan.frameDefaultsKey("))
+        #expect(resolve.contains("animate: false"), "the launch-time put-back must not animate")
+        let read = try #require(Self.offset(of: "MainWindowSizePlan.storedFrame(", in: resolve))
+        let apply = try #require(Self.offset(of: "applyFrameAutosave(to: window)", in: resolve))
+        let decide = try #require(
+            Self.offset(of: "MainWindowSizePlan.launchFrameToRestore(", in: resolve))
+        let restore = try #require(Self.offset(of: "window.setFrame(", in: resolve))
+        #expect(read < apply, """
+            the stored frame must be read before the autosave name is set — after it, AppKit \
+            has written the frame it applied over the one being read.
+            """)
+        #expect(apply < decide && decide < restore,
+            "the put-back is decided and applied after the name is set")
+        let detail = try Self.code(of: Self.detailFile)
+        #expect(detail.contains("applyFrameAutosaveKeepingItsDisplay(to: $0)"), """
+            ContentView+Detail.swift's WindowAccessor no longer calls \
+            applyFrameAutosaveKeepingItsDisplay(to:) — re-anchor this guard.
+            """)
+        #expect(!detail.contains("applyFrameAutosave(to: $0)"), """
+            ContentView+Detail.swift's WindowAccessor calls applyFrameAutosave(to:) bare again — \
+            the stored frame is then applied relative to NSScreen.main and nothing puts it back.
+            """)
     }
 
     /// The negatives, each with its positive beside it: the persisted size

@@ -1221,12 +1221,29 @@ struct TabsWindowLifecycleTests {
         let onlyForThePrimary = autosave.contains("guard isPrimaryWindow")
         // And somebody calls it (fix round 3): the two checks below said
         // what `applyFrameAutosave(to:)` does, and nothing said it ran.
+        // Since the launch-time display fix it is called through
+        // `applyFrameAutosaveKeepingItsDisplay(to:)`, so the chain is
+        // followed one link at a time — the WindowAccessor calls the
+        // wrapper, the wrapper calls this function.
         let detail = try Self.code(of: Self.detailFile)
-        let isCalled = detail.contains("applyFrameAutosave(")
+        let isWrapped = detail.contains("applyFrameAutosaveKeepingItsDisplay(")
+        let wrapper = try #require(
+            Self.body(
+                after: "func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {",
+                in: lifecycle), """
+                    ContentView+Lifecycle.swift no longer declares \
+                    applyFrameAutosaveKeepingItsDisplay(to:) — re-anchor this guard.
+                    """)
+        let isCalled = wrapper.contains("applyFrameAutosave(to: window)")
+        #expect(isWrapped, """
+            ContentView+Detail.swift never calls \
+            applyFrameAutosaveKeepingItsDisplay( — the primary window's frame \
+            would be forgotten however correct that function is.
+            """)
         #expect(isCalled, """
-            ContentView+Detail.swift never calls applyFrameAutosave( — the \
-            primary window's frame would be forgotten however correct that \
-            function is.
+            applyFrameAutosaveKeepingItsDisplay(to:) never calls \
+            applyFrameAutosave(to:) — the name would never be set, and the \
+            primary window's frame would be forgotten.
             """)
         #expect(savesTheFrame, """
             applyFrameAutosave(to:) no longer sets a frame autosave name — the \

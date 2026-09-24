@@ -1039,6 +1039,51 @@ extension ContentView {
         }
     }
 
+    /// What `windowChrome(_:)`'s `WindowAccessor` calls on every resolution
+    /// of the window, the FIRST one at launch included: sets the autosave
+    /// name through `applyFrameAutosave(to:)` above and, when that set a
+    /// name AppKit has a frame stored under, puts the window back on the
+    /// display that frame belongs to.
+    ///
+    /// The launch-time twin of the put-back in `growToBrowserSize()`, and
+    /// the same measured AppKit fact (`7cb822bd`): setting the name applies
+    /// the stored frame relative to `NSScreen.main`, so a launch while
+    /// another app holds focus on the other display opens the window there
+    /// — and unlike the resume case that fires on every launch, not only
+    /// after a shrink and a connect. The resume path can put back the frame
+    /// the window had a moment ago; a window that has just been created has
+    /// no frame of its own yet, so the stored frame is what answers for it
+    /// (`MainWindowSizePlan.launchFrameToRestore`).
+    ///
+    /// The stored descriptor is read BEFORE the name is set: from that
+    /// moment the window autosaves, and the frame AppKit just applied is
+    /// written over the one being read. It is read from the standard user
+    /// defaults rather than from `SettingsStore` because that is where
+    /// AppKit's own autosave lives.
+    ///
+    /// Gated on the name actually CHANGING to a non-empty one. This runs on
+    /// every ordinary body update too, and on those the name is already the
+    /// one the window carries, so nothing was applied and there is nothing
+    /// to put back — without the gate a body update after the user moved
+    /// the window would drag it back to the stored frame. An empty name is
+    /// the suspension (`MainWindowSizePlan.frameAutosaveName`), which
+    /// applies no frame either.
+    func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {
+        guard let window else { return }
+        let stored = MainWindowSizePlan.storedFrame(
+            descriptor: UserDefaults.standard.string(
+                forKey: MainWindowSizePlan.frameDefaultsKey(
+                    autosaveName: Self.primaryFrameAutosaveName)))
+        let nameBefore = window.frameAutosaveName
+        applyFrameAutosave(to: window)
+        let nameNow = window.frameAutosaveName
+        guard nameNow != nameBefore, !nameNow.isEmpty else { return }
+        if let restored = MainWindowSizePlan.launchFrameToRestore(
+            stored: stored, applied: window.frame, screens: NSScreen.screens.map(\.frame)) {
+            window.setFrame(restored, display: true, animate: false)
+        }
+    }
+
     /// `NSWindow.didEndLiveResizeNotification` for THIS window: the user let
     /// go of the window's edge, so the size it has now is a size the user
     /// chose. Persisted when `MainWindowSizePlan.persistsLiveResize` says so
@@ -2100,7 +2145,11 @@ extension ContentView {
     /// (`SettingsStore.mainWindowBrowserSize`, beside the in-memory
     /// `lastBrowserSize`). The clamp added here only bounds frames *this
     /// function itself* computes; it does not touch, and cannot fix, that
-    /// launch-time restore — do not fold the two concerns together.
+    /// launch-time restore — do not fold the two concerns together. The one
+    /// part of it that IS answered now is the DISPLAY the restore lands on
+    /// (`applyFrameAutosaveKeepingItsDisplay(to:)`); a frame no attached
+    /// screen covers any more is still AppKit's to place, and that function
+    /// deliberately leaves it alone.
     func resizeWindow(toWidth width: CGFloat, height: CGFloat) {
         guard let window else { return }
         let current = window.frame

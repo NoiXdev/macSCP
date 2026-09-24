@@ -279,8 +279,12 @@ extension ContentView {
         .background(WindowAccessor {
             window = $0
             // Frame memory for the primary window only (Detachable Tabs
-            // plan, Task 2 fix round 2) — see `applyFrameAutosave(to:)`.
-            applyFrameAutosave(to: $0)
+            // plan, Task 2 fix round 2). Through the wrapper, not the bare
+            // `applyFrameAutosave(to:)`: the first resolution at launch is
+            // where AppKit applies the stored frame, and it applies it on
+            // `NSScreen.main` rather than on the display it was saved on —
+            // see `applyFrameAutosaveKeepingItsDisplay(to:)`.
+            applyFrameAutosaveKeepingItsDisplay(to: $0)
             updateMainWindowPresence()
             // "Keep on Top" (Detachable Tabs plan, Task 4): applied again
             // on every resolution, not just once — `WindowAccessor` calls

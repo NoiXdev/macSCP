@@ -3,9 +3,11 @@ import Foundation
 /// Every decision about the main window's size across a disconnect, a
 /// connect and a relaunch (next build of 2026-09-17, Task 3). `ContentView`
 /// executes the answers against its `NSWindow` in `growToBrowserSize()`,
-/// `shrinkIfPristine()`, `applyFrameAutosave(to:)` and
-/// `handleWindowDidEndLiveResize(_:)`; nothing here touches a window, so
-/// every answer is a value `MainWindowSizePlanTests` can check.
+/// `shrinkIfPristine()`, `applyFrameAutosave(to:)`,
+/// `applyFrameAutosaveKeepingItsDisplay(to:)` and
+/// `handleWindowDidEndLiveResize(_:)` — five functions, counted in the pass
+/// that writes this; nothing here touches a window, so every answer is a
+/// value `MainWindowSizePlanTests` can check.
 ///
 /// **What went wrong before**, read from the code (not reproduced in a
 /// running app): the primary window's frame autosave name stays set for its
@@ -141,5 +143,67 @@ enum MainWindowSizePlan {
     /// keeps the SIZE; only putting the frame back keeps the DISPLAY.
     static func frameToRestore(beforeResume: CGRect, afterResume: CGRect) -> CGRect? {
         beforeResume == afterResume ? nil : beforeResume
+    }
+
+    /// The user defaults key AppKit keeps a named window's frame under —
+    /// the key `ContentView.resizeWindow(toWidth:height:)`'s doc comment
+    /// already names for `macSCP.primary`.
+    ///
+    /// Reading the defaults is the only way to learn the stored frame
+    /// WITHOUT applying it: `NSWindow` offers `setFrameUsingName(_:)` and
+    /// `setFrameAutosaveName(_:)`, both of which move the window, and no
+    /// getter.
+    static func frameDefaultsKey(autosaveName: String) -> String {
+        "NSWindow Frame \(autosaveName)"
+    }
+
+    /// The window frame in one of AppKit's autosave descriptors, or `nil`
+    /// when there is none to read.
+    ///
+    /// The descriptor is `"x y w h sx sy sw sh"`: the window's frame
+    /// followed by the frame the screen had when it was saved. Only the
+    /// first four are read — which display the frame belongs to is answered
+    /// in `launchFrameToRestore` against the screens attached NOW, not
+    /// against the one recorded then, because a display's coordinates move
+    /// when the arrangement changes.
+    ///
+    /// A descriptor with a token that is not a number is refused rather
+    /// than parsed past: skipping the token would read the next number as
+    /// this field and place the window somewhere nobody chose.
+    static func storedFrame(descriptor: String?) -> CGRect? {
+        guard let descriptor else { return nil }
+        let tokens = descriptor.split(whereSeparator: \.isWhitespace)
+        let numbers = tokens.compactMap { Double($0) }
+        guard numbers.count == tokens.count, numbers.count >= 4 else { return nil }
+        guard numbers[2] > 0, numbers[3] > 0 else { return nil }
+        return CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+    }
+
+    /// The frame to put the window back at after its autosave name was set
+    /// for the FIRST time — at launch — or `nil` to leave it where AppKit
+    /// put it.
+    ///
+    /// The same AppKit fact as `frameToRestore` above, one resolution
+    /// earlier: setting a name that has a frame stored under it applies
+    /// that frame placed relative to `NSScreen.main`, so a launch while
+    /// another app holds focus on the other display opens the window there.
+    /// `frameToRestore` can hand back the frame the window had a moment
+    /// ago; a window that has just been created has only the placeholder
+    /// frame AppKit chose for it, which says nothing about where the user
+    /// keeps this window. So "its own display" here is the STORED frame's
+    /// display, and the frame to put back is the stored frame itself.
+    ///
+    /// `nil` in the three cases where the stored frame is not the better
+    /// answer: nothing is stored (a first launch); AppKit applied the
+    /// stored frame unchanged, so the window is already there; and no
+    /// attached screen shows any part of the stored frame, which means the
+    /// display it was saved on is gone and AppKit's placement is the only
+    /// visible one.
+    static func launchFrameToRestore(
+        stored: CGRect?, applied: CGRect, screens: [CGRect]
+    ) -> CGRect? {
+        guard let stored, stored != applied else { return nil }
+        guard screens.contains(where: { $0.intersects(stored) }) else { return nil }
+        return stored
     }
 }
