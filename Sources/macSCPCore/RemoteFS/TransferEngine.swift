@@ -151,7 +151,22 @@ public enum TransferEngine {
         let clock = ContinuousClock()
         let transferStart = clock.now
         do {
-            let total = try await source.stat(path: sourcePath).size
+            // One metadata read of the source, not two (fix round 1,
+            // Important 2): where a validator is wanted, it comes out of the
+            // SAME read that answers the size — for S3 that is one listing of
+            // the parent rather than two, for WebDAV one PROPFIND rather than
+            // two. A caller that wants no validator, or that already carries
+            // one, takes the plain `stat` this line has always made.
+            let sourceEntry: RemoteFileItem
+            var attemptValidator = expectedSourceValidator
+            if onSourceValidator != nil, attemptValidator == nil {
+                let probed = try await source.statWithEntityTag(path: sourcePath)
+                sourceEntry = probed.item
+                attemptValidator = probed.entityTag
+            } else {
+                sourceEntry = try await source.stat(path: sourcePath)
+            }
+            let total = sourceEntry.size
             DiagnosticLog.shared.log(
                 .info, "transfer",
                 "transfer start direction=\(direction?.logText ?? "unknown") "
@@ -186,20 +201,12 @@ public enum TransferEngine {
                 }
             }
 
-            // Resume identity (resume-identity plan, Task 2): the validator this
-            // attempt is tied to, decided BEFORE the stream is opened and
-            // reported to the caller so a later retry can hand it back.
-            //
-            // `try?`: a source that cannot answer a validator is not a reason
-            // to fail a download that would otherwise work — it degrades to
-            // "no validator", which is what SFTP and the local file system
-            // answer anyway, without any I/O at all. A failure that is really
-            // the connection going away resurfaces at the read below, with
-            // its own error.
-            var attemptValidator = expectedSourceValidator
-            if onSourceValidator != nil, attemptValidator == nil {
-                attemptValidator = try? await source.entityTag(path: sourcePath)
-            }
+            // Resume identity (resume-identity plan, Task 2): the validator
+            // this attempt is tied to, read above with the size and reported
+            // here — BEFORE the stream is opened, so a later retry can hand it
+            // back. A caller that is not told has nothing to retry with, which
+            // is why the queue reads its own carried value as the floor rather
+            // than treating silence as "no validator".
             onSourceValidator?(attemptValidator)
 
             // The three-argument read ONLY where a precondition means

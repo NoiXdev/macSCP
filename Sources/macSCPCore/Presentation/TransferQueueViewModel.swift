@@ -1142,8 +1142,16 @@ public final class TransferQueueViewModel {
         // arm that retains a job for a later `retryInterrupted`. Every other
         // outcome drops the job, so the validator has nowhere to go and
         // nothing to be wrong about.
-        let attemptValidator = Mutex<String?>(nil)
+        //
+        // SEEDED with what this job already carries, not with `nil` (fix round
+        // 1, Critical 1): `copyFile` reports only once it has stat-ed both
+        // sides, so an attempt whose source or destination probe drops the
+        // connection interrupts WITHOUT reporting anything. A box that started
+        // empty would then retain `nil` over a validator an earlier attempt
+        // had recorded, and the attempt after that would carry no precondition
+        // at all — which is the whole defect, one interruption further along.
         let expectedSourceValidator = job.expectedSourceValidator
+        let attemptValidator = Mutex<String?>(expectedSourceValidator)
         let transfer = Task<Void, Error> {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: sourcePath,

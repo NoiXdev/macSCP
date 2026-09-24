@@ -154,6 +154,11 @@ struct TransferQueueViewModelTests {
         private(set) var lastIfMatching: [String: String] = [:]
         /// Number of reads that carried a precondition, across all paths.
         private(set) var readsWithPrecondition = 0
+        /// Per-path failure injection for `stat`: lets a test make the ONE
+        /// destination probe `copyFile` runs before it opens the source
+        /// stream fail, which is how an attempt ends before it has reported
+        /// anything about its source.
+        private var statFailures: [String: Error]
 
         /// The reason a refused read reports, DERIVED from the constant the
         /// product really produces rather than spelled a second time here: a
@@ -170,10 +175,12 @@ struct TransferQueueViewModelTests {
             concurrency: ConcurrencyTracker? = nil,
             supportsAppendResume: Bool = true,
             entityTags: [String: String] = [:],
-            preWritten: [String: Data] = [:]
+            preWritten: [String: Data] = [:],
+            statFailures: [String: Error] = [:]
         ) {
             self.entityTags = entityTags
             self.written = preWritten
+            self.statFailures = statFailures
             self.reads = reads
             self.listings = listings
             self.statEntered = statEntered
@@ -200,6 +207,7 @@ struct TransferQueueViewModelTests {
             statEntered?.fire()
             if let statGate { try await statGate.wait() }
             if let gate = statGates[path] { try await gate.wait() }
+            if let failure = statFailures[path] { throw failure }
             guard let read = reads[path] else { throw RemoteFSError.notFound(path: path) }
             let name = String(path.split(separator: "/").last ?? Substring(path))
             return RemoteFileItem(name: name, path: path, kind: .file, size: UInt64(read.content.count))
@@ -2203,6 +2211,60 @@ struct TransferQueueViewModelTests {
         #expect(await local2.readOffsets["/a.txt"] == UInt64(chunk))
         #expect(await remote2.writeModes["/ziel/a.txt"] == .append)
         #expect(await remote2.writtenData(at: "/ziel/a.txt")?.count == chunk)
+    }
+
+    /// The retained validator must survive an attempt that never gets far
+    /// enough to report one. `copyFile` reports the validator only after it
+    /// has stat-ed both sides; a retry whose DESTINATION probe drops the
+    /// connection interrupts before that, and a box that started empty would
+    /// overwrite the first attempt's validator with nothing. The attempt
+    /// after that would then carry no precondition at all — and would append
+    /// a replaced object's tail onto the old object's head, at the right
+    /// length, and report it to the user as a finished download.
+    @Test func aRetryThatFailsBeforeTheReadKeepsTheValidatorTheFirstAttemptSaw() async throws {
+        let chunk = TransferChunk.size
+        let full = Data(repeating: 0x5A, count: chunk * 2)
+        let partial = Data(repeating: 0x5A, count: chunk)
+        let vm = try await interruptedDownload(of: full, sourceValidator: "validator-before")
+
+        // Retry 2: the destination probe drops the connection, so this attempt
+        // ends before the engine has read or reported any validator.
+        let local2 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-before"])
+        let remote2 = QueueTestFS(
+            reads: ["/ziel/a.txt": .init(content: partial)],
+            statFailures: ["/ziel/a.txt": RemoteFSError.connectionFailed(reason: "lost again")])
+        vm.retryInterrupted(source: local2, destination: remote2)
+        await waitUntil { vm.items[0].status == .interrupted }
+        #expect(await local2.readsWithPrecondition == 0)   // it never reached the read
+
+        // Retry 3: the object at that path has been replaced in the meantime.
+        let local3 = QueueTestFS(
+            reads: ["/a.txt": .init(content: full)],
+            entityTags: ["/a.txt": "validator-after"])
+        let remote3 = QueueTestFS(
+            reads: ["/ziel/a.txt": .init(content: partial)],
+            preWritten: ["/ziel/a.txt": partial])
+
+        let partialBefore = await remote3.writtenData(at: "/ziel/a.txt")
+
+        vm.retryInterrupted(source: local3, destination: remote3)
+        await waitUntil { if case .failed = vm.items[0].status { return true }; return false }
+
+        guard case .failed(let message) = vm.items[0].status else {
+            Issue.record("retry 3 should have failed, was \(String(describing: vm.items[0].status))")
+            return
+        }
+        let namesTheChangedSource = message.contains(QueueTestFS.sourceChangedReason)
+        #expect(namesTheChangedSource)
+        #expect(await remote3.writtenData(at: "/ziel/a.txt") == partialBefore)
+        #expect(await remote3.writeModes["/ziel/a.txt"] == nil)
+        // Positives beside those absences: retry 3 really was a resume from the
+        // partial size, and it carried the validator attempt 1 recorded — not
+        // one read fresh from the replaced object, and not none at all.
+        #expect(await local3.readOffsets["/a.txt"] == UInt64(chunk))
+        #expect(await local3.lastIfMatching["/a.txt"] == "validator-before")
     }
 
     // MARK: - 39

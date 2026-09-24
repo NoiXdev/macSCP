@@ -283,6 +283,17 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         try await listedEntry(at: path).item
     }
 
+    /// Both answers off ONE listing. `stat` and `entityTag` above are the same
+    /// `listedEntry(at:)` read, so a caller that wants both — every download
+    /// the transfer engine starts — would otherwise pay two `ListObjectsV2`
+    /// requests for the same response, once per object in a queued directory.
+    public func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        let entry = try await listedEntry(at: path)
+        return (entry.item, entry.eTag)
+    }
+
     /// The raw `<ETag>` the listing carries for `path`, as it arrived —
     /// quotes included, because it goes straight back out as an `If-Match`
     /// header value (RFC 9110 8.8.3) and is never parsed here. The checksum

@@ -243,6 +243,29 @@ struct WebDAVFileSystemTests {
         #expect(request.value(forHTTPHeaderField: "Depth") == "0")
     }
 
+    /// The size and the validator come out of ONE PROPFIND (Task 2 fix round
+    /// 1, Important 2). Asked separately — `stat` then `entityTag` — this is
+    /// two requests for the same response, once per file of a queued
+    /// directory. The single canned reply is itself part of the check: a
+    /// second request would run the transport dry and throw.
+    @Test func theSizeAndTheValidatorComeOutOfOnePropfind() async throws {
+        let transport = FakeHTTPTransport(replies: [
+            .init(status: 207, body: singleWithETag, headers: [:])
+        ])
+        let fs = WebDAVFileSystem(config: config, transport: transport)
+
+        let probed = try await fs.statWithEntityTag(path: "/a.txt")
+
+        #expect(probed.entityTag == Self.resourceETag)
+        // Positives beside the count: the one response answered the stat half
+        // too, and it really was the depth-0 PROPFIND for this resource.
+        #expect(probed.item.size == 12)
+        #expect(transport.requests.count == 1)
+        let request = try #require(transport.requests.first)
+        #expect(request.httpMethod == "PROPFIND")
+        #expect(request.value(forHTTPHeaderField: "Depth") == "0")
+    }
+
     /// A server that reports no `getetag` for the resource has no validator
     /// to offer. `nil`, not an error.
     ///

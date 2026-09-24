@@ -222,6 +222,18 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     }
 
     public func stat(path: String) async throws -> RemoteFileItem {
+        try await statWithEntityTag(path: path).item
+    }
+
+    /// Both answers off ONE PROPFIND: the response `stat` already needs
+    /// carries the `getetag` too, so a caller that wants both — every
+    /// download the transfer engine starts — pays one request rather than
+    /// two. `entityTag(path:)` above stays the standalone reader for callers
+    /// that want only the validator; it reads the same property out of the
+    /// same kind of response.
+    public func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
         // A collection and a file differ in URL shape, and servers disagree
         // about what happens when you address a collection without its
         // trailing slash: some redirect, some answer 2xx with no matching
@@ -238,29 +250,39 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         // (or exhaust an unstubbed transport).
         let isRoot = (path == "/")
         do {
-            if let item = try await statOnce(path: path, isDirectory: isRoot) { return item }
+            if let found = try await statOnce(path: path, isDirectory: isRoot) { return found }
         } catch RemoteFSError.notFound where !isRoot {
             // Shape-ambiguous: fall through to the second attempt below.
         }
-        if let item = try await statOnce(path: path, isDirectory: !isRoot) { return item }
+        if let found = try await statOnce(path: path, isDirectory: !isRoot) { return found }
         throw RemoteFSError.notFound(path: path)
     }
 
     /// Returns nil (rather than throwing `.notFound`) when the PROPFIND
     /// succeeded but the addressed entry was not among the results — that is
-    /// one signal for `stat` to retry with the opposite URL shape. Errors
-    /// `propfind` itself throws (mapped HTTP statuses) propagate unchanged;
-    /// `stat` decides for itself which of those are worth a retry.
-    private func statOnce(path: String, isDirectory: Bool) async throws -> RemoteFileItem? {
+    /// one signal to retry with the opposite URL shape. Errors `propfind`
+    /// itself throws (mapped HTTP statuses) propagate unchanged; the retry
+    /// decides for itself which of those are worth a second attempt, and it
+    /// lives in `statWithEntityTag(path:)` above — `stat(path:)` reaches it
+    /// through that one, and this function's only two callers are there.
+    private func statOnce(
+        path: String, isDirectory: Bool
+    ) async throws -> (item: RemoteFileItem, entityTag: String?)? {
         let data = try await propfind(path: path, depth: "0", isDirectory: isDirectory)
         // Depth 0 reports exactly the addressed resource, which the listing
         // parser excludes as "the requested collection". Ask it for the PARENT
         // so the entry survives, then pick the one that matches.
         let parent = path == "/" ? "/" : RemotePath.parent(of: path)
         let entries = try WebDAVPropfindParser.parse(data, base: base, requestedPath: parent)
-        if let match = entries.first(where: { $0.path == path }) { return match }
+        if let match = entries.first(where: { $0.path == path }) {
+            // The validator out of the SAME response, by the reader that
+            // `entityTag(path:)` uses. A collection, or a server that reports
+            // no `getetag`, yields `nil` — which is what a resumed read of it
+            // cannot be checked against, and is not an error.
+            return (match, try WebDAVPropfindParser.entityTag(data, base: base, at: path))
+        }
         if path == "/" {
-            return RemoteFileItem(name: "/", path: "/", kind: .directory)
+            return (RemoteFileItem(name: "/", path: "/", kind: .directory), nil)
         }
         return nil
     }

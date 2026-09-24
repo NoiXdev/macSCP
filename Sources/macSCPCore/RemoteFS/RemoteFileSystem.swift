@@ -59,6 +59,25 @@ public protocol RemoteFileSystem: Sendable {
     /// NOT an error: it means a resumed read of it cannot be checked, and
     /// the caller decides what to do about that.
     func entityTag(path: String) async throws -> String?
+    /// The entry at `path` AND its validator, in as few round trips as this
+    /// backend can manage. `TransferEngine` needs both before any download it
+    /// may later have to resume, and for the HTTP backends the two are two
+    /// readings of ONE response: `S3FileSystem`'s `stat` and `entityTag` are
+    /// the same `ListObjectsV2` of the parent, `WebDAVFileSystem`'s the same
+    /// depth-0 PROPFIND. Asked separately, that is a second billed,
+    /// rate-limited request per object — once per file for a queued
+    /// directory.
+    ///
+    /// Only the `stat` half throws. The validator is best effort: a backend
+    /// that cannot determine one answers `nil`, exactly as `entityTag(path:)`
+    /// does, and a caller never loses a download it would otherwise have got
+    /// because a validator could not be read.
+    ///
+    /// The extension's default composes the two requirements, so it is
+    /// correct for every conformer without any of them changing; a backend
+    /// whose two answers come out of one response overrides it. Both HTTP
+    /// backends do.
+    func statWithEntityTag(path: String) async throws -> (item: RemoteFileItem, entityTag: String?)
     /// Writes the chunk stream as a file. `.overwrite` truncates/creates;
     /// `.append` opens (or creates) and appends starting at the file's
     /// current end.
@@ -157,6 +176,20 @@ extension RemoteFileSystem {
     /// is where a validator both exists (`ETag`, `getetag`) and can be sent
     /// back (`If-Match`).
     public func entityTag(path: String) async throws -> String? { nil }
+
+    /// Default: the two requirements, in that order. Correct everywhere and
+    /// minimal wherever `entityTag` costs nothing — which is every conformer
+    /// that takes ITS default too, so this pays for exactly one `stat`. The
+    /// `try?` is the "best effort" half of the contract above: a validator
+    /// that cannot be read is `nil`, not a failed transfer. A backend whose
+    /// two answers come from one response overrides this and then has nothing
+    /// separate left to fail.
+    public func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        let item = try await stat(path: path)
+        return (item, try? await entityTag(path: path))
+    }
 
     /// Convenience over `write(path:mode:contents:)` with `.overwrite` — kept
     /// so existing call sites (TransferEngine, tests) compile unchanged.

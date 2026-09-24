@@ -2187,6 +2187,50 @@ struct S3FileSystemTests {
     /// The positive check beside it: with the toggle OFF the reported path
     /// is unchanged, because there the browser path and the key really are
     /// the same string.
+    // MARK: - One metadata read per transfer (Task 2 fix round 1, Important 2)
+
+    /// `stat` and `entityTag` are the SAME listing of the parent, and the
+    /// engine needs both for every download it starts. Reading them twice is
+    /// a second billed, rate-limited `ListObjectsV2` per object — for a
+    /// queued directory of N objects, N of them — for data the previous line
+    /// already held.
+    ///
+    /// Two listings are queued even though this case forbids the second: the
+    /// pre-fix engine consumes both, so the case goes red on the COUNT rather
+    /// than on a transport that ran dry, which would be red for a different
+    /// reason. It asserts nothing about the bytes that reach the destination
+    /// for the same reason — after the fix, the spare listing is what the
+    /// GET is answered with.
+    @Test func aTransferReadsTheSourcesParentListingExactlyOnce() async throws {
+        let (fs, transport) = try await connect(responses: [
+            (Data(listingXML(etag: Self.listedETagXML).utf8), httpResponse(status: 200)),
+            (Data(listingXML(etag: Self.listedETagXML).utf8), httpResponse(status: 200)),
+            (Data(repeating: 7, count: 12), httpResponse(status: 200)),
+        ])
+        let destination = MockRemoteFileSystem(tree: ["/ziel": []])
+        let afterConnect = await transport.requests.count
+
+        let reported = ValidatorBox()
+        try await TransferEngine.copyFile(
+            from: fs, sourcePath: "/a.txt",
+            to: destination, destinationDirectory: "/ziel", fileName: "a.txt",
+            onSourceValidator: { reported.set($0) },
+            onProgress: { _ in }
+        )
+
+        let sent = await transport.requests.dropFirst(afterConnect)
+        let listings = sent.filter { request in
+            guard let query = request.url?.query else { return false }
+            return query.contains("list-type=2")
+        }
+        #expect(listings.count == 1)
+        #expect(sent.count == 2)
+        // Positive beside the count: the one listing really did answer both
+        // questions — the validator came back, so this is not a transfer that
+        // simply stopped asking.
+        #expect(reported.value == Self.listedETag)
+    }
+
     @Test func withTheToggleOffAnErrorNamesTheSamePathAsBefore() async throws {
         let (fs, _) = try await connect(responses: [
             (Data(), httpResponse(status: 200)),  // HEAD: the key is an object
@@ -2204,5 +2248,22 @@ struct S3FileSystemTests {
             }
             #expect(path == "/dir/file.txt")
         }
+    }
+}
+
+/// Catches the one validator `TransferEngine.copyFile` reports. Lock-protected
+/// rather than an actor: the engine's callback is synchronous.
+private final class ValidatorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: String?
+    var value: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return _value
+    }
+    func set(_ validator: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        _value = validator
     }
 }
