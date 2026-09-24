@@ -1033,14 +1033,28 @@ extension ContentView {
     /// two callers are `shrinkIfPristine()` and `growToBrowserSize()`, which
     /// call it once each, right after moving `frameAutosaveSuspended`; three
     /// callers in all, counted in the pass that writes this.
-    func applyFrameAutosave(to window: NSWindow?) {
-        guard isPrimaryWindow, let window else { return }
+    ///
+    /// It answers what it just did, because it is the only place that can
+    /// (review round 2): the name the window carries afterwards, and whether
+    /// THIS call is what put it there — which is
+    /// `NSWindow.setFrameAutosaveName(_:)`'s own return value, `false` when
+    /// another window already owns the name, leaving the old one in place.
+    /// `applyFrameAutosaveKeepingItsDisplay(to:)` needs both and used to
+    /// reconstruct them by reading `frameAutosaveName` on either side of
+    /// this call, which is a pair of same-typed values a caller can bind the
+    /// wrong way round. `@discardableResult` because the other two callers
+    /// only want the name set and have nothing to decide from the answer.
+    @discardableResult
+    func applyFrameAutosave(to window: NSWindow?) -> MainWindowSizePlan.AppliedAutosaveName {
+        guard isPrimaryWindow, let window else { return .none }
         let name = MainWindowSizePlan.frameAutosaveName(
             frameAutosaveSuspended: frameAutosaveSuspended,
             primaryName: Self.primaryFrameAutosaveName)
+        var wasSetNow = false
         if window.frameAutosaveName != name {
-            window.setFrameAutosaveName(name)
+            wasSetNow = window.setFrameAutosaveName(name)
         }
+        return .init(name: window.frameAutosaveName, wasSetNow: wasSetNow)
     }
 
     /// What `windowChrome(_:)`'s `WindowAccessor` calls on every resolution
@@ -1066,12 +1080,15 @@ extension ContentView {
     /// AppKit's own autosave lives.
     ///
     /// Whether the name just set can have applied a stored frame at all is
-    /// `MainWindowSizePlan.restoresAtLaunch(nameBefore:nameNow:)`, which is
-    /// why the name is read on both sides of the call. It was an inline
-    /// `guard` for one commit, and review round 1 measured what that cost:
-    /// deleting it, and dropping half of it, each left the whole suite
-    /// green while snapping a window the user had dragged back to the
-    /// stored frame on the next repaint.
+    /// `MainWindowSizePlan.restoresAtLaunch(_:)`, asked about the one value
+    /// `applyFrameAutosave(to:)` returns. It was an inline `guard` for one
+    /// commit, and review round 1 measured what that cost: deleting it, and
+    /// dropping half of it, each left the whole suite green while snapping a
+    /// window the user had dragged back to the stored frame on the next
+    /// repaint. Round 2 measured the next layer: with the gate asked about
+    /// two `String`s this function read itself, binding the two reads to the
+    /// wrong labels was still green at 94 of 94. There is nothing to read
+    /// here any more, so there is nothing to order.
     func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {
         // `isPrimaryWindow` ahead of the defaults read, not only inside
         // `applyFrameAutosave(to:)` (review round 1): without it every body
@@ -1083,11 +1100,8 @@ extension ContentView {
             descriptor: UserDefaults.standard.string(
                 forKey: MainWindowSizePlan.frameDefaultsKey(
                     autosaveName: Self.primaryFrameAutosaveName)))
-        let nameBefore = window.frameAutosaveName
-        applyFrameAutosave(to: window)
-        let nameNow = window.frameAutosaveName
-        guard MainWindowSizePlan.restoresAtLaunch(nameBefore: nameBefore, nameNow: nameNow)
-        else { return }
+        let applied = applyFrameAutosave(to: window)
+        guard MainWindowSizePlan.restoresAtLaunch(applied) else { return }
         if let restored = MainWindowSizePlan.launchFrameToRestore(
             stored: stored, applied: window.frame, screens: NSScreen.screens.map(\.frame)) {
             window.setFrame(restored, display: true, animate: false)

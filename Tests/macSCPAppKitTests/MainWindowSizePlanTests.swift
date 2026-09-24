@@ -235,33 +235,56 @@ struct MainWindowSizePlanTests {
     /// with no warning at all — while snapping the primary window back to
     /// the stored frame on every repaint.
     ///
+    /// Review round 2: lifting it into the plan was not enough while it
+    /// took two `String`s the caller filled from two reads. Binding those
+    /// reads to the wrong labels was green at 94 of 94. It now takes one
+    /// `AppliedAutosaveName`, whose two fields are a `String` and a `Bool`
+    /// and cannot be exchanged.
+    ///
     /// AppKit applies the stored frame when a window is given a NON-EMPTY
-    /// autosave name it did not already carry, and only then. The two names
-    /// are read from the plan rather than spelled, and they are all there
-    /// is: `applyFrameAutosave(to:)` sets nothing but `frameAutosaveName`'s
-    /// two answers, so the four ordered pairs below are the whole domain —
-    /// counted in the pass that writes this.
+    /// autosave name it did not already carry, and only then. `name` is the
+    /// primary name or the empty string — `applyFrameAutosave(to:)` sets
+    /// nothing but `frameAutosaveName`'s two answers — and `wasSetNow` is
+    /// either, so the domain is FOUR cells, counted in the pass that writes
+    /// this, and all four are below. A fifth SITUATION, the refused write,
+    /// shares a cell with the second rather than adding one.
     @Test func onlyANewNonEmptyAutosaveNameCanHaveAppliedAStoredFrame() {
         let suspended = MainWindowSizePlan.frameAutosaveName(
             frameAutosaveSuspended: true, primaryName: ContentView.primaryFrameAutosaveName)
         let writing = MainWindowSizePlan.frameAutosaveName(
             frameAutosaveSuspended: false, primaryName: ContentView.primaryFrameAutosaveName)
         #expect(suspended != writing, """
-            the plan's two autosave names are the same string, so the four pairs below are \
-            not four cases — re-anchor this test.
+            the plan's two autosave names are the same string, so the cells below are not four \
+            cases — re-anchor this test.
             """)
-        // The first resolve at launch: no name yet, the primary name set
-        // now, so AppKit has just applied whatever was stored under it.
-        #expect(MainWindowSizePlan.restoresAtLaunch(nameBefore: suspended, nameNow: writing))
-        // An ordinary body update. `WindowAccessor` calls back on every one
-        // of them, and the name the plan asks for is the one the window
-        // already carries, so nothing was applied and nothing is put back.
-        // This is the case the dropped `!=` half let through.
-        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: writing, nameNow: writing))
-        // `shrinkIfPristine()`: the suspension reaches the window. Setting
-        // the EMPTY name applies no frame, so there is nothing to put back.
-        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: suspended, nameNow: suspended))
-        #expect(!MainWindowSizePlan.restoresAtLaunch(nameBefore: writing, nameNow: suspended))
+        // (name: primary, wasSetNow: true) — the first resolve at launch.
+        // AppKit has just applied whatever was stored under that name.
+        #expect(MainWindowSizePlan.restoresAtLaunch(
+            .init(name: writing, wasSetNow: true)))
+        // (name: primary, wasSetNow: false) — an ordinary body update.
+        // `WindowAccessor` calls back on every one of them and the window
+        // already carries the name, so nothing was applied. This is the
+        // cell the dropped `!=` half let through in round 1.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(
+            .init(name: writing, wasSetNow: false)))
+        // The same cell by the other route, which the two-`String` version
+        // could not tell apart from "no change" at all: the write was
+        // REFUSED. `NSWindow.setFrameAutosaveName(_:)` answers `false` when
+        // another window already owns the name and leaves the old one in
+        // place, so the window carries a non-empty name that this call did
+        // not put there, and no frame was applied under it.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(
+            .init(name: SettingsView.frameAutosaveName, wasSetNow: false)))
+        // (name: "", wasSetNow: true) — `shrinkIfPristine()`. Setting the
+        // EMPTY name is the suspension, and applies no frame.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(
+            .init(name: suspended, wasSetNow: true)))
+        // (name: "", wasSetNow: false) — a body update while the
+        // suspension stands, and `AppliedAutosaveName.none`, which is what
+        // a window that did not resolve answers.
+        #expect(!MainWindowSizePlan.restoresAtLaunch(
+            .init(name: suspended, wasSetNow: false)))
+        #expect(!MainWindowSizePlan.restoresAtLaunch(.none))
     }
 
     /// AppKit's autosave descriptor is `"x y w h sx sy sw sh"` — the
@@ -468,9 +491,11 @@ struct MainWindowSizePlanTests {
         #expect(apply < resize, "a shrink with the autosave still on writes the form size")
     }
 
+    /// The declaration the two guards below read, spelled once.
+    private static let autosaveDeclaration = "func applyFrameAutosave(to window: NSWindow?) -> MainWindowSizePlan.AppliedAutosaveName {"
+
     @Test func theAutosaveNameComesFromThePlan() throws {
-        let autosave = try Self.body(
-            of: "func applyFrameAutosave(to window: NSWindow?) {", in: Self.lifecycleFile)
+        let autosave = try Self.body(of: Self.autosaveDeclaration, in: Self.lifecycleFile)
         #expect(autosave.contains("MainWindowSizePlan.frameAutosaveName("))
         #expect(autosave.contains("setFrameAutosaveName("))
     }
@@ -564,21 +589,29 @@ struct MainWindowSizePlanTests {
             """)
         #expect(apply < gate && gate < decide && decide < restore,
             "the gate is asked after the name is set and before the put-back is decided")
-        // The gate is only a gate if it is asked about the name from BEFORE
-        // the call and the name from after it. Both reads are pinned — two
-        // of them, counted in the pass that writes this — one on each side
-        // of `applyFrameAutosave(to: window)`, and the arguments are named
-        // so a call passing the same read twice cannot stand in for them.
-        let reads = resolve.components(separatedBy: "window.frameAutosaveName").count - 1
-        #expect(reads == 2, """
-            applyFrameAutosaveKeepingItsDisplay(to:) reads window.frameAutosaveName \(reads) \
-            times, not the two the gate compares.
+        // Structural, not a further anchor (review round 2). The gate used
+        // to be asked about two `String`s this body read itself, and
+        // binding those reads to the wrong labels satisfied every anchor
+        // there was — two reads, the first before the call, the exact
+        // argument spelling, the whole ordering — while disabling the
+        // put-back, 94 of 94 green. The reads live where the change is
+        // caused now, so the negative here is ZERO of them, and its
+        // positive is that `applyFrameAutosave(to:)` does the reading and
+        // answers the pair.
+        let wrapperReads = resolve.components(separatedBy: ".frameAutosaveName").count - 1
+        #expect(wrapperReads == 0, """
+            applyFrameAutosaveKeepingItsDisplay(to:) reads frameAutosaveName \(wrapperReads) \
+            times of its own again — a second same-typed name here is one the gate can be \
+            asked about in either order.
             """)
-        let firstRead = try #require(Self.offset(of: "window.frameAutosaveName", in: resolve))
-        #expect(firstRead < apply, "the name before the call must be read before the call")
-        #expect(resolve.contains("nameBefore: nameBefore, nameNow: nameNow"), """
-            the gate is no longer asked about the two names read around \
-            applyFrameAutosave(to: window) — re-anchor this guard.
+        let autosave = try Self.body(of: Self.autosaveDeclaration, in: Self.lifecycleFile)
+        #expect(autosave.contains(".frameAutosaveName"), """
+            applyFrameAutosave(to:) no longer reads the window's autosave name, so nothing \
+            can answer what the call did — re-anchor this guard.
+            """)
+        #expect(autosave.contains("wasSetNow: "), """
+            applyFrameAutosave(to:) no longer answers whether IT set the name; a caller \
+            reconstructing that from two reads is what round 2 removed.
             """)
         let detail = try Self.code(of: Self.detailFile)
         #expect(detail.contains("applyFrameAutosaveKeepingItsDisplay(to: $0)"), """

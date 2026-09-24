@@ -1213,7 +1213,9 @@ struct TabsWindowLifecycleTests {
     @Test func onlyThePrimaryWindowRemembersItsFrame() throws {
         let lifecycle = try Self.code(of: Self.lifecycleFile)
         let autosave = try #require(
-            Self.body(after: "func applyFrameAutosave(to window: NSWindow?) {", in: lifecycle), """
+            Self.body(
+                after: "func applyFrameAutosave(to window: NSWindow?) -> "
+                    + "MainWindowSizePlan.AppliedAutosaveName {", in: lifecycle), """
                 ContentView+Lifecycle.swift no longer declares \
                 applyFrameAutosave(to:) — re-anchor this guard.
                 """)
