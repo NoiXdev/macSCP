@@ -70,10 +70,11 @@ struct KeyPassphraseFormsTests {
         #expect(outcome == .stored)
         let slotHoldsIt = secrets.peek(key.id) == Self.rightPassphrase
         #expect(slotHoldsIt)
-        // The verification really ran against the key's own file — without
-        // this the refusal checks below could pass over a verifier that is
-        // never called at all.
-        #expect(verifier.calls == 1)
+        // TWO runs, not one: the typed value, and then the empty one, which
+        // must NOT open the key — see
+        // `aKeyWhoseFileTurnsOutNotToBeEncryptedIsRefused`. Without this the
+        // refusal checks below could pass over a verifier never called at all.
+        #expect(verifier.calls == 2)
         let askedAboutTheKeysOwnFile = verifier.lastURL == store.privateKeyURL(for: key)
         #expect(askedAboutTheKeysOwnFile)
         #expect(form.failure == nil)
@@ -137,7 +138,7 @@ struct KeyPassphraseFormsTests {
         let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let secrets = InMemorySecretStore()
         let key = managedKey()
-        let verifier = HeldVerifier(answer: true)
+        let verifier = HeldVerifier(accepting: Self.rightPassphrase)
         let form = CorrectKeyPassphraseForm()
         form.passphrase = Self.rightPassphrase
 
@@ -160,7 +161,7 @@ struct KeyPassphraseFormsTests {
     @Test func anOverlappingCorrectionIsRefused() async throws {
         let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = managedKey()
-        let verifier = HeldVerifier(answer: true)
+        let verifier = HeldVerifier(accepting: Self.rightPassphrase)
         let form = CorrectKeyPassphraseForm()
         form.passphrase = Self.rightPassphrase
 
@@ -182,7 +183,7 @@ struct KeyPassphraseFormsTests {
         let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
         let secrets = InMemorySecretStore()
         let key = managedKey()
-        let verifier = HeldVerifier(answer: true)
+        let verifier = HeldVerifier(accepting: Self.rightPassphrase)
         let form = CorrectKeyPassphraseForm()
         form.passphrase = Self.rightPassphrase
 
@@ -208,6 +209,44 @@ struct KeyPassphraseFormsTests {
         let task = try #require(started)
         #expect(await task.value == .failed(.timedOut))
         #expect(form.failure == .timedOut)
+    }
+
+    @Test func aKeyWhoseFileTurnsOutNotToBeEncryptedIsRefused() async throws {
+        let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        // The metadata says the file is encrypted (which is what offers this
+        // action at all) and the file disagrees: every passphrase opens it,
+        // including the empty one. `ssh-keygen -y` ignores `-P` for an
+        // unencrypted key, so without the second probe ANY typed value would
+        // verify and be stored.
+        let verifier = OpensForAnything()
+        let form = CorrectKeyPassphraseForm()
+        form.passphrase = Self.wrongPassphrase
+
+        let started = form.start(key: managedKey(), store: store, secrets: secrets, verifier: verifier.verify)
+        let task = try #require(started)
+
+        #expect(await task.value == .failed(.keyIsNotEncrypted))
+        #expect(form.failure == .keyIsNotEncrypted)
+        #expect(secrets.storedIDs.isEmpty)
+    }
+
+    @Test func aCorrectionAgainstAKeyFileThatIsGoneSaysSo() async throws {
+        let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let form = CorrectKeyPassphraseForm()
+        form.passphrase = Self.rightPassphrase
+
+        let started = form.start(key: managedKey(), store: store, secrets: secrets) { _, _ in
+            throw SSHKeyPassphraseTool.PassphraseToolError.keyFileMissing
+        }
+        let task = try #require(started)
+
+        // Not the generic failure: "the file is not there" is something the
+        // user can act on, and retyping the passphrase is not the action.
+        #expect(await task.value == .failed(.keyFileMissing))
+        #expect(form.failure == .keyFileMissing)
+        #expect(secrets.storedIDs.isEmpty)
     }
 
     // MARK: - Changing the key file's passphrase
@@ -385,7 +424,7 @@ struct KeyPassphraseFormsTests {
         let secrets = InMemorySecretStore()
         let key = managedKey()
         try store.add(key)
-        let verifier = HeldVerifier(answer: true)
+        let verifier = HeldVerifier(accepting: Self.rightPassphrase)
         let changer = RecordingChanger()
         let form = filledChangeForm()
 
@@ -425,6 +464,48 @@ struct KeyPassphraseFormsTests {
         #expect(form.isSaveDisabled == false)
     }
 
+    @Test func aChangeAgainstAKeyFileThatIsGoneSaysSo() async throws {
+        let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let form = filledChangeForm()
+
+        let started = form.start(
+            key: managedKey(), store: store, secrets: secrets,
+            verifier: { _, _ in throw SSHKeyPassphraseTool.PassphraseToolError.keyFileMissing },
+            changer: { _, _, _ in })
+        let task = try #require(started)
+
+        #expect(await task.value == .failed(.keyFileMissing))
+        #expect(form.failure == .keyFileMissing)
+        #expect(secrets.storedIDs.isEmpty)
+    }
+
+    @Test func aCancellationThrownOutOfTheRewriteIsReportedAsCancelled() async throws {
+        let (store, dir) = tempStore(); defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = InMemorySecretStore()
+        let key = managedKey(encrypted: false)
+        try store.add(key)
+        let form = filledChangeForm()
+
+        // What the REAL tool does when the run is cancelled: `SubprocessRunner`
+        // throws `SubprocessCancelled`, `SSHKeyPassphraseTool` maps it to
+        // `CancellationError`, and the rollback has already put the key file
+        // back (`SSHKeyPassphraseToolTests`). The old `HeldChanger` case below
+        // covers the other half — a changer that FINISHED and was cancelled
+        // afterwards — and never this one.
+        let started = form.start(
+            key: key, store: store, secrets: secrets,
+            verifier: { _, _ in true },
+            changer: { _, _, _ in throw CancellationError() })
+        let task = try #require(started)
+
+        #expect(await task.value == .cancelled)
+        // Nothing recorded, because nothing happened: the file is as it was.
+        #expect(secrets.storedIDs.isEmpty)
+        let recorded = try #require(try store.all().first { $0.id == key.id })
+        #expect(recorded.hasPassphrase == false)
+    }
+
     private func filledChangeForm() -> ChangeKeyPassphraseForm {
         let form = ChangeKeyPassphraseForm()
         form.oldPassphrase = Self.rightPassphrase
@@ -453,23 +534,50 @@ private final class ScriptedVerifier: Sendable {
     }
 }
 
-/// A verifier held open until the test raises `release`.
+/// A verifier that answers `true` for every passphrase — an UNENCRYPTED key
+/// file, which `ssh-keygen -y` opens whatever `-P` says.
+private final class OpensForAnything: Sendable {
+    private let state = Mutex<Int>(0)
+
+    var calls: Int { state.withLock { $0 } }
+
+    var verify: CorrectKeyPassphraseForm.Verifier {
+        { [self] _, _ in
+            state.withLock { $0 += 1 }
+            return true
+        }
+    }
+}
+
+/// A verifier held open until the test raises `release` — only on its FIRST
+/// call, which is the one whose window a test needs to reach into. Later calls
+/// (the correction's empty-passphrase probe) answer at once, and like the key
+/// file itself this accepts exactly one passphrase: a double that opened for
+/// everything would now be an UNENCRYPTED key and refused as one.
 private final class HeldVerifier: Sendable {
     let entered = AsyncSignal()
     let release = AsyncSignal()
-    private let answer: Bool
-    private let state = Mutex<String?>(nil)
+    private let accepted: String
+    private let state = Mutex<(first: String?, calls: Int)>((nil, 0))
 
-    init(answer: Bool) { self.answer = answer }
+    init(accepting accepted: String) { self.accepted = accepted }
 
-    var lastPassphrase: String? { state.withLock { $0 } }
+    /// What the HELD call was asked about — the value captured when the run
+    /// started, which is the whole point of the fixture.
+    var lastPassphrase: String? { state.withLock { $0.first } }
 
     var verify: CorrectKeyPassphraseForm.Verifier {
         { [self] _, passphrase in
-            state.withLock { $0 = passphrase }
-            entered.signal()
-            _ = await release.wait()
-            return answer
+            let isFirstCall = state.withLock { state -> Bool in
+                state.calls += 1
+                if state.calls == 1 { state.first = passphrase }
+                return state.calls == 1
+            }
+            if isFirstCall {
+                entered.signal()
+                _ = await release.wait()
+            }
+            return passphrase == accepted
         }
     }
 }

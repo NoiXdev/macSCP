@@ -961,8 +961,12 @@
 "keys.passphrase.change.notStored" = "The key file now uses the new passphrase — from now on only that opens it. macSCP couldn't finish saving it, so it may be asked for on the next connection.";
 "keys.passphrase.error.doesNotOpen" = "That passphrase doesn't open this key. Nothing was saved.";
 "keys.passphrase.error.notManaged" = "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.";
-"keys.passphrase.error.timedOut" = "Checking the key took too long and was stopped. Nothing was changed.";
-"keys.passphrase.error.failed" = "Something went wrong. Nothing was changed.";
+"keys.passphrase.correct.error.timedOut" = "Checking the key took too long and was stopped. Nothing was changed.";
+"keys.passphrase.change.error.timedOut" = "The key tool took too long and was stopped. Check that the current passphrase still opens this key before trying again.";
+"keys.passphrase.correct.error.failed" = "Something went wrong. Nothing was changed.";
+"keys.passphrase.change.error.failed" = "Something went wrong. Check that the current passphrase still opens this key before trying again.";
+"keys.passphrase.error.keyFileMissing" = "macSCP can't find this key's file. It may have been moved or deleted.";
+"keys.passphrase.error.notEncrypted" = "This key file isn't protected by a passphrase, so there is none to remember. Use “Change the key's passphrase…” to give it one.";
 
 /* Settings — Command Line section (macscp-cli shortcut installer) */
 "settings.section.cli" = "Command Line";

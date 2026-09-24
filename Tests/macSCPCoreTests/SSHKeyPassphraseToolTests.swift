@@ -27,10 +27,17 @@ struct SSHKeyPassphraseToolTests {
             .appendingPathComponent("macscp-passtool-\(UUID().uuidString)")
     }
 
-    @Test func thePassphraseAKeyWasMadeWithOpensItAndAnotherOneDoesNot() async throws {
+    /// All three types `SSHKeyGenerator` produces. The KDF measurement in
+    /// `KeyToolBound` is an ED25519 one and the container format is the same
+    /// for all of them, so nothing here is expected to differ by type — which
+    /// is exactly the claim that was worth measuring rather than assuming.
+    static let everyGeneratedType: [KeyType] = [.ed25519, .rsa(bits: 2048), .ecdsa]
+
+    @Test(arguments: everyGeneratedType)
+    func thePassphraseAKeyWasMadeWithOpensItAndAnotherOneDoesNot(type: KeyType) async throws {
         let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = try await SSHKeyGenerator.generate(
-            type: .ed25519, comment: "tool-test", passphrase: Self.original, into: dir)
+            type: type, comment: "tool-test", passphrase: Self.original, into: dir)
 
         let theRightOneOpensIt = try await SSHKeyPassphraseTool.opensKey(
             at: key.privateKeyURL, passphrase: Self.original)
@@ -40,10 +47,11 @@ struct SSHKeyPassphraseToolTests {
         #expect(theOtherOneDoesNot == false)
     }
 
-    @Test func changingThePassphraseReEncryptsTheFile() async throws {
+    @Test(arguments: everyGeneratedType)
+    func changingThePassphraseReEncryptsTheFile(type: KeyType) async throws {
         let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
         let key = try await SSHKeyGenerator.generate(
-            type: .ed25519, comment: "tool-test", passphrase: Self.original, into: dir)
+            type: type, comment: "tool-test", passphrase: Self.original, into: dir)
         let before = try Data(contentsOf: key.privateKeyURL)
 
         try await SSHKeyPassphraseTool.changePassphrase(
@@ -59,6 +67,78 @@ struct SSHKeyPassphraseToolTests {
         // re-encryption and not a tool that quietly accepts anything.
         #expect(try Data(contentsOf: key.privateKeyURL) != before)
         #expect(SSHKeyConverter.isOpenSSHFormat(fileAt: key.privateKeyURL))
+        // The copy `rewritingWithRollback` keeps for the length of the run is
+        // key material; a successful change must not leave it behind.
+        #expect(try Self.directoryContents(dir).count == 2)
+    }
+
+    @Test func aRewriteThatThrowsPartWayThroughLeavesTheOriginalFileBehind() async throws {
+        let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try await SSHKeyGenerator.generate(
+            type: .ed25519, comment: "tool-test", passphrase: Self.original, into: dir)
+        let before = try Data(contentsOf: key.privateKeyURL)
+
+        // What a SIGKILL between the truncation and the last byte leaves —
+        // planted deterministically, because racing the real `ssh-keygen` for
+        // that window would measure the machine rather than the code.
+        await #expect(throws: CancellationError.self) {
+            try await SSHKeyPassphraseTool.rewritingWithRollback(fileAt: key.privateKeyURL) {
+                try Data("truncated".utf8).write(to: key.privateKeyURL)
+                throw CancellationError()
+            }
+        }
+
+        #expect(try Data(contentsOf: key.privateKeyURL) == before)
+        let theOriginalStillOpensIt = try await SSHKeyPassphraseTool.opensKey(
+            at: key.privateKeyURL, passphrase: Self.original)
+        #expect(theOriginalStillOpensIt)
+        #expect(try Self.directoryContents(dir).count == 2)
+    }
+
+    @Test func aRewriteThatAnswersFalsePartWayThroughLeavesTheOriginalFileBehind() async throws {
+        let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try await SSHKeyGenerator.generate(
+            type: .ed25519, comment: "tool-test", passphrase: Self.original, into: dir)
+        let before = try Data(contentsOf: key.privateKeyURL)
+
+        await #expect(throws: SSHKeyPassphraseTool.PassphraseToolError.failed) {
+            try await SSHKeyPassphraseTool.rewritingWithRollback(fileAt: key.privateKeyURL) {
+                try Data("truncated".utf8).write(to: key.privateKeyURL)
+                return false
+            }
+        }
+
+        #expect(try Data(contentsOf: key.privateKeyURL) == before)
+        let theOriginalStillOpensIt = try await SSHKeyPassphraseTool.opensKey(
+            at: key.privateKeyURL, passphrase: Self.original)
+        #expect(theOriginalStillOpensIt)
+        #expect(try Self.directoryContents(dir).count == 2)
+    }
+
+    @Test func aRewriteThatSucceedsKeepsWhatItWroteAndRemovesTheCopy() async throws {
+        let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let key = try await SSHKeyGenerator.generate(
+            type: .ed25519, comment: "tool-test", passphrase: Self.original, into: dir)
+        let planted = Data("rewritten by the tool".utf8)
+
+        try await SSHKeyPassphraseTool.rewritingWithRollback(fileAt: key.privateKeyURL) {
+            try planted.write(to: key.privateKeyURL)
+            return true
+        }
+
+        // Positive beside the two negatives above: the rollback does NOT fire
+        // on success, so their restores are the failure path and not a copy
+        // that is put back unconditionally.
+        #expect(try Data(contentsOf: key.privateKeyURL) == planted)
+        #expect(try Self.directoryContents(dir).count == 2)
+    }
+
+    /// Everything in `dir`, hidden files included — `contentsOfDirectory`
+    /// skips nothing by default, and the rollback copy's name begins with a
+    /// dot, so a listing that skipped hidden files would report success over
+    /// exactly the leftover this checks for.
+    static func directoryContents(_ dir: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: dir.path(percentEncoded: false))
     }
 
     @Test func aWrongOldPassphraseLeavesTheFileExactlyAsItWas() async throws {

@@ -1155,16 +1155,29 @@ private struct CorrectKeyPassphraseSheet: View {
             return L10n.string(
                 "keys.passphrase.error.notManaged",
                 "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.")
+        case .keyFileMissing:
+            return L10n.string(
+                "keys.passphrase.error.keyFileMissing",
+                "macSCP can't find this key's file. It may have been moved or deleted.")
+        case .keyIsNotEncrypted:
+            return L10n.string(
+                "keys.passphrase.error.notEncrypted",
+                "This key file isn't protected by a passphrase, so there is none to remember. Use \u{201C}Change the key's passphrase\u{2026}\u{201D} to give it one.")
         case .notStored:
             return L10n.string(
                 "keys.passphrase.correct.error.notStored",
                 "The passphrase is right, but it couldn't be saved. The key file was not changed \u{2014} try again.")
+        // These two say "nothing was changed" truthfully HERE and would not in
+        // the change sheet, which is why that sheet has keys of its own: this
+        // action never opens the key file for writing at all.
         case .timedOut:
             return L10n.string(
-                "keys.passphrase.error.timedOut",
+                "keys.passphrase.correct.error.timedOut",
                 "Checking the key took too long and was stopped. Nothing was changed.")
         case .failed:
-            return L10n.string("keys.passphrase.error.failed", "Something went wrong. Nothing was changed.")
+            return L10n.string(
+                "keys.passphrase.correct.error.failed",
+                "Something went wrong. Nothing was changed.")
         }
     }
 }
@@ -1247,9 +1260,11 @@ private struct ChangeKeyPassphraseSheet: View {
         .padding(20)
         .frame(width: 420)
         .textFieldStyle(.roundedBorder)
-        // Cancelling past the rewrite does not undo it — the form documents
-        // why nothing could — so this only stops a run that has not reached
-        // `ssh-keygen -p` yet.
+        // Safe at every point, which is why it is unconditional: a cancelled
+        // rewrite is rolled back before the error leaves the tool, so however
+        // the sheet goes away — Cancel, Escape, the parent closing — the key
+        // file is the one the user still has the current passphrase for
+        // (`ChangeKeyPassphraseForm`, "What a cancellation means").
         .onDisappear { form.cancel() }
     }
 
@@ -1275,16 +1290,29 @@ private struct ChangeKeyPassphraseSheet: View {
             return L10n.string(
                 "keys.passphrase.error.notManaged",
                 "This key's file isn't in macSCP's own key folder, so macSCP won't touch it.")
+        case .keyFileMissing:
+            return L10n.string(
+                "keys.passphrase.error.keyFileMissing",
+                "macSCP can't find this key's file. It may have been moved or deleted.")
         case .oldDoesNotOpenTheKey:
             return L10n.string(
                 "keys.passphrase.change.error.oldDoesNotOpen",
                 "The current passphrase doesn't open this key. Nothing was changed.")
+        // NOT the correction sheet's two: either of these can arrive from the
+        // `ssh-keygen -p` run and not only from the check before it, and a
+        // stopped or failed rewrite is exactly the case where macSCP must not
+        // promise that the key file is untouched. It puts the file back from
+        // the copy it makes first, and that restore is the one step it cannot
+        // guarantee, so the wording sends the user to look rather than telling
+        // them not to.
         case .timedOut:
             return L10n.string(
-                "keys.passphrase.error.timedOut",
-                "Checking the key took too long and was stopped. Nothing was changed.")
+                "keys.passphrase.change.error.timedOut",
+                "The key tool took too long and was stopped. Check that the current passphrase still opens this key before trying again.")
         case .failed:
-            return L10n.string("keys.passphrase.error.failed", "Something went wrong. Nothing was changed.")
+            return L10n.string(
+                "keys.passphrase.change.error.failed",
+                "Something went wrong. Check that the current passphrase still opens this key before trying again.")
         }
     }
 }

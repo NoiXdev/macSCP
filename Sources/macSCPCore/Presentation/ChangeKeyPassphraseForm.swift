@@ -13,21 +13,38 @@ import Observation
 ///
 /// ## What happens when only half of it works
 ///
-/// `ssh-keygen -p` is not undoable — once it returns, the new passphrase is
-/// the only one that opens the file, and macSCP does not hold the old one
-/// anywhere it could put back. So the record that follows it (the Keychain
-/// slot, and the `hasPassphrase` flag when a previously unencrypted key has
-/// just been encrypted) can fail with the file already rewritten, and there is
-/// no honest way to present that as a failure: the change HAPPENED.
-/// `.changedButNotStored` is that state, and the sheet says so — the file's
-/// new passphrase is the truth from now on, and macSCP may ask for it on the
-/// next connection because it could not finish writing it down. Reporting it
-/// as an error would send the user back to a key their old passphrase no
-/// longer opens.
+/// `ssh-keygen -p` rewrites the key file IN PLACE, and a run that is stopped
+/// part-way through would leave a file neither passphrase opens.
+/// `SSHKeyPassphraseTool.rewritingWithRollback` is what stands between the
+/// user and that: it copies the file aside first and puts the original back
+/// whenever the run throws or exits non-zero, so by the time an outcome
+/// reaches here, the file is either fully rewritten or byte-for-byte what it
+/// was. That invariant is what lets the cases below mean anything at all.
 ///
-/// For the same reason a cancellation is only honoured BEFORE the tool runs.
-/// Past that point the task has changed the world, and abandoning the record
-/// would be the one thing guaranteed to lose the new passphrase.
+/// What the rollback cannot cover is the record AFTER a rewrite that
+/// succeeded (the Keychain slot, and the `hasPassphrase` flag when a
+/// previously unencrypted key has just been encrypted): the file is already
+/// the new one, and there is no honest way to present that as a failure —
+/// the change HAPPENED. `.changedButNotStored` is that state, and the sheet
+/// says so: the file's new passphrase is the truth from now on, and macSCP
+/// may ask for it on the next connection because it could not finish writing
+/// it down. Reporting it as an error would send the user back to a key their
+/// old passphrase no longer opens.
+///
+/// ## What a cancellation means
+///
+/// `.cancelled` means the key file is exactly as it was — at EVERY point a
+/// cancellation can arrive, not only before the tool starts. A cancel during
+/// the verification stops before anything is touched; a cancel during the
+/// rewrite reaches `ssh-keygen` as `SIGTERM`/`SIGKILL`, comes back out of the
+/// tool as `CancellationError`, and the rollback has already restored the
+/// file by then. So there is nothing for the sheet to tell the user, and it
+/// tells them nothing.
+///
+/// The one place a cancellation is deliberately IGNORED is after the rewrite
+/// has returned successfully: the file is the new one, and abandoning the
+/// record there would be the single thing guaranteed to lose the new
+/// passphrase.
 ///
 /// Shaped after `GenerateKeyForm`: a run works from a `Request` captured when
 /// it starts and never reads the fields again, because the sheet's fields stay
@@ -44,12 +61,20 @@ public final class ChangeKeyPassphraseForm {
         _ keyURL: URL, _ old: String, _ new: String
     ) async throws -> Void
 
-    /// Why the last run left the key file exactly as it was.
+    /// Why the last run left the key file exactly as it was — every case
+    /// here does, including the two that can arrive from the rewrite itself,
+    /// because the rewrite rolls back. What the SHEET says about `.timedOut`
+    /// and `.failed` is weaker than that on purpose: restoring the copy is the
+    /// one step the tool cannot guarantee, so the wording sends the user to
+    /// check rather than promising them the file is intact.
     public enum Failure: Equatable, Sendable {
         /// The key's stored `fileName` does not address a file inside the
         /// app's own key directory (`ManagedKeyStore.privateKeyURL(for:)`) —
         /// a key macSCP did not put there, and will not rewrite.
         case notManaged
+        /// There is no file at the path the metadata names. Told apart from a
+        /// wrong passphrase because retyping is not the remedy for it.
+        case keyFileMissing
         /// The old passphrase does not open the key file. Proven with
         /// `ssh-keygen -y` BEFORE `-p` runs, so this can be told apart from
         /// a run that broke for some other reason.
@@ -129,8 +154,9 @@ public final class ChangeKeyPassphraseForm {
         return task
     }
 
-    /// Cancels a run in flight, if there is one — effective only up to the
-    /// moment `ssh-keygen -p` starts, for the reason the type's doc gives.
+    /// Cancels a run in flight, if there is one. However far the run has got,
+    /// a cancellation leaves the key file as it was — see "What a
+    /// cancellation means" on the type.
     public func cancel() {
         task?.cancel()
     }
@@ -141,8 +167,11 @@ public final class ChangeKeyPassphraseForm {
     /// `ssh-keygen -p` answers a wrong old passphrase with the same non-zero
     /// exit it answers everything else with.
     ///
-    /// Everything after the rewrite is recorded on a best-effort basis and
-    /// never turns the run into a failure. The metadata write only happens for
+    /// Steps 1-3 leave the file untouched unless they all succeed: the
+    /// rewrite is wrapped in `SSHKeyPassphraseTool.rewritingWithRollback`, so
+    /// a throw or a non-zero exit puts the original back before the error ever
+    /// reaches this function. Everything after it is recorded on a best-effort
+    /// basis and never turns the run into a failure. The metadata write only happens for
     /// a key that was not encrypted before, and only carries the flag the lock
     /// glyph and `ManagedKeyPassphrase.resolve`'s fast path read; the Keychain
     /// write is attempted whether or not that one worked, because a slot is
@@ -163,16 +192,20 @@ public final class ChangeKeyPassphraseForm {
             try await changer(keyURL, request.old, request.new)
         } catch is CancellationError {
             return .cancelled
+        } catch SSHKeyPassphraseTool.PassphraseToolError.keyFileMissing {
+            return .failed(.keyFileMissing)
         } catch SSHKeyPassphraseTool.PassphraseToolError.timedOut {
             return .failed(.timedOut)
         } catch {
             return .failed(.failed)
         }
 
-        // Past here the file is re-encrypted and `Task.isCancelled` is
-        // deliberately NOT consulted: the new passphrase is already the only
-        // one that opens the key, and a cancellation honoured now would be
-        // the one thing that loses it.
+        // Past here the rewrite RETURNED, so the file is re-encrypted and
+        // `Task.isCancelled` is deliberately NOT consulted: the new passphrase
+        // is already the only one that opens the key, and a cancellation
+        // honoured now would be the one thing that loses it. A cancellation
+        // that arrived while the tool was still running never gets here — it
+        // is thrown out of `changer` above, with the file already restored.
         var recorded = true
         if !request.key.hasPassphrase {
             var updated = request.key

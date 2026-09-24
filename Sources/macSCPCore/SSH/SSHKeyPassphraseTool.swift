@@ -79,9 +79,92 @@ public enum SSHKeyPassphraseTool {
         ofKeyAt url: URL, from old: String, to new: String
     ) async throws {
         let path = try existingKeyPath(url)
-        guard try await run(["-q", "-p", "-P", old, "-N", new, "-f", path]) == 0 else {
+        try await rewritingWithRollback(fileAt: url) {
+            try await run(["-q", "-p", "-P", old, "-N", new, "-f", path]) == 0
+        }
+    }
+
+    /// Runs `rewrite` over the file at `url` with a copy of it kept beside it,
+    /// and puts the original back whenever `rewrite` throws or answers `false`.
+    ///
+    /// **Why the file needs protecting at all.** `ssh-keygen -p` rewrites a key
+    /// file IN PLACE: measured 2026-09-24, the inode is the same before and
+    /// after, so the tool truncates and writes rather than building a new file
+    /// and renaming it over the old one. `SubprocessRunner` ends a cancelled or
+    /// timed-out child with `SIGTERM` and then `SIGKILL`
+    /// (`SubprocessRunner.swift`), and a signal landing between the truncation
+    /// and the last byte leaves a key file that NEITHER passphrase opens, with
+    /// nothing anywhere to restore it from. Pressing Cancel — or Escape, or
+    /// closing the window — reaches that window in one click, and the bound
+    /// expiring reaches it on its own.
+    ///
+    /// **The invariant**, the same one `SSHKeyConverter.copyAsOpenSSH` states
+    /// for its destination, one level up: when this returns or throws, the file
+    /// at `url` is either fully rewritten or byte-for-byte what it was, and the
+    /// copy is gone.
+    ///
+    /// The copy holds the same key material as the original, at the same 0600
+    /// mode in the same directory — no more exposed than the file it protects,
+    /// and only for the length of one `ssh-keygen` run. A copy that cannot be
+    /// MADE stops the rewrite before it starts (`.failed`): a rewrite with no
+    /// way back is not attempted.
+    ///
+    /// Beside the original deliberately, not in a temporary directory: a
+    /// rename has to stay on one file system to be the atomic step this
+    /// depends on. Nothing in macSCP enumerates the managed key directory —
+    /// every reader of it addresses a file by name through
+    /// `ManagedKeyStore.privateKeyURL(for:)` (counted 2026-09-24: no
+    /// `contentsOfDirectory` call anywhere touches it) — so a copy that
+    /// outlives a crash is invisible to the app rather than a stray key in a
+    /// list.
+    ///
+    /// The one thing the restore cannot promise is a file system that will not
+    /// rename. If the move back fails, the copy is deliberately LEFT BEHIND
+    /// rather than removed — at that point it is the only intact key there is,
+    /// and deleting it to tidy up would be the very loss this function exists
+    /// to prevent.
+    ///
+    /// Not `private` only so `SSHKeyPassphraseToolTests` can hand in a
+    /// `rewrite` that damages the file deterministically: racing a real
+    /// `ssh-keygen` for the SIGKILL window would be a test that measures the
+    /// machine.
+    static func rewritingWithRollback(
+        fileAt url: URL, _ rewrite: () async throws -> Bool
+    ) async throws {
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent(".macscp-rollback-\(UUID().uuidString)")
+        do {
+            try FileManager.default.copyItem(at: url, to: backup)
+        } catch {
             throw PassphraseToolError.failed
         }
+        let rewritten: Bool
+        do {
+            rewritten = try await rewrite()
+        } catch {
+            restore(backup, to: url)
+            throw error
+        }
+        guard rewritten else {
+            restore(backup, to: url)
+            throw PassphraseToolError.failed
+        }
+        try? FileManager.default.removeItem(at: backup)
+    }
+
+    /// Puts `backup` back at `url`. See the invariant above for why a failed
+    /// move leaves the copy in place instead of cleaning it up.
+    private static func restore(_ backup: URL, to url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        do {
+            try FileManager.default.moveItem(at: backup, to: url)
+        } catch {
+            return
+        }
+        // `copyItem` carries the mode across, so this only makes the 0600
+        // invariant explicit the way the generator and the converter do.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: url.path(percentEncoded: false))
     }
 
     /// The file-system path of `url`, once it is known to name an existing

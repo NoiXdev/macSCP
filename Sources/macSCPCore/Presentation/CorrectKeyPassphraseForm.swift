@@ -44,6 +44,14 @@ public final class CorrectKeyPassphraseForm {
         /// app's own key directory (`ManagedKeyStore.privateKeyURL(for:)`),
         /// so there is no file to verify against.
         case notManaged
+        /// There is no file at the path the metadata names. Told apart from a
+        /// wrong passphrase because retyping is not the remedy for it.
+        case keyFileMissing
+        /// The key file is not encrypted at all, whatever
+        /// `ManagedKey.hasPassphrase` says. `ssh-keygen -y` ignores `-P` for
+        /// such a file, so EVERY passphrase "opens" it and storing the typed
+        /// one would store an arbitrary value under the key's id — see `run`.
+        case keyIsNotEncrypted
         /// The passphrase opens the key and the Keychain write failed anyway.
         /// Nothing about the key file changed, so retrying is free.
         case notStored
@@ -111,15 +119,27 @@ public final class CorrectKeyPassphraseForm {
         task?.cancel()
     }
 
-    /// Verifies first, writes second — and writes exactly one thing, the
+    /// Verifies TWICE, writes once — and writes exactly one thing, the
     /// Keychain slot under the key's own id. The key file is never opened for
     /// writing here and `managed_keys.json` is never touched: the file's
     /// passphrase did not change, so nothing the metadata records about it
     /// did either.
     ///
+    /// **The second probe is the one that is not obvious.** `ssh-keygen -y`
+    /// ignores `-P` for a key file that is not encrypted, so it answers "it
+    /// opens" for every passphrase there — and the only thing keeping this
+    /// action away from such a key is `ManagedKey.hasPassphrase`, a metadata
+    /// flag that can be stale-true (a hand-edited store, a file replaced
+    /// underneath macSCP). With the flag as the sole guard, an arbitrary typed
+    /// value would verify and be stored silently under the key's id. So after
+    /// the typed value opens the key, the EMPTY passphrase is tried too: if
+    /// that opens it as well, the file is not encrypted at all and there is
+    /// nothing to remember (`.keyIsNotEncrypted`). The extra `ssh-keygen` run
+    /// is paid only on the path that is about to write.
+    ///
     /// A failing Keychain write is its own failure rather than a partial
     /// success, because nothing else happened: the key file is exactly as it
-    /// was, and pressing Save again costs one more `ssh-keygen` run.
+    /// was, and pressing Save again costs those runs over again.
     ///
     /// `static`, so it cannot read the form's fields: `request` is all it has.
     private static func run(
@@ -133,6 +153,9 @@ public final class CorrectKeyPassphraseForm {
             // has been written yet, so there is nothing to undo.
             guard !Task.isCancelled else { return .cancelled }
             guard opens else { return .failed(.doesNotOpenTheKey) }
+            let nothingOpensItToo = try await verifier(keyURL, "")
+            guard !Task.isCancelled else { return .cancelled }
+            guard !nothingOpensItToo else { return .failed(.keyIsNotEncrypted) }
             do {
                 try secrets.savePassword(request.passphrase, for: request.keyID)
             } catch {
@@ -141,6 +164,8 @@ public final class CorrectKeyPassphraseForm {
             return .stored
         } catch is CancellationError {
             return .cancelled
+        } catch SSHKeyPassphraseTool.PassphraseToolError.keyFileMissing {
+            return .failed(.keyFileMissing)
         } catch SSHKeyPassphraseTool.PassphraseToolError.timedOut {
             return .failed(.timedOut)
         } catch {

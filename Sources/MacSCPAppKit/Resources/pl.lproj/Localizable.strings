@@ -964,8 +964,12 @@
 "keys.passphrase.change.notStored" = "Plik klucza używa teraz nowego hasła — od tej pory tylko ono go otwiera. macSCP nie zdołał go zapisać do końca, więc może o nie zapytać przy następnym połączeniu.";
 "keys.passphrase.error.doesNotOpen" = "To hasło nie otwiera tego klucza. Nic nie zostało zapisane.";
 "keys.passphrase.error.notManaged" = "Plik tego klucza nie znajduje się w folderze kluczy macSCP, więc macSCP go nie ruszy.";
-"keys.passphrase.error.timedOut" = "Sprawdzanie klucza trwało zbyt długo i zostało przerwane. Nic nie zostało zmienione.";
-"keys.passphrase.error.failed" = "Coś poszło nie tak. Nic nie zostało zmienione.";
+"keys.passphrase.correct.error.timedOut" = "Sprawdzanie klucza trwało zbyt długo i zostało przerwane. Nic nie zostało zmienione.";
+"keys.passphrase.change.error.timedOut" = "Narzędzie klucza działało zbyt długo i zostało przerwane. Zanim spróbujesz ponownie, sprawdź, czy obecne hasło nadal otwiera ten klucz.";
+"keys.passphrase.correct.error.failed" = "Coś poszło nie tak. Nic nie zostało zmienione.";
+"keys.passphrase.change.error.failed" = "Coś poszło nie tak. Zanim spróbujesz ponownie, sprawdź, czy obecne hasło nadal otwiera ten klucz.";
+"keys.passphrase.error.keyFileMissing" = "macSCP nie może znaleźć pliku tego klucza. Mógł zostać przeniesiony lub usunięty.";
+"keys.passphrase.error.notEncrypted" = "Ten plik klucza nie jest chroniony hasłem, więc nie ma czego zapamiętać. Nadaj mu hasło przez „Zmień hasło klucza…”.";
 
 /* Ustawienia — sekcja „Wiersz poleceń" (skrót macscp-cli) */
 "settings.section.cli" = "Wiersz poleceń";

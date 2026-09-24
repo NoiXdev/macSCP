@@ -962,8 +962,12 @@
 "keys.passphrase.change.notStored" = "Die Schlüsseldatei nutzt jetzt die neue Passphrase — ab sofort öffnet nur noch diese den Schlüssel. macSCP konnte sie nicht fertig speichern und fragt womöglich bei der nächsten Verbindung danach.";
 "keys.passphrase.error.doesNotOpen" = "Diese Passphrase öffnet den Schlüssel nicht. Es wurde nichts gespeichert.";
 "keys.passphrase.error.notManaged" = "Die Datei dieses Schlüssels liegt nicht im eigenen Schlüsselordner von macSCP — macSCP fasst sie nicht an.";
-"keys.passphrase.error.timedOut" = "Die Prüfung des Schlüssels hat zu lange gedauert und wurde abgebrochen. Es wurde nichts geändert.";
-"keys.passphrase.error.failed" = "Da ist etwas schiefgegangen. Es wurde nichts geändert.";
+"keys.passphrase.correct.error.timedOut" = "Die Prüfung des Schlüssels hat zu lange gedauert und wurde abgebrochen. Es wurde nichts geändert.";
+"keys.passphrase.change.error.timedOut" = "Das Schlüsselwerkzeug hat zu lange gedauert und wurde abgebrochen. Prüfe, ob die aktuelle Passphrase den Schlüssel noch öffnet, bevor du es erneut versuchst.";
+"keys.passphrase.correct.error.failed" = "Da ist etwas schiefgegangen. Es wurde nichts geändert.";
+"keys.passphrase.change.error.failed" = "Da ist etwas schiefgegangen. Prüfe, ob die aktuelle Passphrase den Schlüssel noch öffnet, bevor du es erneut versuchst.";
+"keys.passphrase.error.keyFileMissing" = "macSCP findet die Datei dieses Schlüssels nicht. Sie wurde vielleicht verschoben oder gelöscht.";
+"keys.passphrase.error.notEncrypted" = "Diese Schlüsseldatei ist nicht durch eine Passphrase geschützt, es gibt also keine zu merken. Gib ihr über „Passphrase des Schlüssels ändern…“ eine.";
 
 /* Einstellungen — Bereich „Kommandozeile" (macscp-cli-Verknüpfung) */
 "settings.section.cli" = "Kommandozeile";

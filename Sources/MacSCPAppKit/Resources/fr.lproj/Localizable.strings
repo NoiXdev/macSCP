@@ -965,8 +965,12 @@
 "keys.passphrase.change.notStored" = "Le fichier de clé utilise désormais la nouvelle phrase secrète — seule celle-ci l'ouvre à partir de maintenant. macSCP n'a pas pu finir de l'enregistrer et pourrait la redemander à la prochaine connexion.";
 "keys.passphrase.error.doesNotOpen" = "Cette phrase secrète n'ouvre pas cette clé. Rien n'a été enregistré.";
 "keys.passphrase.error.notManaged" = "Le fichier de cette clé ne se trouve pas dans le dossier de clés de macSCP : macSCP n'y touchera pas.";
-"keys.passphrase.error.timedOut" = "La vérification de la clé a pris trop de temps et a été interrompue. Rien n'a été changé.";
-"keys.passphrase.error.failed" = "Quelque chose s'est mal passé. Rien n'a été changé.";
+"keys.passphrase.correct.error.timedOut" = "La vérification de la clé a pris trop de temps et a été interrompue. Rien n'a été changé.";
+"keys.passphrase.change.error.timedOut" = "L'outil de clé a pris trop de temps et a été interrompu. Vérifiez que la phrase secrète actuelle ouvre encore cette clé avant de réessayer.";
+"keys.passphrase.correct.error.failed" = "Quelque chose s'est mal passé. Rien n'a été changé.";
+"keys.passphrase.change.error.failed" = "Quelque chose s'est mal passé. Vérifiez que la phrase secrète actuelle ouvre encore cette clé avant de réessayer.";
+"keys.passphrase.error.keyFileMissing" = "macSCP ne trouve pas le fichier de cette clé. Il a peut-être été déplacé ou supprimé.";
+"keys.passphrase.error.notEncrypted" = "Ce fichier de clé n'est pas protégé par une phrase secrète : il n'y a donc rien à retenir. Utilisez « Changer la phrase secrète de la clé… » pour lui en donner une.";
 
 /* Réglages — Section « Ligne de commande » (raccourci macscp-cli) */
 "settings.section.cli" = "Ligne de commande";
