@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 
@@ -1173,32 +1174,94 @@ struct ConnectionDiagnosticsJumpTests {
             "the hop was told it has no secret, for a store that could not be read")
     }
 
-    /// Neither sentence carries anything of the key, the store or the hop:
-    /// the fact is that the store could not be read, not what is in it.
-    /// Every comparison is computed into a `Bool` first, so a failure message
-    /// cannot print the value it is about (CLAUDE.md, "A value a test must
-    /// not leak has two exits").
-    @Test func neitherJumpSecretSentenceCarriesASecretAPathOrTheStore() throws {
+    /// The TAB's path, and the only one that reaches this from the UI:
+    /// `ContentView+Diagnostics` builds a tab's jump with
+    /// `DiagnosticJump.form(_:isEnabled:stored:)`, so a tab running Check
+    /// connection behind an unreadable store is told the two apart only if
+    /// `form` adopts the stored jump's record along with its secret. The
+    /// three cases above all build their jump with `DiagnosticJump.stored`
+    /// and would every one of them stay green with that adoption deleted —
+    /// measured by deleting it, 2026-09-24, fix round 1.
+    ///
+    /// The control is the other half of the adoption rule, and the reason it
+    /// is a rule: a form whose jump was edited and not saved adopts neither
+    /// the secret nor the record, and reads `noJumpSecret`. It is also the
+    /// positive check beside the negative — a `form` that adopted everything
+    /// unconditionally would pass the first half and fail here.
+    @Test(arguments: JumpSecretSite.allCases, [true, false])
+    func aTabsJumpAdoptsTheStoredJumpsUnreadableStoreFact(
+        site: JumpSecretSite, isTheStoredJump: Bool
+    ) async throws {
         let rig = try CorruptManagedKeyStoreRig()
         defer { rig.tearDown() }
-        let sentences = [
-            DiagnosticReason.noJumpSecret, DiagnosticReason.jumpManagedKeyStoreUnreadable,
-        ]
+        let stored = try Self.storedJump(over: rig, inTheKeyDirectory: true)
+        var values = Self.targetValues()
+        values[SSHField.jump, SSHJumpField.host] = Self.storedJumpHost
+        values[SSHField.jump, SSHJumpField.port] = String(Self.storedJumpPort)
+        values[SSHField.jump, SSHJumpField.username] =
+            isTheStoredJump ? Self.storedJumpUsername : "edited-not-saved"
+        values[SSHField.jump, SSHJumpField.authKind] =
+            StoredSession.AuthKind.privateKey.rawValue
+        values[SSHField.jump, SSHJumpField.keyPath] = rig.managedKeyPath
 
-        // The positive anchor: the two sentences are there, and they differ.
-        #expect(sentences.allSatisfy { !$0.isEmpty })
-        #expect(Set(sentences).count == sentences.count)
+        let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
+        let outcome = await Self.jumpSecretOutcome(site: site, jump: jump)
 
-        for sentence in sentences {
-            let carriesThePassphrase = sentence.contains(CorruptManagedKeyStoreRig.keyPassphrase)
-            let carriesTheStore = sentence.contains(CorruptManagedKeyStoreRig.storeContent)
-            let carriesTheKeyPath = sentence.contains(rig.managedKeyPath)
-            let carriesTheKeyDirectory =
-                sentence.contains(rig.keys.keyDirectory.path(percentEncoded: false))
-            #expect(carriesThePassphrase == false)
-            #expect(carriesTheStore == false)
-            #expect(carriesTheKeyPath == false)
-            #expect(carriesTheKeyDirectory == false)
+        #expect(
+            outcome
+                == .skipped(
+                    isTheStoredJump
+                        ? DiagnosticReason.jumpManagedKeyStoreUnreadable
+                        : DiagnosticReason.noJumpSecret))
+    }
+
+    /// Neither sentence can carry a secret, a key path or a line of the
+    /// store, and the guarantee is STRUCTURAL rather than observed: each is a
+    /// `static let` whose value is one string literal with no interpolation,
+    /// so there is nothing at run time for a measured value to arrive
+    /// through.
+    ///
+    /// Scanning the two sentences for a temporary directory's path would be a
+    /// check pointed where the violation cannot be written (CLAUDE.md,
+    /// "Source-scanning guards read comments too", 2): a compile-time literal
+    /// cannot contain a per-run UUID, so such a check can only ever pass.
+    /// This reads the DECLARATIONS instead, where a violation can be written
+    /// — an interpolation, a `+` with something measured, a `static func`
+    /// taking an argument — and it ties each literal to the value the rest of
+    /// the suite compares against, which is the positive anchor: a
+    /// declaration this pattern cannot find, or one whose literal is not the
+    /// sentence Core hands out, fails here.
+    @Test(arguments: [
+        ("noJumpSecret", DiagnosticReason.noJumpSecret),
+        ("jumpManagedKeyStoreUnreadable", DiagnosticReason.jumpManagedKeyStoreUnreadable),
+    ])
+    func aJumpSecretSentenceIsOneLiteralWithNothingMeasuredInIt(
+        name: String, sentence: String
+    ) throws {
+        let source = try SourceCorpus.text(
+            of: SourceCorpus.url(of: .sources)
+                .appendingPathComponent("macSCPCore/Diagnostics/DiagnosticReason.swift"))
+
+        let declaration = try #require(
+            Self.matches(
+                of: "static let \(name) =\\s*\"([^\"]*)\"", in: source
+            ).first,
+            "no `static let \(name) = \"…\"` in DiagnosticReason.swift")
+
+        #expect(declaration == sentence)
+        #expect(!declaration.contains("\\("))
+    }
+
+    /// First capture group of every match, in source order. The twin of
+    /// `ConnectionDiagnosticsTests`' own, kept here rather than shared: two
+    /// suites, two scans, and nothing between them to keep in step.
+    private static func matches(of pattern: String, in source: String) -> [String] {
+        guard let regex = try? CompiledPattern.regex(pattern) else { return [] }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        return regex.matches(in: source, range: range).compactMap { match in
+            guard match.numberOfRanges > 1, let found = Range(match.range(at: 1), in: source)
+            else { return nil }
+            return String(source[found])
         }
     }
 
@@ -1238,6 +1301,14 @@ struct ConnectionDiagnosticsJumpTests {
     /// unreadable store, with nothing in the hop's own slot. The key path
     /// lies in the store's key directory, or beside it — the difference
     /// between a key the store would have managed and one it never could.
+    /// The hop `storedJump` builds, spelled once: `DiagnosticJump.form`
+    /// hands over the stored jump's lookup only when the form's host, port,
+    /// user name and auth kind all equal it, so the case above fills its form
+    /// from these rather than from a second copy of them.
+    private static let storedJumpHost = "127.0.0.1"
+    private static let storedJumpPort = 1
+    private static let storedJumpUsername = "hop"
+
     private static func storedJump(
         over rig: CorruptManagedKeyStoreRig, inTheKeyDirectory: Bool
     ) throws -> DiagnosticJump {
@@ -1246,7 +1317,8 @@ struct ConnectionDiagnosticsJumpTests {
             ssh: StoredSSHConfig(
                 host: targetHost, port: targetPort, username: "testuser",
                 jump: StoredSession.JumpSpec(
-                    host: "127.0.0.1", port: 1, username: "hop", authKind: .privateKey,
+                    host: storedJumpHost, port: storedJumpPort, username: storedJumpUsername,
+                    authKind: .privateKey,
                     keyPath: inTheKeyDirectory ? rig.managedKeyPath : rig.unmanagedKeyPath)))
         return try #require(
             DiagnosticJump.stored(

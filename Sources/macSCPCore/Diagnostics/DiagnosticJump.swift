@@ -50,18 +50,33 @@ public struct DiagnosticJump: Sendable {
     /// cannot reach a stored property — the reason
     /// `ManagedKeyPassphraseSecretSource` keeps its own answer in a box too.
     ///
-    /// `private`, and set only by the two builders below, both in this file:
-    /// a jump built by anyone else has no lookup of its own to record
-    /// anything, and answers `noJumpSecret` exactly as it always did.
-    private var lastRead = LastJumpStoreRead()
+    /// `private let`, as its precedent is
+    /// (`ManagedKeyPassphraseSecretSource.lastRead`): the two builders below
+    /// pass it to the initializer beside them, so "set only by those two" is
+    /// something the compiler holds rather than something this comment
+    /// promises. A jump built through the public initializer gets a box of
+    /// its own that nothing ever writes, and answers `noJumpSecret` exactly
+    /// as it always did.
+    private let lastRead: LastJumpStoreRead
 
     public init(
         endpoint: Endpoint?, login: Login,
         secret: @escaping @Sendable () throws -> String?
     ) {
+        self.init(endpoint: endpoint, login: login, secret: secret, lastRead: LastJumpStoreRead())
+    }
+
+    /// The initializer the two builders in this file use: same three values,
+    /// plus the box their own secret lookup writes.
+    init(
+        endpoint: Endpoint?, login: Login,
+        secret: @escaping @Sendable () throws -> String?,
+        lastRead: LastJumpStoreRead
+    ) {
         self.endpoint = endpoint
         self.login = login
         self.secret = secret
+        self.lastRead = lastRead
     }
 
     /// Why this hop's dial has no secret: `DiagnosticReason.noJumpSecret`, or
@@ -127,7 +142,7 @@ extension DiagnosticJump {
         let host = shape.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let referencingID = session.id
         let lastRead = LastJumpStoreRead()
-        var jump = DiagnosticJump(
+        return DiagnosticJump(
             endpoint: host.isEmpty ? nil : Endpoint(host: host, port: shape.port),
             login: Login(
                 username: shape.login.username, authKind: shape.login.authKind,
@@ -144,9 +159,8 @@ extension DiagnosticJump {
                 // the lookup has answered.
                 lastRead.hidTheKey.withLock { $0 = preferred.unreadableStoreHidTheKey }
                 return preferred.secret
-            })
-        jump.lastRead = lastRead
-        return jump
+            },
+            lastRead: lastRead)
     }
 
     /// The jump a connection FORM describes — a tab's — or `nil` when the
@@ -200,14 +214,13 @@ extension DiagnosticJump {
         } else {
             adopted = nil
         }
-        var jump = DiagnosticJump(
-            endpoint: endpoint, login: login, secret: adopted?.secret ?? noSecret)
         // The fact rides with the lookup it came from: a form that took the
         // stored jump's secret takes what that lookup records too, so its
         // dial names the store for the same read. A form that took nothing
-        // has no lookup, and no fact.
-        if let adopted { jump.lastRead = adopted.lastRead }
-        return jump
+        // has no lookup, and no fact — a box of its own, which nothing writes.
+        return DiagnosticJump(
+            endpoint: endpoint, login: login, secret: adopted?.secret ?? noSecret,
+            lastRead: adopted?.lastRead ?? LastJumpStoreRead())
     }
 }
 

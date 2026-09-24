@@ -602,9 +602,14 @@ public enum DialSupport {
     /// lookup. Evaluated first, this would read the record of a previous
     /// diagnosis, or none.
     ///
-    /// For the TARGET's lookup only — `DiagnosticContribution.sshConnect`
-    /// and `DiagnosticJumpStep.dialViaJump`, two call sites, counted
-    /// 2026-09-18 and again 2026-09-24. A jump's secret is not looked up
+    /// For the TARGET's lookup only — `DiagnosticContribution.sshConnect`,
+    /// `ConnectionDiagnostics.throughput` and
+    /// `DiagnosticJumpStep.dialViaJump`, three call sites, counted
+    /// 2026-09-24. It said TWO, and named the first and the last: the
+    /// throughput step arrived on 2026-09-19 in `565ba9fa`, after the count
+    /// of 2026-09-18, and a pass on 2026-09-24 re-dated the number without
+    /// re-counting it, which is the failure mode CLAUDE.md's rule about
+    /// cardinality in a comment describes. A jump's secret is not looked up
     /// through a managed-key link at all: `DiagnosticJump.stored` resolves it
     /// with `LoginResolver.preferringManagedKeyPassphrase`, so the same fact
     /// about a HOP's key arrives by its own route

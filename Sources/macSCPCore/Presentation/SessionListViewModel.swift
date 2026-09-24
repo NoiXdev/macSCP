@@ -601,8 +601,8 @@ public final class SessionListViewModel {
     /// model's own key store and secret store — the one spelling the three
     /// jump fills in Core share (`resolvedJumpLogin(for:)`,
     /// `resolvedJump(for:)`, and `fillJumpForm` in
-    /// `SessionListViewModel+Submit.swift`; counted 2026-09-24, and the
-    /// fourth caller of the fallback, `DiagnosticJump.stored`, calls it
+    /// `SessionListViewModel+Submit.swift`; three, counted 2026-09-24 —
+    /// the fallback's other reader, `DiagnosticJump.stored`, calls it
     /// directly rather than through here because it holds no view model).
     ///
     /// The login that comes back carries the unreadable-store fact

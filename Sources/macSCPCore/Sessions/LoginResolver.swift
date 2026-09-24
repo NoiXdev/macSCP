@@ -251,9 +251,11 @@ public enum LoginResolver {
         // by saving a credential. It is carried since 2026-09-24, on
         // `ResolvedLogin.unreadableStoreHidTheKey`.
         //
-        // Four call sites read this function, counted 2026-09-24: the three
-        // jump fills in Core, which reach it through `SessionListViewModel
-        // .withManagedKeyPassphrase(_:)`, and `DiagnosticJump.stored`, which
+        // Two direct call sites, counted 2026-09-24:
+        // `SessionListViewModel.withManagedKeyPassphrase(_:)` and
+        // `DiagnosticJump.stored`. Four readers behind them, counted the same
+        // day: the three jump fills in Core, which all go through that helper,
+        // and `DiagnosticJump.stored` itself, which
         // is the one that turns the fact into a sentence
         // (`DiagnosticJump.missingSecretReason`). Of the three fills, two
         // return the login and copy the fact by carrying it; the third
