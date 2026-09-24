@@ -235,21 +235,60 @@ import Testing
     /// missing table entry to plain `strerror` text with no parenthetical
     /// and no failure — invisible to `anIOErrorOutsideTheThreeNamedErrnosReadsItsErrnoName`
     /// above, which only ever asks about `EINVAL`. This scans the table's
-    /// own KEYS instead: every errno from 1 through `ELAST` (107 on this
-    /// SDK, `<sys/errno.h>`'s own "must be equal largest errno" sentinel)
-    /// must resolve. Derived, not transcribed, so it stays exact if the
-    /// SDK's errno range ever grows — `errnoNames` had to become
-    /// `internal` for this suite's `@testable import macSCPCore` to reach
-    /// it; nothing else reads it from outside `DialProbes.swift`.
+    /// own KEYS instead, but NOT against `ELAST`: fix round 2 (CI run
+    /// 36021395795, head `40963b5a`) measured that `ENOTCAPABLE` does not
+    /// exist on the macOS 15.5 SDK CI builds against, only on this
+    /// machine's newer one, so `ELAST` (Darwin's "must be equal largest
+    /// errno" sentinel) is 107 on one SDK and 106 on the other — a bound
+    /// that moves under the same source is not a bound the table's
+    /// coverage can be measured against. Two checks instead, both derived
+    /// from the table itself:
     ///
-    /// Run red first (recorded in the Task 4 fix-round-1 report): with
-    /// `ENOSR: "ENOSR",` deleted from `errnoNames` by hand, this test
-    /// failed at `code == 98` with `DialSupport.errnoNames[98] != nil` →
-    /// false; restoring the entry turned it green again.
-    @Test func everyErrnoFromOneThroughELASTHasATableEntry() {
-        for code in CInt(1)...ELAST {
+    /// 1. `highestKey >= 106` — a POSITIVE floor. Without it, a table
+    ///    whose own topmost entry silently went missing would just lower
+    ///    `highestKey` and the contiguous scan below would still pass
+    ///    (there is no gap to find below a lowered ceiling) — exactly the
+    ///    failure mode a scan anchored only on its own data can have. 106
+    ///    is `EQFULL`'s value, the table's actual highest key on every
+    ///    SDK this project builds on (`ENOTCAPABLE`, 107, is deliberately
+    ///    not a key — see `errnoNames`'s own doc comment).
+    /// 2. Every errno from 1 through that measured `highestKey` must
+    ///    resolve — the contiguous scan, now bounded by data the table
+    ///    itself supplies rather than by a platform constant.
+    ///
+    /// `ELAST >= highestKey` is asserted too, but only as a sanity check
+    /// that this SDK's own sentinel is not somehow lower than what the
+    /// table claims to cover — true on both the newer SDK this machine
+    /// runs (`ELAST == 107 > 106`) and the older one CI does
+    /// (`ELAST == 106 == 106`), so it can never itself go red from an SDK
+    /// difference the way `for code in 1...ELAST` could.
+    ///
+    /// `errnoNames` had to become `internal` for this suite's `@testable
+    /// import macSCPCore` to reach it; nothing else reads it from outside
+    /// `DialProbes.swift`.
+    ///
+    /// Run red first, twice (recorded in the Task 4 fix-round-2 report):
+    /// with `ENOSR: "ENOSR",` (errno 98, a middle entry) deleted from
+    /// `errnoNames` by hand, the contiguous scan failed at `code == 98`
+    /// with `DialSupport.errnoNames[98] != nil` → false; restored, green
+    /// again. Separately, with `EQFULL: "EQFULL",` (106, the table's own
+    /// top entry) deleted instead, `highestKey` became 105 and the
+    /// floor `#expect(highestKey >= 106)` failed — proving the floor
+    /// catches exactly the silent-shrink case the contiguous scan alone
+    /// cannot; restored, green again.
+    @Test func theTableIsContiguousFromOneThroughItsOwnHighestKey() {
+        let highestKey = DialSupport.errnoNames.keys.max() ?? 0
+        #expect(
+            highestKey >= 106,
+            "errnoNames's highest key is \(highestKey), below the 106 floor (EQFULL) — its own top entry may have gone missing"
+        )
+        for code in CInt(1)...highestKey {
             #expect(DialSupport.errnoNames[code] != nil, "no table entry for errno \(code)")
         }
+        #expect(
+            ELAST >= highestKey,
+            "this SDK's ELAST (\(ELAST)) is below errnoNames's own highest key (\(highestKey)) — the table claims to cover more than this platform's errno range holds"
+        )
     }
 
     /// Where a kind's payload is everything its sentence needs, the log's

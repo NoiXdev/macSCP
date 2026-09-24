@@ -472,28 +472,52 @@ public enum DialSupport {
         return "\(text) (\(name))"
     }
 
-    /// Every named errno macro `<sys/errno.h>` declares on Darwin, keyed by
-    /// value, transcribed from `$(xcrun --sdk macosx --show-sdk-path)
-    /// /usr/include/sys/errno.h` — not a hand-picked subset of the ones a
+    /// 106 named errno macros `<sys/errno.h>` declares on Darwin (counted
+    /// in the dictionary literal below at the moment this line was
+    /// written), keyed by value — not a hand-picked subset of the ones a
     /// bind syscall happens to be documented as returning, because the
-    /// fall-through this feeds is reached from every foreign `IOError` this
-    /// module's callers hand `reason(for:)`, not only a local bind's.
-    /// `EWOULDBLOCK` (`#define EWOULDBLOCK EAGAIN`) and `ELAST` (`#define
-    /// ELAST 107`, the same value as `ENOTCAPABLE`) are left out: each is a
-    /// second macro for a value already a key here, and a `Dictionary`
-    /// literal with a repeated key is a runtime trap, not a compile error.
-    /// `EOPNOTSUPP` keeps its own entry despite `<sys/errno.h>` defining it
-    /// twice under `#if`/`#else` (45, same as `ENOTSUP`, or 102): only one
-    /// definition is ever compiled in, and on this project's Darwin target
-    /// it is 102, distinct from `ENOTSUP`'s 45.
+    /// fall-through this feeds is reached from every foreign `IOError`
+    /// this module's callers hand `reason(for:)`, not only a local
+    /// bind's.
+    ///
+    /// The table's own ceiling is SDK-dependent, and deliberately not
+    /// pinned to a number here: `EQFULL` (106) is its highest key on
+    /// every SDK this project builds on, but `ENOTCAPABLE` (107, one
+    /// higher) is NOT a key — measured in fix round 2 (CI run
+    /// 36021395795, head `40963b5a`) as `cannot find 'ENOTCAPABLE' in
+    /// scope` on macOS 15.5's SDK (CI's toolchain at the time), though it
+    /// compiles on this machine's newer one. Swift has no way to
+    /// conditionally compile a dictionary entry on whether a C macro
+    /// exists, so a guarded entry was not available — `ENOTCAPABLE` is
+    /// left out entirely, on every SDK, rather than only where it would
+    /// fail to build. Its absence costs errno 107 its symbolic name and
+    /// degrades to `errnoText(for:)`'s `strerror`-only fallback, the same
+    /// graceful path any other unlisted errno already takes. Do not add
+    /// it back: an entry that only some SDKs can spell breaks the build
+    /// on the others.
+    ///
+    /// `EWOULDBLOCK` (`#define EWOULDBLOCK EAGAIN`) is left out for a
+    /// different, SDK-independent reason: it is a second macro for a
+    /// value (`EAGAIN`) already a key here, and a `Dictionary` literal
+    /// with a repeated key is a runtime trap, not a compile error.
+    /// `ELAST` (`<sys/errno.h>`'s own "must be equal largest errno"
+    /// sentinel — 107 where `ENOTCAPABLE` exists, 106 where it does not)
+    /// was never a candidate key on its own merits either: it names no
+    /// refusal a syscall actually returns. `EOPNOTSUPP` keeps its own
+    /// entry despite `<sys/errno.h>` defining it twice under `#if`/
+    /// `#else` (45, same as `ENOTSUP`, or 102): only one definition is
+    /// ever compiled in, and on every SDK this project targets it is
+    /// 102, distinct from `ENOTSUP`'s 45.
     ///
     /// `internal`, not `private`: `TunnelFailureKindTests` (`@testable
     /// import macSCPCore`) reads this table directly to assert its
     /// coverage is exact — see that suite's
-    /// `everyErrnoFromOneThroughELASTHasATableEntry` — because `errnoText(for:)`'s
-    /// own `guard let … else { return text }` degrades a missing entry
-    /// silently rather than failing loud, which is precisely the shape a
-    /// scan of the table's own KEYS has to catch instead.
+    /// `theTableIsContiguousFromOneThroughItsOwnHighestKey`, derived from
+    /// the table's own highest key rather than from `ELAST` for exactly
+    /// the reason above — because `errnoText(for:)`'s own `guard let …
+    /// else { return text }` degrades a missing entry silently rather
+    /// than failing loud, which is precisely the shape a scan of the
+    /// table's own KEYS has to catch instead.
     static let errnoNames: [CInt: String] = [
         EPERM: "EPERM", ENOENT: "ENOENT", ESRCH: "ESRCH", EINTR: "EINTR", EIO: "EIO",
         ENXIO: "ENXIO", E2BIG: "E2BIG", ENOEXEC: "ENOEXEC", EBADF: "EBADF",
@@ -527,7 +551,7 @@ public enum DialSupport {
         ENODATA: "ENODATA", ENOLINK: "ENOLINK", ENOSR: "ENOSR", ENOSTR: "ENOSTR",
         EPROTO: "EPROTO", ETIME: "ETIME", EOPNOTSUPP: "EOPNOTSUPP",
         ENOPOLICY: "ENOPOLICY", ENOTRECOVERABLE: "ENOTRECOVERABLE",
-        EOWNERDEAD: "EOWNERDEAD", EQFULL: "EQFULL", ENOTCAPABLE: "ENOTCAPABLE",
+        EOWNERDEAD: "EOWNERDEAD", EQFULL: "EQFULL",
     ]
 
     /// What an SSH dial authenticates with, or the outcome its row reports
