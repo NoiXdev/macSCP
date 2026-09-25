@@ -112,10 +112,24 @@ struct DiagnosticsNoDescribingGuardTests {
     /// the rule this suite enforces — prose, not the code it describes, so
     /// this positive check cannot be satisfied by a commented-out example
     /// of the very thing the negative check forbids (CLAUDE.md,
-    /// "Source-scanning guards read comments too"). Read at
-    /// `DialProbes.swift:157` at HEAD; a single source line, so it survives
-    /// a plain (unblanked, unstripped) substring match without needing to
-    /// join lines.
+    /// "Source-scanning guards read comments too"). A single source line, so
+    /// it survives a plain (unblanked, unstripped) substring match without
+    /// needing to join lines.
+    ///
+    /// Deliberately WITHOUT a line citation. This comment used to say "Read
+    /// at `DialProbes.swift:157` at HEAD"; the clause was at `:221` when the
+    /// backlog row recording that as stale was written on 2026-09-24, and at
+    /// `:226` when the row was closed on 2026-09-25 — a number that moves
+    /// whenever anything above it in that file gains or loses a line, and
+    /// that nothing fails on when it does.
+    /// `theRuleIsStatedInDialProbesOwnDocComment` below DERIVES the line and
+    /// names it in its own failure message, so the guard reports where the
+    /// clause IS rather than claiming where it was. What that check now
+    /// fails on: the clause being gone from `DialProbes.swift`, reworded
+    /// past recognition, rewrapped so it no longer sits on one line, or
+    /// spelled more than once. What it cannot fail on any more is the file
+    /// moving, because it no longer states where in the file the clause
+    /// sits.
     private static let ruleClause =
         "to `localizedDescription` and never `String(describing:)`, because"
 
@@ -197,12 +211,28 @@ struct DiagnosticsNoDescribingGuardTests {
     /// carries the prose that states the rule, so the negative check above
     /// is known to be reading the right file's actual content and not a
     /// stand-in that happens to contain no matches for any reason.
+    ///
+    /// The line the clause sits on is DERIVED here rather than written into
+    /// a comment (see `ruleClause`'s own note): it is computed from the file
+    /// at the moment it is reported, so it is right by construction whenever
+    /// anyone reads it, and there is no second copy of it to go stale.
+    ///
+    /// Counting the matching lines rather than asking `contains` also pins
+    /// the property `ruleClause`'s comment claims — that the clause is ONE
+    /// source line — which is what lets a plain substring search find it at
+    /// all. A rewrap that splits it reads as zero matches here instead of
+    /// quietly making the check unsatisfiable.
     @Test func theRuleIsStatedInDialProbesOwnDocComment() throws {
         let source = try SourceCorpus.text(of: Self.dialProbesFile)
-        #expect(source.contains(Self.ruleClause), """
-            DialProbes.swift no longer states the rule this suite enforces \
-            ("\(Self.ruleClause)") — either the doc comment moved or was \
-            reworded; re-anchor `ruleClause` on whatever replaced it.
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+        let carrying = lines.indices.filter { lines[$0].contains(Self.ruleClause) }
+        #expect(carrying.count == 1, """
+            `ruleClause` matches \(carrying.count) line(s) of DialProbes.swift, \
+            not one — at \(carrying.map { $0 + 1 }). Zero means the doc comment \
+            that states this suite's rule moved out of that file, was reworded, \
+            or was rewrapped so the clause no longer sits on a single line; more \
+            than one means it is now spelled twice and the anchor no longer names \
+            one place. Re-anchor `ruleClause` on whatever replaced it.
             """)
     }
 
