@@ -1906,6 +1906,30 @@ struct CitadelFileSystemIntegrationTests {
     // methods here. They moved to `Support/SpawnedAgent.swift` unchanged on
     // 2026-09-02, when `GoServerRSAIntegrationTests` needed the same spawned
     // agent — the same move `makeInstalledKey` made before them.
+    //
+    // Every dial in this section seeds the rig's own host keys through
+    // `rigKnownHosts(in:)` and passes `HostKeyDecider.refusing`. The subject
+    // here is ssh-agent AUTHENTICATION, so a dial has to succeed because the
+    // host key is already KNOWN — not because the case accepted whatever
+    // key arrived, which is what every one of them did until 2026-09-25.
+    // Ten dial sites, counted in that pass: eight that expect a connection
+    // and two that expect an authentication failure
+    // (`agentAuthWrongKeyFailsAuth`, `agentAuthOnJumpHopWrongKeyFailsJumpAuth`);
+    // no accepting decider is left between this marker and the next one.
+    // A dial that now fails on the key itself fails the case loudly —
+    // `rejectedByUser` for an unrecorded key, `mismatch` for a changed one.
+    // Measured rather than assumed (2026-09-25): with the seeding taken back
+    // out of `agentAuthConnectsEd25519` alone — a bare `KnownHostsStore`
+    // under the refusing decider, the shape these cases had before —
+    // `MACSCP_ITEST=1 scripts/mutation-probe` came back
+    // `RESULT: RED — 1 test(s) ran, and the plant was caught by:
+    // macSCPCoreTests.CitadelFileSystemIntegrationTests/agentAuthConnectsEd25519()`.
+    // So the seed is what carries these dials now, not an accepting answer.
+    //
+    // The one case in this file that keeps a decider is `jumpConnectListsOverHop`,
+    // whose SUBJECT is the TOFU path (both hops unknown, the decider asked
+    // exactly twice, both keys learned); it answers only for the keys
+    // `rigHostKeyEntries()` read out of the containers, never `true`.
 
     /// `.agent` connects with an ed25519 identity: the agent holds the ONE
     /// key installed in `authorized_keys`, `connect()` lists it once and
@@ -1923,11 +1947,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-ed25519-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1958,11 +1983,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-rsa-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -1995,11 +2021,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-wrong-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         try await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.authenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
     }
@@ -2040,11 +2067,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-second-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -2073,11 +2101,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-jump-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -2117,11 +2146,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-jump-wrong-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         try await withAgentEnv(agent) {
             await #expect(throws: RemoteFSError.jumpAuthenticationFailed) {
                 _ = try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
     }
@@ -2142,11 +2172,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-ecdsa-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -2171,11 +2202,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-ecdsa-p384-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -2198,11 +2230,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-ecdsa-p521-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
@@ -2242,11 +2275,12 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-agent-passphrase-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await withAgentEnv(agent) {
             try await connectWithRetry {
                 try await CitadelFileSystem.connect(
-                    config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                    config: config, connectTimeout: .seconds(30), knownHosts: store,
+                    onUnknownHostKey: .refusing)
             }
         }
         defer { Task { await fs.disconnect() } }
