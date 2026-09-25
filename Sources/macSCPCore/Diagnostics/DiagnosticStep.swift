@@ -535,8 +535,12 @@ extension Duration {
             + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 
-    /// Seconds as a `Double`, for `DispatchQueue.asyncAfter` and
-    /// `URLRequest.timeoutInterval`.
+    /// Seconds as a `Double`, for the `DispatchTime` a deadline is computed
+    /// from (`DeadlineTimer.schedule(after:_:)`) and for the several
+    /// URL-loading timeouts — `URLRequest.timeoutInterval` and
+    /// `URLSessionConfiguration.timeoutIntervalForRequest` — that take one.
+    /// It named `DispatchQueue.asyncAfter` until 2026-09-25, when the
+    /// diagnostics deadline stopped being one.
     var seconds: Double {
         let components = self.components
         return Double(components.seconds)

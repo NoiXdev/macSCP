@@ -24,19 +24,34 @@ enum BlockingProbe {
         label: String, timeout: Duration, _ body: @escaping @Sendable () -> T
     ) async -> T? {
         let once = OneShot<T>()
-        // A work item rather than a bare closure so the timer can be called
-        // off when the work wins: an uncancelled `asyncAfter` block survives
-        // until its deadline, holding the `OneShot` it captured. Harmless at
-        // one timer per step, and there is no reason to leave a queue of them
-        // behind when cancelling is one line.
-        let expiry = DispatchWorkItem { once.deliver(nil) }
-        defer { expiry.cancel() }
+        // Armed BEFORE the work starts, and called off when the work wins:
+        // an uncalled-off deadline holds the `OneShot` it captured until it
+        // passes, and there is no reason to leave a set of them behind when
+        // cancelling is one line. Arming it first only makes the limit
+        // stricter — it counts from before the work is submitted, never from
+        // after — and an answer that arrives before the continuation exists
+        // is held by the `OneShot` rather than dropped.
+        //
+        // `DeadlineTimer`, NOT `DispatchQueue.global().asyncAfter`: the
+        // global queue draws from the kernel's constrained workqueue pool,
+        // and a deadline that needs a thread from a pool this process has
+        // already filled does not fire. The measurement, the alternatives
+        // weighed against it and what the thread costs are all in
+        // `DeadlineTimer`'s own doc comment.
+        let expiry = DeadlineTimer.shared.schedule(after: timeout) { once.deliver(nil) }
+        defer { DeadlineTimer.shared.cancel(expiry) }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
                 once.arm(continuation)
+                // The work's own queue is private and therefore OVERCOMMIT,
+                // which is why it starts where the global queue's timer did
+                // not: measured 2026-09-25 with 80 blocks parked on the
+                // global queue, a fresh queue's first block ran in
+                // 0.3–1.3 ms, in 4 of 4 runs. It is not unbounded —
+                // `kern.wq_max_threads` (512 here) bounds overcommit threads
+                // too — but reaching that takes hundreds of simultaneously
+                // blocked queues, and a diagnosis runs a handful.
                 DispatchQueue(label: label).async { once.deliver(body()) }
-                DispatchQueue.global().asyncAfter(
-                    deadline: .now() + timeout.seconds, execute: expiry)
             }
         } onCancel: {
             once.deliver(nil)
@@ -75,30 +90,32 @@ enum DetachedProbe {
         // the probe would run ON the diagnostics actor and serialize with the
         // very deadline that is supposed to bound it.
         let work = Task.detached { once.deliver(await body()) }
-        let expiry = DispatchWorkItem { once.deliver(nil) }
+        // A timer off the cooperative pool, NOT a `Task.sleep` on another
+        // task. A deadline that waits for a cooperative-pool thread before it
+        // can start counting is not a deadline: measured under the full suite
+        // (a saturated pool), a `Task.detached` sleep of 1 s let a 3 s probe
+        // run to completion, because the task carrying the sleep did not
+        // start until the pool had room.
+        //
+        // It was `DispatchQueue.global().asyncAfter` until 2026-09-25, with a
+        // comment claiming that pool "overcommits past the core count" and so
+        // fires on time at this scale. It does not overcommit: the global
+        // queues draw from the kernel's CONSTRAINED pool
+        // (`kern.wq_max_constrained_threads`, 64 on the development machine),
+        // and blocked callers hold those threads. Measured that day: with 80
+        // blocks parked on that pool a 0.3 s `asyncAfter` had not fired 5 s
+        // later, in 4 of 4 runs. `DeadlineTimer` fires on a thread of the
+        // process's own, which no pool can refuse it — the full measurement,
+        // the alternatives weighed against it and the cost are in its doc
+        // comment.
+        let expiry = DeadlineTimer.shared.schedule(after: timeout) { once.deliver(nil) }
         defer {
             work.cancel()
-            expiry.cancel()
+            DeadlineTimer.shared.cancel(expiry)
         }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
                 once.arm(continuation)
-                // A Dispatch timer, NOT a `Task.sleep` on another task. A
-                // deadline that waits for a cooperative-pool thread before it
-                // can start counting is not a deadline: measured under the
-                // full suite (a saturated pool), a `Task.detached` sleep of
-                // 1 s let a 3 s probe run to completion, because the task
-                // carrying the sleep did not start until the pool had room.
-                //
-                // Dispatch's global pool is separate from the cooperative one
-                // and overcommits past the core count, which is why it fires
-                // on time HERE — at three steps and a handful of addresses.
-                // That is a statement about this scale, not a property of
-                // Dispatch: the blocking probes in this same file occupy that
-                // pool through their own serial queues, and enough
-                // simultaneously blocked ones would delay this block too.
-                DispatchQueue.global().asyncAfter(
-                    deadline: .now() + timeout.seconds, execute: expiry)
             }
         } onCancel: {
             once.deliver(nil)

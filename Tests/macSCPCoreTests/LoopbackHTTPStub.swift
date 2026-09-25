@@ -212,12 +212,17 @@ final class LoopbackHTTPStub: @unchecked Sendable {
         // the TCP handshake into the backlog, so a client connects
         // successfully and then waits for a server that has not been given
         // a thread yet. This loop blocks in `accept` for the life of the
-        // stub, so it is exactly the kind of occupant CLAUDE.md's
-        // `DetachedProbe` note warns about — "enough simultaneously
-        // blocked ones would delay this block too" — and a three-core
-        // runner running the whole suite in parallel is where that stops
-        // being theoretical. A `Thread` is created by the kernel when it is
-        // started and queues behind nothing.
+        // stub, so it is exactly the kind of occupant that leaves the pool
+        // with nothing to give whatever is submitted behind it, and a
+        // three-core runner running the whole suite in parallel is where
+        // that stops being theoretical. A `Thread` is created by the kernel
+        // when it is started and queues behind nothing.
+        //
+        // `DetachedProbe` used to carry the note this sentence quoted, and
+        // reached the same conclusion for its deadline on 2026-09-25: the
+        // measurement is now in `DeadlineTimer`'s doc comment, and the
+        // deadline fires on a thread of the process's own for the reason
+        // this listener runs on one.
         //
         // `stop()` still ends it the same way: closing the listener makes
         // `accept` return -1 and the loop returns, which ends the thread.
