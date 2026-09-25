@@ -62,10 +62,16 @@ struct HTTPTransferCancelTests {
 
     // MARK: - S3's tree delete
 
-    /// The one S3 request outside a transfer that wraps its transport's
-    /// errors itself instead of going through the channel: the batch
-    /// `DeleteObjects` in `deleteTree`. Cancelled while that request is in
-    /// flight, the delete ends in a `CancellationError`.
+    /// `deleteTree`'s TRANSPORT cancellation path: the batch `DeleteObjects`
+    /// is in flight when the Cancel arrives, the transport ends it, and
+    /// `HTTPCancellation.cancellation(in:)` — reached through
+    /// `S3FileSystem.send(_:)` into `S3HTTPChannel.perform`, since `5ac23b60`
+    /// routed the batch delete there instead of mapping the error by hand —
+    /// turns it into a `CancellationError` rather than a lost connection.
+    ///
+    /// Its sibling below drives the OTHER path, the batch loop's own
+    /// `try Task.checkCancellation()`; between them the two ways a cancelled
+    /// tree delete can end are both pinned.
     @Test(arguments: [Failure.cancellationError, .urlCancelled])
     func aCancelledTreeDeleteEndsInACancellation(_ failure: Failure) async throws {
         let endpoint = ParkingTreeDeleteEndpoint(failure: failure)
@@ -79,6 +85,55 @@ struct HTTPTransferCancelTests {
         if case .failure(let error) = result { endedInACancellation = error is CancellationError }
         else { endedInACancellation = false }
         #expect(endedInACancellation, "\(result)")
+    }
+
+    /// `deleteTree`'s COOPERATIVE cancellation path: the check at the top of
+    /// the batch loop (`try Task.checkCancellation()`), which is what ends a
+    /// delete cancelled while no request is in flight — the window between
+    /// the prefix walk returning and the first `DeleteObjects` going out.
+    ///
+    /// Distinguished from the transport path by construction: this endpoint
+    /// never throws. It parks the first listing after the dial until the task
+    /// is cancelled and then answers it SUCCESSFULLY, so the walk returns
+    /// into an already cancelled task and the loop's own check is the only
+    /// thing left that can end the delete. Two readings prove that is what
+    /// happened — the batch `DeleteObjects` never went out at all, and both
+    /// listings did, so the delete got past `allObjectKeys` and into the loop.
+    ///
+    /// Sensitivity measured, not assumed (2026-09-25): with
+    /// `try Task.checkCancellation()` deleted from `deleteTree`'s batch loop,
+    /// `RESULT: RED — 2 test(s) ran, and the plant was caught by:
+    /// macSCPCoreTests.HTTPTransferCancelTests/aTreeDeleteCancelledBeforeItsFirstBatchEndsInACancellation()`
+    /// — and by that case ALONE: its transport-path sibling above ran under
+    /// the same plant and stayed green, which is the evidence that the two
+    /// cases pin two different paths rather than one twice.
+    @Test func aTreeDeleteCancelledBeforeItsFirstBatchEndsInACancellation() async throws {
+        let endpoint = ParkingListingTreeDeleteEndpoint()
+        let fs = try await S3FileSystem.connect(Case.s3Config, transport: endpoint)
+        endpoint.arm()
+        let run = Task { try await fs.deleteTree(at: "/dir") }
+        #expect(await endpoint.listingParked.wait() == .signalled, "no listing was ever parked")
+        run.cancel()
+
+        let result = await finishingResult(run)
+        let endedInACancellation: Bool
+        if case .failure(let error) = result { endedInACancellation = error is CancellationError }
+        else { endedInACancellation = false }
+        #expect(endedInACancellation, "\(result)")
+        #expect(endpoint.batchDeletesSent == 0, """
+            the batch delete went out \(endpoint.batchDeletesSent) time(s) — this case is \
+            about the loop's own cancellation check, and a request that went out would \
+            mean the transport path ended the delete instead.
+            """)
+        // The positive beside it: the two listings `deleteTree` makes before
+        // its first batch — `deleteLookup`'s and `allObjectKeys`' — both
+        // answered, so the loop really was entered. Counted 2026-09-25 by
+        // running this case; a third would mean the walk paged, which this
+        // endpoint's `IsTruncated=false` listing forbids.
+        #expect(endpoint.listingsAnswered == 2, """
+            \(endpoint.listingsAnswered) listing(s) answered, not 2 — the delete did not \
+            reach the batch loop, so nothing here measured the loop's own check.
+            """)
     }
 
     // MARK: - A cancelled URLError outside a cancelled task
@@ -336,6 +391,72 @@ final class ParkingTreeDeleteEndpoint: HTTPTransport, Sendable {
             arrived.signal()
             _ = await AsyncSignal().wait()
             throw failure.error
+        default:
+            return (Data(), Self.response(request, 500))
+        }
+    }
+
+    func sendStreaming(_ request: URLRequest) async throws
+        -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse)
+    {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+
+    private static func response(_ request: URLRequest, _ status: Int) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
+    }
+}
+
+/// The same one-object `dir/` as `ParkingTreeDeleteEndpoint`, but this one
+/// never throws. Once ARMED, the next listing parks until its task is
+/// cancelled and then answers successfully; every other request is answered
+/// at once. So a `deleteTree` cancelled here walks the prefix to the end and
+/// meets its own `try Task.checkCancellation()` at the top of the batch
+/// loop, with no transport error anywhere to explain the outcome instead.
+///
+/// Armed by the case rather than on construction, because
+/// `S3FileSystem.connect` makes a listing of its own (`fetchPage`, the
+/// bucket probe) before the case owns a file system at all: parking that one
+/// would park the dial, in a task the case has not started and cannot
+/// cancel. The counters below likewise count only what happens after arming,
+/// so the dial's listing is not one of them.
+final class ParkingListingTreeDeleteEndpoint: HTTPTransport, Sendable {
+    /// Raised once the armed listing has gone out and is parked.
+    let listingParked = AsyncSignal()
+    private let armed = Mutex(false)
+    private let firstArmedListing = Once()
+    private let listings = Mutex(0)
+    private let batchDeletes = Mutex(0)
+
+    var listingsAnswered: Int { listings.withLock { $0 } }
+    var batchDeletesSent: Int { batchDeletes.withLock { $0 } }
+
+    /// Begins parking and counting. Called once the dial has returned.
+    func arm() { armed.withLock { $0 = true } }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let isArmed = armed.withLock { $0 }
+        switch request.httpMethod {
+        case "GET":
+            if isArmed, firstArmedListing.isFirst() {
+                listingParked.signal()
+                _ = await AsyncSignal().wait()
+            }
+            let listing = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                <IsTruncated>false</IsTruncated>
+                <Contents><Key>dir/a.txt</Key><Size>1</Size></Contents>
+                </ListBucketResult>
+                """
+            if isArmed { listings.withLock { $0 += 1 } }
+            return (Data(listing.utf8), Self.response(request, 200))
+        case "HEAD":
+            return (Data(), Self.response(request, 404))
+        case "POST" where request.url?.query?.contains("delete") == true:
+            if isArmed { batchDeletes.withLock { $0 += 1 } }
+            return (Data(), Self.response(request, 200))
         default:
             return (Data(), Self.response(request, 500))
         }
