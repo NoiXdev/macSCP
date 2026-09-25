@@ -179,6 +179,51 @@ import Testing
         Row(
             label: "bucket list", error: RemoteFSError.bucketListEmpty, kind: .unknown,
             sentence: "the account has no buckets"),
+        // `StoredSessionConnectionError`, the arm that was missing until
+        // 2026-09-25: every one of these fell to `classify`'s `default:` and
+        // reached the log as "The operation couldn't be completed.
+        // (macSCPCore.StoredSessionConnectionError error N.)" — a case index
+        // (`docs/BACKLOG.md`, "A forwarding's `.secretRequired` renders as a
+        // case index in the diagnostic log"). The sentences are
+        // `StoredSessionConnectionError.sentence`'s, the one spelling
+        // `CLIErrorMapping` prefixes with "Error: " — so a row that goes red
+        // here is stderr churn as well as log churn.
+        //
+        // The kind stays `.unknown` for all six: a forwarding is refused by
+        // `TunnelCarriers.refusalError(for:)` as a typed `TunnelRefusal`
+        // before `StoredSessionConnectionConfig.build` is reached, and the
+        // one case a forwarding does reach — `.secretRequired` — routes to
+        // `TunnelState.needsConfirmation` (`TunnelRunner.needsAPerson`),
+        // which carries no payload at all.
+        Row(
+            label: "session uses a login set",
+            error: StoredSessionConnectionError.loginSetSessionsNotSupported, kind: .unknown,
+            sentence: "this session's credentials come from a login set, "
+                + "which the CLI does not resolve yet"),
+        Row(
+            label: "session uses a jump host",
+            error: StoredSessionConnectionError.jumpSessionsNotSupported, kind: .unknown,
+            sentence: "this session dials through a jump host, "
+                + "which the CLI does not resolve yet"),
+        Row(
+            label: "backend configuration missing",
+            error: StoredSessionConnectionError.missingBackendConfiguration(kind: .s3),
+            kind: .unknown, sentence: "the stored session is missing its S3 configuration"),
+        Row(
+            label: "secret required, two places checked",
+            error: StoredSessionConnectionError.secretRequired(
+                checked: [.keychain, .managedKeyPassphrase]),
+            kind: .unknown,
+            sentence: "no secret available "
+                + "(checked the keychain and the managed key's passphrase)"),
+        Row(
+            label: "secret required, no chain to name",
+            error: StoredSessionConnectionError.secretRequired(checked: []), kind: .unknown,
+            sentence: "no secret available"),
+        Row(
+            label: "incomplete configuration",
+            error: StoredSessionConnectionError.incompleteConfiguration(field: "Host"),
+            kind: .unknown, sentence: "the stored session's Host is missing or invalid"),
     ]
 
     @Test(arguments: rows)
@@ -348,6 +393,55 @@ import Testing
         let rendered = "\(kind) \(kind.sentence)"
         let leaks = rendered.contains(expected) || rendered.contains(presented)
         #expect(leaks == false)
+    }
+
+    /// One spelling for the two surfaces a `StoredSessionConnectionError`
+    /// reaches: the command line's stderr and the diagnostic log. The CLI's
+    /// line is its own "Error: " prefix in front of the SAME sentence, so
+    /// neither can be changed without the other following.
+    ///
+    /// Reached through `Self.rows` rather than a second list, so a case
+    /// added to `StoredSessionConnectionError` is covered by the row its
+    /// `sentence`'s exhaustive switch already forces someone to write.
+    @Test func theStoredSessionSentenceIsTheOneTheCommandLinePrints() {
+        let stored = Self.rows.compactMap { $0.error as? StoredSessionConnectionError }
+        // The positive beside the comparison: without it a filter that
+        // matched nothing would leave this passing on an empty list.
+        #expect(stored.count == 6)
+        for error in stored {
+            #expect(CLIErrorMapping.message(for: error) == "Error: \(DialSupport.reason(for: error))")
+        }
+    }
+
+    /// The row this closes, stated as the shape it had: `.secretRequired`
+    /// bridged to `NSError` reads "The operation couldn't be completed.
+    /// (macSCPCore.StoredSessionConnectionError error 3.)" — the enum's
+    /// fourth case by declaration order, as an index. The positive beside
+    /// the negative is the sentence itself; the negative is that neither
+    /// the bridge's shape nor the case's own spelling survives into the log.
+    @Test func theSecretRequiredSentenceIsNotACaseIndex() {
+        let error = StoredSessionConnectionError.secretRequired(checked: [.keychain])
+        let sentence = DialSupport.reason(for: error)
+        let bridged = (error as NSError).localizedDescription
+        let isTheBridgedIndex = sentence == bridged
+        let namesTheCase = sentence.contains("secretRequired")
+        #expect(sentence == "no secret available (checked the keychain)")
+        #expect(isTheBridgedIndex == false)
+        #expect(namesTheCase == false)
+    }
+
+    /// `checked` names PLACES, never what was found in them — and it can
+    /// hold nothing else: `SecretSourceKind` is a payload-free enum, so the
+    /// cause is structurally unable to carry a value, a path or an
+    /// environment variable's name. What this pins is the rendering of the
+    /// WHOLE chain, every place `SecretSourceKind.allCases` holds: a case
+    /// added there reaches this sentence, and it must arrive as a place.
+    @Test func theSecretRequiredSentenceNamesPlacesAndNothingElse() {
+        let error = StoredSessionConnectionError.secretRequired(
+            checked: SecretSourceKind.allCases)
+        #expect(
+            DialSupport.reason(for: error) == "no secret available (checked --password-command, "
+                + "the environment, the keychain, and the managed key's passphrase)")
     }
 }
 

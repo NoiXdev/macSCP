@@ -386,7 +386,7 @@ struct ErrorNotificationTests {
         view.notifyTransferFailures()
 
         let status = tab.transferQueue.items.first { $0.id == itemID }?.status
-        #expect(status == .failed(CoreL10n.string("core.transfer.connectionLost")))
+        #expect(status == .failed(.connectionLost))
         #expect(tab.transferQueue.totalFailureCount == 1)
         #expect(poster.posted.map(\.title) == [Self.title(.connectionLost)])
     }

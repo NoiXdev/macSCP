@@ -404,10 +404,55 @@ struct CLIErrorMappingTests {
             }
             allowed.insert(next)
         }
+        // The arms that return the error's own `sentence` — this
+        // repository's text, not a foreign error's description. Allowed by
+        // TYPE like the two above, and held to the same two positives: the
+        // arm must still be there and must still read `.sentence`, AND the
+        // type must still DECLARE `sentence` in `Sources/`. The second is
+        // what keeps this from being an allowance for the spelling rather
+        // than for the property: a `sentence` that moved onto a foreign
+        // error, or vanished, fails here instead of quietly widening what
+        // may reach stderr.
+        for type in Self.sentenceCarrying {
+            let arm = "case let error as \(type.name):"
+            guard let index = lines.firstIndex(where: { $0.contains(arm) }) else {
+                Issue.record("the sentence-carrying arm `\(arm)` is gone — drop it from the list")
+                continue
+            }
+            let next = lines[(index + 1)...].first { !$0.allSatisfy(\.isWhitespace) }
+            guard let next, next.contains("error.sentence") else {
+                Issue.record("`\(arm)` no longer returns the error's own sentence — drop it")
+                continue
+            }
+            let declaringSource = try SourceCorpus.commentFree(of: type.declaredIn)
+            #expect(
+                declaringSource.contains("public var sentence: String"),
+                "\(type.name) no longer declares its own `sentence` in \(type.declaredIn.lastPathComponent)"
+            )
+            allowed.insert(next)
+        }
         var found = TransferErrorSecrecyTests.violations(in: body).filter { !allowed.contains($0) }
         found += lines.filter { $0.contains("\\(reason") }
         #expect(found.isEmpty, "\(found)")
     }
+
+    /// One error type whose arm is allowed to interpolate `error` because
+    /// what it interpolates is the error's own `sentence`, written and
+    /// reviewed here — `StoredSessionConnectionError.sentence`, the single
+    /// spelling the diagnostic log's `reason=` reads too
+    /// (`DialSupport.classify`).
+    struct SentenceCarrier {
+        let name: String
+        let declaredIn: URL
+    }
+
+    static let sentenceCarrying = [
+        SentenceCarrier(
+            name: String(describing: StoredSessionConnectionError.self),
+            declaredIn: SourceCorpus.url(of: .sources)
+                .appendingPathComponent("macSCPCore/Connection/StoredSessionConnectionConfig.swift")
+        )
+    ]
 
     static let declaration = "public static func message(for error: Error) -> String"
     static let allowlisted = [

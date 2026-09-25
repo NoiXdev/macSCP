@@ -143,15 +143,20 @@ public enum DialSupport {
     /// host keys — in the row this file documents
     /// as the answer to "why does this not connect", and for the four
     /// commonest SSH dial failures. Every enum arm below is an exhaustive
-    /// `switch` with no `default` — re-counted 2026-09-17: SEVEN of them, over
-    /// `HostKeyError`, `TunnelFailure`, `TunnelRefusal`, `SSHKeyError`,
-    /// `AgentError`, `SFTPStartError` and `RemoteFSError` (four until the
-    /// port-forwarding plan's Task 5 added `TunnelFailure`, five until the
-    /// technical-backlog plan's Task 6 added `TunnelRefusal`, six until the
-    /// next-build plan's Task 1 added `SFTPStartError`) — so a case added to
-    /// any of the seven fails to compile here until someone writes its
-    /// sentence and names its kind. `KeychainError`, a struct with no cases, is the one arm that
-    /// is not a switch.
+    /// `switch` with no `default` — re-counted 2026-09-25: SEVEN of them
+    /// written here, over `HostKeyError`, `TunnelFailure`, `TunnelRefusal`,
+    /// `SSHKeyError`, `AgentError`, `SFTPStartError` and `RemoteFSError`
+    /// (four until the port-forwarding plan's Task 5 added `TunnelFailure`,
+    /// five until the technical-backlog plan's Task 6 added `TunnelRefusal`,
+    /// six until the next-build plan's Task 1 added `SFTPStartError`) — so a
+    /// case added to any of the seven fails to compile here until someone
+    /// writes its sentence and names its kind. An EIGHTH enum,
+    /// `StoredSessionConnectionError`, is switched over exhaustively too,
+    /// but in its own file: its arm reads
+    /// `StoredSessionConnectionError.sentence`, so the compiler asks for a
+    /// new case's sentence there instead, and the command line's stderr
+    /// (`CLIErrorMapping`) reads the same one. `KeychainError`, a struct
+    /// with no cases, is the one arm that is not a switch at all.
     ///
     /// `RemoteFSError` is spelled out too, and this comment used to argue
     /// the opposite — that every one of its cases carries strings this
@@ -325,6 +330,26 @@ public enum DialSupport {
             case .sessionMissing:
                 return known(.sessionMissing)
             }
+        case let error as StoredSessionConnectionError:
+            // The refusals `StoredSessionConnectionConfig.build` raises when a
+            // stored session cannot be turned into a runtime config. The
+            // sentence is the error's OWN
+            // (`StoredSessionConnectionError.sentence`), the same one
+            // `CLIErrorMapping` prints behind "Error: " — not a second
+            // spelling here — so the command line and the log describe one
+            // refusal.
+            //
+            // The kind is `.unknown` for every case, and deliberately, not
+            // for want of a better one. `TunnelConnection.connect` refuses a
+            // login set, a jump host and a non-SSH session as a typed
+            // `TunnelRefusal` BEFORE `build` is reached, so those three
+            // arrive at the arm above instead; and the one case a forwarding
+            // does reach, `.secretRequired`, routes to
+            // `TunnelState.needsConfirmation` (`TunnelRunner.needsAPerson`),
+            // a state with no payload for a kind to travel in. So no
+            // `TunnelFailureKind` case would ever be read — only this
+            // sentence is, which is exactly what the row asked for.
+            return (.unknown, error.sentence)
         case is KeychainError:
             // The status code is dropped: `KeychainError` has no
             // `LocalizedError` conformance, so the generic rendering was

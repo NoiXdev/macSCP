@@ -527,8 +527,7 @@ struct TransferQueueViewModelTests {
 
         try await done2.wait()
 
-        #expect(vm.items[0].status == .failed(
-            String(format: CoreL10n.string("core.transfer.notFound %@"), "/1.txt")))
+        #expect(vm.items[0].status == .failed(.notFound(path: "/1.txt")))
         #expect(vm.items[1].status == .finished)
         #expect(await destination.writtenData(at: "/ziel/2.txt") == content)
     }
@@ -578,8 +577,7 @@ struct TransferQueueViewModelTests {
                 source: source, sourcePath: "/a.txt",
                 destination: destination, destinationDirectory: "/ziel")
         }
-        #expect(vm.items[0].status == .failed(
-            String(format: CoreL10n.string("core.transfer.notFound %@"), "/a.txt")))
+        #expect(vm.items[0].status == .failed(.notFound(path: "/a.txt")))
     }
 
     // MARK: - 7
@@ -684,10 +682,9 @@ struct TransferQueueViewModelTests {
 
         await vm.cancelAll(reason: .connectionLost)
 
-        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
         #expect(vm.items.count == 2)                                  // nothing discarded
-        #expect(vm.items[0].status == .failed(expectedReason))        // was running
-        #expect(vm.items[1].status == .failed(expectedReason))        // was queued, now marked
+        #expect(vm.items[0].status == .failed(.connectionLost))       // was running
+        #expect(vm.items[1].status == .failed(.connectionLost))       // was queued, now marked
         await waitTask.value
         #expect(waiterThrew.value == 1)                                // waiter still throws
         #expect(vm.isActive == false)
@@ -2156,11 +2153,11 @@ struct TransferQueueViewModelTests {
         vm.retryInterrupted(source: local2, destination: remote2)
         await waitUntil { if case .failed = vm.items[0].status { return true }; return false }
 
-        guard case .failed(let message) = vm.items[0].status else {
+        guard case .failed(let cause) = vm.items[0].status else {
             Issue.record("the retry should have failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        let namesTheChangedSource = message.contains(QueueTestFS.sourceChangedReason)
+        let namesTheChangedSource = cause.message.contains(QueueTestFS.sourceChangedReason)
         #expect(namesTheChangedSource)
 
         // The partial file is untouched: no write of any kind reached it, and
@@ -2260,11 +2257,11 @@ struct TransferQueueViewModelTests {
         vm.retryInterrupted(source: local3, destination: remote3)
         await waitUntil { if case .failed = vm.items[0].status { return true }; return false }
 
-        guard case .failed(let message) = vm.items[0].status else {
+        guard case .failed(let cause) = vm.items[0].status else {
             Issue.record("retry 3 should have failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        let namesTheChangedSource = message.contains(QueueTestFS.sourceChangedReason)
+        let namesTheChangedSource = cause.message.contains(QueueTestFS.sourceChangedReason)
         #expect(namesTheChangedSource)
         #expect(await remote3.writtenData(at: "/ziel/a.txt") == partialBefore)
         #expect(await remote3.writeModes["/ziel/a.txt"] == nil)
@@ -3158,11 +3155,11 @@ struct TransferQueueViewModelTests {
         await waitUntil {
             if case .failed = vm.items[0].status { return true }; return false
         }
-        guard case .failed(let message) = vm.items[0].status else {
+        guard case .failed(let cause) = vm.items[0].status else {
             Issue.record("edit-upload should be .failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        #expect(message == CoreL10n.string("core.transfer.interrupted"))
+        #expect(cause == .interrupted)
         #expect(vm.items[0].status != .interrupted)
         #expect(vm.hasInterrupted == false)
 
@@ -3512,11 +3509,11 @@ struct TransferQueueViewModelTests {
         await waitUntil {
             if case .failed = vm.items[0].status { return true }; return false
         }
-        guard case .failed(let message) = vm.items[0].status else {
+        guard case .failed(let cause) = vm.items[0].status else {
             Issue.record("cross-session job should be .failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        #expect(message == CoreL10n.string("core.transfer.interrupted"))
+        #expect(cause == .interrupted)
         #expect(vm.items[0].status != .interrupted)
         #expect(vm.hasInterrupted == false)
     }
@@ -3791,7 +3788,7 @@ struct TransferQueueViewModelTests {
         let progress = TransferProgress(bytesTransferred: 1, totalBytes: 2)
         let cancellable: [TransferQueueViewModel.Item.Status] = [.queued, .running(progress)]
         let notCancellable: [TransferQueueViewModel.Item.Status] =
-            [.finished, .failed("nope"), .cancelled, .skipped, .interrupted]
+            [.finished, .failed(.unknown(detail: "nope")), .cancelled, .skipped, .interrupted]
         for status in cancellable {
             #expect(status.isCancellable, "\(status) is still open work and must offer a cancel")
         }

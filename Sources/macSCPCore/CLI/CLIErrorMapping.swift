@@ -181,46 +181,6 @@ public enum CLIErrorMapping {
         }
     }
 
-    /// The "no secret available" sentence for `.secretRequired(checked:)`.
-    /// `checked` is the exact set of places this invocation's chain walked
-    /// (`SecretSourceKind`, `CLISecretSources.swift`), in the order it
-    /// walked them — this only renders that list, it never adds to or
-    /// trims it. An empty `checked` means the caller had no chain to name
-    /// at all (see `StoredSessionConnectionConfig.build`'s doc comment);
-    /// the parenthetical is left off entirely rather than naming zero
-    /// places or guessing at all four, either of which would claim
-    /// something that did not happen.
-    private static func secretRequiredMessage(checked: [SecretSourceKind]) -> String {
-        guard !checked.isEmpty else { return "Error: no secret available" }
-        let places = checked.map(Self.placeName(for:))
-        return "Error: no secret available (checked \(Self.englishList(places)))"
-    }
-
-    /// The fixed English name for one link — never a value, a path, or an
-    /// environment variable's name (that is exactly what `SecretSourceKind`
-    /// exists to keep out of reach here: it carries no such thing to name).
-    private static func placeName(for kind: SecretSourceKind) -> String {
-        switch kind {
-        case .passwordCommand: return "--password-command"
-        case .environment: return "the environment"
-        case .keychain: return "the keychain"
-        case .managedKeyPassphrase: return "the managed key's passphrase"
-        }
-    }
-
-    /// Oxford-comma English list — "a", "a and b", "a, b, and c" — the shape
-    /// the fixed three- and four-link sentences already used, generalized to
-    /// however many `items` `secretRequiredMessage` actually has (one to
-    /// four; never called with zero, which is handled before this).
-    private static func englishList(_ items: [String]) -> String {
-        switch items.count {
-        case 0: return ""
-        case 1: return items[0]
-        case 2: return "\(items[0]) and \(items[1])"
-        default: return "\(items.dropLast().joined(separator: ", ")), and \(items.last!)"
-        }
-    }
-
     /// A readable line for stderr. `ExitCode`'s own message is empty by
     /// design (see the CLI's `main()` override), so without this the user
     /// would see nothing at all rather than a bare case name — this is
@@ -280,46 +240,27 @@ public enum CLIErrorMapping {
                     + "(pass --accept-new to trust new hosts, or confirm interactively)"
             }
         case let error as StoredSessionConnectionError:
-            switch error {
-            case .loginSetSessionsNotSupported:
-                return "Error: this session's credentials come from a login set, "
-                    + "which the CLI does not resolve yet"
-            case .jumpSessionsNotSupported:
-                return "Error: this session dials through a jump host, "
-                    + "which the CLI does not resolve yet"
-            case .missingBackendConfiguration(let kind):
-                // Names the protocol exactly as the two per-protocol messages
-                // this replaced did (M22/T10) — the descriptor's badge label
-                // is the one English name each backend already carries.
-                return "Error: the stored session is missing its "
-                    + "\(BackendDescriptor.descriptor(for: kind).badgeLabelDefault) configuration"
-            case .secretRequired(let checked):
-                // `checked` names exactly which of the chain's four possible
-                // links (`SecretSourceKind`, `CLISecretSources.swift`) THIS
-                // invocation actually walked, in the order it walked them.
-                // Since fix round 2 this mapping does no deriving at all:
-                // `checked` is `StoredSessionConnectionConfig.build(for:
-                // secret:checkedSources:)`'s own argument, passed straight
-                // through from `.secretRequired(checked:)`'s payload — and
-                // THAT argument is tagged by the chain builder itself
-                // (`secretSources(...)`/`TunnelSecretSources.chain(...)`,
-                // `SecretChain`) at the moment each link is appended, not
-                // reconstructed anywhere downstream by switching on a
-                // source's type. So this names only what ran: a session with
-                // no `--password-command` and no private key does not hear
-                // that either was checked, and a run where all four ran
-                // still hears all four — never fewer than were searched,
-                // never a place that was not. `checked` is empty only when a
-                // caller passed `checkedSources: []` explicitly to `build`
-                // (no default since fix round 2 — every call site states its
-                // answer); `secretRequiredMessage` renders that by omitting
-                // the parenthetical rather than naming zero places or
-                // falling back to all four, since either would claim a place
-                // was tried that was not.
-                return Self.secretRequiredMessage(checked: checked)
-            case .incompleteConfiguration(let field):
-                return "Error: the stored session's \(field) is missing or invalid"
-            }
+            // One spelling, not a second one: the sentence lives on the
+            // error (`StoredSessionConnectionError.sentence`) so the
+            // diagnostic log's `reason=` and this line cannot say different
+            // things about the same refusal. Until 2026-09-25 this switch
+            // was the only place it existed, and the log wrote a case index
+            // instead. The "Error: " prefix is this file's own, as on every
+            // other arm.
+            //
+            // `.secretRequired(checked:)`'s parenthetical names exactly
+            // which of the chain's four possible links (`SecretSourceKind`,
+            // `CLISecretSources.swift`) THIS invocation actually walked, in
+            // the order it walked them; the payload is
+            // `StoredSessionConnectionConfig.build(for:secret:
+            // checkedSources:)`'s own argument, tagged by the chain builder
+            // (`secretSources(...)`/`TunnelSecretSources.chain(...)`,
+            // `SecretChain`) as each link was appended. So the sentence
+            // names only what ran — never fewer places than were searched,
+            // never a place that was not — and an empty `checked` drops the
+            // parenthetical rather than naming zero places or guessing at
+            // all four.
+            return "Error: \(error.sentence)"
         case let error as TunnelStoreError:
             switch error {
             case .unreadable(let path):

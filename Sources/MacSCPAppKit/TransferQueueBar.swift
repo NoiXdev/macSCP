@@ -248,7 +248,12 @@ struct TransferQueueBar: View {
             case .finished:
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(tint(for: item.direction))
-            case .failed(let message):
+            case .failed(let cause):
+                // The status carries the typed cause since 2026-09-25; the
+                // row still shows Core's own sentence for it, unchanged.
+                // Task 6 of the answered-decisions plan is what maps the
+                // cause through `L10n` instead.
+                let message = cause.message
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)

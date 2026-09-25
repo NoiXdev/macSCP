@@ -133,6 +133,9 @@ struct TransferErrorSecrecyTests {
         let source = try SourceCorpus.commentFree(of: Self.root.appendingPathComponent(
             "Sources/macSCPCore/Presentation/TransferQueueViewModel.swift"))
         #expect(source.contains(Self.mappingDeclaration), "the mapping moved — rename?")
+        #expect(
+            source.contains(Self.causeDeclaration),
+            "the cause mapping moved — rename? it is where the filtering lives since 2026-09-25")
         #expect(source.contains(Self.filter), "the mapping no longer filters its details")
         let found = Self.violations(in: source)
         #expect(found.isEmpty, "\(found)")
@@ -151,6 +154,14 @@ struct TransferErrorSecrecyTests {
     }
 
     static let mappingDeclaration = "static func message(for error: Error) -> String"
+    /// The second positive beside the negatives: since 2026-09-25 the
+    /// rendering is one line (`failureKind(for: error).message`) and the
+    /// switch that touches a backend's free text — the one the filter has to
+    /// run in — is this one. Without naming it, a guard that only required
+    /// `message(for:)` would go on passing over a `failureKind(for:)` that
+    /// had quietly dropped the filter.
+    static let causeDeclaration =
+        "static func failureKind(for error: Error) -> TransferFailureKind"
     static let filter = "URLText.withoutUserinfo("
 
     /// Every raw rendering of an error in `source`: a description, an

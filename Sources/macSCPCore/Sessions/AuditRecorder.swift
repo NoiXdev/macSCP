@@ -91,7 +91,8 @@ public struct AuditRecorder: Sendable {
     ///   detail names `targetTitle` (or "unknown session" if the target tab
     ///   is already gone)
     /// - `.finished` (plain) → `.transferFinished`
-    /// - `.failed(message)` → `.transferFailed`, `isError: true`
+    /// - `.failed(cause)` → `.transferFailed`, `isError: true`, the cause's own
+    ///   sentence as `errorMessage`
     /// - `.cancelled` → `.transferCancelled`
     /// - `.queued`/`.running`/`.skipped`/`.interrupted` → no event; this is
     ///   the queue's single terminal-transition sink, so a plain `.skipped`/
@@ -128,9 +129,16 @@ public struct AuditRecorder: Sendable {
             } else {
                 store.append(AuditEvent(kind: .transferFinished, detail: baseDetail), for: sessionID)
             }
-        case .failed(let message):
+        case .failed(let cause):
+            // The status carries the CAUSE since 2026-09-25; the audit line
+            // keeps the sentence it always wrote, rendered from that cause
+            // (`TransferFailureKind.message`) rather than passed in
+            // pre-rendered. The text is unchanged, composition for
+            // composition.
             store.append(
-                AuditEvent(kind: .transferFailed, detail: baseDetail, isError: true, errorMessage: message),
+                AuditEvent(
+                    kind: .transferFailed, detail: baseDetail, isError: true,
+                    errorMessage: cause.message),
                 for: sessionID)
         case .cancelled:
             store.append(AuditEvent(kind: .transferCancelled, detail: baseDetail), for: sessionID)

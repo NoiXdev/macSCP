@@ -187,9 +187,8 @@ struct LivenessGiveUpOrderingTests {
         await view.handleLivenessGiveUp(tab)
 
         let item = tab.transferQueue.items.first { $0.id == itemID }
-        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
-        #expect(item?.status == .failed(expectedReason), """
-            expected the queued item to read .failed("\(expectedReason)") after a liveness \
+        #expect(item?.status == .failed(.connectionLost), """
+            expected the queued item to read .failed(.connectionLost) after a liveness \
             give-up, found \(String(describing: item?.status)) instead — \
             handleLivenessGiveUp(_:) must pass .connectionLost to teardown(_:reason:), not \
             .userRequested.
@@ -261,10 +260,9 @@ struct LivenessGiveUpOrderingTests {
             instead of reading as a connection loss.
             """)
         let item = tab.transferQueue.items.first { $0.id == itemID }
-        let expectedReason = CoreL10n.string("core.transfer.connectionLost")
-        #expect(item?.status == .failed(expectedReason), """
+        #expect(item?.status == .failed(.connectionLost), """
             the check above only means something if there was a real item for the sweep to \
-            find: expected .failed("\(expectedReason)"), found \
+            find: expected .failed(.connectionLost), found \
             \(String(describing: item?.status)).
             """)
     }

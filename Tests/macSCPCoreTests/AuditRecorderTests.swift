@@ -118,13 +118,19 @@ struct AuditRecorderTests {
         let sessionID = UUID()
         let recorder = AuditRecorder(sessionID: sessionID, store: store)
 
-        recorder.recordTransfer(makeItem(status: .failed("boom")), targetTitle: nil)
+        recorder.recordTransfer(
+            makeItem(status: .failed(.notFound(path: "/boom.txt"))), targetTitle: nil)
 
         let events = store.events(for: sessionID)
         #expect(events.count == 1)
         #expect(events[0].kind == .transferFailed)
         #expect(events[0].isError == true)
-        #expect(events[0].errorMessage == "boom")
+        // The audit line carries the CAUSE's own sentence — the status has
+        // held a typed cause since 2026-09-25, and the recorder renders it
+        // rather than being handed pre-rendered text.
+        #expect(
+            events[0].errorMessage
+                == String(format: CoreL10n.string("core.transfer.notFound %@"), "/boom.txt"))
     }
 
     @Test func cancelledRecordsTransferCancelled() {

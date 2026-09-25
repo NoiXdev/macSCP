@@ -54,6 +54,91 @@ public enum StoredSessionConnectionError: Error, Equatable, Sendable {
     case incompleteConfiguration(field: String)
 }
 
+extension StoredSessionConnectionError {
+    /// What this refusal IS, as one English sentence — the single spelling
+    /// two surfaces read.
+    ///
+    /// `CLIErrorMapping.message(for:)` prints it behind its own "Error: "
+    /// prefix on stderr, and `DialSupport.reason(for:)` writes it into the
+    /// diagnostic log's `reason=`. It lived only in `CLIErrorMapping` until
+    /// 2026-09-25, which is why the log had nothing: `DialSupport.classify`
+    /// had no arm for this type at all, so every case fell to its `default:`
+    /// and bridged to `NSError` as "The operation couldn't be completed.
+    /// (macSCPCore.StoredSessionConnectionError error N.)" — the case's
+    /// declaration index, in the one artifact a user pastes into a bug
+    /// report (`docs/BACKLOG.md`, "A forwarding's `.secretRequired` renders
+    /// as a case index in the diagnostic log").
+    ///
+    /// English, like every sentence the log and the CLI produce: the App
+    /// translates the typed value, never this text.
+    ///
+    /// **What reaches it**: a connection kind, a field's English LABEL, and
+    /// the names of the places a secret was looked for. Never a secret,
+    /// never a path, never an environment variable's name — each case's own
+    /// doc comment above says why its payload is safe, and
+    /// `SecretSourceKind` is payload-free, so `.secretRequired` could not
+    /// carry a value even if a caller tried.
+    public var sentence: String {
+        switch self {
+        case .loginSetSessionsNotSupported:
+            return "this session's credentials come from a login set, "
+                + "which the CLI does not resolve yet"
+        case .jumpSessionsNotSupported:
+            return "this session dials through a jump host, "
+                + "which the CLI does not resolve yet"
+        case .missingBackendConfiguration(let kind):
+            // Names the protocol exactly as the two per-protocol messages
+            // this replaced did (M22/T10) — the descriptor's badge label
+            // is the one English name each backend already carries.
+            return "the stored session is missing its "
+                + "\(BackendDescriptor.descriptor(for: kind).badgeLabelDefault) configuration"
+        case .secretRequired(let checked):
+            return Self.secretRequiredSentence(checked: checked)
+        case .incompleteConfiguration(let field):
+            return "the stored session's \(field) is missing or invalid"
+        }
+    }
+
+    /// The "no secret available" sentence for `.secretRequired(checked:)`.
+    /// `checked` is the exact set of places this invocation's chain walked
+    /// (`SecretSourceKind`, `CLISecretSources.swift`), in the order it
+    /// walked them — this only renders that list, it never adds to or
+    /// trims it. An empty `checked` means the caller had no chain to name
+    /// at all (see `StoredSessionConnectionConfig.build`'s doc comment);
+    /// the parenthetical is left off entirely rather than naming zero
+    /// places or guessing at all four, either of which would claim
+    /// something that did not happen.
+    private static func secretRequiredSentence(checked: [SecretSourceKind]) -> String {
+        guard !checked.isEmpty else { return "no secret available" }
+        return "no secret available (checked \(Self.englishList(checked.map(Self.placeName(for:)))))"
+    }
+
+    /// The fixed English name for one link — never a value, a path, or an
+    /// environment variable's name (that is exactly what `SecretSourceKind`
+    /// exists to keep out of reach here: it carries no such thing to name).
+    private static func placeName(for kind: SecretSourceKind) -> String {
+        switch kind {
+        case .passwordCommand: return "--password-command"
+        case .environment: return "the environment"
+        case .keychain: return "the keychain"
+        case .managedKeyPassphrase: return "the managed key's passphrase"
+        }
+    }
+
+    /// Oxford-comma English list — "a", "a and b", "a, b, and c" — the shape
+    /// the fixed three- and four-link sentences already used, generalized to
+    /// however many `items` `secretRequiredSentence` actually has (one to
+    /// four; never called with zero, which is handled before this).
+    private static func englishList(_ items: [String]) -> String {
+        switch items.count {
+        case 0: return ""
+        case 1: return items[0]
+        case 2: return "\(items[0]) and \(items[1])"
+        default: return "\(items.dropLast().joined(separator: ", ")), and \(items.last!)"
+        }
+    }
+}
+
 /// Builds the RUNTIME `ConnectionConfig` for a stored session — the CLI's
 /// analogue of what `ConnectionViewModel.connect()` builds from its form
 /// fields, minus the UI state (M20). Lives in Core rather than the CLI

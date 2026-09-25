@@ -56,7 +56,7 @@ struct HTTPTransferCancelTests {
         // destination can, so it is kept as interrupted.
         let expected: TransferQueueViewModel.Item.Status =
             testCase.leg == .upload
-            ? .failed(CoreL10n.string("core.transfer.interrupted")) : .interrupted
+            ? .failed(.interrupted) : .interrupted
         #expect(queue.items.first?.status == expected)
     }
 

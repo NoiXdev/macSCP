@@ -86,7 +86,12 @@ public final class TransferQueueViewModel {
             case queued
             case running(TransferProgress)
             case finished
-            case failed(String)      // localized message
+            /// Carries the CAUSE, not its rendering (maintainer's answer,
+            /// 2026-09-24): the case and its data, so a reader can say it
+            /// in the user's language. `TransferFailureKind.message` is
+            /// the sentence Core renders from it, unchanged from what this
+            /// case used to hold pre-rendered.
+            case failed(TransferFailureKind)
             case cancelled
             case skipped             // conflict resolved via `.skip` ("skipped")
             case interrupted         // connection lost mid-transfer; resumable (M5d/T3)
@@ -361,7 +366,7 @@ public final class TransferQueueViewModel {
     ///
     /// Those items are `cancelAll(reason: .connectionLost)`'s: the queued and
     /// resolving ones it marks itself, and the running ones `process` marks
-    /// from `connectionLossReasons`. The drop is one event, and it already
+    /// from `connectionLossCauses`. The drop is one event, and it already
     /// raises its own "connection lost" notification; counting the transfers
     /// it swept as failures of their own would say it once per item as well.
     /// They still count in `totalFailureCount`, whose attention dot wants
@@ -472,7 +477,7 @@ public final class TransferQueueViewModel {
         case proceed(fileName: String)      // (possibly renamed) destination name
         case skip                            // item → .skipped, no write
         case cancel                          // item → .cancelled
-        case failed(message: String, error: Error)
+        case failed(cause: TransferFailureKind, error: Error)
     }
 
     private var jobs: [UUID: Job] = [:]
@@ -490,7 +495,7 @@ public final class TransferQueueViewModel {
     /// branch consumes (removes) an entry when it applies it, and
     /// `slotFinished` drops any leftover for a job that raced to `.finished`
     /// instead, so nothing here ever outlives the job it names.
-    private var connectionLossReasons: [UUID: String] = [:]
+    private var connectionLossCauses: [UUID: TransferFailureKind] = [:]
 
     /// A minimal FIFO gate serializing conflict-decider prompts across slots:
     /// at most one prompt is open at a time, and waiters are woken in arrival
@@ -773,9 +778,11 @@ public final class TransferQueueViewModel {
     /// the seam for a drop rather than a deliberate cancel: with
     /// `.connectionLost`, every item this call would otherwise mark
     /// `.cancelled` — the running transfer AND every queued/resolving item
-    /// — becomes `.failed(reason)` instead, with the localized text
-    /// resolved from `CoreL10n` here (never passed in from the App layer,
-    /// which cannot see `CoreL10n` — it is internal to this module). A drop
+    /// — becomes `.failed(.connectionLost)` instead. Since 2026-09-25 that
+    /// is the CAUSE, not a sentence: the status carries the case and
+    /// `TransferFailureKind.message` resolves the text from `CoreL10n`
+    /// wherever it is shown (never passed in from the App layer, which
+    /// cannot see `CoreL10n` — it is internal to this module). A drop
     /// is not something the user chose, so it must not read the same as a
     /// deliberate cancel; and unlike `.interrupted`, no job is retained for
     /// either kind of item — a later retry re-enqueues fresh, through the
@@ -794,7 +801,7 @@ public final class TransferQueueViewModel {
     /// The running transfer is marked ONLY at the SAME choke point that
     /// already decides `.cancelled` vs `.finished` today — the
     /// `catch is CancellationError` branch in `process`, gated by
-    /// `connectionLossReasons` (populated below) — never by writing `items`
+    /// `connectionLossCauses` (populated below) — never by writing `items`
     /// directly from here. A transfer whose `copyFile` had already
     /// returned successfully by the time `task.cancel()` runs below still
     /// takes the success branch there and finishes normally; only an
@@ -805,8 +812,8 @@ public final class TransferQueueViewModel {
     /// they survive a teardown with their retained jobs intact — the queue
     /// outlives the session and a reconnect can still resume them.
     public func cancelAll(reason: CancelReason) async {
-        let connectionLostReason: String? =
-            reason == .connectionLost ? CoreL10n.string("core.transfer.connectionLost") : nil
+        let connectionLostCause: TransferFailureKind? =
+            reason == .connectionLost ? .connectionLost : nil
         // 0. Stop and await any running tree expansion(s) BEFORE clearing queued
         //    items — so no new items can appear from here on (M5b/T3).
         //    `finishExpansion(succeeded: false)` marks the groups as cancelled;
@@ -821,8 +828,8 @@ public final class TransferQueueViewModel {
         order.removeAll()
         for id in queued {
             setStatus(
-                id, connectionLostReason.map { .failed($0) } ?? .cancelled,
-                causedByConnectionLoss: connectionLostReason != nil)
+                id, connectionLostCause.map { .failed($0) } ?? .cancelled,
+                causedByConnectionLoss: connectionLostCause != nil)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
@@ -836,19 +843,19 @@ public final class TransferQueueViewModel {
         resolvingJobIDs.removeAll()
         for id in resolving {
             setStatus(
-                id, connectionLostReason.map { .failed($0) } ?? .cancelled,
-                causedByConnectionLoss: connectionLostReason != nil)
+                id, connectionLostCause.map { .failed($0) } ?? .cancelled,
+                causedByConnectionLoss: connectionLostCause != nil)
             jobs[id] = nil
             resumeWaiter(id, with: .failure(CancellationError()))
         }
         // 2. Cancel every active transfer — each copyFile ends with
         //    CancellationError (cooperative, T2); `process` marks its item
-        //    `.cancelled`, or `.failed(connectionLostReason)` when this call
-        //    was given one — `connectionLossReasons`, populated just below,
+        //    `.cancelled`, or `.failed(connectionLostCause)` when this call
+        //    was given one — `connectionLossCauses`, populated just below,
         //    is what tells `process` which of the two applies to a given id.
-        if let connectionLostReason {
+        if let connectionLostCause {
             for id in runningTransferTasks.keys {
-                connectionLossReasons[id] = connectionLostReason
+                connectionLossCauses[id] = connectionLostCause
             }
         }
         for task in runningTransferTasks.values { task.cancel() }
@@ -892,7 +899,7 @@ public final class TransferQueueViewModel {
     ///   CancellationError` branch is the single choke point that marks it
     ///   `.cancelled`, resumes the waiter and frees the slot — which is also
     ///   what lets a transfer whose `copyFile` had already returned finish
-    ///   normally instead of being retro-cancelled. `connectionLossReasons`
+    ///   normally instead of being retro-cancelled. `connectionLossCauses`
     ///   is deliberately not touched, so that branch lands on `.cancelled`
     ///   rather than on a "connection lost" failure: the person chose this.
     ///
@@ -1003,7 +1010,7 @@ public final class TransferQueueViewModel {
         // actually returning never visits the cancellation branch that
         // would otherwise consume this entry — drop it here instead so it
         // cannot outlive the job it named.
-        connectionLossReasons[jobID] = nil
+        connectionLossCauses[jobID] = nil
         kickWorker()
         if processTasks.isEmpty && order.isEmpty {
             queueRule = nil
@@ -1065,8 +1072,8 @@ public final class TransferQueueViewModel {
             // behavior — only this item is cancelled.
             if let groupID { cancelGroup(groupID) }
             return
-        case .failed(let message, let error):
-            setStatus(jobID, .failed(message))
+        case .failed(let cause, let error):
+            setStatus(jobID, .failed(cause))
             jobs[jobID] = nil
             resumeWaiter(jobID, with: .failure(error))
             return
@@ -1181,13 +1188,13 @@ public final class TransferQueueViewModel {
         } catch is CancellationError {
             progressContinuation.finish()
             await consumer.value
-            // `connectionLossReasons` (connection-liveness plan, Task 8) is
+            // `connectionLossCauses` (connection-liveness plan, Task 8) is
             // populated ONLY by `cancelAll(reason: .connectionLost)`, for the
             // exact jobs THAT call force-cancelled — a plain user cancel
             // (`cancelAll(reason: .userRequested)`, or a tree `cancelGroup`)
             // never touches it, so those still land on `.cancelled` below.
-            if let reason = connectionLossReasons.removeValue(forKey: jobID) {
-                setStatus(jobID, .failed(reason), causedByConnectionLoss: true)
+            if let cause = connectionLossCauses.removeValue(forKey: jobID) {
+                setStatus(jobID, .failed(cause), causedByConnectionLoss: true)
             } else {
                 setStatus(jobID, .cancelled)
             }
@@ -1202,7 +1209,7 @@ public final class TransferQueueViewModel {
                 // deleted by `stopAll` on disconnect, so a later resume would
                 // visibly fail. Surface it as a plain failure instead; the
                 // next editor save enqueues a fresh upload anyway.
-                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                setStatus(jobID, .failed(.interrupted))
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
@@ -1217,7 +1224,7 @@ public final class TransferQueueViewModel {
                 // tab's path (and `resume: true` could even `.append` onto an
                 // unrelated same-named file there). Surface it as a plain
                 // failure instead, exactly like the edit-upload case above.
-                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                setStatus(jobID, .failed(.interrupted))
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
@@ -1226,7 +1233,7 @@ public final class TransferQueueViewModel {
                 // have to overwrite the whole object anyway, so a plain
                 // retry from scratch is equivalent — classify as `.failed`
                 // rather than offering a resume that can't actually resume.
-                setStatus(jobID, .failed(CoreL10n.string("core.transfer.interrupted")))
+                setStatus(jobID, .failed(.interrupted))
                 jobs[jobID] = nil
                 runningTransferTasks[jobID] = nil
                 resumeWaiter(jobID, with: .failure(error))
@@ -1260,7 +1267,7 @@ public final class TransferQueueViewModel {
         } catch {
             progressContinuation.finish()
             await consumer.value
-            setStatus(jobID, .failed(Self.message(for: error)))
+            setStatus(jobID, .failed(Self.failureKind(for: error)))
             jobs[jobID] = nil
             runningTransferTasks[jobID] = nil
             resumeWaiter(jobID, with: .failure(error))
@@ -1279,7 +1286,7 @@ public final class TransferQueueViewModel {
         } catch RemoteFSError.notFound {
             return .proceed(fileName: job.fileName)   // no conflict
         } catch {
-            return .failed(message: Self.message(for: error), error: error)
+            return .failed(cause: Self.failureKind(for: error), error: error)
         }
 
         // Destination exists → conflict. Determine the resolution.
@@ -1348,11 +1355,11 @@ public final class TransferQueueViewModel {
             } catch RemoteFSError.notFound {
                 return .proceed(fileName: candidate)  // free
             } catch {
-                return .failed(message: Self.message(for: error), error: error)
+                return .failed(cause: Self.failureKind(for: error), error: error)
             }
             counter += 1
         }
-        return .failed(message: CoreL10n.string("core.transfer.noFreeName"), error: NoFreeNameError())
+        return .failed(cause: .noFreeName, error: NoFreeNameError())
     }
 
     /// Splits a file name at the LAST dot into stem and extension (dot
@@ -1391,7 +1398,7 @@ public final class TransferQueueViewModel {
             // directory, not its destination.
             addTerminalItem(
                 group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
-                direction: direction, status: .failed(Self.message(for: error)),
+                direction: direction, status: .failed(Self.failureKind(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
                 destinationPath: destDir,
                 crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
@@ -1406,7 +1413,7 @@ public final class TransferQueueViewModel {
             try Task.checkCancellation()
             addTerminalItem(
                 group: groupID, name: directoryName + "/", sourcePath: sourceDirectory,
-                direction: direction, status: .failed(Self.message(for: error)),
+                direction: direction, status: .failed(Self.failureKind(for: error)),
                 destinationTabID: destinationTabID, destinationDirectory: destinationDirectory,
                 destinationPath: destDir,
                 crossRemote: crossRemote, crossBackendTarget: crossBackendTarget)
@@ -1565,47 +1572,72 @@ public final class TransferQueueViewModel {
 
     /// Public: the App layer reuses this mapping for editor-open failures (M6a).
     ///
+    /// Two steps since 2026-09-25, not one: `failureKind(for:)` decides WHAT
+    /// failed and `TransferFailureKind.message` says it. This is the second
+    /// half only, kept under its old name because the editor's banner and
+    /// the row both want a sentence; a caller that wants the case identity
+    /// — the App's, from Task 6 of the answered-decisions plan — reads the
+    /// kind off the status instead.
+    ///
     /// **No error's own description reaches a user through here** (fix
     /// round 1 of the 2026-09-19 small follow-ups, Task 1). An `NSError`'s
     /// description prints its whole `userInfo`, and a `URLSession` failure
     /// carries the failing URL there — userinfo included, so an endpoint
     /// typed as `https://KEY:SECRET@host` put its secret into the queue's
-    /// row, the audit log and the editor banner. So every text a backend or
-    /// Foundation composed — a `reason`, a localized sentence — goes through
-    /// `URLText.withoutUserinfo`, the filter the diagnostics report uses; a
-    /// foreign error is shown as its localized sentence, never described;
-    /// and a lost connection reads the fixed "Connection lost" sentence.
-    /// `TransferErrorSecrecyTests.noQueueMessagePathRendersARawError` scans
-    /// this file for a raw rendering.
+    /// row, the audit log and the editor banner. Every text a backend or
+    /// Foundation composed — a `reason`, a localized sentence — still goes
+    /// through `URLText.withoutUserinfo`, the filter the diagnostics report
+    /// uses, but now in `failureKind(for:)` one step earlier, so the VALUE a
+    /// reader holds is filtered rather than only the string it would have
+    /// printed; a foreign error is shown as its localized sentence, never
+    /// described; and a lost connection reads the fixed "Connection lost"
+    /// sentence. `TransferErrorSecrecyTests.noQueueMessagePathRendersARawError`
+    /// scans this file for a raw rendering, and names both declarations so
+    /// it cannot pass over a filter dropped from either.
     ///
     /// Paths are shown as they are: they are the transfer's own remote or
     /// local paths, which the row names anyway.
     public static func message(for error: Error) -> String {
+        failureKind(for: error).message
+    }
+
+    /// What a transfer's failure IS, for `Item.Status.failed`: the kind,
+    /// from the one switch `message(for:)` renders its sentence from, so the
+    /// row's status and the text beside it describe one failure.
+    ///
+    /// Every `detail` a case carries is filtered HERE, at the construction,
+    /// rather than at the rendering where the filter used to sit — see
+    /// `TransferFailureKind`'s own doc comment for why that move is the
+    /// point of the type. `RemoteFSError`'s two free-text `reason`s and a
+    /// foreign error's `localizedDescription` are the only three payloads
+    /// that are not this module's own text, and all three go through
+    /// `URLText.withoutUserinfo` before they reach a case.
+    ///
+    /// Paths are carried as they are: they are the transfer's own remote or
+    /// local paths, which the row names anyway.
+    public static func failureKind(for error: Error) -> TransferFailureKind {
         switch error {
         case RemoteFSError.notFound(let path):
-            return String(format: CoreL10n.string("core.transfer.notFound %@"), path)
+            return .notFound(path: path)
         case RemoteFSError.permissionDenied(let path):
-            return String(format: CoreL10n.string("core.error.permissionDenied %@"), path)
+            return .permissionDenied(path: path)
         case RemoteFSError.connectionFailed(let reason):
-            return String(
-                format: CoreL10n.string("core.error.connectionLost %@"),
-                URLText.withoutUserinfo(reason))
+            return .connectionFailed(detail: URLText.withoutUserinfo(reason))
         case RemoteFSError.protocolError(let reason):
-            return String(
-                format: CoreL10n.string("core.transfer.failed %@"), URLText.withoutUserinfo(reason))
+            return .protocolError(detail: URLText.withoutUserinfo(reason))
         // The cases the `default:` below used to print by name ("Transfer
         // failed: authenticationFailed"). Its replacement would print
         // Foundation's "The operation couldn't be completed" sentence for
         // them instead, so each gets the sentence the connect form already
         // has for it.
         case RemoteFSError.authenticationFailed:
-            return CoreL10n.string("core.connect.authFailed")
+            return .authenticationFailed
         case RemoteFSError.jumpAuthenticationFailed:
-            return CoreL10n.string("core.connect.jumpAuthFailed")
+            return .jumpAuthenticationFailed
         case RemoteFSError.bucketListForbidden:
-            return CoreL10n.string("core.connect.s3BucketListForbidden")
+            return .bucketListForbidden
         case RemoteFSError.bucketListEmpty:
-            return CoreL10n.string("core.connect.s3BucketListEmpty")
+            return .bucketListEmpty
         // The SECOND `message(for:)` this project has (Task 3 review, I-1).
         // A folder dropped onto an S3 bucket-list root makes
         // `TransferEngine` call `createDirectory("/name")`, which
@@ -1613,21 +1645,20 @@ public final class TransferQueueViewModel {
         // rendered the error's description, so without this arm the queue
         // showed the raw case. It reads exactly like the browser's arm in
         // `RemoteBrowserViewModel.message(for:path:)`, deliberately: a new
-        // `RemoteFSError` case needs an arm in both `message(for:)`s.
+        // `RemoteFSError` case needs an arm in both mappings.
         // Neither `default:` dumps any more (this one since fix round 1
         // above, the browser's since the plan's final review), but each
         // would read a generic sentence for a case it missed.
         case RemoteFSError.bucketLevelRefused(let operation, _):
-            return CoreL10n.string(operation.refusalMessageKey)
+            return .bucketLevelRefused(operation: operation)
         // The second arm the same lesson asks for: a new `RemoteFSError`
-        // case needs an arm in both view models called `message(for:)`.
+        // case needs an arm in both view models' mappings.
         case RemoteFSError.crossBucketRenameRefused:
-            return CoreL10n.string("core.connect.s3CrossBucketRename")
+            return .crossBucketRenameRefused
         default:
-            if isLostConnection(error) { return CoreL10n.string("core.transfer.connectionLost") }
-            return String(
-                format: CoreL10n.string("core.transfer.failed %@"),
-                URLText.withoutUserinfo((error as NSError).localizedDescription))
+            if isLostConnection(error) { return .connectionLost }
+            return .unknown(
+                detail: URLText.withoutUserinfo((error as NSError).localizedDescription))
         }
     }
 
