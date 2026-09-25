@@ -134,14 +134,38 @@ import Testing
         }
     }
 
-    /// Every kind renders a sentence, and `name` round-trips — reached
-    /// through `Name.allCases`, so a new kind is covered without an edit
-    /// here beyond the compiler's demand in `TransferFailureKindSamples`.
+    /// Every kind's `name` round-trips and its message is a CATALOGUE
+    /// sentence — reached through `Name.allCases`, so a new kind is covered
+    /// without an edit here beyond the compiler's demand in
+    /// `TransferFailureKindSamples`.
+    ///
+    /// This asked only `!kind.message.isEmpty` until the Task 5 review, and
+    /// that check could not fail: `CoreL10n.string` falls back to the KEY
+    /// text when the catalogue has no entry, and a key is never empty. The
+    /// reviewer probed it — `core.connect.s3BucketListEmpty` typo'd in
+    /// `TransferFailureKind.swift` left it green — and so did this
+    /// implementer, on the same probe, before rewriting it. What it asks
+    /// now is the two things the fallback hides: that the catalogue really
+    /// ANSWERS for the key (`resolved != key`), and that the kind's message
+    /// is that resolved string with the kind's own argument in it.
+    ///
+    /// The eleven pinning rows already catch a wrong key for the kinds they
+    /// reach. The three they do not reach are `.interrupted`, `.noFreeName`
+    /// and `.unknown`; of those the first two have their key pinned by
+    /// `theKindsTheQueueRaisesItselfRenderTheirOwnSentence` above, so
+    /// `.unknown` is the one kind whose key nothing pinned before this. The
+    /// catalogue-answers half is new for all fourteen: no row could ask it,
+    /// because a row compares one `CoreL10n.string` call against another and
+    /// both fall back together.
     @Test(arguments: TransferFailureKind.Name.allCases)
-    func everyKindHasANameAndASentence(_ name: TransferFailureKind.Name) {
+    func everyKindHasANameAndACatalogueSentence(_ name: TransferFailureKind.Name) {
         let kind = TransferFailureKindSamples.sample(name)
+        let (key, argument) = TransferFailureKindSamples.rendering(name)
+        let resolved = CoreL10n.string(key)
+        let catalogueAnswers = resolved != key
         #expect(kind.name == name)
-        #expect(!kind.message.isEmpty)
+        #expect(catalogueAnswers, "no catalogue entry for \(key) — CoreL10n fell back to the key")
+        #expect(kind.message == (argument.map { String(format: resolved, $0) } ?? resolved))
     }
 
     /// The rows reach every kind an ERROR can produce; the three the queue
@@ -154,25 +178,68 @@ import Testing
     }
 }
 
-/// One value per `TransferFailureKind.Name`, by an exhaustive switch: a name
-/// added to the enum does not compile here until it has a sample.
+/// One value per `TransferFailureKind.Name`, and what that value's message
+/// is MADE of — both by exhaustive switch, so a name added to the enum does
+/// not compile here until it has a sample and a rendering.
 enum TransferFailureKindSamples {
-    static func sample(_ name: TransferFailureKind.Name) -> TransferFailureKind {
+    /// The catalogue key each kind looks up, and the one argument it
+    /// interpolates into it (`nil` for a kind whose sentence takes none).
+    ///
+    /// A second spelling of what `TransferFailureKind.message` does, on
+    /// purpose: a guard that read the key back out of the implementation
+    /// would agree with it by construction. A key that drifts here is a
+    /// loud red in `everyKindHasANameAndACatalogueSentence`, never a silent
+    /// pass.
+    ///
+    /// `.bucketLevelRefused`'s key is DERIVED from the operation, as the
+    /// implementation derives it — a renamed case must carry its key with
+    /// it, and spelling the string here would be the one place that did not
+    /// follow.
+    static func rendering(
+        _ name: TransferFailureKind.Name
+    ) -> (key: String, argument: String?) {
         switch name {
-        case .notFound: return .notFound(path: "/srv/x")
-        case .permissionDenied: return .permissionDenied(path: "/srv/x")
-        case .connectionFailed: return .connectionFailed(detail: "the server hung up")
-        case .protocolError: return .protocolError(detail: "bad XML")
+        case .notFound: return ("core.transfer.notFound %@", "/srv/x")
+        case .permissionDenied: return ("core.error.permissionDenied %@", "/srv/x")
+        case .connectionFailed: return ("core.error.connectionLost %@", "the server hung up")
+        case .protocolError: return ("core.transfer.failed %@", "bad XML")
+        case .authenticationFailed: return ("core.connect.authFailed", nil)
+        case .jumpAuthenticationFailed: return ("core.connect.jumpAuthFailed", nil)
+        case .bucketListForbidden: return ("core.connect.s3BucketListForbidden", nil)
+        case .bucketListEmpty: return ("core.connect.s3BucketListEmpty", nil)
+        case .bucketLevelRefused:
+            return (Self.sampleOperation.refusalMessageKey, nil)
+        case .crossBucketRenameRefused: return ("core.connect.s3CrossBucketRename", nil)
+        case .connectionLost: return ("core.transfer.connectionLost", nil)
+        case .interrupted: return ("core.transfer.interrupted", nil)
+        case .noFreeName: return ("core.transfer.noFreeName", nil)
+        case .unknown: return ("core.transfer.failed %@", "something else")
+        }
+    }
+
+    /// The payload each sample carries comes from `rendering` above, so the
+    /// argument a kind is built with and the argument its message is
+    /// expected to interpolate are one value, not two that can drift.
+    static func sample(_ name: TransferFailureKind.Name) -> TransferFailureKind {
+        let argument = Self.rendering(name).argument ?? ""
+        switch name {
+        case .notFound: return .notFound(path: argument)
+        case .permissionDenied: return .permissionDenied(path: argument)
+        case .connectionFailed: return .connectionFailed(detail: argument)
+        case .protocolError: return .protocolError(detail: argument)
         case .authenticationFailed: return .authenticationFailed
         case .jumpAuthenticationFailed: return .jumpAuthenticationFailed
         case .bucketListForbidden: return .bucketListForbidden
         case .bucketListEmpty: return .bucketListEmpty
-        case .bucketLevelRefused: return .bucketLevelRefused(operation: .rename)
+        case .bucketLevelRefused: return .bucketLevelRefused(operation: Self.sampleOperation)
         case .crossBucketRenameRefused: return .crossBucketRenameRefused
         case .connectionLost: return .connectionLost
         case .interrupted: return .interrupted
         case .noFreeName: return .noFreeName
-        case .unknown: return .unknown(detail: "something else")
+        case .unknown: return .unknown(detail: argument)
         }
     }
+
+    /// One of `BucketLevelOperation`'s seven, for both switches above.
+    static let sampleOperation = RemoteFSError.BucketLevelOperation.rename
 }
