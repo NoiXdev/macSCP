@@ -93,6 +93,9 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         return entityTags[path]
     }
 
+    /// How often `statWithEntityTag(path:)` below was entered, per path.
+    private(set) var statWithEntityTagCallCounts: [String: Int] = [:]
+
     /// Overridden rather than left to the protocol's default composition,
     /// so that a WRAPPER's forwarding of this requirement is visible at all.
     /// The default composes `stat` and `entityTag`, and both of those reach
@@ -103,7 +106,6 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     /// every existing caller of this double, `entityTagCallCounts` included,
     /// reads exactly what it read before. The real overriders are the two
     /// HTTP backends, which read both halves off ONE response.
-    private(set) var statWithEntityTagCallCounts: [String: Int] = [:]
 
     func statWithEntityTag(
         path: String

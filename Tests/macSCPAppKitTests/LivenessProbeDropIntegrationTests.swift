@@ -861,15 +861,28 @@ private final class ValidatorRecordingFileSystem: RemoteFileSystem, @unchecked S
 /// `RESULT: RED — 2 test(s) ran`, naming this case and the gate's.
 @Suite("Liveness probe wrappers forward a validator")
 struct LivenessProbeWrapperForwardingTests {
+    /// Which wrapper a case measures. An enum rather than an index so a
+    /// red names the wrapper it happened to, instead of `(_: 1)` — and so
+    /// a third wrapper is one case added rather than a renumbering.
+    enum Wrapper: String, CaseIterable, CustomTestStringConvertible {
+        case probeTargetStatCounter, disconnectTimingProbe
+        var testDescription: String { rawValue }
+    }
+
     /// Both wrappers, built over the same recording file system, asked the
     /// three validator-carrying questions in turn.
-    @Test(arguments: [0, 1])
-    func aValidatorHandedToAWrapperReachesTheFileSystemBehindIt(_ which: Int) async throws {
+    @Test(arguments: Wrapper.allCases)
+    func aValidatorHandedToAWrapperReachesTheFileSystemBehindIt(
+        _ which: Wrapper
+    ) async throws {
         let inner = ValidatorRecordingFileSystem()
         let wrapper: any RemoteFileSystem =
-            which == 0
-            ? ProbeTargetStatCounter(wrapping: inner, countingStatsOf: "/unused")
-            : DisconnectTimingProbe(wrapping: inner)
+            switch which {
+            case .probeTargetStatCounter:
+                ProbeTargetStatCounter(wrapping: inner, countingStatsOf: "/unused")
+            case .disconnectTimingProbe:
+                DisconnectTimingProbe(wrapping: inner)
+            }
 
         let handed = "\"handed-in\""
         _ = try await wrapper.readStream(path: "/f", fromOffset: 7, ifMatching: handed)
