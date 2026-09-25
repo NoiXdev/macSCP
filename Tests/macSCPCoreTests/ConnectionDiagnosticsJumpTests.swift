@@ -624,35 +624,80 @@ struct ConnectionDiagnosticsJumpTests {
     ///
     /// A floor, not a ceiling (CLAUDE.md, "A wall-clock ceiling in a test
     /// measures the runner"): the answer is released no sooner than a second
-    /// past the step budget, and nothing asserts how long anything took. A
-    /// walk that raced the step budget comes back `timedOut` before the
-    /// release; a slow machine can only make that race later, which makes
-    /// this case green where it should be red — never red where it should
-    /// be green. `.timeLimit` is a hang bound only.
+    /// past the step budget, and nothing asserts how long anything took.
+    /// `.timeLimit` is a hang bound only.
+    ///
+    /// **Raced at the seam, not through a walk — and the comment this
+    /// replaces was false.** Until 2026-09-25 this case drove a whole walk
+    /// with a 2 s step budget, and said here that "a slow machine can only
+    /// make that race later, which makes this case green where it should be
+    /// red — never red where it should be green". It can do the opposite.
+    /// The step budget handed to a walk bounds `jump.resolve` and
+    /// `jump.dial` as well as this step, and `DetachedProbe` arms its
+    /// deadline when the probe is CREATED rather than when its body starts —
+    /// so on a saturated cooperative pool the rig's fake dial, which does
+    /// nothing but record a string, lost its 2 s deadline before it was
+    /// given a thread. `held.connection` stayed nil, every `target.` step
+    /// was skipped naming the jump, and the trace this case exists for never
+    /// ran at all. Measured with an `onStep` observer on 2026-09-25:
+    /// `jump.dial -> timed out`, `target.traceFromJump -> skipped (the jump
+    /// host was not reached)`, red in 3 of 7 runs under an in-process hog
+    /// suite and on CI run 36122639050 at 85.101 s. No number fixes that
+    /// while one value bounds both, so the walk is gone from the fixture:
+    /// `ConnectionDiagnostics.race(_:_:timer:)` is the seam it is raced
+    /// through in production, and the budget the walk picks for this step is
+    /// pinned by `everyTargetStepNamesTheBudgetItIsRacedAgainst`.
     @Test(.timeLimit(.minutes(1)))
     func theTraceFromTheJumpIsRacedAgainstTheTraceBudget() async throws {
-        let listener = try #require(LoopbackSocket.listening())
-        defer { listener.close() }
         let rig = JumpRig()
         let release = AsyncSignal()
         defer { release.signal() }
         rig.park(.traceroute, until: release)
         let stepBudget = Duration.seconds(2)
-        let diagnostics = ConnectionDiagnostics(
-            descriptor: Self.descriptor(dial: Self.okDial()), values: Self.targetValues(),
-            secrets: nil, jump: Self.agentJump(port: listener.port), jumpDialer: rig.dialer,
-            internetSpeedTransport: .neverAsked,
-            stepTimeout: stepBudget, traceTimeout: .seconds(50), appVersion: "test")
+        let context = Self.stepContext(
+            rig: rig, budget: DiagnosticJumpStep.Budget.trace.duration(
+                step: stepBudget, trace: .seconds(50)))
 
-        let run = Task { await diagnostics.run(scope: .trace) }
+        let raced = Task {
+            await ConnectionDiagnostics.race(
+                .traceFromJump, context,
+                timer: DiagnosticStepTimer(
+                    id: DiagnosticStepID.targetTraceFromJump,
+                    titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetTraceFromJump)))
+        }
         #expect(await rig.execParked.wait() == .signalled)
         try await Task.sleep(for: stepBudget + .seconds(1))
         release.signal()
-        let report = await run.value
+        let trace = await raced.value
 
-        let trace = try #require(
-            report.steps.first { $0.id == DiagnosticStepID.targetTraceFromJump })
         #expect(trace.outcome == .ok, "\(trace.outcome.label)")
+        #expect(rig.count("exec traceroute") == 1, "\(rig.events)")
+    }
+
+    /// Which of the walk's two budgets each target step is raced against —
+    /// the mapping `bounded(_:_:_:)` reads, and the positive check beside
+    /// the case above, which no longer drives a walk and so can no longer
+    /// see it.
+    ///
+    /// Written as a whole-set equality rather than as one assertion about
+    /// the trace: a step added to the target half with the wrong budget is
+    /// then red here, where a check naming only `traceFromJump` would go on
+    /// passing (CLAUDE.md, "Guards that name what they watch").
+    @Test func everyTargetStepNamesTheBudgetItIsRacedAgainst() {
+        let budgets = ConnectionDiagnostics.targetHalf.map { ($0.id, $0.budget) }
+        #expect(budgets.map(\.0) == [
+            DiagnosticStepID.targetTCPViaJump, DiagnosticStepID.targetResolveOnJump,
+            DiagnosticStepID.targetICMPFromJump, DiagnosticStepID.targetDialViaJump,
+            DiagnosticStepID.targetTraceFromJump,
+        ], "\(budgets.map(\.0))")
+        #expect(budgets.map(\.1) == [.step, .step, .step, .step, .trace], "\(budgets)")
+        // And what each name resolves to, out of the walk's two durations.
+        #expect(
+            DiagnosticJumpStep.Budget.step.duration(step: .seconds(1), trace: .seconds(2))
+                == .seconds(1))
+        #expect(
+            DiagnosticJumpStep.Budget.trace.duration(step: .seconds(1), trace: .seconds(2))
+                == .seconds(2))
     }
 
     // MARK: - Fix round 1: deadlines, and what a cut step keeps
