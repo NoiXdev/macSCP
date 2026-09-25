@@ -32,28 +32,40 @@ import Testing
 /// other test sharing the process.
 @Suite("Probe deadlines", .timeLimit(.minutes(1)))
 struct ProbeDeadlineTests {
-    /// A scheduled deadline fires; a cancelled one does not.
+    /// A scheduled deadline fires; a cancelled one does not, even when its
+    /// own moment has passed.
     ///
-    /// The second half is an ORDERING, not a wall-clock ceiling: the
-    /// cancelled deadline is due 190 ms BEFORE the one that is awaited, so
-    /// by the time the awaited one has fired, a cancel that did nothing
-    /// would already have shown. A slow machine delays both and cannot
-    /// reorder them.
-    @Test func aScheduledDeadlineFiresAndACancelledOneDoesNot() async throws {
-        let fired = AsyncSignal()
+    /// **The schedule-and-cancel pair runs INSIDE another deadline's body,
+    /// and that is the whole design of this case.** Written the obvious way
+    /// — schedule a 10 ms ticket in the test's own task and cancel it on the
+    /// next line — the case is a bet that this task is not preempted between
+    /// two adjacent statements for longer than the ticket's duration. On the
+    /// three-core CI runner that bet loses: CLAUDE.md records a 14.67 s
+    /// AMBIENT main-actor stall there. Here the one thread that could fire
+    /// the doomed ticket is the thread already running this body, so nothing
+    /// can fire it however long the machine stalls, and `.zero` makes it due
+    /// the moment the body returns. What is asserted afterwards is therefore
+    /// a property of the type, not of the scheduler.
+    @Test func aCancelledDeadlineNeverFiresEvenOnceItIsDue() async throws {
         let cancelledFired = AsyncSignal()
+        let cancelDone = AsyncSignal()
+        let afterwards = AsyncSignal()
 
-        let cancelled = DeadlineTimer.shared.schedule(after: .milliseconds(10)) {
-            cancelledFired.signal()
+        let arming = DeadlineTimer.shared.schedule(after: .milliseconds(20)) {
+            let doomed = DeadlineTimer.shared.schedule(after: .zero) { cancelledFired.signal() }
+            DeadlineTimer.shared.cancel(doomed)
+            cancelDone.signal()
         }
-        DeadlineTimer.shared.cancel(cancelled)
-        let ticket = DeadlineTimer.shared.schedule(after: .milliseconds(200)) { fired.signal() }
-        defer { DeadlineTimer.shared.cancel(ticket) }
+        defer { DeadlineTimer.shared.cancel(arming) }
+        #expect(await cancelDone.wait() == .signalled)
 
-        #expect(await fired.wait() == .signalled)
-        // Read AFTER the later deadline has fired, so this is not a race
-        // with a cancel that has not landed yet — it is a statement about a
-        // deadline whose own moment is long past.
+        // A later deadline, awaited, so the loop has provably passed the
+        // doomed ticket's own moment — and a deadline the timer still
+        // serves, which is the positive beside the negative below: a timer
+        // that fired nothing at all would satisfy `cancelledFired` too.
+        let ticket = DeadlineTimer.shared.schedule(after: .milliseconds(100)) { afterwards.signal() }
+        defer { DeadlineTimer.shared.cancel(ticket) }
+        #expect(await afterwards.wait() == .signalled)
         #expect(cancelledFired.isRaised == false, "a cancelled deadline fired anyway")
     }
 
@@ -71,10 +83,15 @@ struct ProbeDeadlineTests {
         #expect(elapsed >= .milliseconds(200), "a 200 ms deadline fired after \(elapsed)")
     }
 
-    /// Several deadlines at once fire in deadline order, not in the order
-    /// they were scheduled — the timer holds a set, not a single entry, and
-    /// the later-scheduled earlier deadline must not wait behind the one
-    /// already pending.
+    /// A later-scheduled EARLIER deadline fires first: the timer holds a set,
+    /// not a single entry, and the one already pending does not hold up the
+    /// one due sooner.
+    ///
+    /// Both are scheduled from inside another deadline's body, for the reason
+    /// `aCancelledDeadlineNeverFiresEvenOnceItIsDue` spells out: scheduled
+    /// from the test's own task, a preemption longer than the first ticket's
+    /// duration would let it fire BEFORE the second was scheduled, and the
+    /// order this reads would be the runner's rather than the type's.
     ///
     /// The order is recorded BY THE BODIES, on the timing thread, and read
     /// only once both have run. A first version read `late.isRaised` in the
@@ -86,27 +103,64 @@ struct ProbeDeadlineTests {
     /// is the shape CLAUDE.md's "A wall-clock ceiling in a test measures the
     /// runner" names, worn as an ordering: a comparison whose second half is
     /// read at a moment the runner chooses.
-    @Test func severalDeadlinesFireInDeadlineOrder() async throws {
+    @Test func anEarlierDeadlineScheduledLastStillFiresFirst() async throws {
         let fired = Mutex<[String]>([])
         let early = AsyncSignal()
         let late = AsyncSignal()
 
-        let lateTicket = DeadlineTimer.shared.schedule(after: .milliseconds(300)) {
-            fired.withLock { $0.append("late") }
-            late.signal()
+        let arming = DeadlineTimer.shared.schedule(after: .milliseconds(20)) {
+            _ = DeadlineTimer.shared.schedule(after: .milliseconds(300)) {
+                fired.withLock { $0.append("late") }
+                late.signal()
+            }
+            _ = DeadlineTimer.shared.schedule(after: .milliseconds(20)) {
+                fired.withLock { $0.append("early") }
+                early.signal()
+            }
         }
-        let earlyTicket = DeadlineTimer.shared.schedule(after: .milliseconds(20)) {
-            fired.withLock { $0.append("early") }
-            early.signal()
-        }
-        defer {
-            DeadlineTimer.shared.cancel(lateTicket)
-            DeadlineTimer.shared.cancel(earlyTicket)
-        }
+        defer { DeadlineTimer.shared.cancel(arming) }
 
         #expect(await early.wait() == .signalled)
         #expect(await late.wait() == .signalled)
         #expect(fired.withLock { $0 } == ["early", "late"])
+    }
+
+    /// Two deadlines DUE AT THE SAME WAKE fire in deadline order.
+    ///
+    /// This is the case the loop decides by itself, and the one a `Dictionary`
+    /// used to decide: when the thread's wake is late enough that two tickets
+    /// are due together, they are collected in one batch, and until
+    /// 2026-09-25 that batch was `Array(due.values)` — its order the process's
+    /// hash seed. Measured that day against the unsorted loop, this case run
+    /// in 10 fresh test processes: 7 red, 3 green — the seed is per process,
+    /// so a green run says only which seed it drew.
+    ///
+    /// The batch is made deterministic rather than waited for: both tickets
+    /// are scheduled from inside another deadline's body, with `.zero`, so
+    /// both are already due when that body returns and the loop's next pass
+    /// must collect them together. Each body records its name before
+    /// signalling, and both signals are awaited, so the list is complete
+    /// whichever order it came out in.
+    @Test func twoDeadlinesDueAtOneWakeFireInDeadlineOrder() async throws {
+        let fired = Mutex<[String]>([])
+        let firstRan = AsyncSignal()
+        let secondRan = AsyncSignal()
+
+        let arming = DeadlineTimer.shared.schedule(after: .milliseconds(20)) {
+            _ = DeadlineTimer.shared.schedule(after: .zero) {
+                fired.withLock { $0.append("first") }
+                firstRan.signal()
+            }
+            _ = DeadlineTimer.shared.schedule(after: .zero) {
+                fired.withLock { $0.append("second") }
+                secondRan.signal()
+            }
+        }
+        defer { DeadlineTimer.shared.cancel(arming) }
+
+        #expect(await firstRan.wait() == .signalled)
+        #expect(await secondRan.wait() == .signalled)
+        #expect(fired.withLock { $0 } == ["first", "second"])
     }
 }
 
@@ -137,14 +191,20 @@ struct ProbeDeadlineTests {
 /// anything — that is an ordering between two events, not a duration:
 ///
 /// 1. the probe returns `nil`, which only its deadline can produce here,
-///    because the work parks until this test releases it; and
+///    because the work cannot finish on its own — the blocking one parks in
+///    `read(2)` until this test closes the pipe, the detached one parks until
+///    it is cancelled, which `DetachedProbe` does only after the call has
+///    already been settled; and
 /// 2. at that moment the canary submitted to `DispatchQueue.global()` has
 ///    NOT started.
 ///
 /// Both are read before anything is released (CLAUDE.md, "Tests that watch a
-/// defect heal"), and the positive anchor comes after: once released, the
-/// canary is required to start and the work to finish, so a canary that
-/// simply never worked cannot masquerade as saturation.
+/// defect heal"), and the positive anchors come after: the canary must start
+/// once released, the work must end, and every parked block must return — so
+/// a canary that simply never worked cannot masquerade as saturation, and a
+/// body that never ran cannot pass for one that was held. Each case says at
+/// its own `#expect`s which half states what; they differ in one place, and
+/// the detached one explains why.
 ///
 /// With the deadline on `DispatchQueue.global()`, case 1 cannot be reached
 /// at all — the probe never returns while the pool is parked, and the suite's
@@ -212,7 +272,8 @@ struct ProbeDeadlineSaturationTests {
 
         // Parks until cancelled, and `DetachedProbe` cancels an abandoned
         // probe only AFTER it has stopped waiting for it — so this body
-        // cannot return before the deadline has settled the call.
+        // cannot return before the deadline has settled the call, which is
+        // what makes `nil` below unambiguous.
         let workEnded = AsyncSignal()
         let outcome = await DetachedProbe.run(timeout: Self.stepTimeout) { () -> String in
             await suspendUntilCancelled()
@@ -221,12 +282,24 @@ struct ProbeDeadlineSaturationTests {
         }
 
         let canaryHadStarted = canaryStarted.isRaised
-        let workHadEnded = workEnded.isRaised
         #expect(outcome == nil, "the probe returned the work's answer, so the deadline did not settle it")
         #expect(
             canaryHadStarted == false,
             "the global queue had a thread to give, so this run did not measure a saturated pool")
-        #expect(workHadEnded == false, "the work finished on its own, so nothing here raced the deadline")
+
+        // Which half states what, and why this case reads ONE snapshot where
+        // its blocking twin reads two. The canary is the saturation: nothing
+        // can release it but this test, so reading it here states the
+        // ordering. The work is NOT read here: `DetachedProbe.run`'s own
+        // `defer { work.cancel() }` has already run by the time this line
+        // does, so a "the work has not ended" snapshot would race that
+        // cancellation rather than state anything about the deadline — the
+        // blocking twin can read it because only this test's `close()`
+        // releases a parked `read(2)`. What is asserted instead is the
+        // positive: once cancelled, the body does end and signals. Without
+        // it a body that never ran at all would leave every check here
+        // satisfied (CLAUDE.md, "Guards that name what they watch").
+        #expect(await workEnded.wait() == .signalled, "the detached body never ran, or never ended")
 
         parked.release()
         #expect(await canaryStarted.wait() == .signalled, "the canary never started even once released")

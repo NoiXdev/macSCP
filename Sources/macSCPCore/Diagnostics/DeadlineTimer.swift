@@ -111,23 +111,40 @@ final class DeadlineTimer: Sendable {
     /// already fired — the entry is gone either way. A deadline that fires
     /// while this is being called still runs its body once; the callers here
     /// are settled by a `OneShot`, which drops whichever answer is second.
+    ///
+    /// It wakes the thread, which is not needed for correctness and is worth
+    /// the one signal: cancelling the EARLIEST deadline otherwise leaves the
+    /// loop parked until a moment nothing is waiting for any more — for a
+    /// step that answered in a millisecond under a 45 s limit, 45 s of a
+    /// thread parked on an entry that is gone. The wake makes it recompute
+    /// at once and park on whatever is really next, or on nothing.
     func cancel(_ ticket: Ticket) {
         state.withLock { _ = $0.entries.removeValue(forKey: ticket.id) }
+        wake.signal()
     }
 
     private func loop() {
         while true {
             let earliest = state.withLock { $0.entries.values.map(\.at).min() }
             // No pending deadline means no wake-up is due: park until
-            // `schedule` signals. `.distantFuture` rather than a poll
-            // interval, so an idle process pays nothing for this thread.
+            // `schedule` or `cancel` signals. `.distantFuture` rather than a
+            // poll interval, so an idle process pays nothing for this thread.
             _ = wake.wait(timeout: earliest ?? .distantFuture)
 
             let now = DispatchTime.now()
             let due = state.withLock { state -> [Entry] in
                 let due = state.entries.filter { $0.value.at <= now }
                 for id in due.keys { state.entries.removeValue(forKey: id) }
-                return Array(due.values)
+                // BY DEADLINE, not in the dictionary's order. A wake late
+                // enough to find two entries due collects both in one batch,
+                // and `Array(due.values)` ordered that batch by the process's
+                // hash seed: measured 2026-09-25, a test asserting the two
+                // ran in deadline order was red in 7 of 10 fresh test
+                // processes. Nothing in this module depends on the order —
+                // each ticket settles its own `OneShot` — but a firing order
+                // that is a hash seed is not a property anything can be held
+                // to, here or in a test.
+                return due.values.sorted { $0.at < $1.at }
             }
             for entry in due { entry.body() }
         }

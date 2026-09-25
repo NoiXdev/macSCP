@@ -63,18 +63,21 @@ import Testing
 /// (`anOrdinaryInterpolationDoesNotTripTheScan`), without which the second
 /// negative check would be a rule nobody could keep. Eight `@Test`s in all.
 ///
-/// Counted 2026-09-04 at HEAD `6e16b677`: 11 `.swift` files sit under
-/// `Sources/macSCPCore/Diagnostics/`, all of them directly in it, none in a
-/// subdirectory — `BlockingProbe.swift`, `ConnectionDiagnostics.swift`,
-/// `ContributionProbes.swift`, `DiagnosticReason.swift`,
-/// `DiagnosticReport.swift`, `DiagnosticStep.swift`, `DialProbes.swift`,
-/// `HostResolver.swift`, `ICMPEcho.swift`, `NetworkTrace.swift`,
-/// `TCPPing.swift`. The enumeration is recursive all the same, so a file
-/// filed into a future subdirectory is guarded on the day it lands rather
-/// than on the day someone remembers this scan exists.
+/// Recounted 2026-09-25 at HEAD `4f4ada59` (`ls
+/// Sources/macSCPCore/Diagnostics/*.swift | wc -l`): **19** `.swift` files,
+/// all of them directly in that directory, none in a subdirectory. The
+/// figure that stood here was 11, measured at `6e16b677` on 2026-09-04, and
+/// it had gone stale by seven files before the commit that added the
+/// nineteenth (`DeadlineTimer.swift`) noticed it. The list of eleven names
+/// that stood beside it is gone rather than extended: a list of file names
+/// is a second copy of the directory, and this guard reads the directory
+/// itself — recursively, so a file filed into a future subdirectory is
+/// guarded on the day it lands rather than on the day someone remembers
+/// this scan exists. Nothing the guard checks ever depended on either
+/// number.
 ///
-/// None of the 11 carries a raw-string delimiter (`#"…"#`) at HEAD —
-/// `grep -rln '#"' Sources/macSCPCore/Diagnostics/` matches only
+/// No file here carries a raw-string delimiter (`#"…"#`), rechecked the same
+/// day — `grep -rln '#"' Sources/macSCPCore/Diagnostics/` matches only
 /// `DiagnosticStep.swift`, and by hand that hit is a one-character plain
 /// string literal, one of the four delimiters a private helper there
 /// compares a character against when deciding where a URL's authority ends
