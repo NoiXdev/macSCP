@@ -93,6 +93,26 @@ actor MockRemoteFileSystem: RemoteFileSystem {
         return entityTags[path]
     }
 
+    /// Overridden rather than left to the protocol's default composition,
+    /// so that a WRAPPER's forwarding of this requirement is visible at all.
+    /// The default composes `stat` and `entityTag`, and both of those reach
+    /// this double whether the wrapper forwards this one or not — "was THIS
+    /// implementation entered" is the only reading that tells the two apart.
+    /// The body is the extension default's, character for character, plus
+    /// the counter — `stat` then `entityTag`, the second one `try?`-ed — so
+    /// every existing caller of this double, `entityTagCallCounts` included,
+    /// reads exactly what it read before. The real overriders are the two
+    /// HTTP backends, which read both halves off ONE response.
+    private(set) var statWithEntityTagCallCounts: [String: Int] = [:]
+
+    func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        statWithEntityTagCallCounts[path, default: 0] += 1
+        let item = try await stat(path: path)
+        return (item, try? await entityTag(path: path))
+    }
+
     /// Mirrors what a real HTTP backend does with `If-Match`: a read that
     /// carries a precondition is refused when the object's own validator has
     /// moved on, with the SAME reason the product produces — derived from

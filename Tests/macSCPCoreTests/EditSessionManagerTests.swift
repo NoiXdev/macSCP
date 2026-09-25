@@ -95,10 +95,38 @@ struct EditSessionManagerTests {
         }
 
         func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
+            try await readStream(path: path, fromOffset: offset, ifMatching: nil)
+        }
+
+        /// The gate and the counter live on THIS spelling, and the plain one
+        /// above delegates here — so a read that carries a validator is
+        /// gated and counted exactly like one that does not, and the
+        /// validator reaches `inner`. Both spellings are overridden, which
+        /// is what keeps the delegation from recursing through the
+        /// protocol's extension default (see `RemoteFileSystem`'s own note
+        /// on the two-argument/three-argument pair).
+        func readStream(
+            path: String, fromOffset offset: UInt64, ifMatching tag: String?
+        ) async throws -> AsyncThrowingStream<Data, Error> {
             readStreamCallCount += 1
             entered?.fire()
             if let gate { try await gate.wait() }
-            return try await inner.readStream(path: path, fromOffset: offset)
+            return try await inner.readStream(path: path, fromOffset: offset, ifMatching: tag)
+        }
+
+        /// Forwarded rather than defaulted, with `statWithEntityTag` below,
+        /// for the reason the two liveness-probe wrappers forward them: the
+        /// protocol's defaults answer out of THIS wrapper — `nil`, and a
+        /// two-call composition — so a validator the manager reads would
+        /// never reach the file system behind the gate.
+        func entityTag(path: String) async throws -> String? {
+            try await inner.entityTag(path: path)
+        }
+
+        func statWithEntityTag(
+            path: String
+        ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+            try await inner.statWithEntityTag(path: path)
         }
 
         func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {
@@ -172,6 +200,67 @@ struct EditSessionManagerTests {
                 RemoteFileItem(name: name, path: "/dir/\(name)", kind: .file, size: UInt64(content.count)),
             ]],
             files: ["/dir/\(name)": content])
+    }
+
+    // MARK: - 0: the gate forwards a validator
+
+    /// `GatedRemoteFileSystem` hands a validator to the file system behind
+    /// it instead of answering out of the protocol's extension defaults.
+    ///
+    /// Recorded 2026-09-24 as a backlog row, with the two liveness-probe
+    /// wrappers: it wraps a real file system and forwards every other call,
+    /// but took the defaults for `readStream(path:fromOffset:ifMatching:)`,
+    /// `entityTag(path:)` and `statWithEntityTag(path:)`, so a validator
+    /// handed in was answered by the default and never reached the mock.
+    /// Harmless while the mock took the same defaults; this is the case that
+    /// would have caught it once it did not.
+    ///
+    /// The gate and the counter also have to keep working through the new
+    /// spelling, which is the second reading here: a validator-carrying read
+    /// is counted exactly like a plain one.
+    ///
+    /// Sensitivity measured, not assumed (2026-09-25): the three plants
+    /// recorded on `LivenessProbeWrapperForwardingTests` — one per
+    /// requirement, each restoring the defaulted behaviour — each came back
+    /// `RESULT: RED — 2 test(s) ran`, naming this case and that one.
+    @Test func aValidatorHandedToTheGateReachesTheFileSystemBehindIt() async throws {
+        let handed = "\"handed-in\""
+        let held = "\"held\""
+        let inner = MockRemoteFileSystem(
+            tree: ["/dir": [RemoteFileItem(name: "a.txt", path: "/dir/a.txt", kind: .file, size: 1)]],
+            files: ["/dir/a.txt": Data("x".utf8)],
+            entityTags: ["/dir/a.txt": held])
+        let gated = GatedRemoteFileSystem(inner: inner)
+
+        // A read carrying a precondition: the mock refuses one whose tag has
+        // moved on, exactly as an HTTP backend does, so the throw IS the
+        // evidence that the tag arrived. A dropped validator reads no
+        // precondition at all and hands back a body.
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await gated.readStream(path: "/dir/a.txt", fromOffset: 1, ifMatching: handed)
+        }
+        let seen = await inner.lastIfMatching["/dir/a.txt"]
+        #expect(seen == handed, """
+            the gate dropped the validator — it took the protocol's default, \
+            which forwards the read WITHOUT the precondition.
+            """)
+        #expect(await gated.readStreamCallCount == 1, """
+            a validator-carrying read was not counted, so the gate's own \
+            counter and signals no longer see every read that goes through it.
+            """)
+
+        #expect(try await gated.entityTag(path: "/dir/a.txt") == held, """
+            `entityTag` answered out of the protocol's default (`nil`) rather \
+            than out of the file system behind the gate.
+            """)
+
+        let both = try await gated.statWithEntityTag(path: "/dir/a.txt")
+        #expect(both.entityTag == held)
+        #expect(await inner.statWithEntityTagCallCounts["/dir/a.txt"] == 1, """
+            the one-round-trip spelling never reached the file system behind \
+            the gate — the gate composed `stat` and `entityTag` itself, which \
+            is a second billed request per object against an HTTP backend.
+            """)
     }
 
     // MARK: - 1: download via the queue, return URL

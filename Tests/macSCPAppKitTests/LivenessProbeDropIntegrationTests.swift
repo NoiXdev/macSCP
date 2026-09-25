@@ -581,6 +581,30 @@ private final class ProbeTargetStatCounter: RemoteFileSystem, @unchecked Sendabl
 
     var supportsAppendResume: Bool { wrapped.supportsAppendResume }
 
+    // The three validator-carrying requirements. Each has an extension
+    // default on `RemoteFileSystem`, and a default taken here would answer
+    // out of THIS wrapper instead of the file system behind it — a validator
+    // handed in would be dropped, `entityTag` would read `nil` whatever the
+    // backend holds, and `statWithEntityTag` would cost two round trips
+    // where an HTTP backend answers in one. Forwarded for the same reason
+    // `supportsAppendResume` above is (2026-09-25).
+
+    func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await wrapped.readStream(path: path, fromOffset: offset, ifMatching: tag)
+    }
+
+    func entityTag(path: String) async throws -> String? {
+        try await wrapped.entityTag(path: path)
+    }
+
+    func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        try await wrapped.statWithEntityTag(path: path)
+    }
+
     func list(path: String) async throws -> [RemoteFileItem] {
         try await wrapped.list(path: path)
     }
@@ -667,6 +691,30 @@ private final class DisconnectTimingProbe: RemoteFileSystem, @unchecked Sendable
 
     var supportsAppendResume: Bool { wrapped.supportsAppendResume }
 
+    // The three validator-carrying requirements. Each has an extension
+    // default on `RemoteFileSystem`, and a default taken here would answer
+    // out of THIS wrapper instead of the file system behind it — a validator
+    // handed in would be dropped, `entityTag` would read `nil` whatever the
+    // backend holds, and `statWithEntityTag` would cost two round trips
+    // where an HTTP backend answers in one. Forwarded for the same reason
+    // `supportsAppendResume` above is (2026-09-25).
+
+    func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await wrapped.readStream(path: path, fromOffset: offset, ifMatching: tag)
+    }
+
+    func entityTag(path: String) async throws -> String? {
+        try await wrapped.entityTag(path: path)
+    }
+
+    func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        try await wrapped.statWithEntityTag(path: path)
+    }
+
     func stat(path: String) async throws -> RemoteFileItem {
         try await wrapped.stat(path: path)
     }
@@ -709,6 +757,144 @@ private final class DisconnectTimingProbe: RemoteFileSystem, @unchecked Sendable
 
     func homeDirectoryPath() async throws -> String {
         try await wrapped.homeDirectoryPath()
+    }
+}
+
+/// A file system that answers the three validator-carrying requirements out
+/// of its own state and records what it was asked — the inner half of the
+/// forwarding check below.
+///
+/// It overrides `statWithEntityTag` rather than taking the protocol's
+/// default composition, because that is the only way the forward is visible
+/// at all: a wrapper that drops it composes the WRAPPER's `stat` and
+/// `entityTag`, which reach this double too, so nothing but "was THIS
+/// implementation entered" tells the two apart. The two HTTP backends
+/// override it for the real reason — one response, read twice — and they
+/// are what a wrapper would be put over on the day this matters.
+///
+/// Everything else is unreachable here and says so: this double exists for
+/// one measurement and is never handed to anything that transfers.
+private final class ValidatorRecordingFileSystem: RemoteFileSystem, @unchecked Sendable {
+    /// The validator this file system holds for every path.
+    static let heldTag = "\"v1\""
+
+    private let lock = NSLock()
+    private var ifMatchingSeen: [String] = []
+    private var statWithEntityTagCalls = 0
+
+    /// Every non-nil `ifMatching` a read carried, in call order.
+    var validatorsReceived: [String] { lock.withLock { ifMatchingSeen } }
+    /// How often the ONE-round-trip spelling was entered.
+    var statWithEntityTagArrivals: Int { lock.withLock { statWithEntityTagCalls } }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64, ifMatching tag: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        if let tag { lock.withLock { ifMatchingSeen.append(tag) } }
+        return AsyncThrowingStream { $0.finish() }
+    }
+
+    func entityTag(path: String) async throws -> String? { Self.heldTag }
+
+    func statWithEntityTag(
+        path: String
+    ) async throws -> (item: RemoteFileItem, entityTag: String?) {
+        lock.withLock { statWithEntityTagCalls += 1 }
+        return (try await stat(path: path), Self.heldTag)
+    }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        RemoteFileItem(name: (path as NSString).lastPathComponent, path: path, kind: .file, size: 0)
+    }
+
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] { [] }
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func delete(path: String) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func createDirectory(at path: String) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func rename(from: String, to: String) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func setPermissions(path: String, permissions: UInt32) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func deleteTree(at path: String) async throws {
+        throw RemoteFSError.protocolError(reason: "not used here")
+    }
+    func homeDirectoryPath() async throws -> String { "/" }
+    func disconnect() async {}
+}
+
+/// The two wrappers in this file forward a validator to the file system
+/// behind them instead of taking the protocol's extension default.
+///
+/// Recorded 2026-09-24 as a backlog row and closed here: both doubles wrap a
+/// real file system and forward every other call, but took the defaults for
+/// `readStream(path:fromOffset:ifMatching:)`, `entityTag(path:)` and
+/// `statWithEntityTag(path:)` — so a validator handed to either was answered
+/// by the default (`nil`, no precondition) and never reached the backend.
+/// Harmless while each was only ever built over a backend that took the same
+/// defaults; this is the case that would have caught it otherwise.
+///
+/// Ungated, unlike the rig suite these doubles were written for: the
+/// property is about the wrappers' own forwarding and needs no server.
+///
+/// Sensitivity measured, not assumed (2026-09-25): three plants, one per
+/// requirement, each restoring the defaulted behaviour in BOTH wrappers and
+/// in `EditSessionManagerTests.GatedRemoteFileSystem` at once — the read's
+/// `ifMatching: tag` turned back into `nil`, the `entityTag` forward turned
+/// back into `nil`, and the `statWithEntityTag` forward turned back into
+/// the default's two-call composition. Each came back
+/// `RESULT: RED — 2 test(s) ran`, naming this case and the gate's.
+@Suite("Liveness probe wrappers forward a validator")
+struct LivenessProbeWrapperForwardingTests {
+    /// Both wrappers, built over the same recording file system, asked the
+    /// three validator-carrying questions in turn.
+    @Test(arguments: [0, 1])
+    func aValidatorHandedToAWrapperReachesTheFileSystemBehindIt(_ which: Int) async throws {
+        let inner = ValidatorRecordingFileSystem()
+        let wrapper: any RemoteFileSystem =
+            which == 0
+            ? ProbeTargetStatCounter(wrapping: inner, countingStatsOf: "/unused")
+            : DisconnectTimingProbe(wrapping: inner)
+
+        let handed = "\"handed-in\""
+        _ = try await wrapper.readStream(path: "/f", fromOffset: 7, ifMatching: handed)
+        #expect(inner.validatorsReceived == [handed], """
+            the wrapper dropped the validator — it took the protocol's default, \
+            which forwards the read WITHOUT the precondition, so a resumed \
+            download would append the tail of a replaced object to the head of \
+            the old one.
+            """)
+
+        let tag = try await wrapper.entityTag(path: "/f")
+        #expect(tag == ValidatorRecordingFileSystem.heldTag, """
+            `entityTag` answered \(String(describing: tag)) — the protocol's \
+            default answers `nil` whatever the backend holds, so a caller would \
+            resume with no validator to hand back.
+            """)
+
+        let both = try await wrapper.statWithEntityTag(path: "/f")
+        #expect(inner.statWithEntityTagArrivals == 1, """
+            the one-round-trip spelling was entered \
+            \(inner.statWithEntityTagArrivals) time(s), not once — the wrapper \
+            composed `stat` and `entityTag` itself, which is a second billed \
+            request per object against an HTTP backend.
+            """)
+        #expect(both.entityTag == ValidatorRecordingFileSystem.heldTag)
     }
 }
 
