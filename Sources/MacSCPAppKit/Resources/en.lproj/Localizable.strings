@@ -309,6 +309,18 @@
 "transfers.status.skipped" = "skipped";
 "transfers.status.interrupted" = "interrupted";
 
+/* A transfer's failure, in the app's language (2026-09-25). Core's own
+   catalogue already carries eleven of the fourteen causes in all four
+   languages and `TransferFailureLabel` reads them there rather than
+   copying them; the three below are the ones whose payload is free text a
+   backend wrote, which is what made the frame translated and the sentence
+   inside it English. The detail is kept behind the prose and MARKED as
+   technical, because for these three it is the only actionable half. */
+"transfers.failure.connectionFailed" = "The connection to the server failed.";
+"transfers.failure.protocolError" = "The server sent an answer that could not be used.";
+"transfers.failure.unknown" = "The transfer failed.";
+"transfers.failure.detail %1$@ %2$@" = "%1$@ (technical detail: %2$@)";
+
 /* Resume banner (M5d/T4) */
 "transfers.interrupted.banner" = "Interrupted transfers can be resumed.";
 "transfers.interrupted.resume" = "Resume";

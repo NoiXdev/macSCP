@@ -1,6 +1,12 @@
 /* Core-layer user-facing messages — English (default language). */
 
-/* TransferQueueViewModel.message(for:) */
+/* TransferFailureKind.message — what a failed transfer's typed cause
+   renders to, one indirection below `TransferQueueViewModel.message(for:)`
+   since 2026-09-25. The audit line writes it for every one of the fourteen
+   causes (`AuditRecorder`); the App's transfer row reads it for eleven and
+   says the other three itself (`TransferFailureLabel`), because
+   `core.error.connectionLost %@` and `core.transfer.failed %@` are exactly
+   the frames whose argument is free text a backend wrote. */
 "core.transfer.notFound %@" = "File not found: %@";
 "core.error.permissionDenied %@" = "Permission denied for: %@";
 "core.error.connectionLost %@" = "Connection lost: %@";

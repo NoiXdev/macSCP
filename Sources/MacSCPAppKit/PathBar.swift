@@ -469,9 +469,12 @@ struct PathBar: View {
             } catch {
                 // Finding I5: a failed listing must not be silently
                 // indistinguishable from an empty directory. The underlying
-                // reason still goes through the same public error-message
+                // reason still goes through the same error-to-sentence
                 // mapping the App layer already reuses for editor-open
-                // failures (Core's own `RemoteBrowserViewModel.message(for:
+                // failures — since 2026-09-25 `TransferFailureLabel`, which
+                // reads the typed cause in the app's language rather than
+                // letting an English `reason` sit inside this localized
+                // frame (Core's own `RemoteBrowserViewModel.message(for:
                 // path:)` isn't public) — but the wrapping text is now a
                 // dedicated "directory could not be listed" string instead
                 // of the generic transfer-failure wording, since listing a
@@ -485,7 +488,7 @@ struct PathBar: View {
                         format: L10n.string(
                             "browser.pathBar.listingFailed %@",
                             "Couldn't list the directory: %@"),
-                        TransferQueueViewModel.message(for: error)))
+                        TransferFailureLabel.text(for: error)))
                 return
             }
             // Finding I2: a late listing must not overwrite text typed in

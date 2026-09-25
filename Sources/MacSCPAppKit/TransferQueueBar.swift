@@ -249,11 +249,13 @@ struct TransferQueueBar: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(tint(for: item.direction))
             case .failed(let cause):
-                // The status carries the typed cause since 2026-09-25; the
-                // row still shows Core's own sentence for it, unchanged.
-                // Task 6 of the answered-decisions plan is what maps the
-                // cause through `L10n` instead.
-                let message = cause.message
+                // The status carries the typed cause since 2026-09-25, and
+                // the row reads it in the app's language — never the raw
+                // cause, whose payload can be a path or free text a backend
+                // wrote. Which catalogue answers for which cause, and why
+                // the three free-text ones keep a marked technical suffix,
+                // is `TransferFailureLabel`'s own doc comment.
+                let message = TransferFailureLabel.label(cause)
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)

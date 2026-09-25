@@ -313,6 +313,13 @@
 "transfers.status.skipped" = "ignoré";
 "transfers.status.interrupted" = "interrompu";
 
+/* A transfer's failure, in the app's language (2026-09-25) — see the
+   English catalogue for why only these three exist. */
+"transfers.failure.connectionFailed" = "La connexion au serveur a échoué.";
+"transfers.failure.protocolError" = "Le serveur a envoyé une réponse inutilisable.";
+"transfers.failure.unknown" = "Le transfert a échoué.";
+"transfers.failure.detail %1$@ %2$@" = "%1$@ (détail technique : %2$@)";
+
 /* Bandeau de reprise (M5d/T4) */
 "transfers.interrupted.banner" = "Les transferts interrompus peuvent être repris.";
 "transfers.interrupted.resume" = "Reprendre";

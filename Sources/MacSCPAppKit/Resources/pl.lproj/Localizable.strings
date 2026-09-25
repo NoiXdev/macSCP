@@ -312,6 +312,13 @@
 "transfers.status.skipped" = "pominięto";
 "transfers.status.interrupted" = "przerwano";
 
+/* A transfer's failure, in the app's language (2026-09-25) — see the
+   English catalogue for why only these three exist. */
+"transfers.failure.connectionFailed" = "Połączenie z serwerem nie powiodło się.";
+"transfers.failure.protocolError" = "Serwer wysłał odpowiedź, której nie można użyć.";
+"transfers.failure.unknown" = "Transfer nie powiódł się.";
+"transfers.failure.detail %1$@ %2$@" = "%1$@ (szczegóły techniczne: %2$@)";
+
 /* Baner wznawiania (M5d/T4) */
 "transfers.interrupted.banner" = "Przerwane transfery można wznowić.";
 "transfers.interrupted.resume" = "Wznów";

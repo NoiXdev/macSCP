@@ -332,7 +332,7 @@ extension ContentView {
             } catch {
                 tab.editErrorMessage = String(format: L10n.string(
                     "edit.openFailed", "Could not open file for editing: %@"),
-                    TransferQueueViewModel.message(for: error))
+                    TransferFailureLabel.text(for: error))
             }
         }
     }
