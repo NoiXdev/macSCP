@@ -90,7 +90,11 @@ interest is paid by checking, not by remembering.
 
 **Checked so far — 2026-09-25, at the pin.**
 `gh api repos/rustfs/rustfs/security-advisories` returned **30 published
-advisories**, and **none of them covers `1.0.0`**: every one names a
+advisories** — but that is one page. `gh api --paginate` returns **35**
+(recounted 2026-09-25 by the task's reviewer); the five the first page
+hides are all alpha-range and change nothing below, but the recipe in the
+paragraph above must carry `--paginate` or it silently stops at 30.
+**None of the 35 covers `1.0.0`**: every one names a
 vulnerable range that ends at a pre-release, the highest upper bound being
 `<= 1.0.0-rc.5`, and every `patched_versions` is `1.0.0` or earlier.
 Filtering the same response for a range that includes `1.0.0` returned
@@ -231,7 +235,7 @@ get  both-probe        : 200 b'obj'
 get  both-probe/child  : 200 b'kid'
 list delimiter=/&prefix=both-probe: KeyCount=2 keys=['both-probe'] commonPrefixes=['both-probe/']
 list prefix=both-probe       : KeyCount=2 keys=['both-probe', 'both-probe/child'] commonPrefixes=[]
-list prefix=both-probe/&max-keys=1: KeyCount=1 keys=['both-probe/child'] commonPrefixes=['both-probe/']
+list prefix=both-probe/&max-keys=1: KeyCount=1 keys=['both-probe/child'] commonPrefixes=[]
 delete both-probe/child  : 204
 delete both-probe        : 204
 bucket back at seed : keys=['a.txt'] commonPrefixes=['sub/']

@@ -488,7 +488,7 @@ struct CitadelFileSystemIntegrationTests {
     }
 
     /// M18a final review (Important-1): the S3 counterpart of
-    /// `createFileCreatesThenCollidesAgainstMinIO` — proof that a real SFTP
+    /// `createFileCreatesThenCollidesAgainstTheRig` — proof that a real SFTP
     /// server's "no such file" really arrives as `RemoteFSError.notFound`
     /// (via `mapSFTPError`'s `SSH_FX_NO_SUCH_FILE` branch), so the strict
     /// existence probe still lets New File work, and that a collision leaves
