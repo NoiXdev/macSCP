@@ -5,11 +5,14 @@ import Testing
 
 /// Runs only with MACSCP_ITEST=1 and a running Docker test rig
 /// (docker compose -f docker/test-server/compose.yml up -d), which brings up
-/// a MinIO container seeded with a bucket containing `a.txt` and
+/// the `s3` container seeded with a bucket containing `a.txt` and
 /// `sub/b.txt` (M12/T5). Same gating pattern as
-/// `CitadelFileSystemIntegrationTests`.
+/// `CitadelFileSystemIntegrationTests`. That server was MinIO until
+/// 2026-09-25 and is RustFS since, because the MinIO images were withdrawn
+/// from Docker Hub; the dated measurements below name whichever server they
+/// were made against, and nothing in the assertions had to change.
 @Suite(
-    "S3FileSystem against Docker MinIO",
+    "S3FileSystem against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
     .serialized
 )
@@ -23,7 +26,7 @@ struct S3FileSystemIntegrationTests {
     }
 
     /// M15: an S3 session bound to an S3 login set resolves its credentials
-    /// from the set and those credentials really authenticate against MinIO.
+    /// from the set and those credentials really authenticate against the rig.
     /// Proves the resolve → S3ConnectionConfig → connect → list chain end to
     /// end, not just in a fake.
     @Test func setBoundS3SessionResolvesAndLists() async throws {
@@ -92,12 +95,12 @@ struct S3FileSystemIntegrationTests {
 
     /// Regression for M13/T4: `buildSignedRequest` used to sign
     /// `URL.path`, which silently drops a trailing slash, so the PUT of a
-    /// folder-marker key ("name/") was signed as "name" and MinIO rejected
+    /// folder-marker key ("name/") was signed as "name" and the server rejected
     /// it with a 403 SignatureDoesNotMatch. This only reproduces against a
     /// real S3-compatible server — the fake-transport unit tests build the
     /// signature and the wire request from the same (buggy) path, so they
     /// can never see the two diverge.
-    @Test func createDirectoryThenListShowsTheFolderAgainstMinIO() async throws {
+    @Test func createDirectoryThenListShowsTheFolderAgainstTheRig() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let name = "m13-createdir-probe"
@@ -121,7 +124,7 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
-    /// M13/T5: a small object round-trip against a REAL MinIO server. Unit
+    /// M13/T5: a small object round-trip against a REAL S3 server. Unit
     /// tests (`S3UploaderTests.swift`) exercise `S3Uploader`'s buffering and
     /// error-mapping logic with a fake builder that signs and sends the
     /// request from the SAME data, so they can never catch a SigV4 signing
@@ -156,7 +159,7 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
-    /// M13/T6: a >8 MiB object write→read round-trip against a REAL MinIO
+    /// M13/T6: a >8 MiB object write→read round-trip against a REAL S3
     /// server — the one check that actually exercises the multipart
     /// handshake end to end. Unit tests (`S3UploaderTests.swift`) exercise
     /// `S3Uploader`'s part-cutting and abort-on-failure logic with a fake
@@ -212,7 +215,7 @@ struct S3FileSystemIntegrationTests {
     }
 
     /// M13/T7: rename on a FILE — a signed `x-amz-copy-source` PUT followed
-    /// by a DELETE of the source, against a REAL MinIO server. Unit tests
+    /// by a DELETE of the source, against a REAL S3 server. Unit tests
     /// (`S3FileSystemTests.swift`) exercise the copy-source header shape and
     /// the destination pre-check with a fake transport that signs and sends
     /// from the SAME data, so they can never catch a SigV4 signing bug in
@@ -266,7 +269,7 @@ struct S3FileSystemIntegrationTests {
     /// M13/T7: rename on a DIRECTORY — every object under the source prefix
     /// (here two, one nested under a sub-prefix) must be re-keyed to the
     /// destination prefix, and NONE may remain at the source, against a
-    /// REAL MinIO server. Same signing-bug rationale as the file-rename
+    /// REAL S3 server. Same signing-bug rationale as the file-rename
     /// test above, applied to the `allObjectKeys` pagination + per-key
     /// copy+delete loop.
     @Test func renameDirectoryMovesEveryObjectToTheNewPrefix() async throws {
@@ -314,7 +317,7 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
-    /// M13/T8: `deleteTree` against a REAL MinIO server — creates a folder
+    /// M13/T8: `deleteTree` against a REAL S3 server — creates a folder
     /// with several objects (one nested under a sub-prefix, plus the
     /// folder's own trailing-slash marker), deletes the whole tree, and
     /// asserts BOTH that a root listing no longer shows the folder AND that
@@ -441,7 +444,7 @@ struct S3FileSystemIntegrationTests {
     }
 
     /// The other half of `delete`'s contract, and the reason it needs a
-    /// lookup at all: MinIO really does answer `DeleteObject` with 204 for a
+    /// lookup at all: the rig really does answer `DeleteObject` with 204 for a
     /// key that never existed, so before the lookup this returned normally.
     /// Creates nothing.
     @Test func deleteOnAKeyThatIsNotThereIsNotFound() async throws {
@@ -454,31 +457,79 @@ struct S3FileSystemIntegrationTests {
         }
     }
 
-    // NO gated test exercises `delete`/`deleteTree`'s `.both` case
-    // (`docs/BACKLOG.md`, "A key that is both an object and a prefix")
-    // against this rig, and none was added here after measuring why one
-    // would not prove anything: a key `x` and a key `x/child` were written
-    // through `fs.write` exactly as `deleteLookup`'s ambiguity check would
-    // see them, then probed directly against the running container
-    // (`docker exec macscp-test-minio mc find/ls/cat`, 2026-09-05). `mc cat`
-    // retrieves `x/child`'s content — the object exists and answers a direct
-    // GET — but `mc find` and `mc ls --recursive` never list it while `x`
-    // also exists as a bare key; removing `x` makes it appear in listings
-    // again, and recreating `x` makes it vanish from them again, in either
-    // creation order. `deleteLookup`'s one-key `ListObjectsV2` on `x/` is
-    // exactly the kind of call this reconfirms as blind here, so
-    // `delete("x")` never observes the ambiguity and never refuses on this
-    // rig — a rig limitation, not a code defect, and the same one row 28
-    // already measured 2026-09-04 (`?list-type=2&prefix=<key>` there,
-    // `?list-type=2&prefix=<key>/&max-keys=1` here; same invisibility either
-    // way). The `.both` code path is proven only by the unit tests' canned
-    // responses (`S3FileSystemTests.swift`); real AWS S3, which the row
-    // already flags as listing both, remains unmeasured.
+    /// `delete`'s S3-specific rule for a key that is BOTH an object and a
+    /// prefix (`docs/BACKLOG.md`, "A key that is both an object and a
+    /// prefix"): refuse, and remove nothing. `deleteTree` on the same shape
+    /// takes the object AND the subtree.
+    ///
+    /// This could not be proven against a real store until the rig's server
+    /// changed. Measured against the MinIO rig on 2026-09-05 (`docker exec
+    /// macscp-test-minio mc find/ls/cat`): `mc cat` retrieved `x/child` — the
+    /// object existed and answered a direct GET — but `mc find` and `mc ls
+    /// --recursive` never listed it while `x` also existed as a bare key, in
+    /// either creation order, and removing `x` made it reappear.
+    /// `deleteLookup`'s ambiguity check IS such a listing, so it never saw
+    /// the child and `delete("x")` never refused: a rig limitation, not a
+    /// code defect. Re-measured against the RustFS rig on 2026-09-25 with the
+    /// same key pair written by raw signed PUT: `?list-type=2&prefix=x/&max-keys=1`
+    /// — the exact call `deleteLookup` makes — came back `KeyCount 1` naming
+    /// `x/child`, and `?list-type=2&delimiter=/&prefix=x` reported the object
+    /// and the `x/` CommonPrefix together. The rig is no longer blind to the
+    /// shape, so what the unit tests' canned responses proved
+    /// (`S3FileSystemTests.swift`) is proven here against a real store too.
+    /// Real AWS S3 stays unmeasured — this suite calls no AWS endpoint.
+    @Test func deleteRefusesAKeyThatIsBothAnObjectAndAPrefixWhileDeleteTreeTakesBoth() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let key = "m21-s3-both-\(UUID().uuidString)"
+        let objectBody = Data("the bare key's own object".utf8)
+
+        var caught: Error?
+        do {
+            try await Self.put(fs, path: "/\(key)", objectBody)
+            try await Self.put(fs, path: "/\(key)/child", Data("the child under the prefix".utf8))
+
+            do {
+                try await fs.delete(path: "/\(key)")
+                Issue.record("expected delete on an object-and-prefix key to throw")
+            } catch let error as RemoteFSError {
+                // Rethrown rather than returned, like every other refusal in
+                // this file, so the cleanup below still runs.
+                guard case .protocolError = error else { throw error }
+            }
+            // Read the object BEFORE `deleteTree` heals the bucket: a refusal
+            // that deleted something anyway would pass the refusal half alone.
+            var afterRefusal = Data()
+            for try await chunk in try await fs.readStream(path: "/\(key)", fromOffset: 0) {
+                afterRefusal.append(chunk)
+            }
+            #expect(afterRefusal == objectBody)
+
+            try await fs.deleteTree(at: "/\(key)")
+
+            await Self.expectNotFound(fs, path: "/\(key)")
+            await Self.expectNotFound(fs, path: "/\(key)/child")
+        } catch {
+            caught = error
+        }
+        try? await fs.delete(path: "/\(key)/child")
+        try? await fs.delete(path: "/\(key)")
+        if let caught { throw caught }
+    }
+
+    /// One object written through the backend under test, spelled once here
+    /// because the case above writes two.
+    private static func put(_ fs: S3FileSystem, path: String, _ body: Data) async throws {
+        try await fs.write(path: path, mode: .overwrite, contents: AsyncThrowingStream { continuation in
+            continuation.yield(body)
+            continuation.finish()
+        })
+    }
 
     /// A recording decorator around the real transport — the seam
     /// `S3FileSystem.connect(_:transport:)` exposes for exactly this: every
     /// `send`/`sendStreaming` call goes through a real `URLSessionHTTPTransport`
-    /// underneath, so the requests genuinely reach MinIO, and this only
+    /// underneath, so the requests genuinely reach the server, and this only
     /// records the HTTP method of each. `actor`, like `FakeS3Transport` in
     /// the unit tests, because the log is mutated across concurrent `await`s.
     ///
@@ -513,7 +564,7 @@ struct S3FileSystemIntegrationTests {
     /// three on 2026-09-05: the ambiguity check used to run only when the
     /// `HEAD` answered 404, so a plain file (`HEAD` 200) skipped it and left
     /// through `["HEAD", "DELETE"]` alone.
-    @Test func deleteOnAFileCostsExactlyThreeRequestsAgainstMinIO() async throws {
+    @Test func deleteOnAFileCostsExactlyThreeRequestsAgainstTheRig() async throws {
         let config = S3ConnectionConfig(
             accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
             region: "us-east-1", endpoint: "http://127.0.0.1:19000",
@@ -569,11 +620,11 @@ struct S3FileSystemIntegrationTests {
     /// hood — a fake transport cannot prove the real server drives it to
     /// that exact case, and getting it wrong would leave New File
     /// permanently broken on S3 (worse than the bug being fixed). This
-    /// exercises the whole view-model path against MinIO: the missing key
+    /// exercises the whole view-model path against the rig: the missing key
     /// creates, the existing key collides, and the collision must not
     /// truncate the object.
     @MainActor
-    @Test func createFileCreatesThenCollidesAgainstMinIO() async throws {
+    @Test func createFileCreatesThenCollidesAgainstTheRig() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let key = "m18a-createfile-\(UUID().uuidString).txt"
@@ -617,9 +668,9 @@ struct S3FileSystemIntegrationTests {
     /// REAL S3-compatible server. The fake-transport unit test
     /// (`S3FileSystemTests.swift`) only proves the URL's SHAPE; it signs and
     /// "sends" from the same data, so it can never catch a SigV4 signing bug
-    /// — only MinIO re-deriving the signature from the wire bytes can
+    /// — only a real server re-deriving the signature from the wire bytes can
     /// (same rationale as the M13 write/rename/deleteTree gated tests).
-    @Test func presignedGetURLDownloadsTheObjectFromMinIO() async throws {
+    @Test func presignedGetURLDownloadsTheObjectFromTheRig() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let key = "m14-presign-get-\(UUID().uuidString).txt"
@@ -648,9 +699,9 @@ struct S3FileSystemIntegrationTests {
 
     /// M14/T2: the signing proof for `presignedURL(.put)` — a presigned PUT
     /// URL uploads to the exact key it was signed for when driven by a
-    /// plain `URLSession.upload(for:from:)`, again against a REAL MinIO
+    /// plain `URLSession.upload(for:from:)`, again against a REAL S3
     /// server (see the GET test above for the fuller rationale).
-    @Test func presignedPutURLUploadsToTheKeyOnMinIO() async throws {
+    @Test func presignedPutURLUploadsToTheKeyOnTheRig() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let key = "m14-presign-put-\(UUID().uuidString).bin"
@@ -706,12 +757,12 @@ struct S3FileSystemIntegrationTests {
     ///
     /// Both objects are uploaded here rather than taken from the seed,
     /// because the point is the SHAPE of the upload: one small enough for a
-    /// single PUT, one past the uploader's 8 MiB part size so MinIO really
+    /// single PUT, one past the uploader's 8 MiB part size so the server really
     /// composes the ETag out of the parts' MD5s. The multipart half is the
     /// one that matters — its hex is compared against the MD5 of the very
     /// bytes that were uploaded, and it must NOT match, which is exactly
     /// what `describesFileContent == false` is saying.
-    @Test func minioAnswersASinglePartETagAsTheObjectsMD5AndAMultipartOneAsNotThat() async throws {
+    @Test func theStoreAnswersASinglePartETagAsTheObjectsMD5AndAMultipartOneAsNotThat() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let provider = try #require((fs as any RemoteFileSystem) as? any RemoteChecksumProvider)
@@ -792,7 +843,7 @@ struct S3FileSystemIntegrationTests {
     }
 
     /// The root key sees both seeded buckets as directory rows carrying
-    /// MinIO's real creation dates.
+    /// the store's real creation dates.
     @Test func rootKeyWithTheToggleListsBothBuckets() async throws {
         let fs = try await connectAtBucketList()
         defer { Task { await fs.disconnect() } }
@@ -856,14 +907,15 @@ struct S3FileSystemIntegrationTests {
         if let caught { throw caught }
     }
 
-    /// The scoped key, measured 2026-09-02 against this MinIO release
-    /// (`RELEASE.2024-07-16T23-46-41Z`): its account-level listing does NOT
-    /// fail with `AccessDenied` — MinIO returns the FILTERED list of the
-    /// buckets the key can touch, even with an explicit `Deny` on
-    /// `s3:ListAllMyBuckets` (docker/test-server/README.md). So what the rig
-    /// can prove is the filtered list, and the `bucketListForbidden` case —
-    /// which is what AWS answers — is pinned with a canned 403 in
-    /// `S3FileSystemTests` instead.
+    /// The scoped key, measured 2026-09-02 against MinIO
+    /// (`RELEASE.2024-07-16T23-46-41Z`) and again 2026-09-25 against RustFS
+    /// 1.0.0: its account-level listing does NOT fail with `AccessDenied` —
+    /// both servers return the FILTERED list of the buckets the key can
+    /// touch, and on MinIO not even an explicit `Deny` on
+    /// `s3:ListAllMyBuckets` changed that (docker/test-server/README.md). So
+    /// what the rig can prove is the filtered list, and the
+    /// `bucketListForbidden` case — which is what AWS answers — is pinned
+    /// with a canned 403 in `S3FileSystemTests` instead.
     @Test func scopedKeyWithTheToggleSeesOnlyItsOwnBucket() async throws {
         let fs = try await connectAtBucketList(
             accessKeyID: "macscp-scoped", secretAccessKey: "macscpscopedsecret")

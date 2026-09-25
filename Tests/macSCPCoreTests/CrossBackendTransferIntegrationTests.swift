@@ -3,7 +3,7 @@ import NIOCore
 import Testing
 @testable import macSCPCore
 
-/// Cross-backend transfers between MinIO (S3) and the SSH rig (SFTP), M16.
+/// Cross-backend transfers between the S3 rig and the SSH rig (SFTP), M16.
 /// Runs only with MACSCP_ITEST=1 and the Docker rig up
 /// (`docker compose -f docker/test-server/compose.yml up -d`). Proves that
 /// `TransferEngine.copyFile` really moves bytes between two DIFFERENT
@@ -151,7 +151,7 @@ struct CrossBackendTransferIntegrationTests {
 
         var caught: Error?
         do {
-            // ~200 KiB of random payload, written to MinIO only.
+            // ~200 KiB of random payload, written to the S3 rig only.
             let payload = Data((0..<(200 * 1024)).map { _ in UInt8.random(in: 0...255) })
             try await writeOnce(s3FS, path: "/\(sourceKey)", content: payload)
 

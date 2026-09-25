@@ -123,8 +123,8 @@ docker compose -f docker/test-server/compose.yml up -d
 MACSCP_ITEST=1 swift test
 ```
 
-That brings up SSH (two servers, for remote-to-remote transfers), MinIO
-(S3), and an Apache/mod_dav WebDAV server with a Basic, a Digest, and a
+That brings up SSH (two servers, for remote-to-remote transfers), an
+S3-compatible object store, and an Apache/mod_dav WebDAV server with a Basic, a Digest, and a
 TLS vhost — the TLS certificate is generated fresh at container start and
 never committed. A Nextcloud container sits behind a compose profile,
 since it exists only to produce one real PROPFIND response the WebDAV

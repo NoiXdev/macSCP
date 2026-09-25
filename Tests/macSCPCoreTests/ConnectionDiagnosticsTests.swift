@@ -1504,7 +1504,7 @@ struct ConnectionDiagnosticsTests {
 
     @Test(
         .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"))
-    func theS3DialReachesTheRigsMinIO() async throws {
+    func theS3DialReachesTheRigsObjectStore() async throws {
         var values = FieldValues()
         values[S3Field.endpoint] = "http://127.0.0.1:19000"
         values[S3Field.bucket] = "macscp-seed"
@@ -1518,7 +1518,7 @@ struct ConnectionDiagnosticsTests {
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
         #expect(dial.outcome == .ok)
-        // The unsigned HEAD is refused by MinIO, and that refusal IS the
+        // The unsigned HEAD is refused by the store, and that refusal IS the
         // measurement: an HTTP status means the endpoint answered.
         #expect(dial.detail.contains("HTTP"))
     }

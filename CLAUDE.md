@@ -69,9 +69,16 @@
   runner's readers need no thread — it cannot share a parallel run, measured
   on CI run 33705649537; run it alone).
 - Docker rig: `docker compose -f docker/test-server/compose.yml up -d`
-  (127.0.0.1:2222, testuser/testpass). **Always start it from the main
-  checkout, never from a git worktree** (the seed mount is relative to the
-  compose file). `PerSourcePenalties` is disabled in the rig config.
+  (SSH on 127.0.0.1:2222, testuser/testpass; the S3 store on
+  127.0.0.1:19000, `macscp`/`macscpsecretkey`, buckets `macscp-seed` and
+  `macscp-second`). **Always start it from the main checkout, never from a
+  git worktree** (the seed mount is relative to the compose file).
+  `PerSourcePenalties` is disabled in the rig config. The S3 half runs
+  RustFS, not MinIO, since 2026-09-25: the MinIO images were withdrawn
+  from Docker Hub and the rig could not start at all. The seeding is
+  `docker/test-server/s3/init.sh`, driven by curl's own SigV4 rather than
+  a vendor CLI, and it is idempotent — `up -d` reruns it on every start.
+  `docker/test-server/README.md` is the rig's own record.
 - Never commit key material or secrets; test keys are generated at runtime
   via `ssh-keygen`. Secrets live exclusively in the macOS Keychain
   (`SecretStore`); JSON stores never contain them.

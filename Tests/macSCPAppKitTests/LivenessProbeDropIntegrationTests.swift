@@ -30,7 +30,7 @@ import Testing
 
 /// Ports this suite talks to. 2222 is the shared rig's, READ ONLY here.
 /// 2224 is the disposable server's own, deliberately clear of the rig's
-/// 2222/2223 and of the WebDAV/MinIO mappings in `compose.yml`.
+/// 2222/2223 and of the WebDAV/S3 mappings in `compose.yml`.
 private let sharedRigPort = 2222
 private let dropServerPort = 2224
 /// The shell-teardown measurement's OWN disposable server. A third port

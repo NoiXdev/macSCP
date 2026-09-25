@@ -4,11 +4,11 @@
 checkout (never from a git worktree — the seed mounts are relative to this
 compose file).
 
-## MinIO / S3 rig
+## S3 rig
 
-`minio` (host ports 19000/19001) is seeded by the one-shot `minio-init`
-service, which reruns on every `up` and is idempotent. Two buckets and
-two identities:
+`s3` (host ports 19000/19001) is seeded by the one-shot `s3-init` service,
+which reruns on every `up` and is idempotent. Two buckets and two
+identities:
 
 | identity | access key / secret | can list buckets? | access |
 |---|---|---|---|
@@ -20,64 +20,175 @@ Buckets: `macscp-seed` (root's original seed bucket — `a.txt` and
 `second.txt`, seeded so the bucket-list case is a genuine two-bucket
 listing).
 
-The scoped identity's policy (`docker/test-server/minio/scoped-seed-policy.json`,
+The scoped identity's policy (`docker/test-server/s3/scoped-seed-policy.json`,
 policy name `scoped-seed` on the server) grants `s3:ListBucket` on
 `arn:aws:s3:::macscp-seed` and `s3:GetObject`/`s3:PutObject`/`s3:DeleteObject`
 on `arn:aws:s3:::macscp-seed/*` — nothing else, and deliberately no
 `s3:ListAllMyBuckets`.
 
+### The server changed on 2026-09-25: MinIO → RustFS
+
+`minio/minio` and `minio/mc` are no longer on Docker Hub. Measured
+2026-09-25, for the pinned tags the rig used and for `latest` alike:
+
+```
+$ docker pull minio/minio:RELEASE.2024-07-16T23-46-41Z
+Error response from daemon: pull access denied for minio/minio, repository does not exist or may require 'docker login'
+$ docker pull minio/mc:RELEASE.2024-07-15T17-46-06Z
+Error response from daemon: pull access denied for minio/mc, repository does not exist or may require 'docker login'
+$ docker pull minio/minio:latest
+Error response from daemon: pull access denied for minio/minio, repository does not exist or may require 'docker login'
+```
+
+So `docker compose … up -d` could not bring the S3 half up at all, and
+every gated S3 case against a real server had been dead since. The
+replacement is **RustFS `1.0.0`** (`rustfs/rustfs:1.0.0`, Apache-2.0, both
+`amd64` and `arm64` in the manifest, run as a test-only container and never
+linked — the same standing as `sftpgo` below, and the reason no rig image
+appears in `THIRD_PARTY_NOTICES.md`, which is generated from
+`Package.resolved` and covers linked dependencies only).
+
+Two candidates were measured against what the S3 backend actually
+exercises, with a raw-SigV4 probe (no SDK) of 22 behaviours and then with
+the gated Swift suites themselves. Both are Apache-2.0 and both publish
+`arm64`:
+
+| candidate | raw probe | gated `S3FileSystemIntegrationTests` + `S3AccessProbeTests` |
+|---|---|---|
+| `rustfs/rustfs:1.0.0` | 22/22 | 38 tests, all pass, no test changed |
+| `chrislusf/seaweedfs:4.47` | 22/22 | 38 tests, 2 fail with 3 issues |
+
+38 is what the two suites counted at comparison time: the 25 gated S3
+filesystem cases as they stood before this change, plus all 13 of
+`S3AccessProbeTests`, 4 of which are gated. Counted 2026-09-25 from each
+run's own `Test run with 38 tests in 2 suites` line — for RustFS as two
+invocations of one filter each, 25 and 13, both green. It is 39 now:
+the case below that only this server makes possible was added
+afterwards, and `Test run with 39 tests in 2 suites passed` is the
+line that says so.
+
+SeaweedFS's two reds are named in full further down; neither is the
+app's defect.
+
+The 22 probed behaviours, all satisfied by both: HeadBucket; ListBuckets;
+ListObjectsV2 with `delimiter` and CommonPrefixes; single-part PUT whose
+ETag is the object's MD5; GetObject; a ranged GET answering 206 with a
+`Content-Range` that starts at the offset asked for; that ranged GET with a
+matching `If-Match` still answering 206, and with a stale one answering
+412; HeadObject; CopyObject via `x-amz-copy-source`; a folder-marker PUT
+(`name/`) appearing as a CommonPrefix; CreateMultipartUpload + UploadPart;
+CompleteMultipartUpload answering an ETag of the `<hex>-<parts>` shape;
+AbortMultipartUpload; batch `DeleteObjects` (`POST ?delete` with
+`Content-MD5`); `DeleteObject` on an absent key answering 204; a presigned
+GET and a presigned PUT (query-string SigV4, no `Authorization` header);
+wrong credentials refused with 403; the scoped key's ListBuckets answering
+200 with a filtered list; the scoped key listing its own bucket; and the
+scoped key refused the bucket its policy does not name.
+
+SeaweedFS fails where S3's prefix semantics are not the filer's. Measured
+2026-09-25: after the only key under a prefix is deleted, the prefix is
+still reported as a CommonPrefix, with zero keys under it —
+
+```
+after write : ['leftover/', …]
+delete child: 204
+after delete: ['leftover/', …]
+keys under leftover/: []
+```
+
+— because SeaweedFS keeps a real directory, while in S3 a prefix exists
+only as long as some key has it. That breaks
+`renameDirectoryMovesEveryObjectToTheNewPrefix` (the source folder still
+shows in a root listing after the rename) and
+`deleteTreeRemovesEveryObjectUnderThePrefix` (same, plus the emptied
+folder does not list empty). Both would only go green by weakening the
+assertions to match the server, so SeaweedFS was not chosen.
+
+Zenko CloudServer was excluded before probing: `zenko/cloudserver`
+publishes `amd64` only (Docker Hub tag listing, 2026-09-25), so it would
+run under emulation on an Apple Silicon machine.
+
+RustFS also serves MinIO's own admin API, which is what let the scoped
+identity keep the same IAM policy document, the same two key pairs and the
+same refusals — no gated assertion had to change. The seeding no longer
+needs a vendor CLI: `minio/mc` went away with the server image, so
+`s3-init` is `curlimages/curl` (already used by `sftpgo-init`) signing with
+curl's own `--aws-sigv4`. `docker/test-server/s3/init.sh` carries the
+steps and says per step why each is idempotent.
+
+### The scoped key's bucket listing, measured twice
+
 **Measured deviation from the original task brief:** the brief expected an
-account-level bucket listing (`mc ls scoped`, no bucket given) to fail
-outright with `AccessDenied` once `s3:ListAllMyBuckets` is omitted. That is
-not what this MinIO version (`RELEASE.2024-07-16T23-46-41Z`) does: MinIO's
-`ListBuckets` implementation returns every bucket the caller has *any*
-access to, regardless of `s3:ListAllMyBuckets` — confirmed by adding an
-explicit `Deny` statement for that action to a throwaway test policy and
-re-running the same call: the result was unchanged, still the filtered
-one-bucket list, never `AccessDenied` (the throwaway policy was removed and
-the user's policy set back to `scoped-seed` afterwards; see the fork/rig
-discipline this repo already applies — measure, then record). So the
+account-level bucket listing (no bucket given) to fail outright with
+`AccessDenied` once `s3:ListAllMyBuckets` is omitted. Neither server does
+that. MinIO (`RELEASE.2024-07-16T23-46-41Z`, measured 2026-09-02) returned
+every bucket the caller has *any* access to regardless of
+`s3:ListAllMyBuckets` — confirmed by adding an explicit `Deny` statement
+for that action to a throwaway test policy and re-running the same call:
+the result was unchanged, still the filtered one-bucket list, never
+`AccessDenied` (the throwaway policy was removed and the user's policy set
+back to `scoped-seed` afterwards). RustFS 1.0.0, measured 2026-09-25 with
+the same `scoped-seed-policy.json`, answers the same way. So the
 achievable, verified behavior for a bucket-scoped key on this rig is: an
 account-level listing returns only the bucket(s) it is scoped to (here,
 exactly one — `macscp-seed`), and reading any *other* bucket's contents is
-a hard `AccessDenied`. There is no policy shape on this MinIO version that
-makes the account-level listing itself return `AccessDenied` while the key
-still has any bucket access at all. Whoever writes the Swift-side test for
-"a key scoped to one bucket" should assert the single-bucket-filtered list
-and the cross-bucket `AccessDenied`, not an `AccessDenied` on the listing
-call itself.
+a hard `AccessDenied`. The Swift-side tests for "a key scoped to one
+bucket" assert the single-bucket-filtered list and the cross-bucket
+`AccessDenied`, not an `AccessDenied` on the listing call itself. The
+`bucketListForbidden` case — what AWS answers — is pinned with a canned
+403 in `S3FileSystemTests` instead.
 
-### Proof, measured 2026-09-02
+### Proof, measured 2026-09-25 (RustFS)
 
-From inside `minio-init`'s image (`docker compose -f
-docker/test-server/compose.yml run --rm --entrypoint sh minio-init -c
-'...'`), with `local` aliased to the root credentials and `scoped` aliased
-to the scoped credentials:
+Signed with the same raw-SigV4 probe from the host, root and scoped in turn:
 
 ```
---- 1: root mc ls local ---
-[2026-09-02 10:22:29 UTC]     0B macscp-second/
-[2026-09-01 09:04:36 UTC]     0B macscp-seed/
---- 2: scoped mc ls scoped ---
-[2026-09-01 09:04:36 UTC]     0B macscp-seed/
---- 3: scoped mc ls scoped/macscp-seed ---
-[2026-09-02 10:24:31 UTC]     8B STANDARD a.txt
-[2026-09-02 10:26:15 UTC]     0B sub/
---- 4: scoped mc ls scoped/macscp-second ---
-mc: <ERROR> Unable to list folder. Access Denied.
+--- 1: root, ListBuckets ---
+status=200 names=['macscp-second', 'macscp-seed']
+--- 2: scoped, ListBuckets ---
+status=200 names=['macscp-seed']
+--- 3: scoped, ListObjectsV2 on macscp-seed ---
+status=200
+--- 4: scoped, ListObjectsV2 and HeadBucket on macscp-second ---
+list=403 head=403
 ```
 
 Root sees both buckets (1). The scoped key's account-level listing shows
 only the one bucket it has access to, not both — see the deviation note
 above (2). The scoped key can list and read inside `macscp-seed` (3). The
-scoped key gets a hard `AccessDenied` reading `macscp-second`, the bucket
-its policy does not name (4).
+scoped key gets a hard `AccessDenied` on `macscp-second`, the bucket its
+policy does not name (4).
 
-`docker compose up -d` against an already-running rig recreates only
-`minio-init` — `minio`, both `sshd`, `webdav` and the five
-`sshd-hostkey-*` containers keep their existing container IDs (checked via
-`docker ps --format '{{.ID}} {{.Names}}'` before and after; every ID
-matched).
+### A key that is both an object and a prefix
+
+The MinIO rig could not show this shape: measured 2026-09-05, a key `x`
+and a key `x/child` both answered a direct GET, but no listing ever named
+the child while the bare `x` existed, so `deleteLookup`'s ambiguity check
+— which is a listing — never saw it. RustFS does show it. Measured
+2026-09-25, both keys written by raw signed PUT:
+
+```
+put x     : 200          get x     : 200 b'obj'
+put x/kid : 200          get x/kid : 200 b'kid'
+list delimiter=/&prefix=x     : KeyCount=2 keys=['both-probe']              commonPrefixes=['both-probe/']
+list prefix=x                 : KeyCount=2 keys=['both-probe','both-probe/child']
+list prefix=x/&max-keys=1     : KeyCount=1 keys=['both-probe/child']
+```
+
+The third line is exactly the call `deleteLookup` makes. Both probe keys
+were deleted afterwards and the bucket verified back at its seed (`a.txt`,
+`sub/b.txt`). The gated case
+`deleteRefusesAKeyThatIsBothAnObjectAndAPrefixWhileDeleteTreeTakesBoth`
+was added against this rig on the same day; real AWS S3 remains
+unmeasured.
+
+### Restart behaviour
+
+`docker compose up -d` against an already-running rig recreates nothing.
+Measured 2026-09-25 with `docker ps -a --filter 'name=macscp-test-'
+--format '{{.ID}} {{.Names}}'` before and after, diffed: no differences —
+every container ID matched, `macscp-test-s3-init` included, and its rerun
+log ended `s3-init: done` with exit code 0.
 
 ## SSH host-key-types rig (2026-09-02)
 

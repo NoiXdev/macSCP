@@ -11,8 +11,8 @@ import Testing
 /// `ListObjectsV2` with `MaxKeys=1` (may it read the bucket's contents) and
 /// `ListBuckets` (may it enumerate the account). The unit half drives a fake
 /// transport, so what is measured is the request each call builds and the
-/// line the step reports; the gated half asks the rig's MinIO and asserts
-/// WHAT MINIO DOES — which is not what AWS would do, and is recorded as such
+/// line the step reports; the gated half asks the rig's S3 server and asserts
+/// WHAT THAT SERVER DOES — which is not what AWS would do, and is recorded as such
 /// in `docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md`.
 @Suite("S3 access probe")
 struct S3AccessProbeTests {
@@ -233,7 +233,7 @@ struct S3AccessProbeTests {
         #expect(step.detail.contains("ListBuckets"))
     }
 
-    // MARK: - Against the rig's MinIO
+    // MARK: - Against the rig's S3 server
 
     private static func rigConfig(
         accessKeyID: String, secretAccessKey: String, bucket: String
@@ -268,16 +268,16 @@ struct S3AccessProbeTests {
         #expect(Self.status(of: results, .headBucket) == 200)
         #expect(Self.status(of: results, .listObjectsV2) == 200)
         #expect(Self.status(of: results, .listBuckets) == 200)
-        // MinIO sends a request id on every one of them, and the line carries
+        // The rig sends a request id on every one of them, and the line carries
         // it — that id is what a provider is asked to look up.
         #expect(S3AccessProbe.detail(results).contains("(req "))
     }
 
     /// The rig's scoped key is granted the seed bucket only, and its policy
-    /// deliberately omits `s3:ListAllMyBuckets`. Measured against this MinIO
-    /// release on 2026-09-02: the account listing is NOT refused — MinIO
-    /// answers 200 with the FILTERED list. This asserts what the rig does,
-    /// not what AWS would do.
+    /// deliberately omits `s3:ListAllMyBuckets`. Measured against MinIO on
+    /// 2026-09-02 and against RustFS 1.0.0 on 2026-09-25: the account
+    /// listing is NOT refused — both answer 200 with the FILTERED list.
+    /// This asserts what the rig does, not what AWS would do.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"))
     func theScopedKeyGetsAFilteredBucketListRatherThanARefusal() async throws {
         let results = await Self.runAgainstRig(

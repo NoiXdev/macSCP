@@ -35,83 +35,89 @@ services:
       - ./seed2:/data/seed:ro
       - ./sshd_config.d:/config/sshd/sshd_config.d:ro
 
-  # MinIO (M12/T5): thin S3-compatible object store backing the gated S3
-  # integration test. Pinned image tags (never `latest`) so the rig is
-  # reproducible. Independent of sshd/sshd2 above — left byte-identical.
-  minio:
-    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
-    container_name: macscp-test-minio
-    command: server /data --console-address ":9001"
+  # The S3 rig (M12/T5; image replaced 2026-09-25): a thin S3-compatible
+  # object store backing the gated S3 integration suites. RustFS stands
+  # where MinIO stood until `minio/minio` and `minio/mc` were withdrawn
+  # from Docker Hub -- `docker pull` answers "pull access denied for
+  # minio/minio, repository does not exist", measured 2026-09-25, for the
+  # pinned tags and for `latest` alike, so the rig could not start at all.
+  # Apache-2.0, run as a test-only container and never linked, exactly like
+  # the `sftpgo` service below; THIRD_PARTY_NOTICES.md is generated from
+  # `Package.resolved` and covers linked dependencies only, so no rig image
+  # belongs in it. Pinned image tags (never `latest`) so the rig is
+  # reproducible. Independent of sshd/sshd2 above -- left byte-identical.
+  #
+  # RustFS serves MinIO's own admin API, which is why the scoped identity's
+  # policy document below is the same IAM JSON as before and the gated
+  # suites did not have to change: the ports, both bucket names, both key
+  # pairs and every refusal they assert are what they were.
+  s3:
+    image: rustfs/rustfs:1.0.0
+    container_name: macscp-test-s3
     # Host ports are deliberately non-standard (19000/19001, mapped to the
-    # container's 9000/9001) to avoid colliding with a MinIO/S3 service a dev
-    # machine commonly runs on the default 9000 — same "high, unlikely to
-    # clash" spirit as the sshd 2222/2223 mappings above.
+    # container's 9000/9001) to avoid colliding with an S3 service a dev
+    # machine commonly runs on the default 9000 -- same "high, unlikely to
+    # clash" spirit as the sshd 2222/2223 mappings above, and the same two
+    # host ports MinIO published here, so nothing that names them moved.
     ports:
       - "19000:9000"
       - "19001:9001"
     environment:
-      - MINIO_ROOT_USER=macscp
-      - MINIO_ROOT_PASSWORD=macscpsecretkey
+      - RUSTFS_ADDRESS=:9000
+      - RUSTFS_VOLUMES=/data
+      - RUSTFS_ACCESS_KEY=macscp
+      - RUSTFS_SECRET_KEY=macscpsecretkey
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_CONSOLE_ADDRESS=:9001
 
-  # One-shot seeding: waits for MinIO to accept requests, creates the seed
-  # bucket, and puts a couple of objects (incl. one under a "sub/" prefix)
-  # so the gated S3FileSystemIntegrationTests can assert both a file and a
-  # directory (CommonPrefixes) appear in a root listing.
+  # One-shot seeding: waits for the store to accept a signed request, then
+  # creates two buckets, puts three objects and defines the scoped
+  # identity. It reruns on every `docker compose up` against a store that
+  # already holds last run's state, so every step in ./s3/init.sh is
+  # idempotent; the script says per step why.
   #
-  # Also (2026-09-02, S3 bucket browser): a second bucket, `macscp-second`,
-  # so the bucket-list case is a real two-bucket listing rather than a
-  # single-bucket root; and a second S3 identity, `macscp-scoped`, whose
-  # policy grants ListBucket/GetObject/PutObject/DeleteObject on
-  # `macscp-seed` only and deliberately omits `s3:ListAllMyBuckets`.
-  # Measured 2026-09-02 against this MinIO release (proofs in README.md):
-  # such a key does NOT get AccessDenied on the account-level bucket
-  # listing -- MinIO returns the FILTERED list (macscp-seed only), and an
-  # explicit Deny on s3:ListAllMyBuckets does not change that; what it
-  # does deny is any access to macscp-second. So the case this identity
-  # exercises is "a key that sees one bucket", not "a key that is refused
-  # the list". The policy document lives in ./minio/scoped-seed-policy.json,
-  # mounted read-only below.
+  # `macscp-seed` holds `a.txt` and `sub/b.txt`, so the gated
+  # S3FileSystemIntegrationTests can assert both a file and a directory
+  # (CommonPrefixes) appear in a root listing. `macscp-second` holds
+  # `second.txt` (2026-09-02, S3 bucket browser), so the bucket-list case
+  # is a real two-bucket listing rather than a single-bucket root.
   #
-  # Every mc call here is written to be idempotent -- this container reruns
-  # on every `docker compose up`, against a MinIO volume that already has
-  # last run's state:
-  #   - `mc mb --ignore-existing` / `mc pipe` already tolerate a rerun.
-  #   - `mc admin user add` and `mc admin policy create` both overwrite in
-  #     place, so re-adding the same user/policy is a no-op in effect.
-  #   - `mc admin policy attach` is NOT idempotent: MinIO rejects a repeat
-  #     attach ("Specified policy update has no net effect") with a
-  #     non-zero exit. So it only runs when `mc admin policy entities`
-  #     shows the attachment is not already there (verified against a live
-  #     rig: first run attaches, a second run with no state change hits the
-  #     "already attached" branch and exits 0).
-  minio-init:
-    image: minio/mc:RELEASE.2024-07-15T17-46-06Z
-    container_name: macscp-test-minio-init
+  # The second identity, `macscp-scoped`, carries a policy granting
+  # ListBucket/GetObject/PutObject/DeleteObject on `macscp-seed` only and
+  # deliberately omitting `s3:ListAllMyBuckets`. Measured 2026-09-02
+  # against MinIO and again 2026-09-25 against RustFS (proofs in
+  # README.md): such a key does NOT get AccessDenied on the account-level
+  # bucket listing -- the server returns the FILTERED list (macscp-seed
+  # only); what it does deny is any access to macscp-second. So the case
+  # this identity exercises is "a key that sees one bucket", not "a key
+  # that is refused the list". The policy document lives in
+  # ./s3/scoped-seed-policy.json, mounted read-only below.
+  #
+  # `curlimages/curl` rather than a vendor CLI: `minio/mc` went away with
+  # the server image, and curl signs SigV4 itself (`--aws-sigv4`). It is
+  # the same image `sftpgo-init` below already uses. The credentials stay
+  # spelled here, with the rig's other fixture credentials, and reach the
+  # script as environment variables.
+  s3-init:
+    image: curlimages/curl:8.9.1
+    container_name: macscp-test-s3-init
     depends_on:
-      - minio
+      - s3
     volumes:
-      - ./minio/scoped-seed-policy.json:/policies/scoped-seed-policy.json:ro
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 macscp macscpsecretkey; do sleep 1; done &&
-      mc mb --ignore-existing local/macscp-seed &&
-      echo 'hello a' | mc pipe local/macscp-seed/a.txt &&
-      echo 'hello b' | mc pipe local/macscp-seed/sub/b.txt &&
-      mc mb --ignore-existing local/macscp-second &&
-      echo 'hello second' | mc pipe local/macscp-second/second.txt &&
-      mc admin user add local macscp-scoped macscpscopedsecret &&
-      mc admin policy create local scoped-seed /policies/scoped-seed-policy.json &&
-      attached=\$$(mc admin policy entities local --user macscp-scoped) &&
-      case \"\$$attached\" in
-        *scoped-seed*) true ;;
-        *) mc admin policy attach local scoped-seed --user macscp-scoped ;;
-      esac
-      "
+      - ./s3/init.sh:/init.sh:ro
+      - ./s3/scoped-seed-policy.json:/policies/scoped-seed-policy.json:ro
+    environment:
+      - S3_URL=http://s3:9000
+      - ROOT_KEY=macscp
+      - ROOT_SECRET=macscpsecretkey
+      - SCOPED_KEY=macscp-scoped
+      - SCOPED_SECRET=macscpscopedsecret
+    entrypoint: ["/bin/sh", "/init.sh"]
 
   # Apache/mod_dav rig (M21/Task 11) backing WebDAVFileSystemIntegrationTests:
   # three vhosts, one per auth mode the WebDAV backend has to handle. Host
   # ports are non-standard 180xx/18443, same "high, unlikely to clash" spirit
-  # as the sshd/minio mappings above; verified free with `lsof -i` before
+  # as the sshd/s3 mappings above; verified free with `lsof -i` before
   # settling on them.
   #   18080 -> 8080  Basic auth,  plain HTTP
   #   18081 -> 8081  Digest auth, plain HTTP
@@ -275,7 +281,7 @@ services:
   #
   # Ports: 2240 -> 2022 (SFTP) and 18091 -> 8080 (the admin REST API, which is
   # how a test installs a public key on `testuser`). Both host ports are in the
-  # same "high, unlikely to clash" spirit as the sshd/minio/webdav mappings
+  # same "high, unlikely to clash" spirit as the sshd/s3/webdav mappings
   # above, and were verified free with `lsof -nP -iTCP:<port> -sTCP:LISTEN`
   # before being settled on.
   #
@@ -305,7 +311,7 @@ services:
     volumes:
       - ./seed:/data/seed:ro
 
-  # One-shot seeding for `sftpgo`, in the spirit of `minio-init` above: waits
+  # One-shot seeding for `sftpgo`, in the spirit of `s3-init` above: waits
   # for the admin API, then creates `testuser` unless it is already there. See
   # the comments in ./sftpgo/init.sh for the idempotency argument.
   sftpgo-init:

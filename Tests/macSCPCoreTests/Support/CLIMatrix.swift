@@ -78,7 +78,7 @@ struct CLIMatrix: Sendable {
     // MARK: - Rig coordinates
 
     /// The rig's coordinates per backend, from `docker/test-server/compose.yml`:
-    /// sshd on 2222, MinIO on 19000 with the seeded `macscp-seed` bucket, and
+    /// sshd on 2222, the S3 rig on 19000 with the seeded `macscp-seed` bucket, and
     /// the Apache Basic-auth vhost on 18080. The same values
     /// `CitadelFileSystemIntegrationTests`, `S3FileSystemIntegrationTests` and
     /// `WebDAVFileSystemIntegrationTests` already use.
