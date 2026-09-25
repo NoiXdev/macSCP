@@ -315,7 +315,7 @@
 "transfers.failure.connectionFailed" = "Die Verbindung zum Server ist fehlgeschlagen.";
 "transfers.failure.protocolError" = "Der Server hat eine Antwort gesendet, die nicht verwendet werden konnte.";
 "transfers.failure.unknown" = "Die Übertragung ist fehlgeschlagen.";
-"transfers.failure.detail %1$@ %2$@" = "%1$@ (technische Angabe: %2$@)";
+"transfers.failure.detail %1$@ %2$@" = "%1$@ (technische Details: %2$@)";
 
 /* Resume-Banner (M5d/T4) */
 "transfers.interrupted.banner" = "Unterbrochene Übertragungen können fortgesetzt werden.";

@@ -7,8 +7,17 @@
    since 2026-09-25. The audit line writes it for every one of the fourteen
    causes (`AuditRecorder`); the App's transfer row reads it for eleven and
    says the other three itself (`TransferFailureLabel`), because
-   `core.error.connectionLost %@` and `core.transfer.failed %@` are exactly
-   the frames whose argument is free text a backend wrote. */
+   `core.error.connectionLost %@` and `core.transfer.failed %@` are the two
+   frames whose argument is a `reason` string rather than a path.
+
+   Counted 2026-09-25: `core.transfer.failed %@` has 2 readers, both in
+   `TransferFailureKind.message` (`protocolError`, `unknown`);
+   `core.error.connectionLost %@` has 2 — that file's `connectionFailed`
+   arm, and `RemoteBrowserViewModel.message(for:path:)`, which fills it
+   with `DialSupport.reason(for:)` and is NOT one of the three the App
+   takes over. What those arguments hold is mostly macSCP's own English
+   prose, not a server's words; see `TransferFailureLabel`'s doc comment
+   for the measurement. */
 "core.transfer.notFound %@" = "Nie znaleziono pliku: %@";
 "core.error.permissionDenied %@" = "Odmowa dostępu dla: %@";
 "core.error.connectionLost %@" = "Utracono połączenie: %@";

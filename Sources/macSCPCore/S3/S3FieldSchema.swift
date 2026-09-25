@@ -438,6 +438,29 @@ public enum S3FieldSchema {
         endpointURL(values).flatMap { Endpoint(url: $0) }
     }
 
+    /// The backstop refusal for a required field this factory found blank,
+    /// in the user's language.
+    ///
+    /// The message is DERIVED from the schema's own `invalidMessageKey` for
+    /// that field, the way `BucketLevelOperation.refusalMessageKey` is
+    /// derived from its case, rather than spelled a second time here. The
+    /// two English literals that stood here until 2026-09-25 were a second
+    /// copy of what `BackendDescriptor.firstViolation` already says from
+    /// the same key — and an English one, which
+    /// `TransferFailureLabel` would have shown as a technical detail
+    /// "from the server" had it ever reached a transfer row.
+    ///
+    /// A field with no declared key falls back to the generic required-field
+    /// message the schema layer itself falls back to
+    /// (`ConnectionFieldSchema`'s own `invalidMessageKey ?? …` arm), so this
+    /// cannot render a key at a user. Neither of the two fields it is called
+    /// for lacks one, and `S3ConfigFactoryMessageTests` reads both out of
+    /// the schema rather than naming them.
+    static func blankFieldRefusal(_ field: S3Field) -> RemoteFSError {
+        let key = connection.fields.first { $0.id == field.rawValue }?.invalidMessageKey
+        return .connectionFailed(reason: CoreL10n.string(key ?? "core.connect.fieldRequired"))
+    }
+
     public static func makeConfig(
         _ values: FieldValues, _ secret: String
     ) throws -> ConnectionConfig {
@@ -457,10 +480,10 @@ public enum S3FieldSchema {
                 // reads the values and not the schema.
                 guard !values[bool: S3Field.startsAtBucketList] else { break }
                 guard !values[S3Field.bucket].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else { throw RemoteFSError.connectionFailed(reason: "Enter the bucket") }
+                else { throw Self.blankFieldRefusal(.bucket) }
             case .endpoint:
                 guard !values[S3Field.endpoint].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else { throw RemoteFSError.connectionFailed(reason: "Enter the endpoint") }
+                else { throw Self.blankFieldRefusal(.endpoint) }
             case .region, .accessKeyID, .secretAccessKey, .usePathStyle,
                  .startsAtBucketList:
                 // `region` needs no check HERE, but it is not optional: the

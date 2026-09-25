@@ -21,28 +21,58 @@ import macSCPCore
 ///
 /// The three that remain are exactly the row's finding —
 /// `connectionFailed(detail:)`, `protocolError(detail:)` and
-/// `unknown(detail:)`, the only kinds whose payload is free text a backend
-/// or Foundation wrote. For those the App says the sentence itself, from
-/// its own catalogue, and keeps the detail behind it.
+/// `unknown(detail:)`, the only kinds whose payload is a free-text
+/// `reason` rather than a path or an enum. For those the App says the
+/// sentence itself, from its own catalogue, and keeps the detail behind it.
 ///
-/// ## Why the detail is kept (maintainer-facing decision, 2026-09-25)
+/// ## What the detail actually is (corrected 2026-09-25, fix round 1)
 ///
-/// Dropping it for a fixed translated sentence was the alternative. It was
-/// rejected on what a reader can DO with the text:
+/// The first version of this comment called it "free text a backend or
+/// Foundation wrote". That was measured false. Counted over
+/// `Sources/macSCPCore` on 2026-09-25: **68** construction sites of
+/// `RemoteFSError.protocolError(reason:)` / `.connectionFailed(reason:)`,
+/// and the great majority compose **macSCP's own English prose**, not a
+/// server's words. The two sentences a user is most likely to meet are
+/// `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason` — macSCP
+/// constants, quoted verbatim in the user documentation. Genuinely foreign
+/// text is the minority: a `localizedDescription` from Foundation or NIO,
+/// an S3 error code parsed out of a response body.
 ///
-/// - `protocolError`'s detail is the server's own answer — an S3 error code
-///   such as `AccessDenied` or `NoSuchBucket`, a WebDAV status. It names
-///   the thing the user or their administrator has to change.
-/// - `connectionFailed`'s detail is what separates a timeout from a refusal
-///   from an unknown host, and those have three different fixes.
-/// - `unknown`'s detail is, by construction, the only information there is;
-///   without it the row says "The transfer failed." and a bug report cannot
-///   be written.
+/// So the honest statement is: the detail is a diagnostic string macSCP
+/// mostly wrote in English, occasionally relayed from elsewhere, and in
+/// neither case translated.
 ///
-/// So the detail stays, as a suffix that is MARKED as technical
+/// ## Why it is kept anyway (maintainer-facing decision, 2026-09-25)
+///
+/// Dropping it for a fixed translated sentence was the alternative, and the
+/// decision to keep it survives the correction above — but on a narrower
+/// argument than the one first written:
+///
+/// - It is strictly better than what it replaces. Before this type, the
+///   WHOLE line was `core.transfer.failed %@` with the same English inside
+///   it; now the finding is translated and only the diagnostic tail is not.
+///   Nothing a reader could understand before was lost.
+/// - It is the half a reader can act on. The resume refusals say which
+///   resume was refused and that the partial file was left alone; an S3
+///   error code names what the administrator has to change;
+///   `connectionFailed`'s detail separates a timeout from a refusal from an
+///   unknown host, three different fixes. `unknown`'s is by construction
+///   the only information there is, and without it no bug report can be
+///   written.
+/// - It is the half that can be pasted. A support thread quotes it, and a
+///   translated quotation is worth less there, not more.
+///
+/// The right END state is fewer details, not a different frame: each
+/// macSCP-authored `reason` that a user really reads should become a typed
+/// case with a catalogue key of its own, the way
+/// `RemoteFSError.BucketLevelOperation.refusalMessageKey` already is. Two
+/// were converted in fix round 1 (`S3FieldSchema.blankFieldRefusal`); the
+/// rest is a `docs/BACKLOG.md` row, because each conversion is a new
+/// `RemoteFSError` case with arms in three mappers.
+///
+/// So the detail stays for now, as a suffix that is MARKED as technical
 /// (`transfers.failure.detail %1$@ %2$@`, translated in all four
-/// languages), behind prose that is translated and comes first. A reader
-/// who does not read English still learns what failed; the row's
+/// languages), behind prose that is translated and comes first. The row's
 /// `lineLimit(1)` truncates the tail, so the translated half is the half
 /// that survives, and the hover hint carries the whole line.
 ///
@@ -52,7 +82,15 @@ import macSCPCore
 /// .failureKind(for:)` runs every one through `URLText.withoutUserinfo` at
 /// CONSTRUCTION, so a `scheme://KEY:SECRET@host` endpoint composed into a
 /// backend's `reason` cannot reach the value, let alone this rendering
-/// (`TransferFailureKindTests.noCausesDataCarriesACredential`). The other
+/// (`TransferFailureKindTests.noCausesDataCarriesACredential`).
+///
+/// That filter removes userinfo; it does not shorten a dump. Five throws in
+/// `LocalFileSystem` built their `reason` with `String(describing: error)`,
+/// which on an `NSError` prints its domain, its code and the whole
+/// `userInfo` — a local path and an `NSUnderlyingError` among it. Harmless
+/// while the text was dropped again wherever it was shown, and no longer
+/// harmless once this type began showing it; fixed in fix round 1 and held
+/// by `LocalFileSystemErrorTextGuardTests`. The other
 /// payloads a kind carries — the two paths and the bucket-level operation
 /// — are never interpolated HERE at all: their sentences are Core's, and
 /// Core shows a path because it is the queue's own path, which the row

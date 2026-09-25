@@ -311,7 +311,12 @@ public struct LocalFileSystem: RemoteFileSystem {
             try handle.seek(toOffset: offset)
         } catch {
             try? handle.close()
-            throw RemoteFSError.protocolError(reason: String(describing: error))
+            // `localizedDescription`, never `String(describing:)` — see
+            // `map(_:path:)`'s doc comment for the rule and what it cost.
+            // Three further throws below reduce an error the same way,
+            // counted here 2026-09-25: the stream read, the append seek and
+            // the checksum digest.
+            throw RemoteFSError.protocolError(reason: error.localizedDescription)
         }
         // Pull-based (unfolding): the consumer sets the pace,
         // never more than one chunk is buffered.
@@ -325,7 +330,7 @@ public struct LocalFileSystem: RemoteFileSystem {
                 return nil
             } catch {
                 try? handle.close()
-                throw RemoteFSError.protocolError(reason: String(describing: error))
+                throw RemoteFSError.protocolError(reason: error.localizedDescription)
             }
         })
     }
@@ -358,7 +363,7 @@ public struct LocalFileSystem: RemoteFileSystem {
             do {
                 try handle.seekToEnd()
             } catch {
-                throw RemoteFSError.protocolError(reason: String(describing: error))
+                throw RemoteFSError.protocolError(reason: error.localizedDescription)
             }
         }
         for try await chunk in contents {
@@ -557,7 +562,25 @@ public struct LocalFileSystem: RemoteFileSystem {
         return (owner, group)
     }
 
-    private static func map(_ error: Error, path: String) -> Error {
+    /// An error `FileManager` or a file handle threw, as a `RemoteFSError`.
+    ///
+    /// Internal rather than private so the fallback arm is unit-testable
+    /// without a failing disk — the same reason
+    /// `CitadelFileSystem.mapSFTPError` is internal —, which is what
+    /// `LocalFileSystemErrorTextGuardTests` drives.
+    ///
+    /// The fallback reduces an unrecognised error to its
+    /// `localizedDescription`, never to `String(describing:)` — the rule
+    /// `DialSupport.reason(for:)` states and `CitadelFileSystem
+    /// .mapSFTPError` already follows. This file broke it at five throws
+    /// until 2026-09-25, which cost nothing while the text was dropped
+    /// again wherever it was shown; it stopped being free when
+    /// `TransferFailureLabel` began showing a `protocolError`'s `reason` to
+    /// the user as a transfer row's technical detail, because
+    /// `String(describing:)` on an `NSError` prints its domain, its code
+    /// and the whole `userInfo` — a local path and an `NSUnderlyingError`
+    /// dump among it.
+    static func map(_ error: Error, path: String) -> Error {
         let ns = error as NSError
         // FileManager operations throw NSFileReadNoSuchFileError (260),
         // while FileHandle(forReadingFrom:) throws NSFileNoSuchFileError (4) —
@@ -582,7 +605,7 @@ public struct LocalFileSystem: RemoteFileSystem {
             default: break
             }
         }
-        return RemoteFSError.protocolError(reason: String(describing: error))
+        return RemoteFSError.protocolError(reason: error.localizedDescription)
     }
 
     /// Whether `error` is the URL enumeration API's ENOTDIR failure for a
@@ -649,7 +672,7 @@ extension LocalFileSystem: RemoteChecksumProvider {
         } catch let cancellation as CancellationError {
             throw cancellation
         } catch {
-            throw RemoteFSError.protocolError(reason: String(describing: error))
+            throw RemoteFSError.protocolError(reason: error.localizedDescription)
         }
 
         // The factory checks the hex and may refuse it. It cannot refuse
