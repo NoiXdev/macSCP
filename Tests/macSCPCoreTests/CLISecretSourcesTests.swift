@@ -629,11 +629,13 @@ struct SecretSourcesManagedKeyTests {
     /// nothing else in the tree catches.
     ///
     /// An own slot holding the EMPTY string is a real shape, not a
-    /// hypothetical: `SessionListViewModel.upsert` writes
-    /// `savePassword(password, for: session.id)` for every session whose
-    /// backend `requiresSecret` — true for SSH unless the auth kind is
+    /// hypothetical: `SessionListViewModel.save(name:values:password:…)`
+    /// writes `savePassword(password, for: session.id)` for every session
+    /// whose backend `requiresSecret` — true for SSH unless the auth kind is
     /// `.agent` — so a private-key session saved with a blank passphrase
-    /// field gets one. Measured against the real Keychain on 2026-09-25
+    /// field gets one. (Not `upsert`: that is `SessionStore.upsert(_:)`,
+    /// which writes the JSON record and no Keychain item. Named wrongly
+    /// here in round 1, corrected in fix round 1.) Measured against the real Keychain on 2026-09-25
     /// (`MACSCP_KEYCHAIN=1`): such a save creates a full item, which reads
     /// back as the empty string and which `KeychainSecretPresence` reports
     /// as present.

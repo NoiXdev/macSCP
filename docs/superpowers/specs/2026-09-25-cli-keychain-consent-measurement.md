@@ -36,8 +36,8 @@ secret chain, counted 2026-09-25 from the call sites of
 | verb | how it gets the chain |
 | --- | --- |
 | `ls`, `get`, `put`, `rm`, `mkdir` | `withConnection` → `connect(to:options:)` → `resolveSession` |
-| `diagnose` | `resolveSession` (`Sources/MacSCPCLI/DiagnoseCommand.swift:358`) |
-| `tunnels start` | `secretChain(for:options:)` (`Sources/MacSCPCLI/TunnelStartCommand.swift:176`) |
+| `diagnose` | `resolveSession`, called from `DiagnoseCommand.resolveTarget` (`:332`) at `Sources/MacSCPCLI/DiagnoseCommand.swift:358` |
+| `tunnels start` | `secretChain(for:options:)`, called from `TunnelStartCommand.hold` (`:169`) at `Sources/MacSCPCLI/TunnelStartCommand.swift:176` |
 
 `sessions` and the four `tunnels` store verbs build none. There is still
 exactly one `secretSources(` call site under `Sources/MacSCPCLI`
@@ -72,11 +72,15 @@ managed key that has a stored passphrase, environment link filtered out):
 | absent | `[session, key]` — **2** | `managed key passphrase` |
 
 A session's own item holding the **empty string** is not a hypothetical
-shape. `SessionListViewModel.upsert` writes
-`secrets.savePassword(password, for: session.id)` for every session whose
-backend `requiresSecret` (`SessionListViewModel.swift:284-285`), and SSH's
-`requiresSecret` is false only for `.agent`
-(`BackendDescriptor.swift:455-457`). A private-key session saved with a
+shape. `SessionListViewModel.save(name:values:password:…)`
+(`SessionListViewModel.swift:208`) writes
+`secrets.savePassword(password, for: session.id)` at `:284-285` for every
+session whose backend `requiresSecret`, and SSH's `requiresSecret` is
+false only for `.agent` (the closure at `BackendDescriptor.swift:455-457`,
+inside `sshDescriptor` at `:428`). Not `upsert`: `upsert` is
+`SessionStore.upsert(_:)` (`SessionStore.swift:212`), which writes the
+JSON record and no Keychain item — an earlier draft of this record named
+it, wrongly. A private-key session saved with a
 blank passphrase field therefore gets an item that exists and holds
 nothing — and against the real Keychain (`MACSCP_KEYCHAIN=1`, this
 machine, 2026-09-25) such a save creates a full item, which reads back as
@@ -84,9 +88,11 @@ machine, 2026-09-25) such a save creates a full item, which reads back as
 answers `nil` and is reported absent, as expected.
 
 Neither of the five `connect`-based verbs can read a jump hop's items at
-all: `StoredSessionConnectionConfig.build` refuses a session with a jump
-(`jumpSessionsNotSupported`), and `tunnels start` refuses one too
-(`TunnelCarriers.swift:60-61`). Only `diagnose` walks a jump — see
+all: `StoredSessionConnectionConfig.build(for:secret:checkedSources:)` refuses
+a session with a jump (`jumpSessionsNotSupported`, thrown at
+`StoredSessionConnectionConfig.swift:91-93`), and `tunnels start` refuses
+one too (`TunnelCarriers.refusalError(for:)`, `:56`, refusing at
+`TunnelCarriers.swift:60-61`). Only `diagnose` walks a jump — see
 section 4.
 
 ## 2. Is the second read reachable when the first already answered?
@@ -187,20 +193,50 @@ passphrase:
 | absent | `[hopSlot, key]` — **2** | yes |
 
 The first read's value is discarded in both rows. The precedence was
-inverted on 2026-09-19; the read order was not. And the closure is not
-memoized the way `ChainedSecretSource` is — calling it twice reads four
-items, measured `[hopSlot, key, hopSlot, key]` — against **three** call
-sites, counted 2026-09-24 in `DiagnosticJump.missingSecretReason`'s own
-comment and re-checked today: `ConnectionDiagnostics.dialJump`
-(`:690`), `ConnectionDiagnostics.throughput` (`:896`) and
-`DiagnosticJumpStep.dialViaJump` (`DiagnosticJump.swift:500`).
+inverted on 2026-09-19; the read order was not.
 
-So one `macscp diagnose` of a private-key session dialling through a
-private-key bastion can read **four different Keychain items** — the
-hop's slot, the hop's key's slot, the session's slot, the session's
-key's slot — one of which (the hop's slot) is read for nothing whenever
-the key answers, and the jump pair of which can be re-read once per jump
-dial.
+The closure is also not memoized the way `ChainedSecretSource` is: calling
+it twice reads **the same two items twice**, measured
+`[hopSlot, key, hopSlot, key]`. There are **three** call sites, counted
+2026-09-24 in `DiagnosticJump.missingSecretReason`'s own comment and
+re-derived in fix round 1 from each line's enclosing declaration rather
+than from that comment. **Round 1 of this record had two of the three
+names transposed against their line numbers** — the project's own
+"comments that describe other code" rule landing inside the document that
+is this task's whole deliverable. Measured:
+
+| call site | declared at | reads the jump's secret at |
+| --- | --- | --- |
+| `ConnectionDiagnostics.throughput` | `ConnectionDiagnostics.swift:671` | `:690` |
+| `ConnectionDiagnostics.dialJump` | `ConnectionDiagnostics.swift:888` | `:896` |
+| `DiagnosticJumpStep.dialViaJump` (a `static let`, not a `func`) | `DiagnosticJump.swift:483` | `:500` |
+
+**The ceiling, stated as a ceiling.** Two distinct items on the jump half,
+three unmemoized lookups, so a `--scope complete` diagnosis of a jump
+session can reach up to **six reads of those two items**. That figure is
+counted from the three call sites, not observed: what was measured
+directly is two lookups reading the two items twice. No full
+`--scope complete` run was made, so whether all three call sites fire in
+one diagnosis is reasoned from the scope tables, not measured.
+
+Add the target half — the session's own slot and, behind it, the session's
+managed key's slot (section 1) — and one `macscp diagnose` of a
+private-key session dialling through a private-key bastion touches **four
+DISTINCT Keychain items**: the hop's slot, the hop's key's slot, the
+session's slot, the session's key's slot. Four items, and up to eight
+reads of them. One of the four — the hop's slot — is read for nothing
+whenever the key answers.
+
+**A doc comment already reads as a denial of this.** `jump(of:)`'s own doc
+(`Sources/MacSCPCLI/DiagnoseCommand.swift:376-389`, the function at
+`:390`) says "the key's own item answers first, and the hop's slot only
+when it has nothing". That is true of the PRECEDENCE and false of the READ
+ORDER, which is what the table above measures. It is pre-existing and not
+corrected here, because correcting the read order is the behaviour change
+this section declines to make — but whoever takes that row corrects this
+comment in the same pass, since a fix that leaves it standing leaves a
+sentence that describes the old ordering and reads as if it described the
+new one.
 
 **Not fixed here, deliberately.** It is a different pair of items in
 different code; `DiagnosticJump.stored` is shared with the App's own
@@ -209,6 +245,33 @@ and falling back to `resolveJump` only when it answers nothing — is a
 behaviour change that wants its own red-first tests and its own review.
 It belongs on the backlog, not in a task whose row named the target
 chain.
+
+## 5. Adjacent, and settled: the slot a login-set session is asked for
+
+Noticed while reading, checked in fix round 1, and recorded here so the
+row that gets written from this document says the right thing.
+
+`connect(to:options:)` resolves with `session.id`
+(`SessionConnecting.swift:101`), while `diagnose` asks with
+`stored.secretSlot` (`DiagnoseCommand.swift:372`) and the overview asks
+with `session.secretSlot` (`SessionOverviewModel.swift:117`).
+`StoredSession.secretSlot` is `loginSetID ?? id` (`:262`), so for a
+session bound to a login set the two differ.
+
+**This is not a user-visible defect today**, and the record should not be
+read as saying the command line reads the wrong item. Three things hold it
+harmless at once: `StoredSessionConnectionConfig.build` throws
+`.loginSetSessionsNotSupported` (`:88-90`) before the resolved secret is
+ever used, `tunnels start` refuses the same shape, and the App never
+writes the session-id slot for a set-bound session
+(`SessionListViewModel.save`, whose `if loginSetID == nil` at `:276`
+encloses the `savePassword(password, for: session.id)` at `:285`). So the
+read that does happen finds `errSecItemNotFound`, raises no consent
+dialog, and the user gets the honest refusal.
+
+It becomes real only when `build` learns to resolve login sets and
+`connect` is not changed to ask with `secretSlot` in the same pass. That
+is the row: a pairing to keep, not a bug to file.
 
 ## Conclusion
 
