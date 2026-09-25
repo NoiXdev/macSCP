@@ -597,4 +597,74 @@ struct SecretSourcesManagedKeyTests {
         #expect(resolvedNothing, "a password session resolved the managed key's passphrase")
         #expect(rig.secrets.readIDs.contains(rig.keyID) == false, "the managed key's slot was read")
     }
+
+    /// How many DIFFERENT Keychain items one command-line run reads, pinned
+    /// as a count of slot ids rather than described in a comment (the
+    /// measurement of 2026-09-25, `docs/superpowers/specs/
+    /// 2026-09-25-cli-keychain-consent-measurement.md`).
+    ///
+    /// Each item carries its own ACL, so each is its own consent decision for
+    /// a binary that is not on it — two items read means two grants, and
+    /// answering for one grants nothing for the other. The property that
+    /// keeps the second item out of a run that does not need it is the
+    /// resolver's short circuit (`SecretResolver.resolve`, which `continue`s
+    /// only past a nil-or-empty source): the managed key's slot is reached
+    /// ONLY when the session's own slot produced nothing.
+    ///
+    /// Whole-array equality, so the check is positive and negative at once
+    /// (CLAUDE.md, "Guards that name what they watch"): it names the ids that
+    /// MUST be read as well as forbidding any other.
+    ///
+    /// Sensitivity measured 2026-09-25 by mutation: `SecretResolver.resolve`
+    /// was changed to keep walking after its first non-empty answer, holding
+    /// that answer in a `var hit` and returning it at the end — so the SAME
+    /// secret is resolved from the SAME source, and only the reading stops
+    /// being short. That turned the first case red on
+    /// `answered.secrets.readIDs == [withOwnSecret.id]` in 3 of 3 filtered
+    /// runs; a whole mutated `swift test` — 6513 tests in 557 suites —
+    /// recorded that ONE issue and no other. Reverted; green again. The
+    /// mutation is the one that matters here: it leaves the resolution
+    /// correct (same secret, same source label) and only the READ COUNT
+    /// wrong, which is exactly what this case exists to catch and what
+    /// nothing else in the tree catches.
+    ///
+    /// An own slot holding the EMPTY string is a real shape, not a
+    /// hypothetical: `SessionListViewModel.upsert` writes
+    /// `savePassword(password, for: session.id)` for every session whose
+    /// backend `requiresSecret` — true for SSH unless the auth kind is
+    /// `.agent` — so a private-key session saved with a blank passphrase
+    /// field gets one. Measured against the real Keychain on 2026-09-25
+    /// (`MACSCP_KEYCHAIN=1`): such a save creates a full item, which reads
+    /// back as the empty string and which `KeychainSecretPresence` reports
+    /// as present.
+    @Test func theManagedKeysSlotIsReadOnlyWhenTheSessionsOwnSlotAnswersNothing() throws {
+        let answered = try Rig()
+        defer { answered.tearDown() }
+        let withOwnSecret = answered.session(authKind: .privateKey, keyPath: answered.managedPath)
+        try answered.secrets.savePassword(Self.sessionSecret, for: withOwnSecret.id)
+        try answered.secrets.savePassword(Self.keyPassphrase, for: answered.keyID)
+        _ = try answered.resolve(withOwnSecret)
+        #expect(
+            answered.secrets.readIDs == [withOwnSecret.id],
+            "an answering own slot did not stop the walk before the managed key's slot")
+
+        let empty = try Rig()
+        defer { empty.tearDown() }
+        let withEmptyOwnSlot = empty.session(authKind: .privateKey, keyPath: empty.managedPath)
+        try empty.secrets.savePassword("", for: withEmptyOwnSlot.id)
+        try empty.secrets.savePassword(Self.keyPassphrase, for: empty.keyID)
+        _ = try empty.resolve(withEmptyOwnSlot)
+        #expect(
+            empty.secrets.readIDs == [withEmptyOwnSlot.id, empty.keyID],
+            "an own slot holding nothing did not fall through to the managed key's slot")
+
+        let absent = try Rig()
+        defer { absent.tearDown() }
+        let withoutOwnSlot = absent.session(authKind: .privateKey, keyPath: absent.managedPath)
+        try absent.secrets.savePassword(Self.keyPassphrase, for: absent.keyID)
+        _ = try absent.resolve(withoutOwnSlot)
+        #expect(
+            absent.secrets.readIDs == [withoutOwnSlot.id, absent.keyID],
+            "a session with no own slot did not fall through to the managed key's slot")
+    }
 }
