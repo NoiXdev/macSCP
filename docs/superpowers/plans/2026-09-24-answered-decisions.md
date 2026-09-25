@@ -32,11 +32,11 @@
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (the `keys.rename` family at `en:945-947` is the pattern)
 - Test: `Tests/macSCPAppKitTests/` (the key-manager suites), `Tests/macSCPCoreTests/` (whatever Core gains)
 
-- [ ] **Action one — "Correct the stored passphrase".** The app's stored value is wrong or missing; the key file is untouched. The sheet takes one field, **verifies** the typed passphrase against the key file before saving it (`ssh-keygen -y -P … -f …` is what `KeyToolBound` already bounds), and refuses with a fixed message when it does not open the key. Saving writes only the Keychain item for `key.id`. A passphrase that does open the key must never be rejected, and a wrong one must never be stored.
-- [ ] **Action two — "Change the key file's passphrase".** Old and new (plus a confirmation), `ssh-keygen -p` on the key file, then the stored value follows in the same operation. State what happens if the file is re-encrypted and the Keychain write then fails — the honest answer is that the file's new passphrase is the truth and the app must say so rather than pretend. A key the app did not import (not under its own directory) is refused with a message naming why.
-- [ ] Both actions are reachable from the key's own context menu beside the existing five, both are disabled where they cannot apply (state when), and both run their tool off the cooperative pool through the existing bound runner. No secret reaches a log, a reason, a report, an error text, or an `#expect`'s source text; the sheets follow the async-reentrancy rules the key sheets already carry (capture inputs, disable fields, cancellable task).
-- [ ] Tests, red first: correcting with the right passphrase stores it; correcting with a wrong one refuses and stores nothing; changing the file's passphrase re-encrypts and the new value is stored; a Keychain failure after a successful re-encryption is reported as such; a key outside the app's directory is refused. Gated `MACSCP_KEYCHAIN=1` where a real keychain is needed, and say which cases are gated.
-- [ ] Whole suite, zero warnings; docs updated (the keys page: both actions and when each one is the right one). Commit `feat(keys): a managed key's passphrase can be corrected and changed`.
+- [x] **Action one — "Correct the stored passphrase".** The app's stored value is wrong or missing; the key file is untouched. The sheet takes one field, **verifies** the typed passphrase against the key file before saving it (`ssh-keygen -y -P … -f …` is what `KeyToolBound` already bounds), and refuses with a fixed message when it does not open the key. Saving writes only the Keychain item for `key.id`. A passphrase that does open the key must never be rejected, and a wrong one must never be stored.
+- [x] **Action two — "Change the key file's passphrase".** Old and new (plus a confirmation), `ssh-keygen -p` on the key file, then the stored value follows in the same operation. State what happens if the file is re-encrypted and the Keychain write then fails — the honest answer is that the file's new passphrase is the truth and the app must say so rather than pretend. A key the app did not import (not under its own directory) is refused with a message naming why.
+- [x] Both actions are reachable from the key's own context menu beside the existing five, both are disabled where they cannot apply (state when), and both run their tool off the cooperative pool through the existing bound runner. No secret reaches a log, a reason, a report, an error text, or an `#expect`'s source text; the sheets follow the async-reentrancy rules the key sheets already carry (capture inputs, disable fields, cancellable task).
+- [x] Tests, red first: correcting with the right passphrase stores it; correcting with a wrong one refuses and stores nothing; changing the file's passphrase re-encrypts and the new value is stored; a Keychain failure after a successful re-encryption is reported as such; a key outside the app's directory is refused. Gated `MACSCP_KEYCHAIN=1` where a real keychain is needed, and say which cases are gated.
+- [x] Whole suite, zero warnings; docs updated (the keys page: both actions and when each one is the right one). Commit `feat(keys): a managed key's passphrase can be corrected and changed`.
 
 ---
 
@@ -50,10 +50,10 @@
 - Read/Modify: `Sources/macSCPCore/Diagnostics/DiagnosticJump.swift` (`DiagnosticJump` `:20`, `dialViaJump` `:361-448`, the `DialSupport.dialSecret(usesAgent:missing:_:)` call `:442-443` passing `DiagnosticReason.noJumpSecret`), `Sources/macSCPCore/Diagnostics/DiagnosticReason.swift` (`noJumpSecret` `:27`)
 - Test: the jump and login-resolver suites in `Tests/macSCPCoreTests/`
 
-- [ ] Today the hop says "no secret" whether there is none or the managed-key store could not be read — two different problems with one sentence, and the user can only act on one of them. Carry the fact: `ResolvedLogin` gains a field for it (or an equivalent you argue for), the three fills copy it through, and the jump diagnosis distinguishes "no secret" from "the key store could not be read" with its own reason.
-- [ ] The tab's own fill writes no diagnostic line today; decide whether it should, state the decision, and keep it consistent with what the chain's link already logs.
-- [ ] Tests, red first: an unreadable store reaches the jump hop as its own reason, for each of the three fills; a genuinely absent secret still reads as `noJumpSecret`; no secret, path or store content appears in either message.
-- [ ] Whole suite, zero warnings; docs updated if the user-visible wording changes. Commit `fix(keys): an unreadable key store is named at the jump hop`.
+- [x] Today the hop says "no secret" whether there is none or the managed-key store could not be read — two different problems with one sentence, and the user can only act on one of them. Carry the fact: `ResolvedLogin` gains a field for it (or an equivalent you argue for), the three fills copy it through, and the jump diagnosis distinguishes "no secret" from "the key store could not be read" with its own reason.
+- [x] The tab's own fill writes no diagnostic line today; decide whether it should, state the decision, and keep it consistent with what the chain's link already logs.
+- [x] Tests, red first: an unreadable store reaches the jump hop as its own reason, for each of the three fills; a genuinely absent secret still reads as `noJumpSecret`; no secret, path or store content appears in either message.
+- [x] Whole suite, zero warnings; docs updated if the user-visible wording changes. Commit `fix(keys): an unreadable key store is named at the jump hop`.
 
 ---
 
@@ -66,10 +66,10 @@
 - Read: `Sources/MacSCPCLI/DiagnoseCommand.swift` (`jump(of:)` `:389` and its doc `:376-388`)
 - Test: `Tests/macSCPCoreTests/CLISecretSourcesTests.swift` (chain order `:481`, the negative `:595`)
 
-- [ ] Two DIFFERENT keychain items are read in one run — the session's and the managed key's — so macOS can ask twice, and an unattended run stalls on the second ask. Measure first: which runs read both, in what order, and whether the second read is reachable when the first already answered. Write the measurement down before changing anything; if the second read is avoidable when the first succeeded, that is the fix.
-- [ ] Whatever the fix, the rule stands: no secret through the CLI, and the CLI reads the app's keychain entry read-only. Do not add a flag, a prompt, or a way to pass a secret in.
-- [ ] Tests, red first for whatever behaviour changes; if the honest outcome is "both reads are necessary", say so, record it, and change no code — a measurement is a legitimate deliverable here.
-- [ ] Whole suite plus the gated keychain suite; zero warnings; docs updated if what an unattended run needs changes. Commit `fix(cli): an unattended run asks for keychain consent once` (or `docs(cli): why an unattended run can be asked twice, measured`).
+- [x] Two DIFFERENT keychain items are read in one run — the session's and the managed key's — so macOS can ask twice, and an unattended run stalls on the second ask. Measure first: which runs read both, in what order, and whether the second read is reachable when the first already answered. Write the measurement down before changing anything; if the second read is avoidable when the first succeeded, that is the fix.
+- [x] Whatever the fix, the rule stands: no secret through the CLI, and the CLI reads the app's keychain entry read-only. Do not add a flag, a prompt, or a way to pass a secret in.
+- [x] Tests, red first for whatever behaviour changes; if the honest outcome is "both reads are necessary", say so, record it, and change no code — a measurement is a legitimate deliverable here.
+- [x] Whole suite plus the gated keychain suite; zero warnings; docs updated if what an unattended run needs changes. Commit `fix(cli): an unattended run asks for keychain consent once` (or `docs(cli): why an unattended run can be asked twice, measured`).
 
 ---
 
@@ -82,14 +82,25 @@
 - Read: `Sources/macSCPCore/Diagnostics/DiagnosticStep.swift:538` (the `Duration.seconds` bridge), and `BlockingProbe.swift:93-99`'s comment claiming the global queue "overcommits past the core count" — the row's measurement contradicts it
 - Test: `Tests/macSCPCoreTests/ConnectionDiagnosticsTests.swift` and the probe suites
 
-- [ ] The measurement in the row: ten CPU-bound tasks delayed a 0.3 s timer to 5.0 s, because the deadline is a `DispatchQueue.global()` timer and a saturated pool has no thread to fire it. The maintainer's ruling is a hard limit. Design it, state the design, and say what it costs: one dedicated timing thread for the process is the obvious shape (the same fix `4a4835b2` used for a test stub earlier), but weigh at least one alternative before choosing.
-- [ ] Correct the comment at `:93-99` in the same pass — it states as fact the thing the measurement disproves (CLAUDE.md, "Comments that describe other code").
-- [ ] Tests, red first, and this is the hard part: prove the deadline fires under saturation WITHOUT a wall-clock ceiling. A floor is allowed ("this did not return early"); an ordering is better ("the deadline's effect is observed before the work's"). The existing `MACSCP_SATURATION=1` gate (one test that parks the whole GCD global queue, run alone) is the precedent — read it and follow it rather than inventing a second saturation harness.
-- [ ] Whole suite plus the saturation gate run alone; zero warnings. Commit `fix(diagnostics): a step's deadline holds however loaded the machine is`.
+- [x] The measurement in the row: ten CPU-bound tasks delayed a 0.3 s timer to 5.0 s, because the deadline is a `DispatchQueue.global()` timer and a saturated pool has no thread to fire it. The maintainer's ruling is a hard limit. Design it, state the design, and say what it costs: one dedicated timing thread for the process is the obvious shape (the same fix `4a4835b2` used for a test stub earlier), but weigh at least one alternative before choosing.
+- [x] Correct the comment at `:93-99` in the same pass — it states as fact the thing the measurement disproves (CLAUDE.md, "Comments that describe other code").
+- [x] Tests, red first, and this is the hard part: prove the deadline fires under saturation WITHOUT a wall-clock ceiling. A floor is allowed ("this did not return early"); an ordering is better ("the deadline's effect is observed before the work's"). The existing `MACSCP_SATURATION=1` gate (one test that parks the whole GCD global queue, run alone) is the precedent — read it and follow it rather than inventing a second saturation harness.
+- [x] Whole suite plus the saturation gate run alone; zero warnings. Commit `fix(diagnostics): a step's deadline holds however loaded the machine is`.
 
 ---
 
 ### Task 5: Core carries the failure's cause, not only its sentence
+
+> **Correction to this plan, 2026-09-25.** The first row named below, "A forwarding's
+> failure reason is English on four localized surfaces", was **already closed before this
+> plan started** — done 2026-09-17 in `ab4a2c4c` (technical-backlog plan, Task 6), which
+> gave `TunnelState.failed`/`TunnelEvent.failed` a typed `TunnelFailureKind`. Verified
+> independently by two agents with `git show`: Task 5's review, and Task 6, which
+> re-measured the App half rather than assuming it (35 `TunnelFailureKind.Name` cases to
+> 36 `tunnel.failure.*` keys in all four catalogues, and
+> `TunnelActiveFailuresLabelTests.everyStateSurfaceReadsTheTooltip` already pinning all
+> four surfaces). The plan's premise for that row was stale; the row is correct and was
+> not re-closed. The live work of Tasks 5 and 6 was the other two rows.
 
 **Rows:** "A forwarding's failure reason is English on four localized surfaces", "Transfer failure reasons are English inside a localized frame", "A forwarding's `.secretRequired` renders as a case index in the diagnostic log" (maintainer's answer: rebuild now).
 
@@ -99,10 +110,10 @@
 - Modify: `Sources/macSCPCore/Tunnels/TunnelFailureKind.swift`, `Sources/macSCPCore/Tunnels/TunnelRunner.swift` (the log line `:353`, `needsAPerson(_:)` `:509` with its `.secretRequired` check `:511`)
 - Test: the tunnel, dial and transfer suites
 
-- [ ] The shape the row already states: `TunnelState.failed` (and the transfer queue's failure) carries a TYPED cause — the case and its data, a port number, a host, a refusal — not its rendering. Core keeps producing today's English sentence for the audited log from that value, so the log does not change; what is new is that the case identity survives for the App to translate. `classify(_:)` gains its missing `StoredSessionConnectionError` arm in the same pass, so `.secretRequired` stops rendering as a case index in the diagnostic log.
-- [ ] This is a Core model change and the largest task in the plan. Keep it to Core: the App's rendering is Task 6. Do not change any log text; a diff in the audited line is a regression here, and a test should say so.
-- [ ] Tests, red first: every typed cause survives to the boundary the App will read; the rendered English sentences are byte-identical to today's for every case (pin them); `.secretRequired` reaches the log as its own sentence rather than a case index; no secret in any cause's data.
-- [ ] Whole suite, zero warnings. Commit `feat(tunnels): a failure carries its cause, not only its sentence`.
+- [x] The shape the row already states: `TunnelState.failed` (and the transfer queue's failure) carries a TYPED cause — the case and its data, a port number, a host, a refusal — not its rendering. Core keeps producing today's English sentence for the audited log from that value, so the log does not change; what is new is that the case identity survives for the App to translate. `classify(_:)` gains its missing `StoredSessionConnectionError` arm in the same pass, so `.secretRequired` stops rendering as a case index in the diagnostic log.
+- [x] This is a Core model change and the largest task in the plan. Keep it to Core: the App's rendering is Task 6. Do not change any log text; a diff in the audited line is a regression here, and a test should say so.
+- [x] Tests, red first: every typed cause survives to the boundary the App will read; the rendered English sentences are byte-identical to today's for every case (pin them); `.secretRequired` reaches the log as its own sentence rather than a case index; no secret in any cause's data.
+- [x] Whole suite, zero warnings. Commit `feat(tunnels): a failure carries its cause, not only its sentence`.
 
 ---
 
@@ -116,10 +127,10 @@
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings` (+ `.stringsdict` if any case needs a plural)
 - Test: the App's tunnel and queue suites, plus the localization checks
 
-- [ ] Map the typed cause through `L10n` into the four catalogues, German in du-form. Every case gets a sentence in all four languages; a case with data (a port, a host) interpolates it, and nothing that could be a secret is interpolated — state which fields are safe and why.
-- [ ] A cause with no catalogue entry must not fall back to a raw English sentence silently: decide what it does, state it, and give the localization check a positive that every case is covered, so a case added later is a loud red rather than an English leak.
-- [ ] Tests, red first: each of the four surfaces reads the localized text; the transfer queue's failure does too; the German catalogue addresses the user as du (`GermanAddressFormTests` already holds it); a missing entry is caught by the guard.
-- [ ] Whole suite, zero warnings; docs updated (any page quoting a failure sentence). Commit `feat(app): a failure's cause is read in the user's language`.
+- [x] Map the typed cause through `L10n` into the four catalogues, German in du-form. Every case gets a sentence in all four languages; a case with data (a port, a host) interpolates it, and nothing that could be a secret is interpolated — state which fields are safe and why.
+- [x] A cause with no catalogue entry must not fall back to a raw English sentence silently: decide what it does, state it, and give the localization check a positive that every case is covered, so a case added later is a loud red rather than an English leak.
+- [x] Tests, red first: each of the four surfaces reads the localized text; the transfer queue's failure does too; the German catalogue addresses the user as du (`GermanAddressFormTests` already holds it); a missing entry is caught by the guard.
+- [x] Whole suite, zero warnings; docs updated (any page quoting a failure sentence). Commit `feat(app): a failure's cause is read in the user's language`.
 
 ---
 
@@ -132,10 +143,10 @@
 - Read: the S3 gated suites that depend on the rig
 - Modify: `CLAUDE.md`'s rig paragraph and `docs/` where the rig is described
 
-- [ ] Measure before choosing. The rig needs what the S3 backend actually exercises: list, ranged GET, multipart upload and abort, `DeleteObjects`, presigned URLs, ETags, a scoped credential policy, and refusal behaviours the tests assert. Try at least two candidates, say which of those each one satisfies, and name the images with their exact tags. The maintainer asked for a replacement rather than the same images from another registry; if the measurement says nothing else satisfies the list, say so plainly with the evidence rather than quietly falling back.
-- [ ] Wire the winner in with a pinned tag, keep the ports and the seed's shape so the gated suites do not have to change; where a test must change, say why. The rig's own README/comments say what it is and why.
-- [ ] Prove it: `docker compose … up -d` from the MAIN checkout, then the S3 half of `MACSCP_ITEST=1 swift test --build-system native`, with the before/after counts. A suite that has not run against a real server since the images vanished may have drifted — report every failure it finds as a finding, not as noise.
-- [ ] Whole suite plus the gated S3 suite; zero warnings. Commit `test(s3): the rig runs against a server that still exists`.
+- [x] Measure before choosing. The rig needs what the S3 backend actually exercises: list, ranged GET, multipart upload and abort, `DeleteObjects`, presigned URLs, ETags, a scoped credential policy, and refusal behaviours the tests assert. Try at least two candidates, say which of those each one satisfies, and name the images with their exact tags. The maintainer asked for a replacement rather than the same images from another registry; if the measurement says nothing else satisfies the list, say so plainly with the evidence rather than quietly falling back.
+- [x] Wire the winner in with a pinned tag, keep the ports and the seed's shape so the gated suites do not have to change; where a test must change, say why. The rig's own README/comments say what it is and why.
+- [x] Prove it: `docker compose … up -d` from the MAIN checkout, then the S3 half of `MACSCP_ITEST=1 swift test --build-system native`, with the before/after counts. A suite that has not run against a real server since the images vanished may have drifted — report every failure it finds as a finding, not as noise.
+- [x] Whole suite plus the gated S3 suite; zero warnings. Commit `test(s3): the rig runs against a server that still exists`.
 
 ---
 
@@ -149,17 +160,17 @@
 - Modify: `Tests/macSCPAppKitTests/LivenessProbeDropIntegrationTests.swift` (`ProbeTargetStatCounter` `:564`, forwards `supportsAppendResume` at `:582`; `DisconnectTimingProbe` `:649`, at `:668`), `Tests/macSCPCoreTests/EditSessionManagerTests.swift` (`GatedRemoteFileSystem` `:65`)
 - Modify: `Tests/macSCPCoreTests/DiagnosticsNoDescribingGuardTests.swift:113`
 
-- [ ] The ten accepting deciders: seed through `rigKnownHosts(in:)` and dial `.refusing`, as the two-live-connections matrix does. Where a case's SUBJECT is the TOFU path itself (Task 8 of the previous plan kept exactly one such case for that reason — find it and follow the same judgement), keep a decider that answers only for keys the rig holds, and say which cases you treated which way and why.
-- [ ] `deleteTree`'s cancellation: one case pinning that a cancel during the batch delete reads as a cancellation and not as a transport failure. `Task.checkCancellation()` at `S3FileSystem.swift:858` and `HTTPCancellation.cancellation(in:)` at `HTTPTransport.swift:114` are the two paths; say which one your case exercises, and whether the other stays unpinned.
-- [ ] The three doubles: forward `entityTag(path:)`, `readStream(path:fromOffset:ifMatching:)` and `statWithEntityTag(path:)` the way each already forwards `supportsAppendResume`, and add the case that would have caught it — a validator handed to the wrapper reaches the inner file system.
-- [ ] The stale citation at `:113`: the clause it cites now sits at `DialProbes.swift:221`. Retake the number, and while you are there ask whether a citation that drifts every time the file moves should be a derived anchor instead.
-- [ ] Whole suite plus `MACSCP_ITEST=1` (the rig from the MAIN checkout; if Task 7 landed a new S3 server, run against it); zero warnings. Report the `M10d/T2` section's results specifically. Commit `test(ssh): the agent tests refuse an unknown host key` plus one more for the rest, or one commit per row — your call, stated.
+- [x] The ten accepting deciders: seed through `rigKnownHosts(in:)` and dial `.refusing`, as the two-live-connections matrix does. Where a case's SUBJECT is the TOFU path itself (Task 8 of the previous plan kept exactly one such case for that reason — find it and follow the same judgement), keep a decider that answers only for keys the rig holds, and say which cases you treated which way and why.
+- [x] `deleteTree`'s cancellation: one case pinning that a cancel during the batch delete reads as a cancellation and not as a transport failure. `Task.checkCancellation()` at `S3FileSystem.swift:858` and `HTTPCancellation.cancellation(in:)` at `HTTPTransport.swift:114` are the two paths; say which one your case exercises, and whether the other stays unpinned.
+- [x] The three doubles: forward `entityTag(path:)`, `readStream(path:fromOffset:ifMatching:)` and `statWithEntityTag(path:)` the way each already forwards `supportsAppendResume`, and add the case that would have caught it — a validator handed to the wrapper reaches the inner file system.
+- [x] The stale citation at `:113`: the clause it cites now sits at `DialProbes.swift:221`. Retake the number, and while you are there ask whether a citation that drifts every time the file moves should be a derived anchor instead.
+- [x] Whole suite plus `MACSCP_ITEST=1` (the rig from the MAIN checkout; if Task 7 landed a new S3 server, run against it); zero warnings. Report the `M10d/T2` section's results specifically. Commit `test(ssh): the agent tests refuse an unknown host key` plus one more for the rest, or one commit per row — your call, stated.
 
 ---
 
 ### Task 9: Closeout
 
-- [ ] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-24** (or the day the work lands) sentence leading the row, with its commits; open remainders get their own rows; every decision taken FOR the maintainer inside these tasks is listed so it can be overturned; the sight checks join the grouped sight-check row. This plan's step boxes ticked. The docs worktree's commits are named in the report. Commit `docs(backlog): the answered decisions of 2026-09-24 are recorded`.
+- [x] `docs/BACKLOG.md`: each row named above gets a **Done 2026-09-24** (or the day the work lands) sentence leading the row, with its commits; open remainders get their own rows; every decision taken FOR the maintainer inside these tasks is listed so it can be overturned; the sight checks join the grouped sight-check row. This plan's step boxes ticked. The docs worktree's commits are named in the report. Commit `docs(backlog): the answered decisions of 2026-09-24 are recorded`.
 
 ## Self-review
 
