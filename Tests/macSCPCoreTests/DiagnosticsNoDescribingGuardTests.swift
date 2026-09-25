@@ -176,7 +176,8 @@ struct DiagnosticsNoDescribingGuardTests {
 
     /// The floor beneath both negative checks above: the scan must actually
     /// be reaching real files, not an empty or misnamed directory. At least
-    /// five — the tree carries 11 at HEAD — and `DialProbes.swift`
+    /// five — the tree carries 19 at HEAD, recounted 2026-09-25 — and
+    /// `DialProbes.swift`
     /// specifically, since it is the file the rule's own doc comment lives
     /// in and the file Task 1 changed.
     @Test func theScanReachesTheDirectoryItGuards() throws {
@@ -184,7 +185,7 @@ struct DiagnosticsNoDescribingGuardTests {
         #expect(files.count >= 5, """
             only \(files.count) `.swift` file(s) found under \
             Sources/macSCPCore/Diagnostics/ — the scan is not reaching the \
-            directory it is meant to guard (11 at HEAD `6e16b677`).
+            directory it is meant to guard (19 at HEAD, recounted 2026-09-25).
             """)
         #expect(files.contains { $0.lastPathComponent == "DialProbes.swift" }, """
             DialProbes.swift not found under Sources/macSCPCore/Diagnostics/ — \
@@ -322,7 +323,8 @@ struct DiagnosticsNoDescribingGuardTests {
     // MARK: - Scanner
 
     /// Every `.swift` file under `Sources/macSCPCore/Diagnostics/`,
-    /// RECURSIVELY — all 11 sit directly in it at HEAD, and the recursion is
+    /// RECURSIVELY — all 19 sit directly in it at HEAD, recounted
+    /// 2026-09-25, and the recursion is
     /// what keeps that from being load-bearing: a file filed into a
     /// subdirectory later would otherwise leave the guarded module through a
     /// change that never touches this suite. Sorted for a stable failure
