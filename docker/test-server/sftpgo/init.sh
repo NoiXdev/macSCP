@@ -9,8 +9,10 @@
 # Idempotency: this container reruns on every `docker compose up -d` against
 # a data provider that already holds last run's user. A repeated
 # `POST /api/v2/users` is a 500 ("username already in use"), so the create
-# only runs when `GET /api/v2/users/testuser` says the user is absent —
-# the same "check, then act" shape `minio-init` uses for its policy attach.
+# only runs when `GET /api/v2/users/testuser` says the user is absent.
+# The S3 rig's own seeding used to need the same "check, then act" shape
+# for its policy attach, when it was MinIO; `s3/init.sh` sets the policy
+# unconditionally now, because RustFS's call overwrites in place.
 #
 # The user's PUBLIC KEYS are deliberately NOT set here: the gated tests
 # generate a key per run and PUT it onto this user themselves (see

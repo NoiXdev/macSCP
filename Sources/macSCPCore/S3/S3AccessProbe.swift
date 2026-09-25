@@ -65,9 +65,11 @@ struct S3AccessResult: Sendable, Equatable {
 /// Nothing here interprets a status. A row saying `ListBuckets 403` is the
 /// answer; deciding what a user should do about it is the reader's job, and a
 /// probe that guessed would be guessing about every provider at once — the
-/// rig's MinIO already disagrees with AWS about this exact call
+/// rig's own server already disagrees with AWS about this exact call
 /// (`docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md`: a scoped
-/// key gets a FILTERED list, not a refusal).
+/// key gets a FILTERED list, not a refusal). Measured against MinIO on
+/// 2026-09-02 and against RustFS on 2026-09-25: both filter, neither
+/// refuses.
 struct S3AccessProbe: Sendable {
     /// Why the two bucket-level calls are not sent when the connection's root
     /// is the account's bucket list: there is no one bucket to ask about, and

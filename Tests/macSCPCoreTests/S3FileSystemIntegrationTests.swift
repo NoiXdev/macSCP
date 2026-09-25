@@ -481,7 +481,7 @@ struct S3FileSystemIntegrationTests {
     @Test func deleteRefusesAKeyThatIsBothAnObjectAndAPrefixWhileDeleteTreeTakesBoth() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
-        let key = "m21-s3-both-\(UUID().uuidString)"
+        let key = "m21-s3-object-and-prefix-\(UUID().uuidString)"
         let objectBody = Data("the bare key's own object".utf8)
 
         var caught: Error?
@@ -495,7 +495,31 @@ struct S3FileSystemIntegrationTests {
             } catch let error as RemoteFSError {
                 // Rethrown rather than returned, like every other refusal in
                 // this file, so the cleanup below still runs.
-                guard case .protocolError = error else { throw error }
+                guard case .protocolError(let reason) = error else { throw error }
+                // `.protocolError` alone is not enough HERE, unlike in the
+                // other refusal cases: `delete` throws it for `.directory`
+                // too, and a key misclassified as a plain directory is
+                // exactly the mistake this case exists to catch — the
+                // ambiguity is the whole subject. The `.both` arm is the
+                // only one whose sentence says "both"
+                // (`S3FileSystem.delete`), so that word discriminates the
+                // two on its own and no second copy of either sentence is
+                // written here. Deliberately only this positive check: a
+                // negative naming the OTHER arm's wording would start
+                // matching nothing the moment that wording moved, and pass
+                // in silence.
+                //
+                // The KEY is removed from the sentence first, because the
+                // sentence interpolates it: the first version of this check
+                // read `reason.contains("both")` against a fixture named
+                // `m21-s3-both-…`, so the key answered the assertion for the
+                // server. Planting the `.directory` sentence in the `.both`
+                // arm left it green — measured 2026-09-25, which is why the
+                // key is stripped and why the fixture no longer carries the
+                // word either.
+                let sentence = reason.replacingOccurrences(of: key, with: "")
+                let namesTheAmbiguity = sentence.contains("both")
+                #expect(namesTheAmbiguity)
             }
             // Read the object BEFORE `deleteTree` heals the bucket: a refusal
             // that deleted something anyway would pass the refusal half alone.

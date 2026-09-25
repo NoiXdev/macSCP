@@ -48,6 +48,61 @@ linked — the same standing as `sftpgo` below, and the reason no rig image
 appears in `THIRD_PARTY_NOTICES.md`, which is generated from
 `Package.resolved` and covers linked dependencies only).
 
+### This pin is a debt with a review date
+
+Upstream: <https://github.com/rustfs/rustfs>. Tag `1.0.0` was **released
+2026-09-16** and pinned here **2026-09-25**, nine days later. The digest
+that tag resolved to when it was pinned, read from the pulled image with
+`docker image inspect rustfs/rustfs:1.0.0 --format '{{index .RepoDigests 0}}'`:
+
+```
+rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+```
+
+Nine days of public mileage is not much for the only server the gated S3
+suites measure anything against, and this repo already has a rule for a
+dependency chosen ahead of its evidence: CLAUDE.md's "Forks are a debt
+with a review date". The same discipline applies here by analogy — the
+interest is paid by checking, not by remembering.
+
+**Check at every release, and before any change to this pin:**
+
+1. Re-read the digest above (`docker image inspect`, or
+   `docker manifest inspect rustfs/rustfs:1.0.0`). A tag that now resolves
+   to a different digest has been moved under the rig, which is the one
+   thing a pinned tag is supposed to prevent — say so here before doing
+   anything else.
+2. `gh api repos/rustfs/rustfs/releases` and
+   `gh api repos/rustfs/rustfs/security-advisories`. A security fix is
+   taken first, before any other upgrade. **Write the count and the date
+   into this section even when the count is zero** — a zero measured on a
+   date is evidence, a zero remembered is not.
+3. Ask, each time, whether the pin can move forward: a later tag with real
+   mileage behind it is better than this one, and the way to find out is
+   to re-run the 22-behaviour probe and the gated suites against it, the
+   same two measurements that chose it. Anything that then only goes green
+   by weakening an assertion disqualifies the candidate, exactly as it
+   disqualified SeaweedFS below.
+4. Ask whether MinIO came back. If `minio/minio` and `minio/mc` are
+   pullable again, that is a fact worth recording here — but it is not by
+   itself a reason to go back: the maintainer's decision on 2026-09-24 was
+   a replacement, not the same images from elsewhere.
+
+**Checked so far — 2026-09-25, at the pin.**
+`gh api repos/rustfs/rustfs/security-advisories` returned **30 published
+advisories**, and **none of them covers `1.0.0`**: every one names a
+vulnerable range that ends at a pre-release, the highest upper bound being
+`<= 1.0.0-rc.5`, and every `patched_versions` is `1.0.0` or earlier.
+Filtering the same response for a range that includes `1.0.0` returned
+nothing. So the count that matters here is **zero advisories against the
+pinned version, measured 2026-09-25** — and the 30 are themselves evidence
+of a project that discloses and patches, all of it before 1.0.0.
+
+`gh api repos/rustfs/rustfs/releases` on the same date showed the newest
+tags to be `1.0.1-preview.1` … `1.0.1-preview.11` (the last 2026-09-24) —
+previews, so `1.0.0` is still the newest release, and there is nothing
+stable to move the pin forward to yet.
+
 Two candidates were measured against what the S3 backend actually
 exercises, with a raw-SigV4 probe (no SDK) of 22 behaviours and then with
 the gated Swift suites themselves. Both are Apache-2.0 and both publish
@@ -164,20 +219,27 @@ policy does not name (4).
 The MinIO rig could not show this shape: measured 2026-09-05, a key `x`
 and a key `x/child` both answered a direct GET, but no listing ever named
 the child while the bare `x` existed, so `deleteLookup`'s ambiguity check
-— which is a listing — never saw it. RustFS does show it. Measured
+— which is a listing — never saw it. RustFS does show it, and it is RustFS
+that matches AWS here: `docs/BACKLOG.md`'s row on this shape records real
+S3 as listing both, so MinIO's invisibility was the quirk. Measured
 2026-09-25, both keys written by raw signed PUT:
 
 ```
-put x     : 200          get x     : 200 b'obj'
-put x/kid : 200          get x/kid : 200 b'kid'
-list delimiter=/&prefix=x     : KeyCount=2 keys=['both-probe']              commonPrefixes=['both-probe/']
-list prefix=x                 : KeyCount=2 keys=['both-probe','both-probe/child']
-list prefix=x/&max-keys=1     : KeyCount=1 keys=['both-probe/child']
+put  both-probe        : 200
+put  both-probe/child  : 200
+get  both-probe        : 200 b'obj'
+get  both-probe/child  : 200 b'kid'
+list delimiter=/&prefix=both-probe: KeyCount=2 keys=['both-probe'] commonPrefixes=['both-probe/']
+list prefix=both-probe       : KeyCount=2 keys=['both-probe', 'both-probe/child'] commonPrefixes=[]
+list prefix=both-probe/&max-keys=1: KeyCount=1 keys=['both-probe/child'] commonPrefixes=['both-probe/']
+delete both-probe/child  : 204
+delete both-probe        : 204
+bucket back at seed : keys=['a.txt'] commonPrefixes=['sub/']
 ```
 
-The third line is exactly the call `deleteLookup` makes. Both probe keys
-were deleted afterwards and the bucket verified back at its seed (`a.txt`,
-`sub/b.txt`). The gated case
+The last listing before the deletes is exactly the call `deleteLookup`
+makes. Both probe keys were deleted afterwards and the bucket verified
+back at its seed, which is the last line. The gated case
 `deleteRefusesAKeyThatIsBothAnObjectAndAPrefixWhileDeleteTreeTakesBoth`
 was added against this rig on the same day; real AWS S3 remains
 unmeasured.
@@ -392,8 +454,10 @@ admin exists, so that wait is the readiness gate for both — and then creates
 `testuser` from `./sftpgo/testuser.json` only when
 `GET /api/v2/users/testuser` says the user is absent. A repeated
 `POST /api/v2/users` is a 500 ("username already in use"), which is why the
-create is guarded rather than retried, the same "check, then act" shape
-`minio-init` uses for its policy attach.
+create is guarded rather than retried. The S3 rig's seeding needed the same
+"check, then act" shape for its policy attach while it was MinIO; `s3-init`
+sets the policy unconditionally now, because RustFS's call overwrites in
+place.
 
 ### Proof, measured 2026-09-02
 
