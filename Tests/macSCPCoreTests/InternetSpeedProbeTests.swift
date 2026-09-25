@@ -29,10 +29,29 @@ struct InternetSpeedProbeTests {
 
     /// Settings with small payloads, so a case that generates an upload body
     /// generates kilobytes and not mebibytes.
+    ///
+    /// **`legTimeout` is out of stopwatch range on purpose**, and that is
+    /// the one thing about this helper worth knowing. A leg's bound is not
+    /// a number the probe carries around: `DetachedProbe` arms it when the
+    /// leg is CREATED, not when its body starts, so it bounds the
+    /// cooperative pool's queueing latency as well as the request — and a
+    /// small bound here is a wall-clock ceiling on every case that expects
+    /// a leg to finish. Measured 2026-09-25 (CI run 36122639050, three
+    /// cores, 6546 tests): under a saturated pool the UPLOAD leg's detached
+    /// body had not started 7 s after it was created, the leg read as
+    /// `internetSpeedTooSlow`, `measure` stopped at the first refused leg,
+    /// and the second request was never built. Reproduced here in 4 of 5
+    /// runs against an in-process hog suite, and in 1 of 1 under
+    /// `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1` over the whole suite.
+    ///
+    /// Ten minutes is past this suite's own `.timeLimit(.minutes(2))`, so
+    /// a leg that never answers ends the case as the HANG it is, rather
+    /// than as a quietly missing request somewhere downstream. Nothing here
+    /// asserts elapsed time; this is an input, not a ceiling.
     static func settings(
         _ service: InternetSpeedService = .cloudflare,
         download: Int = 4 * 1024 * 1024, upload: Int = 1024 * 1024,
-        legTimeout: Duration = .seconds(30)
+        legTimeout: Duration = .seconds(600)
     ) -> DiagnosticInternetSpeedSettings {
         var settings = DiagnosticInternetSpeedSettings(service: service)
         settings.downloadBytes = download
@@ -135,16 +154,52 @@ struct InternetSpeedProbeTests {
     /// settable field that silently does not reach the request is a field
     /// whose value is a lie, and a request left running past the bound that
     /// abandoned it is a request still holding a socket.
+    /// The bound is distinctive and DIFFERENT from the helper's own
+    /// default, so the equality below is a claim about what `measure`
+    /// passed down rather than about what the default happens to be. It is
+    /// out of stopwatch range for the reason `settings(_:download:upload:
+    /// legTimeout:)` states — it was `.seconds(7)` until 2026-09-25, and
+    /// seven seconds is a stopwatch on a starved machine.
+    ///
+    /// The whole claim again with no race in it at all is
+    /// `bothRequestBuildersPutTheBoundOnTheRequest`.
     @Test func eachRequestCarriesTheLegsOwnBound() async throws {
         let transport = RecordingTransport()
+        let bound = Duration.seconds(777)
 
         _ = await InternetSpeedProbe.measure(
-            settings: Self.settings(download: 1000, upload: 500, legTimeout: .seconds(7)),
+            settings: Self.settings(download: 1000, upload: 500, legTimeout: bound),
             transport: transport.transport, seed: 7, timer: Self.timer())
 
-        #expect(transport.sent.map(\.timeoutSeconds) == [7, 7], """
+        // FIRST, and this order is the finding: a leg abandoned before it
+        // built its request leaves ONE entry below, and the equality then
+        // reads as a wrong bound rather than as a leg that never ran. That
+        // is how CI run 36122639050 reported itself.
+        #expect(transport.sent.count == 2, "\(transport.sent.map(\.url))")
+        #expect(transport.sent.map(\.timeoutSeconds) == [777, 777], """
             \(transport.sent.map(\.timeoutSeconds))
             """)
+    }
+
+    /// The same property as above, with nothing to race: both builders
+    /// `measure` calls put the leg's bound on the `URLRequest` itself.
+    ///
+    /// Both download shapes, because `downloadRequest` branches on
+    /// `InternetSpeedSizing` and a bound dropped on one branch only would
+    /// otherwise be invisible — Cloudflare asks with a query, Apple with a
+    /// range (`InternetSpeedService`'s own measurements).
+    @Test func bothRequestBuildersPutTheBoundOnTheRequest() throws {
+        let bound = Duration.seconds(777)
+        for service in [InternetSpeedService.cloudflare, .apple] {
+            let endpoints = try #require(service.endpoints)
+            #expect(
+                InternetSpeedProbe.downloadRequest(endpoints, bytes: 1000, timeout: bound)
+                    .timeoutInterval == bound.seconds, "\(service.rawValue)")
+            #expect(
+                InternetSpeedProbe.uploadRequest(
+                    endpoints, body: Data(count: 500), timeout: bound
+                ).timeoutInterval == bound.seconds, "\(service.rawValue)")
+        }
     }
 
     /// Apple asks for its size with a range over a fixed body, not in the
