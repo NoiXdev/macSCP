@@ -64,6 +64,8 @@ final class DeadlineTimer: Sendable {
     }
 
     private struct Entry {
+        /// The ticket this entry answers, for the firing order's tie-break.
+        let id: UInt64
         let at: DispatchTime
         let body: @Sendable () -> Void
     }
@@ -89,7 +91,7 @@ final class DeadlineTimer: Sendable {
         let (id, needsThread) = state.withLock { state -> (UInt64, Bool) in
             let id = state.nextID
             state.nextID += 1
-            state.entries[id] = Entry(at: .now() + timeout.seconds, body: body)
+            state.entries[id] = Entry(id: id, at: .now() + timeout.seconds, body: body)
             let needsThread = !state.isRunning
             state.isRunning = true
             return (id, needsThread)
@@ -144,7 +146,19 @@ final class DeadlineTimer: Sendable {
                 // each ticket settles its own `OneShot` — but a firing order
                 // that is a hash seed is not a property anything can be held
                 // to, here or in a test.
-                return due.values.sorted { $0.at < $1.at }
+                //
+                // The tie-break on `id` is the second half of that, and it
+                // is not decoration: `Array.sorted(by:)` is not documented
+                // stable, so two entries with an EQUAL `at` would fall back
+                // to hash order again — and equal is reachable, because
+                // `DispatchTime`'s granularity on Apple Silicon is about
+                // 41.7 ns and two tickets can be scheduled on adjacent
+                // statements. `id` is handed out by a counter, so it orders
+                // them by when they were asked for, which is the only other
+                // order that means anything here.
+                return due.values.sorted {
+                    ($0.at, $0.id) < ($1.at, $1.id)
+                }
             }
             for entry in due { entry.body() }
         }
