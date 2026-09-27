@@ -25,6 +25,16 @@ import Foundation
 /// no key, and a key missing from a catalog, both come out as the English
 /// that was measured.
 public enum DiagnosticReason {
+    /// This Mac did not give a probe a thread before its step budget
+    /// passed, so the step never began — `DiagnosticOutcome.notStarted`'s
+    /// one reason.
+    ///
+    /// Says THIS MAC and not the server, and that is the whole point of the
+    /// sentence: the row it fills used to read `timed out`, which is a
+    /// statement about the far end, and a diagnosis pasted into an issue
+    /// then accused a server nothing had been sent to.
+    static let probeNotStarted = "this Mac was too busy to start the measurement"
+
     /// The endpoint could not be read off the session's field values at all.
     static let noHost = "this session names no host"
     /// Resolution produced no address, so the probes that need one did not
@@ -298,6 +308,7 @@ public enum DiagnosticReason {
     /// they were measured, and are referenced here rather than copied: the
     /// two trace ones in `NetworkTrace`, the route one in `ICMPEcho`.
     private static let table: [String: String] = [
+        probeNotStarted: "diagnostics.reason.probeNotStarted",
         noHost: "diagnostics.reason.noHost",
         nothingToProbe: "diagnostics.reason.nothingResolvedToProbe",
         noSecret: "diagnostics.reason.noSecret",

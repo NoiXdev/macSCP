@@ -446,8 +446,21 @@ enum InternetSpeedProbe {
             parts.append(contentsOf: notes)
         }
         return timer.finish(
-            refusal.map(DiagnosticOutcome.unavailable) ?? .ok,
-            parts.joined(separator: "; "), table: table(legs))
+            Self.outcome(for: refusal), parts.joined(separator: "; "), table: table(legs))
+    }
+
+    /// The row's outcome for the sentence a refused leg reported: `ok` when
+    /// no leg was refused, `notStarted` for the one sentence that says
+    /// nothing was sent at all, and `unavailable` for every other refusal —
+    /// a slow line to a free third-party service is not a finding about the
+    /// user's server, and neither is a busy Mac.
+    ///
+    /// Compared against the SYMBOL rather than against a second copy of its
+    /// text, so a reworded sentence moves this with it.
+    private static func outcome(for refusal: String?) -> DiagnosticOutcome {
+        guard let refusal else { return .ok }
+        return refusal == DiagnosticReason.probeNotStarted
+            ? .notStarted(refusal) : .unavailable(refusal)
     }
 
     // MARK: The legs
@@ -508,19 +521,25 @@ enum InternetSpeedProbe {
         }
         let elapsed = started.duration(to: now())
         switch answer {
-        case nil:
+        case .unanswered(.began):
             // The deadline, or the user's Cancel. The walk drops the row on
             // a cancel (`ConnectionDiagnostics`), so what this sentence
             // reaches a reader as is the deadline.
             return .refused(DiagnosticReason.internetSpeedTooSlow, note: nil)
-        case .redirectRefused(let from, let to)?:
+        case .unanswered(.neverBegan):
+            // The same deadline, over a request this Mac never sent. The
+            // sentence above names the SERVICE, and the CI red of
+            // 2026-09-25 was exactly this leg reporting it for work that had
+            // not started (the investigation record's root cause).
+            return .refused(DiagnosticReason.probeNotStarted, note: nil)
+        case .answered(.redirectRefused(let from, let to)):
             return .refused(
                 DiagnosticReason.internetSpeedRedirectRefused,
                 note: "the \(direction) leg was redirected: \(from) → \(to)")
-        case .failed(let reason)?:
+        case .answered(.failed(let reason)):
             return .refused(
                 DiagnosticReason.internetSpeedLegFailed(direction, reason), note: nil)
-        case .bytes(let bytes)?:
+        case .answered(.bytes(let bytes)):
             guard bytes > 0 else {
                 return .refused(DiagnosticReason.internetSpeedNoBytes, note: nil)
             }

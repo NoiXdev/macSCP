@@ -324,7 +324,18 @@ struct ConnectionDiagnosticsJumpTests {
         ).run(scope: .dial)
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.jumpDial })
-        #expect(dial.outcome == .timedOut)
+        // `settledByItsDeadline` and not `== .timedOut`: since 2026-09-27
+        // the deadline has TWO outcomes, and which one this fixture gets is
+        // a fact about the runner. A body the cooperative pool never starts
+        // reads `notStarted` (measured at 9.49 s on ten cores, `ProbeStart`),
+        // and the three-core CI machine produces that. What this case is
+        // about — the deadline settled the row, and the fake's `.ok` was
+        // never taken — holds either way. Which of the two, and when, is
+        // claimed where it can be claimed without a runner in the way:
+        // `ProbeStartTests` and `ConnectionDiagnostics.outcome(forUnanswered:)`.
+        #expect(dial.outcome.settledByItsDeadline, "\(dial.outcome.label)")
+        // Unchanged by either reading: the target half is skipped because no
+        // connection was opened, not because of the dial row's wording.
         #expect(report.steps.last?.outcome == .skipped(DiagnosticReason.jumpNotReached))
         // Snapshot before the late connection is let through.
         let closedBeforeArrival = rig.count("disconnect")
@@ -865,6 +876,50 @@ struct ConnectionDiagnosticsJumpTests {
     enum CutStep: String, CaseIterable, CustomTestStringConvertible {
         case tracepath, traceroute, ping
         var testDescription: String { rawValue }
+    }
+
+    /// A target-half step whose probe NEVER BEGAN reads `notStarted`, and
+    /// not the cut its budget would otherwise salvage.
+    ///
+    /// The two halves of one claim. A body the pool never started opened no
+    /// channel and ran no command, so the transcript is empty — and the cut
+    /// above answers `timedOut` over an empty transcript, which is a
+    /// sentence about the far end for a measurement that never left this Mac
+    /// (the `For the maintainer` section of the 2026-09-24 investigation).
+    ///
+    /// Held by `DetachedProbe.Launch` rather than by a starved pool: the
+    /// seam is production's own `race(_:_:timer:launch:)`, with the launcher
+    /// substituted the way the context already is, and nothing here reads a
+    /// clock.
+    @Test func aTargetStepWhoseProbeNeverBeganReadsNotStartedAndNotACut() async throws {
+        let hold = HeldLaunch()
+        defer { hold.open() }
+        let rig = JumpRig()
+        let context = Self.stepContext(rig: rig, budget: .milliseconds(200))
+
+        let row = await ConnectionDiagnostics.race(
+            .traceFromJump, context,
+            timer: DiagnosticStepTimer(
+                id: DiagnosticStepID.targetTraceFromJump,
+                titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetTraceFromJump)),
+            launch: hold.launch)
+
+        // Read before the hold is opened, so nothing the released body does
+        // can heal what these state.
+        let transcriptWasEmpty = context.transcript.current == nil
+        let ranNoCommand = rig.count("exec") == 0
+
+        // The positives beside the negatives: this step HAS a cut, so "not a
+        // cut" is a claim rather than a fact about a step that never had
+        // one, and the case above proves the same cut fires when there IS a
+        // transcript to read.
+        #expect(DiagnosticJumpStep.traceFromJump.cut != nil)
+        #expect(
+            row.outcome == .notStarted(DiagnosticReason.probeNotStarted),
+            "a trace step whose probe never began reported \(row.outcome.label)")
+        #expect(row.table == nil, "a table over no hops claims a walk nobody made")
+        #expect(transcriptWasEmpty, "the probe collected something, so this case held nothing")
+        #expect(ranNoCommand, "\(rig.events)")
     }
 
     /// And the transcript the race reads is the one the step's commands

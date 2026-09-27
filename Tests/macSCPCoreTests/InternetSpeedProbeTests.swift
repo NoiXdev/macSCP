@@ -293,11 +293,21 @@ struct InternetSpeedProbeTests {
         #expect(step.table == nil, "a header over no rows claims a measurement nobody made")
     }
 
-    /// A service that never answers is abandoned at the bound and reads
-    /// `unavailable`. The fake PARKS — it waits on a latch nobody raises,
-    /// which returns only on cancellation — so nothing here finishes on its
-    /// own while the deadline races it.
-    @Test func aStalledServiceIsBoundedAndReadsUnavailable() async throws {
+    /// A service that never answers is abandoned at the bound, and the row
+    /// never reads as a measurement. The fake PARKS — it waits on a latch
+    /// nobody raises, which returns only on cancellation — so nothing here
+    /// finishes on its own while the deadline races it.
+    ///
+    /// **Two admissible rows since 2026-09-27**, and which one this gets is
+    /// a fact about the runner rather than about the service. `unavailable
+    /// (the speed service did not finish inside this step's bound)` when the
+    /// leg's request was actually made; `notStarted` when the cooperative
+    /// pool never started the leg's body inside a 50 ms bound — which the
+    /// three-core CI machine does (`ProbeStart`, measured at 9.49 s on ten
+    /// cores). Naming only the first would be the very confusion this
+    /// outcome was added to end: the CI red of 2026-09-25 was this leg
+    /// reporting `internetSpeedTooSlow` for a request that was never sent.
+    @Test func aStalledServiceIsBoundedAndNeverReadsAsAMeasurement() async throws {
         let parked = AsyncSignal()
         let transport = RecordingTransport(answer: { _ in
             _ = await parked.wait()
@@ -308,8 +318,28 @@ struct InternetSpeedProbeTests {
             settings: Self.settings(download: 1000, upload: 500, legTimeout: .milliseconds(50)),
             transport: transport.transport, seed: 7, timer: Self.timer())
 
-        #expect(step.outcome == .unavailable(DiagnosticReason.internetSpeedTooSlow))
-        #expect(transport.sent.count == 1, "the upload ran after the download was abandoned")
+        let abandoned =
+            step.outcome == .unavailable(DiagnosticReason.internetSpeedTooSlow)
+            || step.outcome == .notStarted(DiagnosticReason.probeNotStarted)
+        #expect(abandoned, "\(step.outcome.label)")
+        // The positive beside it: a row that reported a RATE would satisfy
+        // neither, and a step that never got as far as a request would not
+        // have sent one.
+        #expect(step.table == nil, "a table over a leg nobody finished")
+        // The property is that `measure` stops at the first leg that did not
+        // finish, and it holds under both readings: the upload is never
+        // asked. WHICH requests were sent rather than how many, because a
+        // count can no longer say it — a leg the pool never started sent
+        // none, and a body that starts late can record its own between
+        // `measure` returning and this line. Only the upload is a POST
+        // (`uploadRequest`). That the upload IS sent when the download
+        // finishes is `theRequestsCarryNothingOfTheSession`'s and
+        // `theClockIsReadTwicePerLeg`'s two-request claim, so this negative
+        // has a positive elsewhere in the file rather than none at all.
+        #expect(
+            transport.sent.allSatisfy { $0.method != "POST" },
+            "the upload ran after the download was abandoned: \(transport.sent.map(\.url))")
+        #expect(transport.sent.count <= 1, "\(transport.sent.map(\.url))")
     }
 
     /// A refused redirect is its own reason, not the transport's sentence:

@@ -357,15 +357,15 @@ struct DiagnosticsPanel: View {
         .padding(.top, 2)
     }
 
-    /// `unavailable` and `skipped` are deliberately NOT the failure colour:
-    /// they are statements about this build and this session, and colouring
-    /// them red would tell the user their server is broken when nothing was
-    /// measured at all.
+    /// `unavailable`, `skipped` and `notStarted` are deliberately NOT the
+    /// failure colour: they are statements about this build, this session and
+    /// this Mac, and colouring them red would tell the user their server is
+    /// broken when nothing was measured at all.
     private func badgeColour(_ outcome: DiagnosticOutcome) -> Color {
         switch outcome {
         case .ok: return DesignTokens.statusPhosphor
         case .failed, .timedOut: return DesignTokens.statusLost
-        case .unavailable, .skipped: return DesignTokens.inkTertiary
+        case .unavailable, .skipped, .notStarted: return DesignTokens.inkTertiary
         }
     }
 

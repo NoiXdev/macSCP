@@ -559,11 +559,11 @@ enum DiagnosticsPresentation {
         L10n.string(step.titleKey, step.id)
     }
 
-    /// The outcome badge. Five words for five outcomes, and they must stay
-    /// five: "not available" and "skipped" are about THIS build and this
-    /// session, and a badge that read them as a failure would send the user
-    /// after a problem they do not have (`DiagnosticOutcome`'s own doc
-    /// comment).
+    /// The outcome badge. Six words for six outcomes, and they must stay
+    /// six: "not available", "skipped" and "not started" are about THIS
+    /// build, this session and this Mac, and a badge that read them as a
+    /// failure would send the user after a problem they do not have
+    /// (`DiagnosticOutcome`'s own doc comment).
     static func badge(for outcome: DiagnosticOutcome) -> String {
         switch outcome {
         case .ok:
@@ -576,6 +576,8 @@ enum DiagnosticsPresentation {
             return L10n.string("diagnostics.outcome.unavailable", "Not available")
         case .skipped:
             return L10n.string("diagnostics.outcome.skipped", "Skipped")
+        case .notStarted:
+            return L10n.string("diagnostics.outcome.notStarted", "Not started")
         }
     }
 
@@ -587,7 +589,8 @@ enum DiagnosticsPresentation {
         switch outcome {
         case .ok, .timedOut:
             return ""
-        case .failed(let reason), .unavailable(let reason), .skipped(let reason):
+        case .failed(let reason), .unavailable(let reason), .skipped(let reason),
+            .notStarted(let reason):
             guard let key = DiagnosticReason.key(for: reason) else { return reason }
             return L10n.string(key, reason)
         }

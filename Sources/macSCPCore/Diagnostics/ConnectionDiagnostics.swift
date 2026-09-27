@@ -777,14 +777,26 @@ public actor ConnectionDiagnostics {
     ///
     /// **When the target half is skipped.** If any jump step up to and
     /// including its dial FAILED, or the dial opened no connection (it was
-    /// skipped for a missing secret, timed out, or was never asked for), every
-    /// target step in scope is `skipped` naming the jump
+    /// skipped for a missing secret, timed out, never started, or was never
+    /// asked for), every target step in scope is `skipped` naming the jump
     /// (`DiagnosticReason.jumpNotReached`). `failed` only: an echo that heard
     /// nothing is `timedOut`, and a firewall that drops ICMP says nothing
     /// about whether the bastion forwards. The jump's trace runs after its
     /// dial and before the target half, and does not count — it is measured
     /// from this Mac, and a router that refuses a probe is not a bastion that
     /// refuses a login.
+    ///
+    /// **Where `notStarted` falls, stated rather than left to the reader**
+    /// (added with the case, 2026-09-27). It is NOT `failed`, for the reason
+    /// `timedOut` is not: a probe this Mac never gave a thread has said
+    /// nothing at all about the bastion, and it says even less than a probe
+    /// that ran and overran. So a `notStarted` jump.resolve, jump.tcp or
+    /// jump.icmp leaves `reached` alone. A `notStarted` jump.DIAL still skips
+    /// the target half — not through the outcome but through
+    /// `held.connection`, which is nil because no dial happened. Both halves
+    /// of that fall out of the rule below unchanged; what changed is that
+    /// there is now a sixth outcome for it to be read against, and this is
+    /// where that reading is written down.
     private func walkThroughJump(
         _ jump: DiagnosticJump, to endpoint: Endpoint, scope: DiagnosticScope,
         observer: DiagnosticRunObserver, holding held: HeldJumpConnection
@@ -880,8 +892,10 @@ public actor ConnectionDiagnostics {
     /// connection it opens handed to `held` for the target half.
     ///
     /// Raced against the step budget by `DetachedProbe`, like every dial
-    /// here — and so, unlike them, it has to deal with a connection that
-    /// arrives AFTER the deadline: the probe is abandoned, not stopped, and a
+    /// here — so a budget that expires before the pool starts the dial reads
+    /// `notStarted` rather than `timedOut`, and the target half is skipped
+    /// either way, because no connection was opened. Unlike the other dials
+    /// it has to deal with a connection that arrives AFTER the deadline: the probe is abandoned, not stopped, and a
     /// transport that finishes its connect anyway would leave a login open on
     /// the bastion with nobody holding it. `JumpHandoff` is the one place the
     /// connection changes hands; whichever side comes second closes it.
@@ -907,7 +921,7 @@ public actor ConnectionDiagnostics {
         let handoff = JumpHandoff()
         let dialer = jumpDialer
         let seconds = DialSupport.connectSeconds(stepTimeout)
-        let finished = await DetachedProbe.run(timeout: stepTimeout) {
+        let answer = await DetachedProbe.run(timeout: stepTimeout) {
             do {
                 let connection = try await dialer.connectJump(config, seconds)
                 guard handoff.offer(connection) else {
@@ -922,7 +936,11 @@ public actor ConnectionDiagnostics {
         // Closes the handoff: an offer after this line is refused, and the
         // probe closes what it brought.
         let connection = handoff.take()
-        let step = finished ?? timer.finish(.timedOut, "")
+        let step: DiagnosticStep
+        switch answer {
+        case .answered(let finished): step = finished
+        case .unanswered(let start): step = timer.finish(Self.outcome(forUnanswered: start), "")
+        }
         guard step.outcome == .ok, let connection else {
             // A connection that won the race by a hair while its row did not
             // — the deadline or a cancellation landed between the offer and
@@ -950,21 +968,55 @@ public actor ConnectionDiagnostics {
     /// One target-half step against its budget (`context.budget`): its own
     /// row when it finishes in time, otherwise what its `cut` makes of the
     /// output it had collected — a trace cut short still reports the hops it
-    /// measured — or a plain `timedOut` for a step with nothing to salvage.
+    /// measured — or a plain `timedOut` for a step with nothing to salvage,
+    /// or `notStarted` for a probe this Mac never began.
     ///
     /// Static, and handed the context rather than building it, so the suite
     /// can race a step against a transcript it filled itself: the cut is
     /// then read from known output whether or not the abandoned probe ever
     /// got a thread (`aStepCutByItsBudgetReportsWhatItHadCollected`).
+    /// `launch` is the same seam one layer down — production's
+    /// `Task.detached` by default, and a launcher that HOLDS the body when
+    /// the suite needs a probe that never began.
     static func race(
         _ step: DiagnosticJumpStep, _ context: DiagnosticJumpStep.Context,
-        timer: DiagnosticStepTimer
+        timer: DiagnosticStepTimer, launch: DetachedProbe.Launch = DetachedProbe.detach
     ) async -> DiagnosticStep {
-        let finished = await DetachedProbe.run(timeout: context.budget) {
+        let answer = await DetachedProbe.run(timeout: context.budget, launch: launch) {
             await step.measure(context, timer)
         }
-        if let finished { return finished }
-        return step.cut?(context, timer) ?? timer.finish(.timedOut, "")
+        switch answer {
+        case .answered(let finished): return finished
+        case .unanswered(let start):
+            // The `cut` reads what the probe COLLECTED, so it is offered
+            // only to a probe that collected something. A body the pool
+            // never started opened no channel and ran no command; both cuts
+            // answer `timedOut` over an empty transcript (their own first
+            // `guard`), which is a sentence about the far end for a
+            // measurement that never left this Mac. The condition is the
+            // transcript and not `start`, because a probe that DID begin and
+            // was cut before its first byte is a timeout too, and reads as
+            // one through the line below.
+            if let cut = step.cut, context.transcript.current != nil {
+                return cut(context, timer)
+            }
+            return timer.finish(Self.outcome(forUnanswered: start), "")
+        }
+    }
+
+    /// The outcome a step reports when its probe did not answer: the
+    /// deadline's own `timedOut` for a body that ran and overran, and
+    /// `notStarted` for one this Mac never gave a thread.
+    ///
+    /// Spelled ONCE, and read from three places (counted 2026-09-27:
+    /// `dialJump`, `race` above, and `bounded(_:_:)` for a contribution), so
+    /// the three cannot come to disagree about what a probe that never began
+    /// says to a reader.
+    static func outcome(forUnanswered start: ProbeStart) -> DiagnosticOutcome {
+        switch start {
+        case .began: return .timedOut
+        case .neverBegan: return .notStarted(DiagnosticReason.probeNotStarted)
+        }
     }
 
     // MARK: - The universal steps
@@ -1287,9 +1339,11 @@ public actor ConnectionDiagnostics {
     /// SSH dial against a wedged server carries Citadel's uncancellable 15 s
     /// `openSFTP` timer, and a task group would have waited all of it out.
     ///
-    /// A step the deadline wins is reported `timedOut` with the elapsed time
-    /// measured here, never with whatever the abandoned probe eventually
-    /// says — that answer is dropped (see `DetachedProbe`).
+    /// A step the deadline wins is reported with the elapsed time measured
+    /// here, never with whatever the abandoned probe eventually says — that
+    /// answer is dropped (see `DetachedProbe`). Which outcome it is reported
+    /// as, `outcome(forUnanswered:)` decides: `timedOut` for a probe that
+    /// ran, `notStarted` for one the pool never started.
     private func bounded(
         _ contribution: DiagnosticContribution, _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
@@ -1301,13 +1355,16 @@ public actor ConnectionDiagnostics {
         let context = DiagnosticContext(
             secrets: secrets, sessionID: sessionID, timeout: stepTimeout)
         let values = self.values
-        let finished = await DetachedProbe.run(timeout: stepTimeout) {
+        let answer = await DetachedProbe.run(timeout: stepTimeout) {
             await contribution.run(values, context)
         }
-        // A cancellation lands here as `nil` too; `run()` re-reads
+        // A cancellation lands here as `unanswered` too; `run()` re-reads
         // `Task.isCancelled` and never appends the step, so a cancelled run
         // cannot report a timeout it did not measure.
-        return finished ?? timer.finish(.timedOut, "")
+        switch answer {
+        case .answered(let finished): return finished
+        case .unanswered(let start): return timer.finish(Self.outcome(forUnanswered: start), "")
+        }
     }
 
     /// A universal step's timer, with its start announced first.

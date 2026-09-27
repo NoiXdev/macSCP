@@ -1208,6 +1208,7 @@
 "diagnostics.outcome.timedOut" = "Délai dépassé";
 "diagnostics.outcome.unavailable" = "Indisponible";
 "diagnostics.outcome.skipped" = "Ignoré";
+"diagnostics.outcome.notStarted" = "Non démarré";
 "diagnostics.step.resolve" = "Résolution du nom";
 "diagnostics.step.tcp" = "Tentative de connexion";
 "diagnostics.step.icmp" = "Ping";
@@ -1252,6 +1253,7 @@
 "diagnostics.names.check.notAName" = "une adresse, pas un nom";
 "diagnostics.names.check.noName" = "aucun nom";
 "diagnostics.names.check.noAnswer" = "pas de réponse";
+"diagnostics.reason.probeNotStarted" = "Votre Mac était trop occupé pour démarrer cette mesure, rien n’a donc été envoyé au serveur. Réessayez lorsque moins de choses tournent.";
 "diagnostics.reason.noHost" = "Cette connexion ne nomme aucun hôte.";
 "diagnostics.reason.nothingResolvedToProbe" = "Le nom n’a donné aucune adresse ; il n’y avait donc rien à sonder.";
 "diagnostics.reason.noSecret" = "Aucun identifiant n’est enregistré pour cette connexion. Enregistrez-en un, puis relancez la vérification.";

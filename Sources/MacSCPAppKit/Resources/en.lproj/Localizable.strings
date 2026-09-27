@@ -1212,6 +1212,7 @@
 "diagnostics.outcome.timedOut" = "Timed out";
 "diagnostics.outcome.unavailable" = "Not available";
 "diagnostics.outcome.skipped" = "Skipped";
+"diagnostics.outcome.notStarted" = "Not started";
 "diagnostics.step.resolve" = "Name resolution";
 "diagnostics.step.tcp" = "Connection attempt";
 "diagnostics.step.icmp" = "Ping";
@@ -1256,6 +1257,7 @@
 "diagnostics.names.check.notAName" = "An address, not a name";
 "diagnostics.names.check.noName" = "No name";
 "diagnostics.names.check.noAnswer" = "No answer";
+"diagnostics.reason.probeNotStarted" = "Your Mac was too busy to start this measurement, so nothing was sent to the server. Try again when less is running.";
 "diagnostics.reason.noHost" = "This connection names no host.";
 "diagnostics.reason.nothingResolvedToProbe" = "The name resolved to no address, so there was nothing to probe.";
 "diagnostics.reason.noSecret" = "No credential is saved for this connection. Save one, then run the check again.";

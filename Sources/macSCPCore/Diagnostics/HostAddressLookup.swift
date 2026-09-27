@@ -65,8 +65,12 @@ public enum HostAddressLookup {
         resolve: @escaping @Sendable (_ name: String, _ budget: Duration) async -> HostResolverOutcome
     ) async -> HostAddresses {
         let name = trimmed(host)
-        guard let outcome = await DetachedProbe.run(timeout: deadline, { await resolve(name, deadline) })
-        else { return .noAnswer }
+        // `.value`: this type's one reader is a form's address menu, which
+        // has no row and no verdict, so "the pool never started the lookup"
+        // and "the resolver did not answer" are the same `noAnswer` to it.
+        guard let outcome = await DetachedProbe.run(
+            timeout: deadline, { await resolve(name, deadline) }
+        ).value else { return .noAnswer }
         return answer(from: outcome)
     }
 

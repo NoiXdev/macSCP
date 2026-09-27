@@ -1207,6 +1207,7 @@
 "diagnostics.outcome.timedOut" = "Przekroczono czas";
 "diagnostics.outcome.unavailable" = "Niedostępne";
 "diagnostics.outcome.skipped" = "Pominięto";
+"diagnostics.outcome.notStarted" = "Nie uruchomiono";
 "diagnostics.step.resolve" = "Rozwiązywanie nazwy";
 "diagnostics.step.tcp" = "Próba połączenia";
 "diagnostics.step.icmp" = "Ping";
@@ -1251,6 +1252,7 @@
 "diagnostics.names.check.notAName" = "adres zamiast nazwy";
 "diagnostics.names.check.noName" = "brak nazwy";
 "diagnostics.names.check.noAnswer" = "brak odpowiedzi";
+"diagnostics.reason.probeNotStarted" = "Twój Mac był zbyt obciążony, aby rozpocząć ten pomiar, więc nic nie wysłano do serwera. Spróbuj ponownie, gdy mniej rzeczy będzie działać.";
 "diagnostics.reason.noHost" = "To połączenie nie wskazuje żadnego hosta.";
 "diagnostics.reason.nothingResolvedToProbe" = "Nazwa nie rozwiązała się na żaden adres, więc nie było czego sprawdzać.";
 "diagnostics.reason.noSecret" = "Dla tego połączenia nie zapisano danych logowania. Zapisz je i uruchom sprawdzenie ponownie.";

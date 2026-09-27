@@ -1435,16 +1435,18 @@ extension CLIMatrix {
     /// the exit rule below are derived FROM, rather than written down.
     ///
     /// EXHAUSTIVE, and structurally so: the `switch` below has no `default`,
-    /// so a sixth case on the enum stops compiling here until it is sampled
-    /// above. The reason text is one fixed word and nothing reads it back;
-    /// it exists because three of the five cases carry a payload.
+    /// so a seventh case on the enum stops compiling here until it is
+    /// sampled above. It did its job on 2026-09-27, when `notStarted` was
+    /// added. The reason text is one fixed word and nothing reads it back;
+    /// it exists because four of the six cases carry a payload.
     static var outcomeSamples: [DiagnosticOutcome] {
         let samples: [DiagnosticOutcome] = [
             .ok, .failed("sample"), .timedOut, .unavailable("sample"), .skipped("sample"),
+            .notStarted("sample"),
         ]
         for sample in samples {
             switch sample {
-            case .ok, .failed, .timedOut, .unavailable, .skipped: break
+            case .ok, .failed, .timedOut, .unavailable, .skipped, .notStarted: break
             }
         }
         return samples

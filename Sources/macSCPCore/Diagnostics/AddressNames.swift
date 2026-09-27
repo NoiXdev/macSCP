@@ -216,13 +216,19 @@ struct ResolveLookups: Sendable {
     /// it from outside (`DetachedProbe`): `nil` when it did not answer in
     /// time, however it treats the budget itself — and without asking it at
     /// all when nothing is left.
+    ///
+    /// `ProbeAnswer.value`, so the two unanswered cases collapse back to
+    /// `nil` here. The reader is a `no answer` CELL beside an address that
+    /// was resolved, not a step outcome: the row is `ok` either way
+    /// (`ConnectionDiagnostics.resolve`, "Never a verdict"), so it has
+    /// nothing to be honest or dishonest about.
     private static func bounded<T: Sendable>(
         until deadline: ContinuousClock.Instant,
         _ lookUp: @escaping @Sendable (Duration) async -> T?
     ) async -> T? {
         let left = ContinuousClock.now.duration(to: deadline)
         guard left > .zero else { return nil }
-        return await DetachedProbe.run(timeout: left) { await lookUp(left) } ?? nil
+        return await DetachedProbe.run(timeout: left) { await lookUp(left) }.value ?? nil
     }
 
     private static func withoutZone(_ text: String) -> Substring {

@@ -33,9 +33,9 @@ import Foundation
 /// - `conflict`: a local precondition the command itself enforces was not
 ///   met (e.g. a name already in use).
 /// - `diagnosis`: `macscp-cli diagnose` returned its report, and at least
-///   one step's outcome was `failed` or `timedOut` — a `skipped` or
-///   `unavailable` step alone does not set this, only a step that actually
-///   found something wrong with the server or the path to it
+///   one step's outcome was `failed` or `timedOut` — a `skipped`,
+///   `unavailable` or `notStarted` step alone does not set this, only a step
+///   that actually found something wrong with the server or the path to it
 ///   (`DiagnoseRendering.exitCode(for:)`). The report may be a cancelled
 ///   one: a `--scope throughput` run stopped by Ctrl-C exits by the rows it
 ///   kept, so 0 when they are ok, and 16 when its kept row says the test

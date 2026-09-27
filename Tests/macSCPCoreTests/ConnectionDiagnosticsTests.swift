@@ -277,7 +277,16 @@ struct ConnectionDiagnosticsTests {
         // The dial by NAME, not by position: the trace step runs after it,
         // so `last` reads a row this case says nothing about.
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
-        #expect(dial.outcome == .timedOut)
+        // `settledByItsDeadline` and not `== .timedOut`: since 2026-09-27
+        // the deadline has TWO outcomes, and which one this fixture gets is
+        // a fact about the runner. A body the cooperative pool never starts
+        // reads `notStarted` (measured at 9.49 s on ten cores, `ProbeStart`),
+        // and the three-core CI machine produces that. What this case is
+        // about — the deadline settled the row, and the fake's `.ok` was
+        // never taken — holds either way. Which of the two, and when, is
+        // claimed where it can be claimed without a runner in the way:
+        // `ProbeStartTests` and `ConnectionDiagnostics.outcome(forUnanswered:)`.
+        #expect(dial.outcome.settledByItsDeadline, "\(dial.outcome.label)")
         // No wall-clock ceiling: on the three-core CI runner this step took
         // 20.68 s to come back (run 33727757421) while the outcome was
         // already `.timedOut` — a ceiling there measures the runner, not
@@ -1487,7 +1496,16 @@ struct ConnectionDiagnosticsTests {
         let stillRunning = probeFinished.isClosed
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
-        #expect(dial.outcome == .timedOut)
+        // `settledByItsDeadline` and not `== .timedOut`: since 2026-09-27
+        // the deadline has TWO outcomes, and which one this fixture gets is
+        // a fact about the runner. A body the cooperative pool never starts
+        // reads `notStarted` (measured at 9.49 s on ten cores, `ProbeStart`),
+        // and the three-core CI machine produces that. What this case is
+        // about — the deadline settled the row, and the fake's `.ok` was
+        // never taken — holds either way. Which of the two, and when, is
+        // claimed where it can be claimed without a runner in the way:
+        // `ProbeStartTests` and `ConnectionDiagnostics.outcome(forUnanswered:)`.
+        #expect(dial.outcome.settledByItsDeadline, "\(dial.outcome.label)")
         #expect(stillRunning)
         // The positive companion for `stillRunning`, which is a check that
         // something has NOT happened: a `Gate` that never opened would

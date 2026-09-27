@@ -38,27 +38,47 @@ public struct Endpoint: Sendable, Equatable {
 /// How one diagnostic step ended.
 ///
 /// `failed` and `ok` are the two answers a probe gives about the SERVER;
-/// `timedOut` is the deadline's answer; `unavailable` and `skipped` are about
-/// THIS build and this session — a probe this build cannot run, and a probe
-/// there was nothing to run. Keeping the last two apart from `failed` is the
-/// whole point: a row that says "not available in this build" must never read
-/// as "your server is broken".
+/// `timedOut` is the deadline's answer; `unavailable`, `skipped` and
+/// `notStarted` are about THIS build, this session and this Mac — a probe
+/// this build cannot run, a probe there was nothing to run, and a probe the
+/// machine was too busy to begin. Keeping the last three apart from `failed`
+/// is the whole point: a row that says "not available in this build" must
+/// never read as "your server is broken".
+///
+/// **`notStarted` is `timedOut`'s other half** (maintainer's decision,
+/// 2026-09-25). A probe is raced against its step budget by `DetachedProbe`,
+/// whose deadline is armed when the probe is CREATED; on a loaded machine
+/// the cooperative pool can leave the body queued past that deadline
+/// (`ProbeStart` carries the measurement: 9.49 s, 3 of 3). Until this case
+/// existed such a row read `timedOut` — a sentence about the far end, for a
+/// server this Mac never contacted. It draws the same line from `timedOut`
+/// that `skipped` draws from `failed`: nothing was measured, so the row is
+/// not a finding.
 public enum DiagnosticOutcome: Sendable, Equatable {
     case ok
     case failed(String)
     case timedOut
     case unavailable(String)
     case skipped(String)
+    /// This Mac did not give the probe a thread before its deadline passed.
+    /// The reason is always `DiagnosticReason.probeNotStarted`; it carries
+    /// one anyway so the row renders through the same door every other fixed
+    /// reason does (`DiagnosticReason.key(for:)`).
+    case notStarted(String)
 
     /// The same outcome with any URL userinfo stripped out of its reason.
     /// `failed`, `unavailable` and `skipped` all carry free text that can
-    /// name a URL, and every one of them is printed.
+    /// name a URL, and every one of them is printed. `notStarted`'s one
+    /// reason is fixed and names nothing; it goes through the same door
+    /// rather than around it, so a fifth reason-carrying case cannot be
+    /// added past the redaction.
     var redacted: DiagnosticOutcome {
         switch self {
         case .ok, .timedOut: return self
         case .failed(let reason): return .failed(URLText.withoutUserinfo(reason))
         case .unavailable(let reason): return .unavailable(URLText.withoutUserinfo(reason))
         case .skipped(let reason): return .skipped(URLText.withoutUserinfo(reason))
+        case .notStarted(let reason): return .notStarted(URLText.withoutUserinfo(reason))
         }
     }
 
@@ -75,6 +95,7 @@ public enum DiagnosticOutcome: Sendable, Equatable {
         case .timedOut: return "timed out"
         case .unavailable(let reason): return "unavailable (\(reason))"
         case .skipped(let reason): return "skipped (\(reason))"
+        case .notStarted(let reason): return "not started (\(reason))"
         }
     }
 }

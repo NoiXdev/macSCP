@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Runs one blocking socket sequence off the cooperative pool and awaits it
 /// with a deadline.
@@ -16,6 +17,13 @@ import Foundation
 /// the queue thread it holds is released whenever the resolver is done with
 /// it, and its late answer is dropped. That is the trade this type makes,
 /// and it is why the caller gets `nil` rather than a partial result.
+///
+/// **It keeps that plain `nil` where `DetachedProbe` no longer does**, and
+/// the measurement behind the split is in `ProbeStart`'s doc comment: this
+/// type's private queue is overcommit, so its body starts in single-digit
+/// milliseconds on a machine where a detached body waits nine seconds for a
+/// cooperative-pool thread. A deadline here bounds the WORK; there it also
+/// bounded the queueing.
 enum BlockingProbe {
     /// Returns `body`'s result, or `nil` when the deadline expired or the
     /// calling task was cancelled first. The two are not distinguished here:
@@ -23,7 +31,7 @@ enum BlockingProbe {
     static func run<T: Sendable>(
         label: String, timeout: Duration, _ body: @escaping @Sendable () -> T
     ) async -> T? {
-        let once = OneShot<T>()
+        let once = OneShot<T?>()
         // Armed BEFORE the work starts, and called off when the work wins:
         // an uncalled-off deadline holds the `OneShot` it captured until it
         // passes, and there is no reason to leave a set of them behind when
@@ -77,19 +85,56 @@ enum BlockingProbe {
 /// settled, so it is dropped; nothing here waits for it, and no continuation
 /// is resumed twice. It holds whatever it holds (a socket, a connect
 /// attempt) until its own transport gives up.
+///
+/// **Three outcomes, not two** (maintainer's decision, 2026-09-25). The
+/// deadline is armed when the probe is CREATED, so on a loaded machine it
+/// can expire before the body has begun. `ProbeAnswer` says which happened;
+/// `ProbeStart`'s doc comment carries the measurement and why
+/// `BlockingProbe` needs none of it. **The limit itself did not move**: the
+/// deadline is armed at the same point and fires at the same moment, and a
+/// probe the pool never starts still ends by it. What changed is only what
+/// the row SAYS.
 enum DetachedProbe {
-    /// Returns `body`'s result, or `nil` when the deadline expired or the
-    /// calling task was cancelled first — the same contract as
-    /// `BlockingProbe.run`, and the caller tells the two apart the same way,
-    /// by asking `Task.isCancelled`.
+    /// How the probe's body is put on a thread of its own — `Task.detached`
+    /// in production, and `detach` below is that default.
+    ///
+    /// A parameter rather than a hardcoded call, because the one thing this
+    /// type reports that nothing else can observe — a body the pool never
+    /// started — is otherwise measurable only by STARVING the cooperative
+    /// pool, which ends every test sharing the process: the 2026-09-25
+    /// investigation had to run 200 CPU-bound tasks beside the case it was
+    /// reproducing, and deleted the harness afterwards. A launcher that
+    /// HOLDS the body states the same fact with no load at all.
+    typealias Launch = @Sendable (@escaping @Sendable () async -> Void) -> Task<Void, Never>
+
+    /// The production launcher. Detached, not a child: a child inherits the
+    /// caller's isolation, so the probe would run ON the diagnostics actor
+    /// and serialize with the very deadline that is supposed to bound it.
+    static let detach: Launch = { body in Task.detached(operation: body) }
+
+    /// Returns `body`'s result, or — when the deadline expired or the
+    /// calling task was cancelled first — which side of its own start the
+    /// probe was on (`ProbeStart`). The caller tells a deadline from a
+    /// cancellation the way `BlockingProbe.run`'s does, by asking
+    /// `Task.isCancelled`.
     static func run<T: Sendable>(
-        timeout: Duration, _ body: @escaping @Sendable () async -> T
-    ) async -> T? {
-        let once = OneShot<T>()
-        // Detached, not a child: a child inherits this actor's isolation, so
-        // the probe would run ON the diagnostics actor and serialize with the
-        // very deadline that is supposed to bound it.
-        let work = Task.detached { once.deliver(await body()) }
+        timeout: Duration, launch: Launch = DetachedProbe.detach,
+        _ body: @escaping @Sendable () async -> T
+    ) async -> ProbeAnswer<T> {
+        let once = OneShot<ProbeAnswer<T>>()
+        // Raised as the body's FIRST statement, and READ at the moment the
+        // deadline fires rather than afterwards. "Had the body begun when
+        // the deadline expired?" is a question about one instant; a body
+        // that begins a microsecond later must not turn a row that has
+        // already been settled into a claim about the server.
+        let begun = Mutex(false)
+        let start: @Sendable () -> ProbeStart = {
+            begun.withLock { $0 } ? .began : .neverBegan
+        }
+        let work = launch {
+            begun.withLock { $0 = true }
+            once.deliver(.answered(await body()))
+        }
         // A timer off the cooperative pool, NOT a `Task.sleep` on another
         // task. A deadline that waits for a cooperative-pool thread before it
         // can start counting is not a deadline: measured under the full suite
@@ -108,20 +153,76 @@ enum DetachedProbe {
         // process's own, which no pool can refuse it — the full measurement,
         // the alternatives weighed against it and the cost are in its doc
         // comment.
-        let expiry = DeadlineTimer.shared.schedule(after: timeout) { once.deliver(nil) }
+        let expiry = DeadlineTimer.shared.schedule(after: timeout) {
+            once.deliver(.unanswered(start()))
+        }
         defer {
             work.cancel()
             DeadlineTimer.shared.cancel(expiry)
         }
         return await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            await withCheckedContinuation {
+                (continuation: CheckedContinuation<ProbeAnswer<T>, Never>) in
                 once.arm(continuation)
             }
         } onCancel: {
-            once.deliver(nil)
+            once.deliver(.unanswered(start()))
         }
     }
 }
+
+/// Whether a probe's body had BEGUN when its deadline (or a cancellation)
+/// settled the call.
+///
+/// The distinction is not a nicety. `DetachedProbe` arms its deadline when
+/// the probe is CREATED, and a `Task.detached` body reaches its first
+/// statement only once the cooperative pool — which is FIFO, non-preemptive
+/// and exactly as wide as the machine has cores — has a thread for it.
+/// Measured 2026-09-27 on the ten-core development machine, in a standalone
+/// binary, with 200 CPU-bound cooperative tasks filling the pool (they
+/// drained in 10.006-10.041 s): a detached body reached its first statement
+/// **9.483 / 9.490 / 9.494 s** after its creation, 3 of 3 runs. So a deadline
+/// can expire over work that never began, and a row reporting that as a
+/// timeout is an accusation against a server this Mac never contacted.
+///
+/// **`BlockingProbe` does not share it**, and that was measured in the same
+/// binary and the same three runs rather than assumed: its body goes onto a
+/// PRIVATE `DispatchQueue`, which is overcommit and so draws a thread from
+/// the kernel whether or not the cores are busy. Under the identical load
+/// its first block ran **0.000116 / 0.002357 / 0.006739 s** after
+/// submission — four orders of magnitude, and the same answer the
+/// 2026-09-24/25 measurement gave against a parked global queue (0.3-1.3 ms,
+/// 4 of 4). It is not unbounded — `kern.wq_max_threads`, 512 here, bounds
+/// overcommit threads too — but reaching that needs hundreds of
+/// simultaneously blocked queues, and a diagnosis runs a handful. So
+/// `BlockingProbe.run` keeps its `T?`.
+enum ProbeStart: Sendable, Equatable {
+    /// The body had begun. Something was measured, and it overran.
+    case began
+    /// The body had NOT begun: nothing was measured, and nothing was sent.
+    case neverBegan
+}
+
+/// What a bounded probe answered: the body's result, or — when the deadline
+/// or a cancellation settled the call first — which side of its own start
+/// the body was on.
+enum ProbeAnswer<Value: Sendable>: Sendable {
+    case answered(Value)
+    case unanswered(ProbeStart)
+
+    /// The result, or `nil` when there was none — the `T?` this type
+    /// replaced. For the callers whose reader never learns which of the two
+    /// unanswered cases it was: `HostAddressLookup`, whose one reader is a
+    /// form's address menu, and `AddressNames`, whose is a `no answer` cell
+    /// beside an address that WAS resolved. Neither is a step outcome, and
+    /// neither says anything about a server.
+    var value: Value? {
+        guard case .answered(let value) = self else { return nil }
+        return value
+    }
+}
+
+extension ProbeAnswer: Equatable where Value: Equatable {}
 
 /// Resumes a continuation exactly once, whichever of the three racers gets
 /// there first — the work, the deadline, or a cancellation.
@@ -131,17 +232,16 @@ enum DetachedProbe {
 /// `withCheckedContinuation` closure running), so an answer that arrives
 /// early is held rather than dropped. Without that, the continuation would
 /// never be resumed and the caller would hang on a cancelled task.
-private final class OneShot<T: Sendable>: @unchecked Sendable {
+private final class OneShot<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<T?, Never>?
+    private var continuation: CheckedContinuation<Value, Never>?
     private var isSettled = false
     private var hasEarlyAnswer = false
-    private var earlyAnswer: T?
+    private var earlyAnswer: Value?
 
-    func arm(_ continuation: CheckedContinuation<T?, Never>) {
+    func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
-        if hasEarlyAnswer {
-            let answer = earlyAnswer
+        if hasEarlyAnswer, let answer = earlyAnswer {
             hasEarlyAnswer = false
             earlyAnswer = nil
             lock.unlock()
@@ -152,7 +252,7 @@ private final class OneShot<T: Sendable>: @unchecked Sendable {
         lock.unlock()
     }
 
-    func deliver(_ value: T?) {
+    func deliver(_ value: Value) {
         lock.lock()
         guard !isSettled else {
             lock.unlock()

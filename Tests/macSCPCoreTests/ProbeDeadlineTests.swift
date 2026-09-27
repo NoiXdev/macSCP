@@ -282,7 +282,15 @@ struct ProbeDeadlineSaturationTests {
         }
 
         let canaryHadStarted = canaryStarted.isRaised
-        #expect(outcome == nil, "the probe returned the work's answer, so the deadline did not settle it")
+        // `.unanswered(.began)` and not merely "no answer": what is parked
+        // here is the Dispatch GLOBAL queue, which the detached body does
+        // not need — it runs on the cooperative pool, reaches
+        // `suspendUntilCancelled` and only then waits. So this case's probe
+        // DID begin, and the deadline caught it running. A run that read
+        // `.neverBegan` would be measuring something else entirely.
+        #expect(
+            outcome == .unanswered(.began),
+            "the probe answered \(outcome), so the deadline did not settle it over a running body")
         #expect(
             canaryHadStarted == false,
             "the global queue had a thread to give, so this run did not measure a saturated pool")

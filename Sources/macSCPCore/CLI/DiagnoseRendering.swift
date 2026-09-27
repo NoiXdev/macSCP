@@ -19,6 +19,7 @@ public enum DiagnoseRendering {
         case .timedOut: return "timed out"
         case .unavailable: return "unavailable"
         case .skipped: return "skipped"
+        case .notStarted: return "not started"
         }
     }
 
@@ -33,6 +34,11 @@ public enum DiagnoseRendering {
         case .timedOut: return "timedOut"
         case .unavailable: return "unavailable"
         case .skipped: return "skipped"
+        // ADDED 2026-09-27 with `DiagnosticOutcome.notStarted`, and added
+        // rather than a rename of anything: a script switching on `timedOut`
+        // keeps reading exactly the rows it read before, minus the ones this
+        // Mac never measured — which is the correction, not a break.
+        case .notStarted: return "notStarted"
         }
     }
 
@@ -46,6 +52,7 @@ public enum DiagnoseRendering {
         case .failed(let reason): return reason
         case .unavailable(let reason): return reason
         case .skipped(let reason): return reason
+        case .notStarted(let reason): return reason
         }
     }
 
@@ -288,16 +295,19 @@ public enum DiagnoseRendering {
         DiagnosticReport.marker(for: report.completion)
     }
 
-    /// `.success` when every step is `ok`, `skipped`, or `unavailable`;
-    /// `.diagnosis` when any step is `failed` or `timedOut` — the two
-    /// outcomes that say something is actually wrong with the server or the
-    /// path to it, as opposed to "this build/session had nothing to run
-    /// here" (`DiagnosticOutcome`'s own doc comment draws the same line).
+    /// `.success` when every step is `ok`, `skipped`, `unavailable` or
+    /// `notStarted`; `.diagnosis` when any step is `failed` or `timedOut` —
+    /// the two outcomes that say something is actually wrong with the server
+    /// or the path to it, as opposed to "this build, this session or this Mac
+    /// had nothing to run here" (`DiagnosticOutcome`'s own doc comment draws
+    /// the same line). `notStarted` joined the first list on 2026-09-27: a
+    /// step this Mac was too busy to begin found nothing, and exiting 16 for
+    /// it would fail a script over the load on the machine running it.
     public static func exitCode(for report: DiagnosticReport) -> CLIExitCode {
         let foundAProblem = report.steps.contains { step in
             switch step.outcome {
             case .failed, .timedOut: return true
-            case .ok, .unavailable, .skipped: return false
+            case .ok, .unavailable, .skipped, .notStarted: return false
             }
         }
         return foundAProblem ? .diagnosis : .success
