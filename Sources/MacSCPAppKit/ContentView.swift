@@ -3595,6 +3595,36 @@ extension ContentView {
     /// is `.cancelled` and counts in neither
     /// (`TransferQueueViewModel.cancel(itemID:)`, `cancelAll(reason:
     /// .userRequested)`, a conflict prompt dismissed).
+    ///
+    /// **One drop can still raise two notifications, and that is ruled
+    /// deliberate** (deferred minor of 2026-09-17, decided 2026-09-27). The
+    /// count above leaves out the items a SWEEP marked — `cancelAll(reason:
+    /// .connectionLost)`'s — and nothing else, so a transfer that fails on
+    /// its own lost connection, through a foreign error no backend wrapped,
+    /// is `.failed(.connectionLost)` and does count
+    /// (`TransferQueueViewModelTests
+    /// .aTransfersOwnLostConnectionCountsAsATransferFailure`). It raises
+    /// "transfer failed" here, and "connection lost" follows later from the
+    /// one site that posts it, `handleLivenessGiveUp(_:)`.
+    ///
+    /// De-duplicating the two would be wrong, because the second one is not
+    /// guaranteed to come at all:
+    ///
+    /// - `LivenessProbeRunner` probes only while `keepAliveEnabled` is on,
+    ///   and that is a switch the user owns. With it off nothing gives up,
+    ///   and suppressing the notification here would tell the user nothing
+    ///   whatsoever about a transfer that died.
+    /// - Even with it on, `LivenessProbePolicy.decide` answers `.skip`
+    ///   while the queue is busy, so the give-up cannot happen until the
+    ///   queue goes quiet — long after the transfer failed.
+    /// - And one failed request is not a dropped session: the next probe
+    ///   may well succeed, which leaves "transfer failed" the only true
+    ///   thing anyone was told.
+    ///
+    /// The cost is bounded rather than open-ended: `TransferFailureLatch`
+    /// allows at most one "transfer failed" per tab until that tab's window
+    /// is key again, so the worst case for one drop is two banners, not a
+    /// burst.
     func notifyTransferFailures() {
         for tab in tabsModel.tabs {
             guard tab.transferFailureLatch.takeFailures(

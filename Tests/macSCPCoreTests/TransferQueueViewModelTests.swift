@@ -774,6 +774,52 @@ struct TransferQueueViewModelTests {
         #expect(vm.failureCountExcludingConnectionLoss == 1)
     }
 
+    /// The other half of the count, pinned because a deferred minor asked
+    /// what it is (2026-09-27): a transfer that fails on its OWN lost
+    /// connection — a foreign error no backend wrapped, which is what the
+    /// HTTP-shaped backends surface — is `.failed(.connectionLost)` and
+    /// counts in BOTH totals, sweep or no sweep. `causedByConnectionLoss`
+    /// is raised only where `cancelAll(reason: .connectionLost)` marks an
+    /// item, and this item is not one of those.
+    ///
+    /// So one drop really can raise two notifications: this count's
+    /// "transfer failed" now, and "connection lost" later when the liveness
+    /// prober gives up. That pair is ruled deliberate — the ruling and its
+    /// reasons are in `ContentView.notifyTransferFailures`, which is the
+    /// only reader of this count. Nothing here asserts on notifications;
+    /// this pins the count they are read from.
+    ///
+    /// Beside it, for contrast: a wrapped `RemoteFSError.connectionFailed`
+    /// mid-transfer is `.interrupted` instead and counts in NEITHER total
+    /// (`connectionLossMarksInterruptedOtherErrorFails`), which is why the
+    /// pair is not reachable for every backend.
+    @Test func aTransfersOwnLostConnectionCountsAsATransferFailure() async throws {
+        let content = Data(repeating: 0x41, count: TransferChunk.size)
+        let started = TestSignal()
+        let gate = TestSignal()
+        // A raw socket reset: no backend wrapped it, so it reaches the
+        // queue's mapping through the same arm a `URLSession` loss does.
+        let reset = NSError(domain: NSPOSIXErrorDomain, code: Int(ECONNRESET))
+        let source = QueueTestFS(reads: [
+            "/a.txt": .init(content: content, started: started, gate: gate, failWith: reset),
+        ])
+        let destination = QueueTestFS(reads: [:])
+
+        let vm = TransferQueueViewModel()
+        vm.maxConcurrent = 1
+        vm.enqueue(
+            fileName: "a.txt", direction: .upload,
+            source: source, sourcePath: "/a.txt",
+            destination: destination, destinationDirectory: "/ziel", onCompleted: nil)
+        try await started.wait()
+        gate.fire()
+        await waitUntil { vm.items[0].status.isTerminal }
+
+        #expect(vm.items[0].status == .failed(.connectionLost))
+        #expect(vm.totalFailureCount == 1)
+        #expect(vm.failureCountExcludingConnectionLoss == 1)
+    }
+
     // MARK: - 8
 
     @Test func clearCompletedRemovesOnlyDone() async throws {
