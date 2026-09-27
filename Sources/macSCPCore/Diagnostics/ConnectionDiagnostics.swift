@@ -280,6 +280,7 @@ public actor ConnectionDiagnostics {
     private let appVersion: String
     private let jump: DiagnosticJump?
     private let jumpDialer: DiagnosticJumpDialer
+    private let jumpDialLaunch: DetachedProbe.Launch
     private let lookups: ResolveLookups
     private let throughputSettings: DiagnosticThroughputSettings
     private let throughputOpener: DiagnosticThroughputOpener
@@ -378,6 +379,18 @@ public actor ConnectionDiagnostics {
     /// network by omission, and omission is exactly what a default invites.
     /// Required, that cannot be written. The public initializer above is
     /// the one place `.live` is named.
+    ///
+    /// **`jumpDialLaunch`** is how `dialJump`'s probe body is put on a
+    /// thread — `DetachedProbe.detach` in production, and a launcher the
+    /// suite keeps the `Task` from in
+    /// `aJumpConnectionThatArrivesAfterItsDeadlineIsClosed`. That case is
+    /// about what the ABANDONED body does when its connection finally
+    /// arrives, and the only other way to know it has done it is to wait
+    /// for the close itself — which turns a MISSING close into "time limit
+    /// exceeded" rather than into a red about the close (`docs/BACKLOG.md`,
+    /// "The jump plan's deferred minors: diagnostics through the jump").
+    /// With the task in hand the case awaits the body and then reads the
+    /// ledger, so a body that closed nothing is red on the count.
     init(
         descriptor: BackendDescriptor,
         values: FieldValues,
@@ -385,6 +398,7 @@ public actor ConnectionDiagnostics {
         sessionID: UUID? = nil,
         jump: DiagnosticJump?,
         jumpDialer: DiagnosticJumpDialer,
+        jumpDialLaunch: @escaping DetachedProbe.Launch = DetachedProbe.detach,
         lookups: ResolveLookups = .live,
         throughput: DiagnosticThroughputSettings = DiagnosticThroughputSettings(),
         throughputOpener: DiagnosticThroughputOpener = .live,
@@ -404,6 +418,7 @@ public actor ConnectionDiagnostics {
         self.sessionID = sessionID
         self.jump = jump
         self.jumpDialer = jumpDialer
+        self.jumpDialLaunch = jumpDialLaunch
         self.lookups = lookups
         self.throughputSettings = throughput
         self.throughputOpener = throughputOpener
@@ -922,7 +937,7 @@ public actor ConnectionDiagnostics {
         let handoff = JumpHandoff()
         let dialer = jumpDialer
         let seconds = DialSupport.connectSeconds(stepTimeout)
-        let answer = await DetachedProbe.run(timeout: stepTimeout) {
+        let answer = await DetachedProbe.run(timeout: stepTimeout, launch: jumpDialLaunch) {
             do {
                 let connection = try await dialer.connectJump(config, seconds)
                 guard handoff.offer(connection) else {

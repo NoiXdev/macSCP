@@ -307,9 +307,20 @@ struct ConnectionDiagnosticsJumpTests {
     /// The jump's dial loses its deadline, and its connection arrives after
     /// the walk has moved on: nobody is left to use it, so it is closed the
     /// moment it arrives rather than held open until the process exits.
+    ///
+    /// **The close is read, not waited for** (`docs/BACKLOG.md`, "The jump
+    /// plan's deferred minors: diagnostics through the jump", item 2,
+    /// 2026-09-27). This case used to end on
+    /// `rig.disconnected.wait()`, so a production side that closed NOTHING
+    /// left the case waiting until its `.timeLimit` cut it: the red read
+    /// "Time limit exceeded", which is what a hang of any kind reads. The
+    /// abandoned probe's own `Task` is now in hand — `jumpDialLaunch`, the
+    /// seam `DetachedProbe` already carries for the `notStarted` cases —
+    /// so the case awaits THE BODY and then reads the ledger. A body that
+    /// closed nothing finishes all the same, and the red is the count.
     // `.timeLimit` as a hang bound only (CLAUDE.md, "A wall-clock ceiling
     // in a test measures the runner"): nothing below asserts on elapsed
-    // time, and a signal that is never raised must end the case rather
+    // time, and a park that is never released must end the case rather
     // than the run.
     @Test(.timeLimit(.minutes(1)))
     func aJumpConnectionThatArrivesAfterItsDeadlineIsClosed() async throws {
@@ -318,9 +329,11 @@ struct ConnectionDiagnosticsJumpTests {
         let rig = JumpRig()
         let release = AsyncSignal()
         rig.parkJumpDial(until: release)
+        let abandoned = LaunchedProbe()
 
         let report = await Self.diagnostics(
-            jumpPort: listener.port, rig: rig, stepTimeout: .milliseconds(200)
+            jumpPort: listener.port, rig: rig, stepTimeout: .milliseconds(200),
+            jumpDialLaunch: abandoned.launch
         ).run(scope: .dial)
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.jumpDial })
@@ -342,9 +355,13 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(closedBeforeArrival == 0)
 
         release.signal()
-        #expect(await rig.disconnected.wait() == .signalled)
-        #expect(rig.count("disconnect") == 1)
-        #expect(rig.count("dialTarget") == 0)
+        // The body itself, not the event it is supposed to produce: this
+        // returns whether or not the connection was closed, so the two
+        // expectations below are a reading rather than a wait.
+        let body = try #require(abandoned.task)
+        await body.value
+        #expect(rig.count("disconnect") == 1, "\(rig.events)")
+        #expect(rig.count("dialTarget") == 0, "\(rig.events)")
     }
 
     // MARK: - The jump's names
@@ -1632,22 +1649,25 @@ struct ConnectionDiagnosticsJumpTests {
 
     private static func diagnostics(
         jumpPort: Int, rig: JumpRig, contribution: Ticker? = nil,
-        stepTimeout: Duration = .seconds(5)
+        stepTimeout: Duration = .seconds(5),
+        jumpDialLaunch: @escaping DetachedProbe.Launch = DetachedProbe.detach
     ) -> ConnectionDiagnostics {
         diagnostics(
             jump: agentJump(port: jumpPort), rig: rig, contribution: contribution,
-            stepTimeout: stepTimeout)
+            stepTimeout: stepTimeout, jumpDialLaunch: jumpDialLaunch)
     }
 
     private static func diagnostics(
         jump: DiagnosticJump, rig: JumpRig, contribution: Ticker? = nil,
-        values: FieldValues = targetValues(), stepTimeout: Duration = .seconds(5)
+        values: FieldValues = targetValues(), stepTimeout: Duration = .seconds(5),
+        jumpDialLaunch: @escaping DetachedProbe.Launch = DetachedProbe.detach
     ) -> ConnectionDiagnostics {
         ConnectionDiagnostics(
             descriptor: descriptor(
                 dial: okDial(),
                 diagnostics: contribution.map { [recordingContribution(ticker: $0)] } ?? []),
             values: values, secrets: nil, jump: jump, jumpDialer: rig.dialer,
+            jumpDialLaunch: jumpDialLaunch,
             throughput: DiagnosticThroughputSettings(payloadMiB: 1),
             throughputOpener: RecordingOpener(
                 fileSystem: InMemoryThroughputFileSystem(home: "/home/testuser")
@@ -1870,6 +1890,31 @@ private struct FakeJumpConnection: DiagnosticJumpConnection {
     func disconnect() async {
         rig.record("disconnect")
         rig.disconnected.signal()
+    }
+}
+
+/// Keeps the `Task` a `DetachedProbe.Launch` created, so a case can await
+/// the probe's body instead of an event the body may or may not produce.
+///
+/// `DetachedProbe.detach` still does the launching — the body runs exactly
+/// where production runs it, detached and off the caller's isolation; this
+/// only remembers the handle. One probe per instance: `dialJump` runs one,
+/// and a second launch through the same holder would replace the first
+/// silently, so it records that instead.
+private final class LaunchedProbe: Sendable {
+    private let held = Mutex<Task<Void, Never>?>(nil)
+
+    var task: Task<Void, Never>? { held.withLock { $0 } }
+
+    var launch: DetachedProbe.Launch {
+        { body in
+            let task = DetachedProbe.detach(body)
+            self.held.withLock { held in
+                if held != nil { Issue.record("a second probe was launched through this holder") }
+                held = task
+            }
+            return task
+        }
     }
 }
 
