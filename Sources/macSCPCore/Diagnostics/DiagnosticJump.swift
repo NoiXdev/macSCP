@@ -195,6 +195,17 @@ extension DiagnosticJump {
     /// form now names. A jump host also need not be a DNS name at all (an
     /// address, or an alias the resolver decides), so a fold would be this
     /// file guessing at a rule it does not own. Not a defect to fix.
+    ///
+    /// The KEY PATH is not compared, and the enumeration above says so only
+    /// by leaving it out — so it is said here. A form whose jump names the
+    /// same host, port, user name and `.privateKey` auth kind as the stored
+    /// jump adopts the stored jump's secret even when it points at a
+    /// DIFFERENT local key file, so a stored passphrase can be tried
+    /// against a key the user did not store it for. Local decryption only:
+    /// nothing is sent, and a wrong passphrase fails the load. That is why
+    /// it was not folded into the case-sensitivity decision above, which is
+    /// about what leaves this Mac. It is open work with a row of its own in
+    /// `docs/BACKLOG.md`, not a silent omission.
     public static func form(
         _ values: FieldValues, isEnabled: Bool, stored: DiagnosticJump?
     ) -> DiagnosticJump? {
