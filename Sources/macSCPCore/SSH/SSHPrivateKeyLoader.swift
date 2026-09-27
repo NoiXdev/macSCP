@@ -34,6 +34,13 @@ public enum SSHKeyError: Error, Equatable, Sendable {
     /// command line), and `ConnectionViewModel`'s own `namingUnreadableStore`
     /// from what the tab's fill saw (`fillManagedKeyPassphrase(store:secrets:)`).
     /// No payload: the finding is the store, and the store has one name.
+    /// Since 2026-09-27 the sentences it maps to also say WHERE that name
+    /// is — `~/Library/Application Support/macSCP/managed_keys.json`,
+    /// written into the text rather than carried as a payload, because it
+    /// is a constant of the app and not a property of the failure. The
+    /// store's RESOLVED URL is deliberately not used: it carries the
+    /// account's short name, and these sentences reach the diagnostic log,
+    /// the CLI's stderr and its JSON output.
     case managedKeyStoreUnreadable
 }
 

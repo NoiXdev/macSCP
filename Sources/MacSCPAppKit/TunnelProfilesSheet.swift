@@ -684,7 +684,9 @@ struct TunnelProfilesSheet: View {
             return L10n.string(key, "The PEM key uses a feature that is not supported")
         case .managedKeyStoreUnreadable:
             return L10n.string(
-                key, "The key needs a passphrase, but the list of managed keys (managed_keys.json) could not be read")
+                key,
+                "The key needs a passphrase, but the list of managed keys "
+                    + "(~/Library/Application Support/macSCP/managed_keys.json) could not be read")
         case .agentUnavailable:
             return L10n.string(key, "No SSH agent answered")
         case .agentHasNoIdentities:

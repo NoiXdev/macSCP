@@ -200,8 +200,19 @@ public enum TunnelFailureKind: Sendable, Equatable {
         case .managedKeyStoreUnreadable:
             // Names the file and nothing read from it: the finding is that
             // the store could not be read, not what it holds.
+            //
+            // The `~`-relative path, not the store's resolved URL (deferred
+            // minor of 2026-09-19, cleared 2026-09-27: the sentence named
+            // the fact but not where to look). It is a constant of the app,
+            // the one `SessionStore.defaultDirectory` builds for every user,
+            // and it carries no account name — the resolved URL would, and
+            // this sentence reaches the diagnostic log, the CLI's stderr and
+            // its JSON output. `MACSCP_STORAGE_DIRECTORY` can move the
+            // directory, and only ever does so for a gated integration test
+            // driving `macscp-cli`; the GUI never sets it.
             return "the key is encrypted, and its passphrase was not looked up "
-                + "because the managed key store (managed_keys.json) could not be read"
+                + "because the managed key store "
+                + "(~/Library/Application Support/macSCP/managed_keys.json) could not be read"
         case .agentUnavailable:
             return "no ssh-agent answered on SSH_AUTH_SOCK"
         case .agentHasNoIdentities:

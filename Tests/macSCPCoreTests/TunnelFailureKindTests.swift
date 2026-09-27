@@ -62,12 +62,18 @@ import Testing
             sentence: "the key is a PEM file with a feature this app does not read"),
         // NEW sentence (2026-09-18, review follow-ups Task 6): the error did
         // not exist before; the dial said `passphrase required` instead.
+        // The path was added on 2026-09-27 (deferred minor: the sentence
+        // named the file but not where to find it) — the fixed
+        // `~`-relative one the store's default directory resolves to, not
+        // the resolved URL, which would carry the account's short name into
+        // every log line and JSON error this sentence reaches.
         Row(
             label: "managed key store", error: SSHKeyError.managedKeyStoreUnreadable,
             kind: .managedKeyStoreUnreadable,
             sentence:
                 "the key is encrypted, and its passphrase was not looked up "
-                + "because the managed key store (managed_keys.json) could not be read"),
+                + "because the managed key store "
+                + "(~/Library/Application Support/macSCP/managed_keys.json) could not be read"),
         Row(
             label: "agent socket", error: AgentError.socketUnavailable, kind: .agentUnavailable,
             sentence: "no ssh-agent answered on SSH_AUTH_SOCK"),
