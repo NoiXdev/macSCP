@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 

@@ -50,9 +50,11 @@ import Testing
 /// **Isolation.** The same three `ContentView.init` seams as
 /// `AlreadyOpenSessionTests`, pointed at a temporary directory and an
 /// in-memory secret store. No real host names: every target is under
-/// `.invalid`, and the refused jump is `127.0.0.1:1`, which refuses at once.
-/// That case makes a real loopback TCP dial on purpose; a machine with a
-/// listener on port 1 would change its verdict.
+/// `.invalid`, and the refused jump is on `127.0.0.1` at a port
+/// `LoopbackSocket.closedPort()` has just given back, which refuses at once.
+/// That case makes a real loopback TCP dial on purpose, and the port is
+/// asked for rather than spelled so that no listener of the machine's can
+/// change its verdict.
 @Suite("Two tabs through one jump", .timeLimit(.minutes(1)))
 @MainActor
 struct JumpTwoTabsTests {
@@ -348,7 +350,17 @@ struct JumpTwoTabsTests {
     // MARK: - A jump that refuses
 
     /// No factory: the new tab is the window's own `makeTab()` with the real
-    /// connector, dialling a jump at `127.0.0.1:1`.
+    /// connector, dialling a jump on loopback at a port nothing listens on.
+    ///
+    /// The port comes from `LoopbackSocket.closedPort()` and was a literal
+    /// `1` until 2026-09-27 (`docs/BACKLOG.md`, "The jump plan's deferred
+    /// minors: the jump tests"). Loopback is what the rule allows either
+    /// way; what a literal could not promise is that nothing ANSWERS there.
+    /// A machine with a listener on port 1 sent this case at the real
+    /// known-hosts decider and hung until the suite's bound. A port the
+    /// kernel handed out a moment ago and that was given straight back is
+    /// refused by the stack itself, so the dial fails where this case
+    /// expects it to.
     @Test func aRefusedJumpFailsTheNewTabVisiblyAndLeavesTheFirstAlone() async throws {
         let workDir = makeTempDirectory("jump-refused")
         defer { try? FileManager.default.removeItem(at: workDir) }
@@ -358,7 +370,8 @@ struct JumpTwoTabsTests {
         defer { cleanup() }
         installFirstTab(first, in: view)
         let a = viaJump("A", target: "a.invalid")
-        let b = viaJump("B", target: "b.invalid", jumpHost: "127.0.0.1", jumpPort: 1)
+        let refusedPort = try #require(LoopbackSocket.closedPort())
+        let b = viaJump("B", target: "b.invalid", jumpHost: "127.0.0.1", jumpPort: refusedPort)
 
         #expect(view.connectFromSidebar(a) == nil)
         try await pollUntil("the first tab connects") { first.isConnected }
