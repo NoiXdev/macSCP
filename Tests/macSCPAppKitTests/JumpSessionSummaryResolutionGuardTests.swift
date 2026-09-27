@@ -155,25 +155,21 @@ struct JumpSessionSummaryResolutionGuardTests {
         return false
     }
 
+    /// The anchor's brace-balanced body, braces included. The walk is
+    /// `SourceSpan`'s, shared with three other guard suites; only the two
+    /// error cases are this suite's own, because a missing anchor and an
+    /// unbalanced body want different messages here.
     private static func body(after anchor: String, inBlanked source: String) throws -> String {
-        guard let found = source.range(of: anchor),
-              let brace = source[found.upperBound...].firstIndex(of: "{")
-        else { throw ScanError.anchorNotFound }
-        return try balancedSpan(from: brace, in: source)
+        guard source.range(of: anchor) != nil else { throw ScanError.anchorNotFound }
+        guard let span = SourceSpan.bodySpan(after: anchor, in: source)
+        else { throw ScanError.unbalancedBraces }
+        return String(source[span.open...span.close])
     }
 
     private static func balancedSpan(from openBrace: String.Index, in source: String) throws -> String {
-        var depth = 0
-        var index = openBrace
-        while index < source.endIndex {
-            if source[index] == "{" { depth += 1 }
-            if source[index] == "}" {
-                depth -= 1
-                if depth == 0 { return String(source[openBrace...index]) }
-            }
-            index = source.index(after: index)
-        }
-        throw ScanError.unbalancedBraces
+        guard let close = SourceSpan.closingBrace(from: openBrace, in: source)
+        else { throw ScanError.unbalancedBraces }
+        return String(source[openBrace...close])
     }
 
     private static func isIdentifierCharacter(_ character: Character) -> Bool {

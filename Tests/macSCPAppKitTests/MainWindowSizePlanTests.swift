@@ -430,6 +430,7 @@ struct MainWindowSizePlanTests {
     private static let contentViewFile = sourceDir.appendingPathComponent("ContentView.swift")
     private static let lifecycleFile = sourceDir.appendingPathComponent("ContentView+Lifecycle.swift")
     private static let detailFile = sourceDir.appendingPathComponent("ContentView+Detail.swift")
+    private static let planFile = sourceDir.appendingPathComponent("MainWindowSizePlan.swift")
 
     private static func code(of url: URL) throws -> String {
         try SourceCorpus.code(of: url)
@@ -437,7 +438,7 @@ struct MainWindowSizePlanTests {
 
     private static func body(of anchor: String, in url: URL) throws -> String {
         let source = try code(of: url)
-        return try #require(TabsWindowLifecycleTests.body(after: anchor, in: source), """
+        return try #require(SourceSpan.body(after: anchor, in: source), """
             \(url.lastPathComponent) no longer declares \(anchor) — re-anchor this guard.
             """)
     }
@@ -525,37 +526,181 @@ struct MainWindowSizePlanTests {
         return String(source[name])
     }
 
-    /// Fix round 1: every `isPrimaryWindow:` argument in the three executing
-    /// bodies passes the real property. A hard-coded `true` there made a
-    /// secondary window's drag write the saved size with every value test
-    /// still green. Positive (the label appears the expected number of
-    /// times, each followed by the property) beside negative (no literal).
-    /// Full screen is read from the window in the two saving paths.
+    /// The `Bool` parameter labels `MainWindowSizePlan.<function>` declares,
+    /// in declaration order, read from the plan's own signature rather than
+    /// spelled here.
+    ///
+    /// Splitting on depth-zero commas, not on every comma: a parameter whose
+    /// type carried one (`(Bool, Bool)`, a default of `[a, b]`) would
+    /// otherwise be cut in half and neither half would look like a `Bool`.
+    private static func boolParameters(of function: String) throws -> [String] {
+        let source = try code(of: planFile)
+        let anchor = "static func \(function)("
+        let start = try #require(source.range(of: anchor), """
+            MainWindowSizePlan.swift no longer declares `\(anchor)` — re-anchor this guard.
+            """)
+        let list = try #require(Self.parenthesised(from: start.upperBound, in: source), """
+            `\(anchor)`'s parameter list does not close — re-anchor this guard.
+            """)
+        return Self.topLevelArguments(in: list).compactMap { parameter in
+            guard let colon = parameter.firstIndex(of: ":"),
+                  parameter[colon...].dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+                    .hasPrefix("Bool")
+            else { return nil }
+            // `label name: Type` declares an argument label and a distinct
+            // internal name; the label is the first word.
+            return parameter[..<colon].split(whereSeparator: \.isWhitespace).first.map(String.init)
+        }
+    }
+
+    /// The text between `open`'s own `(` — which must be the character just
+    /// before `from` — and the `)` that balances it.
+    private static func parenthesised(from start: String.Index, in source: String) -> String? {
+        var depth = 1
+        var index = start
+        while index < source.endIndex {
+            if source[index] == "(" { depth += 1 }
+            if source[index] == ")" {
+                depth -= 1
+                if depth == 0 { return String(source[start..<index]) }
+            }
+            index = source.index(after: index)
+        }
+        return nil
+    }
+
+    /// An argument (or parameter) list cut at its depth-zero commas.
+    private static func topLevelArguments(in list: String) -> [String] {
+        var arguments: [String] = []
+        var depth = 0
+        var current = ""
+        for character in list {
+            switch character {
+            case "(", "[": depth += 1
+            case ")", "]": depth -= 1
+            case "," where depth == 0:
+                arguments.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                current = ""
+                continue
+            default: break
+            }
+            current.append(character)
+        }
+        let last = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !last.isEmpty { arguments.append(last) }
+        return arguments
+    }
+
+    /// What the call to `MainWindowSizePlan.<function>` inside `body` passes
+    /// for each argument label, as written.
+    private static func arguments(to function: String, in body: String) throws -> [String: String] {
+        let anchor = "MainWindowSizePlan.\(function)("
+        let start = try #require(body.range(of: anchor), """
+            this body no longer calls `\(anchor)` — re-anchor this guard.
+            """)
+        let list = try #require(Self.parenthesised(from: start.upperBound, in: body), """
+            the call to `\(anchor)` does not close — re-anchor this guard.
+            """)
+        var passed: [String: String] = [:]
+        for argument in Self.topLevelArguments(in: list) {
+            guard let colon = argument.firstIndex(of: ":") else { continue }
+            passed[String(argument[..<colon])] =
+                argument[colon...].dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return passed
+    }
+
+    /// The four executing call sites, each named by the body it sits in and
+    /// the plan function it calls. Counted in the pass that wrote this list:
+    /// `git grep -c 'MainWindowSizePlan\.' Sources/MacSCPAppKit/ContentView+Lifecycle.swift`
+    /// reports more, because the launch resolve above calls four more of the
+    /// plan's functions — none of which takes a `Bool`, which is what this
+    /// table is for.
+    private static let planCallSites: [(anchor: String, function: String)] = [
+        ("func shrinkIfPristine() {", "shrink"),
+        ("func growToBrowserSize() {", "rememberedBrowserSize"),
+        ("func growToBrowserSize() {", "resumesFrameAutosave"),
+        ("func handleWindowDidEndLiveResize(_ notification: Notification) {", "persistsLiveResize"),
+    ]
+
+    /// Fix round 1: every window fact the plan is asked for at the four
+    /// executing call sites is read from the window, not written in. A
+    /// hard-coded `true` for the primary-window fact made a secondary
+    /// window's drag write the saved size with every value test still green.
+    ///
+    /// The labels are READ from `MainWindowSizePlan`'s own signatures
+    /// (`boolParameters(of:)`), not spelled here, so renaming a parameter
+    /// cannot leave this scan matching nothing, and a `Bool` parameter added
+    /// to any of the four is pinned the moment it is declared — the previous
+    /// form spelled `isPrimaryWindow:` and counted it, which is why
+    /// `isActiveTabConnected` went unpinned from the day it was added
+    /// (backlog: "Task 3's review deferred minors", re-review item 1).
+    ///
+    /// Each check reads the CALL's own argument list, not the enclosing
+    /// body: the previous form asked whether the body contained
+    /// `isFullScreen:` and, separately, whether it contained
+    /// `styleMask.contains(.fullScreen)` — two independent `.contains`
+    /// calls that a body passing `isFullScreen: false` while reading the
+    /// style mask for anything else at all would have satisfied.
     @Test func thePlanIsAskedAboutTheRealWindow() throws {
         let property = try Self.primaryWindowProperty()
-        let bodies: [(anchor: String, labels: Int)] = [
-            ("func shrinkIfPristine() {", 1),
-            ("func growToBrowserSize() {", 2),
-            ("func handleWindowDidEndLiveResize(_ notification: Notification) {", 1),
+        /// The fact each label names, as the window answers it. A label not
+        /// listed here is still held to "not a literal" below.
+        let readFromTheWindow = [
+            "isPrimaryWindow": property,
+            "isActiveTabConnected": "activeTab.isConnected",
+            "frameAutosaveSuspended": "frameAutosaveSuspended",
         ]
-        let literal = try CompiledPattern.regex(#"isPrimaryWindow:\s*(true|false)\b"#)
-        for (anchor, labels) in bodies {
+        let fullScreen = try CompiledPattern.regex(#"^\w+\.styleMask\.contains\(\.fullScreen\)$"#)
+        var declared: Set<String> = []
+        for (anchor, function) in Self.planCallSites {
+            let labels = try Self.boolParameters(of: function)
+            declared.formUnion(labels)
+            #expect(!labels.isEmpty, """
+                MainWindowSizePlan.\(function) declares no Bool parameter — this guard is \
+                pointed at a signature that no longer asks the window anything.
+                """)
             let body = try Self.body(of: anchor, in: Self.lifecycleFile)
-            let passed = body.components(separatedBy: "isPrimaryWindow: \(property)").count - 1
-            let spelled = body.components(separatedBy: "isPrimaryWindow:").count - 1
-            let literals = literal.numberOfMatches(
-                in: body, range: NSRange(body.startIndex..., in: body))
-            #expect(spelled == labels, "\(anchor): \(spelled) isPrimaryWindow: labels")
-            #expect(passed == labels, "\(anchor): \(passed) of \(labels) pass \(property)")
-            #expect(literals == 0, "\(anchor) hard-codes isPrimaryWindow:")
+            let passed = try Self.arguments(to: function, in: body)
+            for label in labels {
+                let value = try #require(passed[label], """
+                    \(anchor) calls MainWindowSizePlan.\(function) without its `\(label):` \
+                    argument — the plan declares it, so this call does not compile, or this \
+                    scan is reading the wrong call.
+                    """)
+                #expect(value != "true" && value != "false", """
+                    \(anchor) hard-codes `\(label): \(value)` — the plan must be asked about \
+                    the real window.
+                    """)
+                if let expected = readFromTheWindow[label] {
+                    #expect(value == expected, """
+                        \(anchor) passes `\(label): \(value)` where the window answers \
+                        `\(expected)`.
+                        """)
+                }
+                if label == "isFullScreen" {
+                    #expect(
+                        fullScreen.firstMatch(
+                            in: value, range: NSRange(value.startIndex..., in: value)) != nil, """
+                            \(anchor) passes `isFullScreen: \(value)` — full screen is read \
+                            from the window's own style mask, in this argument, or a size the \
+                            screen chose is saved as one the user chose.
+                            """)
+                }
+            }
         }
-        for anchor in [
-            "func shrinkIfPristine() {",
-            "func handleWindowDidEndLiveResize(_ notification: Notification) {",
-        ] {
-            let body = try Self.body(of: anchor, in: Self.lifecycleFile)
-            #expect(body.contains("isFullScreen:") && body.contains("styleMask.contains(.fullScreen)"),
-                "\(anchor) no longer tells the plan whether the window is in full screen")
+        // The positive beside the two spelled tables above: every label
+        // `readFromTheWindow` and the full-screen check name is a label the
+        // plan really declares. Without it, renaming a parameter would
+        // silently retire the value check for it — the table would simply
+        // stop matching — and leave only "not a literal" behind, which is
+        // exactly the way a negative check goes stale in silence.
+        for label in readFromTheWindow.keys.sorted() + ["isFullScreen"] {
+            #expect(declared.contains(label), """
+                no MainWindowSizePlan function this guard reads declares `\(label):` any \
+                more — the check keyed on it is now checking nothing. Declared: \
+                \(declared.sorted().joined(separator: ", ")).
+                """)
         }
     }
 

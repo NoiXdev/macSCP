@@ -47,8 +47,8 @@ struct SettingsWindowResizableGuardTests {
 
     /// Everything between `anchor`'s own trailing `(` and its matching `)`,
     /// by plain paren counting — the parenthesis analogue of
-    /// `TabsWindowLifecycleTests.body(after:in:)`, which only balances
-    /// `{`/`}` and so cannot bound a call like `NSSize(...)` that has none.
+    /// `SourceSpan.body(after:in:)`, which only balances `{`/`}` and so
+    /// cannot bound a call like `NSSize(...)` that has none.
     /// `nil` on a missing anchor or unbalanced parens, so a guard built on
     /// this fails closed when the call it names moves, the same as the
     /// brace version.

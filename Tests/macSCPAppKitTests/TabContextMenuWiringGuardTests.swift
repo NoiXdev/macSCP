@@ -293,32 +293,6 @@ struct TabContextMenuWiringGuardTests {
         try SwiftSource.blankingCommentsAndStrings(source)
     }
 
-    /// The body of the closure or function `anchor` opens — everything
-    /// between its first `{` and the matching `}`, by plain brace counting.
-    /// `nil` on a missing anchor or unbalanced braces rather than a guess,
-    /// so every caller fails closed. Shared with the drag suite, which
-    /// needs the same extraction for the gesture's own closures.
-    private static func body(after anchor: String, in source: String) -> String? {
-        guard let anchorRange = source.range(of: anchor) else { return nil }
-        var index = anchorRange.lowerBound
-        var depth = 0
-        var bodyStart: String.Index?
-        while index < source.endIndex {
-            let char = source[index]
-            if char == "{" {
-                depth += 1
-                if depth == 1 { bodyStart = source.index(after: index) }
-            }
-            if char == "}" {
-                depth -= 1
-                if depth == 0, let start = bodyStart { return String(source[start..<index]) }
-                if depth < 0 { return nil }
-            }
-            index = source.index(after: index)
-        }
-        return nil
-    }
-
     /// One brace-balanced body, canonicalized, from source that has already
     /// had its comments and strings removed — so an anchor spelled inside a
     /// comment cannot misdirect the extraction.
@@ -332,7 +306,7 @@ struct TabContextMenuWiringGuardTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> String {
         let body = try #require(
-            Self.body(after: anchor, in: try Self.stripped(source)),
+            SourceSpan.body(after: anchor, in: try Self.stripped(source)),
             """
             no `\(anchor)` body could be extracted from \(what) — the anchor is \
             missing or its braces are unbalanced, so the scanner has nothing to \
@@ -1067,15 +1041,6 @@ struct TabContextMenuWiringGuardTests {
 
         // MARK: - Extraction
 
-        /// The body of the closure `anchor` opens — everything between its
-        /// first `{` and the matching `}`. `nil` on a missing anchor or
-        /// unbalanced braces rather than a guess, so every caller fails
-        /// closed. One implementation, shared with the menu half, which
-        /// needs the same extraction for the hand-over and the decision.
-        static func body(after anchor: String, in source: String) -> String? {
-            TabContextMenuWiringGuardTests.body(after: anchor, in: source)
-        }
-
         /// The drop closure's body in canonical form. `#require` on the
         /// extraction: a missing anchor and unbalanced braces both leave
         /// nothing to scan, and reporting that as a failed content
@@ -1084,7 +1049,7 @@ struct TabContextMenuWiringGuardTests {
             in source: String, sourceLocation: SourceLocation = #_sourceLocation
         ) throws -> String {
             let body = try #require(
-                Self.body(after: Self.dropAnchor, in: source),
+                SourceSpan.body(after: Self.dropAnchor, in: source),
                 """
                 no `\(Self.dropAnchor)` body could be extracted from \
                 \(Self.stripFile.path) — the anchor is missing or its braces are \
@@ -1652,11 +1617,11 @@ struct TabContextMenuWiringGuardTests {
         // MARK: - Fail-closed self-tests
 
         @Test func scannerFailsClosedOnAMissingAnchor() {
-            #expect(Self.body(after: Self.dropAnchor, in: "nothing to see here") == nil)
+            #expect(SourceSpan.body(after: Self.dropAnchor, in: "nothing to see here") == nil)
         }
 
         @Test func scannerFailsClosedOnUnbalancedBraces() {
-            #expect(Self.body(after: Self.dropAnchor, in: """
+            #expect(SourceSpan.body(after: Self.dropAnchor, in: """
                 .dropDestination(for: TabDragPayload.self) { payload, _ in
                     onReorder(draggedID, tab)
                 """) == nil)

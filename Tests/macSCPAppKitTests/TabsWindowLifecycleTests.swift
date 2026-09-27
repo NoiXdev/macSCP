@@ -675,27 +675,6 @@ struct TabsWindowLifecycleTests {
         try SourceCorpus.commentFree(of: url)
     }
 
-    /// Everything between `anchor`'s own `{` and its matching `}`, by plain
-    /// brace counting. `nil` on a missing anchor or unbalanced braces
-    /// rather than a guess — every caller treats that as a failure, so this
-    /// guard fails closed when the thing it names moves.
-    static func body(after anchor: String, in source: String) -> String? {
-        guard let range = source.range(of: anchor) else { return nil }
-        var depth = 1
-        var index = range.upperBound
-        let start = index
-        while index < source.endIndex {
-            let character = source[index]
-            if character == "{" { depth += 1 }
-            if character == "}" {
-                depth -= 1
-                if depth == 0 { return String(source[start..<index]) }
-            }
-            index = source.index(after: index)
-        }
-        return nil
-    }
-
     private static func occurrences(of needle: String, in haystack: String) -> Int {
         guard !needle.isEmpty else { return 0 }
         var count = 0
@@ -741,13 +720,13 @@ struct TabsWindowLifecycleTests {
     @Test func theWindowsClosePathTearsDownWhatItHoldsAndThenReleasesIt() throws {
         let source = try Self.code(of: Self.lifecycleFile)
         let notified = try #require(
-            Self.body(after: "func releaseHeldTabsOnClose() {", in: source), """
+            SourceSpan.body(after: "func releaseHeldTabsOnClose() {", in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 releaseHeldTabsOnClose() — re-anchor this guard on whatever \
                 the window's close path is called now.
                 """)
         let awaited = try #require(
-            Self.body(after: "func releaseHeldTabsOnCloseAndWait() async {", in: source), """
+            SourceSpan.body(after: "func releaseHeldTabsOnCloseAndWait() async {", in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 releaseHeldTabsOnCloseAndWait() — the app's quit has nothing \
                 left to await.
@@ -762,7 +741,7 @@ struct TabsWindowLifecycleTests {
             sequence than the close path runs.
             """)
         let closePath = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "private func tearDownHeldTabs("
                     + "_ held: [SessionTab], from closingWindow: WindowID) async {",
                 in: source), """
@@ -795,7 +774,7 @@ struct TabsWindowLifecycleTests {
     @Test func theTeardownTheClosePathCallsIsStillTheStagedOne() throws {
         let source = try Self.code(of: Self.lifecycleFile)
         let view = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "func teardown(_ tab: SessionTab, reason: CancelReason) async {",
                 in: source), """
                 ContentView+Lifecycle.swift no longer declares \
@@ -809,7 +788,7 @@ struct TabsWindowLifecycleTests {
             owner — a second copy of the four stages is what that means.
             """)
         let teardown = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "static func run(_ tab: SessionTab, reason: CancelReason) async {",
                 in: try Self.code(of: Self.tabTeardownFile)), """
                 TabTeardown.swift no longer declares run(_:reason:) with that \
@@ -838,13 +817,13 @@ struct TabsWindowLifecycleTests {
         // `handleWindowWillClose(_:)` is what the notification reaches, and
         // it could quit the app before ever calling the function below.
         let notified = try #require(
-            Self.body(after: "func handleWindowWillClose(_ notification: Notification) {",
+            SourceSpan.body(after: "func handleWindowWillClose(_ notification: Notification) {",
                       in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 handleWindowWillClose(_:) — re-anchor this guard.
                 """)
         let closePath = try #require(
-            Self.body(after: "func releaseHeldTabsOnClose() {", in: source), """
+            SourceSpan.body(after: "func releaseHeldTabsOnClose() {", in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 releaseHeldTabsOnClose() — re-anchor this guard.
                 """)
@@ -874,7 +853,7 @@ struct TabsWindowLifecycleTests {
     @Test func aClosingWindowTearsDownItsUnclaimedMovesBeforeItsHeldTabs() throws {
         let source = try Self.code(of: Self.lifecycleFile)
         let notified = try #require(
-            Self.body(after: "func handleWindowWillClose(_ notification: Notification) {",
+            SourceSpan.body(after: "func handleWindowWillClose(_ notification: Notification) {",
                       in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 handleWindowWillClose(_:) — re-anchor this guard.
@@ -907,13 +886,13 @@ struct TabsWindowLifecycleTests {
     @Test func theUnclaimedSweepTearsDownThroughTheOrdinaryPath() throws {
         let source = try Self.code(of: Self.lifecycleFile)
         let sweep = try #require(
-            Self.body(after: "private func takeUnclaimedSeedsOnClose() -> [SessionTab] {",
+            SourceSpan.body(after: "private func takeUnclaimedSeedsOnClose() -> [SessionTab] {",
                       in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 takeUnclaimedSeedsOnClose() — re-anchor this guard.
                 """)
         let teardownLoop = try #require(
-            Self.body(after: "private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async {",
+            SourceSpan.body(after: "private func tearDownUnclaimedSeeds(_ tabs: [SessionTab]) async {",
                       in: source), """
                 ContentView+Lifecycle.swift no longer declares \
                 tearDownUnclaimedSeeds(_:) — re-anchor this guard.
@@ -939,7 +918,7 @@ struct TabsWindowLifecycleTests {
         // Task 1 — the callback that can defer, and therefore the one that
         // can tear the swept tabs down instead of only recording them.
         let terminate = try #require(
-            Self.body(after: "func applicationShouldTerminate(", in: app), """
+            SourceSpan.body(after: "func applicationShouldTerminate(", in: app), """
                 MacSCPApp.swift no longer declares applicationShouldTerminate(_:) — \
                 re-anchor this guard.
                 """)
@@ -951,7 +930,7 @@ struct TabsWindowLifecycleTests {
             unrecorded at quit.
             """)
         let sweep = try #require(
-            Self.body(after: "private func sweepUnclaimedMoves() -> [SessionTab] {", in: app), """
+            SourceSpan.body(after: "private func sweepUnclaimedMoves() -> [SessionTab] {", in: app), """
                 MacSCPApp.swift no longer declares sweepUnclaimedMoves() — \
                 re-anchor this guard.
                 """)
@@ -1014,7 +993,7 @@ struct TabsWindowLifecycleTests {
     @Test func theWhatsNewSheetIsPresentedByThePrimaryWindow() throws {
         let source = try Self.code(of: Self.appFile)
         let primary = try #require(
-            Self.body(after: "private func primaryWindow() -> some View {", in: source), """
+            SourceSpan.body(after: "private func primaryWindow() -> some View {", in: source), """
                 MacSCPApp.swift no longer declares primaryWindow() — re-anchor \
                 this guard on whatever the seedless branch is called now.
                 """)
@@ -1036,7 +1015,7 @@ struct TabsWindowLifecycleTests {
     @Test func aDetachedWindowDoesNotPresentTheWhatsNewSheet() throws {
         let source = try Self.code(of: Self.appFile)
         let detached = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "private func detachedWindow(seed: WindowSeed) -> some View {",
                 in: source), """
                 MacSCPApp.swift no longer declares detachedWindow(seed:) — \
@@ -1162,7 +1141,7 @@ struct TabsWindowLifecycleTests {
     @Test func theMenuBarIsPublishedOnlyByTheKeyWindow() throws {
         let lifecycle = try Self.code(of: Self.lifecycleFile)
         let publish = try #require(
-            Self.body(after: "func publishToMenuBarIfKey() {", in: lifecycle), """
+            SourceSpan.body(after: "func publishToMenuBarIfKey() {", in: lifecycle), """
                 ContentView+Lifecycle.swift no longer declares \
                 publishToMenuBarIfKey() — re-anchor this guard.
                 """)
@@ -1213,7 +1192,7 @@ struct TabsWindowLifecycleTests {
     @Test func onlyThePrimaryWindowRemembersItsFrame() throws {
         let lifecycle = try Self.code(of: Self.lifecycleFile)
         let autosave = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "func applyFrameAutosave(to window: NSWindow?) -> "
                     + "MainWindowSizePlan.AppliedAutosaveName {", in: lifecycle), """
                 ContentView+Lifecycle.swift no longer declares \
@@ -1230,7 +1209,7 @@ struct TabsWindowLifecycleTests {
         let detail = try Self.code(of: Self.detailFile)
         let isWrapped = detail.contains("applyFrameAutosaveKeepingItsDisplay(")
         let wrapper = try #require(
-            Self.body(
+            SourceSpan.body(
                 after: "func applyFrameAutosaveKeepingItsDisplay(to window: NSWindow?) {",
                 in: lifecycle), """
                     ContentView+Lifecycle.swift no longer declares \
@@ -1336,17 +1315,17 @@ struct TabsWindowLifecycleTests {
 
     @Test func theBodyExtractorStopsAtItsOwnClosingBrace() {
         let source = "func a() {\n  if x { y() }\n}\nfunc b() { z() }\n"
-        let extracted = Self.body(after: "func a() {", in: source)
+        let extracted = SourceSpan.body(after: "func a() {", in: source)
         #expect(extracted?.contains("y()") == true)
         #expect(extracted?.contains("z()") == false)
     }
 
     @Test func theBodyExtractorFailsClosedOnAMissingAnchor() {
-        #expect(Self.body(after: "func nothing() {", in: "func a() { }") == nil)
+        #expect(SourceSpan.body(after: "func nothing() {", in: "func a() { }") == nil)
     }
 
     @Test func theBodyExtractorFailsClosedOnUnbalancedBraces() {
-        #expect(Self.body(after: "func a() {", in: "func a() { if x {") == nil)
+        #expect(SourceSpan.body(after: "func a() {", in: "func a() { if x {") == nil)
     }
 
     /// The negative check above would be satisfied by an empty body, so
@@ -1358,7 +1337,7 @@ struct TabsWindowLifecycleTests {
                 NSApp.terminate(nil)
             }
             """
-        let closePath = Self.body(after: "func releaseHeldTabsOnClose() {", in: planted)
+        let closePath = SourceSpan.body(after: "func releaseHeldTabsOnClose() {", in: planted)
         #expect(closePath?.contains("terminate(") == true)
     }
 
@@ -1371,7 +1350,7 @@ struct TabsWindowLifecycleTests {
                     .sheet(isPresented: $showWhatsNew) { WhatsNewSheet() }
             }
             """
-        let detached = Self.body(
+        let detached = SourceSpan.body(
             after: "private func detachedWindow(seed: WindowSeed) -> some View {", in: planted)
         #expect(detached?.contains("showWhatsNew") == true)
     }
