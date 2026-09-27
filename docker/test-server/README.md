@@ -551,16 +551,28 @@ The identical RSA key authenticates against this rig's OpenSSH `sshd` on 2222
 
 ## Why `MaxStartups` carries one number, not three (2026-09-27)
 
-Every sshd include in this directory sets `MaxStartups 1000`. It used to
-read `100:30:200`, and that three-field form is a random dropper: from 100
+Every sshd include in this directory sets `MaxStartups 1000`, and each one
+points here rather than repeating this. The line used to read
+`100:30:200`, and that three-field form is a random dropper: from 100
 unauthenticated connections on, sshd refuses 30% of new ones, chosen at
-random, rising to a hard refusal at 200. A single number has no such band.
+random, rising to a hard refusal at 200. A single number has no such band —
+every connection up to the limit is accepted, and past it refused outright.
 
-That band was the cause of the symptom recorded in `docs/BACKLOG.md` as
+**What this did and did not settle.** `docs/BACKLOG.md` carries a row,
 "Three SSH-rig cases go red under the full gated run and pass in
-isolation" — a different subset of SSH cases red on every gated run, every
-one of them green when run alone. Measured on 2026-09-27, on the
-maintainer's own machine, since the gated suites never run on CI:
+isolation", whose premise was that the rig does not throttle at all. That
+premise is wrong, and the measurements below are why. But removing the
+band did **not** make that symptom go away, and the row is still open:
+gated runs after the change gave 3, 6, 5, 4, 6 and 6 issues against a
+baseline of 3 and 5, and the baseline already argues against the band as
+the cause — the run WITH two logged drops had three issues, the run with
+none had five. So this is a hazard removed, not an explanation found. A
+rig that refuses a random share of connections above a threshold it
+demonstrably reaches manufactures flakes whether or not it manufactured
+those; that, and nothing stronger, is why the change stays.
+
+Measured on 2026-09-27 on the maintainer's own machine, since the gated
+suites never run on CI:
 
 - sshd prints its own unauthenticated-connection count in its process
   title. Read it with
@@ -570,17 +582,21 @@ maintainer's own machine, since the gated suites never run on CI:
   from 0 to 90 and drained only when the test process exited. The
   connections are not in flight: they are pre-auth sockets that Docker
   Desktop's port forwarder releases on the container side long after the
-  client on macOS has closed them.
+  client on macOS has closed them. Peak 90 against a threshold of 100.
 - sshd's own log inside the container, `/config/logs/openssh/current`,
-  carries the proof that the ceiling is really reached:
-  `grep -c 'Maxstartups' /config/logs/openssh/current` returned **85** on
-  2026-09-27, with entries of the form
-  `drop connection #100 from [192.168.65.1]:… Maxstartups` — two of them
-  inside a gated run of that same day, and six on 2026-09-24, the day the
-  backlog row was written.
+  shows the ceiling really being reached. Two counts, because they answer
+  different questions, both taken on 2026-09-27:
+  `grep -c 'drop connection' /config/logs/openssh/current` → **85** lines
+  of the form `drop connection #100 from [192.168.65.1]:… Maxstartups`,
+  and `grep -c 'Maxstartups' …` → **89**, whose four extra lines read
+  `Maxstartups logging rate-limited: additional N connections dropped`
+  and account for a further 1 + 1 + 13 + 2 = **17** drops nobody logged
+  individually. By date, the 85: 15 on 2026-09-18, **6 on 2026-09-24**
+  (the day the backlog row was written), 46 on 2026-09-25, 18 on
+  2026-09-27, two of those inside a gated run of that day.
 
 `PerSourcePenalties no` is a *different* mechanism (a penalty accumulated
 against a source address across failed logins) and was never the one
 firing here; reading it as "no sshd in the rig throttles" is what kept
-this row open. Check both, and check the log rather than the config file
-— the config states an intent, the log states what happened.
+that row's premise standing. Check both, and check the log rather than the
+config file — the config states an intent, the log states what happened.
