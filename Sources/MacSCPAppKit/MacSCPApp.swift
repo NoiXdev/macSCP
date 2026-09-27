@@ -884,7 +884,8 @@ struct MacSCPApp: App {
         // forwarding reads the switch from this app's one `SettingsStore`,
         // the instance the Settings window writes.
         let notifier = ErrorNotifier(
-            poster: UserNotificationCenterPoster(), appIsActive: { NSApp?.isActive ?? false })
+            poster: UserNotificationCenterPoster(operations: LiveNotificationCenterOperations()),
+            appIsActive: { NSApp?.isActive ?? false })
         errorNotifier = notifier
         TunnelManager.shared.notifyForwardingFailed = { name in
             notifier.notify(

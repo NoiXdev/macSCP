@@ -340,80 +340,67 @@ struct ErrorNotificationWiringGuardTests {
 
     // MARK: - The live poster
 
-    /// `UNUserNotificationCenter` is touched only inside the live poster's
-    /// `post`, after the bundle check, and authorization is asked there —
-    /// at the first post, not at launch.
-    @Test func theLivePosterChecksTheBundleBeforeTouchingTheCenter() throws {
+    /// `UNUserNotificationCenter` is reached from one type only, and the
+    /// bundle is checked before anything reaches it.
+    ///
+    /// Since fix round 1 of 2026-09-27 this is a BOUNDARY claim, not a
+    /// sequence claim: the poster's order of steps is driven as behaviour
+    /// in `ErrorNotificationTests`, "The live poster's sequence", because a
+    /// scan of that order bought three planted violations and printed a
+    /// pass. What is left here is what a test cannot see — which types may
+    /// name the framework at all.
+    @Test func onlyTheLiveOperationsTypeTouchesTheNotificationCenter() throws {
         for (file, code) in try Self.allAppCode() where file != Self.notificationsFile {
             #expect(code.contains("UNUserNotificationCenter") == false, "\(file)")
             #expect(code.contains("requestAuthorization") == false, "\(file)")
         }
         let code = try Self.views(Self.notificationsFile).code
-        let post = try Self.body(
-            of: "final class UserNotificationCenterPoster", in: code)
-        let bundleCheck = try #require(
-            post.range(of: "guard Bundle.main.bundleIdentifier != nil else { return }"))
-        let firstCenter = try #require(post.range(of: "UNUserNotificationCenter"))
-        #expect(bundleCheck.lowerBound < firstCenter.lowerBound)
-        #expect(post.contains("requestAuthorization("))
-
-        // Fix round 1: the foreground presenter is installed after the
-        // bundle check and before authorization is asked, and it is kept —
-        // the center holds its delegate weakly.
-        let delegateSet = try #require(post.range(of: ".delegate = "))
-        let authorization = try #require(post.range(of: "requestAuthorization("))
-        #expect(bundleCheck.lowerBound < delegateSet.lowerBound)
-        #expect(delegateSet.lowerBound < authorization.lowerBound)
-        #expect(post.contains("private var presenter: ForegroundNotificationPresenter?"))
+        let live = try Self.body(
+            of: "final class LiveNotificationCenterOperations", in: code)
+        // Positive beside the negatives: the center really is used, here.
+        #expect(live.contains("UNUserNotificationCenter.current()"))
+        #expect(Self.count("UNUserNotificationCenter.current()", in: code)
+            == Self.count("UNUserNotificationCenter.current()", in: live))
+        // The bundle is read in exactly one place, and it is the property
+        // the poster guards on.
+        #expect(live.contains("Bundle.main.bundleIdentifier != nil"))
+        #expect(Self.count("Bundle.main", in: code) == Self.count("Bundle.main", in: live))
+        // The presenter is kept — the center holds its delegate weakly —
+        // and set in one place.
+        #expect(live.contains("private var presenter: ForegroundNotificationPresenter?"))
         #expect(Self.count(".delegate = ", in: code) == 1)
         let presenter = try Self.body(
             of: "final class ForegroundNotificationPresenter", in: code)
         #expect(presenter.contains("willPresent notification: UNNotification"))
         #expect(presenter.contains("completionHandler(Self.presentationOptions)"))
-        // Positive beside the file-wide negatives above: the center really
-        // is used here, and nowhere else in this file.
-        #expect(Self.count("UNUserNotificationCenter.current()", in: code)
-            == Self.count("UNUserNotificationCenter.current()", in: post))
     }
 
-    /// Every post goes through the gate, and the one place that adds a
-    /// request to the center is reached only from the gate's two answers —
-    /// the immediate `.deliver` and the held texts the answer hands back
-    /// (deferred minor of 2026-09-17, cleared 2026-09-27).
-    @Test func theLivePosterRoutesEveryPostThroughTheAuthorizationGate() throws {
+    /// The poster itself names no framework: everything it does to the
+    /// world goes through the seam it was handed, so a test that hands in a
+    /// recorder sees every step. Negative, with the positive beside it that
+    /// the body scanned is the poster's.
+    @Test func thePosterReachesTheWorldOnlyThroughTheSeam() throws {
         let code = try Self.views(Self.notificationsFile).code
         let poster = try Self.body(of: "final class UserNotificationCenterPoster", in: code)
-        // Positives: the gate is held, asked, and read back.
+        #expect(poster.contains("private let operations: any NotificationCenterOperations"))
         #expect(poster.contains("private var gate = ErrorNotificationPlan.FirstAuthorizationGate()"))
-        #expect(Self.count("gate.take(", in: poster) == 1)
-        #expect(Self.count("gate.answered()", in: poster) == 1)
-        // The add happens in exactly one place in the whole file, and that
-        // place is the helper both answers call.
-        #expect(Self.count(".add(request, withCompletionHandler: nil)", in: code) == 1)
-        let deliver = try Self.body(
-            of: "private func deliver(title: String, body: String)", in: code)
-        #expect(deliver.contains(".add(request, withCompletionHandler: nil)"))
-        // Negative beside them: `post` does not reach the center's add
-        // itself, so nothing bypasses the gate. Read out of the class body,
-        // not the file — the protocol declares this same signature.
-        let post = try Self.body(of: "func post(title: String, body: String)", in: poster)
-        #expect(post.contains("gate.take("), "scanning the wrong body")
-        #expect(post.contains(".add(request") == false)
-        // The gate is asked BEFORE anything is delivered, and `post` hands
-        // over exactly once: a `deliver` call added ahead of the switch —
-        // which is precisely the behaviour this replaced — would satisfy a
-        // bare `contains` and was measured green against one.
-        let asked = try #require(post.range(of: "gate.take("))
-        let handedOver = try #require(post.range(of: "deliver(title: title, body: body)"))
-        #expect(asked.upperBound < handedOver.lowerBound)
-        #expect(Self.count("deliver(title:", in: post) == 1)
-        // The held texts are handed back in the order the gate returns
-        // them; nothing re-sorts or reverses them.
-        let answered = try Self.body(of: "private func authorizationAnswered()", in: code)
-        #expect(answered.contains("for text in gate.answered()"))
-        #expect(answered.contains("deliver(title: text.title, body: text.body)"))
-        for forbidden in [".reversed()", ".sorted", ".last", ".first"] {
-            #expect(answered.contains(forbidden) == false, "\(forbidden)")
+        for framework in ["UNUserNotificationCenter", "UNMutableNotificationContent", "Bundle.main"] {
+            #expect(poster.contains(framework) == false, "\(framework)")
+        }
+        // Undefaulted, so nothing reaches the live operations by omission.
+        #expect(poster.contains("init(operations: any NotificationCenterOperations)"))
+        #expect(poster.contains("= LiveNotificationCenterOperations()") == false)
+    }
+
+    /// The live operations are built in `MacSCPApp` and nowhere else — the
+    /// same invariant the poster itself has, one level down, and the reason
+    /// the poster's initialiser may be undefaulted.
+    @Test func theLiveOperationsAreBuiltOnlyInMacSCPApp() throws {
+        let files = try Self.allAppCode()
+        let app = try Self.views(Self.appFile).code
+        #expect(Self.count("LiveNotificationCenterOperations(", in: app) == 1)
+        for (file, code) in files where file != Self.appFile {
+            #expect(Self.count("LiveNotificationCenterOperations(", in: code) == 0, "\(file)")
         }
     }
 

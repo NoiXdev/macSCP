@@ -362,6 +362,155 @@ struct ErrorNotificationTests {
         #expect(delivered == (0..<limit).map { text($0) })
     }
 
+    // MARK: - The live poster's sequence
+
+    /// Records everything `UserNotificationCenterPoster` does to the world,
+    /// and lets a test answer the authorization request when it chooses.
+    ///
+    /// This fake is why the poster's ORDER is testable at all (fix round 1
+    /// of 2026-09-27). Before the seam it was held by scanning the poster's
+    /// source, and that scan was measured green against three planted
+    /// violations: the gate consulted and its answer discarded, a second
+    /// gate shadowing the stored one, and a completion that never drained
+    /// the hold. The cases below are red against all three.
+    @MainActor
+    final class RecordingCenterOperations: NotificationCenterOperations {
+        enum Call: Equatable {
+            case installPresenter
+            case requestAuthorization
+            case add(title: String, body: String)
+            case reportDiscarded
+        }
+
+        var hasBundleIdentifier = true
+        private(set) var calls: [Call] = []
+        private var pendingCompletion: (@MainActor () -> Void)?
+
+        func installForegroundPresenter() { calls.append(.installPresenter) }
+
+        func requestAuthorization(completion: @escaping @MainActor () -> Void) {
+            calls.append(.requestAuthorization)
+            pendingCompletion = completion
+        }
+
+        func add(title: String, body: String) {
+            calls.append(.add(title: title, body: body))
+        }
+
+        func reportDiscardedWhileWaiting() { calls.append(.reportDiscarded) }
+
+        /// The user answered the permission alert. `false` when there was
+        /// no request outstanding to answer.
+        @discardableResult
+        func answerAuthorization() -> Bool {
+            guard let completion = pendingCompletion else { return false }
+            pendingCompletion = nil
+            completion()
+            return true
+        }
+
+        /// What actually reached the center, in order.
+        var added: [ErrorNotificationText] {
+            calls.compactMap {
+                guard case .add(let title, let body) = $0 else { return nil }
+                return ErrorNotificationText(title: title, body: body)
+            }
+        }
+
+        var authorizationRequests: Int {
+            calls.filter { $0 == .requestAuthorization }.count
+        }
+    }
+
+    private func livePoster()
+        -> (UserNotificationCenterPoster, RecordingCenterOperations) {
+        let operations = RecordingCenterOperations()
+        return (UserNotificationCenterPoster(operations: operations), operations)
+    }
+
+    /// The first post of a launch asks for authorization and hands the
+    /// center NOTHING yet — the alert is still on screen, and macOS drops
+    /// what is not allowed.
+    @Test func theFirstPostAsksForAuthorizationAndAddsNothingYet() {
+        let (poster, operations) = livePoster()
+        poster.post(title: "t1", body: "b1")
+        #expect(operations.added.isEmpty)
+        #expect(operations.authorizationRequests == 1)
+    }
+
+    /// The case the whole change exists for: posts made while the alert is
+    /// still up reach the center once it is answered, oldest first.
+    @Test func everyPostMadeBeforeTheAnswerIsAddedOnceItArrives() {
+        let (poster, operations) = livePoster()
+        poster.post(title: "t1", body: "b1")
+        poster.post(title: "t2", body: "b2")
+        poster.post(title: "t3", body: "b3")
+        #expect(operations.added.isEmpty)
+        #expect(operations.authorizationRequests == 1, "the alert is asked for once, not per post")
+        #expect(operations.answerAuthorization())
+        #expect(operations.added == [
+            ErrorNotificationText(title: "t1", body: "b1"),
+            ErrorNotificationText(title: "t2", body: "b2"),
+            ErrorNotificationText(title: "t3", body: "b3"),
+        ])
+    }
+
+    /// Once the answer is in, a post goes straight out and nothing is
+    /// asked again. Whether macOS shows it is macOS's decision.
+    @Test func everyPostAfterTheAnswerGoesStraightOut() {
+        let (poster, operations) = livePoster()
+        poster.post(title: "t1", body: "b1")
+        #expect(operations.answerAuthorization())
+        poster.post(title: "t2", body: "b2")
+        poster.post(title: "t3", body: "b3")
+        #expect(operations.added == [
+            ErrorNotificationText(title: "t1", body: "b1"),
+            ErrorNotificationText(title: "t2", body: "b2"),
+            ErrorNotificationText(title: "t3", body: "b3"),
+        ])
+        #expect(operations.authorizationRequests == 1)
+        #expect(operations.answerAuthorization() == false, "nothing left to answer")
+    }
+
+    /// The presenter is installed before authorization is asked: without a
+    /// delegate answering `willPresent`, macOS shows nothing while this app
+    /// is frontmost, and the plan posts for a background window of it.
+    @Test func thePresenterIsInstalledBeforeAuthorizationIsAsked() {
+        let (poster, operations) = livePoster()
+        poster.post(title: "t1", body: "b1")
+        #expect(operations.calls.first == .installPresenter)
+        #expect(operations.calls == [.installPresenter, .requestAuthorization])
+    }
+
+    /// No bundle, nothing touched — not even the presenter. An unbundled
+    /// process must not reach the center at all.
+    @Test func withoutABundleIdentifierNothingIsTouched() {
+        let (poster, operations) = livePoster()
+        operations.hasBundleIdentifier = false
+        poster.post(title: "t1", body: "b1")
+        poster.post(title: "t2", body: "b2")
+        #expect(operations.calls.isEmpty)
+    }
+
+    /// A post the hold cannot take leaves a trace rather than vanishing
+    /// (fix round 1 of 2026-09-27): eight is reachable — one drop across
+    /// four tabs raises up to eight posts — and a discarded post used to be
+    /// indistinguishable from one never made. The oldest are still the ones
+    /// that reach the center.
+    @Test func aPostTheHoldCannotTakeIsReportedRatherThanVanishing() {
+        let limit = ErrorNotificationPlan.FirstAuthorizationGate.heldLimit
+        let (poster, operations) = livePoster()
+        for n in 0..<(limit + 2) {
+            poster.post(title: "t\(n)", body: "b\(n)")
+        }
+        #expect(operations.calls.filter { $0 == .reportDiscarded }.count == 2)
+        #expect(operations.added.isEmpty)
+        #expect(operations.answerAuthorization())
+        #expect(operations.added == (0..<limit).map {
+            ErrorNotificationText(title: "t\($0)", body: "b\($0)")
+        })
+    }
+
     // MARK: - The default notifier
 
     /// A `ContentView` built without a notifier — every test that does not

@@ -251,8 +251,48 @@ final class SilentNotificationPoster: UserNotificationPosting {
     func post(title: String, body: String) {}
 }
 
-/// The live poster over `UNUserNotificationCenter`. Thin on purpose: every
-/// decision is `ErrorNotificationPlan`'s.
+/// Everything `UserNotificationCenterPoster` does to the world outside
+/// itself, behind one seam (fix round 1 of 2026-09-27).
+///
+/// **Why it exists.** The poster's SEQUENCING is the part of it that has
+/// had bugs in it, and until this round that sequencing was held only by
+/// scanning the poster's own source — because the poster could not be
+/// built in a test without reaching `UNUserNotificationCenter`. Three
+/// violations were planted that the scan bought and printed a pass for:
+/// the gate consulted and its answer discarded, a second gate shadowing
+/// the stored one so every held post vanished, and an authorization
+/// completion that never drained the hold. A fourth anchor would have
+/// bought the next spelling too. This is the boundary instead: with the
+/// seam handed in, all three are ordinary red tests
+/// (`ErrorNotificationTests`, "The live poster's sequence").
+///
+/// Not an abstraction — a seam. `LiveNotificationCenterOperations` is the
+/// only production conformance, every member of it is a single statement,
+/// and no decision lives here: whether to post is
+/// `ErrorNotificationPlan.shouldPost`'s, what to do with a post before the
+/// answer is `FirstAuthorizationGate`'s.
+@MainActor
+protocol NotificationCenterOperations: AnyObject {
+    /// Whether this process has an app bundle at all. See
+    /// `LiveNotificationCenterOperations` for why nothing may be touched
+    /// without one.
+    var hasBundleIdentifier: Bool { get }
+    /// Install the delegate that lets a notification show while this app is
+    /// frontmost. Idempotent: the poster calls it on every post.
+    func installForegroundPresenter()
+    /// Ask macOS for authorization. `completion` runs on the main actor
+    /// once the user has answered, whatever the answer was.
+    func requestAuthorization(completion: @escaping @MainActor () -> Void)
+    /// Hand one notification to the center.
+    func add(title: String, body: String)
+    /// A post the gate could not hold was discarded. Leaves a trace, so a
+    /// discarded post is not indistinguishable from one never made.
+    func reportDiscardedWhileWaiting()
+}
+
+/// The live `NotificationCenterOperations` over `UNUserNotificationCenter`.
+/// Thin on purpose: every decision is `ErrorNotificationPlan`'s, and every
+/// member below is one statement of framework work.
 ///
 /// **No bundle, no notification.** An unbundled build (`swift run`) has a
 /// `Bundle.main` with no bundle identifier, and
@@ -280,38 +320,89 @@ final class SilentNotificationPoster: UserNotificationPosting {
 /// a post is added directly, and macOS drops it while the user has not
 /// allowed them.
 @MainActor
-final class UserNotificationCenterPoster: UserNotificationPosting {
-    private var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+final class LiveNotificationCenterOperations: NotificationCenterOperations {
     /// Kept here because the center holds its delegate weakly.
     private var presenter: ForegroundNotificationPresenter?
 
-    func post(title: String, body: String) {
-        guard Bundle.main.bundleIdentifier != nil else { return }
-        // Fix round 1: without a delegate answering `willPresent`, macOS
-        // shows nothing while this app is frontmost — and the plan posts for
-        // a background window of the frontmost app. Installed at the first
-        // post, after the bundle check, before authorization is asked.
-        if presenter == nil {
-            let installed = ForegroundNotificationPresenter()
-            presenter = installed
-            UNUserNotificationCenter.current().delegate = installed
+    var hasBundleIdentifier: Bool { Bundle.main.bundleIdentifier != nil }
+
+    /// Fix round 1 of 2026-09-18: without a delegate answering
+    /// `willPresent`, macOS shows nothing while this app is frontmost — and
+    /// the plan posts for a background window of the frontmost app.
+    func installForegroundPresenter() {
+        guard presenter == nil else { return }
+        let installed = ForegroundNotificationPresenter()
+        presenter = installed
+        UNUserNotificationCenter.current().delegate = installed
+    }
+
+    /// `@Sendable` spelled out: the answer arrives on a queue of the
+    /// framework's, and without it Swift could infer this closure
+    /// main-actor isolated from the class and trap there. A `@Sendable`
+    /// closure is accepted whether or not the SDK imports the parameter as
+    /// `@Sendable`. The answer itself is not read: a denial drops a held
+    /// post the same way it drops every later one, and the gate's doc
+    /// comment says why.
+    func requestAuthorization(completion: @escaping @MainActor () -> Void) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+            @Sendable _, _ in
+            Task { @MainActor in completion() }
         }
+    }
+
+    func add(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    /// The fact and nothing else: no title, no body, no session name. The
+    /// body of a notification is a stored session's NAME, which is the
+    /// user's own text, and this line exists to say that the hold
+    /// overflowed — not what was in it.
+    func reportDiscardedWhileWaiting() {
+        DiagnosticLog.shared.log(
+            .info, "app",
+            "notification discarded: the first authorization request is still unanswered")
+    }
+}
+
+/// The live poster. It owns the gate and the ORDER of the four steps —
+/// bundle check, presenter, gate, hand-over — and nothing else; every step
+/// itself is `NotificationCenterOperations`'. That split is what makes the
+/// order testable at all (see that protocol's doc comment for the three
+/// planted violations that were invisible before it).
+///
+/// `operations` is undefaulted on purpose: `MacSCPApp` is the one place
+/// that names `LiveNotificationCenterOperations`, so nothing can reach
+/// `UNUserNotificationCenter` by leaving an argument out.
+@MainActor
+final class UserNotificationCenterPoster: UserNotificationPosting {
+    private var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+    private let operations: any NotificationCenterOperations
+
+    init(operations: any NotificationCenterOperations) {
+        self.operations = operations
+    }
+
+    func post(title: String, body: String) {
+        guard operations.hasBundleIdentifier else { return }
+        // Before authorization is asked, and on every post because it is
+        // idempotent.
+        operations.installForegroundPresenter()
         switch gate.take(ErrorNotificationText(title: title, body: body)) {
         case .deliver:
-            deliver(title: title, body: body)
-        case .held, .dropped:
+            operations.add(title: title, body: body)
+        case .held:
             return
+        case .dropped:
+            operations.reportDiscardedWhileWaiting()
         case .requestAuthorization:
-            // `@Sendable` spelled out: the answer arrives on a queue of the
-            // framework's, and without it Swift could infer this closure
-            // main-actor isolated from the class and trap there. A
-            // `@Sendable` closure is accepted whether or not the SDK imports
-            // the parameter as `@Sendable`. The answer itself is not read:
-            // a denial drops a held post the same way it drops every later
-            // one, and the gate's doc comment says why.
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-                @Sendable [weak self] _, _ in
-                Task { @MainActor in self?.authorizationAnswered() }
+            operations.requestAuthorization { [weak self] in
+                self?.authorizationAnswered()
             }
         }
     }
@@ -320,17 +411,8 @@ final class UserNotificationCenterPoster: UserNotificationPosting {
     /// goes to the center now, in the order it was posted.
     private func authorizationAnswered() {
         for text in gate.answered() {
-            deliver(title: text.title, body: text.body)
+            operations.add(title: text.title, body: text.body)
         }
-    }
-
-    private func deliver(title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        let request = UNNotificationRequest(
-            identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
 
