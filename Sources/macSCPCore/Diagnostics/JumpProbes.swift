@@ -956,9 +956,24 @@ private enum JumpProbeRun {
             // transport's sentence is appended only when `DialSupport` WROTE
             // one, which its default arm tells us by returning exactly
             // `localizedDescription`: a reason that differs from it came out
-            // of an arm somebody wrote here and is worth carrying. The
-            // comparison READS the foreign text and keeps none of it —
-            // nothing on this path renders, logs or returns it.
+            // of an arm somebody wrote here and is worth carrying.
+            //
+            // What the comparison guarantees, exactly: THIS error's own
+            // `localizedDescription` is read here and kept nowhere — nothing
+            // on this path renders, logs or returns that string. It does NOT
+            // guarantee that the reason it lets through carries no foreign
+            // text at all. Five arms of `DialSupport.reason(for:)` return a
+            // `TunnelFailure` payload rather than a sentence of their own —
+            // `bindFailed`, `channelOpenFailed`, `connectFailed`, `pumpFailed`
+            // and `remoteBindRefused`, counted 2026-09-27 against that
+            // function's switch — and several of the throw sites build that
+            // payload out of `DialSupport.reason(for:)` itself (its own
+            // counted comment enumerates them), so a foreign error's
+            // description could arrive nested one level down and differ from
+            // the `localizedDescription` compared here. None of the five can
+            // be thrown by an SSH `exec`, which is the only thing this
+            // function runs, so none reaches this line today; a caller that
+            // ran something else through here would need that checked again.
             let reason = DialSupport.reason(for: error)
             guard reason != (error as NSError).localizedDescription else {
                 return .notRun(

@@ -37,8 +37,11 @@ import Foundation
 /// **Following a recorded shape is something to check, not to intend**
 /// (2026-09-27). The header-less BSD walk the hop-limit cases read was
 /// written out row by row in `JumpProbeTests`, and differed from the recorded
-/// BSD row twice: a two-digit hop number carried a leading space BSD does not
-/// print, and the round trip two decimals where BSD prints three. It is now
+/// BSD row in two ways, neither of them at every row (counted 2026-09-27 over
+/// the seventeen `-m 17` produces): a two-digit hop number carried a leading
+/// space BSD does not print, wrong for hops 10-17, 8 of 17; and the round trip
+/// was `"0.4" + String(hop)`, which is two decimals where BSD prints three for
+/// hops 1-9, 9 of 17, and three by accident for the rest. It is now
 /// BUILT — `bsdTracerouteRow(hop:address:milliseconds:)` below — and
 /// `JumpProbeTests.theRecordedBSDRowIsWhatThisFileBuilds` rebuilds
 /// `macOSTracerouteLoopback` from that function and compares it byte for
@@ -229,10 +232,14 @@ enum JumpProbeSamples {
     /// need seventeen of them (`JumpProbeCommand.tracerouteMaxHops(budget:)`
     /// answers 17 inside the default 20 s budget) and a pasted seventeen is
     /// seventeen chances to write a shape BSD does not print. Two of those
-    /// chances had already been taken when this was added on 2026-09-27: the
-    /// rows built inline in `JumpProbeTests` wrote the hop number with ONE
-    /// leading space at every width (`" 10  …"` where BSD prints `"10  …"`)
-    /// and the round trip with two decimals.
+    /// chances had already been taken when this was added on 2026-09-27, and
+    /// each had been taken on SOME of the seventeen rows rather than on all of
+    /// them — which is why they survived a reading. The rows built inline in
+    /// `JumpProbeTests` wrote the hop number with one leading space whatever
+    /// its width (`" 10  …"` where BSD prints `"10  …"`), wrong for hops 10-17
+    /// and right for 1-9, 8 of 17 wrong; and the round trip as `"0.4" +
+    /// String(hop)`, which is two decimals for hops 1-9 where BSD prints three
+    /// — 9 of 17 wrong — and three decimals for hops 10-17 by accident.
     ///
     /// Still CONSTRUCTED, and the entry above says why no header-less walk of
     /// several hops can be recorded here — but constructed FROM the recorded

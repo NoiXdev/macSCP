@@ -391,10 +391,12 @@ struct JumpProbeTests {
     /// CONSTRUCTED, and built out of the recorded BSD row rather than beside
     /// it since 2026-09-27 (`JumpProbeSamples.bsdTracerouteRow`, and
     /// `theRecordedBSDRowIsWhatThisFileBuilds` for the comparison that makes
-    /// it a derivation): seventeen routers, one per hop. The rows written
-    /// here before then differed from the recording twice over — one leading
-    /// space on a two-digit hop number where BSD right-aligns in two columns,
-    /// and two decimals on the round trip where BSD prints three.
+    /// it a derivation): seventeen routers, one per hop. The rows written here
+    /// before then differed from the recording in two ways, each on part of
+    /// the seventeen (counted 2026-09-27): one leading space on a two-digit
+    /// hop number where BSD right-aligns in two columns, wrong for hops 10-17,
+    /// 8 of 17; and two decimals on the round trip where BSD prints three,
+    /// wrong for hops 1-9, 9 of 17, the rest carrying three by accident.
     @Test(arguments: ["target.invalid", "10.0.0.5"])
     func aHeaderlessWalkAtTheProbesHopLimitIsTheHopLimit(target: String) throws {
         let host = try #require(JumpProbeHost(target))
