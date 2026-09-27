@@ -371,19 +371,40 @@ public actor TunnelRunner {
                 return
 
             case .lost:
-                apply(.connectionLost(reconnects: profile.reconnects))
-                guard case .reconnecting(let attempt) = state else {
+                // Same ordering as the two arms above, reached differently.
+                // Those could simply swap two statements; this one could not,
+                // because its lines are written out of the state `apply`
+                // produces. `TunnelStatePlan.next(_:on:)` is pure, so that
+                // state can be COMPUTED here and published afterwards — the
+                // line goes in first either way, and `apply` stays the only
+                // thing that publishes.
+                //
+                // Measured 2026-09-27, fix round 1, with a throwaway test in
+                // `DiagnosticLogSharedSinkTests` that waited for
+                // `.failed(.connectionLost)` and then read the log: with a
+                // 200 ms sleep planted in the old gap it was red 3 of 3, and
+                // with the same sleep in the new one green 3 of 3. That is
+                // the log line itself, not an actor property a probe's own
+                // suspension manufactures.
+                let loss = TunnelEvent.connectionLost(reconnects: profile.reconnects)
+                let next = TunnelStatePlan.next(state, on: loss)
+                var attemptToRetry: Int?
+                switch next {
+                case .failed(let kind):
                     // The plan routed the loss to `failed` — the profile
                     // does not reconnect. The kind's own sentence, not one
                     // written here, so the state and the line cannot
                     // disagree.
-                    if case .failed(let kind) = state {
-                        lastFailureReason = kind.sentence
-                        log(.info, "tunnel \(profile.name) failed \(kind.sentence)")
-                    }
-                    return
+                    lastFailureReason = kind.sentence
+                    log(.info, "tunnel \(profile.name) failed \(kind.sentence)")
+                case .reconnecting(let attempt):
+                    log(.info, "tunnel \(profile.name) reconnecting attempt=\(attempt)")
+                    attemptToRetry = attempt
+                default:
+                    break
                 }
-                log(.info, "tunnel \(profile.name) reconnecting attempt=\(attempt)")
+                apply(loss)
+                guard let attempt = attemptToRetry else { return }
                 do {
                     try await sleeper(BackoffPlan.delay(attempt: attempt))
                 } catch {
