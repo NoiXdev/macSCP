@@ -354,6 +354,47 @@ struct LocalForwardListenerTests {
     /// unobserved as the client-gone case it was folded in with.
     /// `aClientGoneBeforeItsReplyIsNotReportedAsAFailure` above is the other
     /// half: the same moment, the client's failure, still not reported.
+    ///
+    /// **"Once" is read after an ordering point, not after a poll.**
+    /// Recorded as a deferred minor on 2026-09-19 and cleared 2026-09-27:
+    /// this case used to poll for a non-empty list and read `count == 1` on
+    /// the very next line, which races a duplicate rather than excluding
+    /// one — the number it read was "how many had arrived by the time the
+    /// first one had", and a second report a tick later was invisible.
+    ///
+    /// What replaces the race is a later event from the same reporting
+    /// path, and no clock anywhere (CLAUDE.md, "A wall-clock ceiling in a
+    /// test measures the runner" — a bound here would measure the runner
+    /// exactly as one there would). TWO clients go through the same
+    /// listener, one after the other, and the count is read only after:
+    ///
+    /// 1. the SECOND client's own failure has been reported — a full
+    ///    accept, negotiation, channel open through the echo server, pump
+    ///    install and failing hand-over of real work, during which any
+    ///    duplicate belonging to the first client would have had to
+    ///    arrive; and
+    /// 2. `listener.stop()` has returned, which closes the server socket
+    ///    and awaits the `closeFuture` of every channel either connection
+    ///    still holds. `accepted`'s catch arm closes both channels and
+    ///    then calls `onFailure` with no suspension in between, so a
+    ///    connection whose channels this has seen close has already
+    ///    reported whatever it is ever going to report.
+    ///
+    /// **What this case still cannot see, measured rather than assumed.**
+    /// 2026-09-27, against a planted second `onFailure?(failure)` fired
+    /// from a detached task 20 ms after the first: red in 0 of 10 runs.
+    /// The ordering point above is a few milliseconds of loopback work,
+    /// and a duplicate scheduled beyond it lands after the count is read.
+    /// Buying it would take a wait, a wait long enough to be reliable is a
+    /// wall-clock bound, and a bound here measures the runner. So the
+    /// runtime half claims only what it gives — every duplicate up to the
+    /// ordering point — and the rest of "once" is a structural claim,
+    /// pinned by `theAcceptPathHasOneReportingSite` below, which is red in
+    /// 10 of 10 against that same plant because the plant is a second
+    /// call site.
+    ///
+    /// The positive beside the count: both reports are `pumpFailed`, so a
+    /// listener that reported nothing at all cannot satisfy it either.
     @Test func aHandOversOwnFailureIsReportedOnce() async throws {
         let echo = try await EchoServer.start()
         let listener = LocalForwardListener()
@@ -367,26 +408,65 @@ struct LocalForwardListenerTests {
                 observer: { seen.record($0) },
                 onFailure: { failures.record($0) })
 
-            let client = try await connectClient(port: port, inbox: TextInbox())
-            try await awaitCancellably(client.closeFuture)
-            try await pollUntil("the hand-over's own failure is reported") {
-                failures.failures.isEmpty == false
+            for expected in 1...2 {
+                let client = try await connectClient(port: port, inbox: TextInbox())
+                try await awaitCancellably(client.closeFuture)
+                try await pollUntil("hand-over failure \(expected) is reported") {
+                    failures.failures.count >= expected
+                }
             }
-            #expect(failures.failures.count == 1)
-            let isPumpFailure: Bool
-            if case .pumpFailed = failures.failures.first {
-                isPumpFailure = true
-            } else {
-                isPumpFailure = false
-            }
-            #expect(isPumpFailure, "\(failures.failures)")
         } catch {
             await listener.stop()
             await echo.stop()
             throw error
         }
+        // The drain is part of the ordering point, so it happens BEFORE the
+        // count is read and not in a cleanup step after it.
         await listener.stop()
         await echo.stop()
+
+        let reported = failures.failures
+        #expect(reported.count == 2, "\(reported)")
+        let allPumpFailures = reported.allSatisfy {
+            if case .pumpFailed = $0 { return true }
+            return false
+        }
+        #expect(allPumpFailures, "\(reported)")
+    }
+
+    /// The structural half of "reported exactly once", and the half that
+    /// holds however late a duplicate would arrive: `LocalForwardListener`
+    /// calls its `onFailure` from ONE place, the accept path's final
+    /// `catch`, which is the last statement that arm runs. One call site
+    /// per accepted connection is what makes "once" a property of the
+    /// shape rather than of the schedule.
+    ///
+    /// Read through `SourceCorpus.code`, which blanks comments AND string
+    /// literals, so the four comments in that file that discuss when
+    /// `onFailure` is not called cannot be counted as call sites
+    /// (CLAUDE.md, "Source-scanning guards read comments too").
+    ///
+    /// Both checks are positive — two exact counts, neither of which a
+    /// scan that matched nothing could satisfy (CLAUDE.md, "Guards that
+    /// name what they watch"): the second one alone would pass on a file
+    /// that had lost its reporting entirely, and the first says the
+    /// observer is still threaded through the accept path at all.
+    ///
+    /// Counted at HEAD on 2026-09-27, in the blanked view: five
+    /// `onFailure: ` — three parameter declarations (`start` public,
+    /// `start` module-internal, `accepted`) and two hand-ons, `start`
+    /// public to `start` module-internal and `start` module-internal to
+    /// `accepted` — and one `onFailure?(`.
+    @Test func theAcceptPathHasOneReportingSite() throws {
+        let file = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/Tunnels/LocalForwardListener.swift")
+        let code = try SourceCorpus.code(of: file)
+
+        let threading = code.components(separatedBy: "onFailure: ").count - 1
+        #expect(threading == 5, "the scan read \(threading) onFailure parameters and hand-ons")
+
+        let callSites = code.components(separatedBy: "onFailure?(").count - 1
+        #expect(callSites == 1, "the scan read \(callSites) onFailure call sites")
     }
 
     /// One listener binds once. A second `start` — with or without a `stop()`
