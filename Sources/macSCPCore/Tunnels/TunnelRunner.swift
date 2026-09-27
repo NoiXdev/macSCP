@@ -344,13 +344,30 @@ public actor TunnelRunner {
 
             case .failed(let error):
                 lastFailureReason = DialSupport.reason(for: error)
-                apply(.failed(DialSupport.failureKind(for: error)))
+                // The line BEFORE the state that announces it, not after.
+                // `apply` ends in `publish.yield`, which hands the value to
+                // whoever is iterating `states` — on another thread, free to
+                // run while this actor step continues. A reader that waits
+                // for `.failed` and then reads what was written about it
+                // could therefore reach the log before `log` had buffered
+                // anything. Reproduced 2026-09-27 by planting a 200 ms sleep
+                // in exactly this gap: two cases went red, at
+                // `DiagnosticLogSharedSinkTests.swift:827` and `:904`, which
+                // `docs/BACKLOG.md` carried as separate unexplained flakes
+                // ("A flake at `DiagnosticLogSharedSinkTests.swift:800`").
+                // `log` appends to `DiagnosticLog`'s buffer synchronously
+                // and raises its pending sequence there, so once it has
+                // returned a later `flush()` provably covers the line.
                 log(.info, "tunnel \(profile.name) failed", reason: error)
+                apply(.failed(DialSupport.failureKind(for: error)))
                 return
 
             case .needsConfirmation(let error):
-                apply(.needsConfirmation)
+                // Same order, same reason as `.failed` above: the other
+                // terminal state a reader waits for before reading what was
+                // written about it. Not itself measured red — the shape is.
                 log(.info, "tunnel \(profile.name) needs confirmation", reason: error)
+                apply(.needsConfirmation)
                 return
 
             case .lost:
