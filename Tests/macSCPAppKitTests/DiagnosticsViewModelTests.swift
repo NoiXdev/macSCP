@@ -876,15 +876,31 @@ struct DiagnosticsViewModelTests {
         #expect(DiagnosticsPresentation.title(of: step) == "s3.accessLevel")
     }
 
+    /// Every outcome reads as a badge of its own.
+    ///
+    /// **The sample list is EXHAUSTIVE, and structurally so**: the `switch`
+    /// below has no `default`, so an outcome added to the enum stops this
+    /// file compiling until it is sampled above, and the count is derived
+    /// from the samples rather than written down beside them. It was a flat
+    /// array of five with a hand-written `== 5` until 2026-09-27, when
+    /// `notStarted` landed and this case went stale in silence — exactly
+    /// what `CLIMatrix.outcomeSamples` in the Core suite was already shaped
+    /// to prevent, and the shape it now borrows.
     @Test func everyOutcomeHasItsOwnBadge() {
-        let badges = [
-            DiagnosticOutcome.ok, .failed("refused"), .timedOut,
-            .unavailable("no IPv6 route"), .skipped("nothing resolved to probe"),
-        ].map(DiagnosticsPresentation.badge(for:))
-        #expect(Set(badges).count == 5, """
-            the five outcomes must read as five different badges — "not available in this \
-            build" must never read as "your server is broken" (DiagnosticOutcome's own doc \
-            comment) — got \(badges)
+        let outcomes: [DiagnosticOutcome] = [
+            .ok, .failed("refused"), .timedOut, .unavailable("no IPv6 route"),
+            .skipped("nothing resolved to probe"), .notStarted(DiagnosticReason.probeNotStarted),
+        ]
+        for outcome in outcomes {
+            switch outcome {
+            case .ok, .failed, .timedOut, .unavailable, .skipped, .notStarted: break
+            }
+        }
+        let badges = outcomes.map(DiagnosticsPresentation.badge(for:))
+        #expect(Set(badges).count == outcomes.count, """
+            each outcome must read as a badge of its own — "not available in this build", \
+            "skipped" and "not started" must never read as "your server is broken" \
+            (DiagnosticOutcome's own doc comment) — got \(badges)
             """)
         #expect(badges.allSatisfy { !$0.isEmpty })
     }

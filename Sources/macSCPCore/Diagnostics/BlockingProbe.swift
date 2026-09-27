@@ -236,16 +236,28 @@ private final class OneShot<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Never>?
     private var isSettled = false
-    private var hasEarlyAnswer = false
-    private var earlyAnswer: Value?
+    private var early: Early?
+
+    /// The early answer, boxed, so ONE field carries both facts: whether an
+    /// answer arrived before the continuation existed, and what it was.
+    ///
+    /// A bare `Value?` cannot, because `Value` is itself an Optional for
+    /// `BlockingProbe` (`OneShot<T?>`) — `nil` would be both "nothing
+    /// arrived" and "the deadline delivered nil". That used to be a `Bool`
+    /// beside a `Value?`, which is two fields holding one invariant; the
+    /// failure it allowed is the worst kind this type has — the pair read
+    /// apart, the continuation stored and never resumed, a HANG rather than
+    /// a red. One field cannot come apart.
+    private struct Early {
+        let value: Value
+    }
 
     func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
-        if hasEarlyAnswer, let answer = earlyAnswer {
-            hasEarlyAnswer = false
-            earlyAnswer = nil
+        if let early {
+            self.early = nil
             lock.unlock()
-            continuation.resume(returning: answer)
+            continuation.resume(returning: early.value)
             return
         }
         self.continuation = continuation
@@ -264,8 +276,7 @@ private final class OneShot<Value: Sendable>: @unchecked Sendable {
             lock.unlock()
             continuation.resume(returning: value)
         } else {
-            hasEarlyAnswer = true
-            earlyAnswer = value
+            early = Early(value: value)
             lock.unlock()
         }
     }

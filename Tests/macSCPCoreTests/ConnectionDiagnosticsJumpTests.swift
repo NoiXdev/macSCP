@@ -878,6 +878,61 @@ struct ConnectionDiagnosticsJumpTests {
         var testDescription: String { rawValue }
     }
 
+    /// The same claim after an EARLIER target step has already run a
+    /// command — the ordinary shape of a full-scope jump walk, and the one
+    /// a shared transcript would break.
+    ///
+    /// `race`'s cut condition reads `context.transcript.current`, and
+    /// `JumpProbeTranscript.begin(_:)` sets `tool` and never clears it. So
+    /// the condition means "this probe collected something" only because
+    /// every step is raced against a transcript of its OWN:
+    /// `bounded(_:_:_:)` hands `race` a `context.forStep(budget:)`, whose
+    /// whole job is a fresh budget and a fresh transcript. That freshness
+    /// was incidental before 2026-09-27 (the cut was offered
+    /// unconditionally) and is load-bearing now, so it is pinned HERE, at
+    /// the level where it decides a row, rather than only in the doc comment
+    /// that promises it.
+    ///
+    /// Red if the transcript were shared: `resolveOnJump` leaves
+    /// `tool == .getent`, the trace's cut is offered, `readTrace(…, by:
+    /// .getent, …)` answers nil, and the row reads `timedOut` — the sentence
+    /// about the far end this whole change exists to remove.
+    @Test func anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout()
+        async throws
+    {
+        let hold = HeldLaunch()
+        defer { hold.open() }
+        let rig = JumpRig()
+        let walk = Self.stepContext(rig: rig, budget: .seconds(5))
+
+        // Step one, run the way the walk runs it — its own context, its own
+        // transcript — so the rig really does execute a command.
+        let resolved = await ConnectionDiagnostics.race(
+            .resolveOnJump, walk.forStep(budget: .seconds(5)),
+            timer: DiagnosticStepTimer(
+                id: DiagnosticStepID.targetResolveOnJump,
+                titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetResolveOnJump)))
+
+        // Step two, held: the pool never gives its body a thread.
+        let trace = await ConnectionDiagnostics.race(
+            .traceFromJump, walk.forStep(budget: .milliseconds(200)),
+            timer: DiagnosticStepTimer(
+                id: DiagnosticStepID.targetTraceFromJump,
+                titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetTraceFromJump)),
+            launch: hold.launch)
+
+        // The positive: step one really ran a command, so this case is the
+        // scenario it claims to be and not two steps that both did nothing.
+        #expect(resolved.outcome == .ok, "\(resolved.outcome.label)")
+        #expect(rig.events.contains { $0.hasPrefix("exec getent") }, "\(rig.events)")
+        #expect(
+            trace.outcome == .notStarted(DiagnosticReason.probeNotStarted),
+            "a held trace after a step that ran getent reported \(trace.outcome.label)")
+        // And the mechanism, named: the walk-level transcript every step's
+        // context is derived FROM is never the one a step writes into.
+        #expect(walk.transcript.current == nil, "the walk's own transcript was written into")
+    }
+
     /// A target-half step whose probe NEVER BEGAN reads `notStarted`, and
     /// not the cut its budget would otherwise salvage.
     ///

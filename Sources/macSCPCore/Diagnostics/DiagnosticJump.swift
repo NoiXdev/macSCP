@@ -401,6 +401,17 @@ struct DiagnosticJumpStep: Sendable {
 
         /// This context for one step: its own budget, and an empty
         /// transcript.
+        ///
+        /// **The empty transcript is load-bearing, since 2026-09-27.**
+        /// `ConnectionDiagnostics.race` offers a step's `cut` only when
+        /// `transcript.current != nil`, reading that as "this probe
+        /// collected something" — and `JumpProbeTranscript.begin(_:)` sets
+        /// `tool` and never clears it. Hand two steps ONE transcript and the
+        /// second inherits the first's tool: a step the pool never started
+        /// gets a cut over a stale tool and reports `timedOut`, the row the
+        /// `notStarted` outcome exists to replace.
+        /// `anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout`
+        /// is red the moment this line reuses `transcript`.
         func forStep(budget: Duration) -> Context {
             Context(
                 connection: connection, jump: jump, target: target, values: values,

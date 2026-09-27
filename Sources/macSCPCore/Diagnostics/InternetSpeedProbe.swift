@@ -393,11 +393,19 @@ enum InternetSpeedProbe {
     ///
     /// `seed` picks the upload's bytes; a fresh one per run, so no two runs
     /// send the same body, and a fixed one in the suite.
+    /// `launch` is `DetachedProbe`'s own seam, passed through unchanged:
+    /// production's `Task.detached` by default, and a launcher that HOLDS a
+    /// leg's body when the suite needs the row a leg this Mac never started
+    /// produces. Without it that row could only be reached by starving the
+    /// cooperative pool, and the one case on the path could only accept
+    /// either row — which is a check that cannot fail for the line it
+    /// guards.
     static func measure(
         settings: DiagnosticInternetSpeedSettings,
         transport: InternetSpeedTransport,
         now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now },
         seed: UInt64 = UInt64.random(in: .min ... .max),
+        launch: DetachedProbe.Launch = DetachedProbe.detach,
         timer: DiagnosticStepTimer
     ) async -> DiagnosticStep {
         // BEFORE any request is built, which is what makes "off" mean
@@ -420,7 +428,8 @@ enum InternetSpeedProbe {
         var notes: [String] = []
 
         switch await run(
-            DiagnosticInternetSpeedColumn.down, download, transport, settings.legTimeout, now)
+            DiagnosticInternetSpeedColumn.down, download, transport, settings.legTimeout, now,
+            launch)
         {
         case .measured(let leg): legs.append(leg)
         case .refused(let reason, let note):
@@ -433,7 +442,8 @@ enum InternetSpeedProbe {
         // copy of the same answer.
         if refusal == nil {
             switch await run(
-                DiagnosticInternetSpeedColumn.up, upload, transport, settings.legTimeout, now)
+                DiagnosticInternetSpeedColumn.up, upload, transport, settings.legTimeout, now,
+                launch)
             {
             case .measured(let leg): legs.append(leg)
             case .refused(let reason, let note):
@@ -507,10 +517,11 @@ enum InternetSpeedProbe {
     /// a file on the user's server.
     private static func run(
         _ direction: String, _ request: URLRequest, _ transport: InternetSpeedTransport,
-        _ timeout: Duration, _ now: @escaping @Sendable () -> ContinuousClock.Instant
+        _ timeout: Duration, _ now: @escaping @Sendable () -> ContinuousClock.Instant,
+        _ launch: DetachedProbe.Launch
     ) async -> LegOutcome {
         let started = now()
-        let answer = await DetachedProbe.run(timeout: timeout) { () -> Answer in
+        let answer = await DetachedProbe.run(timeout: timeout, launch: launch) { () -> Answer in
             do {
                 return .bytes(try await transport.perform(request))
             } catch InternetSpeedRefusal.redirect(let from, let to) {

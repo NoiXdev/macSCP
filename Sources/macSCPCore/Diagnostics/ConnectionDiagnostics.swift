@@ -895,9 +895,10 @@ public actor ConnectionDiagnostics {
     /// here — so a budget that expires before the pool starts the dial reads
     /// `notStarted` rather than `timedOut`, and the target half is skipped
     /// either way, because no connection was opened. Unlike the other dials
-    /// it has to deal with a connection that arrives AFTER the deadline: the probe is abandoned, not stopped, and a
-    /// transport that finishes its connect anyway would leave a login open on
-    /// the bastion with nobody holding it. `JumpHandoff` is the one place the
+    /// it has to deal with a connection that arrives AFTER the deadline: the
+    /// probe is abandoned, not stopped, and a transport that finishes its
+    /// connect anyway would leave a login open on the bastion with nobody
+    /// holding it. `JumpHandoff` is the one place the
     /// connection changes hands; whichever side comes second closes it.
     private func dialJump(
         _ jump: DiagnosticJump, _ observer: DiagnosticRunObserver,
@@ -997,6 +998,23 @@ public actor ConnectionDiagnostics {
             // transcript and not `start`, because a probe that DID begin and
             // was cut before its first byte is a timeout too, and reads as
             // one through the line below.
+            //
+            // **This reads `current` as "THIS step collected something", and
+            // that holds on ONE invariant kept elsewhere**: every step is
+            // raced against a transcript of its own, because
+            // `bounded(_:_:_:)` hands this function a
+            // `context.forStep(budget:)` and `forStep` builds a fresh
+            // `JumpProbeTranscript`. `JumpProbeTranscript.begin(_:)` sets
+            // `tool` and never clears it, so a transcript SHARED across the
+            // target half would be permanently non-nil from the first remote
+            // command on, and a later step the pool never started would be
+            // handed a cut over a stale tool — `timedOut` again, in the
+            // commonest loaded-machine path. The invariant was incidental
+            // until 2026-09-27 (the cut was offered unconditionally) and is
+            // load-bearing now, so it is pinned by a test at the level where
+            // it decides a row:
+            // `anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout`,
+            // measured red against a `forStep` that reuses the transcript.
             if let cut = step.cut, context.transcript.current != nil {
                 return cut(context, timer)
             }

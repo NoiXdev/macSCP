@@ -258,8 +258,15 @@ struct ConnectionDiagnosticsTests {
     /// when they stopped; with nine it fired after 0.31 s. A 30 s sleep
     /// was a ceiling on how late the deadline could fire, which is the
     /// shape "A wall-clock ceiling in a test measures the runner" names.
+    /// **Renamed on 2026-09-27**, from
+    /// `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`. Since the deadline
+    /// gained a second outcome the old name overstated what this fixture can
+    /// claim: a body the cooperative pool never started did not overrun
+    /// anything, and on the three-core runner that is the row this case
+    /// gets. The former name is written here so a search for it from
+    /// CLAUDE.md, which cites it twice, still lands on this case.
     @Test(.timeLimit(.minutes(5)))
-    func aStepThatOverrunsTheTimeoutIsReportedAsTimedOut() async throws {
+    func aStepBeyondItsTimeoutIsSettledByItsDeadline() async throws {
         let port = try #require(LoopbackSocket.closedPort())
         let report = await Self.run(
             descriptor: Self.probeDescriptor(
@@ -1958,7 +1965,7 @@ private final class Gate: @unchecked Sendable {
 /// meant to end it: the step deadline in the timeout case, the test's own
 /// cancel in the three cancellation cases. On CI run 35405472152 the sleep
 /// won that race against a deadline that fired late, and the row read `.ok`
-/// (see `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`). Parked here, a
+/// (see `aStepBeyondItsTimeoutIsSettledByItsDeadline`). Parked here, a
 /// fake returns only after something cancelled it — and `DetachedProbe`
 /// cancels a probe only once the step is already settled, so whatever the
 /// fake says then is dropped.

@@ -293,6 +293,77 @@ struct InternetSpeedProbeTests {
         #expect(step.table == nil, "a header over no rows claims a measurement nobody made")
     }
 
+    /// A leg this Mac never started reads `notStarted`, NAMED — not
+    /// "the speed service did not finish inside this step's bound", which is
+    /// a sentence about the service for a request that was never sent.
+    ///
+    /// That sentence was the CI red of 2026-09-25 (the investigation
+    /// record's root cause: the upload leg's `DetachedProbe` body did not
+    /// start inside 7 s, and the row blamed the service). The case beside
+    /// this one accepts EITHER row by construction, because on a real
+    /// launcher which one arrives is a fact about the runner — so it cannot
+    /// hold this line, and this case is what does.
+    ///
+    /// No clock and no starved pool: `HeldLaunch` never launches the body,
+    /// which is what a saturated cooperative pool does to it.
+    @Test func aLegThisMacNeverStartedReadsNotStartedAndNeverBlamesTheService() async throws {
+        let hold = HeldLaunch()
+        defer { hold.open() }
+        let transport = RecordingTransport(answer: { _ in 1000 })
+
+        let step = await InternetSpeedProbe.measure(
+            settings: Self.settings(download: 1000, upload: 500, legTimeout: .milliseconds(50)),
+            transport: transport.transport, seed: 7, launch: hold.launch, timer: Self.timer())
+
+        // Read before the hold is opened, so a released body cannot heal it.
+        let sentNothing = transport.sent.isEmpty
+        #expect(
+            step.outcome == .notStarted(DiagnosticReason.probeNotStarted),
+            "a leg that never started reported \(step.outcome.label)")
+        #expect(sentNothing, "the leg sent a request, so this case held nothing")
+        #expect(step.table == nil, "a table over a leg that never ran")
+        // The detail line is still the one the step always writes — the
+        // service, the host and what each request would have been — so the
+        // row says WHICH test did not run, not merely that one did not.
+        #expect(step.detail.contains(InternetSpeedProbe.carriesNothing))
+    }
+
+    /// And the other side of the same mapping, named too: a leg that HAD
+    /// begun and did not finish reads `unavailable` with the service's
+    /// sentence, which is the right row for a service that really is too
+    /// slow.
+    ///
+    /// Settled by a CANCELLATION rather than by the bound, for the reason
+    /// `ProbeStartTests.aBodyThatHadBegunReadsBegan` spells out: both read
+    /// the same flag at the same moment, and the cancellation is the half a
+    /// test can order. The transport signals from inside the leg's body, so
+    /// the body has provably begun before the cancel.
+    @Test func aLegThatHadBegunAndDidNotFinishStillNamesTheService() async throws {
+        let began = AsyncSignal()
+        let parked = AsyncSignal()
+        let transport = RecordingTransport(answer: { _ in
+            began.signal()
+            _ = await parked.wait()
+            return 0
+        })
+
+        let measuring = Task {
+            // Long enough that the bound plays no part; the cancel below is
+            // what settles it, and the suite's time limit ends the case if
+            // nothing does.
+            await InternetSpeedProbe.measure(
+                settings: Self.settings(download: 1000, upload: 500, legTimeout: .seconds(600)),
+                transport: transport.transport, seed: 7, timer: Self.timer())
+        }
+        #expect(await began.wait() == .signalled)
+        measuring.cancel()
+        let step = await measuring.value
+
+        #expect(
+            step.outcome == .unavailable(DiagnosticReason.internetSpeedTooSlow),
+            "a leg that had begun reported \(step.outcome.label)")
+    }
+
     /// A service that never answers is abandoned at the bound, and the row
     /// never reads as a measurement. The fake PARKS — it waits on a latch
     /// nobody raises, which returns only on cancellation — so nothing here
