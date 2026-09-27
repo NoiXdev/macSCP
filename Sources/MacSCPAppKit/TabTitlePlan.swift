@@ -83,16 +83,24 @@ enum TabTitlePlan {
             guard let name, !name.isEmpty else { return nil }
             return .named(name)
         }
-        // A linear scan, called at most twice per `title(…)` and once per
-        // tab per render. Recorded as a deferred minor on 2026-09-18 ("the
-        // tab title's cost") and MEASURED on 2026-09-27 rather than
-        // optimised: worst case, an id that is in no session, so both calls
-        // scan the whole list; 10 000 calls per session count, release
-        // build, this machine. 10 sessions 158 ns per call, 100 sessions
-        // 400 ns, 1 000 sessions 2.8 µs, 5 000 sessions 13.9 µs. A window
-        // with twenty tabs and a thousand saved sessions therefore spends
-        // 55 µs per render here — three tenths of one percent of a 60 Hz
-        // frame. There is nothing to win, and the obvious fix (an id-keyed
+        // A linear scan, called at most twice per `title(…)`, and `title(…)`
+        // is asked N+1 times per render of a window with N tabs: once per
+        // tab for the strip (`ContentView+Detail.swift:361` hands
+        // `tabTitle(for:)` to `TabStripView`, whose `ForEach` calls it at
+        // `TabStripView.swift:74`) and once more for the active tab's
+        // window title (`ContentView+Detail.swift:278`). Both counted at
+        // HEAD on 2026-09-27; the first version of this comment said N and
+        // was corrected in the same day's review.
+        //
+        // Recorded as a deferred minor on 2026-09-18 ("the tab title's
+        // cost") and MEASURED on 2026-09-27 rather than optimised: worst
+        // case, an id that is in no session, so both calls scan the whole
+        // list; 10 000 calls per session count, release build, this
+        // machine. 10 sessions 158 ns per call, 100 sessions 400 ns,
+        // 1 000 sessions 2.8 µs, 5 000 sessions 13.9 µs. A window with
+        // twenty tabs and a thousand saved sessions therefore spends
+        // 21 × 2.8 µs ≈ 59 µs per render here — 0.35 % of a 60 Hz frame.
+        // There is nothing to win, and the obvious fix (an id-keyed
         // dictionary) costs more than it saves for two lookups, so this
         // stays a scan.
         func stored(_ id: UUID?) -> TabTitle? {
