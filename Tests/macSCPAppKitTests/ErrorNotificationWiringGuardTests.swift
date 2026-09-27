@@ -64,14 +64,31 @@ struct ErrorNotificationWiringGuardTests {
     }
 
     /// Every App source file, blanked, by its path relative to the repo.
+    /// Every Swift file of the App target, at ANY depth (fix round 2 of
+    /// 2026-09-27).
+    ///
+    /// It read `SourceCorpus.children(of:)`, which by construction does not
+    /// descend, so `Sources/MacSCPAppKit/Presentation/` was never scanned.
+    /// That is measured, not theorised: a second production conformance to
+    /// `NotificationCenterOperations` and a direct, ungated
+    /// `UNUserNotificationCenter.current().requestAuthorization(…)` were
+    /// planted in that subdirectory, both built clean, and the whole suite
+    /// stayed green. Every negative check in this file rests on this walk,
+    /// so the SPAN was the defect rather than any one of them — CLAUDE.md's
+    /// "a negative check whose SPAN is wrong can never match, and reads
+    /// like one that is satisfied", one level up from the case that rule
+    /// was written for.
+    ///
+    /// `theAppWalkDescendsIntoSubdirectories` is the positive beside it: a
+    /// silent return to a flat listing turns that case red.
     private static func allAppCode() throws -> [(file: String, code: String)] {
         let directory = path(appSources)
-        let names = try SourceCorpus.children(of: directory).map(\.lastPathComponent)
+        let relatives = try SourceCorpus.relativePaths(under: directory)
             .filter { $0.hasSuffix(".swift") }
             .sorted()
-        return try names.map { name in
-            let relative = "\(appSources)/\(name)"
-            return (relative, try views(relative).code)
+        return try relatives.map { relative in
+            let full = "\(appSources)/\(relative)"
+            return (full, try views(full).code)
         }
     }
 
@@ -338,6 +355,27 @@ struct ErrorNotificationWiringGuardTests {
         #expect(Self.count("isKeyWindow", in: key) == 1)
     }
 
+    // MARK: - The span the negatives rest on
+
+    /// The walk descends. Every "nowhere else in the App target" check in
+    /// this file is only as wide as this, and a return to a non-recursive
+    /// listing would leave them all scanning a subset while still reading
+    /// like checks that are satisfied.
+    ///
+    /// Both halves are DERIVED, not spelled: the flat listing is asked for
+    /// itself rather than a counted number, so neither half needs a recount
+    /// when a file is added or a subdirectory appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let files = try Self.allAppCode().map(\.file)
+        let prefix = "\(Self.appSources)/"
+        let nested = files.filter { $0.dropFirst(prefix.count).contains("/") }
+        #expect(nested.isEmpty == false, "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.path(Self.appSources))
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(files.count > flat, "the App walk no longer descends")
+    }
+
     // MARK: - The live poster
 
     /// `UNUserNotificationCenter` is reached from one type only, and the
@@ -353,8 +391,21 @@ struct ErrorNotificationWiringGuardTests {
         for (file, code) in try Self.allAppCode() where file != Self.notificationsFile {
             #expect(code.contains("UNUserNotificationCenter") == false, "\(file)")
             #expect(code.contains("requestAuthorization") == false, "\(file)")
+            // The seam itself is named nowhere else either, so a SECOND
+            // conformance is caught by name rather than incidentally (a
+            // conformance cannot avoid spelling `requestAuthorization`, but
+            // resting on that would be resting on an accident). The one
+            // sanctioned mention outside this file is the live type's own
+            // construction in `MacSCPApp`, so that spelling is removed
+            // before the check rather than the whole file being skipped —
+            // a second conformance declared THERE would still be caught.
+            let beyondTheLiveType = code.replacingOccurrences(
+                of: "LiveNotificationCenterOperations", with: "")
+            #expect(beyondTheLiveType.contains("NotificationCenterOperations") == false, "\(file)")
         }
         let code = try Self.views(Self.notificationsFile).code
+        // Positive beside the three negatives above: the seam is named here.
+        #expect(code.contains("NotificationCenterOperations"))
         let live = try Self.body(
             of: "final class LiveNotificationCenterOperations", in: code)
         // Positive beside the negatives: the center really is used, here.
