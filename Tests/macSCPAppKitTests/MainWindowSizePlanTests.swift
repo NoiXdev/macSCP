@@ -591,36 +591,61 @@ struct MainWindowSizePlanTests {
         return arguments
     }
 
-    /// What the call to `MainWindowSizePlan.<function>` inside `body` passes
-    /// for each argument label, as written.
-    private static func arguments(to function: String, in body: String) throws -> [String: String] {
+    /// What EVERY call to `MainWindowSizePlan.<function>` inside `body`
+    /// passes for each argument label, as written — one dictionary per call,
+    /// in order of appearance.
+    ///
+    /// Every call, not the first (fix round 1). The form this replaces took
+    /// `body.range(of:)` and read ONE call, so a second call to the same plan
+    /// function in the same body was invisible: a planted
+    /// `MainWindowSizePlan.persistsLiveResize(isPrimaryWindow: true, …)`
+    /// beside the real one in `handleWindowDidEndLiveResize` was green here
+    /// and RED against the guard this whole test replaced, which counted the
+    /// label's occurrences across the entire body. The callers assert HOW
+    /// MANY calls came back, which is what keeps the loop from checking
+    /// nothing.
+    ///
+    /// A call whose parenthesis never closes fails here rather than being
+    /// skipped: a call this cannot bound is a call it must not drop.
+    private static func argumentLists(to function: String, in body: String) throws -> [[String: String]] {
         let anchor = "MainWindowSizePlan.\(function)("
-        let start = try #require(body.range(of: anchor), """
-            this body no longer calls `\(anchor)` — re-anchor this guard.
-            """)
-        let list = try #require(Self.parenthesised(from: start.upperBound, in: body), """
-            the call to `\(anchor)` does not close — re-anchor this guard.
-            """)
-        var passed: [String: String] = [:]
-        for argument in Self.topLevelArguments(in: list) {
-            guard let colon = argument.firstIndex(of: ":") else { continue }
-            passed[String(argument[..<colon])] =
-                argument[colon...].dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        var lists: [[String: String]] = []
+        var search = body.startIndex..<body.endIndex
+        while let hit = body.range(of: anchor, range: search) {
+            search = hit.upperBound..<body.endIndex
+            let list = try #require(Self.parenthesised(from: hit.upperBound, in: body), """
+                a call to `\(anchor)` does not close — re-anchor this guard.
+                """)
+            var passed: [String: String] = [:]
+            for argument in Self.topLevelArguments(in: list) {
+                guard let colon = argument.firstIndex(of: ":") else { continue }
+                passed[String(argument[..<colon])] =
+                    argument[colon...].dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            lists.append(passed)
         }
-        return passed
+        return lists
     }
 
-    /// The four executing call sites, each named by the body it sits in and
-    /// the plan function it calls. Counted in the pass that wrote this list:
+    /// The four executing call sites, each named by the body it sits in, the
+    /// plan function it calls, and how many times that body calls it.
+    ///
     /// `git grep -c 'MainWindowSizePlan\.' Sources/MacSCPAppKit/ContentView+Lifecycle.swift`
     /// reports more, because the launch resolve above calls four more of the
     /// plan's functions — none of which takes a `Bool`, which is what this
     /// table is for.
-    private static let planCallSites: [(anchor: String, function: String)] = [
-        ("func shrinkIfPristine() {", "shrink"),
-        ("func growToBrowserSize() {", "rememberedBrowserSize"),
-        ("func growToBrowserSize() {", "resumesFrameAutosave"),
-        ("func handleWindowDidEndLiveResize(_ notification: Notification) {", "persistsLiveResize"),
+    ///
+    /// The counts are the positive beside the per-argument negatives:
+    /// without them the scan would pass a body it found no call in at all,
+    /// and it would pass a SECOND call that hard-codes everything. Counted
+    /// in the pass that wrote this list, with
+    /// `grep -c 'MainWindowSizePlan\.<function>(' ContentView+Lifecycle.swift`:
+    /// 1 each, for all four.
+    private static let planCallSites: [(anchor: String, function: String, calls: Int)] = [
+        ("func shrinkIfPristine() {", "shrink", 1),
+        ("func growToBrowserSize() {", "rememberedBrowserSize", 1),
+        ("func growToBrowserSize() {", "resumesFrameAutosave", 1),
+        ("func handleWindowDidEndLiveResize(_ notification: Notification) {", "persistsLiveResize", 1),
     ]
 
     /// Fix round 1: every window fact the plan is asked for at the four
@@ -642,6 +667,13 @@ struct MainWindowSizePlanTests {
     /// `styleMask.contains(.fullScreen)` — two independent `.contains`
     /// calls that a body passing `isFullScreen: false` while reading the
     /// style mask for anything else at all would have satisfied.
+    ///
+    /// EVERY call in the body, and the number of them asserted against
+    /// `planCallSites` (fix round 1). Narrowing the span from the body to
+    /// the call is what this test is for, and round 0 narrowed it too far:
+    /// it read the first call and no other, where the guard it replaced had
+    /// counted the label over the whole body. A second, fully hard-coded
+    /// call planted beside the real one was green.
     @Test func thePlanIsAskedAboutTheRealWindow() throws {
         let property = try Self.primaryWindowProperty()
         /// The fact each label names, as the window answers it. A label not
@@ -653,7 +685,7 @@ struct MainWindowSizePlanTests {
         ]
         let fullScreen = try CompiledPattern.regex(#"^\w+\.styleMask\.contains\(\.fullScreen\)$"#)
         var declared: Set<String> = []
-        for (anchor, function) in Self.planCallSites {
+        for (anchor, function, calls) in Self.planCallSites {
             let labels = try Self.boolParameters(of: function)
             declared.formUnion(labels)
             #expect(!labels.isEmpty, """
@@ -661,31 +693,38 @@ struct MainWindowSizePlanTests {
                 pointed at a signature that no longer asks the window anything.
                 """)
             let body = try Self.body(of: anchor, in: Self.lifecycleFile)
-            let passed = try Self.arguments(to: function, in: body)
-            for label in labels {
-                let value = try #require(passed[label], """
-                    \(anchor) calls MainWindowSizePlan.\(function) without its `\(label):` \
-                    argument — the plan declares it, so this call does not compile, or this \
-                    scan is reading the wrong call.
-                    """)
-                #expect(value != "true" && value != "false", """
-                    \(anchor) hard-codes `\(label): \(value)` — the plan must be asked about \
-                    the real window.
-                    """)
-                if let expected = readFromTheWindow[label] {
-                    #expect(value == expected, """
-                        \(anchor) passes `\(label): \(value)` where the window answers \
-                        `\(expected)`.
+            let lists = try Self.argumentLists(to: function, in: body)
+            #expect(lists.count == calls, """
+                \(anchor) calls MainWindowSizePlan.\(function) \(lists.count) times, not \
+                \(calls). Fewer means this scan is checking nothing there; more means a call \
+                nobody counted — check what it passes and update planCallSites.
+                """)
+            for passed in lists {
+                for label in labels {
+                    let value = try #require(passed[label], """
+                        \(anchor) calls MainWindowSizePlan.\(function) without its \
+                        `\(label):` argument — the plan declares it, so this call does not \
+                        compile, or this scan is reading the wrong call.
                         """)
-                }
-                if label == "isFullScreen" {
-                    #expect(
-                        fullScreen.firstMatch(
-                            in: value, range: NSRange(value.startIndex..., in: value)) != nil, """
-                            \(anchor) passes `isFullScreen: \(value)` — full screen is read \
-                            from the window's own style mask, in this argument, or a size the \
-                            screen chose is saved as one the user chose.
+                    #expect(value != "true" && value != "false", """
+                        \(anchor) hard-codes `\(label): \(value)` — the plan must be asked \
+                        about the real window.
+                        """)
+                    if let expected = readFromTheWindow[label] {
+                        #expect(value == expected, """
+                            \(anchor) passes `\(label): \(value)` where the window answers \
+                            `\(expected)`.
                             """)
+                    }
+                    if label == "isFullScreen" {
+                        #expect(
+                            fullScreen.firstMatch(
+                                in: value, range: NSRange(value.startIndex..., in: value)) != nil, """
+                                \(anchor) passes `isFullScreen: \(value)` — full screen is \
+                                read from the window's own style mask, in this argument, or a \
+                                size the screen chose is saved as one the user chose.
+                                """)
+                    }
                 }
             }
         }

@@ -86,6 +86,18 @@ public enum SourceSpan {
     /// counted from the anchor's end with the depth already at 1, so
     /// `"func applicationShouldTerminate("` returned that function's body
     /// AND everything after it up to the enclosing type's closing brace.
+    ///
+    /// In one direction this is the LOOSER of the merged copies, and nothing
+    /// exercises it today: a `}` standing between the anchor and the first
+    /// `{` is skipped over here, where `TabContextMenuWiringGuardTests`'s
+    /// copy answered `nil` for it. That shape is an anchor that names the
+    /// END of one declaration and then reaches into the NEXT one's body.
+    /// No anchor any caller passes can reach it: every one either spells its
+    /// own `{`, leaving no text at all between the anchor and the brace, or
+    /// stops at a parameter list, whose text up to the brace is a signature.
+    /// It is written down rather than defended against because "it fails
+    /// closed" is a claim, and this one holds for a missing anchor and for
+    /// unbalanced braces — not for that.
     public static func bodySpan(
         after anchor: String, in source: String
     ) -> (anchor: Range<String.Index>, open: String.Index, close: String.Index)? {

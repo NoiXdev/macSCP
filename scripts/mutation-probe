@@ -120,6 +120,19 @@ cd "$(dirname "$0")/.." || exit 2
 # INDEX, so staged work is what the plant is reverted back TO — which is the
 # normal case while a fix is in progress. What cannot be tolerated is an
 # unstaged edit, because the revert would take it with the plant.
+#
+# Which is why the INDEX itself is saved below and put back before the
+# revert. Measured 2026-09-27, during the guards-cluster task: an --apply
+# that ran `git checkout HEAD -- <paths>` — a perfectly ordinary way to
+# measure an old guard against a new plant — writes the INDEX as well as the
+# working tree, so `git checkout -- .` then restored HEAD and the staged work
+# this gate promises to preserve was gone. The script did not even report it
+# as a failure: the post-plant check came back empty and blamed the pattern
+# ("PLANT CHANGED NOTHING") for work it had destroyed. `git write-tree` /
+# `git read-tree` makes the revert index-safe for ANY --apply, not only for
+# that spelling. The blobs survive in the object store either way — the round
+# lost to this was recovered with `git fsck --unreachable` — but a probe must
+# not need that.
 if [[ -n "$(git diff --name-only)" ]]; then
     echo "mutation-probe: the working tree has unstaged changes." >&2
     echo "  This script reverts with 'git checkout --', which would discard them." >&2
@@ -129,7 +142,11 @@ if [[ -n "$(git diff --name-only)" ]]; then
 fi
 
 BASELINE="$(git rev-parse --short HEAD)"
+# The index as it stands before anything is planted, so `restore` can put it
+# back whatever --apply did to it (see the note above the dirty-tree gate).
+INDEX_TREE="$(git write-tree)"
 restore() {
+    [[ -n "${INDEX_TREE:-}" ]] && git read-tree "$INDEX_TREE" 2>/dev/null
     git checkout -- . 2>/dev/null
     if [[ -n "$(git diff --name-only)" ]]; then
         echo "mutation-probe: WARNING — unstaged changes remain after the revert." >&2

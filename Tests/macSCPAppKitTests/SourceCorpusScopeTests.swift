@@ -120,8 +120,13 @@ struct SourceCorpusScopeTests {
         // The positives beside that filter. Without them it would go on
         // passing the day the spellings stopped matching anything — which
         // is exactly how a negative check goes stale in silence.
-        // A lower bound, not the count: 151 sites across 22 files on
-        // 2026-09-27, and a bound is what survives a file being added.
+        // A lower bound, not the count, because a bound survives a file
+        // being added. Measured 2026-09-27: the raw pre-filter admits 23
+        // files, 19 of them produce sites, and those 19 produce 151. The
+        // four that produce none spell every write marker they carry inside
+        // a string literal or a comment — `TreeWriteScan` itself, this file
+        // in both targets, and `CLISessionsCommandGuardTests` — which is
+        // the blanking doing its job, not the scan missing them.
         #expect(examined > 100, """
             only \(examined) write call sites were examined in the files that name a package
             root at all — this scan is reading almost nothing.
