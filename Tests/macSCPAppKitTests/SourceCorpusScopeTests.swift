@@ -75,6 +75,114 @@ struct SourceCorpusScopeTests {
         #expect(view == (try SwiftSource.blankingComments(text)))
     }
 
+    /// The corpus's own claim that nothing under `Sources/` or `Tests/` is
+    /// written by a test, enforced (backlog: "The source-corpus guard plan's
+    /// deferred minors", M6). Every write-API call site in `Tests/` is read,
+    /// and none of them is handed a path rooted at the package —
+    /// `TreeWriteScan`'s doc comment has what that can and cannot see.
+    ///
+    /// Only the files whose RAW text carries both a write spelling and a
+    /// root spelling are blanked. The raw read is what the corpus caches
+    /// anyway; blanking every Swift file under `Tests/` to reach the handful
+    /// that carry both would be the expensive half of this scan and would
+    /// change no answer.
+    @Test func noTestWritesUnderTheTreeTheCorpusReads() throws {
+        var examined = 0
+        var violations: [String] = []
+        var matched: Set<String> = []
+        var rootsSeen: Set<String> = []
+        for url in try SourceCorpus.files(under: SourceCorpus.url(of: .tests))
+        where url.pathExtension == "swift" {
+            let text = try SourceCorpus.text(of: url)
+            let roots = TreeWriteScan.rootSpellings.filter { text.contains($0) }
+            rootsSeen.formUnion(roots)
+            let writes = TreeWriteScan.markers.filter { text.contains($0) }
+            guard !writes.isEmpty else { continue }
+            guard !roots.isEmpty else { continue }
+            let sites = TreeWriteScan.sites(
+                in: try SourceCorpus.code(of: url), file: url.lastPathComponent, markers: writes)
+            examined += sites.count
+            matched.formUnion(sites.map(\.marker))
+            for site in sites {
+                let roots = site.rootsNamed(among: TreeWriteScan.rootSpellings)
+                guard !roots.isEmpty else { continue }
+                violations.append(
+                    "\(site.file):\(site.line) \(site.marker) names \(roots.joined(separator: ", "))")
+            }
+        }
+        #expect(violations.isEmpty, """
+            a test writes under a root the source corpus reads:
+            \(violations.joined(separator: "\n"))
+            The corpus reads a file the first time anything asks for it, so a write to a tree
+            file mid-run is read before or after it depending on which test ran first. Write
+            fixtures into a temporary directory instead.
+            """)
+        // The positives beside that filter. Without them it would go on
+        // passing the day the spellings stopped matching anything — which
+        // is exactly how a negative check goes stale in silence.
+        // A lower bound, not the count: 151 sites across 22 files on
+        // 2026-09-27, and a bound is what survives a file being added.
+        #expect(examined > 100, """
+            only \(examined) write call sites were examined in the files that name a package
+            root at all — this scan is reading almost nothing.
+            """)
+        let dead = TreeWriteScan.liveMarkers.filter { !matched.contains($0) }
+        #expect(dead.isEmpty, """
+            \(dead.joined(separator: ", ")): recorded on 2026-09-27 as producing a site in
+            these files, and producing none now. A renamed or retired API is not a violation,
+            but a marker that matches nothing checks nothing — re-measure
+            TreeWriteScan.liveMarkers.
+            """)
+        let unseenRoots = TreeWriteScan.rootSpellings.filter { !rootsSeen.contains($0) }
+        #expect(unseenRoots.isEmpty, """
+            \(unseenRoots.joined(separator: ", ")): no file under Tests/ spells the package
+            root that way any more — the violation this scan looks for could no longer be
+            written the way it looks for it.
+            """)
+    }
+
+    /// The scanner reacts, over synthetic source: a write into the tree is
+    /// seen, and the temporary-directory write it sits beside is not. Both
+    /// halves in one fixture, because the value of this scan is exactly that
+    /// it separates them — the two live in the same files and often in the
+    /// same function.
+    @Test func theWriteScanSeparatesATreeWriteFromATemporaryOne() {
+        let source = """
+            func plant(data: Data) throws {
+                let temporary = FileManager.default.temporaryDirectory
+                try data.write(to: temporary.appendingPathComponent("fixture.swift"))
+                try data.write(to: repoRoot.appendingPathComponent("Sources/x.swift"))
+                try FileManager.default.removeItem(at: temporary)
+            }
+            """
+        let sites = TreeWriteScan.sites(
+            in: source, file: "planted.swift", markers: TreeWriteScan.markers)
+        #expect(sites.count == 3)
+        let flagged = sites.filter { !$0.rootsNamed(among: TreeWriteScan.rootSpellings).isEmpty }
+        #expect(flagged.count == 1)
+        #expect(flagged.first?.line == 4)
+        #expect(flagged.first?.marker == ".write(")
+    }
+
+    /// And the span is the CALL's, not the line's: a multi-line write whose
+    /// root spelling sits on a later line is still one site, and a root
+    /// spelling on a line of its own outside any call is not a site at all.
+    @Test func theWriteScanReadsACallThatSpansLines() {
+        let source = """
+            func plant(data: Data) throws {
+                let elsewhere = repoRoot.appendingPathComponent("Sources")
+                try data.write(
+                    to: repoRoot
+                        .appendingPathComponent("Sources/x.swift"),
+                    options: .atomic)
+            }
+            """
+        let sites = TreeWriteScan.sites(
+            in: source, file: "planted.swift", markers: TreeWriteScan.markers)
+        #expect(sites.count == 1)
+        #expect(sites.first?.rootsNamed(among: TreeWriteScan.rootSpellings) == ["repoRoot"])
+    }
+
     /// A path outside both roots, a directory the walk never saw, and a
     /// view of a file that is not Swift all throw — never an empty answer
     /// a guard could read as "nothing to find".

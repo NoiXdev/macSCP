@@ -61,9 +61,10 @@ import Foundation
 /// It is a snapshot. A test that writes files on purpose — a fixture tree
 /// in a temporary directory, planted to exercise a scanner — reads those
 /// from disk, not from here; nothing under `Sources/` or `Tests/` is
-/// written by any test. `SourceCorpusScopeTests` pins that every listing
-/// here equals a direct walk of the same directory, so a guard cannot
-/// silently start scanning less than the tree holds.
+/// written by any test, which `SourceCorpusScopeTests` pins with
+/// `TreeWriteScan` rather than asserting here in prose. The same suite pins
+/// that every listing here equals a direct walk of the same directory, so a
+/// guard cannot silently start scanning less than the tree holds.
 public enum SourceCorpus {
     /// The two trees the corpus holds, by their directory name under the
     /// package root.
