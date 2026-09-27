@@ -60,12 +60,40 @@ class MacSCPTerminalView: TerminalView {
     /// without a mouse button behind it — VoiceOver's "show menu", for
     /// one — gets the snippet menu, as it did before the setting existed.
     ///
+    /// **What the accessibility fallback actually sends is measured**
+    /// (2026-09-27, the deferred minor of 2026-09-19 that asked for it).
+    /// `NSView.accessibilityPerformShowMenu()` — the method behind
+    /// `NSAccessibilityShowMenuAction`, and one that neither SwiftTerm's
+    /// `TerminalView` nor this class overrides — synthesises a
+    /// `.rightMouseDown` event carrying NO modifier flags and asks
+    /// `menu(for:)` with it. `isControlClick` requires a `.leftMouseDown`
+    /// carrying `.control`, so it cannot match that event at all: the
+    /// fallback always gets the real menu, never the withheld answer, and
+    /// never a paste. Measured 3 of 3 in a scratch AppKit binary on macOS
+    /// 26.6.2 (build 25G83), both for an ordered-in window of an inactive
+    /// app and for the key window of an active one — and in both the call
+    /// arrived only after the window was ordered in, never for a window
+    /// that had not been. The event shape it produces is exactly the one
+    /// `TerminalMouseBehaviourTests.aMenuRequestNeverPastes` drives, and
+    /// `TerminalMouseWiringGuardTests.thePlanIsAskedInOnePlace` is what
+    /// holds `isControlClick` to naming `.leftMouseDown`. The one hop still
+    /// unmeasured is VoiceOver itself reaching that action on this view,
+    /// which needs VoiceOver and a running app: a sight check.
+    ///
     /// The one answer it withholds is for a control-click that is to paste.
     /// `NSWindow` asks this BEFORE it delivers a control-click, and shows
     /// whatever comes back INSTEAD of calling `mouseDown(with:)` (measured
     /// 2026-09-18 with synthetic events through `NSWindow.sendEvent(_:)` on
     /// an invisible window that was not key, the view accepting the first
-    /// mouse; a key window was not measured).
+    /// mouse). **A key window routes it the same way**, measured 2026-09-27
+    /// in the same scratch binary: with the app active and the window key,
+    /// a `.leftMouseDown` carrying `.control` sent through
+    /// `NSWindow.sendEvent(_:)` reached the lookup first and the press only
+    /// after the lookup answered nothing, 3 of 3. Only the FIRST half of
+    /// that sentence is measured on either window — what a non-nil answer
+    /// does instead of the press stays a sight check, because a real answer
+    /// opens a modal menu tracking loop: the probe that tried to measure it
+    /// blocked there and had to be killed, 3 of 3.
     /// Declining lets the click through to `mouseDown(with:)`, which pastes.
     override func menu(for event: NSEvent) -> NSMenu? {
         if Self.isControlClick(event) && rightClickAction(for: event) == .paste {

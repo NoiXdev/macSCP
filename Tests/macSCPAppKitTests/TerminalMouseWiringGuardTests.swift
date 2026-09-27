@@ -72,6 +72,13 @@ struct TerminalMouseWiringGuardTests {
 
     /// The plan is asked in exactly one place, and the three hooks act on
     /// that one answer.
+    ///
+    /// `.leftMouseDown` is load-bearing and not incidental (measured
+    /// 2026-09-27): the accessibility "show menu" fallback asks
+    /// `menu(for:)` with a `.rightMouseDown` carrying no modifier flags, so
+    /// a control-click test that stopped requiring a LEFT press would start
+    /// withholding the menu from that fallback. `MacSCPTerminalView
+    /// .menu(for:)`'s doc comment carries the measurement.
     @Test func thePlanIsAskedInOnePlace() throws {
         let code = try Self.views(Self.terminalViewFile).code
         #expect(TransferQueueBarCancelGuardTests.occurrenceCount(

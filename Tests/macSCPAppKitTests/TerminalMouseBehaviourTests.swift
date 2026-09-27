@@ -19,8 +19,14 @@ import Testing
 /// first mouse (Task 8's report): a right click reaches
 /// `rightMouseDown(with:)`, and `NSView`'s implementation of it asks
 /// `menu(for:)`; a control-click asks `menu(for:)` FIRST and reaches
-/// `mouseDown(with:)` only when that answered `nil`. The last hop — a real
-/// key window and a menu popping up on screen — is a sight check.
+/// `mouseDown(with:)` only when that answered `nil`. A KEY window of an
+/// ACTIVE app was measured on 2026-09-27 (deferred minor of 2026-09-19) and
+/// routes a control-click identically — the lookup first, the press only
+/// after it answered nothing, 3 of 3 in a scratch AppKit binary on macOS
+/// 26.6.2 (build 25G83). The last hop — a menu popping up on screen instead
+/// of the press — is a sight check on either window, and stays one because
+/// a real answer opens a modal menu tracking loop: the probe that tried to
+/// measure it blocked there and had to be killed, 3 of 3.
 ///
 /// The pasteboard is a private, uniquely named one per test, never
 /// `NSPasteboard.general`: a test must not overwrite the clipboard of the
@@ -208,6 +214,13 @@ struct TerminalMouseBehaviourTests {
     /// A menu request that is not a real right mouse button — VoiceOver's
     /// "show menu", or anything else asking `menu(for:)` directly — opens
     /// the menu. Only the mouse button pastes.
+    ///
+    /// The first event here is the accessibility fallback's own shape, not
+    /// a stand-in for it: `NSView.accessibilityPerformShowMenu()`, the
+    /// method behind `NSAccessibilityShowMenuAction`, synthesises a
+    /// `.rightMouseDown` carrying no modifier flags and asks `menu(for:)`
+    /// with it — measured 3 of 3 on 2026-09-27, see `MacSCPTerminalView
+    /// .menu(for:)`'s own doc comment for the conditions.
     @Test("Paste on right click on: a menu request for a right click opens the menu and never pastes")
     func aMenuRequestNeverPastes() throws {
         try withTerminal { terminal, _ in
