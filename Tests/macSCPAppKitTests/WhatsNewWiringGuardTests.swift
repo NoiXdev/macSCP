@@ -103,7 +103,7 @@ struct WhatsNewWiringGuardTests {
     /// very thing being scanned.
     @Test func noTextCallTakesAHardcodedLiteral() throws {
         let withLiterals = try Self.views(of: Self.sheetFile).withLiterals
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             WhatsNewSheet.swift has a Text( call whose first argument is a \
             string literal instead of going through L10n.
             """)
@@ -118,16 +118,20 @@ struct WhatsNewWiringGuardTests {
     /// (...))`, `Text(String(format: L10n.string(...), …))` and
     /// `Text(someHelper(value))` all have a non-`"` character right after
     /// the `(` (or after `verbatim:`), so none of them count.
-    private static func hardcodedTextCallCount(in source: String) -> Int {
-        Self.textLiteralRegex.matches(in: source, range: NSRange(source.startIndex..., in: source)).count
+    private static func hardcodedTextCallCount(in source: String) throws -> Int {
+        try CompiledPattern.regex(Self.textLiteralPattern)
+            .matches(in: source, range: NSRange(source.startIndex..., in: source)).count
     }
 
     private static func textCallCount(in source: String) -> Int {
         TransferQueueBarCancelGuardTests.occurrenceCount(of: "Text(", in: source)
     }
 
-    private static let textLiteralRegex = try! NSRegularExpression(
-        pattern: #"Text\(\s*(?:verbatim:\s*)?""#)
+    /// Compiled through `CompiledPattern` rather than a `try!` stored
+    /// property: the corpus's cache compiles each distinct pattern once per
+    /// test process, and a pattern that does not compile throws where the
+    /// scan runs instead of trapping the whole target at load.
+    private static let textLiteralPattern = #"Text\(\s*(?:verbatim:\s*)?""#
 
     // MARK: - The Settings pane's copy (round 1 review: same check, wider scope)
 
@@ -163,7 +167,7 @@ struct WhatsNewWiringGuardTests {
 
     @Test func noTextCallInTheSettingsPaneTakesAHardcodedLiteral() throws {
         let withLiterals = try Self.settingsPaneSection().withLiterals
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             WhatsNewSettingsSection has a Text( call whose first argument \
             is a string literal instead of going through L10n.
             """)
@@ -184,7 +188,7 @@ struct WhatsNewWiringGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             the scanner must not report a hardcoded Button( label as a \
             hardcoded Text( — the two are different checks
             """)
@@ -199,7 +203,7 @@ struct WhatsNewWiringGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 1, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 1, """
             the scanner failed to catch a Text( call given a literal string \
             directly
             """)
@@ -218,7 +222,7 @@ struct WhatsNewWiringGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 1, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 1, """
             the scanner failed to catch a Text(verbatim:) call given a \
             literal string directly
             """)
@@ -235,7 +239,7 @@ struct WhatsNewWiringGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             the scanner must not flag Text( calls whose argument is \
             L10n.string(…)/L10n.text(…) or a helper call, only a literal \
             passed directly

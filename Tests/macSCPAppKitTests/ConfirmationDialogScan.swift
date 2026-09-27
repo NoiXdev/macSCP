@@ -19,6 +19,9 @@ import MacSCPTestSupport
 /// literals are read from the comment-only view (`SwiftSource.blankingComments`)
 /// at the same offsets — both views blank in place, so one offset
 /// addresses the same character in each (`SwiftSource`'s own doc comment).
+/// The offset arithmetic itself — find a token, find the bracket that
+/// balances one — is `SourceSpan`'s, which knows nothing about dialogs and
+/// is where a non-dialog scan borrows it from.
 ///
 /// Fail-closed: `bound(to:in:)` throws when no dialog's argument list
 /// names the state, and when the bound dialog's shape cannot be read, so a
@@ -76,29 +79,29 @@ struct ConfirmationDialogScan {
         guard strict.count == literal.count else { throw ScanError.dialogNotFound }
         let opener = Array(".confirmationDialog(")
         var start = 0
-        while let found = firstOffset(of: opener, in: strict, from: start) {
+        while let found = SourceSpan.firstOffset(of: opener, in: strict, from: start) {
             start = found + opener.count
             let parenOpen = found + opener.count - 1
-            guard let parenClose = closingOffset(from: parenOpen, in: strict, open: "(", close: ")")
+            guard let parenClose = SourceSpan.closingOffset(from: parenOpen, in: strict, open: "(", close: ")")
             else { throw ScanError.unbalanced }
             let arguments = String(strict[parenOpen...parenClose])
             guard arguments.contains(state) else { continue }
-            guard let buttonsOpen = firstOffset(of: ["{"], in: strict, from: parenClose),
-                  let buttonsClose = closingOffset(from: buttonsOpen, in: strict, open: "{", close: "}"),
-                  let label = firstOffset(of: Array("message:"), in: strict, from: buttonsClose),
-                  let messageOpen = firstOffset(of: ["{"], in: strict, from: label),
-                  let messageClose = closingOffset(from: messageOpen, in: strict, open: "{", close: "}"),
-                  let setLabel = firstOffset(of: Array("set:"), in: strict, from: parenOpen),
+            guard let buttonsOpen = SourceSpan.firstOffset(of: ["{"], in: strict, from: parenClose),
+                  let buttonsClose = SourceSpan.closingOffset(from: buttonsOpen, in: strict, open: "{", close: "}"),
+                  let label = SourceSpan.firstOffset(of: Array("message:"), in: strict, from: buttonsClose),
+                  let messageOpen = SourceSpan.firstOffset(of: ["{"], in: strict, from: label),
+                  let messageClose = SourceSpan.closingOffset(from: messageOpen, in: strict, open: "{", close: "}"),
+                  let setLabel = SourceSpan.firstOffset(of: Array("set:"), in: strict, from: parenOpen),
                   setLabel < parenClose,
-                  let setterOpen = firstOffset(of: ["{"], in: strict, from: setLabel),
-                  let setterClose = closingOffset(from: setterOpen, in: strict, open: "{", close: "}"),
+                  let setterOpen = SourceSpan.firstOffset(of: ["{"], in: strict, from: setLabel),
+                  let setterClose = SourceSpan.closingOffset(from: setterOpen, in: strict, open: "{", close: "}"),
                   setterClose < parenClose
             else { throw ScanError.dialogNotFound }
 
             var textStarts = [parenOpen + 1]
             for token in [Array("Button("), Array("Text(")] {
                 var from = parenOpen
-                while let hit = firstOffset(of: token, in: strict, from: from), hit < messageClose {
+                while let hit = SourceSpan.firstOffset(of: token, in: strict, from: from), hit < messageClose {
                     textStarts.append(hit + token.count)
                     from = hit + token.count
                 }
@@ -114,12 +117,12 @@ struct ConfirmationDialogScan {
             var buttonSpans: [ButtonSpan] = []
             var buttonFrom = buttonsOpen
             let buttonToken = Array("Button(")
-            while let hit = firstOffset(of: buttonToken, in: strict, from: buttonFrom), hit < buttonsClose {
+            while let hit = SourceSpan.firstOffset(of: buttonToken, in: strict, from: buttonFrom), hit < buttonsClose {
                 let argsOpen = hit + buttonToken.count - 1
-                guard let argsClose = closingOffset(from: argsOpen, in: strict, open: "(", close: ")"),
-                      let actionOpen = firstOffset(of: ["{"], in: strict, from: argsClose),
+                guard let argsClose = SourceSpan.closingOffset(from: argsOpen, in: strict, open: "(", close: ")"),
+                      let actionOpen = SourceSpan.firstOffset(of: ["{"], in: strict, from: argsClose),
                       strict[(argsClose + 1)..<actionOpen].allSatisfy(\.isWhitespace),
-                      let actionClose = closingOffset(from: actionOpen, in: strict, open: "{", close: "}")
+                      let actionClose = SourceSpan.closingOffset(from: actionOpen, in: strict, open: "{", close: "}")
                 else { throw ScanError.dialogNotFound }
                 let literalArguments = String(literal[argsOpen...argsClose])
                 buttonSpans.append(ButtonSpan(
@@ -155,31 +158,5 @@ struct ConfirmationDialogScan {
             keys.append(String(rest.dropFirst().prefix(while: { $0 != "\"" })))
         }
         return keys
-    }
-
-    /// The first offset at or after `start` where `token` begins in `text`.
-    static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
-        guard !token.isEmpty, text.count >= token.count, start <= text.count - token.count else { return nil }
-        for offset in start...(text.count - token.count)
-        where text[offset..<(offset + token.count)].elementsEqual(token) {
-            return offset
-        }
-        return nil
-    }
-
-    /// The offset of the `closer` that balances the `opener` at `open`, or
-    /// `nil` when it never closes. Meaningful only over a blanked view.
-    static func closingOffset(
-        from open: Int, in text: [Character], open opener: Character, close closer: Character
-    ) -> Int? {
-        var depth = 0
-        for offset in open..<text.count {
-            if text[offset] == opener { depth += 1 }
-            if text[offset] == closer {
-                depth -= 1
-                if depth == 0 { return offset }
-            }
-        }
-        return nil
     }
 }

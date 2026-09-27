@@ -395,8 +395,8 @@ struct ToolbarTransferConfirmationGuardTests {
     private static func body(after anchor: String, in strict: String) throws -> String {
         guard let anchorRange = strict.range(of: anchor) else { throw ScanError.anchorNotFound }
         let characters = Array(strict[anchorRange.lowerBound...])
-        guard let open = ConfirmationDialogScan.firstOffset(of: ["{"], in: characters, from: 0),
-              let close = ConfirmationDialogScan.closingOffset(
+        guard let open = SourceSpan.firstOffset(of: ["{"], in: characters, from: 0),
+              let close = SourceSpan.closingOffset(
                   from: open, in: characters, open: "{", close: "}")
         else { throw ScanError.unbalanced }
         return String(characters[0...close])

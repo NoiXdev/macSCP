@@ -144,11 +144,15 @@ struct SettingsViewDiagnosticLogGuardTests {
     /// `verbatim:`), so none of them count. Same pattern as
     /// `WhatsNewWiringGuardTests.hardcodedTextCallCount` (rewritten here
     /// rather than shared, since that one is private to its own suite).
-    private static let textLiteralRegex = try! NSRegularExpression(
-        pattern: #"Text\(\s*(?:verbatim:\s*)?""#)
+    /// Compiled through `CompiledPattern` rather than a `try!` stored
+    /// property: the corpus's cache compiles each distinct pattern once per
+    /// test process, and a pattern that does not compile throws where the
+    /// scan runs instead of trapping the whole target at load.
+    private static let textLiteralPattern = #"Text\(\s*(?:verbatim:\s*)?""#
 
-    private static func hardcodedTextCallCount(in source: String) -> Int {
-        Self.textLiteralRegex.matches(in: source, range: NSRange(source.startIndex..., in: source)).count
+    private static func hardcodedTextCallCount(in source: String) throws -> Int {
+        try CompiledPattern.regex(Self.textLiteralPattern)
+            .matches(in: source, range: NSRange(source.startIndex..., in: source)).count
     }
 
     /// Positive anchor for the negative below (CLAUDE.md, "a negative check
@@ -169,7 +173,7 @@ struct SettingsViewDiagnosticLogGuardTests {
 
     @Test func noTextCallInTheGeneralSectionTakesAHardcodedLiteral() throws {
         let withLiterals = try Self.sectionBodies().withLiterals
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             GeneralSettingsSection has a Text( call whose first argument is \
             a string literal instead of going through L10n.
             """)
@@ -452,7 +456,7 @@ struct SettingsViewDiagnosticLogGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 1, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 1, """
             the scanner failed to catch a Text( call given a literal string \
             directly
             """)
@@ -468,7 +472,7 @@ struct SettingsViewDiagnosticLogGuardTests {
             }
             """
         let withLiterals = try SwiftSource.blankingComments(source)
-        #expect(Self.hardcodedTextCallCount(in: withLiterals) == 0, """
+        #expect(try Self.hardcodedTextCallCount(in: withLiterals) == 0, """
             the scanner must not flag Text( calls wrapping L10n.string( or a \
             computed helper as hardcoded literals
             """)

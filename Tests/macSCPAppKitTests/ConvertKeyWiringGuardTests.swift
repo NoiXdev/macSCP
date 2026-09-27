@@ -667,7 +667,7 @@ struct ConvertKeyWiringGuardTests {
     /// `Text` built from a literal beside a correct lookup.
     @Test func theQuestionIsAConfirmationDialogBoundToTheRequest() throws {
         let source = try SourceCorpus.text(of: Self.sheetsFile)
-        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: source)
+        let dialog = try ConfirmationDialogScan.bound(to: "setRepointRequest", in: source)
         let violations = Self.dialogViolations(dialog)
         #expect(violations.isEmpty, """
             the login-set question's buttons, setter or presentation are wired wrong: \
@@ -1009,7 +1009,7 @@ struct ConvertKeyWiringGuardTests {
     }
 
     @Test func theDialogScannerReadsTheBoundDialogAndOnlyIt() throws {
-        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture())
+        let dialog = try ConfirmationDialogScan.bound(to: "setRepointRequest", in: Self.dialogFixture())
         #expect(Self.dialogViolations(dialog).isEmpty, "\(Self.dialogViolations(dialog))")
         #expect(dialog.arguments.contains("setRepointDialogArmed"))
         #expect(dialog.unlocalizedTexts.isEmpty, "\(dialog.unlocalizedTexts)")
@@ -1033,8 +1033,8 @@ struct ConvertKeyWiringGuardTests {
     /// over the whole buttons closure cannot see it; the per-button pairing
     /// must.
     @Test func theDialogScannerSeesSwappedActions() throws {
-        let dialog = try Self.dialog(
-            boundTo: "setRepointRequest",
+        let dialog = try ConfirmationDialogScan.bound(
+            to: "setRepointRequest",
             in: Self.dialogFixture(
                 confirmAction: "convertForThisAttemptOnly(request.tab, keyPath: request.keyPath)",
                 attemptAction: "repointLoginSet(request)"))
@@ -1053,8 +1053,8 @@ struct ConvertKeyWiringGuardTests {
             "Button(L10n.string(\"connection.convertKey.repoint.extra\", \"Extra\")) { dismissConnectFailure(request.tab) }",
           ])
     func theDialogScannerSeesAThirdButton(_ extraButton: String) throws {
-        let dialog = try Self.dialog(
-            boundTo: "setRepointRequest", in: Self.dialogFixture(extraButton: extraButton))
+        let dialog = try ConfirmationDialogScan.bound(
+            to: "setRepointRequest", in: Self.dialogFixture(extraButton: extraButton))
         #expect(dialog.buttonSpans.count == 3, "the scan did not read the third button")
         #expect(Self.dialogViolations(dialog).isEmpty == false, """
             a third button in the login-set question passed the pairing — the dialog's button \
@@ -1068,7 +1068,7 @@ struct ConvertKeyWiringGuardTests {
             "if !isPresented { setRepointRequest = nil; convertForThisAttemptOnly(t, keyPath: p) }",
           ])
     func theDialogScannerSeesAHandlerInTheSetter(_ setter: String) throws {
-        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(setter: setter))
+        let dialog = try ConfirmationDialogScan.bound(to: "setRepointRequest", in: Self.dialogFixture(setter: setter))
         #expect(Self.dialogViolations(dialog).isEmpty == false, """
             a handler run from the `isPresented:` setter passed — the setter must only clear state.
             """)
@@ -1077,7 +1077,7 @@ struct ConvertKeyWiringGuardTests {
     @Test("a text that is not a catalog lookup is reported",
           arguments: ["Text(\"Update the set?\")", "Text(request.set.name)"])
     func theDialogScannerSeesAnUnlocalizedText(_ message: String) throws {
-        let dialog = try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture(message: message))
+        let dialog = try ConfirmationDialogScan.bound(to: "setRepointRequest", in: Self.dialogFixture(message: message))
         #expect(dialog.unlocalizedTexts.count == 1, """
             a `Text` that does not open into `L10n.string(` passed the dialog scan — the \
             "catalog keys only" check over the source would pass over exactly that.
@@ -1086,7 +1086,7 @@ struct ConvertKeyWiringGuardTests {
 
     @Test func theDialogScannerFailsClosedWhenNoDialogIsBound() {
         #expect(throws: ConfirmationDialogScan.ScanError.self) {
-            try Self.dialog(boundTo: "setRepointRequest", in: Self.dialogFixture()
+            try ConfirmationDialogScan.bound(to: "setRepointRequest", in: Self.dialogFixture()
                 .replacingOccurrences(of: "setRepointRequest", with: "otherRequest"))
         }
     }
@@ -1503,13 +1503,5 @@ struct ConvertKeyWiringGuardTests {
             violations.append("the request does not reach the buttons through presenting:")
         }
         return violations
-    }
-
-    /// The login-set question: the first `.confirmationDialog(` whose
-    /// argument list names `state`, read by the target's one dialog scanner
-    /// (`ConfirmationDialogScan`, which `ToolbarTransferConfirmationGuardTests`
-    /// reads too).
-    private static func dialog(boundTo state: String, in source: String) throws -> ConfirmationDialogScan {
-        try ConfirmationDialogScan.bound(to: state, in: source)
     }
 }

@@ -145,8 +145,7 @@ struct ConnectionDiagnosticsJumpRigTests {
     /// rows there are `ok` because the walk went through the jump, not
     /// because `sshd2` answers from here.
     @Test func withoutItsJumpTheTargetDoesNotResolveFromHere() async throws {
-        var values = Self.targetValues(host: "sshd2", port: 2222)
-        values[SSHField.authKind] = StoredSession.AuthKind.password.rawValue
+        let values = Self.targetValues(host: "sshd2", port: 2222)
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: values, secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),

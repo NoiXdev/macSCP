@@ -226,12 +226,15 @@ struct CLISettingsCompletionGuardTests {
     /// the source rather than listed here (CLAUDE.md, "Guards that name
     /// what they watch", rule 2). Read on the literals-preserving view,
     /// since a catalogue key IS a literal.
-    private static let keyRegex = try! NSRegularExpression(
-        pattern: #""(settings\.cli\.completion\.[A-Za-z0-9.%@ ]*)""#)
+    /// Compiled through `CompiledPattern` rather than a `try!` stored
+    /// property: the corpus's cache compiles each distinct pattern once per
+    /// test process, and a pattern that does not compile throws where the
+    /// scan runs instead of trapping the whole target at load.
+    private static let keyPattern = #""(settings\.cli\.completion\.[A-Za-z0-9.%@ ]*)""#
 
     private static func keysReadBySection() throws -> Set<String> {
         let source = try sectionBodies().withLiterals
-        let matches = keyRegex.matches(
+        let matches = try CompiledPattern.regex(keyPattern).matches(
             in: source, range: NSRange(source.startIndex..., in: source))
         return Set(matches.compactMap { match in
             Range(match.range(at: 1), in: source).map { String(source[$0]) }
@@ -483,7 +486,7 @@ struct CLISettingsCompletionGuardTests {
             """
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: Self.sectionDeclaration, in: try SwiftSource.blankingComments(source))
-        let matches = Self.keyRegex.matches(
+        let matches = try CompiledPattern.regex(Self.keyPattern).matches(
             in: body, range: NSRange(body.startIndex..., in: body))
         let keys = Set(matches.compactMap { Range($0.range(at: 1), in: body).map { String(body[$0]) } })
         #expect(keys == [
