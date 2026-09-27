@@ -903,6 +903,8 @@ extension ContentView {
                             viewModel: tab.connectionViewModel,
                             sessionList: sessionListViewModel,
                             globalTerminalType: settingsStore.terminalType,
+                            managedKeyStore: managedKeyStore,
+                            secretStore: secretStore,
                             resolveLoginSetForSubmit: {
                                 let form = tab.connectionViewModel
                                 let refusals = sessionListViewModel.prepareForSubmit(form: form)

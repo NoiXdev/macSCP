@@ -18,6 +18,26 @@ struct ConnectionFormView: View {
     /// currently means. A value rather than the store: the form reads
     /// nothing else from Settings.
     let globalTerminalType: TerminalType
+    /// The window's own managed-key store and secret store — the same two
+    /// instances `ContentView.init` resolves and `fillForm`, the two save
+    /// paths and the key-import sheet already read (`ContentView.swift`,
+    /// the `secretStore`/`managedKeyStore` properties).
+    ///
+    /// Injected rather than built here (deferred minor of 2026-09-19,
+    /// cleared 2026-09-27): the Connect button below and the managed-key
+    /// picker's `managedKeyPath(for:)` each built their own
+    /// `ManagedKeyStore(directory: SessionStore.defaultDirectory)`, and the
+    /// button a `KeychainSecretStore()` beside it — so a test that points
+    /// the window at a temporary directory and an in-memory secret store
+    /// still had this form reading the running user's real
+    /// `managed_keys.json` and real Keychain. Both are counted: two
+    /// constructions in this file before this change, none after.
+    ///
+    /// Not defaulted, for the reason `SessionListViewModel.init` no longer
+    /// defaults any of its stores: a default is how the seam goes half
+    /// missing again at the next call site.
+    let managedKeyStore: ManagedKeyStore
+    let secretStore: any SecretStore
     /// Called right before `connect()`/`validateForEditSave()` whenever the
     /// form is in Set mode (M10b/T3) for the TARGET login, or the jump is
     /// enabled and ALSO in Set mode (M10c/T3): fills username/authChoice/
@@ -590,8 +610,7 @@ struct ConnectionFormView: View {
                             // `managed_keys.json` hid the key (Task 6 fix round
                             // 1 of the review follow-ups of 2026-09-18).
                             viewModel.fillManagedKeyPassphrase(
-                                store: ManagedKeyStore(directory: SessionStore.defaultDirectory),
-                                secrets: KeychainSecretStore())
+                                store: managedKeyStore, secrets: secretStore)
                             // Captured HERE, synchronously, before dialing even
                             // starts — see `currentReconnectAttempt`'s own doc
                             // comment for why this timing (not "right before
@@ -719,7 +738,7 @@ struct ConnectionFormView: View {
                   let key = ManagedKeysLoad.connectableKeys()
                       .first(where: { $0.id.uuidString == newID })
             else { return }
-            viewModel.keyPath = Self.managedKeyPath(for: key)
+            viewModel.keyPath = managedKeyPath(for: key)
         }
     }
 
@@ -1264,9 +1283,15 @@ private extension ConnectionFormView {
     /// key" — for a key whose stored `fileName` does not address a file
     /// inside the key directory; `ManagedKeysLoad.connectableKeys` already
     /// keeps those out of the picker.
-    static func managedKeyPath(for key: ManagedKey) -> String {
-        ManagedKeyStore(directory: SessionStore.defaultDirectory)
-            .privateKeyURL(for: key)?.path(percentEncoded: false) ?? ""
+    ///
+    /// An instance method over the injected `managedKeyStore`, not a
+    /// `static` one over a store built here: the path it produces is
+    /// written into `keyPath` and dialled, so a window pointed at a
+    /// temporary key directory must not be handed a path out of the real
+    /// one. `LoginSetsSheet` keeps its own `static` twin, which has no
+    /// window to take a store from.
+    func managedKeyPath(for key: ManagedKey) -> String {
+        managedKeyStore.privateKeyURL(for: key)?.path(percentEncoded: false) ?? ""
     }
 
     /// The first ~12 characters after the `SHA256:` prefix, for a compact
