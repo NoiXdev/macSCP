@@ -320,6 +320,39 @@ struct SnippetDryRunEntranceGuardTests {
         }
     }
 
+    /// The counterpart, and the narrowing of 2026-09-27: a marker in PLAIN
+    /// literal text — a sentence about a call, in an error message or a
+    /// log line — is stepped over, and the real call after it in the same
+    /// file is still read. Until this narrowing the whole file was refused
+    /// for it.
+    @Test func theScanReadsPastAMarkerInPlainLiteralText() throws {
+        let source = """
+            struct Fake {
+                var note: String { "this one used to call L10n.string( and stopped" }
+                var real: String { L10n.string("snippets.real", "R") }
+            }
+            """
+        #expect(try SnippetSourceScan.localizationKeys(in: source) == ["snippets.real"])
+    }
+
+    /// And the direction the narrowing does NOT take: a marker in the prose
+    /// of a literal that ALSO carries an interpolation is still refused.
+    /// The walk that tells the two apart reads backwards to the first
+    /// character that is real code, so it cannot see which side of the
+    /// interpolation the marker is on — and refusing is the fail-closed
+    /// side of that, the side the whole literal used to get.
+    @Test func aMarkerAfterAnInterpolationInTheSameLiteralIsStillRefused() throws {
+        let source = """
+            struct Fake {
+                let count = 2
+                var note: String { "\\(count) of them call L10n.string( somewhere" }
+            }
+            """
+        #expect(throws: SnippetSourceScan.MarkerInsideALiteral.self) {
+            try SnippetSourceScan.localizationKeys(in: source)
+        }
+    }
+
     // MARK: - Reading the tree
 
     private static func appSourceFiles() throws -> [URL] {
@@ -391,8 +424,16 @@ enum SnippetSourceScan {
     /// addresses the same character in the other.
     struct ViewsDisagree: Error {}
 
-    /// A marker sits inside a string literal: plain literal text, or an
-    /// interpolation. Thrown rather than read, naming the site.
+    /// A marker sits inside one of a string literal's INTERPOLATIONS.
+    /// Thrown rather than read, naming the site.
+    ///
+    /// Until 2026-09-27 this was thrown for a marker anywhere inside a
+    /// literal, prose included — narrower than the hazard, which is that
+    /// the strict view blanks an interpolation along with the literal that
+    /// carries it, so a balance started there runs past the literal's end
+    /// and swallows the calls after it. A marker sitting in plain literal
+    /// text is not a call at all: skipping it loses nothing, and refusing
+    /// the file over it would stop a scan for a reason that is a sentence.
     struct MarkerInsideALiteral: Error, CustomStringConvertible {
         let marker: String
         let line: Int
@@ -412,17 +453,25 @@ enum SnippetSourceScan {
     /// the balance is counted in the strict view, so parentheses inside
     /// string literals do not count.
     ///
-    /// A marker found inside a string literal throws `MarkerInsideALiteral`
-    /// (task 9 fix round 1). The strict view blanks a literal's whole range,
-    /// interpolations included, so a balance started there runs past the
-    /// literal's end and `i = j` skips every later marker in it — two
-    /// interpolated `L10n.string(` calls in one literal read as one key.
-    /// Refusing is chosen over a literal-aware walk because that walk would
-    /// be a second hand-rolled Swift literal parser beside `SwiftSource`,
-    /// the duplication this scanner was converged away from, and because no
-    /// App source carries such a marker today (`git grep -F
-    /// '\(L10n.string(' -- Sources`: 0, 2026-09-19) — a refusal costs
-    /// nothing until one appears, and then it names the site.
+    /// A marker found inside one of a literal's INTERPOLATIONS throws
+    /// `MarkerInsideALiteral` (task 9 fix round 1). The strict view blanks
+    /// a literal's whole range, interpolations included, so a balance
+    /// started there runs past the literal's end and `i = j` skips every
+    /// later marker in it — two interpolated `L10n.string(` calls in one
+    /// literal read as one key. Refusing is chosen over a literal-aware
+    /// walk because that walk would be a second hand-rolled Swift literal
+    /// parser beside `SwiftSource`, the duplication this scanner was
+    /// converged away from, and because no App source carries such a marker
+    /// today (`git grep -F '\(L10n.string(' -- Sources`: 0, 2026-09-19) —
+    /// a refusal costs nothing until one appears, and then it names the
+    /// site.
+    ///
+    /// A marker in PLAIN literal text is skipped instead (2026-09-27,
+    /// backlog: "The review-follow-ups plan's deferred minors: guards",
+    /// item 1). It is a sentence about a call, not a call, so there is
+    /// nothing for the balance to lose — and refusing over it would take a
+    /// whole file out of the scan the first time someone wrote the marker
+    /// into an error message.
     static func calls(to marker: String, in source: String) throws -> [String] {
         try calls(
             to: marker, text: try SwiftSource.blankingComments(source),
@@ -447,8 +496,15 @@ enum SnippetSourceScan {
                 continue
             }
             // Blank in the strict view but not in the comment-only one:
-            // the marker is inside a literal, not code.
+            // the marker is inside a literal, not code. An interpolated one
+            // is refused, because the balance cannot be counted for it;
+            // one in plain literal text is stepped over, because it is not
+            // a call.
             guard code[i] == text[i] else {
+                guard interpolated(at: i, text: text, code: code) else {
+                    i += 1
+                    continue
+                }
                 let line = text[..<i].filter { $0 == "\n" }.count + 1
                 throw MarkerInsideALiteral(marker: marker, line: line)
             }
@@ -466,6 +522,36 @@ enum SnippetSourceScan {
             i = j
         }
         return results
+    }
+
+    /// Whether the character at `offset` — already known to be blanked in
+    /// the strict view and intact in the comment-only one, so inside a
+    /// string literal — sits inside one of that literal's interpolations.
+    ///
+    /// Walks back over the characters the strict view blanked and answers
+    /// whether a `\(` stands among them. A character is blanked when the
+    /// two views disagree about it, or when it is whitespace: whitespace
+    /// blanks to itself, so the views agree about it either way, and
+    /// stepping over it costs nothing because `\(` is not whitespace. The
+    /// walk therefore stops at the first character that is real code, which
+    /// is at or before the literal's opening quote.
+    ///
+    /// `\(` cannot be written outside a literal in Swift — a backslash
+    /// begins an escape inside one and a key path (`\.name`, `\Type.name`)
+    /// everywhere else — so finding one means the walk is still inside the
+    /// literal that carries the marker.
+    ///
+    /// It answers `true` for a marker sitting in the PROSE that follows an
+    /// interpolation in the same literal (`"\(x) … L10n.string( …"`). That
+    /// is the fail-closed direction: such a file is refused rather than
+    /// read, which is what the whole literal used to get.
+    private static func interpolated(at offset: Int, text: [Character], code: [Character]) -> Bool {
+        var cursor = offset - 1
+        while cursor >= 0, code[cursor] == text[cursor] ? text[cursor].isWhitespace : true {
+            if text[cursor] == "(", cursor > 0, text[cursor - 1] == "\\" { return true }
+            cursor -= 1
+        }
+        return false
     }
 
     /// The keys of every `L10n.string("…", …)` call in `source`, in order
