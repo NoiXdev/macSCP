@@ -126,8 +126,10 @@ plan's base `112dbc97`, and one of the three fixes does too. Counted
   cases came back after **20.680103625 s** and
   **20.671590291999998 s** on run 33727757421 (`64854401`). Their
   deadlines are not the same:
-  `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut` uses
-  `stepTimeout: .milliseconds(200)` against a 30 s sleep, and
+  `aStepBeyondItsTimeoutIsSettledByItsDeadline` (named
+  `aStepThatOverrunsTheTimeoutIsReportedAsTimedOut` until 2026-09-27,
+  when the old name stopped being true — see the 2026-09-27 update
+  below) uses `stepTimeout: .milliseconds(200)` against a 30 s sleep, and
   `aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline` uses
   `stepTimeout: .seconds(1)` against a 12 s uncancellable probe. The
   outcome each asserted (`.timedOut`, `stillRunning`) was already
@@ -146,7 +148,7 @@ plan's base `112dbc97`, and one of the three fixes does too. Counted
   the bound is asserted on) instead of on the clock.
 
 **2026-09-19 update** (`938609d8`): the fake behind
-`aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`, described above as
+`aStepBeyondItsTimeoutIsSettledByItsDeadline`, described above as
 sleeping 30 s, no longer does. CI run 35405472152 (three cores) went red
 in both attempts — `(dial.outcome → .ok) == .timedOut`, after 87.670 s
 and 87.253 s — because the 30 s sleep was itself a ceiling one level
@@ -167,6 +169,14 @@ red with **one issue attributed to no test at all** — its 10623-line job
 log carries no `✘ Test <name> … failed` line, only the run summary. It
 is evidence that the log loses verdict lines under interleaved output
 (`docs/BACKLOG.md`, "CI logs lose lines"), not evidence of a ceiling.
+
+**2026-09-27 update**: the case named twice above was renamed to
+`aStepBeyondItsTimeoutIsSettledByItsDeadline`. The old name,
+`aStepThatOverrunsTheTimeoutIsReportedAsTimedOut`, had stopped being
+true of it: a step can now also end in `notStarted`, when a saturated
+cooperative pool never gave the probe's body a thread, and a body that
+never began did not overrun anything. The case asserts that the deadline
+settled the row, which is the property it always existed for.
 
 Rule: assert the outcome and the ordering a bound is supposed to
 produce, not how long producing it took. A floor (`elapsed >= …`, "this
