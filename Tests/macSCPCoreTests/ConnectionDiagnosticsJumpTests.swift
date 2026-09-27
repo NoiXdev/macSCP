@@ -897,23 +897,39 @@ struct ConnectionDiagnosticsJumpTests {
     /// `tool == .getent`, the trace's cut is offered, `readTrace(…, by:
     /// .getent, …)` answers nil, and the row reads `timedOut` — the sentence
     /// about the far end this whole change exists to remove.
-    @Test func anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout()
-        async throws
-    {
+    ///
+    /// **Step one does NOT go through a probe, and the first version of this
+    /// case was wrong to make it.** It raced `resolveOnJump` through
+    /// production's real launcher against a 5 s budget and then asserted
+    /// `.ok` — a real probe against a short step budget asserting SUCCESS,
+    /// which is precisely the shape this plan forbids and which three
+    /// recorded cases are left untouched for. Measured on a ten-core
+    /// machine: red in 2 of 9 whole-suite runs, `resolved.outcome →
+    /// .notStarted`, the very outcome this task added. The three-core runner
+    /// makes it likelier. Step one is what fills a transcript, and filling
+    /// one needs no deadline at all, so it calls the step's own `measure`
+    /// directly — the way `aStepsCommandsWriteIntoItsTranscript` already
+    /// does. Step two keeps its 200 ms, because `HeldLaunch` holds its body
+    /// and nothing there races a clock: the deadline MUST win, which is the
+    /// one direction a slow machine cannot break.
+    @Test(.timeLimit(.minutes(1)))
+    func anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout() async throws {
         let hold = HeldLaunch()
         defer { hold.open() }
         let rig = JumpRig()
-        let walk = Self.stepContext(rig: rig, budget: .seconds(5))
+        let walk = Self.stepContext(rig: rig, budget: .seconds(600))
 
-        // Step one, run the way the walk runs it — its own context, its own
-        // transcript — so the rig really does execute a command.
-        let resolved = await ConnectionDiagnostics.race(
-            .resolveOnJump, walk.forStep(budget: .seconds(5)),
-            timer: DiagnosticStepTimer(
+        // Step one, against a context built the way the walk builds one
+        // (`forStep`), so the transcript it writes into is a step's own.
+        let resolveContext = walk.forStep(budget: .seconds(600))
+        let resolved = await DiagnosticJumpStep.resolveOnJump.measure(
+            resolveContext,
+            DiagnosticStepTimer(
                 id: DiagnosticStepID.targetResolveOnJump,
                 titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetResolveOnJump)))
 
-        // Step two, held: the pool never gives its body a thread.
+        // Step two, through production's seam and held: the pool never gives
+        // its body a thread.
         let trace = await ConnectionDiagnostics.race(
             .traceFromJump, walk.forStep(budget: .milliseconds(200)),
             timer: DiagnosticStepTimer(
@@ -921,9 +937,13 @@ struct ConnectionDiagnosticsJumpTests {
                 titleKey: DiagnosticStepID.titleKey(for: DiagnosticStepID.targetTraceFromJump)),
             launch: hold.launch)
 
-        // The positive: step one really ran a command, so this case is the
-        // scenario it claims to be and not two steps that both did nothing.
+        // The positives: step one really ran a command AND left its tool in
+        // its own transcript, so this case is the scenario it claims to be
+        // and not two steps that both did nothing. The second is the one the
+        // claim below actually rests on — a shared transcript is only
+        // dangerous because a tool stays in it.
         #expect(resolved.outcome == .ok, "\(resolved.outcome.label)")
+        #expect(resolveContext.transcript.current?.tool == .getent)
         #expect(rig.events.contains { $0.hasPrefix("exec getent") }, "\(rig.events)")
         #expect(
             trace.outcome == .notStarted(DiagnosticReason.probeNotStarted),

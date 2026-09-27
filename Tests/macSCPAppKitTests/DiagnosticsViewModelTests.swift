@@ -886,6 +886,16 @@ struct DiagnosticsViewModelTests {
     /// `notStarted` landed and this case went stale in silence — exactly
     /// what `CLIMatrix.outcomeSamples` in the Core suite was already shaped
     /// to prevent, and the shape it now borrows.
+    ///
+    /// **What it guarantees is a VISIT, not a sample.** Widening the
+    /// `case` list below compiles and leaves the array short, so the switch
+    /// forces the next author to open this file and read this comment — it
+    /// does not force them to add the outcome above. `CLIMatrix
+    /// .outcomeSamples` has exactly the same property and the project
+    /// already endorses it, so this is the shape on purpose rather than a
+    /// gap in it; what makes the visit enough is that the count is derived
+    /// from `outcomes` rather than written down, so a sample left out is a
+    /// deliberate act and not an arithmetic slip.
     @Test func everyOutcomeHasItsOwnBadge() {
         let outcomes: [DiagnosticOutcome] = [
             .ok, .failed("refused"), .timedOut, .unavailable("no IPv6 route"),
