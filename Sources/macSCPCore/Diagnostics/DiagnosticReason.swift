@@ -54,8 +54,26 @@ public enum DiagnosticReason {
     /// `DialSupport.missingSecretReason(_:secrets:)`), and says
     /// `jumpManagedKeyStoreUnreadable` below for the same fact about its own
     /// key.
+    ///
+    /// Names the store's `~`-relative path, not its resolved URL (2026-09-27,
+    /// fix round 1: the path reached the four App catalogue entries and
+    /// `TunnelFailureKind.sentence` and stopped there, so
+    /// `macscp-cli diagnose` — which prints THIS constant, as text and as
+    /// the JSON `reason` — said less than the panel about the same store).
+    /// A resolved path would carry the running account's short name into
+    /// the diagnostic log, that stderr and that JSON;
+    /// `ManagedKeyStoreUnreadableTests
+    /// .everySentenceForThisFactNamesTheStorePathAndNoResolvedOne` holds
+    /// every sentence for this fact to both halves of that.
+    ///
+    /// ONE literal, however long it runs: `ConnectionDiagnosticsJumpTests
+    /// .aJumpSecretSentenceIsOneLiteralWithNothingMeasuredInIt` reads this
+    /// declaration and its jump twin as `static let <name> = "…"`, and a
+    /// `+` chain — even of two compile-time literals — is a shape that scan
+    /// refuses, because the violation it exists for is a sentence with
+    /// something MEASURED joined onto it.
     static let managedKeyStoreUnreadable =
-        "the managed key store (managed_keys.json) could not be read, so the key's passphrase was not looked up"
+        "the managed key store (~/Library/Application Support/macSCP/managed_keys.json) could not be read, so the key's passphrase was not looked up"
     /// The S3 dial has no endpoint URL to probe.
     static let noEndpoint = "this session names no endpoint"
     /// The WebDAV dial has no base URL to probe.
@@ -85,8 +103,16 @@ public enum DiagnosticReason {
     ///
     /// Names the file and nothing else: not the key, not its path, not a line
     /// of what the file holds. The fact is that it could not be read.
+    ///
+    /// Carries the same `~`-relative store path as `managedKeyStoreUnreadable`
+    /// above, for the reason its own comment gives and for one more: a
+    /// diagnosis can show the session's row and the jump's row for the
+    /// IDENTICAL store, and a jump row that only said `managed_keys.json`
+    /// under a session row that spelled the whole path would send the
+    /// reader looking for a file the row above had already located.
+    /// One literal, for the reason `managedKeyStoreUnreadable` above gives.
     static let jumpManagedKeyStoreUnreadable =
-        "the managed key store (managed_keys.json) could not be read, so the jump host's key passphrase was not looked up"
+        "the managed key store (~/Library/Application Support/macSCP/managed_keys.json) could not be read, so the jump host's key passphrase was not looked up"
     /// `target.tcpViaJump`'s channel open was refused with reason code 1: the
     /// jump host does not forward connections for this login at all
     /// (`AllowTcpForwarding`, a `ForceCommand`, a restricted account).

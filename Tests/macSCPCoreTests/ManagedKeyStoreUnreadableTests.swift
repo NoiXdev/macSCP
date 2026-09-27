@@ -230,6 +230,44 @@ struct ManagedKeyStoreUnreadableTests {
         #expect(step.outcome == .skipped(DiagnosticReason.noSecret))
     }
 
+    // MARK: - One fact, one spelling of where the store is
+
+    /// The sentences this fact reaches outside the App's own catalogue, and
+    /// the one place they all say where to look.
+    ///
+    /// Added in fix round 1 of 2026-09-27: the path was written into the
+    /// four localized App catalogue entries and into
+    /// `TunnelFailureKind.sentence`, and the two `DiagnosticReason`
+    /// constants were missed. The GUI's diagnostics row is localized from
+    /// `DiagnosticReason.key(for:)`, but `macscp-cli diagnose` prints the
+    /// CONSTANT — as its text output and as the JSON `reason` field — so
+    /// for one finding the panel said where the file is and the command
+    /// line did not. The jump's counterpart is here for the same reason one
+    /// step further: a diagnosis can show the session's row and the jump's
+    /// row for the identical store, and one of them naming the path while
+    /// the other does not is worse than neither doing so.
+    ///
+    /// The negative beside the positives: none of these carries a RESOLVED
+    /// path. `SessionStore.defaultDirectory` resolves under the running
+    /// account's home directory, and every sentence here reaches the
+    /// diagnostic log, the command line's stderr and its JSON.
+    @Test func everySentenceForThisFactNamesTheStorePathAndNoResolvedOne() {
+        let path = "~/Library/Application Support/macSCP/managed_keys.json"
+        let sentences = [
+            TunnelFailureKind.managedKeyStoreUnreadable.sentence,
+            DiagnosticReason.managedKeyStoreUnreadable,
+            DiagnosticReason.jumpManagedKeyStoreUnreadable,
+            CoreL10n.string("core.connect.managedKeyStoreUnreadable"),
+        ]
+        for sentence in sentences {
+            #expect(sentence.contains(path), "\(sentence)")
+        }
+
+        let resolved = SessionStore.defaultDirectory.path(percentEncoded: false)
+        let naming = sentences.filter { $0.contains(resolved) }
+        #expect(naming.isEmpty, "\(naming)")
+    }
+
     // MARK: - Helpers
 
     private static func renamed(_ error: SSHKeyError, in sources: [any SecretSource]) -> SSHKeyError? {
