@@ -1194,6 +1194,7 @@
 "diagnostics.title" = "Diagnostyka połączenia";
 "diagnostics.viaJump" = "przez host pośredniczący %@";
 "diagnostics.idle" = "Nic jeszcze nie zostało zmierzone. Sprawdzenie rozwiązuje nazwę hosta, próbuje nawiązać połączenie, wysyła ping, łączy się tak jak zrobiłoby to to połączenie i śledzi trasę.";
+"diagnostics.idle.viaJump" = "Nic jeszcze nie zostało zmierzone. Sprawdzenie mierzy najpierw hosta pośredniczącego — rozwiązuje jego nazwę, próbuje nawiązać połączenie, wysyła ping, łączy się z nim i śledzi trasę — a potem cel przez niego: kanał, rozwiązanie nazwy i ping na hoście pośredniczącym, połączenie takie, jakie zrobiłoby to połączenie, oraz trasę stamtąd.";
 "diagnostics.running" = "Trwa pomiar…";
 "diagnostics.running.step" = "%@ · trwa pomiar…";
 "diagnostics.run" = "Uruchom sprawdzenie";

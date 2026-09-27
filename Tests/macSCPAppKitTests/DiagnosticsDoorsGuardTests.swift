@@ -1080,6 +1080,34 @@ struct DiagnosticsDoorsGuardTests {
             """)
     }
 
+    /// A connection with a jump host is told about the walk it actually
+    /// gets (`docs/BACKLOG.md`, "The jump plan's deferred minors:
+    /// diagnostics through the jump", item 3).
+    ///
+    /// The idle sentence described one walk — resolve, connect, ping, dial,
+    /// trace — for both shapes, and a jump connection makes a different one:
+    /// the bastion first, from this Mac, and the target through it. So the
+    /// region draws one of TWO keys, chosen on `model.jumpEndpoint`, the same
+    /// fact the header line above it reads.
+    ///
+    /// Every check here is a positive one — the keys are there, the branch is
+    /// there, and it is in the CODE rather than in a comment quoting it
+    /// (CLAUDE.md, "Source-scanning guards read comments too"). The four
+    /// catalogues are held to both keys by
+    /// `everyKeyTheDoorsAndThePanelUseExistsInAllFourCatalogs`, which reads
+    /// the same file.
+    @Test func theIdleSentenceIsChosenByWhetherThisConnectionHasAJump() throws {
+        let keys = Self.lookedUpKeys(in: try Self.idleSentences(view: .literals)).sorted()
+        #expect(keys == ["diagnostics.idle", "diagnostics.idle.viaJump"], """
+            the idle region draws two sentences, one per shape of the walk — found \(keys)
+            """)
+        let code = try Self.idleSentences()
+        #expect(code.contains("model.jumpEndpoint"), """
+            …and chooses between them on the view model's jumpEndpoint, in code and not in a \
+            comment about it: \(code)
+            """)
+    }
+
     /// The catalogue-key half, read on the comments-only view so the literals
     /// survive: every key the panel, the view model and the doors' controls
     /// look up exists in all four App catalogs, and every fixed reason Core
@@ -1585,6 +1613,35 @@ struct DiagnosticsDoorsGuardTests {
                 """)
         }
         return asked[only]
+    }
+
+    /// The panel's idle region: the innermost `VStack` that draws the
+    /// sentence shown before anything has been measured.
+    ///
+    /// Found the way `measuringLine` finds its own — every `VStack` body of
+    /// the file, in both views with their counts compared, so a `VStack(` in
+    /// a comment cannot move the region. Chosen by the catalogue key, which
+    /// only the literal view carries, and the SHORTEST of the bodies that
+    /// carry it: an enclosing `VStack` holds the key too, and it is the
+    /// innermost one that is this region.
+    static func idleSentences(view: SourceView = .strict) throws -> String {
+        let strict = try bodies(after: "VStack", in: strictSource(of: panelPath))
+        let literal = bodies(after: "VStack", in: try literalSource(of: panelPath))
+        guard strict.count == literal.count else {
+            throw ScanError.spanNotFound("""
+                the two views of \(panelPath) disagree on how many VStacks it has — \
+                \(strict.count) against \(literal.count)
+                """)
+        }
+        let holding = literal.indices
+            .filter { literal[$0].contains("\"diagnostics.idle\"") }
+            .sorted { literal[$0].count < literal[$1].count }
+        guard let innermost = holding.first else {
+            throw ScanError.spanNotFound("""
+                no VStack in \(panelPath) draws "diagnostics.idle" — the idle region moved
+                """)
+        }
+        return view == .strict ? strict[innermost] : literal[innermost]
     }
 
     static func strictSource(of relativePath: String) throws -> String {

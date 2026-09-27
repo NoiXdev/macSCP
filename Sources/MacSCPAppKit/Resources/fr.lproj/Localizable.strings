@@ -1195,6 +1195,7 @@
 "diagnostics.title" = "Diagnostic de connexion";
 "diagnostics.viaJump" = "via l’hôte relais %@";
 "diagnostics.idle" = "Rien n’a encore été mesuré. La vérification résout l’hôte, tente une connexion, envoie un ping, se connecte comme le ferait cette connexion et retrace l’itinéraire.";
+"diagnostics.idle.viaJump" = "Rien n’a encore été mesuré. La vérification mesure d’abord l’hôte relais — elle le résout, tente une connexion, envoie un ping, s’y connecte et retrace l’itinéraire — puis la cible à travers lui : un canal, une résolution de nom et un ping depuis l’hôte relais, une connexion comme le ferait cette connexion, et un itinéraire depuis là.";
 "diagnostics.running" = "Mesure en cours…";
 "diagnostics.running.step" = "%@ · mesure en cours…";
 "diagnostics.run" = "Lancer la vérification";

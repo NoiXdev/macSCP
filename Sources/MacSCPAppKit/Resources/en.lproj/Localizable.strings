@@ -1199,6 +1199,7 @@
 "diagnostics.title" = "Connection diagnostics";
 "diagnostics.viaJump" = "through the jump host %@";
 "diagnostics.idle" = "Nothing has been measured yet. The check resolves the host, tries a connection, sends a ping, dials the way this connection would, and traces the route.";
+"diagnostics.idle.viaJump" = "Nothing has been measured yet. The check measures the jump host first — it resolves it, tries a connection, sends a ping, dials it and traces the route — and then the target through it: a channel, a name lookup and a ping on the jump host, the dial this connection would make, and a trace from there.";
 "diagnostics.running" = "Measuring…";
 "diagnostics.running.step" = "%@ — measuring…";
 "diagnostics.run" = "Run check";

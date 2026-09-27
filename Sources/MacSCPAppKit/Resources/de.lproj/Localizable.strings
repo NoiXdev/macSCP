@@ -1192,6 +1192,7 @@
 "diagnostics.title" = "Verbindungsdiagnose";
 "diagnostics.viaJump" = "über den Jump-Host %@";
 "diagnostics.idle" = "Es wurde noch nichts gemessen. Die Prüfung löst den Host auf, versucht eine Verbindung, schickt einen Ping, wählt so, wie diese Verbindung es täte, und verfolgt die Route.";
+"diagnostics.idle.viaJump" = "Es wurde noch nichts gemessen. Die Prüfung misst zuerst den Jump-Host — sie löst ihn auf, versucht eine Verbindung, schickt einen Ping, wählt ihn an und verfolgt die Route — und dann das Ziel durch ihn hindurch: einen Kanal, eine Namensauflösung und einen Ping auf dem Jump-Host, die Wahl, die diese Verbindung träfe, und eine Route von dort.";
 "diagnostics.running" = "Messung läuft…";
 "diagnostics.running.step" = "%@ · Prüfung läuft…";
 "diagnostics.run" = "Prüfung starten";

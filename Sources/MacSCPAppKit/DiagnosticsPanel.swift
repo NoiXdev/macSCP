@@ -199,14 +199,32 @@ struct DiagnosticsPanel: View {
             measuring
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } else {
+            // Two sentences, one per shape the walk has. A connection with a
+            // jump host is not checked the way a direct one is — the bastion
+            // is measured first, from this Mac, and the target through it —
+            // and the direct sentence described a walk such a connection
+            // never makes (`docs/BACKLOG.md`, "The jump plan's deferred
+            // minors: diagnostics through the jump"). `jumpEndpoint` is the
+            // same fact the header reads, and it is known before the first
+            // probe runs.
             VStack(alignment: .leading, spacing: 8) {
-                L10n.text(
-                    "diagnostics.idle",
-                    """
-                    Nothing has been measured yet. The check resolves the host, tries a \
-                    connection, sends a ping, dials the way this connection would, and \
-                    traces the route.
-                    """)
+                (model.jumpEndpoint == nil
+                    ? L10n.text(
+                        "diagnostics.idle",
+                        """
+                        Nothing has been measured yet. The check resolves the host, tries a \
+                        connection, sends a ping, dials the way this connection would, and \
+                        traces the route.
+                        """)
+                    : L10n.text(
+                        "diagnostics.idle.viaJump",
+                        """
+                        Nothing has been measured yet. The check measures the jump host \
+                        first — it resolves it, tries a connection, sends a ping, dials it \
+                        and traces the route — and then the target through it: a channel, a \
+                        name lookup and a ping on the jump host, the dial this connection \
+                        would make, and a trace from there.
+                        """))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
