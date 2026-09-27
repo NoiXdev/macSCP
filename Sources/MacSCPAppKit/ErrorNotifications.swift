@@ -108,6 +108,83 @@ enum ErrorNotificationPlan {
         }
     }
 
+    /// What a post does while the app's very first authorization request is
+    /// still unanswered (deferred minor of 2026-09-17, cleared 2026-09-27).
+    ///
+    /// Before this, only the FIRST post of a launch waited for the answer;
+    /// every post after it was handed to the notification center straight
+    /// away, while the system's permission alert was still on screen — and
+    /// macOS drops what is not allowed yet, so such a post was never shown
+    /// and never came back. The window is not hypothetical: one dropped
+    /// connection can raise both a "transfer failed" and a "connection
+    /// lost" notification (`ContentView.notifyTransferFailures` says why
+    /// that pair is deliberate), so the first drop after a fresh install is
+    /// exactly the case that loses one of the two.
+    ///
+    /// So a post made before the answer is HELD and delivered once the
+    /// answer arrives, oldest first. Whether macOS then shows it stays
+    /// macOS's decision: a denial drops a held post exactly as it drops
+    /// every later one, which is why whether authorization was GRANTED is
+    /// not a question this gate asks.
+    ///
+    /// Plain values, no framework: `ErrorNotificationTests` drives it as a
+    /// table, which is the only way this decision can be tested at all —
+    /// `UserNotificationCenterPoster` itself needs an app bundle to run.
+    struct FirstAuthorizationGate: Equatable {
+        /// What the caller must do with the text it just handed over.
+        enum Outcome: Equatable {
+            /// Ask macOS for authorization now. The text is held; the
+            /// answer hands it back.
+            case requestAuthorization
+            /// Held until the answer arrives.
+            case held
+            /// The answer is in: post it now.
+            case deliver
+            /// Not held: `heldLimit` texts are already waiting.
+            case dropped
+        }
+
+        /// How many posts one unanswered request holds. Small on purpose —
+        /// the alert is answered in seconds, and a longer burst behind it
+        /// says something else is wrong. The OLDEST are kept, because the
+        /// event that opened the episode is the one worth telling the user
+        /// about.
+        static let heldLimit = 8
+
+        private enum State: Equatable {
+            case notAsked
+            case pending
+            case answered
+        }
+
+        private var state: State = .notAsked
+        /// Waiting for the answer, oldest first. Empty once it arrives.
+        private(set) var held: [ErrorNotificationText] = []
+
+        mutating func take(_ text: ErrorNotificationText) -> Outcome {
+            switch state {
+            case .answered:
+                return .deliver
+            case .notAsked:
+                state = .pending
+                held.append(text)
+                return .requestAuthorization
+            case .pending:
+                guard held.count < Self.heldLimit else { return .dropped }
+                held.append(text)
+                return .held
+            }
+        }
+
+        /// The request was answered. Returns everything held, oldest first,
+        /// and holds nothing afterwards — every later post is `.deliver`.
+        mutating func answered() -> [ErrorNotificationText] {
+            state = .answered
+            defer { held.removeAll() }
+            return held
+        }
+    }
+
     /// The notification's text: the event's catalogue title, and a body
     /// that is the session's or the forwarding's NAME and nothing else — no
     /// host, no path, no reason sentence, no secret. A connection that is
@@ -196,13 +273,15 @@ final class SilentNotificationPoster: UserNotificationPosting {
 /// was not measured.
 ///
 /// **Authorization is asked at the first post, not at launch.** The first
-/// post requests it and delivers once it is granted; later posts are added
-/// directly, and macOS drops them while the user has not allowed them. A
-/// post made while the first request is still unanswered is added before
-/// the answer, and is not shown if the answer is still pending.
+/// post requests it; every post made before the answer arrives is held and
+/// delivered once it does, oldest first
+/// (`ErrorNotificationPlan.FirstAuthorizationGate`, which carries the
+/// reasoning and is where that decision is tested). Once the answer is in,
+/// a post is added directly, and macOS drops it while the user has not
+/// allowed them.
 @MainActor
 final class UserNotificationCenterPoster: UserNotificationPosting {
-    private var hasRequestedAuthorization = false
+    private var gate = ErrorNotificationPlan.FirstAuthorizationGate()
     /// Kept here because the center holds its delegate weakly.
     private var presenter: ForegroundNotificationPresenter?
 
@@ -217,28 +296,41 @@ final class UserNotificationCenterPoster: UserNotificationPosting {
             presenter = installed
             UNUserNotificationCenter.current().delegate = installed
         }
-        let deliver: @Sendable () -> Void = {
-            let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            let request = UNNotificationRequest(
-                identifier: UUID().uuidString, content: content, trigger: nil)
-            UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
-        }
-        guard !hasRequestedAuthorization else {
-            deliver()
+        switch gate.take(ErrorNotificationText(title: title, body: body)) {
+        case .deliver:
+            deliver(title: title, body: body)
+        case .held, .dropped:
             return
+        case .requestAuthorization:
+            // `@Sendable` spelled out: the answer arrives on a queue of the
+            // framework's, and without it Swift could infer this closure
+            // main-actor isolated from the class and trap there. A
+            // `@Sendable` closure is accepted whether or not the SDK imports
+            // the parameter as `@Sendable`. The answer itself is not read:
+            // a denial drops a held post the same way it drops every later
+            // one, and the gate's doc comment says why.
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+                @Sendable [weak self] _, _ in
+                Task { @MainActor in self?.authorizationAnswered() }
+            }
         }
-        hasRequestedAuthorization = true
-        // `@Sendable` spelled out: the answer arrives on a queue of the
-        // framework's, and without it Swift could infer this closure
-        // main-actor isolated from the class and trap there. A `@Sendable`
-        // closure is accepted whether or not the SDK imports the parameter
-        // as `@Sendable`.
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
-            @Sendable granted, _ in
-            if granted { deliver() }
+    }
+
+    /// The permission alert has been answered: everything the gate held
+    /// goes to the center now, in the order it was posted.
+    private func authorizationAnswered() {
+        for text in gate.answered() {
+            deliver(title: text.title, body: text.body)
         }
+    }
+
+    private func deliver(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
 

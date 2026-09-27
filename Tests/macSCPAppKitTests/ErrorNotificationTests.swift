@@ -305,6 +305,63 @@ struct ErrorNotificationTests {
         #expect(ForegroundNotificationPresenter().responds(to: selector))
     }
 
+    // MARK: - The plan: the first authorization request
+
+    private func text(_ n: Int) -> ErrorNotificationText {
+        ErrorNotificationText(title: "t\(n)", body: "b\(n)")
+    }
+
+    /// The very first post of a launch asks for authorization and is held
+    /// with it, not delivered ahead of the answer.
+    @Test func theFirstPostAsksForAuthorizationAndWaits() {
+        var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+        #expect(gate.take(text(1)) == .requestAuthorization)
+        #expect(gate.held == [text(1)])
+    }
+
+    /// The case the row was opened for: a second post arriving while the
+    /// permission alert is still on screen used to go to the center
+    /// straight away, where macOS dropped it. It is held now, and the
+    /// answer delivers both, oldest first.
+    @Test func aPostMadeBeforeTheAnswerIsHeldAndThenDeliveredInOrder() {
+        var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+        #expect(gate.take(text(1)) == .requestAuthorization)
+        #expect(gate.take(text(2)) == .held)
+        #expect(gate.take(text(3)) == .held)
+        #expect(gate.answered() == [text(1), text(2), text(3)])
+        #expect(gate.held.isEmpty)
+    }
+
+    /// After the answer every post goes straight out — macOS decides
+    /// whether to show it — and nothing is held any more.
+    @Test func everyPostAfterTheAnswerIsDeliveredAtOnce() {
+        var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+        _ = gate.take(text(1))
+        _ = gate.answered()
+        #expect(gate.take(text(2)) == .deliver)
+        #expect(gate.take(text(3)) == .deliver)
+        #expect(gate.held.isEmpty)
+        // A second answer (there is only ever one request, but the gate
+        // must not resurrect anything) hands nothing back.
+        #expect(gate.answered().isEmpty)
+    }
+
+    /// The hold is bounded, and the OLDEST are the ones kept: the event
+    /// that opened the episode is the one worth telling the user about.
+    @Test func theHoldIsBoundedAndKeepsTheOldest() {
+        let limit = ErrorNotificationPlan.FirstAuthorizationGate.heldLimit
+        var gate = ErrorNotificationPlan.FirstAuthorizationGate()
+        #expect(gate.take(text(0)) == .requestAuthorization)
+        for n in 1..<limit {
+            #expect(gate.take(text(n)) == .held, "\(n)")
+        }
+        #expect(gate.take(text(limit)) == .dropped)
+        #expect(gate.take(text(limit + 1)) == .dropped)
+        let delivered = gate.answered()
+        #expect(delivered.count == limit)
+        #expect(delivered == (0..<limit).map { text($0) })
+    }
+
     // MARK: - The default notifier
 
     /// A `ContentView` built without a notifier — every test that does not

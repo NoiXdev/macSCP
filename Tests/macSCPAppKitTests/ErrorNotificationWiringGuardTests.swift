@@ -376,6 +376,47 @@ struct ErrorNotificationWiringGuardTests {
             == Self.count("UNUserNotificationCenter.current()", in: post))
     }
 
+    /// Every post goes through the gate, and the one place that adds a
+    /// request to the center is reached only from the gate's two answers —
+    /// the immediate `.deliver` and the held texts the answer hands back
+    /// (deferred minor of 2026-09-17, cleared 2026-09-27).
+    @Test func theLivePosterRoutesEveryPostThroughTheAuthorizationGate() throws {
+        let code = try Self.views(Self.notificationsFile).code
+        let poster = try Self.body(of: "final class UserNotificationCenterPoster", in: code)
+        // Positives: the gate is held, asked, and read back.
+        #expect(poster.contains("private var gate = ErrorNotificationPlan.FirstAuthorizationGate()"))
+        #expect(Self.count("gate.take(", in: poster) == 1)
+        #expect(Self.count("gate.answered()", in: poster) == 1)
+        // The add happens in exactly one place in the whole file, and that
+        // place is the helper both answers call.
+        #expect(Self.count(".add(request, withCompletionHandler: nil)", in: code) == 1)
+        let deliver = try Self.body(
+            of: "private func deliver(title: String, body: String)", in: code)
+        #expect(deliver.contains(".add(request, withCompletionHandler: nil)"))
+        // Negative beside them: `post` does not reach the center's add
+        // itself, so nothing bypasses the gate. Read out of the class body,
+        // not the file — the protocol declares this same signature.
+        let post = try Self.body(of: "func post(title: String, body: String)", in: poster)
+        #expect(post.contains("gate.take("), "scanning the wrong body")
+        #expect(post.contains(".add(request") == false)
+        // The gate is asked BEFORE anything is delivered, and `post` hands
+        // over exactly once: a `deliver` call added ahead of the switch —
+        // which is precisely the behaviour this replaced — would satisfy a
+        // bare `contains` and was measured green against one.
+        let asked = try #require(post.range(of: "gate.take("))
+        let handedOver = try #require(post.range(of: "deliver(title: title, body: body)"))
+        #expect(asked.upperBound < handedOver.lowerBound)
+        #expect(Self.count("deliver(title:", in: post) == 1)
+        // The held texts are handed back in the order the gate returns
+        // them; nothing re-sorts or reverses them.
+        let answered = try Self.body(of: "private func authorizationAnswered()", in: code)
+        #expect(answered.contains("for text in gate.answered()"))
+        #expect(answered.contains("deliver(title: text.title, body: text.body)"))
+        for forbidden in [".reversed()", ".sorted", ".last", ".first"] {
+            #expect(answered.contains(forbidden) == false, "\(forbidden)")
+        }
+    }
+
     // MARK: - Who holds the live notifier
 
     /// The live poster is built in `MacSCPApp` and nowhere else, and it
