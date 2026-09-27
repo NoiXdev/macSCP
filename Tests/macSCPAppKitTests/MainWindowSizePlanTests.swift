@@ -443,10 +443,25 @@ struct MainWindowSizePlanTests {
             """)
     }
 
+    /// Every Swift file of the App target, at ANY depth. Not
+    /// `SourceCorpus.children(of:)`, which by construction does not descend:
+    /// `Sources/MacSCPAppKit/Presentation/` then sits outside every count and
+    /// every negative below, which is CLAUDE.md's "a negative check whose
+    /// SPAN is wrong can never match, and reads like one that is satisfied"
+    /// applied to the walk the checks rest on rather than to any one of them.
+    ///
+    /// Measured on 2026-09-27, not argued: a second writer of
+    /// `settingsStore.mainWindowBrowserSize` and a `resizeWindow(toWidth: 900,`
+    /// call were planted in that subdirectory. Each was green 3 of 3 against
+    /// the flat listing and red 3 of 3 against this walk.
+    /// `theSizeWalkDescendsIntoSubdirectories` is the positive beside it.
+    private static func appSwiftFiles() throws -> [URL] {
+        try SourceCorpus.files(under: sourceDir).filter { $0.pathExtension == "swift" }
+    }
+
     private static func occurrences(of needle: String) throws -> Int {
-        let files = try SourceCorpus.children(of: sourceDir)
         var count = 0
-        for file in files where file.pathExtension == "swift" {
+        for file in try appSwiftFiles() {
             count += try code(of: file).components(separatedBy: needle).count - 1
         }
         return count
@@ -808,10 +823,35 @@ struct MainWindowSizePlanTests {
             """)
     }
 
+    /// The span every count and every negative below rests on: the walk
+    /// descends. A silent return to a non-recursive listing would leave all
+    /// of them scanning a subset of the target while still reading like
+    /// checks that are satisfied.
+    ///
+    /// Both halves are DERIVED, not spelled: the flat listing is asked for
+    /// itself rather than compared against a counted number, so neither half
+    /// needs a recount when a file is added or a subdirectory appears.
+    @Test func theSizeWalkDescendsIntoSubdirectories() throws {
+        let files = try Self.appSwiftFiles()
+        let prefix = SourceCorpus.key(Self.sourceDir) + "/"
+        let nested = files.filter {
+            SourceCorpus.key($0).dropFirst(prefix.count).contains("/")
+        }
+        #expect(nested.isEmpty == false, "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.sourceDir)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(files.count > flat, "the App walk no longer descends")
+    }
+
     /// The negatives, each with its positive beside it: the persisted size
     /// has exactly the two writers pinned above, the frame is saved by name
     /// in one place, and no call site resizes the window to a size it
     /// spelled itself instead of asking the plan.
+    ///
+    /// The counts were re-derived on 2026-09-27, after the walk was widened
+    /// to the whole target: every needle here occurs zero times in
+    /// `Presentation/`, so widening moved none of them.
     @Test func nothingElseWritesTheSizeOrResizesTheWindow() throws {
         #expect(try Self.occurrences(of: "mainWindowBrowserSize = ") == 2)
         #expect(try Self.occurrences(of: "saveFrame(usingName:") == 1)
@@ -820,8 +860,7 @@ struct MainWindowSizePlanTests {
         #expect(try Self.occurrences(of: "resizeWindow(") == 3)
         let literalResize = try CompiledPattern.regex(#"resizeWindow\(\s*toWidth:\s*[0-9]"#)
         var literalCalls = 0
-        let files = try SourceCorpus.children(of: Self.sourceDir)
-        for file in files where file.pathExtension == "swift" {
+        for file in try Self.appSwiftFiles() {
             let code = try Self.code(of: file)
             literalCalls += literalResize.numberOfMatches(
                 in: code, range: NSRange(code.startIndex..., in: code))

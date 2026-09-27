@@ -355,12 +355,50 @@ struct SnippetDryRunEntranceGuardTests {
 
     // MARK: - Reading the tree
 
+    /// Every Swift file of the App target, at ANY depth, sorted by the path
+    /// each is named by below.
+    ///
+    /// Not `SourceCorpus.children(of:)`, which by construction does not
+    /// descend: `Sources/MacSCPAppKit/Presentation/` then sits outside every
+    /// set equality in this suite, and a file there could describe, plan or
+    /// colour freely while each check still read like one that is satisfied
+    /// (CLAUDE.md, "a negative check whose SPAN is wrong can never match").
+    /// Measured on 2026-09-27: a `SnippetHighlighter.tokens(` call planted in
+    /// that subdirectory was green 3 of 3 against the flat listing and red 3
+    /// of 3 against this walk. `theAppWalkDescendsIntoSubdirectories` is the
+    /// positive beside it.
     private static func appSourceFiles() throws -> [URL] {
-        try SourceCorpus.children(of: appSourceDirectory)
+        try SourceCorpus.files(under: appSourceDirectory)
         .filter { $0.pathExtension == "swift" }
-        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        .sorted { relativePath(of: $0) < relativePath(of: $1) }
     }
 
+    /// A scanned file's path relative to the App target — a file name for a
+    /// file sitting directly in it, `Presentation/Whatever.swift` for one a
+    /// subdirectory deeper. Every name this suite reports and compares is
+    /// this form, so a bare `lastPathComponent` can never be joined back
+    /// onto the directory into a path that does not exist.
+    private static func relativePath(of url: URL) -> String {
+        let prefix = SourceCorpus.key(appSourceDirectory) + "/"
+        return String(SourceCorpus.key(url).dropFirst(prefix.count))
+    }
+
+    /// The span the set equalities above rest on: the walk descends. Both
+    /// halves are DERIVED rather than spelled — the flat listing is asked
+    /// for itself — so neither needs a recount when a file or a
+    /// subdirectory appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let files = try Self.appSourceFiles()
+        #expect(files.contains { Self.relativePath(of: $0).contains("/") },
+            "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.appSourceDirectory)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(files.count > flat, "the App walk no longer descends")
+    }
+
+    /// `name` is a path relative to the App target, the form
+    /// `relativePath(of:)` produces.
     private static func strippedSource(named name: String) throws -> String {
         try SourceCorpus.commentFree(of: appSourceDirectory.appendingPathComponent(name))
     }
@@ -383,7 +421,7 @@ struct SnippetDryRunEntranceGuardTests {
         do {
             return try SnippetSourceScan.calls(to: marker, text: text, code: code)
         } catch var refused as SnippetSourceScan.MarkerInsideALiteral {
-            refused.file = url.lastPathComponent
+            refused.file = relativePath(of: url)
             throw refused
         }
     }
@@ -395,7 +433,7 @@ struct SnippetDryRunEntranceGuardTests {
     private static func fileNamesCalling(_ marker: String) throws -> Set<String> {
         var found: Set<String> = []
         for file in try appSourceFiles() where !(try calls(to: marker, inFileAt: file)).isEmpty {
-            found.insert(file.lastPathComponent)
+            found.insert(relativePath(of: file))
         }
         return found
     }

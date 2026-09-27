@@ -40,16 +40,45 @@ struct SheetOverflowMenuWiringGuardTests {
 
     private static let sourceDirectory = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
 
+    /// `name` is a path RELATIVE to `Sources/MacSCPAppKit`, which for a file
+    /// sitting directly in it is its file name — and for one in a
+    /// subdirectory is `Presentation/Whatever.swift`. Joining a bare
+    /// `lastPathComponent` here instead would build a path that does not
+    /// exist the moment the walk below reaches any depth.
     private static func source(_ name: String) throws -> String {
         try SourceCorpus.text(of: sourceDirectory.appendingPathComponent(name))
     }
 
-    /// Every Swift file of the app layer, sorted so failure messages read
-    /// the same on every machine.
+    /// Every Swift file of the app layer, at ANY depth, as a path relative to
+    /// `Sources/MacSCPAppKit` — sorted so failure messages read the same on
+    /// every machine.
+    ///
+    /// Not `SourceCorpus.children(of:)`, which by construction does not
+    /// descend: `Presentation/` then sits outside every check in this file
+    /// that says "every app-layer file", while each still reads like a check
+    /// that is satisfied (CLAUDE.md, "a negative check whose SPAN is wrong
+    /// can never match"). Measured on 2026-09-27: a footer drawing a file
+    /// action as its own button, planted in that subdirectory, was green 3
+    /// of 3 against the flat listing and red 3 of 3 against this walk.
+    /// `theAppWalkDescendsIntoSubdirectories` is the positive beside it.
     private static func appKitSourceNames() throws -> [String] {
-        try SourceCorpus.children(of: sourceDirectory).map(\.lastPathComponent)
+        try SourceCorpus.relativePaths(under: sourceDirectory)
             .filter { $0.hasSuffix(".swift") }
             .sorted()
+    }
+
+    /// The span every "every app-layer file" check here rests on: the walk
+    /// descends. Both halves are DERIVED rather than spelled — the flat
+    /// listing is asked for itself — so neither needs a recount when a file
+    /// or a subdirectory appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let names = try Self.appKitSourceNames()
+        #expect(names.contains { $0.contains("/") },
+            "the app-layer walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.sourceDirectory)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(names.count > flat, "the app-layer walk no longer descends")
     }
 
     /// The sheets that carry the menu — found by looking, not by listing.

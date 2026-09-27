@@ -39,18 +39,53 @@ struct PaneVisibilityOwnershipGuardTests {
 
     private static let appSources = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
 
+    /// Every Swift file of the App target, at ANY depth. Not
+    /// `SourceCorpus.children(of:)`, which by construction does not descend:
+    /// `Sources/MacSCPAppKit/Presentation/` then sits outside the one
+    /// negative this suite exists for, while it still reads like a check
+    /// that is satisfied (CLAUDE.md, "a negative check whose SPAN is wrong
+    /// can never match"). Measured on 2026-09-27: a `session.showsFiles`
+    /// read planted in that subdirectory was green 3 of 3 against the flat
+    /// listing and red 3 of 3 against this walk.
+    /// `theAppWalkDescendsIntoSubdirectories` is the positive beside it.
+    private static func appSwiftFiles() throws -> [URL] {
+        try SourceCorpus.files(under: appSources).filter { $0.pathExtension == "swift" }
+    }
+
+    /// A scanned file's path relative to the App target, so an offender in a
+    /// subdirectory is named by where it is rather than by a bare file name
+    /// two directories could share.
+    private static func relativePath(of url: URL) -> String {
+        let prefix = SourceCorpus.key(appSources) + "/"
+        return String(SourceCorpus.key(url).dropFirst(prefix.count))
+    }
+
+    /// The span the negative below rests on: the walk descends. Both halves
+    /// are DERIVED rather than spelled — the flat listing is asked for
+    /// itself — so neither needs a recount when a file or a subdirectory
+    /// appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let files = try Self.appSwiftFiles()
+        let nested = files.filter { Self.relativePath(of: $0).contains("/") }
+        #expect(nested.isEmpty == false, "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.appSources)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(files.count > flat, "the App walk no longer descends")
+    }
+
     /// The guard: `SessionTab.swift` owns this property, nobody else touches
     /// it.
     @Test func onlySessionTabReadsShowsFilesOffTheSession() throws {
-        let files = try SourceCorpus.children(of: Self.appSources)
-            .filter { $0.pathExtension == "swift" && $0.lastPathComponent != "SessionTab.swift" }
+        let files = try Self.appSwiftFiles()
+            .filter { $0.lastPathComponent != "SessionTab.swift" }
         #expect(files.count > 1, "re-anchor: no App sources found to scan")
 
         var offenders: [String] = []
         for file in files {
             let lines = try SourceCorpus.text(of: file).components(separatedBy: "\n")
             for (index, line) in lines.enumerated() where Self.readsShowsFilesOffASession(line) {
-                offenders.append("\(file.lastPathComponent):\(index + 1)")
+                offenders.append("\(Self.relativePath(of: file)):\(index + 1)")
             }
         }
         #expect(offenders.isEmpty, """

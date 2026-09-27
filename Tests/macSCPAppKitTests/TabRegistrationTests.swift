@@ -134,19 +134,63 @@ struct TabRegistrationWiringGuardTests {
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
+    private static let appSources = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
+
+    /// Every Swift file of the App target, at ANY depth.
+    ///
+    /// Not `SourceCorpus.children(of:)`, which by construction does not
+    /// descend: a `ContentView` extension under
+    /// `Sources/MacSCPAppKit/Presentation/` would then be outside the
+    /// negative below while it still read like a check that is satisfied
+    /// (CLAUDE.md, "a negative check whose SPAN is wrong can never match").
+    /// Measured on 2026-09-27: a `ContentView+Planted.swift` calling
+    /// `.addTab(` directly, placed in that subdirectory, was green 3 of 3
+    /// against the flat listing and red 3 of 3 against this walk.
+    /// `theAppWalkDescendsIntoSubdirectories` is the positive beside it.
+    private static func appSwiftFiles() throws -> [URL] {
+        try SourceCorpus.files(under: appSources).filter { $0.pathExtension == "swift" }
+    }
+
+    /// A file's path relative to the App target — a file name for a file
+    /// sitting directly in it, `Presentation/Whatever.swift` for one a
+    /// subdirectory deeper. `name` below is this form, so nothing joins a
+    /// bare file name back onto the directory into a path that does not
+    /// exist.
+    private static func relativePath(of url: URL) -> String {
+        let prefix = SourceCorpus.key(appSources) + "/"
+        return String(SourceCorpus.key(url).dropFirst(prefix.count))
+    }
+
     /// Every `ContentView` file, so one added later is scanned without
-    /// anyone remembering to add it here. Recounted 2026-09-18, after the
-    /// jump-and-groups plan's Task 3 added `+TabTitle`: eight files match,
-    /// of which three contain a tab-admitting call site today
+    /// anyone remembering to add it here. Recounted 2026-09-27, when the
+    /// walk was widened to the whole target: eight files match, the same
+    /// eight as before — all of them sit directly in
+    /// `Sources/MacSCPAppKit`, and no file under `Presentation/` begins with
+    /// `ContentView`. Three contain a tab-admitting call site today
     /// (`ContentView.swift`, `+Lifecycle`, `+Detail`).
+    ///
+    /// The prefix is matched on the file NAME while the source is read
+    /// through the file's own URL, so a nested `ContentView+…` is both found
+    /// and read.
     private static func contentViewFiles() throws -> [(name: String, source: String)] {
-        let directory = repoRoot.appendingPathComponent("Sources/MacSCPAppKit")
-        let names = try SourceCorpus.children(of: directory).map(\.lastPathComponent)
-            .filter { $0.hasPrefix("ContentView") && $0.hasSuffix(".swift") }
-            .sorted()
-        return try names.map { name in
-            (name, try SourceCorpus.code(of: directory.appendingPathComponent(name)))
-        }
+        let files = try appSwiftFiles()
+            .filter { $0.lastPathComponent.hasPrefix("ContentView") }
+            .sorted { relativePath(of: $0) < relativePath(of: $1) }
+        return try files.map { (relativePath(of: $0), try SourceCorpus.code(of: $0)) }
+    }
+
+    /// The span the negative below rests on: the walk the `ContentView`
+    /// filter is applied to descends. Both halves are DERIVED rather than
+    /// spelled — the flat listing is asked for itself — so neither needs a
+    /// recount when a file or a subdirectory appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let files = try Self.appSwiftFiles()
+        #expect(files.contains { Self.relativePath(of: $0).contains("/") },
+            "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.appSources)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(files.count > flat, "the App walk no longer descends")
     }
 
     private static func strictSource(of path: String) throws -> String {

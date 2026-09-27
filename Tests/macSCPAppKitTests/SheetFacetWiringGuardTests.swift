@@ -71,9 +71,44 @@ struct SheetFacetWiringGuardTests {
         "LoginSetsSheet.swift",
     ]
 
+    /// `fileName` is a path RELATIVE to `Sources/MacSCPAppKit`: a file name
+    /// for a file sitting directly in it, `Presentation/Whatever.swift` for
+    /// one a subdirectory deeper. A bare `lastPathComponent` joined here
+    /// would build a path that does not exist as soon as the walk below
+    /// reaches any depth.
     private static func strippedSource(_ fileName: String) throws -> String {
         let url = appSourceDirectory.appendingPathComponent(fileName)
         return try SourceCorpus.commentFree(of: url)
+    }
+
+    /// Every Swift file of the App target, at ANY depth, as a path relative
+    /// to `Sources/MacSCPAppKit`.
+    ///
+    /// Not `SourceCorpus.children(of:)`, which by construction does not
+    /// descend: `Presentation/` then sits outside the list-completeness
+    /// check below, which is the one thing holding `facetedSheets` to being
+    /// the real population (CLAUDE.md, "a negative check whose SPAN is wrong
+    /// can never match, and reads like one that is satisfied"). Measured on
+    /// 2026-09-27: a sheet drawing `SheetFacetPicker(` planted in that
+    /// subdirectory was green 3 of 3 against the flat listing and red 3 of 3
+    /// against this walk.
+    private static func appKitSourcePaths() throws -> [String] {
+        try SourceCorpus.relativePaths(under: appSourceDirectory)
+            .filter { $0.hasSuffix(".swift") }
+            .sorted()
+    }
+
+    /// The span the check below rests on: the walk descends. Both halves are
+    /// DERIVED rather than spelled — the flat listing is asked for itself —
+    /// so neither needs a recount when a file or a subdirectory appears.
+    @Test func theAppWalkDescendsIntoSubdirectories() throws {
+        let paths = try Self.appKitSourcePaths()
+        #expect(paths.contains { $0.contains("/") },
+            "the App walk no longer reaches any subdirectory")
+        let flat = try SourceCorpus.children(of: Self.appSourceDirectory)
+            .filter { $0.pathExtension == "swift" }
+            .count
+        #expect(paths.count > flat, "the App walk no longer descends")
     }
 
     /// The first `Self.<name>` written within `window` characters after
@@ -107,14 +142,12 @@ struct SheetFacetWiringGuardTests {
     // MARK: - The list of faceted sheets is the real one
 
     @Test func everySheetDrawingAFacetPickerIsListedHere() throws {
-        let contents = try SourceCorpus.children(of: Self.appSourceDirectory)
         var drawing: Set<String> = []
-        for url in contents where url.pathExtension == "swift" {
-            let source = try SourceCorpus.commentFree(of: url)
+        for path in try Self.appKitSourcePaths() {
             // The view's own definition is not a sheet drawing it.
-            guard url.lastPathComponent != "SheetFacetPicker.swift" else { continue }
-            if source.contains("SheetFacetPicker(") {
-                drawing.insert(url.lastPathComponent)
+            guard path != "SheetFacetPicker.swift" else { continue }
+            if try Self.strippedSource(path).contains("SheetFacetPicker(") {
+                drawing.insert(path)
             }
         }
         #expect(drawing == Set(Self.facetedSheets), """
