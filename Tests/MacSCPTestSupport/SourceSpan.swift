@@ -18,16 +18,21 @@
 /// walk that is about neither suite — while `TabContextMenuWiringGuardTests`
 /// carried a second, byte-different implementation of the same brace count
 /// and `JumpSessionSummaryResolutionGuardTests` a third. One walk stands
-/// here now; its readers, counted in the pass that wrote this sentence, are
-/// those three suites plus `TabsWindowLifecycleTests`.
+/// here now, with five readers counted in the pass that wrote this
+/// sentence: those three suites, `TabsWindowLifecycleTests`, and — the
+/// reason this file moved out of `macSCPAppKitTests` and into the support
+/// target — `RemoteFileSystemReadStreamCycleGuardTests`'s `ReadStreamScan`
+/// in the Core target. Both targets scan source; a brace walk is no more
+/// the App suite's than a comment stripper is, and `SwiftSource` and
+/// `SourceCorpus` already live here.
 ///
 /// Every helper here takes, and returns, positions in one of `SwiftSource`'s
 /// blanked views. Over raw source they are meaningless: a brace inside a
 /// comment or a string literal would decide where a span ends
 /// (`SwiftSourceStripping`'s own doc comment).
-enum SourceSpan {
+public enum SourceSpan {
     /// The first offset at or after `start` where `token` begins in `text`.
-    static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
+    public static func firstOffset(of token: [Character], in text: [Character], from start: Int) -> Int? {
         guard !token.isEmpty, text.count >= token.count, start <= text.count - token.count else { return nil }
         for offset in start...(text.count - token.count)
         where text[offset..<(offset + token.count)].elementsEqual(token) {
@@ -38,7 +43,7 @@ enum SourceSpan {
 
     /// The offset of the `closer` that balances the `opener` at `open`, or
     /// `nil` when it never closes. Meaningful only over a blanked view.
-    static func closingOffset(
+    public static func closingOffset(
         from open: Int, in text: [Character], open opener: Character, close closer: Character
     ) -> Int? {
         var depth = 0
@@ -55,7 +60,7 @@ enum SourceSpan {
     /// The index of the `}` that balances the `{` at `open`, or `nil` when
     /// it never closes — the `String.Index` form of `closingOffset`, for the
     /// scanners that slice a `String` rather than a `[Character]`.
-    static func closingBrace(from open: String.Index, in source: String) -> String.Index? {
+    public static func closingBrace(from open: String.Index, in source: String) -> String.Index? {
         var depth = 0
         var index = open
         while index < source.endIndex {
@@ -81,7 +86,7 @@ enum SourceSpan {
     /// counted from the anchor's end with the depth already at 1, so
     /// `"func applicationShouldTerminate("` returned that function's body
     /// AND everything after it up to the enclosing type's closing brace.
-    static func bodySpan(
+    public static func bodySpan(
         after anchor: String, in source: String
     ) -> (anchor: Range<String.Index>, open: String.Index, close: String.Index)? {
         guard let found = source.range(of: anchor),
@@ -94,7 +99,7 @@ enum SourceSpan {
     /// Everything between the first `{` at or after `anchor` and the `}`
     /// that balances it, the braces themselves excluded. `nil` on a missing
     /// anchor or unbalanced braces (`bodySpan`).
-    static func body(after anchor: String, in source: String) -> String? {
+    public static func body(after anchor: String, in source: String) -> String? {
         guard let span = bodySpan(after: anchor, in: source) else { return nil }
         return String(source[source.index(after: span.open)..<span.close])
     }
