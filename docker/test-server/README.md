@@ -548,3 +548,39 @@ request with a failure, and its own log calls the login type `no_auth_tried`.
 The identical RSA key authenticates against this rig's OpenSSH `sshd` on 2222
 (the ten-cell matrix in `FileKeyTypeIntegrationTests`, and
 `agentAuthConnectsRSA` for the agent route). The only difference is the server.
+
+## Why `MaxStartups` carries one number, not three (2026-09-27)
+
+Every sshd include in this directory sets `MaxStartups 1000`. It used to
+read `100:30:200`, and that three-field form is a random dropper: from 100
+unauthenticated connections on, sshd refuses 30% of new ones, chosen at
+random, rising to a hard refusal at 200. A single number has no such band.
+
+That band was the cause of the symptom recorded in `docs/BACKLOG.md` as
+"Three SSH-rig cases go red under the full gated run and pass in
+isolation" — a different subset of SSH cases red on every gated run, every
+one of them green when run alone. Measured on 2026-09-27, on the
+maintainer's own machine, since the gated suites never run on CI:
+
+- sshd prints its own unauthenticated-connection count in its process
+  title. Read it with
+  `docker exec macscp-test-sshd sh -c "ps aux | grep -o '[0-9]* of .* startups'"`.
+- Sampled once a second through one gated run
+  (`MACSCP_ITEST=1 swift test`, 136 s), that count climbed monotonically
+  from 0 to 90 and drained only when the test process exited. The
+  connections are not in flight: they are pre-auth sockets that Docker
+  Desktop's port forwarder releases on the container side long after the
+  client on macOS has closed them.
+- sshd's own log inside the container, `/config/logs/openssh/current`,
+  carries the proof that the ceiling is really reached:
+  `grep -c 'Maxstartups' /config/logs/openssh/current` returned **85** on
+  2026-09-27, with entries of the form
+  `drop connection #100 from [192.168.65.1]:… Maxstartups` — two of them
+  inside a gated run of that same day, and six on 2026-09-24, the day the
+  backlog row was written.
+
+`PerSourcePenalties no` is a *different* mechanism (a penalty accumulated
+against a source address across failed logins) and was never the one
+firing here; reading it as "no sshd in the rig throttles" is what kept
+this row open. Check both, and check the log rather than the config file
+— the config states an intent, the log states what happened.
