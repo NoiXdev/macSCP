@@ -1252,6 +1252,80 @@ struct ConnectionDiagnosticsJumpTests {
         }
     }
 
+    /// The key PATH is part of "the form's jump IS the stored jump" too
+    /// (`docs/BACKLOG.md`, "`DiagnosticJump.form` adopts a stored jump's
+    /// secret without comparing the key path", 2026-09-27).
+    ///
+    /// Host, port, user name and `.privateKey` all equal to the stored
+    /// jump's, and a different local key file: the stored passphrase was
+    /// stored for the stored key, and trying it against another file is a
+    /// passphrase used on a key it was not stored for. Local decryption
+    /// only — nothing is sent — which is why it is a withheld secret and
+    /// one skipped row, the same safe direction the host compare takes.
+    ///
+    /// Both directions in one case: the same path adopts, a different one
+    /// does not. Without the first half the second is a negative check with
+    /// nothing beside it (CLAUDE.md, "Guards that name what they watch").
+    ///
+    /// Whether the secret came back is computed into a `Bool` before any
+    /// expectation reads it, as the case above does it: the value itself is
+    /// never in an expression `#expect` could print.
+    @Test(arguments: [("/tmp/stored-key.invalid", true), ("/tmp/another-key.invalid", false)])
+    func aFormsJumpGetsTheStoredKeyPassphraseOnlyForTheStoredKeyFile(
+        formKeyPath: String, adopts: Bool
+    ) throws {
+        var values = Self.targetValues()
+        values[SSHField.jump, SSHJumpField.host] = "bastion.invalid"
+        values[SSHField.jump, SSHJumpField.port] = "2200"
+        values[SSHField.jump, SSHJumpField.username] = "hop"
+        values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.privateKey.rawValue
+        values[SSHField.jump, SSHJumpField.keyPath] = formKeyPath
+        let secret = Self.jumpSecret
+        let stored = DiagnosticJump(
+            endpoint: Endpoint(host: "bastion.invalid", port: 2200),
+            login: .init(username: "hop", authKind: .privateKey, keyPath: "/tmp/stored-key.invalid"),
+            secret: { secret })
+
+        let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
+
+        let answered = try jump.secret()
+        let gotTheStoredSecret = answered == secret
+        let gotNothing = answered == nil
+        if adopts {
+            #expect(gotTheStoredSecret, "the form names the stored key file, and got no secret")
+        } else {
+            #expect(gotNothing, "the form names another key file, and got the stored passphrase")
+        }
+    }
+
+    /// The other side of the same comparison: a PASSWORD jump still adopts,
+    /// whatever key path the stored spec happens to carry.
+    ///
+    /// `LoginResolver.resolveJump` passes `spec.keyPath` through for a
+    /// `.password` jump as it does for a key one, so a jump switched from a
+    /// key to a password keeps the old path in its spec — while
+    /// `DiagnosticJump.form` builds `keyPath: nil` for anything but
+    /// `.privateKey`. A comparison that read the path for every kind would
+    /// withhold the secret over a field neither login reads.
+    @Test func aFormsPasswordJumpAdoptsPastAStoredKeyPathNeitherLoginReads() throws {
+        var values = Self.targetValues()
+        values[SSHField.jump, SSHJumpField.host] = "bastion.invalid"
+        values[SSHField.jump, SSHJumpField.port] = "2200"
+        values[SSHField.jump, SSHJumpField.username] = "hop"
+        values[SSHField.jump, SSHJumpField.authKind] = StoredSession.AuthKind.password.rawValue
+        let secret = Self.jumpSecret
+        let stored = DiagnosticJump(
+            endpoint: Endpoint(host: "bastion.invalid", port: 2200),
+            login: .init(
+                username: "hop", authKind: .password, keyPath: "/tmp/a-key-it-no-longer-uses"),
+            secret: { secret })
+
+        let jump = try #require(DiagnosticJump.form(values, isEnabled: true, stored: stored))
+
+        let gotTheStoredSecret = try jump.secret() == secret
+        #expect(gotTheStoredSecret, "a password jump was refused over a key path it never reads")
+    }
+
     enum FormJumpEdit: String, CaseIterable, CustomTestStringConvertible {
         case none, host, port, username, authKind
         var testDescription: String { rawValue }

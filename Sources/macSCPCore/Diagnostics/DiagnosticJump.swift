@@ -178,7 +178,8 @@ extension DiagnosticJump {
     ///
     /// **And only when the form's jump IS the stored jump** (fix round 1 of
     /// the 2026-09-18 plan's Task 6, the coordinator's ruling): host, port,
-    /// user name and auth kind all equal to the stored jump's. A form whose
+    /// user name, auth kind and key path all equal to the stored jump's — five
+    /// things, counted against the `if let stored` below on 2026-09-27. A form whose
     /// jump was edited and not saved names another login, and handing it the
     /// stored bastion's password would send that password to whatever host
     /// the form now names. Such a jump has no secret either, and its dial
@@ -196,16 +197,23 @@ extension DiagnosticJump {
     /// address, or an alias the resolver decides), so a fold would be this
     /// file guessing at a rule it does not own. Not a defect to fix.
     ///
-    /// The KEY PATH is not compared, and the enumeration above says so only
-    /// by leaving it out — so it is said here. A form whose jump names the
-    /// same host, port, user name and `.privateKey` auth kind as the stored
-    /// jump adopts the stored jump's secret even when it points at a
-    /// DIFFERENT local key file, so a stored passphrase can be tried
-    /// against a key the user did not store it for. Local decryption only:
-    /// nothing is sent, and a wrong passphrase fails the load. That is why
-    /// it was not folded into the case-sensitivity decision above, which is
-    /// about what leaves this Mac. It is open work with a row of its own in
-    /// `docs/BACKLOG.md`, not a silent omission.
+    /// The KEY PATH joined that enumeration on 2026-09-27, and it had been
+    /// missing from it until then: a form whose jump named the same host,
+    /// port, user name and `.privateKey` auth kind as the stored jump
+    /// adopted the stored jump's secret even when it pointed at a DIFFERENT
+    /// local key file, so a stored passphrase was tried against a key the
+    /// user did not store it for. Local decryption only — nothing is sent,
+    /// and a wrong passphrase fails the load — which is why it was not
+    /// folded into the case-sensitivity decision above, the one that is
+    /// about what leaves this Mac. Compared the same safe direction as the
+    /// rest: a differing path withholds the secret and costs one skipped
+    /// row. `aFormsJumpGetsTheStoredKeyPassphraseOnlyForTheStoredKeyFile`
+    /// holds both halves of it.
+    ///
+    /// It decides for a `.privateKey` jump and for no other kind, and the
+    /// comment at the comparison says why: a stored password jump can carry
+    /// a key path left over from a key it no longer uses, and the form
+    /// builds none.
     public static func form(
         _ values: FieldValues, isEnabled: Bool, stored: DiagnosticJump?
     ) -> DiagnosticJump? {
@@ -228,8 +236,16 @@ extension DiagnosticJump {
             keyPath: authKind == .privateKey && !keyPath.isEmpty ? keyPath : nil)
         let noSecret: @Sendable () throws -> String? = { nil }
         let adopted: DiagnosticJump?
+        // The key path decides for a KEY login only. `form` builds `keyPath:
+        // nil` for every other kind, while a stored spec keeps whatever path
+        // it was last saved with (`LoginResolver.resolveJump` passes
+        // `spec.keyPath` through for `.password` too), so comparing the two
+        // for a password jump would withhold the secret over a field neither
+        // login reads. The auth kinds are equal by the line above it.
+        let keyFileDecides = login.authKind == .privateKey
         if let stored, let endpoint, stored.endpoint == endpoint,
-            stored.login.username == login.username, stored.login.authKind == login.authKind
+            stored.login.username == login.username, stored.login.authKind == login.authKind,
+            !keyFileDecides || stored.login.keyPath == login.keyPath
         {
             adopted = stored
         } else {
