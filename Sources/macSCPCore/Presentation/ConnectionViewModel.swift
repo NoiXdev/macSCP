@@ -1261,7 +1261,8 @@ public final class ConnectionViewModel {
     ///
     /// `SFTPStartError.noResponse` (a server that never started SFTP) is
     /// `.other` by the same rule: it is neither a host-key decision nor a
-    /// missing passphrase, and a person answering nothing changes it.
+    /// missing passphrase, and there is nothing a person could answer that
+    /// would change it.
     static func failureKind(for error: Error) -> ConnectFailureKind {
         switch error {
         case is HostKeyError, is ServerCertificateError:
@@ -1400,8 +1401,12 @@ public final class ConnectionViewModel {
     /// which IS built on `withTaskCancellationHandler` — see
     /// `cancelWhileHostKeyPromptPendingResolvesConnect`.) Forcing `state`
     /// is therefore the only way an App-level Cancel control can hand the
-    /// form back before a dead host's dial times out on its own (bounded by
-    /// `connectTimeoutSeconds`, but still up to that long).
+    /// form back before a dead host's dial times out on its own. That dial
+    /// is bounded, but by `connectTimeoutSeconds` TWICE over: once for the
+    /// TCP connect and once again for the SFTP version wait that follows it
+    /// (`SFTPStartBound`, reached from `CitadelFileSystem.connect` with the
+    /// same value as its deadline), so the wait a person would otherwise
+    /// sit through is up to roughly twice the configured seconds.
     ///
     /// Clearing `hostKeyPrompt` and resolving `hostKeyContinuation` here —
     /// rather than leaving that to `connect()`'s own `defer` — matters for

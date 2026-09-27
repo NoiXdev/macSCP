@@ -102,7 +102,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Délai de connexion";
 "settings.connection.timeout %lld" = "Abandonner après %lld secondes";
-"settings.connection.timeout.footer" = "Détermine combien de temps macSCP attend la réponse du premier tronçon avant d'abandonner. Avec un hôte relais (jump host), seul ce premier tronçon est couvert — le second passe par un délai fixe que ce réglage ne peut pas modifier.";
+"settings.connection.timeout.footer" = "Limite séparément chaque étape d'une connexion : d'abord l'attente de la réponse du serveur, puis l'attente de l'ouverture de la session de fichiers. Une connexion qui échoue peut donc prendre jusqu'à deux fois plus de temps. Avec un hôte relais (jump host), l'étape allant de l'hôte relais au serveur n'est pas limitée par ce réglage — elle passe par un délai fixe.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Vérifier la connexion en cas d'inactivité";
 "settings.connection.keepAliveInterval %lld" = "Toutes les %lld secondes";

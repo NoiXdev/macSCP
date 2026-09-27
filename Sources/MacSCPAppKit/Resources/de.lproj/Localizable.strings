@@ -100,7 +100,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Verbindungs-Timeout";
 "settings.connection.timeout %lld" = "Nach %lld Sekunden abbrechen";
-"settings.connection.timeout.footer" = "Legt fest, wie lange macSCP auf die Antwort des ersten Verbindungsabschnitts wartet, bevor abgebrochen wird. Bei einem Jump-Host gilt das nur für diesen ersten Abschnitt – der zweite läuft über ein festes Zeitlimit, das diese Einstellung nicht ändern kann.";
+"settings.connection.timeout.footer" = "Begrenzt jeden Abschnitt einer Verbindung einzeln: zuerst das Warten auf die Antwort des Servers, dann das Warten darauf, dass er die Dateisitzung öffnet. Eine fehlschlagende Verbindung kann deshalb bis zu doppelt so lange dauern. Bei einem Jump-Host wird der Schritt vom Jump-Host zum Server nicht von dieser Einstellung begrenzt – dafür gilt ein festes Zeitlimit.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Verbindung im Leerlauf prüfen";
 "settings.connection.keepAliveInterval %lld" = "Alle %lld Sekunden";

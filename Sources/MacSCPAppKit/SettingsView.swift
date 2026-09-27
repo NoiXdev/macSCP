@@ -1502,19 +1502,25 @@ private struct SSHSettingsSection: View {
             } header: {
                 Text(L10n.string("settings.connection.timeout.header", "Connect Timeout"))
             } footer: {
-                // Honest about scope: measured against the vendored Citadel
-                // source (see `SettingsStore.connectTimeoutSeconds`'s own
-                // doc comment) — a jump host's second hop has no TCP
-                // connect step of its own for this setting to bound, and
-                // its handshake wait is Citadel's own fixed 10s instead. An
-                // earlier draft of this text overstated coverage and was
-                // corrected after that measurement.
+                // Honest about scope, in both directions: measured against
+                // the vendored Citadel source (see
+                // `SettingsStore.connectTimeoutSeconds`'s own doc comment)
+                // — a jump host's second hop has no TCP connect step of its
+                // own for this setting to bound, and its handshake wait is
+                // Citadel's own fixed 10s instead, so an earlier draft that
+                // claimed the whole chain overstated coverage. The other
+                // direction was UNDERstated until this pass: a tab's dial
+                // spends this value twice, once on the TCP connect and once
+                // on the SFTP version wait after it, so the worst case the
+                // number promises is roughly 2×.
                 Text(L10n.string(
                     "settings.connection.timeout.footer",
-                    "Bounds how long macSCP waits for the first hop to answer before giving "
-                        + "up. Through a jump host, only that first hop is covered — the "
-                        + "second hop runs through a fixed timeout this setting cannot "
-                        + "change."))
+                    "Bounds each stage of a connection separately: waiting for the server "
+                        + "to answer, then waiting for it to open the file session. A "
+                        + "connection that fails can therefore take up to about twice this "
+                        + "long. Through a jump host, reaching the server from the jump "
+                        + "host is not bounded by this setting — that step runs through a "
+                        + "fixed timeout instead."))
                     .foregroundStyle(.secondary)
             }
 

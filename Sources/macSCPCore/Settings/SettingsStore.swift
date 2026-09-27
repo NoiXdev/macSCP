@@ -840,6 +840,19 @@ public final class SettingsStore {
     /// of whichever hop goes through Citadel's `SSHClient.connect(host:...)`:
     /// the jump hop when there is one, otherwise the target directly.
     ///
+    /// The SAME value also bounds a SECOND wait, after that connect: a
+    /// tab's dial opens its SFTP child channel through
+    /// `SFTPStartBound.run(deadline:)`, and the deadline it passes is this
+    /// connect timeout (`CitadelFileSystem.connect`). Citadel's own open
+    /// waits on the server's SFTP version reply with no timer of its own,
+    /// and a server without the subsystem never sends one. The two waits
+    /// run one after the other, so a TAB dial's worst case is up to roughly
+    /// TWICE this value — which is what the Settings footer
+    /// (`settings.connection.timeout.footer`) tells the user. A FORWARDING
+    /// dial stops at `CitadelFileSystem.connectAuthenticated` and opens no
+    /// SFTP channel (`SSHForwardingConnection.connect`), so it spends this
+    /// value once.
+    ///
     /// Measured against the vendored Citadel source: a JUMP HOST'S second
     /// hop (`SSHClient.jump(to:)`, tunneled through the already-open first
     /// hop) never reads this setting at all — it has no TCP connect step of
