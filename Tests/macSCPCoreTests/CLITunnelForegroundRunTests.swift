@@ -295,8 +295,10 @@ struct CLITunnelForegroundRunTests {
     /// state { reason = await runner.failureReason }` produces on the race
     /// its own comment describes (Task 2 of the review-follow-ups plan
     /// measured this as the one production path to a reasonless `.failed`
-    /// — `TunnelRunner` itself never leaves one, per
-    /// `TunnelRunnerTests.aFailedStateAlwaysCarriesAFailureReason`).
+    /// — `TunnelRunner` itself never leaves one, per the two cases
+    /// `TunnelRunnerTests.aDialFailureCarriesAFailureReason` and
+    /// `TunnelRunnerTests.aLossWithoutReconnectsCarriesAFailureReason`,
+    /// one per production path).
     @Test func aFailureWithoutARunnerSentenceSaysTheKindsOwn() async throws {
         let tunnel = ScriptedForegroundTunnel(boundPort: 8080)
         let out = ForegroundOutputCollector()
