@@ -268,6 +268,37 @@ services:
       - ./sshd_config.d:/config/sshd/sshd_config.d:ro
       - ./custom-cont-init.d-nosftp:/custom-cont-init.d:ro
 
+  # A jump host that forwards NOTHING (2026-09-27). Same image pin,
+  # credentials and seed-less shape as `sshd-nosftp` above; its own
+  # `sshd_config.d-noforward` include replaces `AllowTcpForwarding yes` with
+  # `no`, and the file says why.
+  #
+  # It exists for one row of the jump diagnosis: `target.tcpViaJump` tells a
+  # bastion that does not forward at all (RFC 4254 reason code 1,
+  # administratively prohibited) from one that could not reach the target
+  # (code 2), and the code is READ out of NIOSSH's error text
+  # (`DirectTCPIPRejection.reasonCode(inDescription:)`). The `sshd` service
+  # can only produce code 2, so code 1 was tested against hand-written
+  # strings and nothing else; this server produces it.
+  #
+  # Port 2237: the next one after `sshd-nosftp`'s 2236, not published by any
+  # service here and named by no test before this one (`grep -rn 2237 Tests
+  # Sources docker` was empty on 2026-09-27). Published on loopback only, as
+  # 2236 is.
+  sshd-noforward:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    container_name: macscp-test-sshd-noforward
+    ports:
+      - "127.0.0.1:2237:2222"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - PASSWORD_ACCESS=true
+      - USER_NAME=testuser
+      - USER_PASSWORD=testpass
+    volumes:
+      - ./sshd_config.d-noforward:/config/sshd/sshd_config.d:ro
+
   # SFTPGo (2026-09-02): the rig's only Go-based SSH server. Every other SSH
   # service here is OpenSSH; SFTPGo's server side is `golang.org/x/crypto/ssh`,
   # the library that parses a user-auth public-key blob's leading string as a

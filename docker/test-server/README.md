@@ -402,6 +402,37 @@ hello-from-inside-sshd-nosftp
 nc exit=0
 ```
 
+## A jump host that forwards nothing (2026-09-27)
+
+`sshd-noforward` (container `macscp-test-sshd-noforward`, host port **2237**,
+published on `127.0.0.1` only) is the `sshd` image with
+`AllowTcpForwarding no` — its own include,
+`sshd_config.d-noforward/99-macscp-testrig.conf`, carrying the shared
+`PerSourcePenalties no` and `MaxStartups` beside it. Same image pin,
+`testuser`/`testpass`, seed-less.
+
+It exists for one row of the jump diagnosis. `target.tcpViaJump` tells a
+bastion that does not forward at all (RFC 4254 reason code 1,
+administratively prohibited) from one that tried and could not reach the
+target (code 2), and the code is read out of NIOSSH's error TEXT, which is
+the only place that library carries it
+(`DirectTCPIPRejection.reasonCode(inDescription:)`). The `sshd` service
+forwards, so every refusal it can produce is code 2; this one produces code 1,
+and `ConnectionDiagnosticsJumpRigTests
+.aJumpHostThatForwardsNothingIsReportedAsProhibiting` reads it.
+
+Port 2237 is the next one after `sshd-nosftp`'s 2236. No other service
+publishes it, and `grep -rn 2237 Tests Sources docker` was empty when it was
+chosen.
+
+Bring it up on its own with
+`docker compose -f docker/test-server/compose.yml up -d sshd-noforward`.
+
+Measured 2026-09-27, with the gated case above: the jump's own dial is `ok`
+(the login succeeds) and `target.tcpViaJump` is
+`failed(the jump host does not forward connections)` — which is
+`DiagnosticReason.jumpForwardingProhibited`, the code-1 arm.
+
 ## SFTPGo — the rig's Go-based SSH server (2026-09-02)
 
 `sftpgo` (`drakkan/sftpgo:v2.6.6`, arm64 and amd64 both in the manifest;

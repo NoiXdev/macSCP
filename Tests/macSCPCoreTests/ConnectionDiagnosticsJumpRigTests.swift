@@ -178,6 +178,48 @@ struct ConnectionDiagnosticsJumpRigTests {
             """)
     }
 
+    /// A jump host that forwards NOTHING: reason code 1, administratively
+    /// prohibited, and not code 2.
+    ///
+    /// `macscp-test-sshd-noforward` is the `sshd` image with
+    /// `AllowTcpForwarding no` (`docker/test-server/sshd_config.d-noforward`),
+    /// which is what a bastion restricted to a `ForceCommand` or a locked-down
+    /// account looks like. Until 2026-09-27 code 1 was read only out of
+    /// hand-written strings: `sshd` forwards, so every rig refusal was code 2,
+    /// and `DirectTCPIPRejection.reasonCode(inDescription:)` — which reads the
+    /// code out of NIOSSH's error TEXT, the library's only carrier for it —
+    /// had no server behind its other arm (`docs/BACKLOG.md`, "The jump plan's
+    /// deferred minors: diagnostics through the jump").
+    ///
+    /// The target is `sshd2:2222`, the name and port `everyJumpStepAndThe
+    /// ChannelThroughItAreOk` reaches through the forwarding jump — so the
+    /// difference between that case and this one is the jump host's policy
+    /// and nothing else. The jump's own dial is `ok` here: the login
+    /// succeeds, and only the channel is refused.
+    @Test func aJumpHostThatForwardsNothingIsReportedAsProhibiting() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("macscp-kh-diag-jump-nofwd-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let knownHosts = KnownHostsStore(directory: directory)
+        for entry in try await CitadelFileSystemIntegrationTests.rigHostKeyEntries(
+            of: "macscp-test-sshd-noforward", under: [("127.0.0.1", 2237)])
+        {
+            try knownHosts.upsert(entry)
+        }
+
+        let report = await Self.diagnostics(
+            target: "sshd2", port: 2222, knownHosts: knownHosts, jumpPort: 2237
+        ).run(scope: .ping)
+
+        let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.jumpDial })
+        #expect(dial.outcome == .ok, "\(dial.outcome.label) — \(dial.detail)")
+        let channel = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetTCPViaJump })
+        #expect(
+            channel.outcome == .failed(DiagnosticReason.jumpForwardingProhibited),
+            "\(channel.outcome.label) — \(channel.detail)")
+    }
+
     /// A jump host whose key this Mac has never recorded is refused, not
     /// trusted — and nothing is reached through it.
     @Test func anUnrecordedJumpKeyIsRefusedAndNothingIsReachedThroughIt() async throws {
@@ -222,13 +264,13 @@ struct ConnectionDiagnosticsJumpRigTests {
 
     private static func diagnostics(
         target host: String, port: Int, knownHosts: KnownHostsStore,
-        stepTimeout: Duration = stepBudget
+        jumpPort: Int = 2222, stepTimeout: Duration = stepBudget
     ) -> ConnectionDiagnostics {
         ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: targetValues(host: host, port: port),
             secrets: RigSecretSource(), sessionID: UUID(),
             jump: DiagnosticJump(
-                endpoint: Endpoint(host: "127.0.0.1", port: 2222),
+                endpoint: Endpoint(host: "127.0.0.1", port: jumpPort),
                 login: .init(username: "testuser", authKind: .password, keyPath: nil),
                 secret: { RigSecretSource.password }),
             jumpDialer: .live(knownHosts: knownHosts),

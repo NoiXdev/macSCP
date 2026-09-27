@@ -1610,22 +1610,38 @@ struct CitadelFileSystemIntegrationTests {
         ]
         var entries: [KnownHostKey] = []
         for server in servers {
-            let result = try await SubprocessRunner.run(
-                URL(fileURLWithPath: "/usr/local/bin/docker"),
-                arguments: ["exec", server.container, "cat", "/config/ssh_host_keys/ssh_host_ed25519_key.pub"])
-            #expect(result.status == 0, "reading \(server.container)'s host key: \(result.stderrText)")
-            let fields = result.stdoutText.split(separator: " ", omittingEmptySubsequences: true)
-            guard fields.count >= 2, fields[0] == "ssh-ed25519" else {
-                throw RemoteFSError.protocolError(
-                    reason: "\(server.container) host key unreadable: \(result.stdoutText)")
-            }
-            for name in server.names {
-                entries.append(KnownHostKey(
-                    host: name.host, port: name.port,
-                    keyType: String(fields[0]), publicKeyBase64: String(fields[1])))
-            }
+            entries += try await rigHostKeyEntries(of: server.container, under: server.names)
         }
         return entries
+    }
+
+    /// One container's Ed25519 host key, as an entry under each name it is
+    /// reached by.
+    ///
+    /// Split out of `rigHostKeyEntries()` on 2026-09-27 for a server that is
+    /// deliberately NOT in the list above: `macscp-test-sshd-noforward`, the
+    /// bastion that forwards nothing, which only
+    /// `ConnectionDiagnosticsJumpRigTests` dials. Adding it to that list
+    /// would make every gated suite that seeds a store depend on a container
+    /// none of them talks to; the one case that does reads its key with this
+    /// instead.
+    static func rigHostKeyEntries(
+        of container: String, under names: [(host: String, port: Int)]
+    ) async throws -> [KnownHostKey] {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/local/bin/docker"),
+            arguments: ["exec", container, "cat", "/config/ssh_host_keys/ssh_host_ed25519_key.pub"])
+        #expect(result.status == 0, "reading \(container)'s host key: \(result.stderrText)")
+        let fields = result.stdoutText.split(separator: " ", omittingEmptySubsequences: true)
+        guard fields.count >= 2, fields[0] == "ssh-ed25519" else {
+            throw RemoteFSError.protocolError(
+                reason: "\(container) host key unreadable: \(result.stdoutText)")
+        }
+        return names.map { name in
+            KnownHostKey(
+                host: name.host, port: name.port,
+                keyType: String(fields[0]), publicKeyBase64: String(fields[1]))
+        }
     }
 
     /// A known-hosts store holding `rigHostKeyEntries()` — so its callers dial
