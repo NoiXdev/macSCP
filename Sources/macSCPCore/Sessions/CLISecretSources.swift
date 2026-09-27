@@ -192,6 +192,21 @@ public struct SecretChain: Sendable {
     public let sources: [any SecretSource]
     public let kinds: [SecretSourceKind]
 
+    /// Both defaults are `[]`, which is what `SecretChain()` — the empty
+    /// chain an agent-auth or secret-less session gets — is spelled with.
+    /// Defaulting `kinds` ALONE is the visible hole: `SecretChain(sources:)`
+    /// builds a chain that resolves secrets and reports no places checked,
+    /// which is a weaker message and never a wrong one. Judged harmless
+    /// rather than closed, and recounted in the pass that wrote this
+    /// sentence: 12 call sites pass `sources` without `kinds`, all of them
+    /// in tests (`TunnelConnectionTests` 2, `ForwardingWithoutSFTPITests` 3,
+    /// `TunnelRigITests` 7), and none of them reads `kinds` or asserts on
+    /// the "no secret found" message it feeds
+    /// (`checkedSources:` in `TunnelConnection` and
+    /// `SessionConnecting.connect`). Both production builders —
+    /// `secretSources(for:passwordCommand:keychainStore:keyStore:)` below
+    /// and the App's `TunnelSecretSources.chain(for:keys:secrets:)` — pass
+    /// both arrays, appended in lockstep.
     public init(sources: [any SecretSource] = [], kinds: [SecretSourceKind] = []) {
         self.sources = sources
         self.kinds = kinds

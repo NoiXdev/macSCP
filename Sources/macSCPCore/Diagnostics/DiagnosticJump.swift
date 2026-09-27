@@ -185,6 +185,16 @@ extension DiagnosticJump {
     /// reports `noJumpSecret`. Compared exactly, the host included: a
     /// spelling that differs only in case is still not the value the secret
     /// was stored for, and a refusal costs one skipped row.
+    ///
+    /// The case-sensitivity was re-examined on 2026-09-27 and KEPT. DNS
+    /// names are case-insensitive, so `Bastion.example.com` and
+    /// `bastion.example.com` do name one host, and this comparison will
+    /// withhold the secret between them — but every way it can be wrong is
+    /// a skipped row, and every way a case-folding comparison could be
+    /// wrong is a stored bastion's password handed to a host string the
+    /// form now names. A jump host also need not be a DNS name at all (an
+    /// address, or an alias the resolver decides), so a fold would be this
+    /// file guessing at a rule it does not own. Not a defect to fix.
     public static func form(
         _ values: FieldValues, isEnabled: Bool, stored: DiagnosticJump?
     ) -> DiagnosticJump? {
