@@ -68,6 +68,35 @@ public final class RemoteForward: @unchecked Sendable {
     /// second stop race needs a stop to land in, and one no other seam of
     /// this type reaches: the local dial is a loopback connect that
     /// completes in microseconds. Module-internal and `nil` in production.
+    ///
+    /// **Accepted as a production seam** (maintainer decision of
+    /// 2026-09-27, taken on their behalf; recorded open on 2026-09-19 by
+    /// the review-follow-ups review, which asked for an explicit ruling
+    /// because the brief had named "no production seam for a test" as a
+    /// constraint). It stays, on these terms, counted at HEAD:
+    ///
+    /// - It is not API. The `typealias` and the `init` that takes it are
+    ///   module-internal; the only `public` initializer is
+    ///   `init(transport:)`, which passes nothing for it. Nothing outside
+    ///   `macSCPCore` can supply a hook.
+    /// - It is `nil` in production. `TunnelRuntime.swift` holds the one
+    ///   production construction of a `RemoteForward` and it goes through
+    ///   that public convenience initializer; the other construction sites
+    ///   are the twelve in `RemoteForwardTests`/`TunnelRigITests`, one of
+    ///   which — `aStopWhileTheLocalTargetAnswersIsNotAFailure` — passes a
+    ///   hook.
+    /// - Its cost in production is one `await` on an `Optional` closure
+    ///   that is `nil`, on a path that has just finished a TCP connect.
+    /// - What it buys cannot be bought otherwise. The second stop window
+    ///   is between the local dial returning and `track(local)`, and the
+    ///   dial is a loopback connect: no scheduling a test controls lands
+    ///   inside it. The alternative is not a narrower seam, it is holding
+    ///   the dial and the tracking under one lock across an `await`, which
+    ///   this class deliberately does not do.
+    ///
+    /// The ruling is about THIS seam only, and it does not extend to the
+    /// third stop window (`serve`'s own doc comment) — that one has no seam
+    /// and none is added on the strength of this decision.
     typealias LocalConnectedHook = @Sendable () async -> Void
 
     /// The port the SERVER confirmed, once it has — `nil` before `start`
