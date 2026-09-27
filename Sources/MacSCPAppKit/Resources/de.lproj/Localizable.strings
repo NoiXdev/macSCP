@@ -100,7 +100,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Verbindungs-Timeout";
 "settings.connection.timeout %lld" = "Nach %lld Sekunden abbrechen";
-"settings.connection.timeout.footer" = "Begrenzt jeden Abschnitt einer Verbindung einzeln: zuerst das Warten auf die Antwort des Servers, dann das Warten darauf, dass er die Dateisitzung öffnet. Eine fehlschlagende Verbindung kann deshalb bis zu doppelt so lange dauern. Bei einem Jump-Host wird der Schritt vom Jump-Host zum Server nicht von dieser Einstellung begrenzt – dafür gilt ein festes Zeitlimit.";
+"settings.connection.timeout.footer" = "Begrenzt zwei Abschnitte einer Verbindung getrennt: das Warten auf die Antwort des Servers und das Warten darauf, dass er die Dateisitzung öffnet. Der Wert gilt für jeden der beiden, und dazwischen liegt eine feste Wartezeit, die diese Einstellung nicht abdeckt – eine fehlschlagende Verbindung dauert also spürbar länger als die angezeigten Sekunden. Bei einem Jump-Host ist auch der Schritt vom Jump-Host zum Server nicht abgedeckt.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Verbindung im Leerlauf prüfen";
 "settings.connection.keepAliveInterval %lld" = "Alle %lld Sekunden";

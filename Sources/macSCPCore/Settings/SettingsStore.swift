@@ -840,26 +840,57 @@ public final class SettingsStore {
     /// of whichever hop goes through Citadel's `SSHClient.connect(host:...)`:
     /// the jump hop when there is one, otherwise the target directly.
     ///
-    /// The SAME value also bounds a SECOND wait, after that connect: a
-    /// tab's dial opens its SFTP child channel through
-    /// `SFTPStartBound.run(deadline:)`, and the deadline it passes is this
-    /// connect timeout (`CitadelFileSystem.connect`). Citadel's own open
-    /// waits on the server's SFTP version reply with no timer of its own,
-    /// and a server without the subsystem never sends one. The two waits
-    /// run one after the other, so a TAB dial's worst case is up to roughly
-    /// TWICE this value — which is what the Settings footer
-    /// (`settings.connection.timeout.footer`) tells the user. A FORWARDING
-    /// dial stops at `CitadelFileSystem.connectAuthenticated` and opens no
-    /// SFTP channel (`SSHForwardingConnection.connect`), so it spends this
-    /// value once.
+    /// The SAME value also bounds a LATER wait: a tab's dial opens its SFTP
+    /// child channel through
+    /// `SFTPStartBound.run(deadline:sleeper:open:closeClient:)`, and the
+    /// deadline it passes is this connect timeout
+    /// (`CitadelFileSystem.connect`). Citadel's own open waits on the
+    /// server's SFTP version reply with no timer of its own — the 15s timer
+    /// in `openSFTP` is already succeeded by the time that wait begins
+    /// (`Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift:558`,
+    /// `timeoutCheck.succeed` before the version future) — and a server
+    /// without the subsystem never sends a reply at all. A FORWARDING dial
+    /// stops at
+    /// `CitadelFileSystem.connectAuthenticated` and opens no SFTP channel
+    /// (`SSHForwardingConnection.connect`), so it spends this value once.
     ///
-    /// Measured against the vendored Citadel source: a JUMP HOST'S second
-    /// hop (`SSHClient.jump(to:)`, tunneled through the already-open first
-    /// hop) never reads this setting at all — it has no TCP connect step of
-    /// its own to bound, and its login/handshake wait is a hardcoded 10s
-    /// (`ClientHandshakeHandler`'s `loginTimeout`) this setting cannot
-    /// reach. So a jump-host chain is only half configurable by this value;
-    /// recorded as a known limitation, not a bug to fix here.
+    /// ## Three stages, and this setting reaches only two of them
+    ///
+    /// Between those two waits sits a wait this setting cannot touch, and
+    /// naming only the two it does touch is how a "roughly twice" claim got
+    /// into four catalogues and three comments before it was measured.
+    /// Re-measured against the vendored Citadel source on 2026-09-27:
+    ///
+    /// 1. **TCP connect** — `.connectTimeout(settings.connectTimeout)` on
+    ///    the `ClientBootstrap`
+    ///    (`Citadel/Sources/Citadel/ClientSession.swift:223`). This setting.
+    ///    Bounds the connect attempt and nothing after it.
+    /// 2. **Handshake and user auth** — a hardcoded `.seconds(10)`:
+    ///    `addHandlers` builds `ClientHandshakeHandler(eventLoop:
+    ///    loginTimeout: .seconds(10))`
+    ///    (`Citadel/Sources/Citadel/ClientSession.swift:170-173`), and both
+    ///    routes in reach it: the bootstrap's channel initializer for a
+    ///    direct dial (`ClientSession.swift:221`) and `SSHClient.jump(to:)`
+    ///    for a second hop (`Citadel/Sources/Citadel/Client.swift:207`) —
+    ///    EVERY hop, not only a jump's second one. This repo already
+    ///    records it as `CitadelFileSystem.citadelLoginTimer`, "once per
+    ///    hop". Not reachable from here at any value.
+    /// 3. **SFTP version wait** — this setting again, as above.
+    ///
+    /// So a direct tab dial's worst case is `2 × value + 10s`, not `2 ×
+    /// value`. At the clamp MINIMUM of 5 that is about 20s — four times
+    /// what was set — at the default 10 it is about 30s, and only near the
+    /// clamp maximum of 120 does the ratio approach 2. A multiplier is
+    /// therefore the wrong shape for this fact and is not stated as one,
+    /// here or in the footer (`settings.connection.timeout.footer`).
+    ///
+    /// Through a JUMP HOST the fixed window is paid twice, because stage 2
+    /// runs per hop: the second hop (`SSHClient.jump(to:)`, tunneled
+    /// through the already-open first) has no TCP connect step of its own
+    /// for stage 1 to bound, but it does get its own 10s login timer. Worst
+    /// case `2 × value + 20s`. A jump-host chain is that much less
+    /// configurable by this value; recorded as a known limitation, not a
+    /// bug to fix here.
     ///
     /// Clamped to 5...120 on BOTH ends, default 10, which is NIO's own
     /// `ClientBootstrap` default; Citadel overrides that to 30s, and this

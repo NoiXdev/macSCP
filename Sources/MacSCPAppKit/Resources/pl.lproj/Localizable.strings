@@ -102,7 +102,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Limit czasu połączenia";
 "settings.connection.timeout %lld" = "Przerwij po %lld sekundach";
-"settings.connection.timeout.footer" = "Ogranicza osobno każdy etap połączenia: najpierw oczekiwanie na odpowiedź serwera, potem oczekiwanie na otwarcie sesji plików. Nieudane połączenie może więc trwać nawet dwa razy dłużej. Przy hoście pośredniczącym (jump host) etap od hosta pośredniczącego do serwera nie jest ograniczony tym ustawieniem — obowiązuje dla niego stały limit czasu.";
+"settings.connection.timeout.footer" = "Ogranicza osobno dwa etapy połączenia: oczekiwanie na odpowiedź serwera i oczekiwanie na otwarcie sesji plików. Wartość dotyczy każdego z nich, a między nimi występuje stały czas oczekiwania, którego to ustawienie nie obejmuje — nieudane połączenie trwa więc zauważalnie dłużej niż pokazana liczba sekund. Przy hoście pośredniczącym (jump host) etap od hosta pośredniczącego do serwera również nie jest objęty.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Sprawdzaj połączenie w bezczynności";
 "settings.connection.keepAliveInterval %lld" = "Co %lld sekund";

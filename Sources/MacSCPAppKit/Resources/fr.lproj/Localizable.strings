@@ -102,7 +102,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Délai de connexion";
 "settings.connection.timeout %lld" = "Abandonner après %lld secondes";
-"settings.connection.timeout.footer" = "Limite séparément chaque étape d'une connexion : d'abord l'attente de la réponse du serveur, puis l'attente de l'ouverture de la session de fichiers. Une connexion qui échoue peut donc prendre jusqu'à deux fois plus de temps. Avec un hôte relais (jump host), l'étape allant de l'hôte relais au serveur n'est pas limitée par ce réglage — elle passe par un délai fixe.";
+"settings.connection.timeout.footer" = "Limite séparément deux étapes d'une connexion : l'attente de la réponse du serveur et l'attente de l'ouverture de la session de fichiers. La valeur s'applique à chacune, et entre les deux s'intercale un délai fixe que ce réglage ne couvre pas — une connexion qui échoue prend donc nettement plus de temps que les secondes affichées. Avec un hôte relais (jump host), l'étape allant de l'hôte relais au serveur n'est pas couverte non plus.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Vérifier la connexion en cas d'inactivité";
 "settings.connection.keepAliveInterval %lld" = "Toutes les %lld secondes";

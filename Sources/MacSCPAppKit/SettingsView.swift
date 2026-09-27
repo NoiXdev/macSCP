@@ -1502,25 +1502,27 @@ private struct SSHSettingsSection: View {
             } header: {
                 Text(L10n.string("settings.connection.timeout.header", "Connect Timeout"))
             } footer: {
-                // Honest about scope, in both directions: measured against
-                // the vendored Citadel source (see
-                // `SettingsStore.connectTimeoutSeconds`'s own doc comment)
-                // — a jump host's second hop has no TCP connect step of its
-                // own for this setting to bound, and its handshake wait is
-                // Citadel's own fixed 10s instead, so an earlier draft that
-                // claimed the whole chain overstated coverage. The other
-                // direction was UNDERstated until this pass: a tab's dial
-                // spends this value twice, once on the TCP connect and once
-                // on the SFTP version wait after it, so the worst case the
-                // number promises is roughly 2×.
+                // Honest about scope, and deliberately carrying NO
+                // multiplier. A tab dial has three stages, not two — TCP
+                // connect, a fixed per-hop login window, SFTP version wait
+                // — and this setting reaches the first and the third.
+                // `SettingsStore.connectTimeoutSeconds` has the
+                // measurement and the arithmetic; what matters here is that
+                // `2 × value + 10s` is not a ratio a sentence can state,
+                // because at the clamp minimum of 5 it is 4× and near the
+                // maximum of 120 it is barely 2×. Two earlier drafts of
+                // this text each stated a ratio, in opposite directions,
+                // and both were wrong; the text now says only what is true
+                // at every value the stepper offers.
                 Text(L10n.string(
                     "settings.connection.timeout.footer",
-                    "Bounds each stage of a connection separately: waiting for the server "
-                        + "to answer, then waiting for it to open the file session. A "
-                        + "connection that fails can therefore take up to about twice this "
-                        + "long. Through a jump host, reaching the server from the jump "
-                        + "host is not bounded by this setting — that step runs through a "
-                        + "fixed timeout instead."))
+                    "Bounds two stages of a connection separately: waiting for the server "
+                        + "to answer, and waiting for it to open the file session. The "
+                        + "number applies to each of them, and between them sits a fixed "
+                        + "waiting period this setting does not cover — so a failing "
+                        + "connection takes noticeably longer than the seconds shown. "
+                        + "Through a jump host, reaching the server from the jump host is "
+                        + "not covered either."))
                     .foregroundStyle(.secondary)
             }
 

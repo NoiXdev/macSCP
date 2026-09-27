@@ -100,7 +100,7 @@
 /* Settings — SSH tab, connection behaviour (Task 9) */
 "settings.connection.timeout.header" = "Connect Timeout";
 "settings.connection.timeout %lld" = "Give up after %lld seconds";
-"settings.connection.timeout.footer" = "Bounds each stage of a connection separately: waiting for the server to answer, then waiting for it to open the file session. A connection that fails can therefore take up to about twice this long. Through a jump host, reaching the server from the jump host is not bounded by this setting — that step runs through a fixed timeout instead.";
+"settings.connection.timeout.footer" = "Bounds two stages of a connection separately: waiting for the server to answer, and waiting for it to open the file session. The number applies to each of them, and between them sits a fixed waiting period this setting does not cover — so a failing connection takes noticeably longer than the seconds shown. Through a jump host, reaching the server from the jump host is not covered either.";
 "settings.connection.keepAlive.header" = "Keep-Alive";
 "settings.connection.keepAlive" = "Check the connection while idle";
 "settings.connection.keepAliveInterval %lld" = "Every %lld seconds";

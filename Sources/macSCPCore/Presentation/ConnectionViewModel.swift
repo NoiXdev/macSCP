@@ -1402,11 +1402,16 @@ public final class ConnectionViewModel {
     /// `cancelWhileHostKeyPromptPendingResolvesConnect`.) Forcing `state`
     /// is therefore the only way an App-level Cancel control can hand the
     /// form back before a dead host's dial times out on its own. That dial
-    /// is bounded, but by `connectTimeoutSeconds` TWICE over: once for the
-    /// TCP connect and once again for the SFTP version wait that follows it
-    /// (`SFTPStartBound`, reached from `CitadelFileSystem.connect` with the
-    /// same value as its deadline), so the wait a person would otherwise
-    /// sit through is up to roughly twice the configured seconds.
+    /// is bounded, but not by one `connectTimeoutSeconds`: the setting is
+    /// spent once on the TCP connect and once again on the SFTP version
+    /// wait that follows
+    /// (`SFTPStartBound.run(deadline:sleeper:open:closeClient:)`, reached
+    /// from `CitadelFileSystem.connect` with the same value as its
+    /// deadline), and BETWEEN them sits Citadel's fixed per-hop login
+    /// window (`CitadelFileSystem.citadelLoginTimer`, 10s), which the
+    /// setting cannot reach at any value. So the wait a person would
+    /// otherwise sit through is longer than the number they set — see
+    /// `SettingsStore.connectTimeoutSeconds`, which does the arithmetic.
     ///
     /// Clearing `hostKeyPrompt` and resolving `hostKeyContinuation` here —
     /// rather than leaving that to `connect()`'s own `defer` — matters for
