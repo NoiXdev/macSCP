@@ -388,14 +388,18 @@ struct JumpProbeTests {
     /// command was built with, and a last row at it that is not the literal
     /// target is `.hopLimit`.
     ///
-    /// CONSTRUCTED, in the recorded BSD row shape (`macOSTracerouteLoopback`):
-    /// seventeen routers, one per hop.
+    /// CONSTRUCTED, and built out of the recorded BSD row rather than beside
+    /// it since 2026-09-27 (`JumpProbeSamples.bsdTracerouteRow`, and
+    /// `theRecordedBSDRowIsWhatThisFileBuilds` for the comparison that makes
+    /// it a derivation): seventeen routers, one per hop. The rows written
+    /// here before then differed from the recording twice over — one leading
+    /// space on a two-digit hop number where BSD right-aligns in two columns,
+    /// and two decimals on the round trip where BSD prints three.
     @Test(arguments: ["target.invalid", "10.0.0.5"])
     func aHeaderlessWalkAtTheProbesHopLimitIsTheHopLimit(target: String) throws {
         let host = try #require(JumpProbeHost(target))
         let maxHops = JumpProbeCommand.tracerouteMaxHops(budget: .seconds(20))
-        let rows = (1...maxHops).map { " \($0)  10.9.\($0).1  0.4\($0) ms" }
-        let output = rows.joined(separator: "\n") + "\n"
+        let output = JumpProbeSamples.constructedBSDHeaderlessWalk(hops: maxHops)
 
         let outcome = try #require(
             JumpProbeReading.traceroute(
@@ -410,11 +414,26 @@ struct JumpProbeTests {
                 == DiagnosticReason.traceHopLimitReached(afterHop: maxHops))
     }
 
+    /// The recorded BSD row is exactly what `JumpProbeSamples
+    /// .bsdTracerouteRow` builds for its own hop, address and round trip.
+    ///
+    /// The anchor under every header-less case below: without it the builder
+    /// is one more invented shape, and the cases that use it would agree with
+    /// each other about a layout BSD never printed.
+    @Test func theRecordedBSDRowIsWhatThisFileBuilds() {
+        #expect(
+            JumpProbeSamples.bsdTracerouteRow(hop: 1, address: "127.0.0.1", milliseconds: 0.274)
+                + "\n" == JumpProbeSamples.macOSTracerouteLoopback.standardOutput)
+    }
+
     /// The same header-less shape, reaching a target named by its address
     /// before the limit: arrived, and `ok`. CONSTRUCTED as above.
     @Test func aHeaderlessWalkThatReachesTheLiteralTargetArrived() throws {
         let host = try #require(JumpProbeHost("10.0.0.5"))
-        let output = " 1  10.0.0.1  0.412 ms\n 2  10.0.0.5  0.930 ms\n"
+        let output = JumpProbeSamples.bsdTracerouteRow(
+            hop: 1, address: "10.0.0.1", milliseconds: 0.412) + "\n"
+            + JumpProbeSamples.bsdTracerouteRow(
+                hop: 2, address: "10.0.0.5", milliseconds: 0.930) + "\n"
 
         let outcome = try #require(
             JumpProbeReading.traceroute(

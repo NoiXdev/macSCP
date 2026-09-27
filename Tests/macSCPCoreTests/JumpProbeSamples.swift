@@ -1,3 +1,5 @@
+import Foundation
+
 @testable import macSCPCore
 
 /// What the jump-host probes' tools printed, kept byte for byte as a command
@@ -31,6 +33,17 @@
 /// this Mac would record the maintainer's own network). Their shape follows
 /// the recorded rows; a parser that reads them is tested on its reading of
 /// that shape, not on a measurement.
+///
+/// **Following a recorded shape is something to check, not to intend**
+/// (2026-09-27). The header-less BSD walk the hop-limit cases read was
+/// written out row by row in `JumpProbeTests`, and differed from the recorded
+/// BSD row twice: a two-digit hop number carried a leading space BSD does not
+/// print, and the round trip two decimals where BSD prints three. It is now
+/// BUILT — `bsdTracerouteRow(hop:address:milliseconds:)` below — and
+/// `JumpProbeTests.theRecordedBSDRowIsWhatThisFileBuilds` rebuilds
+/// `macOSTracerouteLoopback` from that function and compares it byte for
+/// byte. What cannot be recorded here is still constructed; what it is
+/// constructed to match is now measured.
 enum JumpProbeSamples {
     // MARK: getent hosts
 
@@ -206,6 +219,42 @@ enum JumpProbeSamples {
     static let rigTracepathOverSSH = RemoteCommandOutput(standardOutput: "", exitStatus: 127)
     static let macOSTracerouteLoopback = RemoteCommandOutput(
         standardOutput: " 1  127.0.0.1  0.274 ms\n", exitStatus: 0)
+
+    /// One BSD `traceroute -n -q 1` row, in the layout
+    /// `macOSTracerouteLoopback` was RECORDED in: the hop number right-aligned
+    /// in two columns, two spaces, the address, two spaces, the round trip
+    /// with three decimals, and ` ms`.
+    ///
+    /// A builder rather than more pasted rows, because the header-less cases
+    /// need seventeen of them (`JumpProbeCommand.tracerouteMaxHops(budget:)`
+    /// answers 17 inside the default 20 s budget) and a pasted seventeen is
+    /// seventeen chances to write a shape BSD does not print. Two of those
+    /// chances had already been taken when this was added on 2026-09-27: the
+    /// rows built inline in `JumpProbeTests` wrote the hop number with ONE
+    /// leading space at every width (`" 10  …"` where BSD prints `"10  …"`)
+    /// and the round trip with two decimals.
+    ///
+    /// Still CONSTRUCTED, and the entry above says why no header-less walk of
+    /// several hops can be recorded here — but constructed FROM the recorded
+    /// row rather than beside it: `theRecordedBSDRowIsWhatThisFileBuilds`
+    /// rebuilds `macOSTracerouteLoopback` out of this function and compares
+    /// it byte for byte, so a row shape that drifts from the recording is red.
+    static func bsdTracerouteRow(hop: Int, address: String, milliseconds: Double) -> String {
+        let number = hop < 10 ? " \(hop)" : String(hop)
+        let rtt = String(format: "%.3f", milliseconds)
+        return "\(number)  \(address)  \(rtt) ms"
+    }
+
+    /// A header-less BSD walk of `hops` rows, each answered by a router of
+    /// its own — `traceroute`'s header goes to standard error, which the
+    /// probe drops, so a real walk's standard output starts at hop 1 exactly
+    /// like this. The addresses are in the documentation-only 10.9.0.0/16
+    /// shape the other constructed rows use.
+    static func constructedBSDHeaderlessWalk(hops: Int) -> String {
+        (1...hops)
+            .map { bsdTracerouteRow(hop: $0, address: "10.9.\($0).1", milliseconds: 0.4 + Double($0) / 100) }
+            .joined(separator: "\n") + "\n"
+    }
 
     /// CONSTRUCTED: a router, then the destination.
     static let constructedTracerouteTwoHops = RemoteCommandOutput(
