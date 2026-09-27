@@ -563,7 +563,7 @@ every connection up to the limit is accepted, and past it refused outright.
 isolation", whose premise was that the rig does not throttle at all. That
 premise is wrong, and the measurements below are why. But removing the
 band did **not** make that symptom go away, and the row is still open:
-gated runs after the change gave 3, 6, 5, 4, 6 and 6 issues against a
+gated runs after the change gave 3, 6, 5, 4, 6, 6 and 4 issues against a
 baseline of 3 and 5, and the baseline already argues against the band as
 the cause — the run WITH two logged drops had three issues, the run with
 none had five. So this is a hazard removed, not an explanation found. A
