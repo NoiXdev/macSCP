@@ -922,6 +922,10 @@ private enum JumpProbeRun {
         /// The jump host did not run it — it refused the channel or the
         /// `exec` request, or the connection failed under it.
         /// `jumpExecRefused`, and not the tool's fault or the target's.
+        ///
+        /// The payload names the tool either way, and says what the refusal
+        /// was only when this project has a sentence for it; `run`'s catch
+        /// arm carries the argument.
         case notRun(String)
     }
 
@@ -938,9 +942,30 @@ private enum JumpProbeRun {
                 "\(command.tool.rawValue) printed more than "
                     + "\(JumpProbeCommand.maxStandardOutputBytes) bytes")
         } catch {
-            // The report's one rendering of an error (`DialSupport
-            // .reason(for:)`), never the error's own text.
-            return .notRun(DialSupport.reason(for: error))
+            // The row's REASON already says the jump host did not run the
+            // command (`DiagnosticReason.jumpExecRefused`); the detail's job
+            // is to say WHICH command, and why. Until 2026-09-27 it said
+            // neither: Citadel's `channelFailure` conforms to no
+            // `LocalizedError`, so `DialSupport.reason(for:)`'s default arm
+            // rendered it as "The operation couldn't be completed.
+            // (Citadel.CitadelError error N.)" — safe, and a case index
+            // (`docs/BACKLOG.md`, "The jump plan's deferred minors: the
+            // jump-host probes").
+            //
+            // The tool is named from `command`, never from the error. The
+            // transport's sentence is appended only when `DialSupport` WROTE
+            // one, which its default arm tells us by returning exactly
+            // `localizedDescription`: a reason that differs from it came out
+            // of an arm somebody wrote here and is worth carrying. The
+            // comparison READS the foreign text and keeps none of it —
+            // nothing on this path renders, logs or returns it.
+            let reason = DialSupport.reason(for: error)
+            guard reason != (error as NSError).localizedDescription else {
+                return .notRun(
+                    "the jump host refused to run \(command.tool.rawValue) "
+                        + "and gave no reason of its own")
+            }
+            return .notRun("\(command.tool.rawValue): \(reason)")
         }
     }
 

@@ -427,6 +427,48 @@ struct ConnectionDiagnosticsJumpTests {
         #expect(rig.events.last == "disconnect")
     }
 
+    /// What such a row's DETAIL says, which until 2026-09-27 was whatever
+    /// the SSH library's error rendered as (`docs/BACKLOG.md`, "The jump
+    /// plan's deferred minors: the jump-host probes"): Citadel's
+    /// `channelFailure` conforms to no `LocalizedError`, so it reached the
+    /// row as "The operation couldn't be completed. (Citadel.CitadelError
+    /// error N.)" — safe, carrying no server text, and telling the reader
+    /// nothing.
+    ///
+    /// Two shapes, which is the whole distinction:
+    ///
+    /// - an error `DialSupport` has a sentence for keeps that sentence,
+    ///   with the tool named in front of it;
+    /// - one it has none for — anything that falls through to
+    ///   `localizedDescription` — gets this file's own sentence instead,
+    ///   naming the tool and saying the jump host gave no reason.
+    ///
+    /// The second half is the one that was missing, and the first is beside
+    /// it so a change that silenced the mapping would not read as a pass
+    /// (CLAUDE.md, "Guards that name what they watch").
+    @Test func aRefusedProbeSaysWhichToolAndKeepsOnlyASentenceThisProjectWrote() async throws {
+        let listener = try #require(LoopbackSocket.listening())
+        defer { listener.close() }
+        // A struct error with no `LocalizedError`: `DialSupport` has no arm
+        // for it, exactly as it has none for Citadel's own.
+        struct AChannelTheJumpHostRefused: Error {}
+        let rig = JumpRig()
+        rig.answer(.getent, with: .failure(AChannelTheJumpHostRefused()))
+        rig.answer(.ping, with: .failure(HostKeyError.rejectedByUser))
+
+        let report = await Self.diagnostics(jumpPort: listener.port, rig: rig).run(scope: .ping)
+
+        let resolve = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetResolveOnJump })
+        #expect(resolve.outcome == .unavailable(DiagnosticReason.jumpExecRefused))
+        #expect(resolve.detail == "the jump host refused to run getent and gave no reason of its own")
+
+        let ping = try #require(
+            report.steps.first { $0.id == DiagnosticStepID.targetICMPFromJump })
+        #expect(ping.outcome == .unavailable(DiagnosticReason.jumpExecRefused))
+        #expect(ping.detail == "ping: \(DialSupport.reason(for: HostKeyError.rejectedByUser))")
+    }
+
     /// Exit status 127 is the shell saying it found no such tool. The trace
     /// tries `tracepath` after `traceroute`, and names neither's absence
     /// until both are gone.
