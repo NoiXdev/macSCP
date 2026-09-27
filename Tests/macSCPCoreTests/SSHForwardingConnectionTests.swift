@@ -155,6 +155,31 @@ struct SSHForwardingConnectionTests {
     /// red in 10 of 10 runs (2026-09-18): that is the measured sensitivity,
     /// not a proof.
     ///
+    /// **The two steps, measured apart** (deferred minor of 2026-09-19,
+    /// cleared 2026-09-27: the pair above was measured as a pair, so
+    /// neither step's own contribution was known). Same plant, same
+    /// machine, ten runs per configuration:
+    ///
+    /// | exec | close-await | red |
+    /// | --- | --- | --- |
+    /// | no | no | 0 of 10 (2026-09-18) |
+    /// | no | yes | 0 of 10 (2026-09-18) |
+    /// | yes | no | **10 of 10** (2026-09-27) |
+    /// | yes | yes | **10 of 10** (2026-09-27) |
+    ///
+    /// So the exec round trip is the whole of the measured sensitivity, and
+    /// the close-await's own contribution against this plant is zero. It
+    /// stays, and what it is now claimed to do is smaller than what step 2
+    /// used to sound like: it orders anything the client writes AFTER the
+    /// exec has been answered, which this plant does not produce and no
+    /// plant tried here could. A second plant was built to give the
+    /// close-await something only it could catch — the same unawaited
+    /// `openSFTP`, started after `collectingStandardOutput` returned — and
+    /// it was red in 0 of 10 runs WITH both steps: the disconnect kills a
+    /// plant started that late, exactly as it killed the one the paragraph
+    /// above describes. The close-await's contribution is therefore an
+    /// ordering argument read from the protocol, and it is not measured.
+    ///
     /// The `exec` doubles as the positive beside the negative: the tally
     /// sees requests on this connection, and counts that one as an `exec`,
     /// not as SFTP.
