@@ -48,6 +48,35 @@ line numbers), then classifying all 147 occurrences by hand:
 below gives for the four biggest files (22 / 10 / 9 / 8) are, truly, 26 / 10 /
 12 / 13.
 
+**Correction to this correction, 2026-09-28**, by the final fix pass before
+this branch is pushed. `7c14a159`, which wrote the block above, cannot be
+amended without a rebase, so this dated entry is the remedy and the paragraph
+above stays as what was claimed on 2026-09-28. Its commit message repeats two
+of the three — the 147 and the nine `S3EndpointReason` sites — and is
+corrected here rather than there for the same reason. Re-measured in one
+pass with the census method that block describes — the CASE NAME followed by
+`(` across any whitespace including newlines, each file read whole, one
+`perl` invocation per file, over all of `Sources/` — and every occurrence
+classified by hand. Three of the block's statements do not reproduce:
+
+| claimed above | measured |
+|---|---|
+| "classifying all **147** occurrences by hand" | **151** at `bcbea4f4` — and at its parent `43330df0`, the plan's base, whose `Sources/` tree is identical to it. **144** at `5b699814`, **132** at `a4dc4890`. 147 is none of them. The **93** construction sites derived from it IS right for `bcbea4f4`, so 147 reads as a transcription slip for 151; it is corrected rather than explained away, because it was written as the denominator of the classification. |
+| "Recounted at **`5b699814`**" | 93 is the count at the BASE, `bcbea4f4`/`43330df0`. At `5b699814` the tree held **81** construction sites — Tasks 2 and 3 had already converted twelve. The revision the sentence names is wrong, not the number under it. `7c14a159`'s own message says "at the design document's own revision", which is that base; only the document's sentence names a head at which its number is false. |
+| "The per-file figures **the section below** gives for the four biggest files (22 / 10 / 9 / 8)" | The section below gives no per-file figures at all. The artifact that carries 22 / 10 / 9 / 8 is `docs/BACKLOG.md`'s row "A transfer failure's technical detail is still macSCP's own English", as recorded 2026-09-25 at `d0dd2ef0` and standing unchanged at `bcbea4f4`: "22 in `S3FileSystem`, 10 in `LocalFileSystem`, 9 in `WebDAVFileSystem`, 8 in `CitadelFileSystem`". The corrected multiset is right. Construction sites per file at `bcbea4f4`, in that row's own order: `S3FileSystem` **26**, `LocalFileSystem` **10**, `WebDAVFileSystem` **12**, `CitadelFileSystem` **13**. (`CitadelFileSystem` holds 14 occurrences; the fourteenth, `:763`, is a doc comment.) |
+
+And the table's `S3EndpointReason` row, "**9** — none was missed", is one
+short. **Ten** sites carry an `S3EndpointReason` constant, counted at
+`bcbea4f4` and again at `a4dc4890`, the same ten at both: nine in
+`Sources/macSCPCore/S3/S3FileSystem.swift` and one in
+`Sources/macSCPCore/S3/S3RequestSigning.swift:63`, which sits in
+`signedRequest` — the function that file's own doc comment calls the one
+place a signed S3 request is assembled. An eleventh occurrence of the name,
+`S3FieldSchema.swift:277`, is a doc comment rather than a site. The absolute
+"none was missed" is withdrawn. Nothing follows from it for the scope: the
+block is out of scope by the maintainer's decision at nine sites and at ten
+alike.
+
 **Six sites therefore belong in the scope the maintainer chose and were not
 in it.** The maintainer took all six on 2026-09-28 after being shown this
 table:
