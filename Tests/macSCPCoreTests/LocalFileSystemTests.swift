@@ -221,13 +221,13 @@ struct LocalFileSystemTests {
         #expect(isDirectory.boolValue)
     }
 
-    @Test func createDirectoryThrowsProtocolErrorOnFileCollision() async throws {
+    @Test func createDirectoryThrowsAFindingOnFileCollision() async throws {
         let root = try makeTempTree()
         defer { try? FileManager.default.removeItem(at: root) }
         let fs = LocalFileSystem()
 
         let target = root.appendingPathComponent("datei.txt").path(percentEncoded: false)
-        await #expect(throws: RemoteFSError.protocolError(reason: "path exists and is not a directory: \(target)")) {
+        await #expect(throws: RemoteFSError.finding(.pathExistsAndIsNotADirectory(path: target))) {
             try await fs.createDirectory(at: target)
         }
     }

@@ -44,7 +44,7 @@ public struct URLSessionHTTPTransport: HTTPTransport {
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteFSError.protocolError(reason: "HTTP transport received a non-HTTP response")
+            throw RemoteFSError.finding(.nonHTTPResponse)
         }
         return (data, httpResponse)
     }
@@ -53,7 +53,7 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         -> (body: AsyncThrowingStream<Data, Error>, response: HTTPURLResponse) {
         let (bytes, response) = try await session.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw RemoteFSError.protocolError(reason: "HTTP transport received a non-HTTP response")
+            throw RemoteFSError.finding(.nonHTTPResponse)
         }
         // Pull-based: `AsyncThrowingStream(unfolding:)` only invokes this
         // closure when the CONSUMER asks for the next element (each `for

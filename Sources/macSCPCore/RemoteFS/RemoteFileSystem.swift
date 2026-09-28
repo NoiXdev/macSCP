@@ -92,10 +92,13 @@ public protocol RemoteFileSystem: Sendable {
     /// that shape.
     func delete(path: String) async throws
     /// Creates the directory. IDEMPOTENT: if it already exists as a directory,
-    /// the call returns silently. If a FILE exists at the path, throws
-    /// RemoteFSError.protocolError. Missing intermediate directories: Local
-    /// creates them (withIntermediateDirectories); Citadel creates ONLY the
-    /// last level — the recursion (T3) runs top-down, so parents always exist.
+    /// the call returns silently. If a FILE exists at the path, Local throws
+    /// RemoteFSError.finding(.pathExistsAndIsNotADirectory(path:)) (typed-
+    /// remote-fs-findings Task 5); Citadel still throws the untyped
+    /// RemoteFSError.protocolError for the same case, not yet converted.
+    /// Missing intermediate directories: Local creates them
+    /// (withIntermediateDirectories); Citadel creates ONLY the last level —
+    /// the recursion (T3) runs top-down, so parents always exist.
     func createDirectory(at path: String) async throws
     /// Renames/moves the entry at `from` to the FULL destination path `to`.
     /// An existing destination is an error (`RemoteFSError`) — this call

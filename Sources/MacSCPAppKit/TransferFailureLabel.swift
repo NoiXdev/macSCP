@@ -115,7 +115,23 @@ import macSCPCore
 /// recipe's path ever reaches. **The whole-tree total is 81, not 78, and
 /// not 57.**
 ///
-/// What the single-line recipe's 57 lines DO show, unaffected by the count
+/// **Recounted a fifth time 2026-09-28**, after Task 5 converted the plan's
+/// last three sites — `LocalFileSystem.createDirectory`'s file-collision
+/// throw and `URLSessionHTTPTransport`'s two non-HTTP-response guards
+/// (`send` and `sendStreaming`) — to `.finding(...)`: the single-line
+/// recipe now finds **80** raw lines, the same 17/2/7 still subtract off
+/// it (none of the three converted sites belonged to `AgentError`, to a
+/// `RemoteFSError` case declaration, or to the 7 comment-only mentions),
+/// so the answer is **54**, exactly three fewer than 57. The multi-line
+/// recipe is untouched — all three of Task 5's sites were single-line —
+/// so it still finds 23 raw lines, 21 of them `RemoteFSError`
+/// constructions after the same 2 `AgentError` lines subtract off. 54 + 21
+/// = **75** for `Sources/macSCPCore` under both recipes combined; the
+/// three `Sources/MacSCPAppKit/` sites are untouched by this task (none of
+/// them constructs from `LocalFileSystem` or `HTTPTransport`), so **the
+/// whole-tree total is 78, not 81, and not 54**.
+///
+/// What the single-line recipe's 54 lines DO show, unaffected by the count
 /// being a floor: the great majority compose **macSCP's own English
 /// prose**, not a server's words. The two sentences a user was most likely
 /// to meet — `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason` —

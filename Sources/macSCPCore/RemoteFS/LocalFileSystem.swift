@@ -390,13 +390,13 @@ public struct LocalFileSystem: RemoteFileSystem {
 
     /// Creates the directory including any missing intermediate levels. If the
     /// path already exists as a directory, the call returns silently
-    /// (idempotent). If a file exists there, throws `protocolError`.
+    /// (idempotent). If a file exists there, throws `.finding(.pathExistsAndIsNotADirectory)`.
     public func createDirectory(at path: String) async throws {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
         if exists {
             if isDirectory.boolValue { return }
-            throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
+            throw RemoteFSError.finding(.pathExistsAndIsNotADirectory(path: path))
         }
         do {
             try FileManager.default.createDirectory(
