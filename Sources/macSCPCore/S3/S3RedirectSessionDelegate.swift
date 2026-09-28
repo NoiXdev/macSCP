@@ -219,8 +219,15 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
     ///
     /// First refusal wins, for both entry points above: one lock, one
     /// `alreadyRecorded` gate, so a finding cannot be overwritten by a
-    /// later foreign-origin refusal or the other way round
-    /// (`S3RedirectRefusalFindingTests.theFirstRefusalWinsAcrossBothKinds`).
+    /// later foreign-origin refusal or the other way round.
+    ///
+    /// Both directions, and the second one is spelled out because it was
+    /// measured missing (Task 4 review, 2026-09-28):
+    /// `S3RedirectRefusalFindingTests.theFirstRefusalWinsAcrossBothKinds`
+    /// offered a finding first and a foreign origin second, and nothing in
+    /// the tree noticed a `record(_ finding:)` that skipped this gate — the
+    /// whole suite stayed green under that plant. The case runs the sequence
+    /// both ways round now, and the same plant is red.
     private func store(_ refused: RemoteFSError, logging sentence: String) {
         lock.lock()
         let alreadyRecorded = refusal != nil

@@ -465,16 +465,27 @@ public enum DialSupport {
                 // arrangement.
                 //
                 // The KIND is preserved, not defaulted. Counted 2026-09-28
-                // against the spec's sixteen sites: fifteen of them are
+                // against the spec's sixteen sites: fifteen of them were
                 // `.protocolError` and carry ten of the thirteen findings,
                 // which rendered here as `known(.serverAnswerUnusable)`; the
-                // sixteenth is `.connectionFailed`
-                // (`S3HTTPChannel.swift:129`, the refused redirect), and all
-                // three redirect findings come from it and rendered as
-                // `known(.connectionFailed)`. Returning `.unknown` for all
-                // thirteen would reclassify the redirects in the diagnostics
-                // while every other consumer's frame is deliberately
-                // preserved.
+                // sixteenth was `.connectionFailed`, the refused redirect,
+                // which `S3HTTPChannel.refusedRedirect()` built out of a
+                // sentence `S3RedirectSessionDelegate` had recorded — all
+                // three redirect findings came from that one site, and
+                // rendered as `known(.connectionFailed)`. Returning
+                // `.unknown` for all thirteen would reclassify the redirects
+                // in the diagnostics while every other consumer's frame is
+                // deliberately preserved.
+                //
+                // Past tense since the plan's Task 4 (2026-09-28), which is
+                // when the three stopped coming from a `.connectionFailed`
+                // site at all: `S3RedirectSessionDelegate` records them as
+                // findings itself and `refusedRedirect()` constructs
+                // nothing. The one `.connectionFailed` that path still
+                // builds is its FOURTH refusal — a redirect to a foreign
+                // origin, whose sentence names two origins the endpoint
+                // chose, so it cannot be a finding — and that one never
+                // reaches this arm.
                 //
                 // What DOES change for all thirteen is the sentence: from
                 // the kind's generic one to the finding's own.

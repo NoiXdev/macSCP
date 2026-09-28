@@ -190,8 +190,12 @@ import Testing
         // kind's generic one to the finding's own. Both branches of that
         // arm, because there are two: a finding from a `.protocolError`
         // site stays `.serverAnswerUnusable`, and one of the three redirect
-        // refusals — which all come from the single `.connectionFailed`
-        // site, `S3HTTPChannel.swift:129` — stays `.connectionFailed`.
+        // refusals stays `.connectionFailed`. Those three were built as a
+        // `.connectionFailed` by `S3HTTPChannel.refusedRedirect()` until the
+        // plan's Task 4 typed them; `S3RedirectSessionDelegate` records them
+        // as findings now, and the only `.connectionFailed` that path still
+        // builds is its fourth refusal, a foreign origin, which is not a
+        // finding and never reaches this arm.
         // Without the second row the arm could return `.unknown` for the
         // redirects and nothing here would notice.
         Row(
@@ -199,7 +203,7 @@ import Testing
             error: RemoteFSError.finding(.outOfStorage), kind: .serverAnswerUnusable,
             sentence: "the server is out of storage"),
         Row(
-            label: "a named finding from the connectionFailed site",
+            label: "a named finding that reads as a connection failure",
             error: RemoteFSError.finding(.redirectNotResignable), kind: .connectionFailed,
             sentence: "the server redirected the request, and the new target could not be signed, "
                 + "so the redirect was refused"),

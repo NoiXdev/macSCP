@@ -79,36 +79,61 @@ struct S3RedirectRefusalFindingTests {
             bucket: "bucket-redirect-finding", usePathStyle: true, sessionToken: nil)
     }
 
-    /// One run of the delegate's decision point, read back the way a caller
-    /// reads it: through the channel that carries the delegate.
+    /// One offer's outcome: what the delegate answered `URLSession` with,
+    /// and what the channel reports afterwards.
     ///
-    /// Returns the answer the delegate gave `URLSession` as well, so a test
-    /// can assert the redirect was REFUSED (a `nil` request) beside asserting
-    /// what was recorded — a recording read alone would look the same if the
-    /// hop had been followed anyway.
-    private static func refusal(
-        leaving current: URL, proposing proposed: URLRequest
-    ) -> (recorded: RemoteFSError?, answered: URLRequest?, decided: Bool) {
+    /// `answered` is here so a test can assert the redirect was REFUSED (a
+    /// `nil` request) beside asserting what was recorded — a recording read
+    /// alone would look the same if the hop had been followed anyway.
+    private struct Step {
+        let answered: URLRequest?
+        let recorded: RemoteFSError?
+    }
+
+    /// Several redirects offered to ONE delegate, read back the way a caller
+    /// reads them: through the channel that carries it.
+    ///
+    /// A `Step` is appended only once the completion handler has really run,
+    /// so a returned count that matches the offers is the positive that every
+    /// decision point was reached — there is no separate "did it decide"
+    /// flag to forget to assert.
+    private static func sequence(
+        leaving current: URL, offering proposals: [URLRequest]
+    ) -> [Step] {
         let delegate = S3RedirectSessionDelegate(config: config())
         let session = URLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
         let task = session.dataTask(with: URLRequest(url: current))
         let response = HTTPURLResponse(
             url: current, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: nil)!
-
-        var answered: URLRequest?
-        var decided = false
-        delegate.urlSession(
-            session, task: task, willPerformHTTPRedirection: response, newRequest: proposed
-        ) { request in
-            answered = request
-            decided = true
-        }
-
         let channel = S3HTTPChannel(
             transport: URLSessionHTTPTransport(session: session), redirectPolicy: delegate,
             cancel: {}, finish: {})
-        return (channel.refusedRedirect(), answered, decided)
+
+        var steps: [Step] = []
+        for proposed in proposals {
+            var answered: URLRequest?
+            var decided = false
+            delegate.urlSession(
+                session, task: task, willPerformHTTPRedirection: response, newRequest: proposed
+            ) { request in
+                answered = request
+                decided = true
+            }
+            guard decided else { continue }
+            steps.append(Step(answered: answered, recorded: channel.refusedRedirect()))
+        }
+        return steps
+    }
+
+    /// One offer, for the three single-refusal cases. `decided` is the count
+    /// coming back as expected, which is the same positive spelled shorter.
+    private static func refusal(
+        leaving current: URL, proposing proposed: URLRequest
+    ) -> (recorded: RemoteFSError?, answered: URLRequest?, decided: Bool) {
+        let steps = sequence(leaving: current, offering: [proposed])
+        guard steps.count == 1 else { return (nil, nil, false) }
+        return (steps[0].recorded, steps[0].answered, true)
     }
 
     @Test("a redirect whose target cannot be read is the unreadable finding")
@@ -204,38 +229,55 @@ struct S3RedirectRefusalFindingTests {
         #expect(recorded.isConnectionFailure)
     }
 
-    /// First refusal wins, across the two kinds a refusal can be. The
-    /// property predates the conversion; what is new is that `record` now
-    /// has two entry points, so the one lock and the one `alreadyRecorded`
-    /// gate have to serve both.
+    /// First refusal wins, across the two kinds a refusal can be, in BOTH
+    /// orders. The property predates the conversion; what is new is that
+    /// `record` has two entry points, so the one lock and the one
+    /// `alreadyRecorded` gate have to serve both.
+    ///
+    /// Both orders because one of them was measured to be worth nothing on
+    /// its own (Task 4 review, 2026-09-28): with a finding offered first and
+    /// a foreign origin second, a `record(_ finding:)` planted to skip the
+    /// gate entirely left the WHOLE suite green — the plant can only be seen
+    /// when the earlier refusal is the kind the later finding would
+    /// overwrite. The complementary plant, on `record(foreignOrigin:)`, was
+    /// red under the old one-way case.
     @Test("the first refusal wins, whichever kind the later one is")
     func theFirstRefusalWinsAcrossBothKinds() throws {
         let base = try #require(URL(string: "\(Self.endpointOrigin)/bucket/"))
-        let delegate = S3RedirectSessionDelegate(config: Self.config())
-        let session = URLSession(configuration: .ephemeral)
-        defer { session.invalidateAndCancel() }
-        let task = session.dataTask(with: URLRequest(url: base))
-        let response = HTTPURLResponse(
-            url: base, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: nil)!
-
-        let channel = S3HTTPChannel(
-            transport: URLSessionHTTPTransport(session: session), redirectPolicy: delegate,
-            cancel: {}, finish: {})
-
-        func offer(_ proposed: URLRequest) {
-            delegate.urlSession(
-                session, task: task, willPerformHTTPRedirection: response,
-                newRequest: proposed
-            ) { _ in }
-        }
-
+        let elsewhere = "http://127.0.0.1:9001"
         var unreadable = URLRequest(url: base)
+        // The same proposal the unreadable case uses: nothing to judge an
+        // origin by, so the refusal is a finding.
         unreadable.url = nil
-        offer(unreadable)
-        // The positive: the first refusal was recorded at all.
-        #expect(channel.refusedRedirect() == .finding(.redirectUnreadable))
+        let foreign = URLRequest(url: try #require(URL(string: "\(elsewhere)/bucket/")))
 
-        offer(URLRequest(url: try #require(URL(string: "http://127.0.0.1:9001/bucket/"))))
-        #expect(channel.refusedRedirect() == .finding(.redirectUnreadable))
+        // A finding first, a foreign origin after it.
+        let findingFirst = Self.sequence(leaving: base, offering: [unreadable, foreign])
+        try #require(findingFirst.count == 2)
+        // The positive the recordings are read after: both hops were really
+        // REFUSED, not followed and then ignored.
+        #expect(findingFirst.allSatisfy { $0.answered == nil })
+        #expect(findingFirst[0].recorded == .finding(.redirectUnreadable))
+        #expect(findingFirst[1].recorded == .finding(.redirectUnreadable))
+
+        // A foreign origin first, a finding after it — the direction the
+        // one-way case could not see.
+        let foreignFirst = Self.sequence(leaving: base, offering: [foreign, unreadable])
+        try #require(foreignFirst.count == 2)
+        #expect(foreignFirst.allSatisfy { $0.answered == nil })
+        for (index, step) in foreignFirst.enumerated() {
+            let recorded = try #require(step.recorded)
+            guard case .connectionFailed(let reason) = recorded else {
+                Issue.record("offer \(index) left \(recorded), not the foreign-origin refusal")
+                return
+            }
+            // Read as two `Bool`s, and on the origins rather than on a whole
+            // translated sentence: the host's preferred language decides
+            // which catalog answers.
+            let namesTheEndpoint = reason.contains(Self.endpointOrigin)
+            let namesTheTarget = reason.contains(elsewhere)
+            #expect(namesTheEndpoint)
+            #expect(namesTheTarget)
+        }
     }
 }
