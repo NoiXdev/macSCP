@@ -163,12 +163,14 @@ import Testing
     /// ANSWERS for the key (`resolved != key`), and that the kind's message
     /// is that resolved string with the kind's own argument in it.
     ///
-    /// The eleven pinning rows already catch a wrong key for the kinds they
-    /// reach. The three they do not reach are `.interrupted`, `.noFreeName`
+    /// The thirteen pinning rows already catch a wrong key for the twelve
+    /// kinds they reach; the two counts differ because `.finding` carries
+    /// two rows, one per frame `TransferFailureKind.message` can choose.
+    /// The three they do not reach are `.interrupted`, `.noFreeName`
     /// and `.unknown`; of those the first two have their key pinned by
     /// `theKindsTheQueueRaisesItselfRenderTheirOwnSentence` above, so
     /// `.unknown` is the one kind whose key nothing pinned before this. The
-    /// catalogue-answers half is new for all fourteen: no row could ask it,
+    /// catalogue-answers half is new for all fifteen: no row could ask it,
     /// because a row compares one `CoreL10n.string` call against another and
     /// both fall back together.
     @Test(arguments: TransferFailureKind.Name.allCases)
@@ -265,7 +267,7 @@ enum TransferFailureKindSamples {
     /// One of `BucketLevelOperation`'s seven, for both switches above.
     static let sampleOperation = RemoteFSError.BucketLevelOperation.rename
 
-    /// One of `RemoteFSFinding`'s thirteen, for both switches above and for
+    /// One of `RemoteFSFinding`'s seventeen, for both switches above and for
     /// the row that pins the error-to-kind mapping. Deliberately one that
     /// does NOT read as a connection failure, so the frame the row expects
     /// is the `.protocolError` one; `RemoteFSFindingTests
