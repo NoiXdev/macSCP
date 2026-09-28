@@ -11,6 +11,60 @@ carried.)
 "Wall-clock ceilings still in the tree" (measured 2026-09-04: 8 files, 12
 `waitUntil` definitions, 79 callers).
 
+## Correction, 2026-09-28, before any of this was built: the seam is not needed
+
+Everything below was written before the affected cases were read one by one.
+Reading them changed the answer, and the design section below is superseded.
+
+**What the measurement found.** The three cases that went red build their
+dial from `Self.constantContribution(…)` — a contribution that RETURNS A
+CONSTANT. It computes nothing. The only thing that can fail in it is being
+given a thread. Above it sits `ConnectionDiagnosticsTests.run(…)` at `:1692`,
+whose signature carries `stepTimeout: Duration = .seconds(5)`.
+
+A five-second budget over a body that returns immediately measures the runner
+and nothing else. That is not a case for a new seam; it is the wall-clock
+ceiling CLAUDE.md already forbids, sitting in a default argument.
+
+**The blast radius, counted 2026-09-28.** `Self.run(` has **12** call sites
+in that file. **Two** pass their own `stepTimeout` — `.milliseconds(200)` and
+`.seconds(1)` — and they are exactly the two cases that WANT the deadline to
+fire (`aStepBeyondItsTimeoutIsSettledByItsDeadline`,
+`aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline`). The other
+**ten** take the default. So raising the default heals ten cases at once and
+cannot reach the two that depend on a small budget, because they do not use
+it.
+
+**The shape, and it is this file's own precedent.**
+`aStepBeyondItsTimeoutIsSettledByItsDeadline` already carries
+`@Test(.timeLimit(.minutes(5)))` as a hang bound in place of a wall-clock
+ceiling, and asserts `settledByItsDeadline` so that it tolerates both of the
+deadline's outcomes. The complement, for cases that want the probe to ANSWER,
+is a budget no assertion depends on plus the same kind of hang bound. No
+production code changes.
+
+**What stays true from the design below:** the diagnosis (the reds are
+`notStarted` from a starved pool), the classification of which cases must
+keep a small budget and which must not, the rule that no positive companion
+may be removed, and the closing measurement (a single green run proves
+nothing — the count must be compared).
+
+**What is withdrawn:** the stored `stepLaunch` seam in
+`ConnectionDiagnostics`, and with it the premise that a launcher can
+guarantee a body begins. `DetachedProbe.Launch` is
+`(@escaping @Sendable () async -> Void) -> Task<Void, Never>`; every task it
+can return still waits for the same cooperative pool, so no launcher
+expressible through that signature could have delivered what the design
+asked of it. The seam was the wrong tool, and it was specified before the
+cases were read.
+
+**This is the third design in this session that measurement changed**, after
+the scope of the typed-findings block (16 sites to 22) and its census recipe.
+The pattern is consistent enough to name: the cheap step is reading the
+things the change will touch, one by one, before deciding the shape.
+
+---
+
 ## What is red, and why it is not a defect in the code under test
 
 Two CI runs of the same sources went red on 2026-09-28, with different tests
