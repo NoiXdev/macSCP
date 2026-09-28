@@ -63,7 +63,24 @@ classified by hand. Three of the block's statements do not reproduce:
 |---|---|
 | "classifying all **147** occurrences by hand" | **151** at `bcbea4f4` — and at its parent `43330df0`, the plan's base, whose `Sources/` tree is identical to it. **144** at `5b699814`, **132** at `a4dc4890`. 147 is none of them. The **93** construction sites derived from it IS right for `bcbea4f4`, so 147 reads as a transcription slip for 151; it is corrected rather than explained away, because it was written as the denominator of the classification. |
 | "Recounted at **`5b699814`**" | 93 is the count at the BASE, `bcbea4f4`/`43330df0`. At `5b699814` the tree held **81** construction sites — Tasks 2 and 3 had already converted twelve. The revision the sentence names is wrong, not the number under it. `7c14a159`'s own message says "at the design document's own revision", which is that base; only the document's sentence names a head at which its number is false. |
-| "The per-file figures **the section below** gives for the four biggest files (22 / 10 / 9 / 8)" | The section below gives no per-file figures at all. The artifact that carries 22 / 10 / 9 / 8 is `docs/BACKLOG.md`'s row "A transfer failure's technical detail is still macSCP's own English", as recorded 2026-09-25 at `d0dd2ef0` and standing unchanged at `bcbea4f4`: "22 in `S3FileSystem`, 10 in `LocalFileSystem`, 9 in `WebDAVFileSystem`, 8 in `CitadelFileSystem`". The corrected multiset is right. Construction sites per file at `bcbea4f4`, in that row's own order: `S3FileSystem` **26**, `LocalFileSystem` **10**, `WebDAVFileSystem` **12**, `CitadelFileSystem` **13**. (`CitadelFileSystem` holds 14 occurrences; the fourteenth, `:763`, is a doc comment.) |
+| "The per-file figures **the section below** gives for the four biggest files (22 / 10 / 9 / 8)" | The section below gives no per-file figures at all. The artifact that carries 22 / 10 / 9 / 8 is `docs/BACKLOG.md`'s row "A transfer failure's technical detail is still macSCP's own English", as written on 2026-09-25 by `544d5c76` and standing unchanged at `bcbea4f4`: "22 in `S3FileSystem`, 10 in `LocalFileSystem`, 9 in `WebDAVFileSystem`, 8 in `CitadelFileSystem`". The corrected multiset is right. Construction sites per file at `bcbea4f4`, in that row's own order: `S3FileSystem` **26**, `LocalFileSystem` **10**, `WebDAVFileSystem` **12**, `CitadelFileSystem` **13**. (`CitadelFileSystem` holds 14 occurrences; the fourteenth, `:763`, is a doc comment.) |
+
+**Correction to the correction above, also 2026-09-28.** Its middle row
+cited `d0dd2ef0` as the commit that recorded the per-file figures. Measured:
+`d0dd2ef0` touches two test files and never `docs/BACKLOG.md`;
+`git log -S'22 in \`S3FileSystem\`' -- docs/BACKLOG.md` names **`544d5c76`**,
+the same day, and `544d5c76^` has none. The hash was carried over from the
+row's own unrelated sentence "68, counted 2026-09-25 at `d0dd2ef0`". The
+charitable reading fails too: the row's recipe run at `d0dd2ef0` gives
+22 / 10 / 9 / **9**, not 22 / 10 / 9 / 8. Corrected above; **the same wrong
+hash is in commit `3fe317bb`'s message**, which cannot be amended without
+rewriting a commit another session has since built on, so this is where it
+is recorded.
+
+That makes three artifacts in this plan whose prose about a measurement was
+wrong while the measurement itself was right, and all three were caught by a
+reader who recounted rather than read. The rule they all break is the one
+this project already has: a report says what the diff shows.
 
 And the table's `S3EndpointReason` row, "**9** — none was missed", is one
 short. **Ten** sites carry an `S3EndpointReason` constant, counted at
