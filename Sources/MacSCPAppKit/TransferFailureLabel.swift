@@ -65,7 +65,7 @@ import macSCPCore
 /// `AgentError` (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`),
 /// leaving **21 more `RemoteFSError` construction sites the 57 above does
 /// not include**: `S3MultipartXML.swift:20`, `S3FileSystem.swift:90`,
-/// `:706`, `:888`, `:1108`, `S3ListParser.swift:90`, `S3Uploader.swift:276`,
+/// `:716`, `:898`, `:1118`, `S3ListParser.swift:90`, `S3Uploader.swift:276`,
 /// `S3XMLText.swift:61`, `RemoteChecksumProvider.swift:329`,
 /// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
 /// `:1188`, `:1661`, `WebDAVPropfindParser.swift:83`,
@@ -76,12 +76,26 @@ import macSCPCore
 /// of 63, all four numbers resting on the same single-line recipe, and of
 /// `docs/BACKLOG.md`'s own "68" — this recount just inherited it rather than
 /// closing it. So: **57 is a lower bound on how many `protocolError`/
-/// `connectionFailed` construction sites this module has, not a census of
-/// them**, and the same is true of every earlier number in this paragraph.
-/// A reconciled total (the two recipes' matches combined, their own
-/// `AgentError`/declaration/comment exclusions worked out together) is not
-/// computed here; whoever next recounts this should derive it fresh rather
-/// than add 57 and 21 as if the two recipes' exclusions already lined up.
+/// `connectionFailed` construction sites `Sources/macSCPCore` has, not a
+/// census of them**, and the same was true of every earlier number in this
+/// paragraph.
+///
+/// **Corrected (Task 3 fix round 2, task review's independent census,
+/// 2026-09-28):** this comment used to warn against simply adding 57 and
+/// 21 "as if the two recipes' exclusions already lined up" — right in
+/// spirit, wrong in arithmetic. For `Sources/macSCPCore`, they DO line up:
+/// the second recipe's 23 lines are exactly 21 `RemoteFSError`
+/// constructions plus the 2 `AgentError`'s already named above, with no
+/// `RemoteFSError` case declaration and no comment-only mention among
+/// them, so the two recipes' matches are disjoint and 57 + 21 = **78**
+/// genuinely is `Sources/macSCPCore`'s construction-site count under both
+/// recipes combined. The real blind spot was never the regex — it is the
+/// search PATH: both recipes above are scoped to `Sources/macSCPCore`
+/// only. Three more `RemoteFSError` construction sites of this same shape
+/// live in `Sources/MacSCPAppKit/` — `ContentView+Lifecycle.swift:276`,
+/// `ContentView.swift:1871`, `ContentView.swift:3434` — which neither
+/// recipe's path ever reaches. **The whole-tree total is 81, not 78, and
+/// not 57.**
 ///
 /// What the single-line recipe's 57 lines DO show, unaffected by the count
 /// being a floor: the great majority compose **macSCP's own English
