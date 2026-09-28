@@ -115,8 +115,15 @@ public enum TransferFailureKind: Equatable, Sendable {
     /// before the kind existed, composition for composition — the same key
     /// with the same argument — so making the status typed changed no
     /// message a user reads. The three `detail`-carrying cases still put
-    /// English inside a localized frame; that is the row's remaining half,
-    /// and Task 6 owns it.
+    /// English inside a localized frame; that is the half the `docs/BACKLOG.md`
+    /// row on a transfer failure's technical detail still being macSCP's own
+    /// English was opened for, and that row is Done 2026-09-28 for the sites
+    /// a user really reads: those reasons became `.finding`, the fifteenth case
+    /// above, whose sentence is Core's own in all four languages. What still
+    /// arrives in these three is the text no finding covers — a foreign
+    /// error's words, and the `S3EndpointReason` constants, which the same
+    /// decision left untyped because they name an endpoint the user typed
+    /// and a finding may carry no endpoint.
     ///
     /// No filtering happens here: a `detail` arrives filtered (see above),
     /// and a path is the queue's own.

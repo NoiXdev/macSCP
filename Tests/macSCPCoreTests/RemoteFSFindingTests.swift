@@ -45,7 +45,7 @@ import Testing
     /// uses, and it is locale-independent — a machine running in `de` reads
     /// its own catalogue and both halves still agree.
     ///
-    /// That the catalogue FILES declare all thirteen keys, in all four
+    /// That the catalogue FILES declare all seventeen keys, in all four
     /// languages, is `everyRemoteFSFindingHasItsOwnSentence`'s job.
     @Test func everyFindingResolvesToASentenceAndNotToItsKey() {
         for finding in RemoteFSFinding.everyCase {
