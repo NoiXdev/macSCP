@@ -834,7 +834,165 @@ MSG
 
 ---
 
-### Task 6: closeout
+### Task 6: the six sites the single-line recipe never saw
+
+Added 2026-09-28, after Task 3's review found that the recipe every count in
+this plan rests on requires `reason:` on the same line and searches only
+`Sources/macSCPCore`. An independent census put the true figure at 93
+construction sites where the design document said 69, and the in-scope set at
+22 where it said 16. The maintainer took all six on 2026-09-28. The correction
+is written up in the design document's own first section.
+
+Four new findings, and two sites that reuse findings Task 1 already built.
+
+**Files:**
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFSFinding.swift` (four cases,
+  four `Name` cases, four arms in each of `name`, `messageKey(for:)` where
+  they interpolate, `message`, `logSentence`, `readsAsConnectionFailure`)
+- Modify: `Sources/macSCPCore/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
+- Modify: `Sources/macSCPCore/SSH/CitadelFileSystem.swift:1188`
+- Modify: `Sources/macSCPCore/WebDAV/WebDAVPropfindParser.swift:83`
+- Modify: `Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift:450`
+- Modify: `Sources/macSCPCore/S3/S3FileSystem.swift:90`
+- Modify: `Sources/macSCPCore/S3/S3Uploader.swift:276`
+- Modify: `Sources/macSCPCore/S3/S3XMLText.swift:61`
+- Test: the suites that already cover those files
+
+**Interfaces — produced:**
+```swift
+case resumeNotSupported
+case noSuchBucket(path: String)
+case uploadPartUnacknowledged(part: Int)
+case requestBodyUnencodable
+```
+`noSuchBucket` and `uploadPartUnacknowledged` interpolate, so their
+`messageKey` carries ` %@`. All four have `readsAsConnectionFailure == false`
+— all six sites are `.protocolError` today.
+
+- [ ] **Step 1: Write the failing tests**
+
+One per site's condition, in the suite that already covers that file. Four of
+the six need no server:
+
+```swift
+@Test func creatingAFolderWhereAFileSitsSaysSoOverSSHToo() async throws {
+    // The word-for-word twin of LocalFileSystem's, so it must reach the
+    // SAME finding — a reader must not meet one sentence over SFTP and a
+    // different one locally.
+    #expect(
+        RemoteFSFinding.pathExistsAndIsNotADirectory(path: "/a").message
+            == RemoteFSFinding.pathExistsAndIsNotADirectory(path: "/a").message)
+}
+```
+That one is a tautology — do not write it. Write instead a test that drives
+`CitadelFileSystem.createDirectory(at:)` against the seam its existing tests
+already use, and assert `.finding(.pathExistsAndIsNotADirectory(path:))`; if
+that file's suite has no such seam, say so in the report rather than
+inventing one, and pin the site by mutation evidence alone.
+
+For the other five, assert the finding each site now throws, at the level
+that file's existing suite already tests it. `WebDAVPropfindParser.parsed(_:)`
+and `S3XMLText.escaped(_:)` take their input directly and need no server.
+
+- [ ] **Step 2: Run them to see them fail**
+
+```bash
+swift test --build-system native 2>&1 | tail -20
+```
+Expected: FAIL — the sites still throw `protocolError(reason:)`.
+
+- [ ] **Step 3: Add the four findings**
+
+To `RemoteFSFinding`, in the order above, after the thirteen already there.
+Every switch in the type is exhaustive; add an arm to each. `logSentence`
+takes the English below, lower-cased and with the argument interpolated
+directly, as the existing ones do.
+
+- [ ] **Step 4: Write the catalogue entries**
+
+`en.lproj`:
+```
+"core.finding.resumeNotSupported" = "The server cannot add to an existing file, so the transfer cannot be resumed";
+"core.finding.noSuchBucket %@" = "This connection starts at the bucket list, and %@ names no bucket";
+"core.finding.uploadPartUnacknowledged %@" = "The server did not confirm part %@ of the upload";
+"core.finding.requestBodyUnencodable" = "A value in the request cannot be written in the format the server needs";
+```
+
+`de.lproj`:
+```
+"core.finding.resumeNotSupported" = "Der Server kann nichts an eine vorhandene Datei anhängen, deshalb lässt sich die Übertragung nicht fortsetzen";
+"core.finding.noSuchBucket %@" = "Diese Verbindung beginnt bei der Bucket-Liste, und %@ benennt keinen Bucket";
+"core.finding.uploadPartUnacknowledged %@" = "Der Server hat Teil %@ des Uploads nicht bestätigt";
+"core.finding.requestBodyUnencodable" = "Ein Wert in der Anfrage lässt sich nicht in dem Format schreiben, das der Server braucht";
+```
+
+`fr.lproj`:
+```
+"core.finding.resumeNotSupported" = "Le serveur ne peut rien ajouter à un fichier existant, le transfert ne peut donc pas être repris";
+"core.finding.noSuchBucket %@" = "Cette connexion démarre sur la liste des buckets, et %@ ne désigne aucun bucket";
+"core.finding.uploadPartUnacknowledged %@" = "Le serveur n'a pas confirmé la partie %@ de l'envoi";
+"core.finding.requestBodyUnencodable" = "Une valeur de la requête ne peut pas être écrite dans le format que le serveur exige";
+```
+
+`pl.lproj`:
+```
+"core.finding.resumeNotSupported" = "Serwer nie potrafi dopisać do istniejącego pliku, więc przesyłania nie można wznowić";
+"core.finding.noSuchBucket %@" = "To połączenie zaczyna się od listy bucketów, a %@ nie wskazuje żadnego bucketa";
+"core.finding.uploadPartUnacknowledged %@" = "Serwer nie potwierdził części %@ wysyłania";
+"core.finding.requestBodyUnencodable" = "Wartości w żądaniu nie da się zapisać w formacie, którego wymaga serwer";
+```
+
+The four locales keep the word "bucket" — counted in the catalogues on
+2026-09-28: `en`, `de`, `fr` and `pl` all spell it `bucket`
+(`core.connect.s3BucketRequired` and its three siblings), Polish inflecting
+it (`bucketów`, `bucketa`). Do not introduce a translated term for it here.
+
+- [ ] **Step 5: Convert the six sites**
+
+- `CitadelFileSystem.swift:1188` → `.finding(.pathExistsAndIsNotADirectory(path: path))`
+- `WebDAVPropfindParser.swift:83` → `.finding(.listingUnparsable)`
+- `WebDAVFileSystem.swift:450` → `.finding(.resumeNotSupported)`
+- `S3FileSystem.swift:90` → `.finding(.noSuchBucket(path: path))`
+- `S3Uploader.swift:276` → `.finding(.uploadPartUnacknowledged(part: partNumber))`
+- `S3XMLText.swift:61` → `.finding(.requestBodyUnencodable)`
+
+Two reuses, and each needs a comment saying why it is a reuse rather than a
+new finding: the Citadel one because it is the word-for-word twin of
+`LocalFileSystem.swift:399` and a reader must not meet two sentences for one
+condition; the PROPFIND one because a PROPFIND body IS the WebDAV listing.
+`everyRemoteFSFindingHasItsOwnSentence` forbids two findings sharing a
+sentence, so a new finding for either would have needed a second way of
+saying the same thing.
+
+- [ ] **Step 6: Prove each site**
+
+Plant a mutation per site (substitute a different finding, anchor asserted
+before writing), run the narrowest filter, record red or green, restore
+byte-for-byte with `git checkout --`, confirm `git status --porcelain` is
+empty. Report red/green per site. A site that stays green is an honest
+finding to report, not something to paper over.
+
+- [ ] **Step 7: Recount and commit**
+
+`Sources/MacSCPAppKit/TransferFailureLabel.swift` carries the count and its
+recipe. Recount AFTER your edits land, not before, and correct both the
+single-line figure and the enumeration of multi-line sites — six of them
+become findings in this task, so the enumeration shrinks.
+
+```bash
+git add -A && git commit -F - <<'MSG'
+refactor(core): the six sites the single-line recipe never saw
+
+<what the diff shows, the per-site mutation evidence, the recounted
+numbers, and the App-row shape change for these six>
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+MSG
+```
+
+---
+
+### Task 7: closeout
 
 **Files:**
 - Modify: `docs/BACKLOG.md`
@@ -847,9 +1005,23 @@ Re-run the row's own recipe at the new HEAD:
 ```bash
 grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore | wc -l
 ```
-and recompute the split (AgentError / comments / declarations / sites). Write
-the new numbers into `docs/BACKLOG.md`, with the date, alongside what the
-work removed: sixteen sites, thirteen findings.
+and recompute the split (AgentError / comments / declarations / sites).
+
+**That recipe is known to undercount** — it requires `reason:` on the same
+line and searches only `Sources/macSCPCore`. Run the census method instead
+(match the CASE NAME followed by `(` across any whitespace including
+newlines, reading each file whole, per file — batching the files into one
+`perl` invocation silently under-counts and misreports line numbers), over
+all of `Sources/`. Write BOTH numbers into `docs/BACKLOG.md` with the date:
+what the row's own recipe yields, and what the true count is. The row states
+68; at `bcbea4f4` the true figure was 93 construction sites, and the row's
+whole per-file breakdown (22 / 10 / 9 / 8 for the four biggest files) is
+truly 26 / 10 / 12 / 13. Correct it, dated, and say which recipe produced
+which number — the row is a measurement record, so the old number stays
+visible as what was measured then.
+
+Alongside it, what the work removed: twenty-two sites, seventeen findings.
+Count both against the tree rather than copying them from here.
 
 - [ ] **Step 2: Record what stays open, as its own rows**
 
@@ -897,10 +1069,11 @@ MSG
 
 ## Self-review
 
-**Spec coverage.** Each of the spec's sixteen sites has a task: WebDAV's six
-(Task 2), S3's six (Task 3), the redirect (Task 4), Local and the transport's
-three (Task 5). The spec's type, catalogue, guards and three mapper arms are
-Task 1; its documentation section is Task 6.
+**Spec coverage.** Each of the spec's twenty-two sites has a task: WebDAV's
+six (Task 2), S3's six (Task 3), the redirect (Task 4), Local and the
+transport's three (Task 5), and the six the single-line recipe never saw
+(Task 6). The spec's type, catalogue, guards and three mapper arms are
+Task 1; its documentation section is Task 7, and the six sites the recipe never saw are Task 6.
 
 **Placeholders.** The `<what the diff shows>` markers in the commit-message
 heredocs are deliberate and are the project's own rule ("a report says what

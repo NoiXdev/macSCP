@@ -17,6 +17,66 @@ prose. The frame around it is translated and the sentence inside it is not,
 so a German, French or Polish reader gets "Übertragung fehlgeschlagen: S3
 download failed with HTTP status 503".
 
+## Correction, 2026-09-28: the recipe undercounted, and the numbers below are short
+
+Everything in the next section was derived with the row's own recipe,
+`grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore`.
+That recipe has two blind spots, both found by Task 3's review and then
+measured independently:
+
+1. **It requires `reason:` on the same line as the case name**, so every
+   construction written across two lines is invisible to it — 21 of them in
+   `Sources/macSCPCore` alone.
+2. **Its search path is `Sources/macSCPCore`**, so the 3 construction sites
+   in `Sources/MacSCPAppKit` were never in range at any spelling.
+
+Recounted at `5b699814` by matching the CASE NAME followed by `(` across any
+whitespace including newlines, reading each file whole (per file — batching
+the files into one `perl` invocation silently under-counts and misreports
+line numbers), then classifying all 147 occurrences by hand:
+
+| | the section below says | corrected |
+|---|---|---|
+| construction sites | 69 | **93** (90 in Core, 3 in `MacSCPAppKit`) |
+| reach the queue mapper | 34 | **42** |
+| cannot reach it | 35 | **51** |
+| foreign-text passthroughs | 9 | **11** |
+| `S3EndpointReason` | 9 | **9** — none was missed |
+| **in scope** | **16** | **22** |
+
+11 + 9 + 22 = 42, and the arithmetic closes. The per-file figures the section
+below gives for the four biggest files (22 / 10 / 9 / 8) are, truly, 26 / 10 /
+12 / 13.
+
+**Six sites therefore belong in the scope the maintainer chose and were not
+in it.** The maintainer took all six on 2026-09-28 after being shown this
+table:
+
+| site | text | finding |
+|---|---|---|
+| `SSH/CitadelFileSystem.swift:1188` | `path exists and is not a directory: \(path)` | reuses `.pathExistsAndIsNotADirectory` — the word-for-word twin of `LocalFileSystem.swift:399` |
+| `WebDAV/WebDAVPropfindParser.swift:83` | `WebDAV PROPFIND response is not valid XML` | reuses `.listingUnparsable` |
+| `WebDAV/WebDAVFileSystem.swift:450` | `WebDAV cannot append to a file; resume is not supported` | new |
+| `S3/S3FileSystem.swift:90` | `S3: this connection starts at the bucket list, and "…" names no bucket` | new, carries the path |
+| `S3/S3Uploader.swift:276` | `S3 UploadPart response for part N is missing an ETag header` | new |
+| `S3/S3XMLText.swift:61` | `S3 request body: a value contains a character XML cannot carry` | new |
+
+One borderline case is deliberately left out: `S3/S3MultipartXML.swift:20`
+composes `"Failed to parse S3 InitiateMultipartUpload response: \(reason)"`
+where `reason` falls back from Foundation's `parserError` to macSCP's own
+`"no UploadId element"`. One of its two branches is in-scope text and the
+other is not; splitting it is the same move that produced finding 10, and it
+gets a backlog row rather than a place here.
+
+**What stays true below:** the three-way split's SHAPE (the two mappers that
+drop the text, the one that keeps it, the fourth entry point outside the
+queue), every traced call chain, and the thirteen findings already built. What
+was wrong was one number and everything derived by subtracting from it. The
+section is left as written, because it is the record of what was measured on
+2026-09-27 and how — not rewritten to look as if it had been right.
+
+---
+
 ## The measurement this rests on
 
 All of it recomputed at `bcbea4f4` on 2026-09-28, with the recipes, so none
