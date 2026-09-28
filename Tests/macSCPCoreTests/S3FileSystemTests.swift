@@ -400,6 +400,27 @@ struct S3FileSystemTests {
         }
     }
 
+    /// Runs `operation` and asserts it was refused by `mapErrorStatus`'s
+    /// default arm — `.finding(.unexpectedStatus(code:))` — with the exact
+    /// status code named.
+    private func expectUnexpectedStatusFinding(
+        _ code: Int, sourceLocation: SourceLocation = #_sourceLocation,
+        _ operation: () async throws -> Void
+    ) async {
+        do {
+            try await operation()
+            Issue.record("expected throw", sourceLocation: sourceLocation)
+        } catch let error as RemoteFSError {
+            guard case .finding(let finding) = error else {
+                Issue.record("expected .finding, got \(error)", sourceLocation: sourceLocation)
+                return
+            }
+            #expect(finding == .unexpectedStatus(code: code), sourceLocation: sourceLocation)
+        } catch {
+            Issue.record("unexpected error type: \(error)", sourceLocation: sourceLocation)
+        }
+    }
+
     /// Runs `operation` and asserts the BUCKET-LEVEL guard is what refused
     /// it — its own error case, naming the operation and the path.
     ///
@@ -559,11 +580,51 @@ struct S3FileSystemTests {
         do {
             try await read()
             Issue.record("the resumed read was not refused", sourceLocation: sourceLocation)
-        } catch RemoteFSError.protocolError(let reason) {
-            #expect(reason == S3FileSystem.rangeIgnoredReason, sourceLocation: sourceLocation)
+        } catch RemoteFSError.finding(let finding) {
+            #expect(finding == .resumeRangeIgnored, sourceLocation: sourceLocation)
         } catch {
             Issue.record("refused with \(error), not the Range refusal", sourceLocation: sourceLocation)
         }
+    }
+
+    /// `rangeIgnoredReason`'s doc comment claims it carries the same English
+    /// as `core.finding.resumeRangeIgnored`'s `en` catalogue entry — held to
+    /// that claim the way `WebDAVFileSystemTests
+    /// .sourceChangedReasonStillMatchesTheFindingsEnglishCatalogueEntry`
+    /// holds WebDAV's sibling constant. Reads the catalogue directly off
+    /// disk rather than through `CoreL10n.string`/`RemoteFSFinding.message`
+    /// at runtime: those resolve through the test process's current locale,
+    /// and this property has to hold regardless of what locale runs the
+    /// test, not only under `en`.
+    @Test func rangeIgnoredReasonStillMatchesTheFindingsEnglishCatalogueEntry() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let enCatalogue = repoRoot
+            .appendingPathComponent("Sources/macSCPCore/Resources/en.lproj/Localizable.strings")
+            .path(percentEncoded: false)
+        let catalogue = try #require(NSDictionary(contentsOfFile: enCatalogue) as? [String: String])
+        let key = RemoteFSFinding.messageKey(for: .resumeRangeIgnored)
+        let englishFromCatalogue = try #require(catalogue[key])
+
+        #expect(S3FileSystem.rangeIgnoredReason == englishFromCatalogue)
+    }
+
+    /// The S3 sibling of the same claim, for `sourceChangedReason`.
+    @Test func sourceChangedReasonStillMatchesTheFindingsEnglishCatalogueEntry() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let enCatalogue = repoRoot
+            .appendingPathComponent("Sources/macSCPCore/Resources/en.lproj/Localizable.strings")
+            .path(percentEncoded: false)
+        let catalogue = try #require(NSDictionary(contentsOfFile: enCatalogue) as? [String: String])
+        let key = RemoteFSFinding.messageKey(for: .sourceChangedSinceInterruption)
+        let englishFromCatalogue = try #require(catalogue[key])
+
+        #expect(S3FileSystem.sourceChangedReason == englishFromCatalogue)
     }
 
     /// S3 answers a range request past EOF with HTTP 416; the protocol
@@ -938,7 +999,7 @@ struct S3FileSystemTests {
             (Data(), httpResponse(status: 500)), // stat(to="/b.txt") -> transient server error, NOT "not found"
         ])
 
-        await expectProtocolError {
+        await expectUnexpectedStatusFinding(500) {
             try await fs.rename(from: "/a.txt", to: "/b.txt")
         }
 
@@ -1536,20 +1597,14 @@ struct S3FileSystemTests {
     }
 
     /// Outcome 4: anything else stays what it was. A 500 on `ListBuckets`
-    /// is a `protocolError`, not one of the two new cases — a provider that
-    /// does not implement `ListBuckets` must not be reported as a key
-    /// without the permission.
+    /// is a `.finding(.unexpectedStatus(code:))`, not one of the two new
+    /// cases — a provider that does not implement `ListBuckets` must not be
+    /// reported as a key without the permission.
     @Test func anyOtherBucketListFailureStaysWhatItWas() async throws {
         let config = bucketListConfig
         let transport = FakeS3Transport(responses: [(Data(), httpResponse(status: 500))])
-        do {
+        await expectUnexpectedStatusFinding(500) {
             _ = try await S3FileSystem.connect(config, transport: transport)
-            Issue.record("expected throw")
-        } catch let error as RemoteFSError {
-            guard case .protocolError = error else {
-                Issue.record("expected .protocolError, got \(error)")
-                return
-            }
         }
     }
 
@@ -2139,33 +2194,31 @@ struct S3FileSystemTests {
     /// claim about something nobody asked the store about. Both shapes fall
     /// through to the generic status mapping instead.
     @Test func aTwelveTwelveNoPreconditionAskedForIsNotTheChangedObjectRefusal() async throws {
-        let fresh = try await reasonFor412(offset: 0, tag: Self.listedETag)
-        let unvalidatedResume = try await reasonFor412(offset: 16, tag: nil)
+        let fresh = try await findingFor412(offset: 0, tag: Self.listedETag)
+        let unvalidatedResume = try await findingFor412(offset: 16, tag: nil)
 
-        let freshReportedAsChanged = fresh == S3FileSystem.sourceChangedReason
-        let resumeReportedAsChanged = unvalidatedResume == S3FileSystem.sourceChangedReason
-        #expect(freshReportedAsChanged == false)
-        #expect(resumeReportedAsChanged == false)
+        #expect(fresh != .sourceChangedSinceInterruption)
+        #expect(unvalidatedResume != .sourceChangedSinceInterruption)
         // The positive beside the two negatives: each refusal still names the
         // status that came back, so a case that stopped reaching the 412 at
         // all — or stopped refusing — fails here rather than passing quietly.
-        #expect(fresh.contains("412"))
-        #expect(unvalidatedResume.contains("412"))
+        #expect(fresh == .unexpectedStatus(code: 412))
+        #expect(unvalidatedResume == .unexpectedStatus(code: 412))
     }
 
-    /// The `reason` a 412 produces for a read of this shape. Records an issue
-    /// and returns an empty string if the read was not refused at all, which
-    /// fails the `contains` checks above.
-    private func reasonFor412(
+    /// The finding a 412 produces for a read of this shape. Records an issue
+    /// and returns a finding the assertions above cannot match if the read
+    /// was not refused at all.
+    private func findingFor412(
         offset: UInt64, tag: String?, sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws -> String {
+    ) async throws -> RemoteFSFinding {
         let (fs, _) = try await connect(responses: [(Data(), httpResponse(status: 412))])
         do {
             _ = try await fs.readStream(path: "/big.bin", fromOffset: offset, ifMatching: tag)
             Issue.record("the 412 was not refused at all", sourceLocation: sourceLocation)
-            return ""
-        } catch RemoteFSError.protocolError(let reason) {
-            return reason
+            return .unexpectedStatus(code: -1)
+        } catch RemoteFSError.finding(let finding) {
+            return finding
         }
     }
 
@@ -2175,8 +2228,8 @@ struct S3FileSystemTests {
         do {
             try await read()
             Issue.record("the changed object was not refused", sourceLocation: sourceLocation)
-        } catch RemoteFSError.protocolError(let reason) {
-            #expect(reason == S3FileSystem.sourceChangedReason, sourceLocation: sourceLocation)
+        } catch RemoteFSError.finding(let finding) {
+            #expect(finding == .sourceChangedSinceInterruption, sourceLocation: sourceLocation)
         } catch {
             Issue.record(
                 "refused with \(error), not the changed-object refusal",

@@ -450,7 +450,7 @@ struct TransferEngineTests {
         let bytesBefore = try await destinationBytes(destination)
 
         await #expect(
-            throws: RemoteFSError.protocolError(reason: S3FileSystem.sourceChangedReason)
+            throws: RemoteFSError.finding(.sourceChangedSinceInterruption)
         ) {
             try await TransferEngine.copyFile(
                 from: source, sourcePath: "/quelle.bin",

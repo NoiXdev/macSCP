@@ -117,9 +117,11 @@ actor MockRemoteFileSystem: RemoteFileSystem {
 
     /// Mirrors what a real HTTP backend does with `If-Match`: a read that
     /// carries a precondition is refused when the object's own validator has
-    /// moved on, with the SAME reason the product produces — derived from
-    /// `S3FileSystem`, not spelled a second time here. A read that carries no
-    /// precondition is never refused, whatever the double currently holds.
+    /// moved on, with the SAME finding the product produces (2026-09-28:
+    /// `S3FileSystem.readStream` throws `.finding(.sourceChangedSinceInterruption)`
+    /// rather than a `protocolError(reason:)`, so this double now does too).
+    /// A read that carries no precondition is never refused, whatever the
+    /// double currently holds.
     func readStream(
         path: String, fromOffset offset: UInt64, ifMatching tag: String?
     ) async throws -> AsyncThrowingStream<Data, Error> {
@@ -127,7 +129,7 @@ actor MockRemoteFileSystem: RemoteFileSystem {
             readsWithPrecondition += 1
             lastIfMatching[path] = tag
             if let current = entityTags[path], current != tag {
-                throw RemoteFSError.protocolError(reason: S3FileSystem.sourceChangedReason)
+                throw RemoteFSError.finding(.sourceChangedSinceInterruption)
             }
         }
         return try await readStream(path: path, fromOffset: offset)

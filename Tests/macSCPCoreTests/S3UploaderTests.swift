@@ -426,6 +426,27 @@ struct S3UploaderTests {
         }
     }
 
+    /// `mapStatus`'s default arm: anything not 403/404 becomes
+    /// `.finding(.unexpectedStatus(code:))`, naming the status the server
+    /// actually sent.
+    @Test func nonSuccessResponseMapsUnmappedStatusToAFinding() async throws {
+        let builder = FakeRequestBuilder(responses: [(Data(), http(500))])
+        let uploader = S3Uploader()
+
+        do {
+            try await uploader.upload(key: "dir/small.bin", contents: stream(of: [Data([0x01])]), using: builder)
+            Issue.record("expected throw")
+        } catch let error as RemoteFSError {
+            guard case .finding(let finding) = error else {
+                Issue.record("expected .finding, got \(error)")
+                return
+            }
+            #expect(finding == .unexpectedStatus(code: 500))
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
+
     /// An empty stream (0-byte object) is still valid: it ends at or below
     /// the threshold, so it goes out as one PUT of an empty body.
     @Test func emptyStreamIsASinglePutOfAnEmptyBody() async throws {

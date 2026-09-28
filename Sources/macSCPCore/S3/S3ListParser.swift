@@ -34,8 +34,11 @@ public enum S3ListParser {
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse() else {
-            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
-            throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
+            // The parser's own `parserError` — macSCP's own text about XML
+            // shape — is dropped here rather than carried into the finding:
+            // no mapper rendered it to a user except the queue, and no
+            // reader acts on it.
+            throw RemoteFSError.finding(.listingUnparsable)
         }
         return (delegate.items, delegate.continuationToken, delegate.eTags)
     }

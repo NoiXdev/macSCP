@@ -47,12 +47,20 @@ import macSCPCore
 /// rather than construct it (`DiagnosticLog.swift:266-267`,
 /// `DialProbes.swift:164-165`, `ConnectionViewModel.swift:2333`,
 /// `RemoteFSFinding.swift:6`, `CitadelFileSystem.swift:763`) — 89 − 17 − 2
-/// − 7 = 63. The great majority of those 63 compose **macSCP's own English
-/// prose**, not a server's words. The two sentences a user is most likely
-/// to meet are `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason`
-/// — macSCP constants, quoted verbatim in the user documentation. Genuinely
-/// foreign text is the minority: a `localizedDescription` from Foundation
-/// or NIO, an S3 error code parsed out of a response body.
+/// − 7 = 63. **Recounted a third time 2026-09-28**, after Task 3 converted
+/// S3's six sites (four in `S3FileSystem.swift`, one in `S3Uploader.swift`,
+/// one in `S3ListParser.swift`) to `.finding(...)` too: the same recipe now
+/// finds 83 raw lines, the same 17/2/7 subtract off it, 83 − 17 − 2 − 7 =
+/// **57**, again exactly six fewer. The great majority of those 57 compose
+/// **macSCP's own English prose**, not a server's words. The two sentences a
+/// user was most likely to meet — `S3FileSystem.rangeIgnoredReason` and
+/// `sourceChangedReason` — are no longer among them: both constants stay in
+/// source as the English anchor for their finding's catalogue entry (the
+/// user documentation still quotes that English), but neither is read by
+/// the site that used to construct a `protocolError(reason:)` from it.
+/// Genuinely foreign text is the minority of what remains: a
+/// `localizedDescription` from Foundation or NIO, an S3 error code parsed
+/// out of a response body.
 ///
 /// So the honest statement is: the detail is a diagnostic string macSCP
 /// mostly wrote in English, occasionally relayed from elsewhere, and in

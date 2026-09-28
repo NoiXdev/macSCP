@@ -332,7 +332,7 @@ public struct S3Uploader: Sendable {
         case 404:
             return .notFound(path: "/" + key)
         default:
-            return .protocolError(reason: "S3 upload failed with HTTP status \(statusCode)")
+            return .finding(.unexpectedStatus(code: statusCode))
         }
     }
 }

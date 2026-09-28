@@ -165,9 +165,12 @@ struct TransferQueueViewModelTests {
         /// anything about its source.
         private var statFailures: [String: Error]
 
-        /// The reason a refused read reports, DERIVED from the constant the
-        /// product really produces rather than spelled a second time here: a
-        /// literal copy would keep matching after the real one was reworded.
+        /// The English a refused read's message contains, DERIVED from the
+        /// constant the product's `sourceChangedSinceInterruption` finding
+        /// carries (`S3FileSystem.sourceChangedReason`'s doc comment is that
+        /// finding's English anchor) rather than spelled a second time here:
+        /// a literal copy would keep matching after the real one was
+        /// reworded.
         static let sourceChangedReason = S3FileSystem.sourceChangedReason
 
         init(
@@ -228,8 +231,12 @@ struct TransferQueueViewModelTests {
 
         /// Mirrors what a real HTTP backend does with a precondition: a read
         /// that carries one is refused when this double's own validator has
-        /// moved on since, with the product's own reason. A read that carries
-        /// none is never refused, whatever validator the double holds.
+        /// moved on since, with the product's own finding (2026-09-28:
+        /// `S3FileSystem.readStream` throws
+        /// `.finding(.sourceChangedSinceInterruption)` rather than a
+        /// `protocolError(reason:)`, so this double now does too). A read
+        /// that carries none is never refused, whatever validator the double
+        /// holds.
         func readStream(
             path: String, fromOffset offset: UInt64, ifMatching tag: String?
         ) async throws -> AsyncThrowingStream<Data, Error> {
@@ -238,7 +245,7 @@ struct TransferQueueViewModelTests {
                 readsWithPrecondition += 1
                 lastIfMatching[path] = tag
                 if let current = entityTags[path], current != tag {
-                    throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
+                    throw RemoteFSError.finding(.sourceChangedSinceInterruption)
                 }
             }
             return try await readStream(path: path, fromOffset: offset)

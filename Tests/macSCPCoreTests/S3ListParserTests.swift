@@ -97,9 +97,9 @@ struct S3ListParserTests {
         #expect(result.items.first?.path == "/sub/b.txt")
     }
 
-    @Test func malformedXMLThrowsProtocolError() throws {
+    @Test func malformedXMLThrowsTheListingUnparsableFinding() throws {
         let garbage = Data("not xml at all <<<".utf8)
-        #expect(throws: RemoteFSError.self) {
+        #expect(throws: RemoteFSError.finding(.listingUnparsable)) {
             _ = try S3ListParser.parse(garbage, prefix: "")
         }
     }

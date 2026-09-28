@@ -519,7 +519,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             // resume was practically unreachable here; since then it is
             // `retryInterrupted`'s path.
             if offset > 0, !Self.answersTheRange(response, from: offset) {
-                throw RemoteFSError.protocolError(reason: Self.rangeIgnoredReason)
+                throw RemoteFSError.finding(.resumeRangeIgnored)
             }
             return Self.wrappingTransportErrors(body)
         case 412 where validatorSent != nil:
@@ -534,7 +534,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             // there would be a claim about something nobody asked, so that
             // one falls through to `default:` and is reported as the status
             // it is.
-            throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
+            throw RemoteFSError.finding(.sourceChangedSinceInterruption)
         case 416:
             return AsyncThrowingStream { $0.finish() }
         case 403:
@@ -542,13 +542,21 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         case 404:
             throw RemoteFSError.notFound(path: path)
         default:
-            throw RemoteFSError.protocolError(reason: "S3 download failed with HTTP status \(response.statusCode)")
+            throw RemoteFSError.finding(.unexpectedStatus(code: response.statusCode))
         }
     }
 
     /// Why a resumed download was refused: the server did not answer with
     /// the byte range it was asked for (final review of the 2026-09-19 small
     /// follow-ups, I-3).
+    ///
+    /// As of the 2026-09-28 typed-findings change, this is no longer what
+    /// gets thrown: the site above throws
+    /// `RemoteFSError.finding(.resumeRangeIgnored)`, whose `logSentence` and
+    /// `core.finding.resumeRangeIgnored` `en` catalogue entry carry the same
+    /// English this constant does. It stays here as that English's anchor in
+    /// source — the user documentation quotes it — even though nothing in
+    /// this module reads it any more.
     static let rangeIgnoredReason =
         "S3 did not answer with the byte range asked for, so the download was not resumed"
 
@@ -559,6 +567,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// longer exists, and appending this one's tail to it would make a file
     /// of exactly the right length and entirely wrong contents. Nothing was
     /// appended.
+    ///
+    /// As of the 2026-09-28 typed-findings change, this is no longer what
+    /// gets thrown: the site above throws
+    /// `RemoteFSError.finding(.sourceChangedSinceInterruption)`, whose
+    /// `logSentence` and `core.finding.sourceChangedSinceInterruption` `en`
+    /// catalogue entry carry the same English this constant does. It stays
+    /// here as that English's anchor in source — the user documentation
+    /// quotes it — even though nothing in this module reads it any more.
     static let sourceChangedReason =
         "The file changed on the server since the interrupted download, so nothing was added to the partial file"
 
@@ -1198,8 +1214,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
     /// Maps a non-2xx HTTP status to the `RemoteFSError` it represents:
     /// 403 → `.authenticationFailed`, 404 → `.notFound(path:)`, anything
-    /// else → `.protocolError`. Callers only reach this for a status
-    /// already known to be outside the 2xx range.
+    /// else → `.finding(.unexpectedStatus(code:))`. Callers only reach this
+    /// for a status already known to be outside the 2xx range.
     private static func mapErrorStatus(_ statusCode: Int, path: String) -> RemoteFSError {
         switch statusCode {
         case 403:
@@ -1207,7 +1223,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         case 404:
             return .notFound(path: path)
         default:
-            return .protocolError(reason: "S3 request failed with HTTP status \(statusCode)")
+            return .finding(.unexpectedStatus(code: statusCode))
         }
     }
 
