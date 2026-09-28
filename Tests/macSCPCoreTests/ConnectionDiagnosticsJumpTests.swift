@@ -19,7 +19,13 @@ import Testing
 ///
 /// No case waits on a clock: a dial that has to be in flight is parked on an
 /// `AsyncSignal` and released by the case.
-@Suite("ConnectionDiagnostics through a jump host")
+/// **Hang bound, not a ceiling** (2026-09-28). Every case here races steps
+/// against a budget through `DetachedProbe`, whose deadline is armed at
+/// CREATION and so bounds how long a body waited for a thread as well as how
+/// long it ran. `.timeLimit` is the net for a case that truly hangs, and it
+/// is deliberately far larger than any step budget below, so no assertion in
+/// this suite depends on it.
+@Suite("ConnectionDiagnostics through a jump host", .timeLimit(.minutes(5)))
 struct ConnectionDiagnosticsJumpTests {
     /// The jump's secret in the cases that give it one. Named, and never
     /// written into an expectation: `#expect` prints the source text of what
@@ -1691,7 +1697,7 @@ struct ConnectionDiagnosticsJumpTests {
 
     private static func diagnostics(
         jumpPort: Int, rig: JumpRig, contribution: Ticker? = nil,
-        stepTimeout: Duration = .seconds(5),
+        stepTimeout: Duration = .seconds(60),
         jumpDialLaunch: @escaping DetachedProbe.Launch = DetachedProbe.detach
     ) -> ConnectionDiagnostics {
         diagnostics(
@@ -1701,7 +1707,7 @@ struct ConnectionDiagnosticsJumpTests {
 
     private static func diagnostics(
         jump: DiagnosticJump, rig: JumpRig, contribution: Ticker? = nil,
-        values: FieldValues = targetValues(), stepTimeout: Duration = .seconds(5),
+        values: FieldValues = targetValues(), stepTimeout: Duration = .seconds(60),
         jumpDialLaunch: @escaping DetachedProbe.Launch = DetachedProbe.detach
     ) -> ConnectionDiagnostics {
         ConnectionDiagnostics(

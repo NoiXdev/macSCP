@@ -211,7 +211,27 @@ struct ConnectionDiagnosticsTests {
                 DiagnosticStepID.resolve, DiagnosticStepID.tcp, DiagnosticStepID.icmp,
                 DiagnosticStepID.dial, DiagnosticStepID.trace,
             ])
-        #expect(report.steps.map(\.outcome) == [.ok, .ok, .ok, .ok, .ok])
+        // No row failed — and nothing stronger. Four of these five are REAL
+        // probes against loopback (resolve, TCP, ICMP, trace), each raced
+        // against its budget, and the fifth is a contribution the pool must
+        // still hand a thread. On the three-core CI runner, whose idle stalls
+        // have been measured at 14.67 s, "ok within the budget" is a
+        // wall-clock ceiling (CLAUDE.md, "A wall-clock ceiling in a test
+        // measures the runner"). The order above is what this case is about
+        // and is asserted exactly; this is the floor beneath it.
+        //
+        // The same treatment its jump twin got in `ac894cb9`
+        // (`ConnectionDiagnosticsJumpTests.aJumpSessionIsWalkedJumpFirstThenTheTargetThroughIt`),
+        // and the last site in the tree that still asserted an `.ok` chain
+        // over real probes — counted 2026-09-28 with
+        // `grep -rn "\[\.ok, \.ok" Tests/`, which returned this line alone.
+        let failed = report.steps.filter {
+            if case .failed = $0.outcome { return true }
+            return false
+        }
+        #expect(failed.isEmpty, """
+            \(report.plainText())
+            """)
         #expect(report.endpoint == Endpoint(host: "127.0.0.1", port: listener.port))
     }
 
