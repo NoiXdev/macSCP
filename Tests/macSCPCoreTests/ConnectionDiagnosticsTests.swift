@@ -21,7 +21,14 @@ import Testing
 /// (CLAUDE.md, "Tests never block the cooperative pool"); the tests here only
 /// `await`. The one place a test touches a socket directly — `LoopbackSocket`
 /// below — calls `socket`/`bind`/`listen`/`close`, none of which block.
-@Suite("ConnectionDiagnostics")
+/// **Hang bound, not a ceiling** (2026-09-28). Every case here runs steps
+/// through `DetachedProbe`, whose deadline is armed at CREATION and so bounds
+/// how long the body waited for a thread as well as how long it ran. On a
+/// three-core CI runner a body that computes nothing can miss a small budget
+/// entirely, and the step then settles as `notStarted`. `.timeLimit` is the
+/// net for a case that truly hangs; it is deliberately far larger than any
+/// step budget below, so no assertion in this suite depends on it.
+@Suite("ConnectionDiagnostics", .timeLimit(.minutes(5)))
 struct ConnectionDiagnosticsTests {
     /// The secret the SSH dial cases hand the runner. Named rather than
     /// written into an expectation: `#expect` reports the SOURCE TEXT of the
@@ -1689,8 +1696,23 @@ struct ConnectionDiagnosticsTests {
             """)
     }
 
+    /// The default budget is sixty seconds, and it is NOT a bound any case here
+    /// asserts on. It was `.seconds(5)` until 2026-09-28, when CI run
+    /// 36443098104 went red with three cases reading
+    /// `notStarted("this Mac was too busy to start the measurement")` where
+    /// they expect `.failed(…)` — each after 49.6 s in a suite that took
+    /// 67.175 s. Their dial is `constantContribution`, a body that returns a
+    /// constant and computes nothing, so five seconds over it measured the
+    /// runner's willingness to hand out a thread and nothing else.
+    ///
+    /// Counted in the same pass: `Self.run(` has 12 call sites here, and the
+    /// two that pass their own `stepTimeout` (`.milliseconds(200)`,
+    /// `.seconds(1)`) are exactly the two cases that WANT the deadline to
+    /// fire. Raising this default therefore reaches the other ten and cannot
+    /// reach those two. The suite's `.timeLimit` above is what catches a body
+    /// that really hangs.
     private static func run(
-        descriptor: BackendDescriptor, stepTimeout: Duration = .seconds(5),
+        descriptor: BackendDescriptor, stepTimeout: Duration = .seconds(60),
         appVersion: String = "test"
     ) async -> DiagnosticReport {
         await ConnectionDiagnostics(
