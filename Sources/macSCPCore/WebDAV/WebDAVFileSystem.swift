@@ -447,8 +447,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         guard mode == .overwrite else {
             // WebDAV has no partial PUT. Treating .append as .overwrite would
             // silently destroy the bytes already transferred.
-            throw RemoteFSError.protocolError(
-                reason: "WebDAV cannot append to a file; resume is not supported")
+            throw RemoteFSError.finding(.resumeNotSupported)
         }
 
         var request = URLRequest(url: base.url(forPath: path, isDirectory: false))

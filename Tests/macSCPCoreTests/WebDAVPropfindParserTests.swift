@@ -273,8 +273,18 @@ struct WebDAVPropfindParserTests {
         #expect(items.isEmpty)
     }
 
-    @Test func malformedXMLThrowsProtocolError() {
-        #expect(throws: RemoteFSError.self) {
+    /// A body the XML parser refuses is the listing this backend could not
+    /// read, so it reports `.listingUnparsable` — the SAME finding the S3
+    /// list parser reports for its own unreadable listing, because a
+    /// PROPFIND body IS the WebDAV listing and a reader must not meet two
+    /// sentences for one condition (typed-remote-fs-findings Task 6).
+    ///
+    /// `emptyCollectionYieldsNoEntries` above is the positive control this
+    /// negative case needs: it parses a well-formed body through the same
+    /// `parsed` and gets entries back, so a parser that threw for every
+    /// input could not satisfy both.
+    @Test func malformedXMLIsReportedAsAnUnreadableListing() {
+        #expect(throws: RemoteFSError.finding(.listingUnparsable)) {
             try WebDAVPropfindParser.parse(
                 Data("not xml at all".utf8), base: base, requestedPath: "/")
         }

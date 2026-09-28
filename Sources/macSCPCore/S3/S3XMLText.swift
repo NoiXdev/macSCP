@@ -55,11 +55,10 @@ enum S3XMLText {
         escaped.reserveCapacity(string.unicodeScalars.count)
         for scalar in string.unicodeScalars {
             guard isRepresentableInXML(scalar) else {
-                // The reason names no value: an object key can be anything a
-                // user typed into a rename field, and a reason string
-                // reaches logs and error banners.
-                throw RemoteFSError.protocolError(
-                    reason: "S3 request body: a value contains a character XML cannot carry")
+                // The finding names no value: an object key can be anything
+                // a user typed into a rename field, and a finding's
+                // sentence reaches logs and error banners.
+                throw RemoteFSError.finding(.requestBodyUnencodable)
             }
             switch scalar {
             case "&": escaped += "&amp;"

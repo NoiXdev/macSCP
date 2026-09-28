@@ -1171,7 +1171,9 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// Creates ONLY the last level (parents must already exist — the
     /// recursion in T3 runs top-down). Idempotent: if the path already exists
     /// as a directory (even in a race between two clients), the call returns
-    /// silently. If a file exists there, throws `protocolError`.
+    /// silently. If a file exists there, throws
+    /// `.finding(.pathExistsAndIsNotADirectory(path:))` — the same finding
+    /// `LocalFileSystem.createDirectory` throws for the same condition.
     public func createDirectory(at path: String) async throws {
         try await measured("createDirectory", path: path) {
             do {
@@ -1185,8 +1187,16 @@ public final class CitadelFileSystem: RemoteFileSystem, @unchecked Sendable {
                     case .directory:
                         return
                     default:
-                        throw RemoteFSError.protocolError(
-                            reason: "path exists and is not a directory: \(path)")
+                        // REUSES Local's finding rather than getting one of
+                        // its own: this is the word-for-word twin of
+                        // `LocalFileSystem.createDirectory`'s collision
+                        // throw, and a reader must not meet one sentence
+                        // over SFTP and a different one locally. A finding
+                        // of its own would have needed a second way of
+                        // saying the same thing, which
+                        // `everyRemoteFSFindingHasItsOwnSentence` forbids.
+                        throw RemoteFSError.finding(
+                            .pathExistsAndIsNotADirectory(path: path))
                     }
                 }
                 throw Self.mapSFTPError(error, path: path)

@@ -75,10 +75,13 @@ import Testing
         switch finding {
         case .unexpectedStatus(let code): return String(code)
         case .pathExistsAndIsNotADirectory(let path): return path
+        case .noSuchBucket(let path): return path
+        case .uploadPartUnacknowledged(let part): return String(part)
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
-            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
+            .resumeNotSupported, .requestBodyUnencodable:
             return nil
         }
     }
@@ -128,9 +131,10 @@ extension RemoteFSFinding {
     /// the enum does not compile until it has a sample, and cannot be left
     /// out of the guards above.
     ///
-    /// The payloads are placeholders: a status code and a path this project
-    /// owns, which is exactly what the two payload-carrying findings are
-    /// allowed to hold.
+    /// The payloads are placeholders: a status code, two paths this project
+    /// owns and an upload part number it counted out itself, which is
+    /// exactly what the four payload-carrying findings are allowed to hold
+    /// (counted in the switch below, 2026-09-28).
     static var everyCase: [RemoteFSFinding] {
         Name.allCases.map { name in
             switch name {
@@ -148,6 +152,10 @@ extension RemoteFSFinding {
             case .redirectUnreadable: return .redirectUnreadable
             case .redirectBodyNotResendable: return .redirectBodyNotResendable
             case .redirectNotResignable: return .redirectNotResignable
+            case .resumeNotSupported: return .resumeNotSupported
+            case .noSuchBucket: return .noSuchBucket(path: "/srv/x")
+            case .uploadPartUnacknowledged: return .uploadPartUnacknowledged(part: 7)
+            case .requestBodyUnencodable: return .requestBodyUnencodable
             }
         }
     }

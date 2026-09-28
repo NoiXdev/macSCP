@@ -2,7 +2,11 @@ import Foundation
 
 /// A finding this project NAMED, rather than a sentence it wrote.
 ///
-/// The sixteen sites the 2026-09-28 spec counted threw
+/// The sixteen sites the 2026-09-28 spec counted — twenty-two, after an
+/// independent census on 2026-09-28 found the recipe every count rested on
+/// required `reason:` on the same line and searched only
+/// `Sources/macSCPCore`, hiding six multi-line constructions (Task 6) —
+/// threw
 /// `RemoteFSError.protocolError(reason:)` with macSCP's own English prose
 /// in the `reason` — prose that then travelled, untranslated, inside a
 /// translated frame (`core.transfer.failed %@`). That is the
@@ -22,8 +26,9 @@ import Foundation
 ///
 /// ## A finding never carries an endpoint or a server's words
 ///
-/// The only payloads here are an HTTP status code and a path the CALLER
-/// asked about — this project's own strings both. Nothing a backend
+/// The only payloads here are an HTTP status code, a path the CALLER asked
+/// about, and an upload part number this project counted out itself — all
+/// three this project's own values, none of them a server's. Nothing a backend
 /// composed out of a typed endpoint, and nothing a server wrote, may enter
 /// a finding: that is precisely the text `URLText.withoutUserinfo` exists
 /// to filter, and a finding is handed to readers (the queue's typed cause,
@@ -71,6 +76,18 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case redirectBodyNotResendable
     /// A redirect was refused: the new target could not be signed.
     case redirectNotResignable
+    /// The backend cannot add to an existing file, so an interrupted
+    /// transfer cannot be continued where it stopped.
+    case resumeNotSupported
+    /// The session starts at the bucket list, and `path` names no bucket to
+    /// address the operation to.
+    case noSuchBucket(path: String)
+    /// The server accepted an upload part without confirming it, so the
+    /// upload cannot be completed.
+    case uploadPartUnacknowledged(part: Int)
+    /// A value the request has to carry cannot be written in the wire format
+    /// the server expects.
+    case requestBodyUnencodable
 
     /// The payload-free name of a finding: what a catalogue key is derived
     /// from, and what a guard iterates when it has to reach every finding.
@@ -84,6 +101,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case uploadStreamUnavailable, pathExistsAndIsNotADirectory
         case nonHTTPResponse, listingUnparsable
         case redirectUnreadable, redirectBodyNotResendable, redirectNotResignable
+        case resumeNotSupported, noSuchBucket, uploadPartUnacknowledged
+        case requestBodyUnencodable
     }
 
     public var name: Name {
@@ -101,6 +120,10 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .redirectUnreadable: return .redirectUnreadable
         case .redirectBodyNotResendable: return .redirectBodyNotResendable
         case .redirectNotResignable: return .redirectNotResignable
+        case .resumeNotSupported: return .resumeNotSupported
+        case .noSuchBucket: return .noSuchBucket
+        case .uploadPartUnacknowledged: return .uploadPartUnacknowledged
+        case .requestBodyUnencodable: return .requestBodyUnencodable
         }
     }
 
@@ -108,9 +131,9 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// that iterates `allCases` can ask for the key without inventing a
     /// payload.
     ///
-    /// The two names that interpolate carry the format specifier in the key,
-    /// as this project's other argument-taking keys do
-    /// (`core.transfer.notFound %@`).
+    /// The four names that interpolate — counted in the switch below on
+    /// 2026-09-28 — carry the format specifier in the key, as this project's
+    /// other argument-taking keys do (`core.transfer.notFound %@`).
     ///
     /// No `default:`, here or in `message` below, for the same reason
     /// `readsAsConnectionFailure` refuses one: a finding added later with a
@@ -120,12 +143,14 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// derives the key exactly the same way.
     public static func messageKey(for name: Name) -> String {
         switch name {
-        case .unexpectedStatus, .pathExistsAndIsNotADirectory:
+        case .unexpectedStatus, .pathExistsAndIsNotADirectory, .noSuchBucket,
+            .uploadPartUnacknowledged:
             return "core.finding.\(name.rawValue) %@"
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
-            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
+            .resumeNotSupported, .requestBodyUnencodable:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -139,10 +164,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return String(format: CoreL10n.string(messageKey), String(code))
         case .pathExistsAndIsNotADirectory(let path):
             return String(format: CoreL10n.string(messageKey), path)
+        case .noSuchBucket(let path):
+            return String(format: CoreL10n.string(messageKey), path)
+        case .uploadPartUnacknowledged(let part):
+            return String(format: CoreL10n.string(messageKey), String(part))
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
-            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
+            .resumeNotSupported, .requestBodyUnencodable:
             return CoreL10n.string(messageKey)
         }
     }
@@ -187,6 +217,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .redirectNotResignable:
             return "the server redirected the request, and the new target could not be signed, "
                 + "so the redirect was refused"
+        case .resumeNotSupported:
+            return "the server cannot add to an existing file, "
+                + "so the transfer cannot be resumed"
+        case .noSuchBucket(let path):
+            return "this connection starts at the bucket list, and \(path) names no bucket"
+        case .uploadPartUnacknowledged(let part):
+            return "the server did not confirm part \(part) of the upload"
+        case .requestBodyUnencodable:
+            return "a value in the request cannot be written in the format the server needs"
         }
     }
 
@@ -196,9 +235,9 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// transfer queue classifies a mid-transfer failure as resumable.
     ///
     /// The three redirect refusals are the ones that are: the request never
-    /// reached a server that answered it. Everything else is a remote-side
-    /// fact about the object or the request, which a retry would meet
-    /// again.
+    /// reached a server that answered it. Everything else is a fact about
+    /// the object, the request, or what the server can do — which a retry
+    /// would meet again.
     ///
     /// No `default:` — a finding added later has to decide.
     public var readsAsConnectionFailure: Bool {
@@ -208,7 +247,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .pathExistsAndIsNotADirectory,
-            .nonHTTPResponse, .listingUnparsable:
+            .nonHTTPResponse, .listingUnparsable, .resumeNotSupported,
+            .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable:
             return false
         }
     }

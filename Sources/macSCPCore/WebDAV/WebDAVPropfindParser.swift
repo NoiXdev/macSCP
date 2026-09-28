@@ -80,8 +80,13 @@ public enum WebDAVPropfindParser {
         parser.delegate = delegate
         parser.shouldProcessNamespaces = true
         guard parser.parse() else {
-            throw RemoteFSError.protocolError(
-                reason: "WebDAV PROPFIND response is not valid XML")
+            // REUSES `.listingUnparsable` rather than getting a PROPFIND
+            // finding of its own: a PROPFIND body IS the WebDAV listing, so
+            // this is the same condition the S3 list parser reports, and a
+            // finding of its own would have needed a second way of saying
+            // the same thing — which
+            // `everyRemoteFSFindingHasItsOwnSentence` forbids.
+            throw RemoteFSError.finding(.listingUnparsable)
         }
         return delegate
     }

@@ -483,6 +483,34 @@ struct S3UploaderTests {
         #expect(String(data: builder.performed.last!.httpBody!, encoding: .utf8)!.contains("etag-1"))
     }
 
+    /// A 2xx `UploadPart` answer with no `ETag` header is the server not
+    /// confirming that part: `completeBody` has to echo every part's ETag
+    /// verbatim, so there is nothing to complete the upload with. It is the
+    /// typed `.uploadPartUnacknowledged` finding, carrying the part number
+    /// this uploader counted out itself (typed-remote-fs-findings Task 6) —
+    /// `largeUploadUsesMultipartWithParts` above is the positive control
+    /// beside it, where the SAME part answers WITH an ETag and the upload
+    /// completes.
+    @Test func aPartAnsweredWithoutAnETagIsUnacknowledged() async throws {
+        let chunks = Array(repeating: Data(repeating: 0x9, count: 64 * 1024), count: 320)
+        let builder = FakeRequestBuilder(responses: [
+            (Data(initiateXML(uploadID: "UP3").utf8), http(200)),  // Initiate
+            (Data(), http(200)),  // UploadPart 1: 200, but no ETag header
+        ])
+        do {
+            try await S3Uploader(noteUnconfirmedAbort: { _ in }, abortBound: Self.roomyAbortBound)
+                .upload(key: "big.bin", contents: stream(of: chunks), using: builder)
+            Issue.record("expected a throw")
+        } catch let aborting as S3MultipartAbortInFlight {
+            // The abort runs detached from the upload; wait for it before
+            // the case ends, as the other multipart cases here do.
+            _ = await aborting.confirmation.value
+            #expect(
+                aborting.underlying as? RemoteFSError
+                    == .finding(.uploadPartUnacknowledged(part: 1)))
+        }
+    }
+
     /// A part upload failure must abort the multipart upload — never leave
     /// an orphaned upload sitting on the server.
     @Test func multipartAbortsOnPartFailure() async throws {

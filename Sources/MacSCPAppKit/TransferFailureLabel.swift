@@ -46,7 +46,7 @@ import macSCPCore
 /// minus 7 lines that quote the pattern in a doc comment or `//` comment
 /// rather than construct it (`DiagnosticLog.swift:266-267`,
 /// `DialProbes.swift:164-165`, `ConnectionViewModel.swift:2333`,
-/// `RemoteFSFinding.swift:6`, `CitadelFileSystem.swift:763`) — 89 − 17 − 2
+/// `RemoteFSFinding.swift:10`, `CitadelFileSystem.swift:763`) — 89 − 17 − 2
 /// − 7 = 63. **Recounted a third time 2026-09-28**, after Task 3 converted
 /// S3's six sites (four in `S3FileSystem.swift`, one in `S3Uploader.swift`,
 /// one in `S3ListParser.swift`) to `.finding(...)` too: the same recipe now
@@ -79,16 +79,18 @@ import macSCPCore
 /// "…")`, which this project writes whenever the reason string is long — is
 /// invisible to it. `grep -rnE '(protocolError|connectionFailed)\($'
 /// Sources/macSCPCore` (the opening parenthesis alone at the end of the
-/// line, no argument on it at all) finds 23 more lines; 2 belong to
-/// `AgentError` (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`),
-/// leaving **21 more `RemoteFSError` construction sites the 57 above does
-/// not include**: `S3MultipartXML.swift:20`, `S3FileSystem.swift:90`,
-/// `:716`, `:898`, `:1118`, `S3ListParser.swift:90`, `S3Uploader.swift:276`,
-/// `S3XMLText.swift:61`, `RemoteChecksumProvider.swift:329`,
+/// line, no argument on it at all) found 23 more lines when this paragraph
+/// was written; 2 belong to `AgentError` (`AgentBackedPrivateKey.swift:351`,
+/// `SSHAgentClient.swift:196`), leaving **21 more `RemoteFSError`
+/// construction sites the 57 above did not include**. Six of those 21 are
+/// findings since Task 6; the enumeration as re-read against the tree on
+/// 2026-09-28, after Task 6's edits landed, is the **15** below — every
+/// citation opened and confirmed to be the line it names:
+/// `S3MultipartXML.swift:20`, `S3FileSystem.swift:714`, `:896`, `:1116`,
+/// `S3ListParser.swift:90`, `RemoteChecksumProvider.swift:329`,
 /// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
-/// `:1188`, `:1661`, `WebDAVPropfindParser.swift:83`,
-/// `WebDAVFileSystem.swift:450`, `:587`, `:631`, `ThroughputProbe.swift:632`,
-/// `:702`.
+/// `:1671`, `WebDAVFileSystem.swift:586`, `:630`,
+/// `ThroughputProbe.swift:632`, `:702`.
 ///
 /// This gap is not new to this diff — it was already true of 68, of 69, and
 /// of 63, all four numbers resting on the same single-line recipe, and of
@@ -130,6 +132,24 @@ import macSCPCore
 /// three `Sources/MacSCPAppKit/` sites are untouched by this task (none of
 /// them constructs from `LocalFileSystem` or `HTTPTransport`), so **the
 /// whole-tree total is 78, not 81, and not 54**.
+///
+/// **Recounted a sixth time 2026-09-28**, after Task 6 converted the six
+/// sites that the SINGLE-LINE recipe never saw — the ones the paragraph
+/// above calls a floor. This is the first recount where the two recipes
+/// move in opposite directions, and the asymmetry is the whole point of
+/// the task: all six were multi-line, so the single-line recipe still
+/// finds **80** raw lines, the same 17/2/7 still subtract off it (the one
+/// change inside the 7 is that `RemoteFSFinding.swift`'s comment-only
+/// mention moved from `:6` to `:10`), and its answer is still **54**,
+/// unmoved. The MULTI-LINE recipe is where the six come off: it now finds
+/// **17** raw lines where it found 23, the same 2 `AgentError` lines
+/// subtract off, leaving **15** `RemoteFSError` constructions where there
+/// were 21. 54 + 15 = **69** for `Sources/macSCPCore` under both recipes
+/// combined. The three `Sources/MacSCPAppKit/` sites are untouched by this
+/// task and were re-read in the same pass — `ContentView+Lifecycle.swift:276`,
+/// `ContentView.swift:1871`, `ContentView.swift:3434` all still resolve to
+/// the line they name — so **the whole-tree total is 72, not 78, and not
+/// 54**.
 ///
 /// What the single-line recipe's 54 lines DO show, unaffected by the count
 /// being a floor: the great majority compose **macSCP's own English

@@ -288,11 +288,18 @@ struct WebDAVFileSystemWriteTests {
 
     /// There is no partial PUT in WebDAV. Accepting `.append` would silently
     /// overwrite the file from byte zero and destroy the part already there.
+    /// The refusal is the typed `.resumeNotSupported` finding, so the
+    /// sentence a reader meets is Core's catalogue in their own language
+    /// rather than English inside a translated frame
+    /// (typed-remote-fs-findings Task 6). `writeIssuesPut` above is the
+    /// positive control this negative one needs: it proves `.overwrite`
+    /// passes the same gate and reaches the PUT, so a `write` that refused
+    /// every mode could not satisfy both cases.
     @Test func appendModeIsRefused() async throws {
         let transport = FakeHTTPTransport(replies: [])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
-        await #expect(throws: RemoteFSError.self) {
+        await #expect(throws: RemoteFSError.finding(.resumeNotSupported)) {
             try await fs.write(path: "/a.txt", mode: .append, contents: stream("more"))
         }
         #expect(transport.requests.isEmpty)

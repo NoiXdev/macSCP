@@ -92,10 +92,11 @@ public protocol RemoteFileSystem: Sendable {
     /// that shape.
     func delete(path: String) async throws
     /// Creates the directory. IDEMPOTENT: if it already exists as a directory,
-    /// the call returns silently. If a FILE exists at the path, Local throws
-    /// RemoteFSError.finding(.pathExistsAndIsNotADirectory(path:)) (typed-
-    /// remote-fs-findings Task 5); Citadel still throws the untyped
-    /// RemoteFSError.protocolError for the same case, not yet converted.
+    /// the call returns silently. If a FILE exists at the path, Local
+    /// (typed-remote-fs-findings Task 5) and Citadel (Task 6) both throw
+    /// RemoteFSError.finding(.pathExistsAndIsNotADirectory(path:)) — ONE
+    /// finding for the one condition, so a reader does not meet a different
+    /// sentence over SFTP than locally.
     /// Missing intermediate directories: Local creates them
     /// (withIntermediateDirectories); Citadel creates ONLY the last level —
     /// the recursion (T3) runs top-down, so parents always exist.

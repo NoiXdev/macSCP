@@ -198,3 +198,7 @@
 "core.finding.redirectUnreadable" = "Der Server hat die Anfrage an ein Ziel weitergeleitet, das nicht gelesen werden konnte; sie wurde abgelehnt";
 "core.finding.redirectBodyNotResendable" = "Der Server hat einen Upload weitergeleitet; dessen Daten lassen sich kein zweites Mal senden, deshalb wurde die Weiterleitung abgelehnt";
 "core.finding.redirectNotResignable" = "Der Server hat die Anfrage weitergeleitet; das neue Ziel konnte nicht signiert werden, deshalb wurde die Weiterleitung abgelehnt";
+"core.finding.resumeNotSupported" = "Der Server kann nichts an eine vorhandene Datei anhängen, deshalb lässt sich die Übertragung nicht fortsetzen";
+"core.finding.noSuchBucket %@" = "Diese Verbindung beginnt bei der Bucket-Liste, und %@ benennt keinen Bucket";
+"core.finding.uploadPartUnacknowledged %@" = "Der Server hat Teil %@ des Uploads nicht bestätigt";
+"core.finding.requestBodyUnencodable" = "Ein Wert in der Anfrage lässt sich nicht in dem Format schreiben, das der Server braucht";

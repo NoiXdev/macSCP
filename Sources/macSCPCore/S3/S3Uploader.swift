@@ -273,8 +273,7 @@ public struct S3Uploader: Sendable {
             throw Self.mapStatus(response.statusCode, key: key)
         }
         guard let etag = response.value(forHTTPHeaderField: "ETag") else {
-            throw RemoteFSError.protocolError(
-                reason: "S3 UploadPart response for part \(partNumber) is missing an ETag header")
+            throw RemoteFSError.finding(.uploadPartUnacknowledged(part: partNumber))
         }
         return etag
     }

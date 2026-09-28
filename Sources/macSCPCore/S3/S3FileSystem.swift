@@ -87,9 +87,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 // would address a different resource entirely — and a
                 // DELETE or PUT would address it too.
                 guard let bucket = components.first else {
-                    throw RemoteFSError.protocolError(
-                        reason: "S3: this connection starts at the bucket list, "
-                            + "and \"\(path)\" names no bucket")
+                    throw RemoteFSError.finding(.noSuchBucket(path: path))
                 }
                 return (bucket, components.dropFirst().joined(separator: "/"))
             }

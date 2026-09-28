@@ -59,10 +59,23 @@ struct S3XMLTextTests {
     /// `ab.txt`, which may be a different object in the same bucket, and a
     /// `DeleteObjects` body would then name it. Failing the request is the
     /// honest outcome: the request was already impossible.
+    /// The refusal is the typed `.requestBodyUnencodable` finding
+    /// (typed-remote-fs-findings Task 6), whose sentence names no value —
+    /// the reason the throw site gives for saying nothing about the key
+    /// holds for the finding too. `theControlCharactersXMLAdmitsAreKept`
+    /// below is the positive control this negative case needs: it proves
+    /// the escaper returns rather than throws for the characters XML does
+    /// carry, so an escaper that refused everything could not satisfy both.
     @Test func aCharacterXMLCannotCarryIsRefused() {
-        #expect(throws: RemoteFSError.self) { try S3XMLText.escaped("a\u{0001}b") }
-        #expect(throws: RemoteFSError.self) { try S3XMLText.escaped("\u{FFFE}") }
-        #expect(throws: RemoteFSError.self) { try S3XMLText.escaped("\u{001F}") }
+        #expect(throws: RemoteFSError.finding(.requestBodyUnencodable)) {
+            try S3XMLText.escaped("a\u{0001}b")
+        }
+        #expect(throws: RemoteFSError.finding(.requestBodyUnencodable)) {
+            try S3XMLText.escaped("\u{FFFE}")
+        }
+        #expect(throws: RemoteFSError.finding(.requestBodyUnencodable)) {
+            try S3XMLText.escaped("\u{001F}")
+        }
     }
 
     /// The three control characters XML does admit stay, and so does the

@@ -328,13 +328,16 @@ actor MockRemoteFileSystem: RemoteFileSystem {
     }
 
     /// Idempotent (already exists as a directory in the mock tree: silently
-    /// ok), throws `protocolError` for a file at the path, otherwise the path
-    /// is added to the tree and logged in `createdDirectories`.
+    /// ok), throws `.finding(.pathExistsAndIsNotADirectory(path:))` for a
+    /// file at the path — the SAME finding both real backends throw for the
+    /// condition since typed-remote-fs-findings Tasks 5 and 6, so a mock
+    /// caller is not exercising a shape no backend produces — otherwise the
+    /// path is added to the tree and logged in `createdDirectories`.
     func createDirectory(at path: String) async throws {
         let parent = RemotePath.parent(of: path)
         if let siblings = tree[parent], let existing = siblings.first(where: { $0.path == path }) {
             if existing.kind == .directory { return }
-            throw RemoteFSError.protocolError(reason: "path exists and is not a directory: \(path)")
+            throw RemoteFSError.finding(.pathExistsAndIsNotADirectory(path: path))
         }
         let name = String(path.split(separator: "/").last ?? Substring(path))
         var siblings = tree[parent] ?? []

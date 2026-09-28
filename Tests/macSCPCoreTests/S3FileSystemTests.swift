@@ -1516,15 +1516,13 @@ struct S3FileSystemTests {
     /// never a request against `/`, which is a different resource entirely
     /// (the account's bucket list) and would delete or overwrite something
     /// nobody named.
+    /// It is the typed `.noSuchBucket` finding rather than a
+    /// `protocolError` whose English reason travels untranslated
+    /// (typed-remote-fs-findings Task 6), and the finding carries the path
+    /// the CALLER asked about — never a bucket name the endpoint chose.
     @Test func aPathWithoutABucketIsAnErrorInBucketListMode() throws {
-        do {
+        #expect(throws: RemoteFSError.finding(.noSuchBucket(path: "/"))) {
             _ = try S3FileSystem.RootMode.bucketList.resolve(path: "/")
-            Issue.record("expected throw")
-        } catch let error as RemoteFSError {
-            guard case .protocolError = error else {
-                Issue.record("expected .protocolError, got \(error)")
-                return
-            }
         }
     }
 
@@ -1532,7 +1530,9 @@ struct S3FileSystemTests {
     @Test func aBucketlessPathSendsNoRequestAtAll() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [])
 
-        await expectProtocolError { try await fs.delete(path: "/") }
+        await #expect(throws: RemoteFSError.finding(.noSuchBucket(path: "/"))) {
+            try await fs.delete(path: "/")
+        }
 
         // Only the connect-time ListBuckets, nothing after it.
         let sent = await transport.requests.count

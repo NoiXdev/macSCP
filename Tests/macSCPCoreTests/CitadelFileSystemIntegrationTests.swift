@@ -565,7 +565,17 @@ struct CitadelFileSystemIntegrationTests {
         #expect(item.kind == .directory)
     }
 
-    @Test func createDirectoryThrowsProtocolErrorOnFileCollision() async throws {
+    /// The collision is the typed `.pathExistsAndIsNotADirectory` finding,
+    /// carrying the path the CALLER asked about — the SAME finding
+    /// `LocalFileSystem.createDirectory` throws for the same condition
+    /// (typed-remote-fs-findings Task 6), so a reader does not meet one
+    /// sentence over SFTP and a different one locally.
+    ///
+    /// `createDirectoryIsIdempotentOnSecondCall` above is the positive
+    /// control this case needs: it proves the same `default:` arm is NOT
+    /// reached when a DIRECTORY is already there, so a `createDirectory`
+    /// that threw for every existing path could not satisfy both.
+    @Test func createDirectoryOverSFTPReportsTheCollisionFinding() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let path = "/config/macscp-mkdir-test-\(UUID().uuidString).txt"
@@ -576,14 +586,9 @@ struct CitadelFileSystemIntegrationTests {
         continuation.finish()
         try await fs.write(path: path, contents: stream)
 
-        do {
+        await #expect(throws: RemoteFSError.finding(
+            .pathExistsAndIsNotADirectory(path: path))) {
             try await fs.createDirectory(at: path)
-            Issue.record("expected protocolError")
-        } catch let error as RemoteFSError {
-            guard case .protocolError = error else {
-                Issue.record("expected protocolError, was: \(error)")
-                return
-            }
         }
     }
 

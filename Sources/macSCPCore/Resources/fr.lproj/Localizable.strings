@@ -201,3 +201,7 @@
 "core.finding.redirectUnreadable" = "Le serveur a redirigé la requête vers une cible illisible, elle a donc été refusée";
 "core.finding.redirectBodyNotResendable" = "Le serveur a redirigé un envoi, et ses données ne peuvent pas être envoyées une seconde fois : la redirection a été refusée";
 "core.finding.redirectNotResignable" = "Le serveur a redirigé la requête, et la nouvelle cible n'a pas pu être signée : la redirection a été refusée";
+"core.finding.resumeNotSupported" = "Le serveur ne peut rien ajouter à un fichier existant, le transfert ne peut donc pas être repris";
+"core.finding.noSuchBucket %@" = "Cette connexion démarre sur la liste des buckets, et %@ ne désigne aucun bucket";
+"core.finding.uploadPartUnacknowledged %@" = "Le serveur n'a pas confirmé la partie %@ de l'envoi";
+"core.finding.requestBodyUnencodable" = "Une valeur de la requête ne peut pas être écrite dans le format que le serveur exige";
