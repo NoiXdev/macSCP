@@ -213,7 +213,10 @@ public static func messageKey(for name: Name) -> String {
     switch name {
     case .unexpectedStatus, .pathExistsAndIsNotADirectory:
         return "core.finding.\(name.rawValue) %@"
-    default:
+    case .resumeRangeIgnored, .sourceChangedSinceInterruption,
+         .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+         .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+         .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
         return "core.finding.\(name.rawValue)"
     }
 }
@@ -226,11 +229,20 @@ public var message: String {
         return String(format: CoreL10n.string(messageKey), String(code))
     case .pathExistsAndIsNotADirectory(let path):
         return String(format: CoreL10n.string(messageKey), path)
-    default:
+    case .resumeRangeIgnored, .sourceChangedSinceInterruption,
+         .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+         .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+         .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
         return CoreL10n.string(messageKey)
     }
 }
 ```
+
+**No `default:` in either.** Every switch in this type is exhaustive, so a
+finding added later must decide whether it interpolates. A `default:` here
+would hand a new payload-carrying finding a key without its ` %@` and an
+un-interpolated sentence, silently, and the catalogue guard could not see it
+— it derives the key the same way.
 
 `readsAsConnectionFailure` is an exhaustive switch — no `default:`, so a
 finding added later must decide:
@@ -393,10 +405,25 @@ case RemoteFSError.finding(let finding):
 case .finding(let finding):
     // The log's own English, from the finding rather than from a
     // sentence a backend wrote — the `TunnelFailureKind.sentence`
-    // arrangement. Before this case existed, every one of these
-    // rendered as `known(.serverAnswerUnusable)`'s single sentence.
-    return (.unknown, finding.logSentence)
+    // arrangement.
+    //
+    // The KIND is preserved, not defaulted: ten of the thirteen
+    // findings travelled as `.protocolError` and rendered as
+    // `known(.serverAnswerUnusable)`, and the three redirect
+    // refusals travelled as `.connectionFailed`
+    // (`S3HTTPChannel.swift:129`) and rendered as
+    // `known(.connectionFailed)`. Counted 2026-09-28 against the
+    // spec's sixteen sites. Returning `.unknown` for all of them
+    // would reclassify the redirects in the diagnostics while every
+    // other consumer's frame is deliberately preserved.
+    return (
+        finding.readsAsConnectionFailure ? .connectionFailed : .serverAnswerUnusable,
+        finding.logSentence)
 ```
+
+The sentence each of these carries DOES change — from the kind's generic one
+to the finding's own. That is the improvement; the classification beside it
+is what must not move. Say both in the commit message.
 
 `CLIErrorMapping.swift` — read both `RemoteFSError` switches (`:118`,
 `:288`), add whatever arm each needs, and follow the file's own convention
