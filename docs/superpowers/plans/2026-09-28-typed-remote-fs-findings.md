@@ -43,8 +43,20 @@ is deliberately out of scope.
 - `TransferFailureKind.finding(_:)` composes the same frame the site composed
   before: `core.error.connectionLost %@` where the finding reads as a
   connection failure, `core.transfer.failed %@` otherwise. Composition for
-  composition, so no English message a user reads changes except where this
-  plan says it does.
+  composition **at the Core level** — the audit line and the CLI keep their
+  shape.
+- **The App's transfer row does change shape, and that is intended.** Found
+  by Task 2's review, stated here because the constraint above was written
+  as if nothing changed. `TransferFailureLabel.sentence(for:)`
+  (`Sources/MacSCPAppKit/TransferFailureLabel.swift:128-144`) classifies
+  `.protocolError` as `.app` — "The server sent an answer that could not be
+  used. (technical detail: …)", a translated sentence with English inside the
+  parenthesis — and a `.finding` as `.core`, rendered as the finding's own
+  translated message inside `core.transfer.failed %@`. A converted site
+  therefore moves from the first shape to the second. That is the point of
+  the work: the parenthesis existed to carry English no catalogue could
+  reach. Every task reports the shape change for its own sites rather than
+  claiming none, and Task 6 writes it into the user documentation.
 
 ---
 
