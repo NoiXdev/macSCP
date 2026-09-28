@@ -348,7 +348,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
             // server" there would be a claim about something nobody asked,
             // so that one goes on to `mapStatus` — where a 412 went before
             // this precondition existed.
-            throw RemoteFSError.protocolError(reason: Self.sourceChangedReason)
+            throw RemoteFSError.finding(.sourceChangedSinceInterruption)
         }
         try Self.mapStatus(response.statusCode, path: path, method: "GET")
         // A server that ignores Range answers 200 with the WHOLE body. Handing
@@ -367,9 +367,13 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     /// would produce the old resource's head followed by the new one's tail,
     /// at exactly the length a size check expects. Nothing was appended.
     ///
-    /// Its own constant, read before `mapStatus`, because `mapStatus` maps
-    /// 412 to the precondition a MOVE sets (`Overwrite: F` — "The
-    /// destination already exists"), which says something false about a GET.
+    /// As of the 2026-09-28 typed-findings change, this is no longer what
+    /// gets thrown: the site above throws
+    /// `RemoteFSError.finding(.sourceChangedSinceInterruption)`, whose
+    /// `logSentence` and `core.finding.sourceChangedSinceInterruption` `en`
+    /// catalogue entry carry the same English this constant does. It stays
+    /// here as that English's anchor in source — the user documentation
+    /// quotes it — even though nothing in this module reads it any more.
     static let sourceChangedReason =
         "The file changed on the server since the interrupted download, so nothing was added to the partial file"
 
@@ -456,7 +460,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         Stream.getBoundStreams(withBufferSize: TransferChunk.size,
                                inputStream: &input, outputStream: &output)
         guard let input, let output else {
-            throw RemoteFSError.protocolError(reason: "Could not create the upload stream")
+            throw RemoteFSError.finding(.uploadStreamUnavailable)
         }
         request.httpBodyStream = input
 
@@ -644,12 +648,25 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         case 403: throw RemoteFSError.permissionDenied(path: path)
         case 404: throw RemoteFSError.notFound(path: path)
         case 405 where method == "MKCOL":
-            throw RemoteFSError.protocolError(reason: "A file or folder named that already exists")
+            throw RemoteFSError.finding(.directoryAlreadyExists)
         case 409: throw RemoteFSError.notFound(path: path)
-        case 412: throw RemoteFSError.protocolError(reason: "The destination already exists")
-        case 507: throw RemoteFSError.protocolError(reason: "The server is out of storage")
+        // Kept as-is (docs/BACKLOG.md, "An unguarded WebDAV 412 outside the
+        // resume path reads as a MOVE's refusal", open): this is a MOVE's
+        // `Overwrite: F` answer, but a 412 from a GET with no precondition
+        // sent (see `readStream` above) falls through to this same arm and
+        // is reported as a destination conflict too — the wrong case for a
+        // read. Converting the string to a finding does not fix that; it is
+        // unchanged on purpose. Sibling row, same misreading for a MOVE
+        // whose failed precondition is on the source rather than the
+        // destination: "`WebDAVFileSystem.mapStatus` renders a
+        // source-precondition 412 as \"The destination already exists\"".
+        case 412: throw RemoteFSError.finding(.destinationAlreadyExists)
+        case 507: throw RemoteFSError.finding(.outOfStorage)
         default:
-            throw RemoteFSError.protocolError(reason: "WebDAV \(method) failed with status \(status)")
+            // `method` is deliberately left out of the finding: the HTTP
+            // method is not information a user acts on, and the transfer
+            // queue's row already names the file and the direction.
+            throw RemoteFSError.finding(.unexpectedStatus(code: status))
         }
     }
 }

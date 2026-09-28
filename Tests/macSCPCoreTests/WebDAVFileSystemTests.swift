@@ -309,9 +309,9 @@ struct WebDAVFileSystemTests {
         let fresh = try await refusalFor412(offset: 0, tag: Self.resourceETag)
         let unvalidatedResume = try await refusalFor412(offset: 8, tag: nil)
 
-        let freshReportedAsChanged = fresh.reason == WebDAVFileSystem.sourceChangedReason
+        let freshReportedAsChanged = fresh.finding == .sourceChangedSinceInterruption
         let resumeReportedAsChanged =
-            unvalidatedResume.reason == WebDAVFileSystem.sourceChangedReason
+            unvalidatedResume.finding == .sourceChangedSinceInterruption
         #expect(freshReportedAsChanged == false)
         #expect(resumeReportedAsChanged == false)
         // The positive beside the two negatives: each read really did reach
@@ -319,29 +319,35 @@ struct WebDAVFileSystemTests {
         // that stopped issuing the GET cannot pass these.
         #expect(fresh.sentNoValidator)
         #expect(unvalidatedResume.sentNoValidator)
+        // A second positive: each 412 still fell through to `mapStatus`,
+        // whose own (wrong-but-preserved, see docs/BACKLOG.md) 412 arm
+        // reports a destination conflict — so a case that threw nothing at
+        // all cannot pass the two negatives above by accident.
+        #expect(fresh.finding == .destinationAlreadyExists)
+        #expect(unvalidatedResume.finding == .destinationAlreadyExists)
     }
 
-    /// The `reason` a 412 produces for a read of this shape, and whether the
-    /// GET that met it carried no `If-Match`. Records an issue and reports an
-    /// empty reason if the read was not refused at all.
+    /// The finding a 412 produces for a read of this shape, and whether the
+    /// GET that met it carried no `If-Match`. Records an issue and reports no
+    /// finding if the read was not refused at all.
     private func refusalFor412(
         offset: UInt64, tag: String?, sourceLocation: SourceLocation = #_sourceLocation
-    ) async throws -> (reason: String, sentNoValidator: Bool) {
+    ) async throws -> (finding: RemoteFSFinding?, sentNoValidator: Bool) {
         let transport = FakeHTTPTransport(replies: [
             .init(status: 412, body: Data("replacement".utf8), headers: [:])
         ])
         let fs = WebDAVFileSystem(config: config, transport: transport)
-        var reason = ""
+        var finding: RemoteFSFinding?
         do {
             _ = try await fs.readStream(path: "/a.txt", fromOffset: offset, ifMatching: tag)
             Issue.record("the 412 was not refused at all", sourceLocation: sourceLocation)
-        } catch RemoteFSError.protocolError(let refusal) {
-            reason = refusal
+        } catch RemoteFSError.finding(let refusal) {
+            finding = refusal
         }
         let sent = transport.requests
         let sentNoValidator = sent.count == 1
             && sent[0].value(forHTTPHeaderField: "If-Match") == nil
-        return (reason, sentNoValidator)
+        return (finding, sentNoValidator)
     }
 
     /// A resumed read carries the validator on exactly one request — the
@@ -380,8 +386,8 @@ struct WebDAVFileSystemTests {
             _ = try await fs.readStream(
                 path: "/a.txt", fromOffset: 8, ifMatching: Self.resourceETag)
             Issue.record("the changed resource was not refused")
-        } catch RemoteFSError.protocolError(let reason) {
-            #expect(reason == WebDAVFileSystem.sourceChangedReason)
+        } catch RemoteFSError.finding(let finding) {
+            #expect(finding == .sourceChangedSinceInterruption)
         } catch {
             Issue.record("refused with \(error), not the changed-resource refusal")
         }
@@ -585,6 +591,34 @@ struct WebDAVFileSystemTests {
     @Test func appendResumeIsNotSupported() {
         let fs = WebDAVFileSystem(config: config, transport: FakeHTTPTransport(replies: []))
         #expect(fs.supportsAppendResume == false)
+    }
+
+    // MARK: - mapStatus reports findings, not English sentences (Task 2)
+
+    /// `mapStatus` is `static` and takes its inputs directly, so these four
+    /// need no transport at all.
+    @Test func aRefusedMKCOLReportsThatSomethingIsAlreadyThere() {
+        #expect(throws: RemoteFSError.finding(.directoryAlreadyExists)) {
+            try WebDAVFileSystem.mapStatus(405, path: "/a", method: "MKCOL")
+        }
+    }
+
+    @Test func aPreconditionFailureReportsAnExistingDestination() {
+        #expect(throws: RemoteFSError.finding(.destinationAlreadyExists)) {
+            try WebDAVFileSystem.mapStatus(412, path: "/a", method: "MOVE")
+        }
+    }
+
+    @Test func aFullServerReportsItsStorage() {
+        #expect(throws: RemoteFSError.finding(.outOfStorage)) {
+            try WebDAVFileSystem.mapStatus(507, path: "/a", method: "PUT")
+        }
+    }
+
+    @Test func anyOtherStatusIsReportedAsTheStatusItself() {
+        #expect(throws: RemoteFSError.finding(.unexpectedStatus(code: 503))) {
+            try WebDAVFileSystem.mapStatus(503, path: "/a", method: "PROPFIND")
+        }
     }
 
     // MARK: - Checksums (a statement, not a dead menu entry)

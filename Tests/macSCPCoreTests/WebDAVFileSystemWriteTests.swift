@@ -247,7 +247,7 @@ struct WebDAVFileSystemWriteTests {
         let result = try #require(
             outcome,
             "write() never returned: the pump is parked on a body nobody will drain")
-        #expect(result.thrown == .protocolError(reason: "The server is out of storage"))
+        #expect(result.thrown == .finding(.outOfStorage))
     }
 
     /// Same wedge, reached the other way: the server accepts the PUT but the
@@ -316,8 +316,7 @@ struct WebDAVFileSystemWriteTests {
         let transport = FakeHTTPTransport(replies: [.init(status: 405, body: Data(), headers: [:])])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
-        await #expect(throws: RemoteFSError.protocolError(
-            reason: "A file or folder named that already exists")) {
+        await #expect(throws: RemoteFSError.finding(.directoryAlreadyExists)) {
             try await fs.createDirectory(at: "/sub")
         }
     }
@@ -344,8 +343,7 @@ struct WebDAVFileSystemWriteTests {
         let transport = FakeHTTPTransport(replies: [.init(status: 412, body: Data(), headers: [:])])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
-        await #expect(throws: RemoteFSError.protocolError(
-            reason: "The destination already exists")) {
+        await #expect(throws: RemoteFSError.finding(.destinationAlreadyExists)) {
             try await fs.rename(from: "/a.txt", to: "/b.txt")
         }
     }
