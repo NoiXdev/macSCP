@@ -30,14 +30,29 @@ import macSCPCore
 ///
 /// The first version of this comment called it "free text a backend or
 /// Foundation wrote". That was measured false. Counted over
-/// `Sources/macSCPCore` on 2026-09-25: **68** construction sites of
-/// `RemoteFSError.protocolError(reason:)` / `.connectionFailed(reason:)`,
-/// and the great majority compose **macSCP's own English prose**, not a
-/// server's words. The two sentences a user is most likely to meet are
-/// `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason` — macSCP
-/// constants, quoted verbatim in the user documentation. Genuinely foreign
-/// text is the minority: a `localizedDescription` from Foundation or NIO,
-/// an S3 error code parsed out of a response body.
+/// `Sources/macSCPCore` on 2026-09-25: 68 construction sites of
+/// `RemoteFSError.protocolError(reason:)` / `.connectionFailed(reason:)`.
+/// Recounted 2026-09-28 (`docs/superpowers/specs/2026-09-28-typed-remote-fs-findings-design.md`,
+/// at `bcbea4f4`): 69, not 68 — the two counts disagree by one and neither
+/// is re-derivable from the other, so this comment no longer claims 68 was
+/// right. **Recounted again 2026-09-28**, after Task 2 of the
+/// typed-remote-fs-findings plan converted WebDAV's six sites to
+/// `.finding(...)` (`4e20fc80`): **63**, exactly six fewer than 69. Recipe:
+/// `grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore`
+/// (89 lines at this HEAD) minus 17 lines that belong to `AgentError` — an
+/// unrelated SSH-agent error type whose `protocolError(reason:)` case
+/// happens to share the name, counting both its call sites and its own
+/// case declaration — minus `RemoteFSError`'s own 2 case declarations,
+/// minus 7 lines that quote the pattern in a doc comment or `//` comment
+/// rather than construct it (`DiagnosticLog.swift:266-267`,
+/// `DialProbes.swift:164-165`, `ConnectionViewModel.swift:2333`,
+/// `RemoteFSFinding.swift:6`, `CitadelFileSystem.swift:763`) — 89 − 17 − 2
+/// − 7 = 63. The great majority of those 63 compose **macSCP's own English
+/// prose**, not a server's words. The two sentences a user is most likely
+/// to meet are `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason`
+/// — macSCP constants, quoted verbatim in the user documentation. Genuinely
+/// foreign text is the minority: a `localizedDescription` from Foundation
+/// or NIO, an S3 error code parsed out of a response body.
 ///
 /// So the honest statement is: the detail is a diagnostic string macSCP
 /// mostly wrote in English, occasionally relayed from elsewhere, and in

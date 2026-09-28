@@ -393,6 +393,29 @@ struct WebDAVFileSystemTests {
         }
     }
 
+    /// `sourceChangedReason`'s doc comment claims it "carries the same
+    /// English" as `core.finding.sourceChangedSinceInterruption`'s `en`
+    /// catalogue entry — but nothing enforced that claim (Task 2 fix round
+    /// 1, MINOR 4). Reads the catalogue directly off disk, the way
+    /// `LocalizableStringsTests` does, rather than through
+    /// `CoreL10n.string`/`RemoteFSFinding.message` at runtime: those resolve
+    /// through the test process's current locale, and this property has to
+    /// hold regardless of what locale runs the test, not only under `en`.
+    @Test func sourceChangedReasonStillMatchesTheFindingsEnglishCatalogueEntry() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let enCatalogue = repoRoot
+            .appendingPathComponent("Sources/macSCPCore/Resources/en.lproj/Localizable.strings")
+            .path(percentEncoded: false)
+        let catalogue = try #require(NSDictionary(contentsOfFile: enCatalogue) as? [String: String])
+        let key = RemoteFSFinding.messageKey(for: .sourceChangedSinceInterruption)
+        let englishFromCatalogue = try #require(catalogue[key])
+
+        #expect(WebDAVFileSystem.sourceChangedReason == englishFromCatalogue)
+    }
+
     /// No validator, no header. The `Range` beside it is the positive check
     /// that this request really is the resumed GET.
     @Test func aResumedReadWithoutAValidatorSendsNoIfMatch() async throws {
