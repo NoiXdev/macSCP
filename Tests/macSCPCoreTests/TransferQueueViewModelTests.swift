@@ -165,14 +165,6 @@ struct TransferQueueViewModelTests {
         /// anything about its source.
         private var statFailures: [String: Error]
 
-        /// The English a refused read's message contains, DERIVED from the
-        /// constant the product's `sourceChangedSinceInterruption` finding
-        /// carries (`S3FileSystem.sourceChangedReason`'s doc comment is that
-        /// finding's English anchor) rather than spelled a second time here:
-        /// a literal copy would keep matching after the real one was
-        /// reworded.
-        static let sourceChangedReason = S3FileSystem.sourceChangedReason
-
         init(
             reads: [String: Read],
             listings: [String: [RemoteFileItem]] = [:],
@@ -2210,8 +2202,16 @@ struct TransferQueueViewModelTests {
             Issue.record("the retry should have failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        let namesTheChangedSource = cause.message.contains(QueueTestFS.sourceChangedReason)
-        #expect(namesTheChangedSource)
+        // A typed check rather than `cause.message.contains(...)`: the
+        // latter resolves through `CoreL10n.string` at the test process's
+        // current locale (2026-09-28 fix round 1) and would go red under a
+        // non-`en` locale now that the source-changed refusal is a finding
+        // rather than a `.protocolError(detail:)` carrying the English
+        // constant verbatim.
+        guard case .finding(.sourceChangedSinceInterruption) = cause else {
+            Issue.record("expected the changed-source finding, got \(cause)")
+            return
+        }
 
         // The partial file is untouched: no write of any kind reached it, and
         // its bytes are the ones snapshotted above.
@@ -2314,8 +2314,12 @@ struct TransferQueueViewModelTests {
             Issue.record("retry 3 should have failed, was \(String(describing: vm.items[0].status))")
             return
         }
-        let namesTheChangedSource = cause.message.contains(QueueTestFS.sourceChangedReason)
-        #expect(namesTheChangedSource)
+        // Same typed check as the sibling test above, for the same reason:
+        // locale-free.
+        guard case .finding(.sourceChangedSinceInterruption) = cause else {
+            Issue.record("expected the changed-source finding, got \(cause)")
+            return
+        }
         #expect(await remote3.writtenData(at: "/ziel/a.txt") == partialBefore)
         #expect(await remote3.writeModes["/ziel/a.txt"] == nil)
         // Positives beside those absences: retry 3 really was a resume from the

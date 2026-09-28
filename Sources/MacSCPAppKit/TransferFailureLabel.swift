@@ -51,16 +51,49 @@ import macSCPCore
 /// S3's six sites (four in `S3FileSystem.swift`, one in `S3Uploader.swift`,
 /// one in `S3ListParser.swift`) to `.finding(...)` too: the same recipe now
 /// finds 83 raw lines, the same 17/2/7 subtract off it, 83 − 17 − 2 − 7 =
-/// **57**, again exactly six fewer. The great majority of those 57 compose
-/// **macSCP's own English prose**, not a server's words. The two sentences a
-/// user was most likely to meet — `S3FileSystem.rangeIgnoredReason` and
-/// `sourceChangedReason` — are no longer among them: both constants stay in
-/// source as the English anchor for their finding's catalogue entry (the
-/// user documentation still quotes that English), but neither is read by
-/// the site that used to construct a `protocolError(reason:)` from it.
-/// Genuinely foreign text is the minority of what remains: a
-/// `localizedDescription` from Foundation or NIO, an S3 error code parsed
-/// out of a response body.
+/// **57**, again exactly six fewer than 63.
+///
+/// **57 is what the recipe yields, not the number of construction sites
+/// there are — it is a FLOOR** (Task 3 fix round 1, task review, 2026-09-28).
+/// The recipe only matches a construction whose `reason:` argument sits on
+/// the SAME line as `protocolError(`/`connectionFailed(`; a construction
+/// split across two lines — `RemoteFSError.protocolError(\n    reason:
+/// "…")`, which this project writes whenever the reason string is long — is
+/// invisible to it. `grep -rnE '(protocolError|connectionFailed)\($'
+/// Sources/macSCPCore` (the opening parenthesis alone at the end of the
+/// line, no argument on it at all) finds 23 more lines; 2 belong to
+/// `AgentError` (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`),
+/// leaving **21 more `RemoteFSError` construction sites the 57 above does
+/// not include**: `S3MultipartXML.swift:20`, `S3FileSystem.swift:90`,
+/// `:706`, `:888`, `:1108`, `S3ListParser.swift:90`, `S3Uploader.swift:276`,
+/// `S3XMLText.swift:61`, `RemoteChecksumProvider.swift:329`,
+/// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
+/// `:1188`, `:1661`, `WebDAVPropfindParser.swift:83`,
+/// `WebDAVFileSystem.swift:450`, `:587`, `:631`, `ThroughputProbe.swift:632`,
+/// `:702`.
+///
+/// This gap is not new to this diff — it was already true of 68, of 69, and
+/// of 63, all four numbers resting on the same single-line recipe, and of
+/// `docs/BACKLOG.md`'s own "68" — this recount just inherited it rather than
+/// closing it. So: **57 is a lower bound on how many `protocolError`/
+/// `connectionFailed` construction sites this module has, not a census of
+/// them**, and the same is true of every earlier number in this paragraph.
+/// A reconciled total (the two recipes' matches combined, their own
+/// `AgentError`/declaration/comment exclusions worked out together) is not
+/// computed here; whoever next recounts this should derive it fresh rather
+/// than add 57 and 21 as if the two recipes' exclusions already lined up.
+///
+/// What the single-line recipe's 57 lines DO show, unaffected by the count
+/// being a floor: the great majority compose **macSCP's own English
+/// prose**, not a server's words. The two sentences a user was most likely
+/// to meet — `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason` —
+/// are no longer among the construction sites at all (neither single-line
+/// nor multi-line): both constants stay in source as the English anchor for
+/// their finding's catalogue entry (the user documentation still quotes
+/// that English), but neither is read by the site that used to construct a
+/// `protocolError(reason:)` from it. Genuinely foreign text is the minority
+/// of what the recipe finds: a `localizedDescription` from Foundation or
+/// NIO, an S3 error code parsed out of a response body.
 ///
 /// So the honest statement is: the detail is a diagnostic string macSCP
 /// mostly wrote in English, occasionally relayed from elsewhere, and in

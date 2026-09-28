@@ -86,11 +86,13 @@ struct S3HTTPChannel: S3AbortChannel {
     ///
     /// A refusal is not an error at the `URLSession` level: declining to
     /// follow leaves the 3xx response to be delivered as if the endpoint had
-    /// answered it, so without this every caller would report "S3 request
-    /// failed with HTTP status 302" and no reader would learn that their
-    /// endpoint tried to send them elsewhere. Checked on both outcomes
-    /// because a refusal can also precede a genuine transport failure — a
-    /// declined redirect whose 3xx body then fails to arrive.
+    /// answered it, so without this every caller would report it through the
+    /// ordinary status mapping instead — as of the 2026-09-28 typed-findings
+    /// change, `RemoteFSError.finding(.unexpectedStatus(code: 302))`,
+    /// "The server answered with status 302" — and no reader would learn
+    /// that their endpoint tried to send them elsewhere. Checked on both
+    /// outcomes because a refusal can also precede a genuine transport
+    /// failure — a declined redirect whose 3xx body then fails to arrive.
     ///
     /// A cancelled request is the exception, and is read first: it reaches
     /// the caller as a `CancellationError` (`HTTPCancellation`), so a user's

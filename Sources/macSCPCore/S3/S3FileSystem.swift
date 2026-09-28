@@ -570,11 +570,21 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     ///
     /// As of the 2026-09-28 typed-findings change, this is no longer what
     /// gets thrown: the site above throws
-    /// `RemoteFSError.finding(.sourceChangedSinceInterruption)`, whose
-    /// `logSentence` and `core.finding.sourceChangedSinceInterruption` `en`
-    /// catalogue entry carry the same English this constant does. It stays
-    /// here as that English's anchor in source — the user documentation
-    /// quotes it — even though nothing in this module reads it any more.
+    /// `RemoteFSError.finding(.sourceChangedSinceInterruption)`. Its
+    /// `core.finding.sourceChangedSinceInterruption` `en` catalogue entry
+    /// carries the same English this constant does, byte for byte — pinned
+    /// by `S3FileSystemTests
+    /// .sourceChangedReasonStillMatchesTheFindingsEnglishCatalogueEntry`,
+    /// which reads the catalogue off disk. Its `logSentence` carries the
+    /// SAME WORDS but not the same bytes: log sentences are lower-case
+    /// phrases by this project's convention (`RemoteFSFinding.logSentence`'s
+    /// own doc), so it opens "the file changed…" where this constant and the
+    /// catalogue both open "The file changed…" — that half is untested here
+    /// (fix round 1, task review, 2026-09-28: corrects the previous version
+    /// of this comment, which claimed both halves matched). This constant
+    /// stays as the catalogue English's anchor in source — the user
+    /// documentation quotes it — even though nothing in this module reads it
+    /// any more.
     static let sourceChangedReason =
         "The file changed on the server since the interrupted download, so nothing was added to the partial file"
 
