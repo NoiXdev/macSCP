@@ -201,6 +201,6 @@
 "core.finding.redirectBodyNotResendable" = "Serwer przekierował wysyłanie, a jego danych nie można wysłać drugi raz, więc przekierowanie odrzucono";
 "core.finding.redirectNotResignable" = "Serwer przekierował żądanie, a nowego celu nie udało się podpisać, więc przekierowanie odrzucono";
 "core.finding.resumeNotSupported" = "Serwer nie potrafi dopisać do istniejącego pliku, więc przesyłania nie można wznowić";
-"core.finding.noSuchBucket %@" = "To połączenie zaczyna się od listy bucketów, a %@ nie wskazuje żadnego bucketa";
+"core.finding.noSuchBucket" = "To połączenie zaczyna się od listy bucketów, więc ścieżka musi wskazywać bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Serwer nie potwierdził części %@ wysyłania";
 "core.finding.requestBodyUnencodable" = "Wartości w żądaniu nie da się zapisać w formacie, którego wymaga serwer";

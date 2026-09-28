@@ -79,9 +79,16 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// The backend cannot add to an existing file, so an interrupted
     /// transfer cannot be continued where it stopped.
     case resumeNotSupported
-    /// The session starts at the bucket list, and `path` names no bucket to
-    /// address the operation to.
-    case noSuchBucket(path: String)
+    /// The session starts at the bucket list and the path named no bucket
+    /// to address the operation to.
+    ///
+    /// Payload-free on purpose (maintainer ruling, 2026-09-28): the guard
+    /// that reports it fires only when the normalised path splits to no
+    /// components at all, which is the single path `/`. A payload that can
+    /// only ever carry one value renders as "… and / names no bucket",
+    /// which reads as a truncated string in every language, so the sentence
+    /// states the rule instead of quoting the path.
+    case noSuchBucket
     /// The server accepted an upload part without confirming it, so the
     /// upload cannot be completed.
     case uploadPartUnacknowledged(part: Int)
@@ -131,7 +138,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// that iterates `allCases` can ask for the key without inventing a
     /// payload.
     ///
-    /// The four names that interpolate — counted in the switch below on
+    /// The three names that interpolate — counted in the switch below on
     /// 2026-09-28 — carry the format specifier in the key, as this project's
     /// other argument-taking keys do (`core.transfer.notFound %@`).
     ///
@@ -143,14 +150,14 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// derives the key exactly the same way.
     public static func messageKey(for name: Name) -> String {
         switch name {
-        case .unexpectedStatus, .pathExistsAndIsNotADirectory, .noSuchBucket,
+        case .unexpectedStatus, .pathExistsAndIsNotADirectory,
             .uploadPartUnacknowledged:
             return "core.finding.\(name.rawValue) %@"
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
-            .resumeNotSupported, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -164,15 +171,13 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return String(format: CoreL10n.string(messageKey), String(code))
         case .pathExistsAndIsNotADirectory(let path):
             return String(format: CoreL10n.string(messageKey), path)
-        case .noSuchBucket(let path):
-            return String(format: CoreL10n.string(messageKey), path)
         case .uploadPartUnacknowledged(let part):
             return String(format: CoreL10n.string(messageKey), String(part))
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
-            .resumeNotSupported, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
             return CoreL10n.string(messageKey)
         }
     }
@@ -220,8 +225,9 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeNotSupported:
             return "the server cannot add to an existing file, "
                 + "so the transfer cannot be resumed"
-        case .noSuchBucket(let path):
-            return "this connection starts at the bucket list, and \(path) names no bucket"
+        case .noSuchBucket:
+            return "this connection starts at the bucket list, "
+                + "so the path has to name a bucket"
         case .uploadPartUnacknowledged(let part):
             return "the server did not confirm part \(part) of the upload"
         case .requestBodyUnencodable:

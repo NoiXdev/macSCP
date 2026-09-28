@@ -215,6 +215,6 @@
 "core.finding.redirectBodyNotResendable" = "The server redirected an upload, and its data cannot be sent a second time, so the redirect was refused";
 "core.finding.redirectNotResignable" = "The server redirected the request, and the new target could not be signed, so the redirect was refused";
 "core.finding.resumeNotSupported" = "The server cannot add to an existing file, so the transfer cannot be resumed";
-"core.finding.noSuchBucket %@" = "This connection starts at the bucket list, and %@ names no bucket";
+"core.finding.noSuchBucket" = "This connection starts at the bucket list, so the path has to name a bucket";
 "core.finding.uploadPartUnacknowledged %@" = "The server did not confirm part %@ of the upload";
 "core.finding.requestBodyUnencodable" = "A value in the request cannot be written in the format the server needs";

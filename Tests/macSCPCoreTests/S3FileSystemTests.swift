@@ -1518,10 +1518,13 @@ struct S3FileSystemTests {
     /// nobody named.
     /// It is the typed `.noSuchBucket` finding rather than a
     /// `protocolError` whose English reason travels untranslated
-    /// (typed-remote-fs-findings Task 6), and the finding carries the path
-    /// the CALLER asked about — never a bucket name the endpoint chose.
+    /// (typed-remote-fs-findings Task 6). The finding carries NO payload:
+    /// this guard fires only when the normalised path splits to no
+    /// components, so the path it could quote is always `/`
+    /// (`rootModeResolvesEveryPathToItsBucketAndKey` above is the positive
+    /// control for that — every path with a first component resolves).
     @Test func aPathWithoutABucketIsAnErrorInBucketListMode() throws {
-        #expect(throws: RemoteFSError.finding(.noSuchBucket(path: "/"))) {
+        #expect(throws: RemoteFSError.finding(.noSuchBucket)) {
             _ = try S3FileSystem.RootMode.bucketList.resolve(path: "/")
         }
     }
@@ -1530,7 +1533,7 @@ struct S3FileSystemTests {
     @Test func aBucketlessPathSendsNoRequestAtAll() async throws {
         let (fs, transport) = try await connectAtBucketList(responses: [])
 
-        await #expect(throws: RemoteFSError.finding(.noSuchBucket(path: "/"))) {
+        await #expect(throws: RemoteFSError.finding(.noSuchBucket)) {
             try await fs.delete(path: "/")
         }
 

@@ -26,146 +26,52 @@ import macSCPCore
 /// `reason` rather than a path or an enum. For those the App says the
 /// sentence itself, from its own catalogue, and keeps the detail behind it.
 ///
-/// ## What the detail actually is (corrected 2026-09-25, fix round 1)
+/// ## What the detail actually is (counted 2026-09-28, Task 6 fix round 1)
 ///
 /// The first version of this comment called it "free text a backend or
-/// Foundation wrote". That was measured false. Counted over
-/// `Sources/macSCPCore` on 2026-09-25: 68 construction sites of
-/// `RemoteFSError.protocolError(reason:)` / `.connectionFailed(reason:)`.
-/// Recounted 2026-09-28 (`docs/superpowers/specs/2026-09-28-typed-remote-fs-findings-design.md`,
-/// at `bcbea4f4`): 69, not 68 — the two counts disagree by one and neither
-/// is re-derivable from the other, so this comment no longer claims 68 was
-/// right. **Recounted again 2026-09-28**, after Task 2 of the
-/// typed-remote-fs-findings plan converted WebDAV's six sites to
-/// `.finding(...)` (`4e20fc80`): **63**, exactly six fewer than 69. Recipe:
+/// Foundation wrote". That was measured false, and it has been recounted
+/// after every conversion since. Two recipes over `Sources/macSCPCore`, both
+/// run against THIS HEAD:
 /// `grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore`
-/// (89 lines at this HEAD) minus 17 lines that belong to `AgentError` — an
-/// unrelated SSH-agent error type whose `protocolError(reason:)` case
-/// happens to share the name, counting both its call sites and its own
-/// case declaration — minus `RemoteFSError`'s own 2 case declarations,
-/// minus 7 lines that quote the pattern in a doc comment or `//` comment
-/// rather than construct it (`DiagnosticLog.swift:266-267`,
-/// `DialProbes.swift:164-165`, `ConnectionViewModel.swift:2333`,
-/// `RemoteFSFinding.swift:10`, `CitadelFileSystem.swift:763`) — 89 − 17 − 2
-/// − 7 = 63. **Recounted a third time 2026-09-28**, after Task 3 converted
-/// S3's six sites (four in `S3FileSystem.swift`, one in `S3Uploader.swift`,
-/// one in `S3ListParser.swift`) to `.finding(...)` too: the same recipe now
-/// finds 83 raw lines, the same 17/2/7 subtract off it, 83 − 17 − 2 − 7 =
-/// **57**, again exactly six fewer than 63.
+/// finds **80** lines, minus **17** belonging to `AgentError` — an unrelated
+/// SSH-agent error type whose `protocolError(reason:)` case happens to share
+/// the name, counting its call sites and its own case declaration — minus
+/// `RemoteFSError`'s own **2** case declarations, minus **7** lines that
+/// quote the pattern in a comment rather than construct it
+/// (`DiagnosticLog.swift:266-267`, `DialProbes.swift:164-165`,
+/// `ConnectionViewModel.swift:2333`, `RemoteFSFinding.swift:10`,
+/// `CitadelFileSystem.swift:763`) = **54**. That recipe is a FLOOR, not a
+/// census: it matches only a construction whose `reason:` sits on the SAME
+/// line, and this project splits the line whenever the reason is long — six
+/// sites hid there until Task 6. So
+/// `grep -rnE '(protocolError|connectionFailed)\($' Sources/macSCPCore`
+/// finds **17** further lines, **2** of them `AgentError`
+/// (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`), leaving
+/// **15**. The two recipes' matches are disjoint, so 54 + 15 = **69** for
+/// `Sources/macSCPCore`. Both are scoped to that path; three more
+/// constructions of the same shape live in `Sources/MacSCPAppKit/`
+/// (`ContentView+Lifecycle.swift:276`, `ContentView.swift:1871`,
+/// `ContentView.swift:3434`), which neither path reaches. **The whole-tree
+/// total is 72.**
 ///
-/// **Recounted a fourth time 2026-09-28**, after Task 4 converted the plan's
-/// ONE `.connectionFailed` site, the refused redirect that
-/// `S3HTTPChannel.refusedRedirect()` reports: the same recipe still finds
-/// **83** raw lines, the same 17/2/7 still subtract off it, and the answer
-/// is still **57**. That is measured, not an oversight. The conversion
-/// removed one single-line construction from `S3HTTPChannel.swift` and added
-/// one at `S3RedirectSessionDelegate.swift:211`, because the FOURTH refusal
-/// that delegate records — a redirect to a foreign origin — is not a finding
-/// and cannot become one: its sentence names two origins the endpoint chose
-/// by writing a `Location` header, and a finding carries no foreign words
-/// (`RemoteFSFinding`). So the site moved instead of disappearing. The three
-/// refusals that DID become findings never had a construction of their own:
-/// they recorded a sentence, and the one site in `S3HTTPChannel` wrapped
-/// whatever had been recorded. The 21-item enumeration below was re-read
-/// against the tree in the same pass, after these edits landed — all 21
-/// citations resolve to the line they name, as do the three
-/// `Sources/MacSCPAppKit/` sites, so the whole-tree total is still **81**.
-///
-/// **57 is what the recipe yields, not the number of construction sites
-/// there are — it is a FLOOR** (Task 3 fix round 1, task review, 2026-09-28).
-/// The recipe only matches a construction whose `reason:` argument sits on
-/// the SAME line as `protocolError(`/`connectionFailed(`; a construction
-/// split across two lines — `RemoteFSError.protocolError(\n    reason:
-/// "…")`, which this project writes whenever the reason string is long — is
-/// invisible to it. `grep -rnE '(protocolError|connectionFailed)\($'
-/// Sources/macSCPCore` (the opening parenthesis alone at the end of the
-/// line, no argument on it at all) found 23 more lines when this paragraph
-/// was written; 2 belong to `AgentError` (`AgentBackedPrivateKey.swift:351`,
-/// `SSHAgentClient.swift:196`), leaving **21 more `RemoteFSError`
-/// construction sites the 57 above did not include**. Six of those 21 are
-/// findings since Task 6; the enumeration as re-read against the tree on
-/// 2026-09-28, after Task 6's edits landed, is the **15** below — every
-/// citation opened and confirmed to be the line it names:
+/// The 15 the second recipe finds, every citation opened against this HEAD:
 /// `S3MultipartXML.swift:20`, `S3FileSystem.swift:714`, `:896`, `:1116`,
 /// `S3ListParser.swift:90`, `RemoteChecksumProvider.swift:329`,
 /// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
 /// `:1671`, `WebDAVFileSystem.swift:586`, `:630`,
 /// `ThroughputProbe.swift:632`, `:702`.
 ///
-/// This gap is not new to this diff — it was already true of 68, of 69, and
-/// of 63, all four numbers resting on the same single-line recipe, and of
-/// `docs/BACKLOG.md`'s own "68" — this recount just inherited it rather than
-/// closing it. So: **57 is a lower bound on how many `protocolError`/
-/// `connectionFailed` construction sites `Sources/macSCPCore` has, not a
-/// census of them**, and the same was true of every earlier number in this
-/// paragraph.
+/// What those lines show: the great majority compose **macSCP's own English
+/// prose**, not a server's words — genuinely foreign text is the minority (a
+/// `localizedDescription` from Foundation or NIO, an S3 error code parsed
+/// out of a response body). So the honest statement is that the detail is a
+/// diagnostic string macSCP mostly wrote in English, occasionally relayed
+/// from elsewhere, and in neither case translated.
 ///
-/// **Corrected (Task 3 fix round 2, task review's independent census,
-/// 2026-09-28):** this comment used to warn against simply adding 57 and
-/// 21 "as if the two recipes' exclusions already lined up" — right in
-/// spirit, wrong in arithmetic. For `Sources/macSCPCore`, they DO line up:
-/// the second recipe's 23 lines are exactly 21 `RemoteFSError`
-/// constructions plus the 2 `AgentError`'s already named above, with no
-/// `RemoteFSError` case declaration and no comment-only mention among
-/// them, so the two recipes' matches are disjoint and 57 + 21 = **78**
-/// genuinely is `Sources/macSCPCore`'s construction-site count under both
-/// recipes combined. The real blind spot was never the regex — it is the
-/// search PATH: both recipes above are scoped to `Sources/macSCPCore`
-/// only. Three more `RemoteFSError` construction sites of this same shape
-/// live in `Sources/MacSCPAppKit/` — `ContentView+Lifecycle.swift:276`,
-/// `ContentView.swift:1871`, `ContentView.swift:3434` — which neither
-/// recipe's path ever reaches. **The whole-tree total is 81, not 78, and
-/// not 57.**
-///
-/// **Recounted a fifth time 2026-09-28**, after Task 5 converted the plan's
-/// last three sites — `LocalFileSystem.createDirectory`'s file-collision
-/// throw and `URLSessionHTTPTransport`'s two non-HTTP-response guards
-/// (`send` and `sendStreaming`) — to `.finding(...)`: the single-line
-/// recipe now finds **80** raw lines, the same 17/2/7 still subtract off
-/// it (none of the three converted sites belonged to `AgentError`, to a
-/// `RemoteFSError` case declaration, or to the 7 comment-only mentions),
-/// so the answer is **54**, exactly three fewer than 57. The multi-line
-/// recipe is untouched — all three of Task 5's sites were single-line —
-/// so it still finds 23 raw lines, 21 of them `RemoteFSError`
-/// constructions after the same 2 `AgentError` lines subtract off. 54 + 21
-/// = **75** for `Sources/macSCPCore` under both recipes combined; the
-/// three `Sources/MacSCPAppKit/` sites are untouched by this task (none of
-/// them constructs from `LocalFileSystem` or `HTTPTransport`), so **the
-/// whole-tree total is 78, not 81, and not 54**.
-///
-/// **Recounted a sixth time 2026-09-28**, after Task 6 converted the six
-/// sites that the SINGLE-LINE recipe never saw — the ones the paragraph
-/// above calls a floor. This is the first recount where the two recipes
-/// move in opposite directions, and the asymmetry is the whole point of
-/// the task: all six were multi-line, so the single-line recipe still
-/// finds **80** raw lines, the same 17/2/7 still subtract off it (the one
-/// change inside the 7 is that `RemoteFSFinding.swift`'s comment-only
-/// mention moved from `:6` to `:10`), and its answer is still **54**,
-/// unmoved. The MULTI-LINE recipe is where the six come off: it now finds
-/// **17** raw lines where it found 23, the same 2 `AgentError` lines
-/// subtract off, leaving **15** `RemoteFSError` constructions where there
-/// were 21. 54 + 15 = **69** for `Sources/macSCPCore` under both recipes
-/// combined. The three `Sources/MacSCPAppKit/` sites are untouched by this
-/// task and were re-read in the same pass — `ContentView+Lifecycle.swift:276`,
-/// `ContentView.swift:1871`, `ContentView.swift:3434` all still resolve to
-/// the line they name — so **the whole-tree total is 72, not 78, and not
-/// 54**.
-///
-/// What the single-line recipe's 54 lines DO show, unaffected by the count
-/// being a floor: the great majority compose **macSCP's own English
-/// prose**, not a server's words. The two sentences a user was most likely
-/// to meet — `S3FileSystem.rangeIgnoredReason` and `sourceChangedReason` —
-/// are no longer among the construction sites at all (neither single-line
-/// nor multi-line): both constants stay in source as the English anchor for
-/// their finding's catalogue entry (the user documentation still quotes
-/// that English), but neither is read by the site that used to construct a
-/// `protocolError(reason:)` from it. Genuinely foreign text is the minority
-/// of what the recipe finds: a `localizedDescription` from Foundation or
-/// NIO, an S3 error code parsed out of a response body.
-///
-/// So the honest statement is: the detail is a diagnostic string macSCP
-/// mostly wrote in English, occasionally relayed from elsewhere, and in
-/// neither case translated.
+/// Six earlier recounts stood here — 68, 69, 63, 57, 81, 78 — each
+/// superseded by the next. What each measured, and what each got wrong, is
+/// in `docs/superpowers/specs/2026-09-28-typed-remote-fs-findings-design.md`
+/// and in this file's git history.
 ///
 /// ## Why it is kept anyway (maintainer-facing decision, 2026-09-25)
 ///

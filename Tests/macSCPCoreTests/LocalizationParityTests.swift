@@ -668,31 +668,61 @@ struct LocalizationParityTests {
     /// payload-carrying finding has no value this test could invent, and
     /// `Name.allCases` is the compiler's list.
     ///
-    /// Only the reference catalogs are asked;
-    /// `everyTranslationDeclaresExactlyTheEnglishKeys` above already holds
-    /// every translation to exactly the English key set.
+    /// EVERY locale is asked, not only the reference one (widened in Task 6
+    /// fix round 1 of the typed-remote-fs-findings plan). The uniqueness
+    /// half below is the guard two of that task's conversions lean on — a
+    /// condition reuses an existing finding precisely BECAUSE a second
+    /// sentence for it would be red here — and a version that read English
+    /// alone was narrower than the argument resting on it: two findings
+    /// could share a sentence in `de`, `fr` or `pl` and it stayed green.
+    /// `everyTranslationDeclaresExactlyTheEnglishKeys` above holds the key
+    /// SETS equal across locales; it says nothing about the values, which
+    /// is where a pasted sentence lives.
+    ///
+    /// `seen` is per catalog: the same finding necessarily has a different
+    /// sentence in each language, and only a collision WITHIN one language
+    /// is the defect.
     @Test func everyRemoteFSFindingHasItsOwnSentence() throws {
-        var seen: [String: String] = [:]
         var declaringCatalogs = 0
-        for (reference, _) in try Self.allCatalogs() {
+        for (reference, translations) in try Self.allCatalogs() {
             guard reference.entries[RemoteFSFinding.nonHTTPResponse.messageKey] != nil
             else { continue }
             declaringCatalogs += 1
-            for name in RemoteFSFinding.Name.allCases {
-                let key = RemoteFSFinding.messageKey(for: name)
-                let value = reference.entries[key]
-                #expect(value != nil, """
-                    \(reference.label) has no sentence for \(name): \(key) is missing, \
-                    so the finding renders as its own key.
+            // The reference first, so a failure names it before its
+            // translations; the count is derived from what `allCatalogs`
+            // returned rather than spelled, so adding a locale widens this
+            // guard without editing it.
+            let catalogs = [reference] + translations
+            #expect(translations.isEmpty == false, """
+                \(reference.label) has no translations to scan, so the \
+                uniqueness check below saw English only.
+                """)
+            for catalog in catalogs {
+                var seen: [String: String] = [:]
+                for name in RemoteFSFinding.Name.allCases {
+                    let key = RemoteFSFinding.messageKey(for: name)
+                    let value = catalog.entries[key]
+                    #expect(value != nil, """
+                        \(catalog.label) has no sentence for \(name): \(key) is missing, \
+                        so the finding renders as its own key.
+                        """)
+                    guard let value else { continue }
+                    // Two findings sharing a sentence means one of them was pasted
+                    // rather than written.
+                    #expect(seen[value] == nil, """
+                        \(catalog.label) uses the same sentence for \(name) and for \
+                        \(seen[value] ?? "?"): \(value)
+                        """)
+                    seen[value] = name.rawValue
+                }
+                // The positive beside the two negatives above: this catalog
+                // really produced one DISTINCT sentence per finding. A
+                // catalog that answered nothing, or whose entries collapsed,
+                // cannot pass as "no duplicates found".
+                #expect(seen.count == RemoteFSFinding.Name.allCases.count, """
+                    \(catalog.label) yielded \(seen.count) distinct finding sentences \
+                    for \(RemoteFSFinding.Name.allCases.count) findings.
                     """)
-                guard let value else { continue }
-                // Two findings sharing a sentence means one of them was pasted
-                // rather than written.
-                #expect(seen[value] == nil, """
-                    \(reference.label) uses the same sentence for \(name) and for \
-                    \(seen[value] ?? "?"): \(value)
-                    """)
-                seen[value] = name.rawValue
             }
         }
         #expect(declaringCatalogs == 1, """
