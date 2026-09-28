@@ -53,6 +53,24 @@ import macSCPCore
 /// finds 83 raw lines, the same 17/2/7 subtract off it, 83 − 17 − 2 − 7 =
 /// **57**, again exactly six fewer than 63.
 ///
+/// **Recounted a fourth time 2026-09-28**, after Task 4 converted the plan's
+/// ONE `.connectionFailed` site, the refused redirect that
+/// `S3HTTPChannel.refusedRedirect()` reports: the same recipe still finds
+/// **83** raw lines, the same 17/2/7 still subtract off it, and the answer
+/// is still **57**. That is measured, not an oversight. The conversion
+/// removed one single-line construction from `S3HTTPChannel.swift` and added
+/// one at `S3RedirectSessionDelegate.swift:211`, because the FOURTH refusal
+/// that delegate records — a redirect to a foreign origin — is not a finding
+/// and cannot become one: its sentence names two origins the endpoint chose
+/// by writing a `Location` header, and a finding carries no foreign words
+/// (`RemoteFSFinding`). So the site moved instead of disappearing. The three
+/// refusals that DID become findings never had a construction of their own:
+/// they recorded a sentence, and the one site in `S3HTTPChannel` wrapped
+/// whatever had been recorded. The 21-item enumeration below was re-read
+/// against the tree in the same pass, after these edits landed — all 21
+/// citations resolve to the line they name, as do the three
+/// `Sources/MacSCPAppKit/` sites, so the whole-tree total is still **81**.
+///
 /// **57 is what the recipe yields, not the number of construction sites
 /// there are — it is a FLOOR** (Task 3 fix round 1, task review, 2026-09-28).
 /// The recipe only matches a construction whose `reason:` argument sits on

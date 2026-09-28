@@ -127,7 +127,18 @@ struct S3HTTPChannel: S3AbortChannel {
     /// The redirect this channel's session refused, as the error to report
     /// instead of whatever the refusal left behind. Always `nil` for a
     /// borrowed transport, which carries no policy of ours.
+    ///
+    /// Handed on unchanged since 2026-09-28. This used to build a
+    /// `.connectionFailed` here out of a recorded SENTENCE — the one site of
+    /// that case in the typed-remote-fs-findings plan — and the delegate now
+    /// builds the error itself, because three of its four refusals are named
+    /// findings and the fourth is the `.connectionFailed` this line made.
+    ///
+    /// Deliberately not spelling the case's argument label: this file is
+    /// read by the construction-site recipe `TransferFailureLabel`
+    /// documents, and a comment that quotes the code it describes is
+    /// indistinguishable from that code to a scanner.
     func refusedRedirect() -> RemoteFSError? {
-        redirectPolicy?.lastRefusedRedirect.map { RemoteFSError.connectionFailed(reason: $0) }
+        redirectPolicy?.lastRefusedRedirect
     }
 }

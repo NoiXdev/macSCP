@@ -27,10 +27,28 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
         subsystem: "dev.noix.macscp", category: "S3RedirectSessionDelegate")
 
     private let lock = NSLock()
-    private var refusal: String?
+    private var refusal: RemoteFSError?
 
-    /// The sentence describing a redirect this delegate refused, or `nil` if
-    /// none was.
+    /// The redirect this delegate refused, as the error to report, or `nil`
+    /// if none was.
+    ///
+    /// An error and not a sentence since 2026-09-28. Three of the four
+    /// refusals below are named `RemoteFSFinding`s, which carry a catalogue
+    /// key and so reach a reader in their own language; the fourth — a
+    /// foreign origin — cannot be one, because its sentence names two
+    /// origins Foundation parsed out of a `Location` header the endpoint
+    /// wrote, and a finding carries no foreign words. So it stays the
+    /// `.connectionFailed` with the localized two-origin sentence it has
+    /// carried since 2026-08-29, and the two kinds travel together as the
+    /// error they already are rather than as a common sentence.
+    ///
+    /// All four read as a connection failure: `.connectionFailed` by its
+    /// own case, the three findings through
+    /// `RemoteFSFinding.readsAsConnectionFailure`. That is what keeps the
+    /// transfer queue classifying a redirect refused mid-transfer as
+    /// resumable exactly as it did while `S3HTTPChannel.refusedRedirect()`
+    /// built a `.connectionFailed` out of this text
+    /// (`S3RedirectRefusalFindingTests`).
     ///
     /// It has to be recorded rather than derived from the request's own
     /// outcome, because refusing a redirect is not an error at the
@@ -42,7 +60,7 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
     ///
     /// Sticky for the life of the delegate, and first refusal wins: the
     /// first one is what explains any that follow.
-    var lastRefusedRedirect: String? {
+    var lastRefusedRedirect: RemoteFSError? {
         lock.lock(); defer { lock.unlock() }
         return refusal
     }
@@ -59,7 +77,7 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
 
     /// Answering with `nil` is what refuses: `URLSession` then stops
     /// following and delivers the redirect response itself, which
-    /// `S3FileSystem` turns into the recorded sentence rather than into the
+    /// `S3FileSystem` turns into the recorded refusal rather than into the
     /// bare status.
     ///
     /// Every redirect status runs through the same decision. 301/302/303
@@ -78,14 +96,14 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
         // second redirect is compared against where the first one landed.
         let current = response.url ?? task.currentRequest?.url ?? task.originalRequest?.url
         guard let current, let target = request.url else {
-            record("an S3 redirect with no readable source or target was refused")
+            record(.redirectUnreadable)
             completionHandler(nil)
             return
         }
 
         let decision = S3RedirectDecision.decide(from: current, to: target)
         guard decision == .reSignAndFollow else {
-            if let message = decision.refusalMessage { record(message) }
+            if let message = decision.refusalMessage { record(foreignOrigin: message) }
             completionHandler(nil)
             return
         }
@@ -99,7 +117,7 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
         // records; this is where a future streaming upload would announce
         // itself instead of silently signing the wrong thing.
         if request.httpBodyStream != nil || task.originalRequest?.httpBodyStream != nil {
-            record("an S3 redirect was refused: the request body is a stream and cannot be resent")
+            record(.redirectBodyNotResendable)
             completionHandler(nil)
             return
         }
@@ -112,8 +130,15 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
                 config: config)
             completionHandler(signed)
         } catch {
-            record("an S3 redirect could not be re-signed and was refused: "
-                + error.localizedDescription)
+            // The thrown error's `localizedDescription` used to be appended
+            // here and is DROPPED, which is the point of the finding: a
+            // finding is this module's own text in four languages, and a
+            // foreign error's sentence inside it would be untranslated words
+            // from somewhere else. Nothing a reader can act on goes with it
+            // — every error `S3RequestSigning.reSigned` throws says some
+            // shape of "this target could not be signed", which is what the
+            // finding says.
+            record(.redirectNotResignable)
             completionHandler(nil)
         }
     }
@@ -172,16 +197,36 @@ final class S3RedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchec
         return headers.filter { $0.key.lowercased() == "range" }
     }
 
+    /// A named refusal. The log gets the finding's own fixed English
+    /// (`logSentence`), not its localized `message`: the diagnostic log is
+    /// not localized, the `TunnelFailureKind` arrangement.
+    private func record(_ finding: RemoteFSFinding) {
+        store(.finding(finding), logging: finding.logSentence)
+    }
+
+    /// The one refusal that is not a finding — see `lastRefusedRedirect`.
+    /// `message` is `S3RedirectDecision.refusalMessage`, already localized
+    /// and already naming both origins.
+    private func record(foreignOrigin message: String) {
+        store(.connectionFailed(reason: message), logging: message)
+    }
+
     /// Recorded and logged: a redirect this product declined to follow is
     /// worth a line whether or not anybody reads the error it produces. The
-    /// text is `.public` — it names two origins that Foundation parsed out
-    /// of URLs, and no path, no query and no credential.
-    private func record(_ reason: String) {
+    /// logged text is `.public` — it is either this module's own English or
+    /// two origins that Foundation parsed out of URLs, and in neither case
+    /// a path, a query or a credential.
+    ///
+    /// First refusal wins, for both entry points above: one lock, one
+    /// `alreadyRecorded` gate, so a finding cannot be overwritten by a
+    /// later foreign-origin refusal or the other way round
+    /// (`S3RedirectRefusalFindingTests.theFirstRefusalWinsAcrossBothKinds`).
+    private func store(_ refused: RemoteFSError, logging sentence: String) {
         lock.lock()
         let alreadyRecorded = refusal != nil
-        if !alreadyRecorded { refusal = reason }
+        if !alreadyRecorded { refusal = refused }
         lock.unlock()
         guard !alreadyRecorded else { return }
-        Self.logger.error("\(reason, privacy: .public)")
+        Self.logger.error("\(sentence, privacy: .public)")
     }
 }
