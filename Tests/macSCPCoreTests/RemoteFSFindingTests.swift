@@ -33,16 +33,53 @@ import Testing
     }
 
     /// `CoreL10n.string` falls back to the KEY text when the catalogue has
-    /// no entry, so a missing sentence is silent at the lookup. These three
-    /// expectations are what make it loud: the message is not the key, it
-    /// does not begin with the key's own prefix, and the log's English is
-    /// there at all.
+    /// no entry, so a missing sentence is silent at the lookup.
+    ///
+    /// Three checks, labelled for what they are. Two are NEGATIVE — the
+    /// message is not the key, and it does not begin with the key's prefix
+    /// either. The POSITIVE beside them is `catalogueAnswers`: the
+    /// catalogue really resolves the derived key, and the message is that
+    /// resolved value with the finding's own argument in the slot the
+    /// catalogue put it. That is the shape
+    /// `TransferFailureKindTests.everyKindHasANameAndACatalogueSentence`
+    /// uses, and it is locale-independent — a machine running in `de` reads
+    /// its own catalogue and both halves still agree.
+    ///
+    /// That the catalogue FILES declare all thirteen keys, in all four
+    /// languages, is `everyRemoteFSFindingHasItsOwnSentence`'s job.
     @Test func everyFindingResolvesToASentenceAndNotToItsKey() {
         for finding in RemoteFSFinding.everyCase {
+            let resolved = CoreL10n.string(finding.messageKey)
+            let catalogueAnswers = resolved != finding.messageKey
+            #expect(catalogueAnswers, """
+                the catalogue does not answer for \(finding.messageKey) — CoreL10n fell back \
+                to the key text.
+                """)
             #expect(finding.message != finding.messageKey, "\(finding.name) renders as its key")
-            #expect(finding.logSentence.isEmpty == false)
-            // The positive: the sentence is the catalogue's, not the key text.
             #expect(finding.message.hasPrefix("core.finding.") == false)
+            #expect(finding.logSentence.isEmpty == false)
+
+            let argument = Self.argument(of: finding)
+            #expect(
+                finding.message == (argument.map { String(format: resolved, $0) } ?? resolved),
+                "\(finding.name)'s message is not the catalogue's sentence with its argument")
+        }
+    }
+
+    /// The one argument each payload-carrying finding interpolates, as the
+    /// text `String(format:)` receives, or `nil` for a finding that takes
+    /// none. Exhaustive for the reason `messageKey(for:)` is: a finding
+    /// added later with a payload must say what it interpolates rather than
+    /// silently interpolating nothing.
+    private static func argument(of finding: RemoteFSFinding) -> String? {
+        switch finding {
+        case .unexpectedStatus(let code): return String(code)
+        case .pathExistsAndIsNotADirectory(let path): return path
+        case .resumeRangeIgnored, .sourceChangedSinceInterruption,
+            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
+            return nil
         }
     }
 
@@ -60,21 +97,29 @@ import Testing
     }
 
     /// The guard is not blind to what it forbids: a finding whose payload
-    /// IS an endpoint fails both halves of `noFindingCarriesForeignText`.
+    /// IS an endpoint fails both halves of `noFindingCarriesForeignText`,
+    /// in BOTH texts that guard scans. Planting into only one of them would
+    /// leave the other free to go stale into scanning nothing.
     ///
-    /// Written as two halves so neither the value nor its spelling can
-    /// reach a failure message from this file (`CLAUDE.md`, "A value a test
-    /// must not leak has two exits"), and the `Bool`s are computed before
-    /// the expectations for the same reason.
+    /// The credential is written as two halves so neither the value nor its
+    /// spelling can reach a failure message from this file (`CLAUDE.md`,
+    /// "A value a test must not leak has two exits"), and the `Bool`s are
+    /// computed before the expectations for the same reason.
     @Test func theURLGuardSeesAPlantedEndpoint() {
         let credential = "AKIAEXAMPLE" + ":" + "s3cr3t"
         let planted = RemoteFSFinding.pathExistsAndIsNotADirectory(
             path: "https://" + credential + "@example.invalid/b")
-        let text = planted.logSentence
-        let carriesUserinfo = text != URLText.withoutUserinfo(text)
-        let carriesURL = text.contains("://")
-        #expect(carriesUserinfo)
-        #expect(carriesURL)
+        var scanned = 0
+        for text in [planted.message, planted.logSentence] {
+            scanned += 1
+            let carriesUserinfo = text != URLText.withoutUserinfo(text)
+            let carriesURL = text.contains("://")
+            #expect(carriesUserinfo)
+            #expect(carriesURL)
+        }
+        // The list above is the same two texts `noFindingCarriesForeignText`
+        // scans; if one is dropped there, this count says which.
+        #expect(scanned == 2)
     }
 }
 

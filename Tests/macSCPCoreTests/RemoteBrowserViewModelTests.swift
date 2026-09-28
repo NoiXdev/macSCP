@@ -328,6 +328,26 @@ struct RemoteBrowserViewModelTests {
         #expect(message != Self.defaultArmText(for: error))
     }
 
+    /// A named finding is RENDERED by the browser rather than reduced to a
+    /// generic sentence: unlike a `reason`, it carries no endpoint, so the
+    /// banner and the diagnostic log can both read it.
+    ///
+    /// Every finding, through `everyCase`, so a finding added later is
+    /// covered without an edit here. The negatives are the two silent
+    /// failures this arm can have — falling to `default:`, and the
+    /// catalogue not answering, which comes back as the key itself.
+    @Test func everyNamedFindingIsRenderedRatherThanReducedToAGenericSentence() {
+        for finding in RemoteFSFinding.everyCase {
+            let error = RemoteFSError.finding(finding)
+
+            let message = RemoteBrowserViewModel.message(for: error, path: "/srv/x")
+
+            #expect(message == finding.message)
+            #expect(message != finding.messageKey)
+            #expect(message != Self.defaultArmText(for: error))
+        }
+    }
+
     /// `.bucketListForbidden` reaches a BROWSE action too (Task 3 review,
     /// M-3): `listBuckets` runs again on every listing of `/` and on a
     /// `stat` of a bucket, so a policy revoked mid-session lands here — and

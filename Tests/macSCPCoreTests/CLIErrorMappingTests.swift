@@ -220,6 +220,56 @@ struct CLIErrorMappingTests {
         #expect(!message.contains("is a bucket"))
     }
 
+    /// Both `.finding` arms, over every finding rather than over a list
+    /// written here.
+    ///
+    /// The exit code is the one the site exited with before it was typed —
+    /// derived from `readsAsConnectionFailure`, which
+    /// `RemoteFSFindingTests.exactlyTheRedirectFindingsReadAsAConnectionFailure`
+    /// pins against a literal set, so this is not the implementation
+    /// agreeing with itself about WHICH findings those are.
+    ///
+    /// Measured 2026-09-28: with `case .finding: return .remote` planted in
+    /// the arm, this test is red in three of thirteen iterations — the
+    /// three redirect findings, which no test reached at all before it
+    /// existed.
+    ///
+    /// The floors below are the positives beside the per-finding checks:
+    /// both branches of the arm must really have run.
+    @Test func everyFindingKeepsItsExitCodeAndPrintsItsOwnSentence() {
+        var connectionFailures = 0
+        var remoteFailures = 0
+        for finding in RemoteFSFinding.everyCase {
+            let error = RemoteFSError.finding(finding)
+            let expected: CLIExitCode = finding.readsAsConnectionFailure ? .connection : .remote
+            if finding.readsAsConnectionFailure {
+                connectionFailures += 1
+            } else {
+                remoteFailures += 1
+            }
+            #expect(CLIErrorMapping.exitCode(for: error) == expected, """
+                \(finding.name) exits with \(CLIErrorMapping.exitCode(for: error)), \
+                not the code its site used before it was typed.
+                """)
+
+            // The finding's own English — `logSentence`, because CLI output
+            // is not localized. The negative beside it: no case identifier
+            // reached the line, which is the defect
+            // `everyBucketLevelRefusalPrintsProseAndNamesThePath` above
+            // exists for.
+            let message = CLIErrorMapping.message(for: error)
+            #expect(message == "Error: " + finding.logSentence)
+            #expect(!message.contains(finding.name.rawValue), """
+                the CLI sentence for \(finding.name) carries the raw identifier: \(message)
+                """)
+        }
+        #expect(connectionFailures == 3, """
+            \(connectionFailures) finding(s) read as a connection failure — the \
+            `.connection` branch of the arm ran that many times.
+            """)
+        #expect(remoteFailures > 0, "the `.remote` branch of the arm never ran")
+    }
+
     // MARK: - diagnose
 
     /// The refusal exists so the exit code is 2 and not ArgumentParser's own

@@ -185,6 +185,24 @@ import Testing
         Row(
             label: "bucket list", error: RemoteFSError.bucketListEmpty, kind: .unknown,
             sentence: "the account has no buckets"),
+        // A named finding (2026-09-28) keeps the KIND its site produced
+        // before it was typed and only improves the sentence, from the
+        // kind's generic one to the finding's own. Both branches of that
+        // arm, because there are two: a finding from a `.protocolError`
+        // site stays `.serverAnswerUnusable`, and one of the three redirect
+        // refusals — which all come from the single `.connectionFailed`
+        // site, `S3HTTPChannel.swift:129` — stays `.connectionFailed`.
+        // Without the second row the arm could return `.unknown` for the
+        // redirects and nothing here would notice.
+        Row(
+            label: "a named finding from a protocolError site",
+            error: RemoteFSError.finding(.outOfStorage), kind: .serverAnswerUnusable,
+            sentence: "the server is out of storage"),
+        Row(
+            label: "a named finding from the connectionFailed site",
+            error: RemoteFSError.finding(.redirectNotResignable), kind: .connectionFailed,
+            sentence: "the server redirected the request, and the new target could not be signed, "
+                + "so the redirect was refused"),
         // `StoredSessionConnectionError`, the arm that was missing until
         // 2026-09-25: every one of these fell to `classify`'s `default:` and
         // reached the log as "The operation couldn't be completed.
@@ -344,6 +362,13 @@ import Testing
 
     /// Where a kind's payload is everything its sentence needs, the log's
     /// sentence IS the kind's — one spelling, read from the kind.
+    ///
+    /// A named finding (2026-09-28) is the deliberate exception, and it is
+    /// INVERTED here rather than skipped: it keeps the kind its site
+    /// produced and replaces the kind's generic sentence with its own,
+    /// which is the entire improvement the arm exists for. Skipping those
+    /// rows would let the arm quietly fall back to the kind's sentence
+    /// again and nothing would say so.
     @Test(arguments: rows)
     func aKindThatCarriesItsWholeSentenceIsTheLogSentence(_ row: Row) {
         let freeText: Set<TunnelFailureKind.Name> = [
@@ -351,6 +376,14 @@ import Testing
             .remoteBindRefused,
         ]
         guard !freeText.contains(row.kind.name), row.label != "jump authentication" else { return }
+        if let fsError = row.error as? RemoteFSError, case .finding(let finding) = fsError {
+            #expect(row.sentence == finding.logSentence)
+            #expect(row.kind.sentence != row.sentence, """
+                \(finding.name) reads the kind's generic sentence again — the finding's own \
+                sentence is what this arm exists to produce.
+                """)
+            return
+        }
         #expect(row.kind.sentence == row.sentence)
     }
 
@@ -364,8 +397,12 @@ import Testing
         #expect(!kind.sentence.isEmpty)
     }
 
-    /// Every row's kind is a different name, and together they reach every
-    /// name but `connectionLost` — the plan's own, which no error produces.
+    /// Together the rows reach every name but `connectionLost` — the
+    /// plan's own, which no error produces. Not one row per name: the two
+    /// named-finding rows added 2026-09-28 share `.serverAnswerUnusable`
+    /// and `.connectionFailed` with the `.protocolError` and
+    /// `.connectionFailed` rows above them, deliberately, because what they
+    /// pin is that the kind is unchanged while the sentence improves.
     @Test func theRowsReachEveryKindAnErrorCanProduce() {
         let reached = Set(Self.rows.map(\.kind.name)).union([.connectionLost])
         #expect(reached == Set(TunnelFailureKind.Name.allCases))

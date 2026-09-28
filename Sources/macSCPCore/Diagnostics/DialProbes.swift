@@ -462,9 +462,25 @@ public enum DialSupport {
             case .finding(let finding):
                 // The log's own English, from the finding rather than from a
                 // sentence a backend wrote — the `TunnelFailureKind.sentence`
-                // arrangement. Before this case existed, every one of these
-                // rendered as `known(.serverAnswerUnusable)`'s single sentence.
-                return (.unknown, finding.logSentence)
+                // arrangement.
+                //
+                // The KIND is preserved, not defaulted. Counted 2026-09-28
+                // against the spec's sixteen sites: fifteen of them are
+                // `.protocolError` and carry ten of the thirteen findings,
+                // which rendered here as `known(.serverAnswerUnusable)`; the
+                // sixteenth is `.connectionFailed`
+                // (`S3HTTPChannel.swift:129`, the refused redirect), and all
+                // three redirect findings come from it and rendered as
+                // `known(.connectionFailed)`. Returning `.unknown` for all
+                // thirteen would reclassify the redirects in the diagnostics
+                // while every other consumer's frame is deliberately
+                // preserved.
+                //
+                // What DOES change for all thirteen is the sentence: from
+                // the kind's generic one to the finding's own.
+                return (
+                    finding.readsAsConnectionFailure ? .connectionFailed : .serverAnswerUnusable,
+                    finding.logSentence)
             }
         case let ioError as IOError:
             // The one route left that still reduced to the case-index

@@ -80,6 +80,13 @@ import Testing
                 format: CoreL10n.string("core.transfer.failed %@"),
                 CoreL10n.string(TransferFailureKindSamples.sampleFinding.messageKey))),
         Row(
+            label: "a named finding that reads as a lost connection",
+            error: RemoteFSError.finding(TransferFailureKindSamples.sampleRedirectFinding),
+            kind: .finding(TransferFailureKindSamples.sampleRedirectFinding),
+            message: String(
+                format: CoreL10n.string("core.error.connectionLost %@"),
+                CoreL10n.string(TransferFailureKindSamples.sampleRedirectFinding.messageKey))),
+        Row(
             label: "a foreign error that is a lost connection",
             error: NSError(domain: NSURLErrorDomain, code: URLError.networkConnectionLost.rawValue),
             kind: .connectionLost, message: CoreL10n.string("core.transfer.connectionLost")),
@@ -265,4 +272,10 @@ enum TransferFailureKindSamples {
     /// .exactlyTheRedirectFindingsReadAsAConnectionFailure` covers the
     /// other frame's condition.
     static let sampleFinding = RemoteFSFinding.outOfStorage
+
+    /// One of the three that DO, so the row beside it executes the other
+    /// half of `TransferFailureKind.message`'s frame choice. Without it the
+    /// two frames could be swapped in the implementation and the whole
+    /// suite stayed green (measured 2026-09-28, fix round 1).
+    static let sampleRedirectFinding = RemoteFSFinding.redirectNotResignable
 }

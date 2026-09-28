@@ -111,11 +111,21 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// The two names that interpolate carry the format specifier in the key,
     /// as this project's other argument-taking keys do
     /// (`core.transfer.notFound %@`).
+    ///
+    /// No `default:`, here or in `message` below, for the same reason
+    /// `readsAsConnectionFailure` refuses one: a finding added later with a
+    /// payload would otherwise get a key WITHOUT its ` %@` and an
+    /// un-interpolated sentence, silently — and
+    /// `everyRemoteFSFindingHasItsOwnSentence` could not see it, because it
+    /// derives the key exactly the same way.
     public static func messageKey(for name: Name) -> String {
         switch name {
         case .unexpectedStatus, .pathExistsAndIsNotADirectory:
             return "core.finding.\(name.rawValue) %@"
-        default:
+        case .resumeRangeIgnored, .sourceChangedSinceInterruption,
+            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -129,7 +139,10 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return String(format: CoreL10n.string(messageKey), String(code))
         case .pathExistsAndIsNotADirectory(let path):
             return String(format: CoreL10n.string(messageKey), path)
-        default:
+        case .resumeRangeIgnored, .sourceChangedSinceInterruption,
+            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
             return CoreL10n.string(messageKey)
         }
     }
