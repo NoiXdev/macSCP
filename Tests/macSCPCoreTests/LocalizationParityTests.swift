@@ -656,6 +656,51 @@ struct LocalizationParityTests {
             """)
     }
 
+    /// Every `RemoteFSFinding` carries its own sentence, in every locale.
+    /// The same shape as `everyBucketLevelOperationHasItsOwnSentence` above,
+    /// and for the same reason: every renderer DERIVES the key from the
+    /// case (`RemoteFSFinding.messageKey(for:)`), and a derived lookup
+    /// cannot fail loudly — `CoreL10n.string` falls back to the key text —
+    /// so this is the check that a finding added without its catalog
+    /// entries is red.
+    ///
+    /// The key is asked for from a `Name` rather than from a case: a
+    /// payload-carrying finding has no value this test could invent, and
+    /// `Name.allCases` is the compiler's list.
+    ///
+    /// Only the reference catalogs are asked;
+    /// `everyTranslationDeclaresExactlyTheEnglishKeys` above already holds
+    /// every translation to exactly the English key set.
+    @Test func everyRemoteFSFindingHasItsOwnSentence() throws {
+        var seen: [String: String] = [:]
+        var declaringCatalogs = 0
+        for (reference, _) in try Self.allCatalogs() {
+            guard reference.entries[RemoteFSFinding.nonHTTPResponse.messageKey] != nil
+            else { continue }
+            declaringCatalogs += 1
+            for name in RemoteFSFinding.Name.allCases {
+                let key = RemoteFSFinding.messageKey(for: name)
+                let value = reference.entries[key]
+                #expect(value != nil, """
+                    \(reference.label) has no sentence for \(name): \(key) is missing, \
+                    so the finding renders as its own key.
+                    """)
+                guard let value else { continue }
+                // Two findings sharing a sentence means one of them was pasted
+                // rather than written.
+                #expect(seen[value] == nil, """
+                    \(reference.label) uses the same sentence for \(name) and for \
+                    \(seen[value] ?? "?"): \(value)
+                    """)
+                seen[value] = name.rawValue
+            }
+        }
+        #expect(declaringCatalogs == 1, """
+            Expected exactly one catalog to declare the finding sentences, \
+            found \(declaringCatalogs).
+            """)
+    }
+
     /// The toggle's name exists THREE times: once as the label the form
     /// renders (the App catalog, keyed by `ConnectionField.labelKey`), once
     /// as Core's own spelling of it, and once inside every message that

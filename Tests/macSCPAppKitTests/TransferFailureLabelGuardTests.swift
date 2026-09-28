@@ -69,6 +69,11 @@ import macSCPCore
         case .interrupted: return .interrupted
         case .noFreeName: return .noFreeName
         case .unknown: return .unknown(detail: detailFixture)
+        // Core-owned and detail-free, so no fixture: a finding's sentence
+        // IS a catalogue key in all four languages. One that does not read
+        // as a connection failure, so the frame Core puts it in is the
+        // ordinary transfer one.
+        case .finding: return .finding(.outOfStorage)
         }
     }
 
@@ -158,7 +163,7 @@ import macSCPCore
         }
         #expect(Set(appOwned) == [.connectionFailed, .protocolError, .unknown])
         #expect(appOwned.count == 3)
-        #expect(TransferFailureKind.Name.allCases.count == 14)
+        #expect(TransferFailureKind.Name.allCases.count == 15)
     }
 
     // MARK: - What the rendered line says

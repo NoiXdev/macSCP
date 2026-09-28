@@ -1267,6 +1267,13 @@ public final class RemoteBrowserViewModel {
         // browser, not an error.
         case RemoteFSError.bucketListForbidden:
             return CoreL10n.string("core.connect.s3BucketListForbidden")
+        // Rendered, not dropped: unlike the `reason` of the two arms below,
+        // a finding carries no endpoint, so the banner and the diagnostic
+        // log can both read it. This does NOT make the browser a
+        // `TransferFailureKind` consumer — the backlog row that forbids
+        // that still stands; the finding is read directly.
+        case RemoteFSError.finding(let finding):
+            return finding.message
         // `.protocolError`/`.connectionFailed` (fix round 1, Critical): the
         // associated `reason` is dropped, unread, on purpose — it is where
         // `S3FileSystem`/`WebDAVFileSystem` embed the endpoint the user

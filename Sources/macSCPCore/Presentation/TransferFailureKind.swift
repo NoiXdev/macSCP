@@ -71,6 +71,9 @@ public enum TransferFailureKind: Equatable, Sendable {
     /// Anything else, as the localized sentence the error carried — already
     /// filtered (see the type's own doc comment).
     case unknown(detail: String)
+    /// A finding this project named. The frame is the one the site composed
+    /// before it was typed, so no English message a user reads changed.
+    case finding(RemoteFSFinding)
 
     /// The payload-free name of a kind: what a catalogue key is derived
     /// from, and what a test iterates when it has to reach every kind.
@@ -83,6 +86,7 @@ public enum TransferFailureKind: Equatable, Sendable {
         case authenticationFailed, jumpAuthenticationFailed
         case bucketListForbidden, bucketListEmpty, bucketLevelRefused, crossBucketRenameRefused
         case connectionLost, interrupted, noFreeName, unknown
+        case finding
     }
 
     public var name: Name {
@@ -101,6 +105,7 @@ public enum TransferFailureKind: Equatable, Sendable {
         case .interrupted: return .interrupted
         case .noFreeName: return .noFreeName
         case .unknown: return .unknown
+        case .finding: return .finding
         }
     }
 
@@ -148,6 +153,16 @@ public enum TransferFailureKind: Equatable, Sendable {
             return CoreL10n.string("core.transfer.noFreeName")
         case .unknown(let detail):
             return String(format: CoreL10n.string("core.transfer.failed %@"), detail)
+        case .finding(let finding):
+            // The frame each converted site composed before it was typed:
+            // a finding that reads as a connection failure travelled as
+            // `RemoteFSError.connectionFailed`, every other one as
+            // `.protocolError`, and those two are the frames the arms above
+            // give them. Only the sentence INSIDE the frame changed — from
+            // macSCP's English to the reader's language.
+            let frame = finding.readsAsConnectionFailure
+                ? "core.error.connectionLost %@" : "core.transfer.failed %@"
+            return String(format: CoreL10n.string(frame), finding.message)
         }
     }
 }

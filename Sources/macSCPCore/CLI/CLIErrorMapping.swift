@@ -146,6 +146,15 @@ public enum CLIErrorMapping {
             // no about a remote-side arrangement of objects.
             case .crossBucketRenameRefused:
                 return .remote
+            // A finding keeps the code its site exited with before it was
+            // typed, and the finding itself says which: the three redirect
+            // refusals travelled as `.connectionFailed` (`.connection`),
+            // every other one as `.protocolError` (`.remote`). Derived from
+            // `readsAsConnectionFailure` rather than listed here, so a
+            // finding added later cannot be classified twice, differently,
+            // in two files.
+            case .finding(let finding):
+                return finding.readsAsConnectionFailure ? .connection : .remote
             }
         default:
             return .connection
@@ -314,6 +323,14 @@ public enum CLIErrorMapping {
             case .crossBucketRenameRefused(let from, let to):
                 return "Error: cannot rename \(from) to \(to); "
                     + "macSCP does not move objects between buckets"
+            // The finding's own English, the sentence the diagnostic log
+            // prints for it — not `message`, because CLI output stays plain
+            // English (this file's policy, as at `refusalReason` below).
+            // Unfiltered, and that is the property rather than an omission:
+            // a finding carries a status code or the caller's own path,
+            // never a backend's text or an endpoint.
+            case .finding(let finding):
+                return "Error: \(finding.logSentence)"
             }
         default:
             // Never the error's own description (final review of the

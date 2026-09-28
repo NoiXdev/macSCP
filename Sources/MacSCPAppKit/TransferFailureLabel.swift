@@ -11,13 +11,14 @@ import macSCPCore
 ///
 /// ## What this maps, and what it deliberately does not
 ///
-/// Counted 2026-09-25 over `Sources/macSCPCore/Resources/*.lproj`: Core's
-/// catalogue already carries every sentence `TransferFailureKind.message`
-/// looks up in all four languages — `en`, `de`, `fr`, `pl` — for eleven of
-/// the fourteen kinds. Those eleven are read here, not copied: `label(_:)`
-/// returns `cause.message` for them, so the transfer row and the audit
-/// line (`AuditRecorder`, which renders the same cause) cannot say two
-/// different things, and no sentence exists twice in four languages.
+/// Counted 2026-09-25 over `Sources/macSCPCore/Resources/*.lproj`, and
+/// recounted 2026-09-28 when `.finding` joined the enum: Core's catalogue
+/// already carries every sentence `TransferFailureKind.message` looks up in
+/// all four languages — `en`, `de`, `fr`, `pl` — for twelve of the fifteen
+/// kinds. Those twelve are read here, not copied: `label(_:)` returns
+/// `cause.message` for them, so the transfer row and the audit line
+/// (`AuditRecorder`, which renders the same cause) cannot say two different
+/// things, and no sentence exists twice in four languages.
 ///
 /// The three that remain are exactly the row's finding —
 /// `connectionFailed(detail:)`, `protocolError(detail:)` and
@@ -132,14 +133,17 @@ enum TransferFailureLabel {
                 english: "The server sent an answer that could not be used.")
         case .unknown:
             return .app(key: "transfers.failure.unknown", english: "The transfer failed.")
+        // `.finding` is Core's (2026-09-28): a finding IS a catalogue key in
+        // all four languages, which is the whole point of the type — so the
+        // App has nothing of its own to say for it.
         case .notFound, .permissionDenied, .authenticationFailed, .jumpAuthenticationFailed,
             .bucketListForbidden, .bucketListEmpty, .bucketLevelRefused,
-            .crossBucketRenameRefused, .connectionLost, .interrupted, .noFreeName:
+            .crossBucketRenameRefused, .connectionLost, .interrupted, .noFreeName, .finding:
             return .core
         }
     }
 
-    /// The free text a cause carries, or `nil` for the eleven that carry
+    /// The free text a cause carries, or `nil` for the twelve that carry
     /// none. The three listed here are the three `sentence(for:)` answers
     /// `.app` for, and `everyAppOwnedKindCarriesADetail` holds the two
     /// lists to each other.
@@ -149,7 +153,7 @@ enum TransferFailureLabel {
             return detail.isEmpty ? nil : detail
         case .notFound, .permissionDenied, .authenticationFailed, .jumpAuthenticationFailed,
             .bucketListForbidden, .bucketListEmpty, .bucketLevelRefused,
-            .crossBucketRenameRefused, .connectionLost, .interrupted, .noFreeName:
+            .crossBucketRenameRefused, .connectionLost, .interrupted, .noFreeName, .finding:
             return nil
         }
     }

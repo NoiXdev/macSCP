@@ -1625,6 +1625,12 @@ public final class TransferQueueViewModel {
             return .connectionFailed(detail: URLText.withoutUserinfo(reason))
         case RemoteFSError.protocolError(let reason):
             return .protocolError(detail: URLText.withoutUserinfo(reason))
+        case RemoteFSError.finding(let finding):
+            // No filter: a finding carries a status code or the caller's own
+            // path, never text this module did not write. That is the property
+            // `RemoteFSFinding`'s doc comment states and
+            // `noFindingCarriesForeignText` holds.
+            return .finding(finding)
         // The cases the `default:` below used to print by name ("Transfer
         // failed: authenticationFailed"). Its replacement would print
         // Foundation's "The operation couldn't be completed" sentence for

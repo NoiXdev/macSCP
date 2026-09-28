@@ -93,11 +93,18 @@ public enum RemoteFSError: Error, Equatable, Sendable {
     /// someone does.
     case crossBucketRenameRefused(from: String, to: String)
 
-    /// True only for `.connectionFailed`. The transfer queue (M5d/T3) uses
-    /// this — and ONLY this — to classify a mid-transfer error as
-    /// `.interrupted` (resumable) rather than `.failed`.
+    /// A finding this project named, rather than a sentence it wrote: the
+    /// case a mapper can derive a catalogue key from. See `RemoteFSFinding`.
+    case finding(RemoteFSFinding)
+
+    /// True for `.connectionFailed`, and for a `.finding` whose
+    /// `readsAsConnectionFailure` says so — the three redirect refusals, as
+    /// of the 2026-09-28 typed-findings change. The transfer queue (M5d/T3)
+    /// uses this to classify a mid-transfer error as `.interrupted`
+    /// (resumable) rather than `.failed`.
     public var isConnectionFailure: Bool {
         if case .connectionFailed = self { return true }
+        if case .finding(let finding) = self { return finding.readsAsConnectionFailure }
         return false
     }
 }

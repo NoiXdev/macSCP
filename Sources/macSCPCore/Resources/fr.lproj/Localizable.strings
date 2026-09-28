@@ -181,3 +181,23 @@
 "core.fileType.folder" = "Dossier";
 "core.fileType.link" = "Lien";
 "core.fileType.file" = "Fichier";
+
+/* RemoteFSFinding (2026-09-28) — a finding this project NAMED, so the
+   sentence inside the translated frame is translated too. The key is
+   DERIVED from the case (`RemoteFSFinding.messageKey(for:)`), never
+   spelled at a mapper; `LocalizationParityTests
+   .everyRemoteFSFindingHasItsOwnSentence` is what makes a finding added
+   without these entries red. */
+"core.finding.resumeRangeIgnored" = "S3 n'a pas répondu avec la plage d'octets demandée, le téléchargement n'a donc pas été repris";
+"core.finding.sourceChangedSinceInterruption" = "Le fichier a changé sur le serveur depuis le téléchargement interrompu, rien n'a donc été ajouté au fichier partiel";
+"core.finding.unexpectedStatus %@" = "Le serveur a répondu avec le statut %@";
+"core.finding.directoryAlreadyExists" = "Un fichier ou un dossier portant ce nom existe déjà";
+"core.finding.destinationAlreadyExists" = "La destination existe déjà";
+"core.finding.outOfStorage" = "Le serveur n'a plus d'espace de stockage";
+"core.finding.uploadStreamUnavailable" = "Le flux d'envoi n'a pas pu être créé";
+"core.finding.pathExistsAndIsNotADirectory %@" = "Quelque chose se trouve déjà à %@ et ce n'est pas un dossier";
+"core.finding.nonHTTPResponse" = "La réponse du serveur n'était pas une réponse HTTP";
+"core.finding.listingUnparsable" = "La liste du dossier envoyée par le serveur n'a pas pu être lue";
+"core.finding.redirectUnreadable" = "Le serveur a redirigé la requête vers une cible illisible, elle a donc été refusée";
+"core.finding.redirectBodyNotResendable" = "Le serveur a redirigé un envoi, et ses données ne peuvent pas être envoyées une seconde fois : la redirection a été refusée";
+"core.finding.redirectNotResignable" = "Le serveur a redirigé la requête, et la nouvelle cible n'a pas pu être signée : la redirection a été refusée";

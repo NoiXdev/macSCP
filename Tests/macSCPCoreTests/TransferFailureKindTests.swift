@@ -73,6 +73,13 @@ import Testing
             kind: .crossBucketRenameRefused,
             message: CoreL10n.string("core.connect.s3CrossBucketRename")),
         Row(
+            label: "a named finding",
+            error: RemoteFSError.finding(TransferFailureKindSamples.sampleFinding),
+            kind: .finding(TransferFailureKindSamples.sampleFinding),
+            message: String(
+                format: CoreL10n.string("core.transfer.failed %@"),
+                CoreL10n.string(TransferFailureKindSamples.sampleFinding.messageKey))),
+        Row(
             label: "a foreign error that is a lost connection",
             error: NSError(domain: NSURLErrorDomain, code: URLError.networkConnectionLost.rawValue),
             kind: .connectionLost, message: CoreL10n.string("core.transfer.connectionLost")),
@@ -214,6 +221,13 @@ enum TransferFailureKindSamples {
         case .interrupted: return ("core.transfer.interrupted", nil)
         case .noFreeName: return ("core.transfer.noFreeName", nil)
         case .unknown: return ("core.transfer.failed %@", "something else")
+        // The frame a finding's site composed before it was typed — the
+        // `.protocolError` one, because `sampleFinding` is not one of the
+        // three that read as a connection failure. The argument is the
+        // finding's own sentence, whose KEY is derived rather than spelled
+        // (as `.bucketLevelRefused`'s is above).
+        case .finding:
+            return ("core.transfer.failed %@", CoreL10n.string(Self.sampleFinding.messageKey))
         }
     }
 
@@ -237,9 +251,18 @@ enum TransferFailureKindSamples {
         case .interrupted: return .interrupted
         case .noFreeName: return .noFreeName
         case .unknown: return .unknown(detail: argument)
+        case .finding: return .finding(Self.sampleFinding)
         }
     }
 
     /// One of `BucketLevelOperation`'s seven, for both switches above.
     static let sampleOperation = RemoteFSError.BucketLevelOperation.rename
+
+    /// One of `RemoteFSFinding`'s thirteen, for both switches above and for
+    /// the row that pins the error-to-kind mapping. Deliberately one that
+    /// does NOT read as a connection failure, so the frame the row expects
+    /// is the `.protocolError` one; `RemoteFSFindingTests
+    /// .exactlyTheRedirectFindingsReadAsAConnectionFailure` covers the
+    /// other frame's condition.
+    static let sampleFinding = RemoteFSFinding.outOfStorage
 }

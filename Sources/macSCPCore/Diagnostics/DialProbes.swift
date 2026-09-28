@@ -459,6 +459,12 @@ public enum DialSupport {
                 // the finding is the refusal, not where it pointed; the
                 // browser knows what the user asked for.
                 return (.unknown, "a rename across buckets is refused")
+            case .finding(let finding):
+                // The log's own English, from the finding rather than from a
+                // sentence a backend wrote — the `TunnelFailureKind.sentence`
+                // arrangement. Before this case existed, every one of these
+                // rendered as `known(.serverAnswerUnusable)`'s single sentence.
+                return (.unknown, finding.logSentence)
             }
         case let ioError as IOError:
             // The one route left that still reduced to the case-index

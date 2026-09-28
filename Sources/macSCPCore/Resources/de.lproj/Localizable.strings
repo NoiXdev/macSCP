@@ -178,3 +178,23 @@
 "core.fileType.folder" = "Ordner";
 "core.fileType.link" = "Link";
 "core.fileType.file" = "Datei";
+
+/* RemoteFSFinding (2026-09-28) — a finding this project NAMED, so the
+   sentence inside the translated frame is translated too. The key is
+   DERIVED from the case (`RemoteFSFinding.messageKey(for:)`), never
+   spelled at a mapper; `LocalizationParityTests
+   .everyRemoteFSFindingHasItsOwnSentence` is what makes a finding added
+   without these entries red. */
+"core.finding.resumeRangeIgnored" = "S3 hat nicht den angeforderten Byte-Bereich geliefert, deshalb wurde der Download nicht fortgesetzt";
+"core.finding.sourceChangedSinceInterruption" = "Die Datei hat sich auf dem Server seit dem abgebrochenen Download geändert, deshalb wurde der unvollständigen Datei nichts hinzugefügt";
+"core.finding.unexpectedStatus %@" = "Der Server hat mit Status %@ geantwortet";
+"core.finding.directoryAlreadyExists" = "Eine Datei oder ein Ordner mit diesem Namen ist bereits vorhanden";
+"core.finding.destinationAlreadyExists" = "Das Ziel ist bereits vorhanden";
+"core.finding.outOfStorage" = "Der Server hat keinen Speicherplatz mehr";
+"core.finding.uploadStreamUnavailable" = "Der Upload-Datenstrom konnte nicht erstellt werden";
+"core.finding.pathExistsAndIsNotADirectory %@" = "Unter %@ liegt bereits etwas, das kein Ordner ist";
+"core.finding.nonHTTPResponse" = "Die Antwort des Servers war keine HTTP-Antwort";
+"core.finding.listingUnparsable" = "Die Ordnerliste, die der Server geschickt hat, konnte nicht gelesen werden";
+"core.finding.redirectUnreadable" = "Der Server hat die Anfrage an ein Ziel weitergeleitet, das nicht gelesen werden konnte; sie wurde abgelehnt";
+"core.finding.redirectBodyNotResendable" = "Der Server hat einen Upload weitergeleitet; dessen Daten lassen sich kein zweites Mal senden, deshalb wurde die Weiterleitung abgelehnt";
+"core.finding.redirectNotResignable" = "Der Server hat die Anfrage weitergeleitet; das neue Ziel konnte nicht signiert werden, deshalb wurde die Weiterleitung abgelehnt";
