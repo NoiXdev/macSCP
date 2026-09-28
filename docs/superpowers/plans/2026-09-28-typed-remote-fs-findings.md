@@ -861,12 +861,12 @@ Four new findings, and two sites that reuse findings Task 1 already built.
 **Interfaces — produced:**
 ```swift
 case resumeNotSupported
-case noSuchBucket(path: String)
+case noSuchBucket
 case uploadPartUnacknowledged(part: Int)
 case requestBodyUnencodable
 ```
-`noSuchBucket` and `uploadPartUnacknowledged` interpolate, so their
-`messageKey` carries ` %@`. All four have `readsAsConnectionFailure == false`
+`uploadPartUnacknowledged` interpolates, so its `messageKey` carries ` %@`.
+`noSuchBucket` does NOT — see the correction below. All four have `readsAsConnectionFailure == false`
 — all six sites are `.protocolError` today.
 
 - [ ] **Step 1: Write the failing tests**
@@ -913,7 +913,7 @@ directly, as the existing ones do.
 `en.lproj`:
 ```
 "core.finding.resumeNotSupported" = "The server cannot add to an existing file, so the transfer cannot be resumed";
-"core.finding.noSuchBucket %@" = "This connection starts at the bucket list, and %@ names no bucket";
+"core.finding.noSuchBucket" = "This connection starts at the bucket list, so the path has to name a bucket";
 "core.finding.uploadPartUnacknowledged %@" = "The server did not confirm part %@ of the upload";
 "core.finding.requestBodyUnencodable" = "A value in the request cannot be written in the format the server needs";
 ```
@@ -921,7 +921,7 @@ directly, as the existing ones do.
 `de.lproj`:
 ```
 "core.finding.resumeNotSupported" = "Der Server kann nichts an eine vorhandene Datei anhängen, deshalb lässt sich die Übertragung nicht fortsetzen";
-"core.finding.noSuchBucket %@" = "Diese Verbindung beginnt bei der Bucket-Liste, und %@ benennt keinen Bucket";
+"core.finding.noSuchBucket" = "Diese Verbindung beginnt bei der Bucket-Liste, der Pfad muss also einen Bucket benennen";
 "core.finding.uploadPartUnacknowledged %@" = "Der Server hat Teil %@ des Uploads nicht bestätigt";
 "core.finding.requestBodyUnencodable" = "Ein Wert in der Anfrage lässt sich nicht in dem Format schreiben, das der Server braucht";
 ```
@@ -929,7 +929,7 @@ directly, as the existing ones do.
 `fr.lproj`:
 ```
 "core.finding.resumeNotSupported" = "Le serveur ne peut rien ajouter à un fichier existant, le transfert ne peut donc pas être repris";
-"core.finding.noSuchBucket %@" = "Cette connexion démarre sur la liste des buckets, et %@ ne désigne aucun bucket";
+"core.finding.noSuchBucket" = "Cette connexion démarre sur la liste des buckets, le chemin doit donc désigner un bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Le serveur n'a pas confirmé la partie %@ de l'envoi";
 "core.finding.requestBodyUnencodable" = "Une valeur de la requête ne peut pas être écrite dans le format que le serveur exige";
 ```
@@ -937,7 +937,7 @@ directly, as the existing ones do.
 `pl.lproj`:
 ```
 "core.finding.resumeNotSupported" = "Serwer nie potrafi dopisać do istniejącego pliku, więc przesyłania nie można wznowić";
-"core.finding.noSuchBucket %@" = "To połączenie zaczyna się od listy bucketów, a %@ nie wskazuje żadnego bucketa";
+"core.finding.noSuchBucket" = "To połączenie zaczyna się od listy bucketów, więc ścieżka musi wskazywać bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Serwer nie potwierdził części %@ wysyłania";
 "core.finding.requestBodyUnencodable" = "Wartości w żądaniu nie da się zapisać w formacie, którego wymaga serwer";
 ```
@@ -947,12 +947,21 @@ The four locales keep the word "bucket" — counted in the catalogues on
 (`core.connect.s3BucketRequired` and its three siblings), Polish inflecting
 it (`bucketów`, `bucketa`). Do not introduce a translated term for it here.
 
+**Correction, 2026-09-28, after Task 6's review: `noSuchBucket` carries no
+payload.** The sketch above gave it `path: String` and a sentence
+interpolating it. The reviewer traced the guard: it fires only when the
+normalised path splits to nothing, i.e. the path is `/`, and both tests
+assert exactly that. A payload that can only ever be one value is a payload
+to drop, and the interpolated sentence rendered as "…, and / names no
+bucket" in all four languages — which reads like a truncated string. The
+case, its key and its four sentences above are the corrected ones.
+
 - [ ] **Step 5: Convert the six sites**
 
 - `CitadelFileSystem.swift:1188` → `.finding(.pathExistsAndIsNotADirectory(path: path))`
 - `WebDAVPropfindParser.swift:83` → `.finding(.listingUnparsable)`
 - `WebDAVFileSystem.swift:450` → `.finding(.resumeNotSupported)`
-- `S3FileSystem.swift:90` → `.finding(.noSuchBucket(path: path))`
+- `S3FileSystem.swift:90` → `.finding(.noSuchBucket)`
 - `S3Uploader.swift:276` → `.finding(.uploadPartUnacknowledged(part: partNumber))`
 - `S3XMLText.swift:61` → `.finding(.requestBodyUnencodable)`
 
