@@ -1,0 +1,5 @@
+# Blank issues stay ON deliberately. The two forms beside this file cover a
+# bug and a request; anything else a person wants to raise — a question, a
+# packaging problem, a documentation gap — should not have to be squeezed
+# into one of them or dropped.
+blank_issues_enabled: true

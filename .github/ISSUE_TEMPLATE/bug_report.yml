@@ -1,0 +1,119 @@
+name: Bug report
+description: Something in macSCP behaves differently than it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. The fields below are the ones that
+        usually decide whether a report can be acted on or has to be
+        guessed at.
+
+        **Please do not paste passwords, passphrases, private keys, or a
+        server address that carries credentials in it** (anything of the
+        shape `scheme://user:secret@host`). Nothing below needs them.
+
+  - type: input
+    id: version
+    attributes:
+      label: macSCP version
+      description: macSCP → About macSCP, or the name of the disk image you installed from.
+      placeholder: "1.5.0"
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac.
+      placeholder: "15.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Which kind of connection?
+      options:
+        - SFTP over SSH
+        - S3-compatible storage
+        - WebDAV
+        - More than one of them
+        - Not about a connection
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, in as much detail as you have.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to get there
+      description: |
+        The steps you took, from opening the app onwards. If you cannot
+        reproduce it on purpose, say so — that is useful information, not a
+        reason to leave the report out.
+      placeholder: |
+        1. Connect a saved session over …
+        2. Drag a folder from the right pane to the left
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Does it happen every time?
+      options:
+        - Every time
+        - Often, but not always
+        - Saw it once
+        - Have not tried again
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Connection diagnostics report
+      description: |
+        For anything connection-related this is the single most useful
+        thing you can attach. Run it from the tab's toolbar, from a saved
+        session's context menu, or from the error message of a failed
+        connection, then copy the report as plain text or Markdown and
+        paste it here.
+
+        The report is built to carry no passwords, no key material and no
+        credentials from a server address. Read it before you post it
+        anyway — it is your machine, and you know what is on it.
+      render: text
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: Screenshots, a server's own log, what you had tried before it started.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you post
+      options:
+        - label: I searched the existing issues and this is not one of them.
+          required: true
+        - label: Nothing I pasted above contains a password, a passphrase, a private key, or a server address with credentials in it.
+          required: true

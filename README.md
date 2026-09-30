@@ -1,5 +1,10 @@
 # macSCP
 
+[![CI](https://github.com/NoiXdev/macSCP/actions/workflows/ci.yml/badge.svg)](https://github.com/NoiXdev/macSCP/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/NoiXdev/macSCP?label=release)](https://github.com/NoiXdev/macSCP/releases/latest)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-555)](#install)
+[![License: MIT](https://img.shields.io/github/license/NoiXdev/macSCP?label=license)](LICENSE)
+
 **A fast, native SFTP client for the Mac — two panes, saved sessions, and a
 built-in terminal.**
 
@@ -110,6 +115,9 @@ What's new**.
 1. Download the latest DMG from the [releases page](https://github.com/NoiXdev/macSCP/releases).
 2. Open it and drag **macSCP** into **Applications**.
 3. Requires macOS 15 or newer. The app is signed and notarized.
+
+What changed in each release is listed in [CHANGELOG.md](CHANGELOG.md),
+generated from the commits that went into it.
 
 ## Building from source
 
@@ -292,6 +300,15 @@ its own.
 | 14 | The remote path was not found, or access to it was denied. |
 | 15 | The destination already exists and `--on-conflict fail` (the default) was in effect. |
 | 16 | `diagnose` finished, and at least one step failed or ran out of time. |
+
+## Reporting something
+
+Bugs and requests go through [the issue forms](https://github.com/NoiXdev/macSCP/issues/new/choose).
+For anything about a connection, the most useful thing you can attach is the
+connection diagnostics report — run it from the tab's toolbar, a saved
+session's context menu, or the error message of a failed connection, and copy
+it as plain text or Markdown. It is built to carry no passwords, no key
+material and no credentials from a server address.
 
 ## License
 
