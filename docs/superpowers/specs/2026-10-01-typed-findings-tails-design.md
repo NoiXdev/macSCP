@@ -74,15 +74,18 @@ that a `reason=` field completes. A plain equality guard is therefore
 impossible.
 
 Measured across all 17 findings on 2026-10-01, comparing each
-`logSentence` with its `en` entry stripped of the trailing period and
-lower-cased at the first character: **16 of 17 match exactly.** The one
-exception is `resumeRangeIgnored`, whose sentence opens with the proper
-noun "S3" — lower-casing it yields "s3".
+`logSentence` with its `en` entry lower-cased at the first character:
+**16 of 17 match exactly.** The one exception is `resumeRangeIgnored`,
+whose sentence opens with the proper noun "S3" — lower-casing it yields
+"s3".
 
-The relation that holds for all 17 is therefore: equal after stripping the
-`en` entry's trailing period and comparing the first character
-case-insensitively. That still fails on any wording change anywhere in
-either text, which is what the row wants.
+The relation that holds for all 17 is therefore: equal, with the first
+character compared case-insensitively. That still fails on any wording
+change anywhere in either text, which is what the row wants.
+
+Counted in the same pass: **0 of the 17** `en` finding sentences end with
+a period, so no trailing punctuation has to be stripped. A guard that
+stripped one anyway would carry a branch nothing exercises.
 
 ### 3. `supportsAppendResume` defaults to `true`, in a protocol extension
 
@@ -129,8 +132,10 @@ Closes the open half of row `:172` and completes row `:177`.
 A test asserts each of the four production backends' answer by name
 (`LocalFileSystem` and `CitadelFileSystem` take the extension default
 `true`; `S3FileSystem` and `WebDAVFileSystem` override to `false`), and a
-source scan asserts the conformer count in `Sources/` is exactly six, so a
-seventh conformer turns it red rather than inheriting `true` in silence.
+source scan asserts two sets by name: the conformers in `Sources/` (the six
+above) and the types that override `supportsAppendResume` (S3 and WebDAV,
+both `false`). A set is stronger than a count — a conformer swapped for
+another turns it red too, and a seventh cannot inherit `true` in silence.
 Both halves are positive checks: an equality and a count that must match,
 per `CLAUDE.md`, "Guards that name what they watch".
 
@@ -219,9 +224,8 @@ the first time.
 Closes row `:178`. One test iterates `RemoteFSFinding.Name.allCases` and,
 through an exhaustive switch mapping each name to a representative value
 and the argument its key interpolates, compares `logSentence` against the
-`en` entry read off disk — stripped of its trailing period, compared
-case-insensitively at the first character only, and formatted with the same
-argument for the three names whose key carries ` %@` (`unexpectedStatus`,
+`en` entry read off disk — compared case-insensitively at the first
+character only, and formatted with the same argument for the three names whose key carries ` %@` (`unexpectedStatus`,
 `pathExistsAndIsNotADirectory`, `uploadPartUnacknowledged`, counted at
 `RemoteFSFinding.swift:153-154`).
 
