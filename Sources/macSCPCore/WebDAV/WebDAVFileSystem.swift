@@ -680,17 +680,20 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         case 405 where method == "MKCOL":
             throw RemoteFSError.finding(.directoryAlreadyExists)
         case 409: throw RemoteFSError.notFound(path: path)
-        // Kept as-is (docs/BACKLOG.md, "An unguarded WebDAV 412 outside the
-        // resume path reads as a MOVE's refusal", open): this is a MOVE's
-        // `Overwrite: F` answer, but a 412 from a GET with no precondition
-        // sent (see `readStream` above) falls through to this same arm and
-        // is reported as a destination conflict too — the wrong case for a
-        // read. Converting the string to a finding does not fix that; it is
-        // unchanged on purpose. Sibling row, same misreading for a MOVE
-        // whose failed precondition is on the source rather than the
-        // destination: "`WebDAVFileSystem.mapStatus` renders a
-        // source-precondition 412 as \"The destination already exists\"".
-        case 412: throw RemoteFSError.finding(.movePreconditionFailed)
+        // A 412 means different things to the two callers that reach this
+        // arm, and only the method tells them apart. `rename` sends a MOVE
+        // with `Overwrite: F`, where a precondition really did fail — on the
+        // destination or, as mod_dav answers identically, on the source.
+        // `readStream` sends a GET, and one that sent no validator lands here
+        // too; nothing was moved, so a sentence about a move is false for it.
+        // The read keeps what is actually known, the status itself.
+        //
+        // No `COPY` arm: counted 2026-10-02 with
+        // `grep -rnE 'httpMethod = |simple\(method: ' Sources/macSCPCore/WebDAV/`,
+        // this backend sends GET, PUT, PROPFIND, OPTIONS, MOVE, DELETE and
+        // MKCOL. Widening to a method the app never sends would be a guess.
+        case 412 where method == "MOVE":
+            throw RemoteFSError.finding(.movePreconditionFailed)
         case 507: throw RemoteFSError.finding(.outOfStorage)
         default:
             // `method` is deliberately left out of the finding: the HTTP

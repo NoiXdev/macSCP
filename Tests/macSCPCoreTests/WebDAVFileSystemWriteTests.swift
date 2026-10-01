@@ -361,10 +361,10 @@ struct WebDAVFileSystemWriteTests {
             == "https://dav.example.com/dav/b.txt")
     }
 
-    /// 412 is the answer to `Overwrite: F` — the destination exists. Pinning
-    /// the exact case matters here: `mapStatus` maps 409 to `.notFound`, and
-    /// a weaker assertion could not tell the two apart.
-    @Test func renameOn412ReportsDestinationConflict() async throws {
+    /// A rename's 412 reports a failed precondition without choosing an end.
+    /// Pinning the exact case matters here: `mapStatus` maps 409 to
+    /// `.notFound`, and a weaker assertion could not tell the two apart.
+    @Test func renameOn412ReportsAFailedPrecondition() async throws {
         let transport = FakeHTTPTransport(replies: [.init(status: 412, body: Data(), headers: [:])])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
