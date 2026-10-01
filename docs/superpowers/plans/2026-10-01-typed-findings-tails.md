@@ -92,8 +92,9 @@ Closes the open half of the row at `docs/BACKLOG.md:172`
 - Modify: `Sources/macSCPCore/RemoteFS/RemoteFSFinding.swift:237-247`
 
 **Interfaces:**
-- Consumes: `SourceCorpus.code(of:)` and `SourceCorpus.url(of: .sources)`
-  from `Tests/MacSCPTestSupport/SourceCorpus.swift`; `LocalFileSystem()`
+- Consumes: `SourceCorpus.url(of: .sources)` (`:112`), `files(under:)`
+  (`:173`), `code(of:)` (`:130`, comments and string literals blanked) and
+  `key(_:)` (`:224`) from `Tests/MacSCPTestSupport/SourceCorpus.swift`; `LocalFileSystem()`
   (all parameters defaulted, `LocalFileSystem.swift:85`);
   `WebDAVFileSystem(config:transport:)` (internal test seam,
   `WebDAVFileSystem.swift:11`).
@@ -168,27 +169,37 @@ struct RemoteFileSystemAppendResumeGuardTests {
         #expect(webdav.supportsAppendResume == false)
     }
 
-    /// Every conformer, and every override, by name — so a seventh conformer
-    /// that inherits `true` in silence turns this red instead.
+    /// Every conformer, and every override — so a seventh conformer that
+    /// inherits `true` in silence turns this red instead.
     ///
-    /// Both checks are POSITIVE: a set that must match, not an absence. An
+    /// Both checks are POSITIVE: sets that must match, not absences. An
     /// emptied-out scan fails them rather than reading as satisfied
     /// (CLAUDE.md, "Guards that name what they watch").
-    @Test func exactlyTheseTypesConformAndExactlyTheseOverride() throws {
+    ///
+    /// Overrides are attributed by FILE, not by walking back to the enclosing
+    /// type: the two override lines are textually IDENTICAL
+    /// (`WebDAVFileSystem.swift:417` and `S3FileSystem.swift:927` differ in
+    /// nothing but their file), so any search that located a line's owner by
+    /// matching its text would be matching on something that is not unique.
+    /// A file that declares two conformers and overrides in one would read as
+    /// that file overriding — which is red here, and a human then looks. That
+    /// is the intended outcome, not a gap.
+    @Test func exactlyTheseTypesConformAndExactlyTheseFilesOverride() throws {
         var conformers: Set<String> = []
-        var overriders: [String: String] = [:]
+        var overridesByFile: [String: String] = [:]
 
         let sources = SourceCorpus.url(of: .sources)
         for url in try SourceCorpus.files(under: sources)
         where url.pathExtension == "swift" {
             let code = try SourceCorpus.code(of: url)
+            let key = SourceCorpus.key(url)
             for line in code.split(separator: "\n", omittingEmptySubsequences: true) {
                 let text = String(line)
                 if let name = Self.conformerName(in: text) { conformers.insert(name) }
-                if text.contains("var supportsAppendResume"),
-                   let owner = Self.enclosingTypeName(of: url, before: text, in: code) {
-                    overriders[owner] = text.contains("true") ? "true" : "false"
-                }
+                guard text.contains("var supportsAppendResume") else { continue }
+                // The declaration's body, not a mention: `{ true }` / `{ false }`.
+                if text.contains("{ true }") { overridesByFile[key] = "true" }
+                if text.contains("{ false }") { overridesByFile[key] = "false" }
             }
         }
 
@@ -203,50 +214,69 @@ struct RemoteFileSystemAppendResumeGuardTests {
             \(conformers.sorted().joined(separator: ", "))
             """)
 
-        #expect(overriders == ["S3FileSystem": "false", "WebDAVFileSystem": "false"], """
-            The set of supportsAppendResume overrides changed. Found: \
-            \(overriders.sorted(by: { $0.key < $1.key }).map { "\($0.key)=\($0.value)" }
-                .joined(separator: ", "))
+        #expect(overridesByFile.count == 2, """
+            Expected exactly two files to override supportsAppendResume. \
+            Found \(overridesByFile.count): \
+            \(overridesByFile.keys.sorted().joined(separator: ", "))
             """)
+        for (file, answer) in overridesByFile {
+            #expect(answer == "false", """
+                \(file) overrides supportsAppendResume to \(answer). Only S3 and \
+                WebDAV override, and both answer false — a backend that can \
+                append does not need to override at all, because the protocol \
+                extension already answers true.
+                """)
+            #expect(
+                file.hasSuffix("S3FileSystem.swift") || file.hasSuffix("WebDAVFileSystem.swift"),
+                """
+                \(file) overrides supportsAppendResume, which only \
+                S3FileSystem.swift and WebDAVFileSystem.swift did when this \
+                guard was written (2026-10-01).
+                """)
+        }
     }
 
-    /// The declared type name on a line that conforms to `RemoteFileSystem`,
-    /// or `nil`. Keyed on the declaration keywords so a mere mention of the
-    /// protocol does not count.
+    /// The declared type name on a line that CONFORMS to `RemoteFileSystem`,
+    /// or `nil`.
+    ///
+    /// `extension` is in the keyword list on purpose: a conformance added as
+    /// `extension Foo: RemoteFileSystem {}` is exactly the seventh conformer
+    /// this guard exists to notice, and a scan that only knew
+    /// `class`/`struct`/`actor` would miss it while the set check above still
+    /// passed — a negative check going stale in silence. The protocol's own
+    /// default-providing `extension RemoteFileSystem {`
+    /// (`RemoteFileSystem.swift:161`) carries no `:` and is therefore not
+    /// counted, which the test below pins.
     private static func conformerName(in line: String) -> String? {
         guard line.contains("RemoteFileSystem"), line.contains(":"),
-              line.contains("class ") || line.contains("struct ") || line.contains("actor ")
+              line.contains("class ") || line.contains("struct ")
+                || line.contains("actor ") || line.contains("extension ")
         else { return nil }
-        let afterKeyword = line.components(separatedBy: CharacterSet(charactersIn: " "))
-        guard let index = afterKeyword.firstIndex(where: {
-            $0 == "class" || $0 == "struct" || $0 == "actor"
-        }), afterKeyword.index(after: index) < afterKeyword.endIndex else { return nil }
-        let name = afterKeyword[afterKeyword.index(after: index)]
-            .trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-        return name.isEmpty ? nil : name
+        let parts = line.components(separatedBy: " ")
+        guard let keyword = parts.firstIndex(where: {
+            $0 == "class" || $0 == "struct" || $0 == "actor" || $0 == "extension"
+        }) else { return nil }
+        let nameIndex = parts.index(after: keyword)
+        guard nameIndex < parts.endIndex else { return nil }
+        let name = parts[nameIndex].trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+        return name.isEmpty || name == "RemoteFileSystem" ? nil : name
     }
 
-    /// The nearest preceding type declaration in the same file — enough to
-    /// attribute an override, because no file here declares two conformers
-    /// that both override.
-    private static func enclosingTypeName(
-        of url: URL, before line: String, in code: String
-    ) -> String? {
-        guard let cut = code.range(of: line) else { return nil }
-        let head = code[code.startIndex..<cut.lowerBound]
-        for candidate in head.split(separator: "\n").reversed() {
-            let text = String(candidate)
-            guard text.contains("class ") || text.contains("struct ")
-                || text.contains("actor ") || text.contains("extension ")
-            else { continue }
-            let parts = text.components(separatedBy: " ")
-            guard let index = parts.firstIndex(where: {
-                $0 == "class" || $0 == "struct" || $0 == "actor" || $0 == "extension"
-            }), parts.index(after: index) < parts.endIndex else { continue }
-            return parts[parts.index(after: index)]
-                .trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-        }
-        return nil
+    /// The positive companion to `conformerName`'s exclusions: it really does
+    /// read a conformance off a declaration line, and really does ignore the
+    /// protocol's own extension. Without this, a `conformerName` that returned
+    /// `nil` for everything would leave the set check comparing two empty
+    /// sets — which is not how a set equality fails, but is how a typo in the
+    /// keyword list would read if the expected set were ever emptied too.
+    @Test func theConformerScannerReadsDeclarationsAndNotTheProtocolsOwnExtension() {
+        #expect(Self.conformerName(
+            in: "public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {")
+            == "S3FileSystem")
+        #expect(Self.conformerName(in: "public struct LocalFileSystem: RemoteFileSystem {")
+            == "LocalFileSystem")
+        #expect(Self.conformerName(in: "extension Foo: RemoteFileSystem {") == "Foo")
+        #expect(Self.conformerName(in: "extension RemoteFileSystem {") == nil)
+        #expect(Self.conformerName(in: "public protocol RemoteFileSystem: Sendable {") == nil)
     }
 }
 ```
@@ -285,9 +315,15 @@ PY
 
 Run: `swift test --build-system native --filter RemoteFileSystemAppendResumeGuardTests`
 
-Expected: FAIL, in **both** tests — the instance expectation
-(`webdav.supportsAppendResume == false`) and the overrider set
-(`WebDAVFileSystem=true`). Record both failure messages for the report.
+Expected: FAIL, in **two** of the suite's three tests —
+`theTwoConstructibleBackendsAnswerWhatTheQueueReads` on
+`webdav.supportsAppendResume == false`, and
+`exactlyTheseTypesConformAndExactlyTheseFilesOverride` on the
+`answer == "false"` expectation, which will name
+`WebDAV/WebDAVFileSystem.swift` and the answer `true`.
+`theConformerScannerReadsDeclarationsAndNotTheProtocolsOwnExtension` stays
+green — it tests the scanner on literal strings, not the tree. Record both
+failure messages for the report.
 
 - [ ] **Step 4: Revert the plant and prove the file is byte-identical**
 
