@@ -16,6 +16,35 @@ public enum S3MultipartXML {
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse(), let uploadID = delegate.uploadID, !uploadID.isEmpty else {
+            // TWO PROVENANCES IN ONE SENTENCE, left that way on purpose
+            // (maintainer's decision, 2026-10-01; docs/BACKLOG.md row
+            // "`S3MultipartXML.parseUploadID` composes one sentence out of an
+            // in-scope half and a foreign half").
+            //
+            // `reason` is either Foundation's own `parserError`
+            // `localizedDescription` — a foreign string, out of scope for typing
+            // since 2026-09-28 — or this project's own "no UploadId element".
+            // Typing the second half would mean a finding, which the parity
+            // guard turns into four catalogue sentences; the phrase reaches a
+            // reader, and two of those four would go into catalogues whose
+            // native-speaker review was closed unreviewed. So the in-scope half
+            // stays untyped here, deliberately, and this comment is the record.
+            //
+            // The phrase DOES reach a reader, which an earlier draft of this
+            // comment denied: `S3Uploader.uploadMultipart` lets the
+            // `.protocolError` through `S3FileSystem.write`, and from there the
+            // app shows `transfers.failure.protocolError` ("The server sent an
+            // answer that could not be used.") with this text appended as a
+            // marked technical detail, while the CLI prints it after "Error: ".
+            // What it is NOT is the only text a reader gets: the sentence in
+            // front of it is already translated, and the English half arrives
+            // labelled as technical. Typing the in-scope half would trade that
+            // pair for one translated sentence with no suffix — a real but small
+            // gain, against four catalogue sentences, two of them in `fr`/`pl`
+            // catalogues whose native-speaker review was closed unreviewed.
+            //
+            // Revisit if the technical-detail suffix is ever dropped, or if this
+            // phrase becomes the only text a reader gets.
             let reason = parser.parserError?.localizedDescription ?? "no UploadId element"
             throw RemoteFSError.protocolError(
                 reason: "Failed to parse S3 InitiateMultipartUpload response: \(reason)")
