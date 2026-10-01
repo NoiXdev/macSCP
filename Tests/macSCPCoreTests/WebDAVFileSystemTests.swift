@@ -320,11 +320,12 @@ struct WebDAVFileSystemTests {
         #expect(fresh.sentNoValidator)
         #expect(unvalidatedResume.sentNoValidator)
         // A second positive: each 412 still fell through to `mapStatus`,
-        // whose own (wrong-but-preserved, see docs/BACKLOG.md) 412 arm
-        // reports a destination conflict — so a case that threw nothing at
-        // all cannot pass the two negatives above by accident.
-        #expect(fresh.finding == .movePreconditionFailed)
-        #expect(unvalidatedResume.finding == .movePreconditionFailed)
+        // whose 412 arm reports what is actually known about a read's 412 —
+        // the status itself, since nothing was moved and no precondition was
+        // sent. A case that threw nothing at all cannot pass the two
+        // negatives above by accident.
+        #expect(fresh.finding == .unexpectedStatus(code: 412))
+        #expect(unvalidatedResume.finding == .unexpectedStatus(code: 412))
     }
 
     /// The finding a 412 produces for a read of this shape, and whether the
@@ -626,10 +627,34 @@ struct WebDAVFileSystemTests {
         }
     }
 
-    @Test func aPreconditionFailureReportsAnExistingDestination() {
+    /// A MOVE's 412 names both ends, because the status cannot say which one
+    /// failed — see `RemoteFSFinding.movePreconditionFailed`.
+    @Test func aMovesPreconditionFailureNamesBothEnds() {
         #expect(throws: RemoteFSError.finding(.movePreconditionFailed)) {
             try WebDAVFileSystem.mapStatus(412, path: "/a", method: "MOVE")
         }
+    }
+
+    /// The separation itself, as one case: the same status, two methods, two
+    /// findings. Each expectation above pins one side; this pins that the
+    /// sides differ, which is the property the `where method ==` clause
+    /// exists for and the one a collapse would break.
+    @Test func theSameStatusReadsDifferentlyForAMoveAndARead() {
+        var moveFinding: RemoteFSFinding?
+        var readFinding: RemoteFSFinding?
+        do { try WebDAVFileSystem.mapStatus(412, path: "/a", method: "MOVE") } catch {
+            if case RemoteFSError.finding(let f) = error { moveFinding = f }
+        }
+        do { try WebDAVFileSystem.mapStatus(412, path: "/a", method: "GET") } catch {
+            if case RemoteFSError.finding(let f) = error { readFinding = f }
+        }
+
+        #expect(moveFinding == .movePreconditionFailed)
+        #expect(readFinding == .unexpectedStatus(code: 412))
+        #expect(moveFinding != readFinding, """
+            A MOVE's 412 and a read's 412 must not resolve to the same finding \
+            — that collapse is the defect docs/BACKLOG.md recorded.
+            """)
     }
 
     @Test func aFullServerReportsItsStorage() {
