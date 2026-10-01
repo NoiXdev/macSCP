@@ -197,6 +197,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Pod %@ już coś jest i nie jest to folder";
 "core.finding.nonHTTPResponse" = "Odpowiedź serwera nie była odpowiedzią HTTP";
 "core.finding.listingUnparsable" = "Nie udało się odczytać listy folderu przysłanej przez serwer";
+"core.finding.resourceDetailsUnparsable" = "Nie udało się odczytać informacji o tym elemencie przysłanych przez serwer";
 "core.finding.redirectUnreadable" = "Serwer przekierował żądanie w miejsce, którego nie dało się odczytać, więc je odrzucono";
 "core.finding.redirectBodyNotResendable" = "Serwer przekierował wysyłanie, a jego danych nie można wysłać drugi raz, więc przekierowanie odrzucono";
 "core.finding.redirectNotResignable" = "Serwer przekierował żądanie, a nowego celu nie udało się podpisać, więc przekierowanie odrzucono";

@@ -45,7 +45,7 @@ import Testing
     /// uses, and it is locale-independent — a machine running in `de` reads
     /// its own catalogue and both halves still agree.
     ///
-    /// That the catalogue FILES declare all seventeen keys, in all four
+    /// That the catalogue FILES declare all eighteen keys, in all four
     /// languages, is `everyRemoteFSFindingHasItsOwnSentence`'s job.
     @Test func everyFindingResolvesToASentenceAndNotToItsKey() {
         for finding in RemoteFSFinding.everyCase {
@@ -79,6 +79,7 @@ import Testing
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
             return nil
@@ -148,6 +149,7 @@ extension RemoteFSFinding {
                 return .pathExistsAndIsNotADirectory(path: "/srv/x")
             case .nonHTTPResponse: return .nonHTTPResponse
             case .listingUnparsable: return .listingUnparsable
+            case .resourceDetailsUnparsable: return .resourceDetailsUnparsable
             case .redirectUnreadable: return .redirectUnreadable
             case .redirectBodyNotResendable: return .redirectBodyNotResendable
             case .redirectNotResignable: return .redirectNotResignable

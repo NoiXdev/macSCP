@@ -267,7 +267,7 @@ enum TransferFailureKindSamples {
     /// One of `BucketLevelOperation`'s seven, for both switches above.
     static let sampleOperation = RemoteFSError.BucketLevelOperation.rename
 
-    /// One of `RemoteFSFinding`'s seventeen, for both switches above and for
+    /// One of `RemoteFSFinding`'s eighteen, for both switches above and for
     /// the row that pins the error-to-kind mapping. Deliberately one that
     /// does NOT read as a connection failure, so the frame the row expects
     /// is the `.protocolError` one; `RemoteFSFindingTests

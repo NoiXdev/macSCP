@@ -70,6 +70,11 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case nonHTTPResponse
     /// A directory listing arrived in a shape this backend could not read.
     case listingUnparsable
+    /// A PROPFIND answer describing ONE resource would not parse. The
+    /// sibling of `.listingUnparsable` for the two Depth-0 readers: a
+    /// `stat` and a session-root probe ask about a single resource, and
+    /// calling that a folder listing was wrong about what was asked for.
+    case resourceDetailsUnparsable
     /// A redirect was refused: its new target could not be read.
     case redirectUnreadable
     /// A redirect was refused: the request's body cannot be sent twice.
@@ -106,7 +111,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case resumeRangeIgnored, sourceChangedSinceInterruption, unexpectedStatus
         case directoryAlreadyExists, destinationAlreadyExists, outOfStorage
         case uploadStreamUnavailable, pathExistsAndIsNotADirectory
-        case nonHTTPResponse, listingUnparsable
+        case nonHTTPResponse, listingUnparsable, resourceDetailsUnparsable
         case redirectUnreadable, redirectBodyNotResendable, redirectNotResignable
         case resumeNotSupported, noSuchBucket, uploadPartUnacknowledged
         case requestBodyUnencodable
@@ -124,6 +129,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .pathExistsAndIsNotADirectory: return .pathExistsAndIsNotADirectory
         case .nonHTTPResponse: return .nonHTTPResponse
         case .listingUnparsable: return .listingUnparsable
+        case .resourceDetailsUnparsable: return .resourceDetailsUnparsable
         case .redirectUnreadable: return .redirectUnreadable
         case .redirectBodyNotResendable: return .redirectBodyNotResendable
         case .redirectNotResignable: return .redirectNotResignable
@@ -156,6 +162,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
             return "core.finding.\(name.rawValue)"
@@ -176,6 +183,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
+            .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
             return CoreL10n.string(messageKey)
@@ -213,6 +221,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "the server's answer was not an HTTP response"
         case .listingUnparsable:
             return "the folder listing the server sent could not be read"
+        case .resourceDetailsUnparsable:
+            return "the information the server sent about this item could not be read"
         case .redirectUnreadable:
             return "the server redirected the request somewhere that could not be read, "
                 + "so it was refused"
@@ -273,8 +283,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus,
             .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
             .uploadStreamUnavailable, .pathExistsAndIsNotADirectory,
-            .nonHTTPResponse, .listingUnparsable, .resumeNotSupported,
-            .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable:
+            .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
+            .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable:
             return false
         }
     }

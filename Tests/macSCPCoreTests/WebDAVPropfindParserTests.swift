@@ -289,4 +289,26 @@ struct WebDAVPropfindParserTests {
                 Data("not xml at all".utf8), base: base, requestedPath: "/")
         }
     }
+
+    /// Malformed XML means something different to each reader, and the
+    /// sentence has to match what was asked for. A Depth-1 body IS the
+    /// folder listing; a Depth-0 body describes one resource, and calling
+    /// that a folder listing is what `docs/BACKLOG.md` recorded as a wording
+    /// regression.
+    @Test func eachReaderNamesWhatItAskedFor() throws {
+        let malformed = Data("<multistatus><response".utf8)
+        let base = WebDAVURL(
+            baseURL: try #require(URL(string: "https://dav.example.com/dav")),
+            nextcloudUser: nil)
+
+        #expect(throws: RemoteFSError.finding(.listingUnparsable)) {
+            _ = try WebDAVPropfindParser.parse(malformed, base: base, requestedPath: "/")
+        }
+        #expect(throws: RemoteFSError.finding(.resourceDetailsUnparsable)) {
+            _ = try WebDAVPropfindParser.entityTag(malformed, base: base, at: "/a.txt")
+        }
+        #expect(throws: RemoteFSError.finding(.resourceDetailsUnparsable)) {
+            _ = try WebDAVPropfindParser.firstResourceIsCollection(malformed)
+        }
+    }
 }
