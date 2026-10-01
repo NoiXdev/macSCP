@@ -58,8 +58,13 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case unexpectedStatus(code: Int)
     /// A directory could not be created because something is already there.
     case directoryAlreadyExists
-    /// A move or copy was refused because its destination exists.
-    case destinationAlreadyExists
+    /// A `MOVE` was refused because a precondition failed, and the status
+    /// alone does not say which one. `Overwrite: F` makes RFC 4918's
+    /// destination-exists case live, and mod_dav answers a failed precondition
+    /// on the SOURCE with the same 412 — its free text distinguishes them and
+    /// is a foreign string this project does not carry into a finding. So the
+    /// sentence names both ends rather than asserting one.
+    case movePreconditionFailed
     /// The server reported that it has no room left.
     case outOfStorage
     /// The upload's body stream could not be opened.
@@ -109,7 +114,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// a name here does not compile.
     public enum Name: String, CaseIterable, Sendable {
         case resumeRangeIgnored, sourceChangedSinceInterruption, unexpectedStatus
-        case directoryAlreadyExists, destinationAlreadyExists, outOfStorage
+        case directoryAlreadyExists, movePreconditionFailed, outOfStorage
         case uploadStreamUnavailable, pathExistsAndIsNotADirectory
         case nonHTTPResponse, listingUnparsable, resourceDetailsUnparsable
         case redirectUnreadable, redirectBodyNotResendable, redirectNotResignable
@@ -123,7 +128,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .sourceChangedSinceInterruption: return .sourceChangedSinceInterruption
         case .unexpectedStatus: return .unexpectedStatus
         case .directoryAlreadyExists: return .directoryAlreadyExists
-        case .destinationAlreadyExists: return .destinationAlreadyExists
+        case .movePreconditionFailed: return .movePreconditionFailed
         case .outOfStorage: return .outOfStorage
         case .uploadStreamUnavailable: return .uploadStreamUnavailable
         case .pathExistsAndIsNotADirectory: return .pathExistsAndIsNotADirectory
@@ -160,7 +165,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .uploadPartUnacknowledged:
             return "core.finding.\(name.rawValue) %@"
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
-            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
@@ -181,7 +186,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .uploadPartUnacknowledged(let part):
             return String(format: CoreL10n.string(messageKey), String(part))
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
-            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
@@ -209,8 +214,9 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "the server answered with status \(code)"
         case .directoryAlreadyExists:
             return "a file or folder with that name already exists"
-        case .destinationAlreadyExists:
-            return "the destination already exists"
+        case .movePreconditionFailed:
+            return "the server refused the move: either something is already "
+                + "at the new name, or the item is locked on the server"
         case .outOfStorage:
             return "the server is out of storage"
         case .uploadStreamUnavailable:
@@ -281,7 +287,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable:
             return true
         case .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus,
-            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .pathExistsAndIsNotADirectory,
             .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
             .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable:

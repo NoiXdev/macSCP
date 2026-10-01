@@ -690,7 +690,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         // whose failed precondition is on the source rather than the
         // destination: "`WebDAVFileSystem.mapStatus` renders a
         // source-precondition 412 as \"The destination already exists\"".
-        case 412: throw RemoteFSError.finding(.destinationAlreadyExists)
+        case 412: throw RemoteFSError.finding(.movePreconditionFailed)
         case 507: throw RemoteFSError.finding(.outOfStorage)
         default:
             // `method` is deliberately left out of the finding: the HTTP

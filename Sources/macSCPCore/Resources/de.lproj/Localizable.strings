@@ -189,7 +189,7 @@
 "core.finding.sourceChangedSinceInterruption" = "Die Datei hat sich auf dem Server seit dem abgebrochenen Download geändert, deshalb wurde der unvollständigen Datei nichts hinzugefügt";
 "core.finding.unexpectedStatus %@" = "Der Server hat mit Status %@ geantwortet";
 "core.finding.directoryAlreadyExists" = "Eine Datei oder ein Ordner mit diesem Namen ist bereits vorhanden";
-"core.finding.destinationAlreadyExists" = "Das Ziel ist bereits vorhanden";
+"core.finding.movePreconditionFailed" = "Der Server hat das Verschieben abgelehnt: entweder liegt unter dem neuen Namen schon etwas, oder der Eintrag ist auf dem Server gesperrt";
 "core.finding.outOfStorage" = "Der Server hat keinen Speicherplatz mehr";
 "core.finding.uploadStreamUnavailable" = "Der Upload-Datenstrom konnte nicht erstellt werden";
 "core.finding.pathExistsAndIsNotADirectory %@" = "Unter %@ liegt bereits etwas, das kein Ordner ist";

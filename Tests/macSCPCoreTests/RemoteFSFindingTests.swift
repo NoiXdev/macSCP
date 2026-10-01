@@ -77,7 +77,7 @@ import Testing
         case .pathExistsAndIsNotADirectory(let path): return path
         case .uploadPartUnacknowledged(let part): return String(part)
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
-            .directoryAlreadyExists, .destinationAlreadyExists, .outOfStorage,
+            .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
@@ -210,7 +210,7 @@ extension RemoteFSFinding {
             case .sourceChangedSinceInterruption: return (.sourceChangedSinceInterruption, nil)
             case .unexpectedStatus: return (.unexpectedStatus(code: 418), "418")
             case .directoryAlreadyExists: return (.directoryAlreadyExists, nil)
-            case .destinationAlreadyExists: return (.destinationAlreadyExists, nil)
+            case .movePreconditionFailed: return (.movePreconditionFailed, nil)
             case .outOfStorage: return (.outOfStorage, nil)
             case .uploadStreamUnavailable: return (.uploadStreamUnavailable, nil)
             case .pathExistsAndIsNotADirectory:

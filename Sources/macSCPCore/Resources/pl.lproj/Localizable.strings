@@ -191,7 +191,7 @@
 "core.finding.sourceChangedSinceInterruption" = "Plik zmienił się na serwerze od czasu przerwanego pobierania, więc do niepełnego pliku nic nie dodano";
 "core.finding.unexpectedStatus %@" = "Serwer odpowiedział statusem %@";
 "core.finding.directoryAlreadyExists" = "Plik lub folder o tej nazwie już istnieje";
-"core.finding.destinationAlreadyExists" = "Miejsce docelowe już istnieje";
+"core.finding.movePreconditionFailed" = "Serwer odmówił przeniesienia: albo pod nową nazwą już coś jest, albo element jest zablokowany na serwerze";
 "core.finding.outOfStorage" = "Na serwerze zabrakło miejsca";
 "core.finding.uploadStreamUnavailable" = "Nie udało się utworzyć strumienia wysyłania";
 "core.finding.pathExistsAndIsNotADirectory %@" = "Pod %@ już coś jest i nie jest to folder";

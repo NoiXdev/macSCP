@@ -368,7 +368,7 @@ struct WebDAVFileSystemWriteTests {
         let transport = FakeHTTPTransport(replies: [.init(status: 412, body: Data(), headers: [:])])
         let fs = WebDAVFileSystem(config: config, transport: transport)
 
-        await #expect(throws: RemoteFSError.finding(.destinationAlreadyExists)) {
+        await #expect(throws: RemoteFSError.finding(.movePreconditionFailed)) {
             try await fs.rename(from: "/a.txt", to: "/b.txt")
         }
     }

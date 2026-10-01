@@ -205,7 +205,7 @@
 "core.finding.sourceChangedSinceInterruption" = "The file changed on the server since the interrupted download, so nothing was added to the partial file";
 "core.finding.unexpectedStatus %@" = "The server answered with status %@";
 "core.finding.directoryAlreadyExists" = "A file or folder with that name already exists";
-"core.finding.destinationAlreadyExists" = "The destination already exists";
+"core.finding.movePreconditionFailed" = "The server refused the move: either something is already at the new name, or the item is locked on the server";
 "core.finding.outOfStorage" = "The server is out of storage";
 "core.finding.uploadStreamUnavailable" = "The upload stream could not be created";
 "core.finding.pathExistsAndIsNotADirectory %@" = "Something is already at %@ and it is not a folder";

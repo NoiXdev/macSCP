@@ -323,8 +323,8 @@ struct WebDAVFileSystemTests {
         // whose own (wrong-but-preserved, see docs/BACKLOG.md) 412 arm
         // reports a destination conflict — so a case that threw nothing at
         // all cannot pass the two negatives above by accident.
-        #expect(fresh.finding == .destinationAlreadyExists)
-        #expect(unvalidatedResume.finding == .destinationAlreadyExists)
+        #expect(fresh.finding == .movePreconditionFailed)
+        #expect(unvalidatedResume.finding == .movePreconditionFailed)
     }
 
     /// The finding a 412 produces for a read of this shape, and whether the
@@ -627,7 +627,7 @@ struct WebDAVFileSystemTests {
     }
 
     @Test func aPreconditionFailureReportsAnExistingDestination() {
-        #expect(throws: RemoteFSError.finding(.destinationAlreadyExists)) {
+        #expect(throws: RemoteFSError.finding(.movePreconditionFailed)) {
             try WebDAVFileSystem.mapStatus(412, path: "/a", method: "MOVE")
         }
     }
