@@ -197,6 +197,73 @@ MSG
 
 ---
 
+## Correction, 2026-10-01, before Task 2 was dispatched
+
+Measuring Task 2's premises — which Task 1's implementer and reviewer both
+asked for independently — changed three of them. The task description below
+is superseded where they conflict.
+
+**1. `ConnectionDiagnostics.swift` cannot be split as a pure move at all.**
+Swift's `private` is file-scoped at type scope, so a `private` member moved
+into another file loses sight of the actor's other `private` members. Counted
+at `5cf965de`: the actor has **16** private stored properties, **11** of them
+used by the sections that would move (`descriptor`, `values`, `secrets`,
+`sessionID`, `stepTimeout`, `traceTimeout`, `appVersion`, `jump`, `jumpDialer`,
+`jumpDialLaunch`, `lookups`). Task 2 Step 2 was written to catch this during
+the task; catching it before dispatch was cheaper.
+
+**The maintainer's decision, 2026-10-01: widen, in a commit of its own.** The
+widening and the move are two commits, the widening first and carrying nothing
+else, so the move stays reviewable as a move. `internal` does not leave
+`macSCPCore`, so nothing changes outside the module.
+
+**2. The widening is 12 declarations, not 14.** `HeldJumpConnection` (4 hits)
+and `JumpHandoff` (3) are used **only** inside the jump section, so they move
+with it into the same file and stay `private` — measured, not assumed. `Walk`
+is used at `:527`, `:599`, `:628` and `:630`, outside the jump section, so it
+is the one helper type that must widen. 11 properties + `Walk` = 12.
+
+**3. `DiagnosticTraceColumn` gets its own file.** The table below says it is
+read only by the trace rendering. It is read by **13** files, including
+`Sources/MacSCPAppKit/Presentation/DiagnosticsViewModel.swift`,
+`Sources/macSCPCore/CLI/DiagnoseRendering.swift`,
+`Diagnostics/AddressNames.swift`, `InternetSpeedProbe.swift` and
+`ThroughputProbe.swift`. A public type with that many readers belongs in a
+file of its own, not appended to an extension.
+
+**Also for the record**, since Task 1's text is pushed: its Step 3 cites "the
+positive check at `:968`" of `SnippetCommandSurveyTests.swift`. At that base
+`:968` is `let classified = Set(…)`; the positive check is `:976`. The claim
+about what the check does was right, the line was not.
+
+### Task 2 (revised): widen, then split `ConnectionDiagnostics.swift`
+
+**Commit 2a — the widening, and nothing else.** Change exactly these from
+`private` to `internal`: the 11 stored properties named above, and
+`private struct Walk` at `:1433`. Nothing else in the diff. No reordering, no
+comment rewriting except where a comment states an access level that is no
+longer true — and if one does, say which.
+
+**Commit 2b — the pure move**, in the same shape Task 1 used:
+
+| new file | what moves |
+|---|---|
+| `DiagnosticScope.swift` | `DiagnosticScope` |
+| `DiagnosticTraceColumn.swift` | `DiagnosticTraceColumn` |
+| `ConnectionDiagnostics+Jump.swift` | the `MARK: Through a jump host` section as an `extension ConnectionDiagnostics`, plus `HeldJumpConnection` and `JumpHandoff`, both still `private` |
+| `ConnectionDiagnostics+UniversalSteps.swift` | the `MARK: The universal steps` section as an `extension ConnectionDiagnostics` |
+| `ConnectionDiagnostics.swift` (stays) | `DiagnosticRunObserver`, the actor's properties and `init`, the three `run` entry points, `contributions`, the internet-speed and throughput sections, `Walk`, and `MARK: The seam` |
+
+Everything else in the original Task 2 below still applies: the baseline, the
+per-section empty diffs, the declaration inventory, the comment sweep, and the
+rule that a report says what the diff shows.
+
+**One thing to measure and report rather than assume**, because the ranges
+below were taken before Task 1: re-derive the two `MARK` sections' line
+numbers from the tree at the commit you start from, and say what they are.
+
+---
+
 ### Task 2: split `ConnectionDiagnostics.swift`
 
 **Files:**
