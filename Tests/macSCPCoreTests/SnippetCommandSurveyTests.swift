@@ -906,10 +906,36 @@ struct SnippetCommandSurveyTests {
     /// shell-completion line quotes by the same rule as every other command
     /// this app shows; `SSHKeyConverter.inPlaceCommandLine(forKeyAt:)`
     /// quotes the key path into the `ssh-keygen -p -f …` command line the
-    /// same way). `JumpProbes` (2026-09-18) does the same with a target host
-    /// for the diagnosis's commands on a jump host, after checking that host
-    /// scalar by scalar (`JumpProbeHost`); its `Character` use is in reading
-    /// the tools' OUTPUT back, which no shell reads.
+    /// same way). `JumpProbeCommand` (2026-09-18, in `JumpProbes.swift` until
+    /// the split of 2026-10-01) does the same with a target host for the
+    /// diagnosis's commands on a jump host, after checking that host scalar by
+    /// scalar (`JumpProbeHost`), and asks no per-element question of its own.
+    ///
+    /// The entry this replaced justified `JumpProbes.swift` with TWO things
+    /// that the split put in two different files, and only the first of them
+    /// is what this list is for. The quoting left with `JumpProbeCommand`.
+    /// The reading of the tools' OUTPUT back — which no shell reads — left
+    /// with `JumpProbeReading`, and that file names neither `ShellScalar` nor
+    /// `PosixQuoting` in code, so it is on neither list by design: nothing
+    /// classifies it because nothing puts it on the shell path. Measured
+    /// 2026-10-01 over the three files the split produced: one hit,
+    /// `JumpProbeCommand.swift`. `JumpProbes.swift`, which kept only the three
+    /// steps, has none left and so came off this list in the same pass.
+    ///
+    /// Why that removal had to be deliberate, recorded rather than claimed
+    /// shut: `shellLexingFileNames` above is pinned in BOTH directions — a
+    /// name that no longer exists throws `missingShellLexingFile` — while this
+    /// list is pinned in one. A name here that has left the shell path is
+    /// still a legal entry; it widens `classified` for a file that no longer
+    /// needs it and nothing goes red. So an entry removed from this list is
+    /// removed by measuring, and an entry whose stated reason moves to another
+    /// file moves with it.
+    ///
+    /// Counted 2026-10-01: seven entries below, four above.
+    /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
+    /// this list's only reader; the list above has a second one,
+    /// `shellLexingSourceFiles()`, which is where its missing-name throw and
+    /// the `Character` ban come from.
     private static let shellCallerFileNames = [
         "SSHConnectionConfig.swift",
         "SSHCommandBuilder.swift",
@@ -917,7 +943,7 @@ struct SnippetCommandSurveyTests {
         "ShellCompletionRecipe.swift",
         "FileChecksum.swift",
         "SSHKeyConverter.swift",
-        "JumpProbes.swift",
+        "JumpProbeCommand.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {
