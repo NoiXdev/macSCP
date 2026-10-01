@@ -249,6 +249,59 @@ becomes a loud one instead. And a report is written from the diff, never
 from the intent: read back what actually changed before describing it
 as done.
 
+## A number travels with the command that produced it
+
+Measured 2026-10-01, on the typed-findings-tails branch, where every
+false claim caught had one shape: a figure or a reach written down
+without running the thing it asserted, then copied forward because it
+read as measured. Three instances, each a different way for that to fail:
+
+1. **A figure nobody could check.** The cost of deleting the
+   `supportsAppendResume` default was written as "32 conformer headers
+   across 23 files". It is 30 across 22 — the derivation's subtraction
+   named two string-literal matches and there were four. Three readers
+   counting it produced **32, 30 and 43**, because each wrote a
+   different regex. The figure was not wrong by accident; it was
+   uncheckable, so being wrong cost nothing.
+2. **A command that did not run as committed.** The corrected
+   derivation shipped with its `grep` beside it — and `docs/BACKLOG.md`
+   is a table, so the alternation carried cell escapes (`\|`).
+   Extracted verbatim and run, it returned **0 lines** where the row
+   claimed 37. A verification command you have to repair before running
+   invites the reader to repeat the author's assumption while repairing
+   it, which is exactly what happened: the controller "verified" the
+   figure by retyping the command with real pipes.
+3. **A sentence that falsified itself by existing.** A row claimed a
+   `grep` for a path "returns nothing" — and returned itself, because
+   the row quotes the path. The fix for it then counted how many places
+   spell that path and spelled it again, making its own count wrong.
+   Both were found only by re-running the command *after* writing the
+   sentence.
+
+So, for any figure in a comment, a `docs/` row, a spec or a commit
+message:
+
+- **Write the command beside the figure**, with its raw totals and its
+  exclusions named one by one, so the next reader lands on the same
+  starting set or sees exactly where they diverge.
+- **The command must run in the form it is committed.** Inside a
+  `docs/BACKLOG.md` table cell that means no pipe at all — several
+  `-e` patterns instead of one `-E` alternation.
+- **Run it again after writing the sentence.** The sentence can change
+  the answer, and that is not a corner case: it happened twice here,
+  the second time inside the fix for the first.
+
+The final re-review of that branch ran **ten** committed commands,
+extracted from the committed text rather than retyped, and all ten
+reproduced their stated figures. None of them did at the start of the
+day.
+
+One corollary, from the same work: **prefer the symbol to the line
+number.** Two fixture lines cited in that derivation moved three times
+in one piece of work — `:303`, then `:307`/`:308`, then `:310`/`:311` —
+each time because a sibling commit added comment lines above them. The
+symbol names written in their place survived all three.
+
 ## Guards that name what they watch
 
 Measured on 2026-08-27, across a tab-menu wiring guard that survived five
