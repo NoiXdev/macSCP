@@ -366,15 +366,17 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         }
         let (body, response) = try await sendStreaming(request)
         if response.statusCode == 412, validatorSent != nil {
-            // Read BEFORE `mapStatus`, which maps 412 to the precondition a
-            // MOVE sets. Here the precondition is the `If-Match` above, and
-            // the sentence has to say what it means.
+            // Read BEFORE `mapStatus`, which would not know what this 412
+            // means: its 412 arm is a MOVE's and answers only for that
+            // method. Here the precondition is the `If-Match` above, and the
+            // sentence has to say what it means.
             //
             // GUARDED, because a 412 can also come back from a read that
             // sent no precondition at all. Saying "the file changed on the
             // server" there would be a claim about something nobody asked,
-            // so that one goes on to `mapStatus` — where a 412 went before
-            // this precondition existed.
+            // so that one goes on to `mapStatus`, which gives a read the
+            // status itself (`.unexpectedStatus`) rather than a sentence
+            // about a move.
             throw RemoteFSError.finding(.sourceChangedSinceInterruption)
         }
         try Self.mapStatus(response.statusCode, path: path, method: "GET")
@@ -680,18 +682,22 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         case 405 where method == "MKCOL":
             throw RemoteFSError.finding(.directoryAlreadyExists)
         case 409: throw RemoteFSError.notFound(path: path)
-        // A 412 means different things to the two callers that reach this
-        // arm, and only the method tells them apart. `rename` sends a MOVE
-        // with `Overwrite: F`, where a precondition really did fail — on the
+        // A 412 means different things to the callers that can see one, and
+        // only the method tells them apart. `rename` sends a MOVE with
+        // `Overwrite: F`, where a precondition really did fail — on the
         // destination or, as mod_dav answers identically, on the source.
         // `readStream` sends a GET, and one that sent no validator lands here
         // too; nothing was moved, so a sentence about a move is false for it.
-        // The read keeps what is actually known, the status itself.
+        // The read keeps what is actually known, the status itself, as does
+        // any other method's 412 through the `default:` below.
         //
         // No `COPY` arm: counted 2026-10-02 with
         // `grep -rnE 'httpMethod = |simple\(method: ' Sources/macSCPCore/WebDAV/`,
         // this backend sends GET, PUT, PROPFIND, OPTIONS, MOVE, DELETE and
-        // MKCOL. Widening to a method the app never sends would be a guess.
+        // MKCOL. Read the matches rather than counting them: DELETE matches
+        // twice, and `simple`'s declaration, its `= method` assignment and
+        // this very line match too. Widening to a method the app never
+        // sends would be a guess.
         case 412 where method == "MOVE":
             throw RemoteFSError.finding(.movePreconditionFailed)
         case 507: throw RemoteFSError.finding(.outOfStorage)
