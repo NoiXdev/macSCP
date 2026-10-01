@@ -1419,9 +1419,12 @@ step is that a citation gets re-read, not re-remembered.
    The file is at `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`
    — confirm with `ls`, then correct the path.
    > **Correction, 2026-10-01 (closeout).** This step is false, and the
-   > line above is where the wrong path comes from: the one line in the
-   > repository spelling the full `Sources/MacSCPAppKit/` form of it, the
-   > shorter string now standing in these corrections too. The `:172` row
+   > line above is where the wrong path comes from: the line that
+   > INTRODUCED the full `Sources/MacSCPAppKit/` form of it, which the
+   > design spec's own correction then had to quote, so that form now
+   > stands on two lines and the shorter string on five — counted at HEAD
+   > on 2026-10-01, and not written as a line list here for the reason the
+   > spec gives. The `:172` row
    > cites a BARE `RemoteBrowserViewModel.swift:938` with no module path:
    > `git grep "MacSCPAppKit/RemoteBrowserViewModel" 0f55446d -- docs/`
    > returns nothing. There were two stale spots in that file, not three.

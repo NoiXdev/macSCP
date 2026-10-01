@@ -5,8 +5,19 @@
 (rows at lines 172–178), and three stale spots in `docs/BACKLOG.md` itself
 found while reading them.
 
-**Base:** `develop` at `0f55446d`. Every number and line citation below was
-measured at that commit on 2026-10-01, not carried over from the rows.
+**Base:** `develop` at `0f55446d`. Every number and line citation in the
+DESIGN body below was measured at that commit on 2026-10-01, not carried
+over from the rows.
+
+**Two conventions, and which applies where.** The design body is anchored
+at `0f55446d` as just stated, because that is the tree it was written
+against. The paragraphs marked **Correction, 2026-10-01, after execution**
+are anchored at HEAD, because their whole job is to say what the execution
+turned out to show — and where execution moved a line, they name the
+SYMBOL rather than retake the number, which is why the T1 correction below
+cites `conformers`, `protocolDefault` and `overridesByFile` instead of
+line numbers. A citation in a correction paragraph is therefore a HEAD
+citation unless it names a commit of its own.
 
 ---
 
@@ -121,11 +132,22 @@ and so is the third item of the T7 list below: `docs/BACKLOG.md` never
 carried the App module's path for `RemoteBrowserViewModel.swift`. The
 `:172` row cites a BARE `RemoteBrowserViewModel.swift:938` with no module
 path at all. The wrong one comes from this plan's own Task 7 step
-(`docs/superpowers/plans/2026-10-01-typed-findings-tails.md:1418`), the
-one line in the repository spelling the FULL
-`Sources/MacSCPAppKit/RemoteBrowserViewModel.swift`. The shorter string
-now stands in four places, three of them these corrections, which is why
-the absence claim below is anchored at a commit rather than at the tree.
+(`docs/superpowers/plans/2026-10-01-typed-findings-tails.md:1418`), which
+spells the FULL `Sources/MacSCPAppKit/RemoteBrowserViewModel.swift` — and
+so, unavoidably, does this sentence. Counted at HEAD on 2026-10-01 with
+the grep below run against the working tree instead of the base commit:
+the module-qualified string (the needle that grep uses, the `Sources/`
+prefix dropped) stands on FIVE lines — that Task 7 step, which introduced
+it, and four lines of correction ABOUT it: the `:172` row of
+`docs/BACKLOG.md`, the grep quoted in that step's own correction note, and
+two in this paragraph. They are named that way rather than by line number
+because a paragraph that counts its own occurrences moves them the next
+time it is edited. **And the count is why the needle is described here
+rather than spelled**: the first version of this sentence wrote it out,
+which made the answer SIX while the sentence said five — the same
+self-falsification one clause further on, caught by re-running the grep
+after committing. That is also why the absence claim below is anchored at
+a commit rather than at the tree.
 `git grep "MacSCPAppKit/RemoteBrowserViewModel" 0f55446d -- docs/`
 returns nothing — anchored at the base commit, because a document that
 quotes the string it calls absent makes that string present, which is how
@@ -185,11 +207,29 @@ that fail loudly the moment what they name moves, per `CLAUDE.md`,
 above were weaker in the tree than on the page, and both are corrected
 here rather than quietly rewritten.
 
-1. There is no "count that must match". The guard asserts set EQUALITIES
-   — the conformer set, the override set, and the protocol extension's
-   own default read into a third, separate expectation — and no count
-   anywhere. The sentence as first written is what this spec's own section
-   argues against.
+1. The guard's three expectations are not all of one shape, and the
+   first version of this correction described them wrongly in the
+   opposite direction — it said "set EQUALITIES … and no count
+   anywhere", which this command refutes with its single hit,
+   `#expect(overridesByFile.count == 2, …)`:
+   `grep -n "count ==" Tests/macSCPCoreTests/RemoteFileSystemAppendResumeGuardTests.swift`
+   The hit is deliberately named by its expression and not by its line
+   number: writing `:154` here, as the first draft of this correction did,
+   was falsified by the very edit that added this paragraph's sibling
+   comment to that file, which moved it to `:157`. Read rather than
+   remembered, the
+   three are: a genuine SET equality for the conformers
+   (`conformers == [...]`, six names); a scalar equality for the protocol
+   extension's own default (`protocolDefault == "true"`), which is the
+   separate expectation that pins this row's premise; and, for the
+   overrides, a COUNT plus per-element predicates — `overridesByFile.count
+   == 2`, then `answer == "false"` and a `hasSuffix` check naming
+   `S3FileSystem.swift`/`WebDAVFileSystem.swift` for each entry. Nothing
+   is weaker than advertised: over two distinct dictionary keys, a count
+   of 2 with a predicate pinning each key and each value is operationally
+   the same thing as a set equality, and it fails just as loudly when a
+   third file starts overriding. What was wrong was the absolute word
+   "no count anywhere", not the strength of the guard.
 2. "A seventh cannot inherit `true` in silence" promises more than the
    code delivers. The source half is BEST-EFFORT over declaration headers.
    Eight defects were found in its scans during execution: six misses (a
