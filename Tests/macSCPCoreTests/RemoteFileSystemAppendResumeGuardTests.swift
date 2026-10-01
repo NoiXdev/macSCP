@@ -8,8 +8,9 @@ import Testing
 /// is appendable BY SILENCE. Two things follow, and this suite pins both.
 ///
 /// 1. `WebDAVFileSystem` answers `false`, which is why
-///    `RemoteFSFinding.resumeNotSupported` — thrown at
-///    `WebDAVFileSystem.swift:450` when `mode != .overwrite` — has no
+///    `RemoteFSFinding.resumeNotSupported` — thrown by
+///    `WebDAVFileSystem.write(path:mode:contents:)` when `mode != .overwrite`
+///    — has no
 ///    production path to a reader: `TransferEngine` writes `.append` only
 ///    when `effectiveResume` is true, and that needs
 ///    `destination.supportsAppendResume` (`TransferEngine.swift:182`). The
@@ -42,7 +43,14 @@ struct RemoteFileSystemAppendResumeGuardTests {
     }
 
     /// Every conformer, and every override — so a seventh conformer that
-    /// inherits `true` in silence turns this red instead.
+    /// inherits `true` in silence turns this red instead, WHEN its declaration
+    /// names `RemoteFileSystem` (or a protocol refining it) in the header of a
+    /// `class`, `struct`, `actor`, `enum` or `extension` under `Sources/`.
+    /// Not covered, and said so rather than implied: a subclass of a
+    /// conformer (it inherits that conformer's answer, which is the point of
+    /// subclassing, not a silent default), a conformance reached through a
+    /// `typealias` composition, and anything under `Tests/` — the test doubles
+    /// inherit the default on purpose.
     ///
     /// Both checks are POSITIVE: sets that must match, not absences. An
     /// emptied-out scan fails them rather than reading as satisfied
@@ -50,14 +58,14 @@ struct RemoteFileSystemAppendResumeGuardTests {
     ///
     /// Overrides are attributed by FILE, not by walking back to the enclosing
     /// type: the two override lines are textually IDENTICAL
-    /// (`WebDAVFileSystem.swift:417` and `S3FileSystem.swift:927` differ in
-    /// nothing but their file), so any search that located a line's owner by
+    /// (the declarations in `WebDAVFileSystem.swift` and `S3FileSystem.swift`
+    /// differ in nothing but their file), so any search that located a line's owner by
     /// matching its text would be matching on something that is not unique.
     /// A file that declares two conformers and overrides in one would read as
     /// that file overriding — which is red here, and a human then looks. That
     /// is the intended outcome, not a gap.
     @Test func exactlyTheseTypesConformAndExactlyTheseFilesOverride() throws {
-        var conformers: Set<String> = []
+        var declarations: [Declaration] = []
         var overridesByFile: [String: String] = [:]
         // The protocol extension's own default is the thing being overridden,
         // not an override; it is read separately so the guard's premise (the
@@ -69,9 +77,9 @@ struct RemoteFileSystemAppendResumeGuardTests {
         where url.pathExtension == "swift" {
             let code = try SourceCorpus.code(of: url)
             let key = SourceCorpus.key(url)
+            declarations += Self.declarations(in: code)
             for line in code.split(separator: "\n", omittingEmptySubsequences: true) {
                 let text = String(line)
-                if let name = Self.conformerName(in: text) { conformers.insert(name) }
                 guard text.contains("var supportsAppendResume") else { continue }
                 // The declaration's body, not a mention: `{ true }` / `{ false }`.
                 let answer = text.contains("{ true }") ? "true"
@@ -85,6 +93,7 @@ struct RemoteFileSystemAppendResumeGuardTests {
             }
         }
 
+        let conformers = Self.conformers(among: declarations)
         #expect(conformers == [
             "S3FileSystem", "WebDAVFileSystem", "LocalFileSystem",
             "CitadelFileSystem", "ThroughputPayload", "ThroughputSink",
@@ -126,46 +135,137 @@ struct RemoteFileSystemAppendResumeGuardTests {
         }
     }
 
-    /// The declared type name on a line that CONFORMS to `RemoteFileSystem`,
-    /// or `nil`.
-    ///
-    /// `extension` is in the keyword list on purpose: a conformance added as
-    /// `extension Foo: RemoteFileSystem {}` is exactly the seventh conformer
-    /// this guard exists to notice, and a scan that only knew
-    /// `class`/`struct`/`actor` would miss it while the set check above still
-    /// passed — a negative check going stale in silence. The protocol's own
-    /// default-providing `extension RemoteFileSystem {`
-    /// (`RemoteFileSystem.swift:161`) carries no `:` and is therefore not
-    /// counted, which the test below pins.
-    private static func conformerName(in line: String) -> String? {
-        guard line.contains("RemoteFileSystem"), line.contains(":"),
-              line.contains("class ") || line.contains("struct ")
-                || line.contains("actor ") || line.contains("extension ")
-        else { return nil }
-        let parts = line.components(separatedBy: " ")
-        guard let keyword = parts.firstIndex(where: {
-            $0 == "class" || $0 == "struct" || $0 == "actor" || $0 == "extension"
-        }) else { return nil }
-        let nameIndex = parts.index(after: keyword)
-        guard nameIndex < parts.endIndex else { return nil }
-        let name = parts[nameIndex].trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-        return name.isEmpty || name == "RemoteFileSystem" ? nil : name
+    /// One `class` / `struct` / `actor` / `enum` / `extension` / `protocol`
+    /// declaration, reduced to what the conformance question needs.
+    struct Declaration: Equatable {
+        let kind: String
+        let name: String
+        /// The comma-separated list after the colon, module prefixes dropped.
+        let inherited: [String]
     }
 
-    /// The positive companion to `conformerName`'s exclusions: it really does
-    /// read a conformance off a declaration line, and really does ignore the
-    /// protocol's own extension. Without this, a `conformerName` that returned
-    /// `nil` for everything would leave the set check comparing two empty
-    /// sets — which is not how a set equality fails, but is how a typo in the
-    /// keyword list would read if the expected set were ever emptied too.
+    /// Every declaration in `code`, read STATEMENT-wise: newlines are folded
+    /// to spaces first, so a header wrapped over several lines
+    /// (`struct Foo: Sendable,` / `    RemoteFileSystem {`) is one unit. A
+    /// line-wise scan cannot see that conformance, because neither line
+    /// carries both the keyword and the protocol.
+    ///
+    /// The header is the text from the declared name up to the next `{`; a
+    /// balanced generic parameter list is skipped, and a trailing `where`
+    /// clause is cut off before the list is split.
+    static func declarations(in code: String) -> [Declaration] {
+        let flat = code.replacingOccurrences(of: "\n", with: " ")
+        let keyword = /\b(class|struct|actor|enum|extension|protocol)\s+([A-Za-z_][A-Za-z0-9_.]*)/
+        return flat.matches(of: keyword).map { match in
+            let afterName = flat[match.range.upperBound...]
+            var header = Substring(afterName.prefix { $0 != "{" })
+            header = header.drop { $0.isWhitespace }
+            if header.first == "<" {
+                var depth = 0
+                var end = header.startIndex
+                for index in header.indices {
+                    if header[index] == "<" { depth += 1 }
+                    if header[index] == ">" { depth -= 1 }
+                    end = header.index(after: index)
+                    if depth == 0 { break }
+                }
+                header = header[end...].drop { $0.isWhitespace }
+            }
+            var inherited: [String] = []
+            if header.first == ":" {
+                var list = header.dropFirst()
+                if let clause = list.range(of: " where ") { list = list[..<clause.lowerBound] }
+                inherited = list.split(separator: ",").compactMap { token in
+                    let trimmed = token.trimmingCharacters(in: .whitespaces)
+                    return trimmed.split(separator: ".").last.map(String.init)
+                }
+            }
+            return Declaration(
+                kind: String(match.output.1), name: String(match.output.2),
+                inherited: inherited)
+        }
+    }
+
+    /// The type names that conform to `RemoteFileSystem`, directly or through
+    /// a protocol that refines it — to any depth, because
+    /// `protocol Refined: RemoteFileSystem {}` followed by `struct Bar: Refined`
+    /// never names `RemoteFileSystem` on `Bar`'s line and inherits `true` by
+    /// silence all the same.
+    ///
+    /// Protocols are not themselves counted (a refinement is not an instance),
+    /// and neither is the protocol or its own default-providing
+    /// `extension RemoteFileSystem {` (`RemoteFileSystem.swift:161`).
+    static func conformers(among declarations: [Declaration]) -> Set<String> {
+        var protocols: Set<String> = ["RemoteFileSystem"]
+        var grew = true
+        while grew {
+            grew = false
+            for declaration in declarations
+            where declaration.kind == "protocol"
+                && !protocols.contains(declaration.name)
+                && declaration.inherited.contains(where: protocols.contains) {
+                protocols.insert(declaration.name)
+                grew = true
+            }
+        }
+        return Set(declarations
+            .filter {
+                $0.kind != "protocol" && $0.name != "RemoteFileSystem"
+                    && $0.inherited.contains(where: protocols.contains)
+            }
+            .map(\.name))
+    }
+
+    private static func conformers(in code: String) -> Set<String> {
+        conformers(among: declarations(in: code))
+    }
+
+    /// The positive companion to the scanner's exclusions: it really does read
+    /// a conformance off a declaration, however the declaration is spelled,
+    /// and really does ignore the protocol's own extension. Without this, a
+    /// scanner that returned nothing would leave the set check comparing the
+    /// tree against an expected set only a human keeps honest — and the first
+    /// version of this scanner was line-wise with a `class`/`struct`/`actor`/
+    /// `extension` keyword list, which a planted `enum`, a wrapped header and a
+    /// refined protocol all walked through with the suite green.
     @Test func theConformerScannerReadsDeclarationsAndNotTheProtocolsOwnExtension() {
-        #expect(Self.conformerName(
+        #expect(Self.conformers(
             in: "public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {")
-            == "S3FileSystem")
-        #expect(Self.conformerName(in: "public struct LocalFileSystem: RemoteFileSystem {")
-            == "LocalFileSystem")
-        #expect(Self.conformerName(in: "extension Foo: RemoteFileSystem {") == "Foo")
-        #expect(Self.conformerName(in: "extension RemoteFileSystem {") == nil)
-        #expect(Self.conformerName(in: "public protocol RemoteFileSystem: Sendable {") == nil)
+            == ["S3FileSystem"])
+        #expect(Self.conformers(in: "public struct LocalFileSystem: RemoteFileSystem {")
+            == ["LocalFileSystem"])
+        #expect(Self.conformers(in: "extension Foo: RemoteFileSystem {") == ["Foo"])
+        #expect(Self.conformers(in: "extension RemoteFileSystem {") == [])
+        #expect(Self.conformers(in: "public protocol RemoteFileSystem: Sendable {") == [])
+
+        // The three forms that once got through.
+        #expect(Self.conformers(in: "enum Foo: RemoteFileSystem {}") == ["Foo"])
+        #expect(Self.conformers(in: "struct Foo: Sendable,\n    RemoteFileSystem {\n}") == ["Foo"])
+        #expect(Self.conformers(in: "extension Foo:\n    RemoteFileSystem\n{\n}") == ["Foo"])
+        #expect(Self.conformers(in: """
+            protocol Refined: RemoteFileSystem {}
+            struct Bar: Refined {}
+            """) == ["Bar"])
+        // Refinement to depth two, declared in the opposite order.
+        #expect(Self.conformers(in: """
+            struct Baz: Deeper {}
+            protocol Deeper: Refined, Sendable {}
+            protocol Refined: RemoteFileSystem {}
+            """) == ["Baz"])
+
+        // Spellings around the keyword: generics, a where clause, a module
+        // prefix, two conformers in one file.
+        #expect(Self.conformers(in: "struct Box<T: Sendable>: RemoteFileSystem {}") == ["Box"])
+        #expect(Self.conformers(in: "extension Foo: RemoteFileSystem where Foo: Sendable {}")
+            == ["Foo"])
+        #expect(Self.conformers(in: "struct Foo: macSCPCore.RemoteFileSystem {}") == ["Foo"])
+        #expect(Self.conformers(in: """
+            struct A: RemoteFileSystem {}
+            final class B: Sendable, RemoteFileSystem {}
+            """) == ["A", "B"])
+
+        // And what is not a conformer.
+        #expect(Self.conformers(in: "struct Plain: Sendable {}\nenum Kind: String { case a }") == [])
+        #expect(Self.conformers(in: "protocol Unrelated: Sendable {}\nstruct C: Unrelated {}") == [])
     }
 }
