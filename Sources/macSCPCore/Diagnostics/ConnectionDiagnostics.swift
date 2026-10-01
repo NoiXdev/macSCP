@@ -271,17 +271,17 @@ public struct DiagnosticRunObserver: Sendable {
 /// the server is kept on a cancelled walk too, because it is the only place
 /// the file is named (`contributions(_:_:into:)`).
 public actor ConnectionDiagnostics {
-    private let descriptor: BackendDescriptor
-    private let values: FieldValues
-    private let secrets: (any SecretSource)?
-    private let sessionID: UUID?
-    private let stepTimeout: Duration
-    private let traceTimeout: Duration
-    private let appVersion: String
-    private let jump: DiagnosticJump?
-    private let jumpDialer: DiagnosticJumpDialer
-    private let jumpDialLaunch: DetachedProbe.Launch
-    private let lookups: ResolveLookups
+    let descriptor: BackendDescriptor
+    let values: FieldValues
+    let secrets: (any SecretSource)?
+    let sessionID: UUID?
+    let stepTimeout: Duration
+    let traceTimeout: Duration
+    let appVersion: String
+    let jump: DiagnosticJump?
+    let jumpDialer: DiagnosticJumpDialer
+    let jumpDialLaunch: DetachedProbe.Launch
+    let lookups: ResolveLookups
     private let throughputSettings: DiagnosticThroughputSettings
     private let throughputOpener: DiagnosticThroughputOpener
     private let internetSpeedSettings: DiagnosticInternetSpeedSettings
@@ -595,7 +595,7 @@ public actor ConnectionDiagnostics {
     /// it opens its own connection through the jump the way a tab does, as
     /// `target.dialViaJump` does, and a jump it cannot reach is its own
     /// connect failing.
-    private func contributions(
+    func contributions(
         _ scope: DiagnosticScope, _ observer: DiagnosticRunObserver, into walk: inout Walk
     ) async -> DiagnosticReport {
         if scope.runs(.contributions) {
@@ -775,7 +775,7 @@ public actor ConnectionDiagnostics {
     /// connection is closed before the report is handed back: a diagnosis
     /// that left a login open on the bastion would be the one probe that
     /// changes what it measures.
-    private func runThroughJump(
+    func runThroughJump(
         _ jump: DiagnosticJump, to endpoint: Endpoint, scope: DiagnosticScope,
         observer: DiagnosticRunObserver
     ) async -> DiagnosticReport {
@@ -1070,7 +1070,7 @@ public actor ConnectionDiagnostics {
     /// table beside the detail line reports them (`DiagnosticNameColumn`).
     /// The detail line is the one it always was, so nothing that read it
     /// reads anything new.
-    private func resolve(
+    func resolve(
         _ endpoint: Endpoint, as id: String = DiagnosticStepID.resolve,
         _ observer: DiagnosticRunObserver
     ) async -> (DiagnosticStep, [ResolvedAddress]) {
@@ -1093,7 +1093,7 @@ public actor ConnectionDiagnostics {
         }
     }
 
-    private func ping(
+    func ping(
         _ addresses: [ResolvedAddress], port: Int, as id: String = DiagnosticStepID.tcp,
         _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
@@ -1138,7 +1138,7 @@ public actor ConnectionDiagnostics {
     /// called that a server fault would send the user after a problem they do
     /// not have — the same reasoning the TCP step's "first acceptance wins"
     /// rule rests on. What silence gets is `timedOut`, the deadline's answer.
-    private func echo(
+    func echo(
         _ addresses: [ResolvedAddress], as id: String = DiagnosticStepID.icmp,
         _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
@@ -1180,7 +1180,7 @@ public actor ConnectionDiagnostics {
     ///
     /// The walk runs against `traceTimeout`, not `stepTimeout`: see the
     /// initializer's note.
-    private func trace(
+    func trace(
         _ addresses: [ResolvedAddress], as id: String = DiagnosticStepID.trace,
         _ observer: DiagnosticRunObserver
     ) async -> DiagnosticStep {
@@ -1413,7 +1413,7 @@ public actor ConnectionDiagnostics {
     /// Announced BEFORE the timer is constructed, because the timer reads both
     /// clocks at construction — an observer that took a millisecond would
     /// otherwise be charged to the step it was told about.
-    private static func starting(
+    static func starting(
         _ id: String, announcedTo observer: DiagnosticRunObserver
     ) async -> DiagnosticStepTimer {
         let titleKey = DiagnosticStepID.titleKey(for: id)
@@ -1421,7 +1421,7 @@ public actor ConnectionDiagnostics {
         return DiagnosticStepTimer(id: id, titleKey: titleKey)
     }
 
-    private static func timer(for id: String) -> DiagnosticStepTimer {
+    static func timer(for id: String) -> DiagnosticStepTimer {
         DiagnosticStepTimer(id: id, titleKey: DiagnosticStepID.titleKey(for: id))
     }
 }
@@ -1430,7 +1430,7 @@ public actor ConnectionDiagnostics {
 ///
 /// One value both walks — the direct one and the one through a jump — carry,
 /// so the rules below are stated once for every return site either has.
-private struct Walk {
+struct Walk {
     let endpoint: Endpoint
     let jump: Endpoint?
     let appVersion: String
