@@ -30,11 +30,10 @@ public enum S3MultipartXML {
             // native-speaker review was closed unreviewed. So the in-scope half
             // stays untyped here, deliberately, and this comment is the record.
             //
-            // The phrase DOES reach a reader, which an earlier draft of this
-            // comment denied: `S3Uploader.uploadMultipart` lets the
-            // `.protocolError` through `S3FileSystem.write`, and from there the
-            // app shows `transfers.failure.protocolError` ("The server sent an
-            // answer that could not be used.") with this text appended as a
+            // The phrase DOES reach a reader: `S3Uploader.uploadMultipart` lets
+            // the `.protocolError` through `S3FileSystem.write`, and from there
+            // the app shows `transfers.failure.protocolError` ("The server sent
+            // an answer that could not be used.") with this text appended as a
             // marked technical detail, while the CLI prints it after "Error: ".
             // What it is NOT is the only text a reader gets: the sentence in
             // front of it is already translated, and the English half arrives

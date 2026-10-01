@@ -36,8 +36,7 @@ public enum S3ListParser {
         guard parser.parse() else {
             // The parser's own `parserError` — macSCP's own text about XML
             // shape — is dropped here rather than carried into the finding:
-            // no mapper rendered it to a user except the queue, and no
-            // reader acts on it.
+            // no reader acts on it.
             throw RemoteFSError.finding(.listingUnparsable)
         }
         return (delegate.items, delegate.continuationToken, delegate.eTags)
