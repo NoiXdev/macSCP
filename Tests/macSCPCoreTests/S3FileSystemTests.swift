@@ -1240,6 +1240,43 @@ struct S3FileSystemTests {
         }
     }
 
+    /// `parseObjectKeys` used to throw its condition as prose, which was a
+    /// second untyped copy of what `.listingUnparsable` names and
+    /// `S3ListParser` already throws. Same condition, one spelling.
+    ///
+    /// Driven through `deleteTree`, which reaches the parse after exactly two
+    /// lookup requests (`HEAD d`, the one-key list) and then the subtree
+    /// listing this body answers; `rename` would need more round trips to the
+    /// same throw.
+    @Test func anUnparsableObjectListingThrowsTheTypedFinding() async throws {
+        let malformed = Data("<ListBucketResult><Contents".utf8)
+        let (fs, _) = try await connect(responses: [
+            (Data(), httpResponse(status: 404)),  // HEAD: not an object
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),  // one-key list: something's there
+            (malformed, httpResponse(status: 200)),  // allObjectKeys: the subtree, unparsable
+        ])
+
+        await #expect(throws: RemoteFSError.finding(.listingUnparsable)) {
+            try await fs.deleteTree(at: "/d")
+        }
+    }
+
+    /// The other place the same condition used to be written out in prose:
+    /// `S3ListParser.hasAnyEntries`, which `deleteLookup` runs on its one-key
+    /// list. Driven through `delete(path:)`, which needs only the lookup's two
+    /// requests (`HEAD d`, then the one-key list this body answers).
+    @Test func anUnparsableDeleteLookupListingThrowsTheTypedFinding() async throws {
+        let malformed = Data("<ListBucketResult><Contents".utf8)
+        let (fs, _) = try await connect(responses: [
+            (Data(), httpResponse(status: 404)),  // HEAD: not an object
+            (malformed, httpResponse(status: 200)),  // one-key list: unparsable
+        ])
+
+        await #expect(throws: RemoteFSError.finding(.listingUnparsable)) {
+            try await fs.delete(path: "/d")
+        }
+    }
+
     /// `RemoteFileSystem.deleteTree`'s contract: "A plain file behaves
     /// exactly like `delete`." The prefix walk cannot honour that — it
     /// enumerates `<key>/`, which a plain object's key never matches, so it

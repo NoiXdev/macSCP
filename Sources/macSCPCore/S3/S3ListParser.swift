@@ -61,8 +61,10 @@ public enum S3ListParser {
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse() else {
-            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
-            throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
+            // The same condition, dropped the same way as in `parse` above:
+            // the parser's own `parserError` is XML-shape prose no reader
+            // acts on.
+            throw RemoteFSError.finding(.listingUnparsable)
         }
         return delegate.foundAny
     }
