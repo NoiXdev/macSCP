@@ -1200,8 +1200,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         guard parser.parse() else {
-            let reason = parser.parserError?.localizedDescription ?? "unknown XML error"
-            throw RemoteFSError.protocolError(reason: "Failed to parse S3 ListObjectsV2 response: \(reason)")
+            // The same condition `.listingUnparsable` names, and the one
+            // `S3ListParser.parse` already throws as a finding. The parser's
+            // own `parserError` is dropped with it, as there: it is XML-shape
+            // prose no reader acts on, and a finding is this module's own
+            // text in four languages.
+            throw RemoteFSError.finding(.listingUnparsable)
         }
         return (delegate.keys, delegate.continuationToken)
     }
