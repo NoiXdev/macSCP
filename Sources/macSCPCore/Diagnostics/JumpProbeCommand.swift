@@ -17,13 +17,15 @@ import Darwin
 /// `inet_pton(3)` then accepts for its family. The character set is the
 /// boundary, not `inet_pton`: Darwin's accepts an IPv6 zone with ANY suffix
 /// — `::1%$(id)`, `::1%;id` and `::1%a'b c` all return 1 (measured in the
-/// 2026-09-18 review of this file) — and only the set, which has no `%`,
-/// refuses them. The same check admits the addresses the readers below copy
-/// out of tool output, so it guards the report's rows too. A host name is at
-/// most 253 characters of dot-separated labels, each 1 to 63 ASCII letters,
-/// digits or hyphens, neither starting nor ending with a hyphen; no empty
-/// label, so no leading, trailing or doubled dot. Compared on Unicode scalars
-/// and ASCII ranges, never `Character.isLetter`, which would let `é` in.
+/// 2026-09-18 review of `JumpProbes.swift`, which held this type until the
+/// split of 2026-10-01) — and only the set, which has no `%`, refuses them.
+/// The same check admits the addresses the readers in
+/// `JumpProbeReading.swift` copy out of tool output, so it guards the
+/// report's rows too. A host name is at most 253 characters of dot-separated
+/// labels, each 1 to 63 ASCII letters, digits or hyphens, neither starting
+/// nor ending with a hyphen; no empty label, so no leading, trailing or
+/// doubled dot. Compared on Unicode scalars and ASCII ranges, never
+/// `Character.isLetter`, which would let `é` in.
 ///
 /// Why validate when the host is quoted anyway: the quoting keeps the shell
 /// from reading the host as syntax, and the check keeps the TOOL from reading
