@@ -80,6 +80,11 @@ jobs:
   build:
     name: Build, sign & notarize (macOS)
     needs: changelog
+    outputs:
+      # The cask's checksum, read off the DMG this job just notarized rather
+      # than recomputed later from a download — the tap verifies it again on
+      # its side, so a mismatch here is caught before anything is published.
+      sha256: ${{ steps.dmg.outputs.sha256 }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -164,6 +169,15 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/apple_api_key.p8"
 
+      - name: Checksum the DMG
+        id: dmg
+        run: |
+          set -uo pipefail
+          dmg=$(ls dist/*.dmg 2>/dev/null | head -1)
+          [ -n "$dmg" ] || { echo "::error::no DMG in dist/ to checksum" >&2; exit 1; }
+          echo "Found $dmg"
+          echo "sha256=$(shasum -a 256 "$dmg" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Upload DMG and publish the release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
@@ -175,3 +189,56 @@ jobs:
           # (Finding M2) — this step is what actually flips the release out
           # of draft, so it must carry it too.
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+
+  tap:
+    name: Bump the Homebrew cask
+    needs: build
+    # Homebrew has no concept of a prerelease: whatever lands in the tap is
+    # what `brew upgrade` hands every user. Pre-releases therefore skip this
+    # and are installed from the releases page instead — the same rule the
+    # tap's own README states.
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch the bump
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          SHA: ${{ needs.build.outputs.sha256 }}
+        run: |
+          set -uo pipefail
+          [ -n "$SHA" ] || { echo "::error::the build job produced no checksum" >&2; exit 1; }
+          for attempt in 1 2 3; do
+            if gh workflow run bump.yml --repo NoiXdev/homebrew-tap \
+              -f kind=cask \
+              -f name=macscp \
+              -f version="${TAG#v}" \
+              -f sha256="$SHA"; then
+              echo "Dispatched on attempt $attempt."
+              exit 0
+            fi
+            echo "Dispatch attempt $attempt failed."
+            sleep 10
+          done
+          exit 1
+
+      # This job runs after the release is already public. A silent failure
+      # here leaves the tap pointing at the previous version while its README
+      # advertises this one, so say exactly what to run by hand. The tap's
+      # SETUP.md records this happening to another product on 2026-09-23.
+      - name: Explain how to finish the bump by hand
+        if: failure()
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          SHA: ${{ needs.build.outputs.sha256 }}
+        run: |
+          echo "::error::The tap was not bumped. The release is already published,"
+          echo "::error::so 'brew install --cask macscp' still installs the previous version."
+          echo "Run it by hand with a token that may dispatch workflows in the tap:"
+          echo ""
+          echo "  gh workflow run bump.yml --repo NoiXdev/homebrew-tap \\"
+          echo "    -f kind=cask -f name=macscp \\"
+          echo "    -f version=${TAG#v} -f sha256=${SHA}"
+          echo ""
+          echo "A 403 here means TAP_TOKEN cannot dispatch in NoiXdev/homebrew-tap."
+          echo "See SETUP.md in that repository for what the token needs."
