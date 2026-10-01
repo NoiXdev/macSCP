@@ -82,9 +82,13 @@ struct RemoteFileSystemAppendResumeGuardTests {
     /// `supportsAppendResume` default from the protocol extension would make
     /// the compiler demand an answer from every conformer and close the
     /// question permanently. Measured 2026-10-01, it forces an explicit
-    /// answer onto roughly 32 test doubles across more than 20 files, which
-    /// is exactly what that extension's own comment says it exists to avoid.
-    /// That is the maintainer's decision, raised separately.
+    /// answer onto 30 conformer declarations across 22 files under `Tests/`,
+    /// which is exactly what that extension's own comment says it exists to
+    /// avoid. That is the maintainer's decision, raised separately; the
+    /// `docs/BACKLOG.md` row that raises it carries the whole derivation of
+    /// that figure — the scan, its 37 matches, and the seven excluded
+    /// lines named — because this count was first written as 32 across 23
+    /// and three different regexes gave three different totals.
     ///
     /// Both checks are POSITIVE: sets that must match, not absences. An
     /// emptied-out scan fails them rather than reading as satisfied
