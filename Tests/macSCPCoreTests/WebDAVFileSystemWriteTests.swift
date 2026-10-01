@@ -305,6 +305,24 @@ struct WebDAVFileSystemWriteTests {
         #expect(transport.requests.isEmpty)
     }
 
+    /// The one line in this file that no test could reach before a seam
+    /// existed: `Stream.getBoundStreams` is a static Foundation call, so the
+    /// "it handed back no pair" branch was unreachable from a test and a
+    /// reviewer could substitute a different finding there with the suite
+    /// staying green (docs/BACKLOG.md, 2026-09-28).
+    @Test func noBoundStreamPairIsReportedAsTheUploadStreamFinding() async throws {
+        let transport = FakeHTTPTransport(replies: [])
+        let fs = WebDAVFileSystem(
+            config: config, transport: transport, boundStreams: { _ in nil })
+
+        await #expect(throws: RemoteFSError.finding(.uploadStreamUnavailable)) {
+            try await fs.write(path: "/a.txt", mode: .overwrite, contents: stream("data"))
+        }
+        #expect(transport.requests.isEmpty, """
+            No request may be made when the body stream could not be created.
+            """)
+    }
+
     @Test func createDirectoryIssuesMkcolOnACollectionURL() async throws {
         let transport = FakeHTTPTransport(replies: [.init(status: 201, body: Data(), headers: [:])])
         let fs = WebDAVFileSystem(config: config, transport: transport)

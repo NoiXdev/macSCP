@@ -8,19 +8,46 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
     private let transport: any HTTPTransport
     private let session: URLSession?
 
-    /// Test seam: inject a transport, skip the network entirely.
-    init(config: WebDAVConnectionConfig, transport: any HTTPTransport) {
+    /// How a bound stream pair is obtained. A closure rather than a protocol:
+    /// `Stream.getBoundStreams` is one static Foundation call, and the shape
+    /// here follows `DetachedProbe.Launch` — a `@Sendable` alias with a
+    /// production default — rather than inventing a factory protocol for a
+    /// single line. Its reason for existing is that the "no pair" branch in
+    /// `write(path:mode:contents:)` was reachable from no test, which let a
+    /// reviewer substitute a different finding there unnoticed.
+    typealias BoundStreamFactory =
+        @Sendable (_ bufferSize: Int) -> (input: InputStream, output: OutputStream)?
+
+    static let foundationBoundStreams: BoundStreamFactory = { bufferSize in
+        var input: InputStream?
+        var output: OutputStream?
+        Stream.getBoundStreams(withBufferSize: bufferSize,
+                               inputStream: &input, outputStream: &output)
+        guard let input, let output else { return nil }
+        return (input, output)
+    }
+
+    private let boundStreams: BoundStreamFactory
+
+    /// Test seam: inject a transport, skip the network entirely. The
+    /// `boundStreams` default is the Foundation call every production path
+    /// uses; a test overrides it to reach the "no pair" branch.
+    init(config: WebDAVConnectionConfig, transport: any HTTPTransport,
+         boundStreams: @escaping BoundStreamFactory = WebDAVFileSystem.foundationBoundStreams) {
         self.base = WebDAVURL(
             baseURL: URL(string: config.baseURL) ?? URL(string: "https://invalid.invalid")!,
             nextcloudUser: config.useNextcloudPath ? config.username : nil)
         self.transport = transport
         self.session = nil
+        self.boundStreams = boundStreams
     }
 
-    private init(base: WebDAVURL, transport: any HTTPTransport, session: URLSession) {
+    private init(base: WebDAVURL, transport: any HTTPTransport, session: URLSession,
+                 boundStreams: @escaping BoundStreamFactory = WebDAVFileSystem.foundationBoundStreams) {
         self.base = base
         self.transport = transport
         self.session = session
+        self.boundStreams = boundStreams
     }
 
     /// Builds the delegate-bearing session, verifies the credentials with a
@@ -462,11 +489,7 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         request.httpMethod = "PUT"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
 
-        var input: InputStream?
-        var output: OutputStream?
-        Stream.getBoundStreams(withBufferSize: TransferChunk.size,
-                               inputStream: &input, outputStream: &output)
-        guard let input, let output else {
+        guard let (input, output) = boundStreams(TransferChunk.size) else {
             throw RemoteFSError.finding(.uploadStreamUnavailable)
         }
         request.httpBodyStream = input
