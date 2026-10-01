@@ -310,6 +310,10 @@ session's context menu, or the error message of a failed connection, and copy
 it as plain text or Markdown. It is built to carry no passwords, no key
 material and no credentials from a server address.
 
+If you think you have found a security problem, do not open an issue —
+write to **security@noix.dev**. [SECURITY.md](SECURITY.md) says what is in
+scope and what to include.
+
 ## License
 
 [MIT](LICENSE) — © 2026 noix.

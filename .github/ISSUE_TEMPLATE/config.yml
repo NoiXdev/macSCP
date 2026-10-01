@@ -3,3 +3,14 @@
 # packaging problem, a documentation gap — should not have to be squeezed
 # into one of them or dropped.
 blank_issues_enabled: true
+
+contact_links:
+  # The address is in `about` on purpose, not only behind the link: GitHub
+  # serves /security/policy from the DEFAULT branch, so until SECURITY.md
+  # reaches `main` that page shows no policy — while this entry still has to
+  # tell someone where to write.
+  - name: Security problem — do not open a public issue
+    url: https://github.com/NoiXdev/macSCP/security/policy
+    about: >-
+      Write to security@noix.dev instead. Include what you did and what
+      happened, and leave every password, passphrase and private key out.
