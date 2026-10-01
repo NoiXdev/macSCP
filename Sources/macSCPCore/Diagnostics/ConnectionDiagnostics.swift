@@ -68,14 +68,14 @@ public struct DiagnosticRunObserver: Sendable {
 /// the server is kept on a cancelled walk too, because it is the only place
 /// the file is named (`contributions(_:_:into:)`).
 public actor ConnectionDiagnostics {
-    let descriptor: BackendDescriptor
+    private let descriptor: BackendDescriptor
     let values: FieldValues
     let secrets: (any SecretSource)?
     let sessionID: UUID?
     let stepTimeout: Duration
     let traceTimeout: Duration
     let appVersion: String
-    let jump: DiagnosticJump?
+    private let jump: DiagnosticJump?
     let jumpDialer: DiagnosticJumpDialer
     let jumpDialLaunch: DetachedProbe.Launch
     let lookups: ResolveLookups
