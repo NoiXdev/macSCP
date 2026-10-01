@@ -26,40 +26,54 @@ import macSCPCore
 /// `reason` rather than a path or an enum. For those the App says the
 /// sentence itself, from its own catalogue, and keeps the detail behind it.
 ///
-/// ## What the detail actually is (counted 2026-09-28, Task 6 fix round 1)
+/// ## What the detail actually is (counted 2026-09-28, recounted 2026-10-01)
 ///
 /// The first version of this comment called it "free text a backend or
 /// Foundation wrote". That was measured false, and it has been recounted
 /// after every conversion since. Two recipes over `Sources/macSCPCore`, both
 /// run against THIS HEAD:
 /// `grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore`
-/// finds **80** lines, minus **17** belonging to `AgentError` — an unrelated
+/// finds **78** lines, minus **17** belonging to `AgentError` — an unrelated
 /// SSH-agent error type whose `protocolError(reason:)` case happens to share
 /// the name, counting its call sites and its own case declaration — minus
 /// `RemoteFSError`'s own **2** case declarations, minus **7** lines that
 /// quote the pattern in a comment rather than construct it
 /// (`DiagnosticLog.swift:266-267`, `DialProbes.swift:164-165`,
 /// `ConnectionViewModel.swift:2333`, `RemoteFSFinding.swift:10`,
-/// `CitadelFileSystem.swift:763`) = **54**. That recipe is a FLOOR, not a
+/// `CitadelFileSystem.swift:763`) = **52**. That recipe is a FLOOR, not a
 /// census: it matches only a construction whose `reason:` sits on the SAME
 /// line, and this project splits the line whenever the reason is long — six
 /// sites hid there until Task 6. So
 /// `grep -rnE '(protocolError|connectionFailed)\($' Sources/macSCPCore`
 /// finds **17** further lines, **2** of them `AgentError`
 /// (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`), leaving
-/// **15**. The two recipes' matches are disjoint, so 54 + 15 = **69** for
+/// **15**. The two recipes' matches are disjoint, so 52 + 15 = **67** for
 /// `Sources/macSCPCore`. Both are scoped to that path; three more
 /// constructions of the same shape live in `Sources/MacSCPAppKit/`
 /// (`ContentView+Lifecycle.swift:276`, `ContentView.swift:1871`,
 /// `ContentView.swift:3434`), which neither path reaches. **The whole-tree
-/// total is 72.**
+/// total is 70.**
+///
+/// The chain stood at 80 → 54 → 69 → 72 until `af283217`, which converted
+/// the two same-line constructions in `S3FileSystem.parseObjectKeys` and
+/// `S3ListParser.hasAnyEntries` to `RemoteFSError.finding(.listingUnparsable)`:
+/// two lines left the FIRST recipe, and every figure derived from it dropped
+/// by two. The second recipe's 17 and the App layer's 3 are unchanged.
 ///
 /// The 15 the second recipe finds, every citation opened against this HEAD:
 /// `S3MultipartXML.parseUploadID`, `S3FileSystem.swift:714`, `:896`, `:1116`,
-/// `S3ListParser.swift:90`, `RemoteChecksumProvider.swift:329`,
+/// `S3ListParser.parseBuckets`, `RemoteChecksumProvider.swift:329`,
 /// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
-/// `:1671`, `WebDAVFileSystem.swift:586`, `:630`,
+/// `:1671`, `WebDAVFileSystem.delete`, `WebDAVFileSystem.setPermissions`,
 /// `ThroughputProbe.swift:632`, `:702`.
+///
+/// Three of those were line numbers until 2026-10-01, and each had been
+/// moved TWICE by the branch that corrected them — traced per commit, not
+/// assumed. `S3ListParser.swift:90` went to `:92` in `af283217` and back to
+/// `:91` in `5fd6d211`; `WebDAVFileSystem.swift:586` and `:630` went to
+/// `:594`/`:638` in `1f56368d` and then to `:617`/`:661` in `c84aa33d`.
+/// Two commits each is the argument for a symbol: they are named by symbol
+/// now, as `parseUploadID` already was.
 ///
 /// What those lines show: the great majority compose **macSCP's own English
 /// prose**, not a server's words — genuinely foreign text is the minority (a

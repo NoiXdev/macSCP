@@ -63,10 +63,13 @@ struct RemoteFileSystemAppendResumeGuardTests {
     /// override set). The list is whatever was found, not a closed set.
     ///
     /// Why no stronger claim: eight defects have been found in this guard's
-    /// scans so far, in this order. Six are misses: a keyword list without
-    /// `extension`; an `enum`; a header wrapped over two lines; a type
-    /// conforming through a refined protocol; a refinement composed with `&`;
-    /// an attribute before the type. Two are not misses: an override
+    /// scans so far, grouped below by kind rather than by when they were
+    /// found — the order holds WITHIN each group, and the two non-misses
+    /// listed second were actually among the first found, as the
+    /// attribution sentence further down says. Six are misses: a keyword
+    /// list without `extension`; an `enum`; a header wrapped over two lines;
+    /// a type conforming through a refined protocol; a refinement composed
+    /// with `&`; an attribute before the type. Two are not misses: an override
     /// attributed by walking back to its enclosing type (a design defect),
     /// and the protocol extension's own default counted as an overrider (a
     /// false red). The first miss and the override attribution were found by
