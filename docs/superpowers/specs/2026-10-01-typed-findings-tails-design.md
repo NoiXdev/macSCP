@@ -87,6 +87,14 @@ Counted in the same pass: **0 of the 17** `en` finding sentences end with
 a period, so no trailing punctuation has to be stripped. A guard that
 stripped one anyway would carry a branch nothing exercises.
 
+**Recount, 2026-10-01, after execution.** T2 added the eighteenth finding
+on the same day, so the figures above are the design-time ones and the
+count in them is not the count at HEAD. Re-measured at `424512a4` for the
+closeout: **17 of 18** match under the naive rule — the exception is
+still `resumeRangeIgnored` and its "S3" — **18 of 18** under the
+first-character rule, and **0 of 18** `en` finding sentences end with a
+period. The relation itself is unchanged.
+
 ### 3. `supportsAppendResume` defaults to `true`, in a protocol extension
 
 Not named in any of the seven rows. `RemoteFileSystem.swift:207` gives the
@@ -108,6 +116,24 @@ substantively correct. One is wrong in its path:
 `RemoteBrowserViewModel.swift` is in `Sources/macSCPCore/Presentation/`,
 not `Sources/MacSCPAppKit/`. That is the third stale spot this work fixes.
 
+**Correction, 2026-10-01, after execution.** That last sentence is false,
+and so is the third item of the T7 list below: `docs/BACKLOG.md` never
+carried the App module's path for `RemoteBrowserViewModel.swift`. The
+`:172` row cites a BARE `RemoteBrowserViewModel.swift:938` with no module
+path at all. The wrong one comes from this plan's own Task 7 step
+(`docs/superpowers/plans/2026-10-01-typed-findings-tails.md:1418`), the
+one line in the repository spelling the FULL
+`Sources/MacSCPAppKit/RemoteBrowserViewModel.swift`. The shorter string
+now stands in four places, three of them these corrections, which is why
+the absence claim below is anchored at a commit rather than at the tree.
+`git grep "MacSCPAppKit/RemoteBrowserViewModel" 0f55446d -- docs/`
+returns nothing — anchored at the base commit, because a document that
+quotes the string it calls absent makes that string present, which is how
+the first attempt at this verification falsified itself. There were TWO
+stale spots in that file, not three; the closeout qualified the bare
+citation to `Sources/macSCPCore/Presentation/` anyway and recorded the
+correction in the row.
+
 ---
 
 ## Decisions taken by the maintainer, 2026-10-01
@@ -120,6 +146,22 @@ not `Sources/MacSCPAppKit/`. That is the third stale spot this work fixes.
    review was closed unreviewed on 2026-09-28.
 2. **Row `:177` closes by measurement**, with no behaviour change and no
    property split — see measurement 1.
+
+**Correction, 2026-10-01, after execution.** Decision 1's stated reason
+for `parseUploadID` is false: the phrase DOES reach a reader.
+`parseUploadID` <- `S3Uploader.uploadMultipart` <- `S3FileSystem.write`,
+which rethrows unchanged; the app's `TransferFailureLabel` renders
+`.protocolError` as the translated `transfers.failure.protocolError` with
+this English text appended as a MARKED technical detail, and the CLI
+prints it after `Error: `. The decision stands, with its reason corrected:
+the reader already gets a translated sentence with the English arriving
+labelled as technical, so typing the in-scope half would trade that pair
+for one translated sentence with no suffix — a real but small gain
+against four catalogue sentences, two of them unreviewed. The maintainer
+was given a false premise for this choice and should know it. The same
+correction applies to T4's paragraph below, which repeats the phrase
+"reaches no reader"; the comment committed at the site says the corrected
+thing.
 
 ---
 
@@ -135,14 +177,54 @@ A test asserts each of the four production backends' answer by name
 source scan asserts two sets by name: the conformers in `Sources/` (the six
 above) and the types that override `supportsAppendResume` (S3 and WebDAV,
 both `false`). A set is stronger than a count — a conformer swapped for
-another turns it red too, and a seventh cannot inherit `true` in silence.
-Both halves are positive checks: an equality and a count that must match,
-per `CLAUDE.md`, "Guards that name what they watch".
+another turns it red too. Both halves are positive checks: set equalities
+that fail loudly the moment what they name moves, per `CLAUDE.md`,
+"Guards that name what they watch".
 
-The decision recorded in code at `WebDAVFileSystem.swift:417`: plain WebDAV
-has no partial PUT, so `false` is permanent rather than provisional, and
-the `resumeNotSupported` throw at `:450` stays as defence in depth with its
-catalogue entries accepted as unreached from production.
+**Correction, 2026-10-01, after execution.** Two claims in the paragraph
+above were weaker in the tree than on the page, and both are corrected
+here rather than quietly rewritten.
+
+1. There is no "count that must match". The guard asserts set EQUALITIES
+   — the conformer set, the override set, and the protocol extension's
+   own default read into a third, separate expectation — and no count
+   anywhere. The sentence as first written is what this spec's own section
+   argues against.
+2. "A seventh cannot inherit `true` in silence" promises more than the
+   code delivers. The source half is BEST-EFFORT over declaration headers.
+   Eight defects were found in its scans during execution: six misses (a
+   keyword list without `extension`; an `enum`; a header wrapped over two
+   lines; a conformance through a refined protocol; a refinement composed
+   with `&`; an attribute before the type) and two non-misses (an override
+   attributed by walking back to its enclosing type; the protocol
+   extension's own default counted as an overrider). Five of the six
+   misses were found by a fresh reader planting a spelling the previous
+   list did not contain. The guard's own doc comment now says this, and
+   names the spellings it does not read as an open list rather than a
+   closed one.
+
+The structural alternative — deleting the extension default so the
+compiler demands an answer — is an open row in `docs/BACKLOG.md` for
+the maintainer, not something this plan decided. Its cost, corrected in
+fix round 1 of the closeout: **30 single-line conformer headers across 22
+files under `Tests/`**, not the 32 across 23 first written here. Three
+counters on this branch produced three different totals (32, 30, 43) from
+three different regexes, so the figure is only a measurement when it
+travels with its derivation; the row in `docs/BACKLOG.md` carries the
+grep, its 37 matches in 25 files, and all seven excluded lines named one
+by one. What the first count got wrong: it excluded the two string-literal
+fixture lines in the append-resume guard and missed the two in
+`RemoteFileSystemReadStreamCycleGuardTests.swift` (`:133`, `:152`), which
+were never read.
+
+The decision recorded in code at `WebDAVFileSystem.supportsAppendResume`:
+plain WebDAV has no partial PUT, so `false` is permanent rather than
+provisional, and the `resumeNotSupported` throw in
+`write(path:mode:contents:)` stays as defence in depth with its catalogue
+entries accepted as unreached from production. (Written as `:417` and
+`:450` here at design time; Task 5's bound-stream seam moved them to
+`:452` and `:485`, so both are named by symbol instead — corrected in
+fix round 1 of the closeout.)
 
 The reachability argument of measurement 1 is written at
 `RemoteFSFinding.readsAsConnectionFailure`, naming the four gates and both
@@ -194,6 +276,31 @@ queue's mapper catches. The change is therefore invisible today and
 correct the moment either operation joins the queue's catch set, which is
 the row's own argument.
 
+**Correction, 2026-10-01, after execution.** Both halves of the paragraph
+above are false, and they were false when it was written — they were
+carried over from `docs/BACKLOG.md:174` and not re-measured.
+
+1. There were TWO untyped copies of this condition, not one:
+   `S3FileSystem.parseObjectKeys` and `S3ListParser.hasAnyEntries`, the
+   second in the same file as the sibling cited above as already typed. It
+   was found by `grep -rn "Failed to parse S3 ListObjectsV2" Sources/`
+   after the first had been converted, and T3 was amended to type both.
+2. The change is NOT invisible. `RmCommand.swift:40`/`:48` calls
+   `deleteTree(at:)` and `delete(path:)`, which reach both sites; the CLI
+   prints the error through `Sources/macSCPCore/CLI/CLIErrorMapping.swift`
+   (`:313` for `.protocolError`, `:332` for `.finding`), and
+   `RemoteBrowserViewModel.message(for:path:)` renders it in the browse
+   banner (`.protocolError` at `:1288`, `.finding` at `:1275`).
+
+Measured delta: the CLI's `rm` loses Foundation's detail text in exchange
+for the fixed sentence "the folder listing the server sent could not be
+read", and the browse banner goes from the frame
+`core.browse.protocolError %@` around a FIXED English tail to the
+finding's own translated sentence. The one part of the old paragraph that
+held is the transfer queue: neither `rename` nor `deleteTree` reaches its
+mapper. The corrected premise is in the now-closed row at
+`docs/BACKLOG.md:174`.
+
 ### T4 — `parseUploadID` recorded as a deliberate passthrough
 
 Closes row `:175` without a code change beyond a comment at
@@ -242,8 +349,10 @@ constant-comparison tests keep their own subjects.
 ### T7 — closeout
 
 The seven rows are closed in `docs/BACKLOG.md` with what was measured,
-including the two whose premise the measurements changed. The three stale
-spots are corrected:
+including the two whose premise the measurements changed. The stale spots
+are corrected — **two of the three listed, because the third does not
+exist**; see the correction under "Citations checked rather than
+trusted" above:
 
 1. The row "Wall-clock ceilings still in the tree" (`:20`) states that
    `ConnectionDiagnosticsTests.theRunnerWalksTheUniversalStepsInTheOrderTheReportPrints`
@@ -254,7 +363,10 @@ spots are corrected:
    candidates. Its third, the capability boundary, has been
    **Implemented since 2026-08-28** by the row at `:120`; the other two
    have no row in the file at all.
-3. The module path in the `resumeNotSupported` row, as above.
+3. ~~The module path in the `resumeNotSupported` row, as above.~~ **Not a
+   stale spot: the row never carried that path.** Corrected 2026-10-01;
+   the bare citation was qualified rather than fixed, and the row records
+   why.
 
 Whether any of this reaches the user documentation is decided in this task
 by reading the changed sentences, not assumed: T2 changes one user-visible

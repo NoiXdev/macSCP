@@ -121,6 +121,16 @@ a unit test. The guard therefore has two halves: real instances for the two
 that are cheap, and a source scan for the set of conformers and the set of
 overriders.
 
+> **Correction, 2026-10-01 (closeout).** The guard that landed
+> (`1f56368d`..`d68fcdb0`) is not the code block below: the scanner became
+> statement-wise and the doc claim was narrowed three times. Eight defects
+> were found in its scans during execution — six misses, two
+> non-misses, five of the misses found by planting — so the source half
+> is BEST-EFFORT over declaration headers and says so at the suite. Read
+> the committed doc comment, not this block, for what it covers; the spec's
+> T1 section carries the same correction, and the structural alternative is
+> an open row in `docs/BACKLOG.md` for the maintainer.
+
 - [ ] **Step 1: Write the guard**
 
 Create `Tests/macSCPCoreTests/RemoteFileSystemAppendResumeGuardTests.swift`:
@@ -730,6 +740,18 @@ It is invisible today: `parseObjectKeys` is reached only from
 queue's mapper catches. It becomes user-visible the moment either operation
 joins the queue's catch set, which is why the copy is worth removing now.
 
+> **Correction, 2026-10-01 (closeout).** Both claims in the two paragraphs
+> above are false, and the commit that landed (`af283217`) says the
+> corrected thing. There were TWO untyped copies, not "the last" one:
+> `S3FileSystem.parseObjectKeys` and `S3ListParser.hasAnyEntries`, and the
+> task was amended to type both. And the change is NOT invisible —
+> `RmCommand` reaches both sites through `deleteTree(at:)` and
+> `delete(path:)`, the CLI prints it through `CLIErrorMapping`, and
+> `RemoteBrowserViewModel` renders it in the browse banner. The measured
+> before/after for both surfaces is in the closed row at
+> `docs/BACKLOG.md:174` and in the spec's T3 correction. The commit-message
+> block below is the plan's proposal, superseded by the amended commit.
+
 - [ ] **Step 1: Write the failing test**
 
 Add to `Tests/macSCPCoreTests/S3FileSystemTests.swift`, inside the existing
@@ -841,6 +863,20 @@ provenances. Splitting it would cost four catalogue sentences, two of them in
 type a phrase that reaches no reader. The maintainer decided against it. What
 this task leaves behind is a decision a later reader can find, instead of an
 oversight they re-discover.
+
+> **Correction, 2026-10-01 (closeout).** "A phrase that reaches no reader"
+> is false, and so is the same clause in the comment and commit-message
+> blocks below. The trace: `parseUploadID` <- `S3Uploader.uploadMultipart`
+> <- `S3FileSystem.write`, which rethrows unchanged; the app's
+> `TransferFailureLabel` renders `.protocolError` as the translated
+> `transfers.failure.protocolError` with this English text appended as a
+> MARKED technical detail, and the CLI prints it after `Error: `. The
+> decision stands; its reason is corrected at the site and in the closed row
+> at `docs/BACKLOG.md:175` — the reader already gets a translated
+> sentence with the English arriving labelled as technical, so typing the
+> in-scope half would trade that pair for one translated sentence with no
+> suffix. The committed comment (`67713554`) is the corrected text, not the
+> block below.
 
 - [ ] **Step 1: Record the decision at the site**
 
@@ -1107,6 +1143,14 @@ the **first character compared case-insensitively**. Counted in the same
 pass, **0 of the 17** `en` sentences end with a period, so nothing needs
 stripping — do not add a branch for punctuation that does not exist.
 
+> **Recount, 2026-10-01 (closeout).** These are design-time figures: T2
+> added the eighteenth finding on the same day, before this task ran.
+> Re-measured at `424512a4`: **17 of 18** under the naive rule — the
+> exception is still `resumeRangeIgnored` and its "S3" — **18 of 18**
+> under the first-character rule, and **0 of 18** trailing periods. The
+> relation itself is unchanged. The spec's measurement 2 carries the same
+> recount.
+
 Three keys carry a ` %@` suffix and their values a `%@`
 (`unexpectedStatus`, `pathExistsAndIsNotADirectory`,
 `uploadPartUnacknowledged`, counted at `RemoteFSFinding.swift:153-154`), so
@@ -1331,6 +1375,10 @@ it — the rows are a measurement record):
   readers' table, and that the finding count went 17 → 18.
 - `:174` `parseObjectKeys` — **Done**, noting the change is invisible today
   and why it was still worth making.
+  > **Correction, 2026-10-01 (closeout).** This step's premise is false; see
+  > the correction in Task 3 above. The row was closed with the MEASURED
+  > reach instead — two untyped sites, and a user-visible delta on the
+  > CLI's `rm` and on the browse banner.
 - `:175` `parseUploadID` — **Done by a DECISION, not a change**, naming the
   maintainer's decision of 2026-10-01 and its cost argument.
 - `:176` upload-stream seam — **Done**, naming the alias, and that the plant
@@ -1340,6 +1388,9 @@ it — the rows are a measurement record):
 - `:178` `logSentence` — **Done**, with the relation that was measured
   (16 of 17 under the naive rule, all under the first-character rule) and the
   zero for trailing periods.
+  > **Recount, 2026-10-01 (closeout).** 17 of 18, 18 of 18, 0 of 18 at
+  > `424512a4`; see the recount under Task 6 above. The row was closed with
+  > the re-measured figures, not with these.
 
 - [ ] **Step 2: Correct the three stale spots**
 
@@ -1367,6 +1418,15 @@ step is that a citation gets re-read, not re-remembered.
 3. The `:172` row cites `Sources/MacSCPAppKit/RemoteBrowserViewModel.swift`.
    The file is at `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`
    — confirm with `ls`, then correct the path.
+   > **Correction, 2026-10-01 (closeout).** This step is false, and the
+   > line above is where the wrong path comes from: the one line in the
+   > repository spelling the full `Sources/MacSCPAppKit/` form of it, the
+   > shorter string now standing in these corrections too. The `:172` row
+   > cites a BARE `RemoteBrowserViewModel.swift:938` with no module path:
+   > `git grep "MacSCPAppKit/RemoteBrowserViewModel" 0f55446d -- docs/`
+   > returns nothing. There were two stale spots in that file, not three.
+   > The closeout qualified the bare citation anyway and recorded the
+   > correction in the row and in the spec.
 
 - [ ] **Step 3: Decide the user documentation by reading, not by assuming**
 
