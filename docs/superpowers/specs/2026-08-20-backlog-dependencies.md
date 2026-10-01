@@ -1223,3 +1223,83 @@ Three courses the maintainer can take:
    implements `zlib@openssh.com` only.
 
 **Review date:** at the next release and before the next fork change.
+
+## Measured 2026-10-01 — fork check before v1.6.0
+
+The first check since v1.5.0, and the first that had to read code rather
+than compare versions. Both upstreams, measured on 2026-10-01.
+
+- **apple/swift-nio-ssh**: commits since the fork base `b0591e4` ("Fix
+  warnings, that appeared after requiring Swift 5.4", #114):
+  `git rev-list --count b0591e4..upstream/main` = **92**. Advisories:
+  **1**.
+- **orlandos-nl/Citadel**: commits since the fork base:
+  `git rev-list --count ae8562f..upstream/main` = **0**. Advisories:
+  **0**. A zero measured on a date, which is the point of writing it down.
+
+### The advisory, and why the version numbers could not answer it
+
+`GHSA-998x-vgvp-xwpc` / **CVE-2026-43798**, **critical**, published
+2026-07-17: an unauthenticated out-of-bounds stack write via an oversized
+ECDSA signature. Affected `<= 0.14.0`, patched in `0.14.1`. A single
+crafted message, before any cryptographic verification.
+
+**The fork's tags are its own** (`0.3.7`…`0.3.10`, by way of `Wellz26`),
+so comparing them against upstream's `0.14.x` answers nothing — it would
+have said "affected". And `git merge-base --is-ancestor 31cdc3c HEAD` is
+false, because this fork applies patches rather than merging, so the
+ancestry test would have said "affected" too.
+
+**Carried.** The guard sits at `NIOSSHSignature.swift:347`:
+
+```swift
+guard rByteView.count <= pointSize, sByteView.count <= pointSize else {
+    throw NIOSSHError.invalidSSHMessage(reason: "ECDSA signature mpint exceeds curve point size")
+}
+```
+
+Byte-identical to upstream's added lines once whitespace is normalised,
+three-line comment included, applied as fork `b098395`, **with upstream's
+61-line regression test**. The raw hunks differ only because upstream has
+since run swift-format over that file (41 insertions / 43 deletions of
+pure reformatting).
+
+### The 92, classified
+
+**SECURITY 5 · CORRECTNESS 5 · FEATURE 7 · NOISE 75.** Sixty of the 92
+touch no file under `Sources/NIOSSH/` at all. Twelve are already
+cherry-picked into the fork.
+
+Every SECURITY and CORRECTNESS commit was decided by reading the fork's
+code, not by matching keywords:
+
+| commit | verdict |
+|---|---|
+| `31cdc3c` CVE-2026-43798 | **carried**, with its test |
+| `6d576c8` Limit buffered state | **equivalent, independently, and tighter** — the fork caps the version/preamble phase at `maximumAllowedVersionSize = 4096` and enforces `maximumPacketSize` (default 128 KB) on both the plaintext and the decrypted path. Upstream's equivalents are ~8 MB and 256 KB |
+| `73d8f68` Configurable max packet size | **equivalent**, and the fork was never on the bad default: `SSHChildChannel` advertises `UInt32(multiplexer.maximumPacketSize)`, not the hard-coded 16 MB upstream was fixing. Uncarried part is a flow-control window of 64× the packet size against the fork's 1× — a throughput characteristic, not an exposure |
+| `3ec2814` Limit client auth attempts | **not carried — server-side only.** The cap is on inbound `SSH_MSG_USERAUTH_REQUEST`, which macSCP sends and never receives; the upstream code's own comment says the limit is `.max` for clients |
+| `8257bc4` readVersion() bare-LF crash | **not carried — and structurally inapplicable.** Two independent reasons: the trapping `-1` subscript was inside `if self.isServer`, and the fork rewrote `readVersion` in `089d3ec` with no negative indexing at all. Traced in both roles: a bare LF yields a clean `protocolViolation` as server and a skipped preamble line as client |
+| `ded5e5c` client version parsing · `db57f32` ByteBuffer resize · `7733e7e` window update when closed · `baa05dc` Sealed Box | **all carried or equivalent**, hunks identical once normalised |
+| `c99a20b` lost file handle | **not carried — not in the library.** Touches only `Sources/NIOSSHServer/ExecHandler.swift`, the demo executable macSCP does not build |
+
+### Both retirement questions, asked as the rule requires
+
+**swift-nio-ssh: no.** The fork still carries `hostKeyAlgorithmNames` and
+`userAuthAlgorithmName`, neither of which upstream has.
+
+**Citadel: harder than this record previously implied.** Upstream has
+been dormant six months — its `main` tip `ae8562f` is dated 2026-04-04
+and is also tag `0.12.1`. More to the point, that tip is "Merge pull
+request #127 from Wellz26/main", and its parent is "use Wellz26 nio-ssh
+fork for Mac Catalyst compatibility": **upstream Citadel now depends on
+the Wellz26 nio-ssh fork itself**. Retiring our Citadel fork would
+therefore not get this project off the Wellz26 lineage, which is what
+retiring it was partly for.
+
+### For the record, not for this release
+
+The fork does not cap authentication attempts, which matters only if
+macSCP ever grows a server role. It has none, and none is planned.
+
+**Nothing found here blocks a release.**
