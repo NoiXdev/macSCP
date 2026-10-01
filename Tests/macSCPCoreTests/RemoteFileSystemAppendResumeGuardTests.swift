@@ -55,18 +55,28 @@ struct RemoteFileSystemAppendResumeGuardTests {
     /// conformance reached through a `typealias` composition; anything under
     /// `Tests/`, where the test doubles inherit the default on purpose; a
     /// declaration whose header contains a `{` before its inheritance list
-    /// ends. The list is whatever was found, not a closed set.
+    /// ends; a NESTED type that reuses the name of a real conformer (the set
+    /// keys on bare names, so `enum Ns { struct ThroughputSink: ... }` leaves
+    /// `ThroughputSink` appearing once and the set matching); and an override
+    /// whose body spans several lines (only a single-line `{ true }` or
+    /// `{ false }` is read, so such an override would drop out of the
+    /// override set). The list is whatever was found, not a closed set.
     ///
-    /// Why no stronger claim: eight holes have been found in this guard's
-    /// scans so far, each by a fresh reader PLANTING a spelling the previous
-    /// list did not contain, never by reading the code. In the order found: a
-    /// keyword list without `extension`; an override attributed by walking
-    /// back to its enclosing type; the protocol extension's own default
-    /// counted as an overrider; an `enum`; a header wrapped over two lines; a
-    /// type conforming through a refined protocol; a refinement composed with
-    /// `&`; an attribute before the type. CLAUDE.md ("Guards that name what
-    /// they watch") calls that pattern evidence that the property wants a
-    /// structural boundary rather than another anchor.
+    /// Why no stronger claim: eight defects have been found in this guard's
+    /// scans so far, in this order. Six are misses: a keyword list without
+    /// `extension`; an `enum`; a header wrapped over two lines; a type
+    /// conforming through a refined protocol; a refinement composed with `&`;
+    /// an attribute before the type. Two are not misses: an override
+    /// attributed by walking back to its enclosing type (a design defect),
+    /// and the protocol extension's own default counted as an overrider (a
+    /// false red). The first miss and the override attribution were found by
+    /// the plan author reading the sample guard; the false red by running it;
+    /// and five of the six misses, all but the first, by a reader PLANTING a
+    /// spelling the previous list lacked. CLAUDE.md ("Guards that name what
+    /// they watch") calls a scan that keeps buying one spelling and revealing
+    /// another evidence that the property wants a structural boundary rather
+    /// than another anchor; five planted-and-missed spellings is that
+    /// pattern.
     ///
     /// The structural alternative, not taken here: deleting the
     /// `supportsAppendResume` default from the protocol extension would make
