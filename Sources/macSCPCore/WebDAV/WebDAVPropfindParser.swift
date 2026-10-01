@@ -77,7 +77,9 @@ public enum WebDAVPropfindParser {
     /// which finding a malformed body is for IT, because the answer differs:
     /// a Depth-1 body IS the folder listing, a Depth-0 body describes one
     /// resource. Passing it in rather than throwing one finding for all
-    /// three is what closed the `docs/BACKLOG.md` wording row.
+    /// three is what closed the `docs/BACKLOG.md` row "A Depth-0 PROPFIND
+    /// that will not parse now says the FOLDER LISTING could not be read",
+    /// closed 2026-10-01.
     private static func parsed(
         _ data: Data, unparsable finding: RemoteFSFinding
     ) throws -> Delegate {

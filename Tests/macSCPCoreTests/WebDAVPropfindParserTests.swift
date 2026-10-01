@@ -273,11 +273,18 @@ struct WebDAVPropfindParserTests {
         #expect(items.isEmpty)
     }
 
-    /// A body the XML parser refuses is the listing this backend could not
-    /// read, so it reports `.listingUnparsable` — the SAME finding the S3
-    /// list parser reports for its own unreadable listing, because a
-    /// PROPFIND body IS the WebDAV listing and a reader must not meet two
-    /// sentences for one condition (typed-remote-fs-findings Task 6).
+    /// A DEPTH-1 body the XML parser refuses is the listing this backend
+    /// could not read, so it reports `.listingUnparsable` — the SAME
+    /// finding the S3 list parser reports for its own unreadable listing,
+    /// because a Depth-1 PROPFIND body IS the WebDAV listing and a reader
+    /// must not meet two sentences for one condition
+    /// (typed-remote-fs-findings Task 6).
+    ///
+    /// True of Depth 1 only. A Depth-0 body describes ONE resource, and
+    /// calling that a folder listing is wrong about what was asked for, so
+    /// it reports `.resourceDetailsUnparsable` instead;
+    /// `eachReaderNamesWhatItAskedFor` below is where each reader's own
+    /// finding is asserted.
     ///
     /// `emptyCollectionYieldsNoEntries` above is the positive control this
     /// negative case needs: it parses a well-formed body through the same
