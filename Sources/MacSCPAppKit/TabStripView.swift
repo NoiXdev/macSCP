@@ -97,6 +97,28 @@ struct TabStripView: View {
             Spacer(minLength: 0)
         }
         .frame(height: 30)
+        // DIAGNOSTIC, 2026-10-01, for the `docs/BACKLOG.md` row "the active
+        // tab's colour is drawn above the tab strip, into the toolbar band".
+        //
+        // Nothing in this file clipped before this line, and a tab row
+        // carries `maxHeight: .infinity` with a `.background` of its own, so
+        // a tab taller than this frame painted its fill OUTSIDE the strip —
+        // SwiftUI draws a child past its parent's frame rather than cutting
+        // it off. That is the one mechanism that produces a tab-coloured
+        // block above a strip which cannot otherwise paint over itself.
+        //
+        // It is here to ANSWER a question, not because overflow is proven:
+        // if the block goes, the cause was overflow and this line is the
+        // fix; if it survives, the cause is in the toolbar band and the tab
+        // colour was only what showed through — then this line buys nothing
+        // and should come out again rather than stay as a charm.
+        //
+        // One thing it may not reach: `TabDragSourceView` is an AppKit
+        // `NSView` hosted inside each tab, and an `NSView`'s own hit region
+        // does not necessarily follow a SwiftUI clip. If the block goes but
+        // a drag still starts from above the strip, that is this caveat and
+        // not a second bug.
+        .clipped()
         // The mockup's "paper" (window ground) token had no consumer left
         // after M6a and was dropped from `DesignTokens`; there is no custom
         // replacement, so the strip uses the same surface the rest of the
