@@ -473,7 +473,7 @@ public enum DialSupport {
                 // sentence `S3RedirectSessionDelegate` had recorded — all
                 // three redirect findings came from that one site, and
                 // rendered as `known(.connectionFailed)`. Returning
-                // `.unknown` for all seventeen would reclassify the redirects
+                // `.unknown` for every finding would reclassify the redirects
                 // in the diagnostics while every other consumer's frame is
                 // deliberately preserved.
                 //
@@ -487,7 +487,7 @@ public enum DialSupport {
                 // chose, so it cannot be a finding — and that one never
                 // reaches this arm.
                 //
-                // What DOES change for all seventeen is the sentence: from
+                // What DOES change for every finding is the sentence: from
                 // the kind's generic one to the finding's own.
                 return (
                     finding.readsAsConnectionFailure ? .connectionFailed : .serverAnswerUnusable,

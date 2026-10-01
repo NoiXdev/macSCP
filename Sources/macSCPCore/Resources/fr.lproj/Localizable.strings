@@ -198,6 +198,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Quelque chose se trouve déjà à %@ et ce n'est pas un dossier";
 "core.finding.nonHTTPResponse" = "La réponse du serveur n'était pas une réponse HTTP";
 "core.finding.listingUnparsable" = "La liste du dossier envoyée par le serveur n'a pas pu être lue";
+"core.finding.resourceDetailsUnparsable" = "Les informations envoyées par le serveur sur cet élément n'ont pas pu être lues";
 "core.finding.redirectUnreadable" = "Le serveur a redirigé la requête vers une cible illisible, elle a donc été refusée";
 "core.finding.redirectBodyNotResendable" = "Le serveur a redirigé un envoi, et ses données ne peuvent pas être envoyées une seconde fois : la redirection a été refusée";
 "core.finding.redirectNotResignable" = "Le serveur a redirigé la requête, et la nouvelle cible n'a pas pu être signée : la redirection a été refusée";

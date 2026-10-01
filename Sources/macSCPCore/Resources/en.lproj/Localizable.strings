@@ -211,6 +211,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Something is already at %@ and it is not a folder";
 "core.finding.nonHTTPResponse" = "The server's answer was not an HTTP response";
 "core.finding.listingUnparsable" = "The folder listing the server sent could not be read";
+"core.finding.resourceDetailsUnparsable" = "The information the server sent about this item could not be read";
 "core.finding.redirectUnreadable" = "The server redirected the request somewhere that could not be read, so it was refused";
 "core.finding.redirectBodyNotResendable" = "The server redirected an upload, and its data cannot be sent a second time, so the redirect was refused";
 "core.finding.redirectNotResignable" = "The server redirected the request, and the new target could not be signed, so the redirect was refused";

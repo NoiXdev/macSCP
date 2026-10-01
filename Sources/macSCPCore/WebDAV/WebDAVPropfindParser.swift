@@ -15,7 +15,7 @@ public enum WebDAVPropfindParser {
     public static func parse(
         _ data: Data, base: WebDAVURL, requestedPath: String
     ) throws -> [RemoteFileItem] {
-        let delegate = try parsed(data)
+        let delegate = try parsed(data, unparsable: .listingUnparsable)
 
         var items: [RemoteFileItem] = []
         for entry in delegate.entries {
@@ -47,7 +47,7 @@ public enum WebDAVPropfindParser {
     /// returns, and it needs a `WebDAVURL` to map hrefs a probe has no
     /// business re-deriving.
     public static func firstResourceIsCollection(_ data: Data) throws -> Bool? {
-        try parsed(data).entries.first?.isCollection
+        try parsed(data, unparsable: .resourceDetailsUnparsable).entries.first?.isCollection
     }
 
     /// The `getetag` of the response describing `path`, exactly as the
@@ -66,40 +66,26 @@ public enum WebDAVPropfindParser {
     /// depth-0 PROPFIND answers with and exactly the one being asked about.
     public static func entityTag(_ data: Data, base: WebDAVURL, at path: String) throws -> String? {
         let wanted = normalized(path)
-        for entry in try parsed(data).entries
+        for entry in try parsed(data, unparsable: .resourceDetailsUnparsable).entries
         where resolvedPath(of: entry, base: base) == wanted {
             return entry.eTag
         }
         return nil
     }
 
-    /// One XML pass, shared by the three readers above.
-    private static func parsed(_ data: Data) throws -> Delegate {
+    /// One XML pass, shared by the three readers above — each of which says
+    /// which finding a malformed body is for IT, because the answer differs:
+    /// a Depth-1 body IS the folder listing, a Depth-0 body describes one
+    /// resource. Passing it in rather than throwing one finding for all
+    /// three is what closed the `docs/BACKLOG.md` wording row.
+    private static func parsed(
+        _ data: Data, unparsable finding: RemoteFSFinding
+    ) throws -> Delegate {
         let delegate = Delegate()
         let parser = XMLParser(data: data)
         parser.delegate = delegate
         parser.shouldProcessNamespaces = true
-        guard parser.parse() else {
-            // REUSES `.listingUnparsable` rather than getting a PROPFIND
-            // finding of its own: for `parse`, a Depth-1 PROPFIND body IS
-            // the WebDAV listing, so this is the same condition the S3 list
-            // parser reports, and a finding of its own would have needed a
-            // second way of saying the same thing — which
-            // `everyRemoteFSFindingHasItsOwnSentence` forbids.
-            //
-            // The wording is WIDER than two of the three readers, and that
-            // is accepted rather than unnoticed (Task 6 fix round 1).
-            // `entityTag(_:base:at:)` is fed a Depth-0 body describing ONE
-            // resource (`WebDAVFileSystem.statWithEntityTag`, `entityTag`),
-            // and `firstResourceIsCollection(_:)` a Depth-0 body of the
-            // session root (`WebDAVClaimsProbe`, under `try?`, so no reader
-            // ever meets the throw from there). A `stat` of a single file
-            // against a server answering malformed XML therefore says the
-            // folder listing could not be read, for an operation that
-            // listed no folder. The sentence is the price of one finding
-            // per condition; the wording has a `docs/BACKLOG.md` row.
-            throw RemoteFSError.finding(.listingUnparsable)
-        }
+        guard parser.parse() else { throw RemoteFSError.finding(finding) }
         return delegate
     }
 
