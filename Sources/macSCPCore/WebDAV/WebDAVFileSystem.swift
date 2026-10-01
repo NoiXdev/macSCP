@@ -412,8 +412,16 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         session?.invalidateAndCancel()
     }
 
-    /// WebDAV has no partial PUT; Nextcloud's chunked upload is a proprietary
-    /// extension and out of scope. The transfer queue gates resume on this.
+    /// Permanent, not provisional: plain WebDAV has no partial PUT, so there
+    /// is no byte range to resume onto, and Nextcloud's chunked upload is a
+    /// proprietary extension and out of scope. The transfer queue gates
+    /// resume on this. `write(path:mode:contents:)` still refuses `.append`
+    /// with `RemoteFSFinding.resumeNotSupported` as defence in depth —
+    /// `TransferEngine` cannot ask for it while this answers `false`
+    /// (`TransferEngine.swift:182`), so that finding's four catalogue
+    /// sentences are accepted as unreached from production.
+    /// `RemoteFileSystemAppendResumeGuardTests` is what makes a change here
+    /// loud instead of silent.
     public var supportsAppendResume: Bool { false }
 
     // MARK: - Writes (Task 7)

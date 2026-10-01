@@ -245,6 +245,26 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// the object, the request, or what the server can do — which a retry
     /// would meet again.
     ///
+    /// Measured 2026-10-01: this answer and the queue's resumability
+    /// question do not collide on any reachable path, which is why they
+    /// share one property. `isConnectionFailure` only selects a BRANCH at
+    /// `TransferQueueViewModel.swift:1204`; four gates inside it decide the
+    /// status — `bypassConflictCheck` (`:1207`), `destinationTabID != nil`
+    /// (`:1216`), `!destination.supportsAppendResume` (`:1231`), and
+    /// otherwise, in the final `else` (`:1240`), `.interrupted`, the only
+    /// resumable outcome.
+    ///
+    /// `.redirectBodyNotResendable` cannot reach that last gate, for two
+    /// independent reasons: it is recorded only when a request carries a body
+    /// STREAM (`S3RedirectSessionDelegate.swift:119`), and the comment there
+    /// records that the S3 path builds none today; and a request with a body
+    /// is an upload, whose destination is S3, which answers `false` to
+    /// `supportsAppendResume` — gate three. What IS reachable is
+    /// `.redirectUnreadable` / `.redirectNotResignable` during a DOWNLOAD,
+    /// where the destination is local and appendable, and there `.interrupted`
+    /// is right: the request never reached a server that answered it, and the
+    /// partial file is sound.
+    ///
     /// No `default:` — a finding added later has to decide.
     public var readsAsConnectionFailure: Bool {
         switch self {
