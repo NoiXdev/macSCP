@@ -124,40 +124,110 @@ import Testing
         // scans; if one is dropped there, this count says which.
         #expect(scanned == 2)
     }
+
+    /// `logSentence` is a second English text beside the `en` catalogue, on
+    /// purpose — the log's sentences are lower-case phrases a `reason=`
+    /// field completes (the doc comment on `RemoteFSFinding.logSentence`). Nothing held the two
+    /// together, so they could drift silently; this is what holds them.
+    ///
+    /// Measured 2026-10-01 across all of them: equal, with the first
+    /// character compared case-insensitively. The first character is the one
+    /// difference the two texts are allowed to have, and it is a real one —
+    /// `resumeRangeIgnored` opens with "S3", which must not be lower-cased
+    /// to "s3". None of the catalogue sentences ends with a period, so
+    /// nothing is stripped here.
+    ///
+    /// The catalogue is read off disk rather than through
+    /// `CoreL10n.string` / `message`: those resolve through the test
+    /// process's current locale, and this property must hold whatever locale
+    /// runs the test, not only under `en`. Same reason, and same route, as
+    /// `S3FileSystemTests.rangeIgnoredReasonStillMatchesTheFindingsEnglishCatalogueEntry`.
+    @Test func everyLogSentenceMatchesItsEnglishCatalogueEntry() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let enCatalogue = repoRoot
+            .appendingPathComponent("Sources/macSCPCore/Resources/en.lproj/Localizable.strings")
+            .path(percentEncoded: false)
+        let catalogue = try #require(NSDictionary(contentsOfFile: enCatalogue) as? [String: String])
+
+        #expect(RemoteFSFinding.everySample.isEmpty == false, """
+            everySample came back empty, so the loop below checked nothing.
+            """)
+
+        for (finding, argument) in RemoteFSFinding.everySample {
+            let key = finding.messageKey
+            let english = try #require(catalogue[key], """
+                No en entry for \(finding.name) at key \(key).
+                """)
+            let expected = argument.map { String(format: english, $0) } ?? english
+            let actual = finding.logSentence
+
+            #expect(actual.count == expected.count, """
+                \(finding.name): logSentence and its en entry differ in length.
+                log: \(actual)
+                en : \(expected)
+                """)
+            #expect(actual.dropFirst() == expected.dropFirst(), """
+                \(finding.name): logSentence and its en entry differ after the \
+                first character. Only the first character may differ, and only \
+                in case.
+                log: \(actual)
+                en : \(expected)
+                """)
+            #expect(actual.prefix(1).lowercased() == expected.prefix(1).lowercased(), """
+                \(finding.name): logSentence and its en entry differ in their \
+                first character beyond case.
+                log: \(actual)
+                en : \(expected)
+                """)
+        }
+    }
 }
 
 extension RemoteFSFinding {
-    /// One value per `Name`, by exhaustive switch — so a finding added to
-    /// the enum does not compile until it has a sample, and cannot be left
-    /// out of the guards above.
+    /// One sample per `Name`, with the argument its catalogue key
+    /// interpolates — by exhaustive switch, so a finding added to the enum
+    /// does not compile until it has a sample, and cannot be left out of
+    /// the guards above.
     ///
     /// The payloads are placeholders: a status code, a path this project
     /// owns and an upload part number it counted out itself, which is
     /// exactly what the three payload-carrying findings are allowed to hold
-    /// (counted in the switch below, 2026-09-28).
-    static var everyCase: [RemoteFSFinding] {
+    /// (counted in the switch below, 2026-10-01: three of eighteen).
+    ///
+    /// `formatArgument` is `nil` for a finding whose key carries no format
+    /// specifier, and the interpolated value as a string for the three that
+    /// do — which is what lets
+    /// `everyLogSentenceMatchesItsEnglishCatalogueEntry` format the
+    /// catalogue value the same way `message` would.
+    static var everySample: [(finding: RemoteFSFinding, formatArgument: String?)] {
         Name.allCases.map { name in
             switch name {
-            case .resumeRangeIgnored: return .resumeRangeIgnored
-            case .sourceChangedSinceInterruption: return .sourceChangedSinceInterruption
-            case .unexpectedStatus: return .unexpectedStatus(code: 418)
-            case .directoryAlreadyExists: return .directoryAlreadyExists
-            case .destinationAlreadyExists: return .destinationAlreadyExists
-            case .outOfStorage: return .outOfStorage
-            case .uploadStreamUnavailable: return .uploadStreamUnavailable
+            case .resumeRangeIgnored: return (.resumeRangeIgnored, nil)
+            case .sourceChangedSinceInterruption: return (.sourceChangedSinceInterruption, nil)
+            case .unexpectedStatus: return (.unexpectedStatus(code: 418), "418")
+            case .directoryAlreadyExists: return (.directoryAlreadyExists, nil)
+            case .destinationAlreadyExists: return (.destinationAlreadyExists, nil)
+            case .outOfStorage: return (.outOfStorage, nil)
+            case .uploadStreamUnavailable: return (.uploadStreamUnavailable, nil)
             case .pathExistsAndIsNotADirectory:
-                return .pathExistsAndIsNotADirectory(path: "/srv/x")
-            case .nonHTTPResponse: return .nonHTTPResponse
-            case .listingUnparsable: return .listingUnparsable
-            case .resourceDetailsUnparsable: return .resourceDetailsUnparsable
-            case .redirectUnreadable: return .redirectUnreadable
-            case .redirectBodyNotResendable: return .redirectBodyNotResendable
-            case .redirectNotResignable: return .redirectNotResignable
-            case .resumeNotSupported: return .resumeNotSupported
-            case .noSuchBucket: return .noSuchBucket
-            case .uploadPartUnacknowledged: return .uploadPartUnacknowledged(part: 7)
-            case .requestBodyUnencodable: return .requestBodyUnencodable
+                return (.pathExistsAndIsNotADirectory(path: "/srv/x"), "/srv/x")
+            case .nonHTTPResponse: return (.nonHTTPResponse, nil)
+            case .listingUnparsable: return (.listingUnparsable, nil)
+            case .resourceDetailsUnparsable: return (.resourceDetailsUnparsable, nil)
+            case .redirectUnreadable: return (.redirectUnreadable, nil)
+            case .redirectBodyNotResendable: return (.redirectBodyNotResendable, nil)
+            case .redirectNotResignable: return (.redirectNotResignable, nil)
+            case .resumeNotSupported: return (.resumeNotSupported, nil)
+            case .noSuchBucket: return (.noSuchBucket, nil)
+            case .uploadPartUnacknowledged: return (.uploadPartUnacknowledged(part: 7), "7")
+            case .requestBodyUnencodable: return (.requestBodyUnencodable, nil)
             }
         }
     }
+
+    /// The samples alone — what the guards that need no argument read.
+    static var everyCase: [RemoteFSFinding] { everySample.map(\.finding) }
 }
