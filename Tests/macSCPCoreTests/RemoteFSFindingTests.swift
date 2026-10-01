@@ -127,8 +127,9 @@ import Testing
 
     /// `logSentence` is a second English text beside the `en` catalogue, on
     /// purpose — the log's sentences are lower-case phrases a `reason=`
-    /// field completes (the doc comment on `RemoteFSFinding.logSentence`). Nothing held the two
-    /// together, so they could drift silently; this is what holds them.
+    /// field completes (the doc comment on `RemoteFSFinding.logSentence`).
+    /// Nothing held the two together, so they could drift silently; this is
+    /// what holds them.
     ///
     /// Measured 2026-10-01 across all of them: equal, with the first
     /// character compared case-insensitively. The first character is the one
