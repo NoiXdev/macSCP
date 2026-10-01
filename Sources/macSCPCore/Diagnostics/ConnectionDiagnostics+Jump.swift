@@ -3,8 +3,8 @@ import Foundation
 // The target half of a walk through a jump host, and the two small classes
 // that carry the jump's connection between the walk and its dial. Split out of
 // `ConnectionDiagnostics.swift` on 2026-10-01 with its text unchanged; the
-// universal steps the jump half also runs stay in
-// `ConnectionDiagnostics+UniversalSteps.swift`.
+// universal steps the jump half also runs went to
+// `ConnectionDiagnostics+UniversalSteps.swift` in the same commit.
 
 extension ConnectionDiagnostics {
     // MARK: - Through a jump host

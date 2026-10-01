@@ -191,9 +191,8 @@ struct DiagnosticsNoDescribingGuardTests {
     /// The floor beneath both negative checks above: the scan must actually
     /// be reaching real files, not an empty or misnamed directory. At least
     /// five — the tree carries 25 at HEAD, recounted 2026-10-01 — and
-    /// `DialProbes.swift`
-    /// specifically, since it is the file the rule's own doc comment lives
-    /// in and the file Task 1 changed.
+    /// `DialProbes.swift` specifically, since it is the file the rule's own
+    /// doc comment lives in and the file Task 1 changed.
     ///
     /// The 19 that stood here and in the message below was measured
     /// 2026-09-25 and falsified on 2026-10-01 by the split of
@@ -206,11 +205,11 @@ struct DiagnosticsNoDescribingGuardTests {
     /// `DiagnosticTraceColumn.swift`, `ConnectionDiagnostics+Jump.swift`,
     /// `ConnectionDiagnostics+UniversalSteps.swift` and itself added four
     /// more. Twice in one day is the argument for reading this directory
-    /// rather than describing it. The
-    /// 19 anchored to `4f4ada59` in this suite's own doc comment above stays
-    /// as written: it is a dated measurement of that tree, not a claim about
-    /// this one. The floor below is `>= 5`, so neither number has ever been
-    /// load-bearing — and neither could have gone red.
+    /// rather than describing it. The 19 anchored to `4f4ada59` in this
+    /// suite's own doc comment above stays as written: it is a dated
+    /// measurement of that tree, not a claim about this one. The floor below
+    /// is `>= 5`, so no figure in this paragraph has ever been load-bearing —
+    /// and none of them could have gone red.
     @Test func theScanReachesTheDirectoryItGuards() throws {
         let files = try Self.diagnosticsSwiftFiles()
         #expect(files.count >= 5, """
@@ -370,13 +369,12 @@ struct DiagnosticsNoDescribingGuardTests {
     // MARK: - Scanner
 
     /// Every `.swift` file under `Sources/macSCPCore/Diagnostics/`,
-    /// RECURSIVELY — all 25 sit directly in it at HEAD, recounted
-    /// 2026-10-01 (`find Sources/macSCPCore/Diagnostics -type d` returns only
-    /// that directory), and the recursion is
-    /// what keeps that from being load-bearing: a file filed into a
-    /// subdirectory later would otherwise leave the guarded module through a
-    /// change that never touches this suite. Sorted for a stable failure
-    /// message.
+    /// RECURSIVELY — all 25 sit directly in it at HEAD, recounted 2026-10-01
+    /// (`find Sources/macSCPCore/Diagnostics -type d` returns only that
+    /// directory), and the recursion is what keeps that from being
+    /// load-bearing: a file filed into a subdirectory later would otherwise
+    /// leave the guarded module through a change that never touches this
+    /// suite. Sorted for a stable failure message.
     private static func diagnosticsSwiftFiles() throws -> [URL] {
         // Fails closed, like the stripper: `SourceCorpus` throws for a
         // directory it does not hold, because a scan that checked nothing
