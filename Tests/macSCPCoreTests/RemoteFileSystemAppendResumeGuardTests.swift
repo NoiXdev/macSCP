@@ -10,9 +10,8 @@ import Testing
 /// 1. `WebDAVFileSystem` answers `false`, which is why
 ///    `RemoteFSFinding.resumeNotSupported` — thrown by
 ///    `WebDAVFileSystem.write(path:mode:contents:)` when `mode != .overwrite`
-///    — has no
-///    production path to a reader: `TransferEngine` writes `.append` only
-///    when `effectiveResume` is true, and that needs
+///    — has no production path to a reader: `TransferEngine` writes `.append`
+///    only when `effectiveResume` is true, and that needs
 ///    `destination.supportsAppendResume` (`TransferEngine.swift:182`). The
 ///    throw is defence in depth. That PAIR is what `docs/BACKLOG.md` records
 ///    as pinned by nothing: a WebDAV that later answered `true` would make
@@ -42,28 +41,53 @@ struct RemoteFileSystemAppendResumeGuardTests {
         #expect(webdav.supportsAppendResume == false)
     }
 
-    /// Every conformer, and every override — so a seventh conformer that
-    /// inherits `true` in silence turns this red instead, WHEN its declaration
-    /// names `RemoteFileSystem` (or a protocol refining it) in the header of a
-    /// `class`, `struct`, `actor`, `enum` or `extension` under `Sources/`.
-    /// Not covered, and said so rather than implied: a subclass of a
-    /// conformer (it inherits that conformer's answer, which is the point of
-    /// subclassing, not a silent default), a conformance reached through a
-    /// `typealias` composition, and anything under `Tests/` — the test doubles
-    /// inherit the default on purpose.
+    /// The conformers and the overrides found under `Sources/`, each against a
+    /// fixed expected set. This is a BEST-EFFORT check over declaration
+    /// headers, not a proof that no conformer escapes it.
+    ///
+    /// What it reads: the header of every `class`, `struct`, `actor`, `enum`
+    /// and `extension` that names `RemoteFileSystem`, or a protocol refining
+    /// it (to any depth, through `,`, `&` and a leading attribute such as
+    /// `@preconcurrency`).
+    ///
+    /// What it does not read, as far as known: a subclass of a conformer (it
+    /// inherits that class's answer, so it is not a silent default); a
+    /// conformance reached through a `typealias` composition; anything under
+    /// `Tests/`, where the test doubles inherit the default on purpose; a
+    /// declaration whose header contains a `{` before its inheritance list
+    /// ends. The list is whatever was found, not a closed set.
+    ///
+    /// Why no stronger claim: eight holes have been found in this guard's
+    /// scans so far, each by a fresh reader PLANTING a spelling the previous
+    /// list did not contain, never by reading the code. In the order found: a
+    /// keyword list without `extension`; an override attributed by walking
+    /// back to its enclosing type; the protocol extension's own default
+    /// counted as an overrider; an `enum`; a header wrapped over two lines; a
+    /// type conforming through a refined protocol; a refinement composed with
+    /// `&`; an attribute before the type. CLAUDE.md ("Guards that name what
+    /// they watch") calls that pattern evidence that the property wants a
+    /// structural boundary rather than another anchor.
+    ///
+    /// The structural alternative, not taken here: deleting the
+    /// `supportsAppendResume` default from the protocol extension would make
+    /// the compiler demand an answer from every conformer and close the
+    /// question permanently. Measured 2026-10-01, it forces an explicit
+    /// answer onto roughly 32 test doubles across more than 20 files, which
+    /// is exactly what that extension's own comment says it exists to avoid.
+    /// That is the maintainer's decision, raised separately.
     ///
     /// Both checks are POSITIVE: sets that must match, not absences. An
     /// emptied-out scan fails them rather than reading as satisfied
     /// (CLAUDE.md, "Guards that name what they watch").
     ///
-    /// Overrides are attributed by FILE, not by walking back to the enclosing
-    /// type: the two override lines are textually IDENTICAL
-    /// (the declarations in `WebDAVFileSystem.swift` and `S3FileSystem.swift`
-    /// differ in nothing but their file), so any search that located a line's owner by
-    /// matching its text would be matching on something that is not unique.
-    /// A file that declares two conformers and overrides in one would read as
-    /// that file overriding — which is red here, and a human then looks. That
-    /// is the intended outcome, not a gap.
+    /// Overrides are attributed by FILE, not by walking back to the
+    /// enclosing type: the two override lines are textually IDENTICAL (the
+    /// declarations in `WebDAVFileSystem.swift` and `S3FileSystem.swift`
+    /// differ in nothing but their file), so any search that located a
+    /// line's owner by matching its text would be matching on something that
+    /// is not unique. A file that declares two conformers and overrides in
+    /// one would read as that file overriding — which is red here, and a
+    /// human then looks. That is the intended outcome, not a gap.
     @Test func exactlyTheseTypesConformAndExactlyTheseFilesOverride() throws {
         var declarations: [Declaration] = []
         var overridesByFile: [String: String] = [:]
@@ -175,10 +199,16 @@ struct RemoteFileSystemAppendResumeGuardTests {
             if header.first == ":" {
                 var list = header.dropFirst()
                 if let clause = list.range(of: " where ") { list = list[..<clause.lowerBound] }
-                inherited = list.split(separator: ",").compactMap { token in
-                    let trimmed = token.trimmingCharacters(in: .whitespaces)
-                    return trimmed.split(separator: ".").last.map(String.init)
-                }
+                // `,` separates inherited types and `&` composes them
+                // (`Sendable & RemoteFileSystem`); a leading attribute such as
+                // `@preconcurrency` or `@retroactive` is a separate word, so
+                // the type is the token's last word, minus any module prefix.
+                inherited = list.split(whereSeparator: { $0 == "," || $0 == "&" })
+                    .compactMap { token in
+                        token.split(whereSeparator: \.isWhitespace).last
+                            .flatMap { $0.split(separator: ".").last }
+                            .map(String.init)
+                    }
             }
             return Declaration(
                 kind: String(match.output.1), name: String(match.output.2),
@@ -263,6 +293,18 @@ struct RemoteFileSystemAppendResumeGuardTests {
             struct A: RemoteFileSystem {}
             final class B: Sendable, RemoteFileSystem {}
             """) == ["A", "B"])
+
+        // Attributes before the type, and `&` compositions.
+        #expect(Self.conformers(in: "struct Foo: @preconcurrency RemoteFileSystem {}") == ["Foo"])
+        #expect(Self.conformers(in: "extension Foo: @retroactive RemoteFileSystem {}") == ["Foo"])
+        #expect(Self.conformers(
+            in: "struct Foo: @unchecked Sendable, @preconcurrency RemoteFileSystem {}")
+            == ["Foo"])
+        #expect(Self.conformers(in: """
+            protocol Composed: Sendable & RemoteFileSystem {}
+            struct Baz: Composed {}
+            """) == ["Baz"])
+        #expect(Self.conformers(in: "struct Foo: Sendable & RemoteFileSystem {}") == ["Foo"])
 
         // And what is not a conformer.
         #expect(Self.conformers(in: "struct Plain: Sendable {}\nenum Kind: String { case a }") == [])
