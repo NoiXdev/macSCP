@@ -646,8 +646,216 @@ MSG
 
 ---
 
+## Task 5: the sentence stops enumerating
+
+**Added 2026-10-02, after Task 3.** Task 3 measured the cause of the gated
+412 and it is **neither** of the two this plan's own sentence names: Apache
+answers 412 because URLSession attaches revalidation headers to the MOVE.
+Nothing is at the new name and nothing is locked. The maintainer's ruling:
+stop enumerating causes entirely — say what the server did, not why.
+
+That is the same overclaim this plan set out to remove, one enumeration
+further on. "Either A or B" is a two-element version of "A", and a third
+clause would be the same bug with worse odds.
+
+**Runs BEFORE Task 4**, which is the closeout and must describe the final
+state.
+
+**Files:**
+- Modify: `Sources/macSCPCore/RemoteFS/RemoteFSFinding.swift` (the case's doc
+  comment and its `logSentence` arm)
+- Modify: `Sources/macSCPCore/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
+
+**Interfaces:**
+- Consumes: `RemoteFSFinding.movePreconditionFailed` from Task 1. **The case
+  name does not change** — it was always about a failed precondition and is
+  still exactly right. Only its text does.
+- Produces: nothing later tasks consume.
+
+- [ ] **Step 1: Change the `en` sentence only, and watch the guard catch it**
+
+Replace the `en` entry, leaving `logSentence` and the other three catalogues
+untouched:
+
+```
+"core.finding.movePreconditionFailed" = "The server refused the move because a condition it checked first was not met";
+```
+
+Run: `swift test --build-system native --filter everyLogSentenceMatchesItsEnglishCatalogueEntry`
+
+Expected: **FAIL**, naming `movePreconditionFailed`, because `logSentence`
+still carries the old enumeration. Quote it verbatim — this is the red, and
+it is the guard added 2026-10-01 doing the job it was built for.
+
+- [ ] **Step 2: Bring `logSentence` and the other three catalogues with it**
+
+`logSentence`, which must equal the `en` entry with only the first
+character's case differing:
+
+```swift
+        case .movePreconditionFailed:
+            return "the server refused the move because a condition it "
+                + "checked first was not met"
+```
+
+`de.lproj` — the sentence addresses nobody, so the *du* rule has no pronoun
+to apply to:
+
+```
+"core.finding.movePreconditionFailed" = "Der Server hat das Verschieben abgelehnt, weil eine Bedingung, die er vorher prüft, nicht erfüllt war";
+```
+
+`fr.lproj`:
+
+```
+"core.finding.movePreconditionFailed" = "Le serveur a refusé le déplacement parce qu'une condition qu'il vérifie au préalable n'était pas remplie";
+```
+
+`pl.lproj`:
+
+```
+"core.finding.movePreconditionFailed" = "Serwer odmówił przeniesienia, ponieważ warunek, który sprawdza najpierw, nie został spełniony";
+```
+
+- [ ] **Step 3: Rewrite the case's doc comment, which names both ends**
+
+The doc comment currently explains why the sentence names the destination
+and the source. That reasoning is now known to be incomplete. Replace it:
+
+```swift
+    /// A `MOVE` was refused because a precondition failed, and the status
+    /// does not say which one. Three causes are known to produce it here —
+    /// `Overwrite: F` meeting an occupied destination, a failed precondition
+    /// on the source, and (measured 2026-10-02) a revalidation header
+    /// `URLSession` attached to the request without this project asking.
+    /// An earlier version of this sentence named the first two and was
+    /// falsified by the third, so the text no longer enumerates causes at
+    /// all: it says what the server did. Where the cause matters, the
+    /// diagnostic log carries the exchange.
+    case movePreconditionFailed
+```
+
+- [ ] **Step 4: Run the guards, then the whole suite**
+
+Run: `swift test --build-system native --filter "LocalizationParityTests|RemoteFSFindingTests"`
+Expected: PASS. If the logSentence guard still fails, the two texts differ by
+more than the first character's case — fix the texts, never the guard.
+
+Then: `swift test --build-system native`
+Expected: PASS except the one known `ViewTestabilitySpike` failure.
+
+- [ ] **Step 5: Commit**
+
+Stage the finding type and the four catalogues, and use this message:
+
+```
+fix(webdav): the 412 sentence stops naming causes it cannot know
+
+Task 1 of this plan replaced a sentence that named one end of a MOVE with
+one that named both. Task 3 then measured the actual cause of the gated
+case and it is neither: Apache answers 412 because URLSession attaches
+revalidation headers to the MOVE, so nothing is at the new name and nothing
+is locked.
+
+"Either A or B" is a two-element version of "A". A third clause would be the
+same overclaim with worse odds, so the text now says what the server did and
+stops there. The case name is unchanged — it was always about a failed
+precondition and still is.
+
+Red first, from the guard added 2026-10-01: changing the en entry alone left
+logSentence carrying the old enumeration, and
+everyLogSentenceMatchesItsEnglishCatalogueEntry named the finding.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
+---
+
+## Task 6: two rules written down
+
+**Added 2026-10-02.** Both are maintainer decisions taken during this plan's
+execution, and both exist so the next contributor does not decide them by
+precedent.
+
+**Files:**
+- Modify: `CLAUDE.md`
+
+**Interfaces:** none.
+
+- [ ] **Step 1: The commit trailer**
+
+`CLAUDE.md:482` prescribes a footer naming `Claude Fable 5`. Measured
+2026-10-02 by listing the `Co-Authored-By` trailer of the last 30 commits on
+`develop`: all 30 carry `Claude Opus 5`. The maintainer ruled the file is the
+stale one. Change that line to `Claude Opus 5`, then run the same listing
+again and confirm the file and the history now agree.
+
+- [ ] **Step 2: The record's correction rule**
+
+The backlog rows were treated as append-only. Task 3's fix round corrected a
+row **in place**, quoting the wording it withdrew at every point, and the
+maintainer ruled that pattern allowed. Write it into `CLAUDE.md`, beside the
+existing records rules, as its own short section:
+
+```markdown
+## A correction quotes what it withdraws
+
+Measured 2026-10-02, on the WebDAV 412 row: a round that corrected three
+wrong counts, a withdrawn attribution and two over-general sentences did it
+**in place** rather than by appending, and quoted the replaced wording at
+every point. A reviewer checked every withdrawal and found nothing erased.
+
+The rows in `docs/BACKLOG.md` were treated as append-only until then. The
+rule is now the weaker and more useful one: **a row may be corrected in
+place, provided every withdrawal quotes the wording it replaces.**
+Append-only guarantees that earlier text is untouched; quoting guarantees
+that nothing is lost, which is the property that actually protects a
+measurement record — and a stack of appendices pointing backwards is harder
+to read than one corrected cell that shows its own history.
+
+What this does not license: deleting a measurement because it turned out
+inconvenient, or rewording a finding without saying that is what happened. If
+a sentence changes meaning, the old meaning is quoted beside the new one.
+```
+
+- [ ] **Step 3: Verify both claims the new text makes**
+
+Run the trailer listing from step 1 and confirm it prints one value. Then
+read the `docs/BACKLOG.md` 412 row and confirm the count the new section
+states for what was corrected matches what is actually there — count it, do
+not copy it from this plan.
+
+- [ ] **Step 4: Commit**
+
+Stage `CLAUDE.md` and use this message:
+
+```
+docs(claude): the trailer this project actually uses, and how a row is corrected
+
+Two rules the maintainer settled while the WebDAV 412 plan ran.
+
+The footer line prescribed Claude Fable 5 while the last 30 commits on
+develop carried Claude Opus 5 without exception. The file was the stale one.
+
+And the backlog rows were treated as append-only until a fix round corrected
+one in place, quoting the wording it withdrew at every point. A reviewer
+checked each withdrawal and found nothing erased, and raised the rule itself
+as a maintainer's call rather than deciding it by precedent. The rule is now
+that a row may be corrected in place provided every withdrawal quotes what it
+replaces — append-only guarantees earlier text is untouched, quoting
+guarantees nothing is lost, and only the second is what protects a
+measurement record.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
+---
+
 ## Notes for the coordinator
 
+- **Execution order is 1, 2, 3, 5, 6, 4.** Tasks 5 and 6 were added on
+  2026-10-02 after Task 3's measurement and two maintainer decisions; Task 4
+  is the closeout and must run last so it describes the final state.
 - **Task order is strict for 1 → 2.** Task 2 throws a case Task 1 creates.
   Task 3 depends on both only for the message it reads. Task 4 is last.
 - **Task 3 may close no row.** Judge it on whether the run happened, the four
