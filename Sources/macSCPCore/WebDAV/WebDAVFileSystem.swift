@@ -684,8 +684,8 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         case 409: throw RemoteFSError.notFound(path: path)
         // A 412 means different things to the callers that can see one, and
         // only the method tells them apart. `rename` sends a MOVE with
-        // `Overwrite: F`, where a precondition really did fail — on the
-        // destination or, as mod_dav answers identically, on the source.
+        // `Overwrite: F`, where a precondition really did fail, and the
+        // status does not say which one.
         // `readStream` sends a GET, and one that sent no validator lands here
         // too; nothing was moved, so a sentence about a move is false for it.
         // The read keeps what is actually known, the status itself, as does
