@@ -333,12 +333,18 @@ to read than one corrected cell that shows its own history.
 **What the rule binds is the measurement record**: the rows of
 `docs/BACKLOG.md`, the specs and plans under `docs/superpowers/`, and the SDD
 ledgers — the documents whose whole value is that a later reader can tell what
-was measured, when, and by which command. The title above and the paragraph
-below it are stated generally; this is their scope. The rule does not bind a
-rule prescription in this file, because a section here states what the project
-should do rather than what it observed, so sharpening one withdraws no
-measurement and owes no quote — the commit message is where that change is
-accounted for.
+was measured, when, and by which command. The general statements in this
+section have that scope, however broadly any of them reads — an earlier
+version of this sentence named two of them and left a third out, which is
+the failure this file has a rule about.
+
+What the rule does not bind is a prescription in this file: a sentence
+saying what the project should do. Sections here carry both kinds — this one
+opens with a dated measurement and the command that produced it, and ends
+with a rule read off it — so the earlier claim that "a section here states
+what the project should do rather than what it observed" was false of the
+section making it. Sharpening the prescribed half withdraws no measurement
+and owes no quote; the commit message is where that change is accounted for.
 
 What this does not license: deleting a measurement because it turned out
 inconvenient, or rewording a finding without saying that is what happened. If
