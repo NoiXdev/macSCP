@@ -627,9 +627,10 @@ struct WebDAVFileSystemTests {
         }
     }
 
-    /// A MOVE's 412 names both ends, because the status cannot say which one
-    /// failed — see `RemoteFSFinding.movePreconditionFailed`.
-    @Test func aMovesPreconditionFailureNamesBothEnds() {
+    /// A MOVE's 412 maps to `movePreconditionFailed`, which says what the
+    /// server did and no longer names a cause — see
+    /// `RemoteFSFinding.movePreconditionFailed`.
+    @Test func aMovesPreconditionFailureMapsToTheMovePreconditionFinding() {
         #expect(throws: RemoteFSError.finding(.movePreconditionFailed)) {
             try WebDAVFileSystem.mapStatus(412, path: "/a", method: "MOVE")
         }
