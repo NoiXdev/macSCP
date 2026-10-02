@@ -59,11 +59,14 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// A directory could not be created because something is already there.
     case directoryAlreadyExists
     /// A `MOVE` was refused because a precondition failed, and the status
-    /// alone does not say which one. `Overwrite: F` makes RFC 4918's
-    /// destination-exists case live, and mod_dav answers a failed precondition
-    /// on the SOURCE with the same 412 — its free text distinguishes them and
-    /// is a foreign string this project does not carry into a finding. So the
-    /// sentence names both ends rather than asserting one.
+    /// does not say which one. Three causes are known to produce it here —
+    /// `Overwrite: F` meeting an occupied destination, a failed precondition
+    /// on the source, and (measured 2026-10-02) a revalidation header
+    /// `URLSession` attached to the request without this project asking.
+    /// An earlier version of this sentence named the first two and was
+    /// falsified by the third, so the text no longer enumerates causes at
+    /// all: it says what the server did. Where the cause matters, the
+    /// diagnostic log carries the exchange.
     case movePreconditionFailed
     /// The server reported that it has no room left.
     case outOfStorage
@@ -215,8 +218,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .directoryAlreadyExists:
             return "a file or folder with that name already exists"
         case .movePreconditionFailed:
-            return "the server refused the move: either something is already "
-                + "at the new name, or the item is locked on the server"
+            return "the server refused the move because a condition it "
+                + "checked first was not met"
         case .outOfStorage:
             return "the server is out of storage"
         case .uploadStreamUnavailable:
