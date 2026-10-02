@@ -307,17 +307,20 @@ symbol names written in their place survived all three.
 Measured 2026-10-02, on the `fullCRUDRoundTripOverBasic` row of
 `docs/BACKLOG.md` (the WebDAV 412 case): a fix round corrected that row
 **in place** rather than by appending, and quoted the replaced wording at
-every point. Counted the same day: seven marked passages (`grep -o` on the
-seven markers the row carries — `Fix round 1 withdraws a clause`, `… hedges
-what this sentence`, `… withdraws the reading`, `… corrects three figures`,
-`… corrects two further claims`, `… first wrote here`, and `the word
-“therefore” here first claimed` — returns seven lines, all on that one
-row), holding ten corrected claims: three wrong counts, and seven claims of
-other kinds — a withdrawn clause, a hedged attribution, a withdrawn
-reading, two claims the round's own confirmation run overtook, a clause the
-round had itself just added, and a connective that asserted more than the
-measurement showed. A reviewer checked every withdrawal and found nothing
-erased.
+every point. Counted the same day: seven marked passages, which this
+command, run from the repository root, prints one per line (all seven on
+that one row, line 276 when counted):
+
+```
+grep -n -o -e 'Fix round 1 withdraws a clause' -e 'Fix round 1 hedges what this sentence' -e 'Fix round 1 withdraws the reading' -e 'Fix round 1 corrects three figures' -e 'Fix round 1 corrects two further claims' -e 'Fix round 1 first wrote here' -e 'here first claimed' docs/BACKLOG.md
+```
+
+Those passages hold ten corrected claims: three wrong counts, and seven
+claims of other kinds — a withdrawn clause, a hedged attribution, a
+withdrawn reading, two claims the round's own confirmation run overtook, a
+clause the round had itself just added, and a connective that asserted more
+than the measurement showed. A reviewer checked every withdrawal and found
+nothing erased.
 
 The rows in `docs/BACKLOG.md` were treated as append-only until then. The
 rule is now the weaker and more useful one: **a row may be corrected in
@@ -330,6 +333,13 @@ to read than one corrected cell that shows its own history.
 What this does not license: deleting a measurement because it turned out
 inconvenient, or rewording a finding without saying that is what happened. If
 a sentence changes meaning, the old meaning is quoted beside the new one.
+
+Two edges of the rule, so that it can be checked rather than merely
+followed. A quote is owed whenever the **meaning** changes, and it is
+**verbatim**: every withdrawal in that row quotes the exact words, and a
+paraphrase of what was withdrawn is itself a claim about it that nobody can
+check. A pure typo fix or a rewrap that leaves the meaning intact withdraws
+nothing, so it owes no quote.
 
 ## Guards that name what they watch
 
