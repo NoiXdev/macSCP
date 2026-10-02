@@ -302,6 +302,35 @@ in one piece of work — `:303`, then `:307`/`:308`, then `:310`/`:311` —
 each time because a sibling commit added comment lines above them. The
 symbol names written in their place survived all three.
 
+## A correction quotes what it withdraws
+
+Measured 2026-10-02, on the `fullCRUDRoundTripOverBasic` row of
+`docs/BACKLOG.md` (the WebDAV 412 case): a fix round corrected that row
+**in place** rather than by appending, and quoted the replaced wording at
+every point. Counted the same day: seven marked passages (`grep -o` on the
+seven markers the row carries — `Fix round 1 withdraws a clause`, `… hedges
+what this sentence`, `… withdraws the reading`, `… corrects three figures`,
+`… corrects two further claims`, `… first wrote here`, and `the word
+“therefore” here first claimed` — returns seven lines, all on that one
+row), holding ten corrected claims: three wrong counts, and seven claims of
+other kinds — a withdrawn clause, a hedged attribution, a withdrawn
+reading, two claims the round's own confirmation run overtook, a clause the
+round had itself just added, and a connective that asserted more than the
+measurement showed. A reviewer checked every withdrawal and found nothing
+erased.
+
+The rows in `docs/BACKLOG.md` were treated as append-only until then. The
+rule is now the weaker and more useful one: **a row may be corrected in
+place, provided every withdrawal quotes the wording it replaces.**
+Append-only guarantees that earlier text is untouched; quoting guarantees
+that nothing is lost, which is the property that actually protects a
+measurement record — and a stack of appendices pointing backwards is harder
+to read than one corrected cell that shows its own history.
+
+What this does not license: deleting a measurement because it turned out
+inconvenient, or rewording a finding without saying that is what happened. If
+a sentence changes meaning, the old meaning is quoted beside the new one.
+
 ## Guards that name what they watch
 
 Measured on 2026-08-27, across a tab-menu wiring guard that survived five
@@ -479,6 +508,6 @@ own page `reference/contributing-docs.md` is the house style, and
 ## Git
 
 - Conventional Commits (enforced by CI); commit messages in English.
-- Footer on every commit: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
+- Footer on every commit: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
 - Commit/push only on explicit request; the coordinator pushes per milestone
   after the final whole-branch review and watches CI (`gh run watch`).
