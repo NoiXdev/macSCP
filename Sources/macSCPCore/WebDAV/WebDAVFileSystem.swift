@@ -695,8 +695,10 @@ public final class WebDAVFileSystem: RemoteFileSystem, @unchecked Sendable {
         // `grep -rnE 'httpMethod = |simple\(method: ' Sources/macSCPCore/WebDAV/`,
         // this backend sends GET, PUT, PROPFIND, OPTIONS, MOVE, DELETE and
         // MKCOL. Read the matches rather than counting them: DELETE matches
-        // twice, and `simple`'s declaration, its `= method` assignment and
-        // this very line match too. Widening to a method the app never
+        // twice, and not every match is a call site — `simple`'s
+        // declaration, its assignment of `method`, and the comment line
+        // above that spells the pattern out, which its first alternative
+        // matches inside the quotes. Widening to a method the app never
         // sends would be a guess.
         case 412 where method == "MOVE":
             throw RemoteFSError.finding(.movePreconditionFailed)
