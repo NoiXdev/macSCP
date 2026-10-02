@@ -303,10 +303,24 @@ changes it in the entry and at most updates the line here to match.
 
 ## If you don't know where to start
 
-Three candidates, for different reasons. **Last checked against the rows of this file on 2026-10-01**; each of the three below opens with `**Open` and ends `Not started.`, read out of the row rather than remembered.
+Three candidates, for different reasons. **Last checked against the rows of this file on 2026-10-02**; each of the three below opens with `**Open` and ends `Not started.`, read out of the row rather than remembered. The derivation is re-runnable, which is the point — it matches each row by its title, reports the two properties as `1` or `0` rather than only staying silent when they hold, and ends with the number of rows it matched, so a row that is closed or retitled shows up instead of dropping out unnoticed. It is anchored to a leading `|` so that it reads the table and not its own text in this section:
 
-1. **`WebDAVFileSystem.mapStatus` renders a source-precondition 412 as “The destination already exists”** — a user is pointed at the wrong end of the operation, and it already sent one investigation the wrong way.
+```
+awk -F'|' '/^\|/ && ($2 ~ /citations that were stale before the typed-findings plan/ || $2 ~ /outcome\(forUnanswered:\)/ || $2 ~ /Three guard suites still read raw source/) { n++; printf "%d opens-Open=%d ends-Not-started=%d\n", NR, ($3 ~ /^ \*\*Open/), ($3 ~ /Not started\. *$/) } END { printf "rows matched=%d, expected 3\n", n }' docs/BACKLOG.md
+```
+
+Run 2026-10-02, it printed `opens-Open=1 ends-Not-started=1` for rows 147, 148 and 285 and `rows matched=3, expected 3`.
+
+1. **Four rows in this file carry citations that were stale before the typed-findings plan** — the row names each stale citation and what the symbol has moved to, so the work is reading rather than hunting; and the WebDAV 412 complex plan has just made exactly this pass on two other rows, replacing line numbers with symbol names.
 2. **`outcome(forUnanswered:)`'s comment claims three readers where a fourth decides the same question** — almost free, and it is this project's own rule about numbers in comments applied to one sentence.
 3. **Three guard suites still read raw source or exempt by file name** — one small commit, and it ends a class of silent staleness instead of its next instance.
 
 The three that stood here before were checked on 2026-10-01 and replaced: “The capability boundary” has been **Implemented since 2026-08-28** per its own row above, and “Single click no longer connects” and “Known-hosts column sorting” have no row in this file at all — `grep -n "Single click no longer connects" docs/BACKLOG.md` returned only lines inside this section itself.
+
+**Item 1 replaced 2026-10-02.** It read “**`WebDAVFileSystem.mapStatus` renders a source-precondition 412 as “The destination already exists”** — a user is pointed at the wrong end of the operation, and it already sent one investigation the wrong way.” That row is now closed by the WebDAV 412 complex plan, so the index was pointing a reader at a defect this same file records as fixed, and the preamble's claim that all three end `Not started.` was false of it:
+
+```
+awk -F'|' '/^\|/ && $2 ~ /renders a source-precondition 412/ { print NR, ($3 ~ /\*\*Done 2026-10-02\*\*/ ? "Done" : "NOT-Done") }' docs/BACKLOG.md
+```
+
+printed `107 Done` on 2026-10-02.
