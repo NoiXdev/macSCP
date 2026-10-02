@@ -218,8 +218,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .directoryAlreadyExists:
             return "a file or folder with that name already exists"
         case .movePreconditionFailed:
-            return "the server refused the move because a condition it "
-                + "checked first was not met"
+            return "the server refused the move because a condition on "
+                + "the request was not met"
         case .outOfStorage:
             return "the server is out of storage"
         case .uploadStreamUnavailable:
