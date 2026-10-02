@@ -66,11 +66,34 @@ fact Part B starts from and the first investigation did not have.
 
 ### No COPY exists to generalise for
 
-Counted 2026-10-01 with `grep -rn 'httpMethod = ' Sources/macSCPCore/WebDAV/`:
+**Corrected 2026-10-02** by Task 4's closeout, out of a controller error that
+Task 2's implementer found and the controller verified. This section first
+read: "Counted 2026-10-01 with
+`grep -rn 'httpMethod = ' Sources/macSCPCore/WebDAV/`:
 the backend sends `PUT`, `PROPFIND`, `OPTIONS`, `MOVE`, `GET` and one
-dynamic `method`. **No `COPY`.** The new arm therefore matches `MOVE` only;
-widening it to a method the app never sends would be a guess dressed as
-generality.
+dynamic `method`." That recipe cannot see `DELETE` or
+`MKCOL`: both are built through `simple(method:)`, which assigns
+`httpMethod = method` — the "one dynamic `method`" is three call sites naming
+two methods, not a loose end.
+
+The wider recipe, run from the repository root on 2026-10-02 —
+`grep -rnE 'httpMethod = |simple\(method: ' Sources/macSCPCore/WebDAV/` —
+prints 11 lines naming **seven** methods: `PROPFIND`, `OPTIONS`, `GET`, `PUT`,
+`DELETE` (twice), `MKCOL` and `MOVE`. Read the matches rather than counting
+the lines: `simple`'s own declaration, its `httpMethod = method` assignment
+and the comment in `mapStatus` that quotes this command all match too.
+
+**The conclusion survives; only its evidence was under-counted.**
+`grep -rn '"COPY"' Sources/macSCPCore/WebDAV/` returns nothing, `rc=1`, on the
+same date — there is no `COPY` to generalise for. **No `COPY`.** The new arm
+therefore matches `MOVE` only; widening it to a method the app never sends
+would be a guess dressed as generality.
+
+Recorded because it is this project's own named failure mode, an enumeration
+written without counting it in the same moment, and because the evidence was
+in view: `mapStatus` already carried a `case 405 where method == "MKCOL"` arm
+when the five were counted, so `MKCOL` was visible in the very function the
+count was about.
 
 ---
 
@@ -119,6 +142,20 @@ the new name, or the item is locked on the server`
 The German sentence addresses nobody, so the catalogue's *du* rule has no
 pronoun to apply to, exactly as its `listingUnparsable` sibling does.
 
+**Superseded 2026-10-02, and the four sentences above are left as the record
+of what was designed.** The maintainer ruled that the finding's sentence must
+stop enumerating causes entirely — say what the server did, not why — because
+the cause Task 3 went on to localise is neither of the two this table names.
+Task 5 (`916c5aa5`, `3d27f474`) and Task 4's closeout (`d2123b9a`) replaced
+them. The `en` text at HEAD is "The server refused the move because a
+condition on the request was not met", and this prints the four as they stand:
+`grep -n movePreconditionFailed Sources/macSCPCore/Resources/*.lproj/Localizable.strings`.
+
+The relation this section states — `logSentence` is the `en` entry
+with the first character lower-cased, enforced by
+`RemoteFSFindingTests.everyLogSentenceMatchesItsEnglishCatalogueEntry` —
+is unchanged, and it is what made each rewrite go red before it went green.
+
 ### The three tests that pin today's behaviour, and which become the red
 
 All three change, and two of them are the defect's own witnesses:
@@ -128,6 +165,22 @@ All three change, and two of them are the defect's own witnesses:
 | `WebDAVFileSystemTests.swift:630`, `aPreconditionFailureReportsAnExistingDestination` | expects `.destinationAlreadyExists` from `mapStatus(412, method: "MOVE")` | expects `.movePreconditionFailed`; the name becomes `aMovesPreconditionFailureNamesBothEnds` |
 | `WebDAVFileSystemWriteTests.swift:371`, `renameOn412ReportsDestinationConflict` | expects `.destinationAlreadyExists` from a real `rename` | expects `.movePreconditionFailed`; renamed to match |
 | `WebDAVFileSystemTests.swift:326-327` | expects `.destinationAlreadyExists` for a **GET**, under a comment reading "wrong-but-preserved, see docs/BACKLOG.md" | expects `.unexpectedStatus(code: 412)`, and the comment's apology goes with it |
+
+**Superseded 2026-10-02, and the old name is deliberately left above because
+a reader may grep for it.** The first row's planned name
+`aMovesPreconditionFailureNamesBothEnds` did ship, in Task 2 (`ef6bd7b7`).
+Task 5 then renamed it to
+`aMovesPreconditionFailureMapsToTheMovePreconditionFinding` (`3d27f474`),
+because the maintainer had ruled that the sentence must stop naming ends at
+all — a test name asserting a retired claim is that claim, one layer out. At
+HEAD on 2026-10-02,
+`grep -rn 'aMovesPreconditionFailureNamesBothEnds' Sources Tests docs` finds
+the old name in two documents and nowhere in `Sources` or `Tests`: the plan at
+`:339`, and this one — the table row above plus the two lines of this very
+paragraph that spell it. Both documents record what was planned rather than
+what the tree does, which is why the name stays in them.
+(`CLIErrorMappingTests`'s own `aCrossBucketRenameSaysWhatItRefusedAndNamesBothEnds`
+is a different case about a different message and is correct.)
 
 The third is the closing of row 2. Its two expectations sit beside two
 negatives as their positive companion, and that role is unchanged — only the

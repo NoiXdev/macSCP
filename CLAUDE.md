@@ -309,7 +309,7 @@ Measured 2026-10-02, on the `fullCRUDRoundTripOverBasic` row of
 **in place** rather than by appending, and quoted the replaced wording at
 every point. Counted the same day: seven marked passages, which this
 command, run from the repository root, prints one per line (all seven on
-that one row, line 276 when counted):
+that one row):
 
 ```
 grep -n -o -e 'Fix round 1 withdraws a clause' -e 'Fix round 1 hedges what this sentence' -e 'Fix round 1 withdraws the reading' -e 'Fix round 1 corrects three figures' -e 'Fix round 1 corrects two further claims' -e 'Fix round 1 first wrote here' -e 'here first claimed' docs/BACKLOG.md
