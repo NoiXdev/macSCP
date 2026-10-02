@@ -573,6 +573,14 @@ MSG
 
 ## Task 4: closeout
 
+**Wording withdrawn 2026-10-02, and the prescription below is left as the
+record of what was planned.** Step 1's first closing sentence asks for "why
+the sentence names both ends"; the sentence names no ends any more. Task 5
+(`916c5aa5`) stopped it enumerating causes and `d2123b9a` removed an ordering
+the replacement still asserted, so the row was closed on what the diff shows
+instead. Read the `en` entry before copying anything from here:
+`grep -n movePreconditionFailed Sources/macSCPCore/Resources/en.lproj/Localizable.strings`.
+
 **Files:**
 - Modify: `docs/BACKLOG.md` — two rows closed
 - Report only: the `noix-docs` troubleshooting sentence
@@ -647,6 +655,18 @@ MSG
 ---
 
 ## Task 5: the sentence stops enumerating
+
+**Wording withdrawn 2026-10-02, and the prescription below is left as the
+record of what was planned.** Steps 1 and 2 prescribe "The server refused the
+move because a condition it checked first was not met", in the `en` block and
+again in the `logSentence` block. "Checked first" is an ordering, true of the
+one Apache run Task 3 measured and not a property of servers in general, so
+`d2123b9a` replaced it with "a condition on the request was not met" across
+the four catalogues and `logSentence`. The `de`, `fr` and `pl` sentences
+prescribed further down this task went with it in the same commit, to "eine
+Bedingung der Anfrage", "une condition de la requête" and "warunek żądania".
+Do not copy the text from here; read the entry:
+`grep -n movePreconditionFailed Sources/macSCPCore/Resources/en.lproj/Localizable.strings`.
 
 **Added 2026-10-02, after Task 3.** Task 3 measured the cause of the gated
 412 and it is **neither** of the two this plan's own sentence names: Apache

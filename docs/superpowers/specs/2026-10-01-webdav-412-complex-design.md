@@ -21,9 +21,9 @@ Closes two `docs/BACKLOG.md` rows and makes one bounded attempt at a third:
 
 ### The defect is one ignored parameter
 
-`WebDAVFileSystem.mapStatus(_:path:method:)` is declared at
-`Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift:674` and **takes the HTTP
-method**. Its `412` arm (`:693`) ignores it and throws
+`WebDAVFileSystem.mapStatus(_:path:method:)` is declared in
+`Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift` and **takes the HTTP
+method**. Its `412` arm ignores it and throws
 `RemoteFSError.finding(.destinationAlreadyExists)` for every caller. Two
 callers reach it with two different meanings:
 
@@ -31,6 +31,18 @@ callers reach it with two different meanings:
 |---|---|---|
 | `rename`, a MOVE | ambiguous — see below | "The destination already exists" |
 | `readStream`, a GET with no precondition sent | nothing about a destination | the same sentence |
+
+**Citations re-anchored 2026-10-02.** The paragraph above read “is declared at
+`Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift:674`” and “Its `412` arm
+(`:693`)”. Both numbers were already stale — the declaration is at `:676` and
+the arm at `:703`, counted this day with
+`grep -n 'static func mapStatus' Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift`
+and
+`grep -n 'case 412 where' Sources/macSCPCore/WebDAV/WebDAVFileSystem.swift`.
+They are named by symbol here for the reason Task 4 gave for the two
+`docs/BACKLOG.md` rows — numbers that have already moved twice in this file —
+and the arm moved again in the fix wave that wrote this note, which is why no
+number above replaces them.
 
 ### A MOVE's 412 is genuinely ambiguous, and the code cannot resolve it
 
@@ -45,6 +57,20 @@ Nothing in the status line distinguishes them. Apache's free text does, and
 that text is a foreign string this project decided on 2026-09-28 not to
 carry into a finding. **So the honest sentence names both possibilities**;
 asserting either one is a claim the code cannot support.
+
+**Superseded 2026-10-02, and the conclusion above is left as the record of
+what was designed.** "Names both possibilities" was this spec's own answer,
+and the maintainer's ruling that day overturned it: the sentence must stop
+enumerating causes entirely. Task 5 (`916c5aa5`) carried that out and
+`d2123b9a` then removed an ordering the replacement had still asserted, so
+the `en` text at HEAD names no cause at all. The reasoning above is not
+withdrawn — "nothing in the status line distinguishes them" is what the
+measurement in `docs/BACKLOG.md` went on to confirm — only the conclusion
+drawn from it, because an enumeration of two is the same overclaim as an
+enumeration of one with better odds, and Task 3 measured a cause that is
+neither of these two. The two other passages this spec marks as superseded,
+further down, were annotated by Task 4 for the same ruling; this one was
+missed then and is annotated here.
 
 ### The replacement is free of collateral damage
 

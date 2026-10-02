@@ -330,6 +330,16 @@ that nothing is lost, which is the property that actually protects a
 measurement record — and a stack of appendices pointing backwards is harder
 to read than one corrected cell that shows its own history.
 
+**What the rule binds is the measurement record**: the rows of
+`docs/BACKLOG.md`, the specs and plans under `docs/superpowers/`, and the SDD
+ledgers — the documents whose whole value is that a later reader can tell what
+was measured, when, and by which command. The title above and the paragraph
+below it are stated generally; this is their scope. The rule does not bind a
+rule prescription in this file, because a section here states what the project
+should do rather than what it observed, so sharpening one withdraws no
+measurement and owes no quote — the commit message is where that change is
+accounted for.
+
 What this does not license: deleting a measurement because it turned out
 inconvenient, or rewording a finding without saying that is what happened. If
 a sentence changes meaning, the old meaning is quoted beside the new one.
