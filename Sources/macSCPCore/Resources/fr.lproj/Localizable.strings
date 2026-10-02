@@ -192,7 +192,7 @@
 "core.finding.sourceChangedSinceInterruption" = "Le fichier a changé sur le serveur depuis le téléchargement interrompu, rien n'a donc été ajouté au fichier partiel";
 "core.finding.unexpectedStatus %@" = "Le serveur a répondu avec le statut %@";
 "core.finding.directoryAlreadyExists" = "Un fichier ou un dossier portant ce nom existe déjà";
-"core.finding.movePreconditionFailed" = "Le serveur a refusé le déplacement : soit quelque chose se trouve déjà sous le nouveau nom, soit l'élément est verrouillé sur le serveur";
+"core.finding.movePreconditionFailed" = "Le serveur a refusé le déplacement parce qu'une condition qu'il vérifie au préalable n'était pas remplie";
 "core.finding.outOfStorage" = "Le serveur n'a plus d'espace de stockage";
 "core.finding.uploadStreamUnavailable" = "Le flux d'envoi n'a pas pu être créé";
 "core.finding.pathExistsAndIsNotADirectory %@" = "Quelque chose se trouve déjà à %@ et ce n'est pas un dossier";
