@@ -59,14 +59,31 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// A directory could not be created because something is already there.
     case directoryAlreadyExists
     /// A `MOVE` was refused because a precondition failed, and the status
-    /// does not say which one. Three causes are known to produce it here —
-    /// `Overwrite: F` meeting an occupied destination, a failed precondition
-    /// on the source, and (measured 2026-10-02) a revalidation header
-    /// `URLSession` attached to the request without this project asking.
-    /// An earlier version of this sentence named the first two and was
-    /// falsified by the third, so the text no longer enumerates causes at
-    /// all: it says what the server did. Where the cause matters, the
-    /// diagnostic log carries the exchange.
+    /// does not say which one. The text enumerates no causes at all: it
+    /// says what the server did.
+    ///
+    /// Measured 2026-10-02, in the one gated run Task 3 of the WebDAV 412
+    /// complex plan was given: the refused `MOVE` arrived carrying
+    /// `If-None-Match` and `If-Modified-Since`, headers this project sets
+    /// nowhere. Which layer attached them is an inference from elimination
+    /// plus a documented default, not an observation; the
+    /// `fullCRUDRoundTripOverBasic` row of `docs/BACKLOG.md` carries that
+    /// hedge along with the run and the captured request line.
+    ///
+    /// Read out of source rather than measured here: `ap_meets_conditions`
+    /// (httpd 2.4.68) answers 412 for an `If-None-Match` that matches on any
+    /// method but `GET`, and `dav_method_copymove` wraps that in its own
+    /// "failed precondition on the source (e.g. locks)" text — while
+    /// mod_dav's lock path, reached with no `If:` header, answers 423 or
+    /// nothing and cannot produce a 412 at all. RFC 4918 describes another
+    /// cause nothing here has measured: `Overwrite: F` meeting an occupied
+    /// destination.
+    ///
+    /// An earlier version of this sentence read "either something is already
+    /// at the new name, or the item is locked on the server". The lock it
+    /// named is the reading that measurement refuted, which is why the text
+    /// stopped naming causes. Where the cause matters, the diagnostic log
+    /// carries the exchange.
     case movePreconditionFailed
     /// The server reported that it has no room left.
     case outOfStorage

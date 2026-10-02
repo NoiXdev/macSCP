@@ -375,8 +375,8 @@ struct WebDAVFileSystemTests {
 
     /// 412 on a GET is the one thing the precondition exists to report: the
     /// resource changed, so nothing is handed back to append. It must NOT
-    /// read as `mapStatus`'s 412 — that one is a MOVE's `Overwrite: F`, and
-    /// "The destination already exists" would be a false sentence here.
+    /// read as `mapStatus`'s 412, which is guarded on the method being MOVE
+    /// and hands every other method's 412 back as the status itself.
     @Test func aChangedResourceIsRefusedWithItsOwnReasonAndNoBody() async throws {
         let transport = FakeHTTPTransport(replies: [
             .init(status: 412, body: Data("replacement".utf8), headers: [:])
@@ -619,8 +619,8 @@ struct WebDAVFileSystemTests {
 
     // MARK: - mapStatus reports findings, not English sentences (Task 2)
 
-    /// `mapStatus` is `static` and takes its inputs directly, so these four
-    /// need no transport at all.
+    /// `mapStatus` is `static` and takes its inputs directly, so the cases in
+    /// this section need no transport at all.
     @Test func aRefusedMKCOLReportsThatSomethingIsAlreadyThere() {
         #expect(throws: RemoteFSError.finding(.directoryAlreadyExists)) {
             try WebDAVFileSystem.mapStatus(405, path: "/a", method: "MKCOL")
