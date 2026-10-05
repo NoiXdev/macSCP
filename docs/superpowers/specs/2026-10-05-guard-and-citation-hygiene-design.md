@@ -203,11 +203,43 @@ adjusted. Row 285 names four and points at two more:
 **Form of each correction, decided by the maintainer 2026-10-05:** one
 group sentence per row, quoting the withdrawn citations verbatim and
 carrying the date of the re-derivation. This is the pattern row 106 of this
-same file already uses ("Before this correction this row cited `mapStatus`
-at `:643` …"). Quoting each of the ~25 citations in its own clause was
-considered and rejected: it would add more text than the rows it protects.
+same file already uses; its marker, read off `docs/BACKLOG.md` on
+2026-10-05:
+
+"**The three line citations above were replaced by symbols in the same pass, not retaken**, and all three had gone stale: this row cited `mapStatus` at `:643`, its 412 arm at `:662` and the guarded read at `:341`"
+
+The `fullCRUDRoundTripOverBasic` row carries a second shape for the same
+job, a bold lead with the withdrawn wording in curly quotes:
+
+"**Fix round 1 withdraws a clause that stood here**, “on the same keep-alive connection (`ka=5` there, `ka=8` on the MOVE)”"
+
+Seven such passages sit on that one row, and CLAUDE.md's "A correction quotes
+what it withdraws" enumerates them. What the shapes share is the invariant a
+correction here has to meet: a bold marker, the withdrawn wording or
+citation named verbatim, and a date. Quoting each of the ~25 citations in
+its own clause was considered and rejected: it would add more text than the
+rows it protects.
 Treating a line number as a typo owing no quote was also rejected — a
 citation is a claim about the tree, and replacing it withdraws that claim.
+
+Both quotations above are kept on single long lines deliberately. Wrapped,
+each was verbatim only modulo this document's own line breaks: measured
+2026-10-05, before the wrap was removed, a raw search for either returned
+nothing while a whitespace-normalised one found it. A quotation a reader
+cannot grep is a claim they have to take on trust, which is the failure this
+document exists to remove.
+
+**Corrected 2026-10-05** (Task 4, fix round 1). This paragraph first gave
+row 106's marker as “Before this correction this row cited `mapStatus` at
+`:643` …”, presented as a quotation. It is not one:
+`grep -n 'Before this correction' docs/BACKLOG.md` prints 0 lines, paired
+with the positive
+`grep -n 'The three line citations above were replaced by symbols' docs/BACKLOG.md`,
+which prints 1 and is row 106 — so the row and the citation it names are
+real, and only the lead-in was invented, written as quoted while never
+having been read. Task 4's brief carried the same invented phrase as the
+instruction for finding the form, which sent its implementer to a `grep`
+that matched nothing; the real wording above was read off the file instead.
 
 **Where a symbol does not exist**, a line number stays, and it is marked
 with the date it was derived so the next reader knows how old it is. The
