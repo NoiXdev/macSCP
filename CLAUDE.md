@@ -294,7 +294,7 @@ message:
   string therefore usually share a line, and `grep -c` reports **1**
   where the count is **2**. The property is reproducible with no file at
   all — `grep -c a <<< 'a a'` prints `1`, `grep -o a <<< 'a a' | wc -l`
-  prints `2` — and it was measured on 2026-10-06 against
+  prints `2` — and it was measured on 2026-10-05 against
   `docs/BACKLOG.md`, on the lead sentence that the index section's own
   correction record quotes beside the command that searches for it: the
   same two figures, 1 and 2. Count occurrences with `grep -o` and
