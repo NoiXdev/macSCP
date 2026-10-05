@@ -25,6 +25,18 @@ import Testing
 /// long it ran. `.timeLimit` is the net for a case that truly hangs, and it
 /// is deliberately far larger than any step budget below, so no assertion in
 /// this suite depends on it.
+///
+/// **Every case here takes that bound from the suite** (2026-10-05). Four
+/// cases used to carry `@Test(.timeLimit(.minutes(1)))` of their own,
+/// tightening the suite's five minutes to one inside a suite whose five
+/// exist for a starved runner — `ConnectionDiagnosticsTests`'
+/// `aStepBeyondItsTimeoutIsSettledByItsDeadline` records CI run 35405472152
+/// taking 87.253 s merely to REACH its assertion on the three-core runner.
+/// All four race steps against a budget through `DetachedProbe`, the same
+/// machinery that justification is about, so the suite's bound covers them
+/// and a per-case one only risked a red with no defect behind it. Removing
+/// the override rather than widening the number also means a later change
+/// to the suite's bound carries these four with it.
 @Suite("ConnectionDiagnostics through a jump host", .timeLimit(.minutes(5)))
 struct ConnectionDiagnosticsJumpTests {
     /// The jump's secret in the cases that give it one. Named, and never
@@ -282,11 +294,11 @@ struct ConnectionDiagnosticsJumpTests {
 
     /// Cancelled while the target's dial is in flight: the report stops
     /// there, and the jump connection is closed before `run` returns.
-    // `.timeLimit` as a hang bound only (CLAUDE.md, "A wall-clock ceiling
-    // in a test measures the runner"): nothing below asserts on elapsed
+    // The suite's `.timeLimit` as a hang bound only (CLAUDE.md, "A wall-clock
+    // ceiling in a test measures the runner"): nothing below asserts on elapsed
     // time, and a signal that is never raised must end the case rather
     // than the run.
-    @Test(.timeLimit(.minutes(1)))
+    @Test
     func aCancelledWalkStillClosesTheJumpConnection() async throws {
         let listener = try #require(LoopbackSocket.listening())
         defer { listener.close() }
@@ -324,11 +336,11 @@ struct ConnectionDiagnosticsJumpTests {
     /// seam `DetachedProbe` already carries for the `notStarted` cases —
     /// so the case awaits THE BODY and then reads the ledger. A body that
     /// closed nothing finishes all the same, and the red is the count.
-    // `.timeLimit` as a hang bound only (CLAUDE.md, "A wall-clock ceiling
-    // in a test measures the runner"): nothing below asserts on elapsed
+    // The suite's `.timeLimit` as a hang bound only (CLAUDE.md, "A wall-clock
+    // ceiling in a test measures the runner"): nothing below asserts on elapsed
     // time, and a park that is never released must end the case rather
     // than the run.
-    @Test(.timeLimit(.minutes(1)))
+    @Test
     func aJumpConnectionThatArrivesAfterItsDeadlineIsClosed() async throws {
         let listener = try #require(LoopbackSocket.listening())
         defer { listener.close() }
@@ -701,7 +713,7 @@ struct ConnectionDiagnosticsJumpTests {
     /// A floor, not a ceiling (CLAUDE.md, "A wall-clock ceiling in a test
     /// measures the runner"): the answer is released no sooner than a second
     /// past the step budget, and nothing asserts how long anything took.
-    /// `.timeLimit` is a hang bound only.
+    /// The suite's `.timeLimit` is a hang bound only.
     ///
     /// **Raced at the seam, not through a walk — and the comment this
     /// replaces was false.** Until 2026-09-25 this case drove a whole walk
@@ -723,7 +735,7 @@ struct ConnectionDiagnosticsJumpTests {
     /// `ConnectionDiagnostics.race(_:_:timer:)` is the seam it is raced
     /// through in production, and the budget the walk picks for this step is
     /// pinned by `everyTargetStepNamesTheBudgetItIsRacedAgainst`.
-    @Test(.timeLimit(.minutes(1)))
+    @Test
     func theTraceFromTheJumpIsRacedAgainstTheTraceBudget() async throws {
         let rig = JumpRig()
         let release = AsyncSignal()
@@ -977,7 +989,7 @@ struct ConnectionDiagnosticsJumpTests {
     /// does. Step two keeps its 200 ms, because `HeldLaunch` holds its body
     /// and nothing there races a clock: the deadline MUST win, which is the
     /// one direction a slow machine cannot break.
-    @Test(.timeLimit(.minutes(1)))
+    @Test
     func anEarlierStepsOutputDoesNotTurnALaterNeverStartedStepIntoATimeout() async throws {
         let hold = HeldLaunch()
         defer { hold.open() }
