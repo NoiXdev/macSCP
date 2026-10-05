@@ -106,19 +106,35 @@ the bound exists to catch, not a fixture to plant.
 
 What is checkable:
 
-- **`everyCallerOfPollUntilDeclaresATimeLimit` stays green.** That guard
+- **`everyCallerOfPollUntilDeclaresATimeLimit` is not evidence here.**
+  Fix round 1 withdraws this bullet's first version, "stays green", and its
+  claim that the guard is "the one guard that could have gone red on this
+  change": it could not, because it never examines this file. That guard
   (`PollingGuardTests`) requires a file calling `pollUntil(` or a polling
   helper to carry `.timeLimit(`. It is a **per-file** check —
-  `callers.filter { !$0.text.contains(".timeLimit(") }` — so the suite
-  annotation satisfies it after the four `@Test` ones are gone. Verified by
-  reading the check at `770472ac`; it is named here because it is the one
-  guard that could have gone red on this change, and a reviewer should
-  confirm the per-file reading rather than take it.
+  `callers.filter { !$0.text.contains(".timeLimit(") }` — which was read
+  correctly at `770472ac` and matters nothing here: the check considers
+  only suite files that contain `pollUntil(` or call a polling helper, and
+  `ConnectionDiagnosticsJumpTests.swift` contains neither. Counted
+  2026-10-05, each printing 0:
+  `grep -c -F 'pollUntil(' Tests/macSCPCoreTests/ConnectionDiagnosticsJumpTests.swift`,
+  and the same with `'waitFor('`, `'waitForFailure('` and
+  `'waitForRequests('`. A reviewer also removed the suite annotation, and
+  the comment's mention of it, so the file carried no `timeLimit(` at all,
+  and the guard still passed. What the change rests on instead: the four
+  cases still run and pass under the suite's bound
+  (`swift test --build-system native --filter ConnectionDiagnosticsJumpTests`:
+  45 tests in 1 suite passed), and the suite's trait applies to them
+  because they sit directly in the struct, with no nested `@Suite`
+  (`grep -c -F '@Suite' Tests/macSCPCoreTests/ConnectionDiagnosticsJumpTests.swift`
+  prints 1).
 - **The suite stays green**, with the four cases still running.
 - **The file still contains `.timeLimit(`** exactly once, at the suite.
   `grep -c 'timeLimit(' Tests/macSCPCoreTests/ConnectionDiagnosticsJumpTests.swift`
   printed **5** before the change (one suite, four overrides) and must print
-  **1** after.
+  **1** after. Fix round 1 withdraws "must print **1** after": it prints
+  **2**, because the doc comment this change adds quotes the removed
+  override. The code carries exactly one `.timeLimit(`, at the suite.
 
 ## Part B — `hang-hunt` refuses a run that tested nothing
 
@@ -171,8 +187,9 @@ change, because neither is in scope:
 
 - `everyCallerOfPollUntilDeclaresATimeLimit` is a **per-file** check, so a
   file can satisfy it with one suite annotation while a `@Test` that needs
-  its own bound has none. That is the property this change relies on, and
-  it is also a weakness worth its own row.
+  its own bound has none. Fix round 1 withdraws "That is the property this
+  change relies on": the change relies on neither reading, since the guard
+  never examines the file. It stays a weakness worth its own row.
 - `scripts/hang-hunt` deletes the log of every non-hanging run, so any
   evidence a passing run carried is gone. Part B keeps the log only on the
   refusal path; whether the others should survive is a separate question.
