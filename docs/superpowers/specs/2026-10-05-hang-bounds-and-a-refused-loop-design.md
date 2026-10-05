@@ -189,7 +189,15 @@ change, because neither is in scope:
   file can satisfy it with one suite annotation while a `@Test` that needs
   its own bound has none. Fix round 1 withdraws "That is the property this
   change relies on": the change relies on neither reading, since the guard
-  never examines the file. It stays a weakness worth its own row.
+  never examines the file. It stays a weakness worth its own row. Fix round 2
+  adds: the guard's other weakness, that it reads raw text, so a
+  `.timeLimit(` only in a comment satisfies it, is now watched by
+  `PollingGuardTests.noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment`
+  (commit `dcddbd57`), which fails when a caller carries the limit only in a
+  comment. It detects the situation and repairs nothing: the existing check
+  still reads raw text, and whether to switch it to the blanked view is
+  undecided. (No sentence of this spec called that weakness "latent"; the
+  word lived in the plan's Task 3 row, which is corrected there.)
 - `scripts/hang-hunt` deletes the log of every non-hanging run, so any
   evidence a passing run carried is gone. Part B keeps the log only on the
   refusal path; whether the others should survive is a separate question.
