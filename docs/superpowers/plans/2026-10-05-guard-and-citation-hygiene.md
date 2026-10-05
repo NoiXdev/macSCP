@@ -121,77 +121,30 @@ Expected: exactly one line,
 unstaged form). Any other path means something else was touched — stop and
 report. **Do not use `git checkout --` to clean up.**
 
-- [ ] **Step 6: Plant the A2 violation — the exemption's blind spot**
+**Steps 6 to 10 were struck on 2026-10-05, after Task 1's first run.** They
+planted `Sources/MacSCPAppKit/Presentation/SessionTab.swift` to measure the
+bare-name exemption's blind spot. That plant cannot exist: SwiftPM maps both
+files to one object path and the build fails with
 
-Create an untracked file
-`Sources/MacSCPAppKit/Presentation/SessionTab.swift` with exactly this
-content:
-
-```swift
-/// Probe A2. A second file carrying the exempted NAME, one directory down.
-struct ProbeA2Session {
-    var showsFiles = false
-}
-
-enum ProbeA2Scratch {
-    static func read(_ session: ProbeA2Session) -> Bool {
-        session.showsFiles
-    }
-}
+```
+error: couldn't build .../MacSCPAppKit.build/SessionTab.swift.o because of
+multiple producers: Compiling Swift Module 'MacSCPAppKit' (121 sources), ...
 ```
 
-Three things make this the right plant, each checked 2026-10-05:
+This plan asserted the opposite — "Two files named `SessionTab.swift` in one
+module is legal Swift — file names carry no meaning", in a list introduced as
+"each checked 2026-10-05". It had not been checked. It is true of the
+language and false of the build system.
 
-- `Sources/MacSCPAppKit/Presentation/` already exists, so the task creates
-  no directory.
-- Two files named `SessionTab.swift` in one module is legal Swift — file
-  names carry no meaning — and the type names above clash with nothing.
-- The scanner, `readsShowsFilesOffASession(_:)`, needs only a `.showsFiles`
-  member access whose receiver name contains `session`
-  case-insensitively. It does **not** need `BrowserSession`, which is
-  declared in `Sources/MacSCPAppKit/SessionTab.swift` and would drag the
-  probe into the App's real types for nothing.
+With it falls the premise, not only the measurement: the backlog row says such
+a file "would be silently exempted", and that state is unreachable. The only
+case in which the two spellings differ is the owner MOVING into a
+subdirectory, where the bare name keeps exempting it correctly and the
+relative path would go red for no violation. **Maintainer's ruling,
+2026-10-05: strike the change.** The measurement goes into the backlog row
+instead, in Task 5.
 
-Build before concluding anything about red or green:
-`swift build --build-system native` must succeed first.
-
-- [ ] **Step 7: Measure A2 green-before, three times**
-
-Run three times:
-`swift test --build-system native --filter onlySessionTabReadsShowsFilesOffTheSession`
-
-Expected: **PASS** all three *with the violation present* — that is the
-defect, and it is what makes the change worth making. Record `3 of 3`
-green. If it is red, the bare-name exemption is not doing what the row
-says; stop and report.
-
-- [ ] **Step 8: Make the A2 change**
-
-Replace the exemption filter:
-
-```swift
-        let files = try Self.appSwiftFiles()
-            .filter { Self.relativePath(of: $0) != "SessionTab.swift" }
-```
-
-- [ ] **Step 9: Measure A2 red-after, three times**
-
-Run the same filter three times. Expected: **FAIL** all three, naming
-`Presentation/SessionTab.swift` — by its relative path, which is the other
-half of the point. Record `3 of 3` and quote one message.
-
-- [ ] **Step 10: Remove the A2 probe and confirm the tree**
-
-```bash
-rm Sources/MacSCPAppKit/Presentation/SessionTab.swift
-git status --porcelain
-```
-
-Expected: again exactly the one modified test file. If
-`Sources/MacSCPAppKit/Presentation/` was created by this task rather than
-already present, remove it too and say so in the report.
-
-- [ ] **Step 11: Write both measurements into the suite's doc comment**
+- [ ] **Step 11: Write the measurement into the suite's doc comment**
 
 The doc comment on `onlySessionTabReadsShowsFilesOffTheSession` currently
 reads:
@@ -218,13 +171,13 @@ measured for `3 of 3` if they differed:
     /// `Character`s — `SourceCorpus.lengthCheckedView` refuses one that is
     /// not — so the offender line numbers are unchanged.
     ///
-    /// Exempts by `relativePath(of:)`, not by `lastPathComponent`: the walk
-    /// descends, so a bare name would exempt a `SessionTab.swift` anywhere
-    /// in the target from the one negative this suite exists for. Measured
-    /// 2026-10-05: a violation planted in
-    /// `Sources/MacSCPAppKit/Presentation/SessionTab.swift` was green 3 of 3
-    /// against the bare name — silently exempted — and red 3 of 3 against
-    /// the relative path.
+    /// The exemption stays a bare file name on purpose. A second
+    /// `SessionTab.swift` under this target — the case a relative path
+    /// would guard against — cannot exist: SwiftPM maps both to one object
+    /// path and the build fails with "multiple producers" (measured
+    /// 2026-10-05). The only case the two spellings part company on is the
+    /// owner moving into a subdirectory, and there the bare name keeps
+    /// exempting it, where a relative path would go red for no violation.
 ```
 
 - [ ] **Step 12: Run the whole suite**
@@ -239,26 +192,24 @@ final summary line into your report.
 Stage only the test file and commit:
 
 ```
-test(appkit): the pane-visibility guard reads code, and exempts by path
-
-Two defects in one negative check, both found by the cleanup plan's final
-review on 2026-09-28 and both widened by a22658df, which took the walk from
-116 to 119 files without touching either.
+test(appkit): the pane-visibility guard reads code, not raw text
 
 It read SourceCorpus.text(of:), so a doc comment or a string literal
 spelling session.showsFiles was reported as an offender — the collision
-CLAUDE.md describes under "Source-scanning guards read comments too". And
-it exempted by lastPathComponent, so now that the walk descends, a
-SessionTab.swift in any subdirectory would have been silently exempted from
-the one negative this suite exists for. The suite already carried the
-helper the fix needs: relativePath(of:).
+CLAUDE.md describes under "Source-scanning guards read comments too".
+a22658df widened the walk from 116 to 119 files without touching the read,
+so the blast radius grew. Found 2026-09-28 by the cleanup plan's final
+review.
 
-Both measured, both directions. A planted doc comment spelling the property
-was red 3 of 3 against text(of:) and green 3 of 3 against code(of:). A
-violation planted in Presentation/SessionTab.swift was green 3 of 3 against
-the bare name — the defect — and red 3 of 3 against the relative path. The
-counts are in the suite's own doc comment beside the 2026-09-27
-measurement that widened the walk.
+Measured both directions, 2026-10-05: a planted doc comment spelling the
+property was red 3 of 3 against text(of:) and green 3 of 3 against
+code(of:). The two views are the same length in Characters —
+SourceCorpus.lengthCheckedView refuses one that is not — so the offender
+line numbers the guard reports are unchanged.
+
+The same row named a second defect, the exemption by bare file name. It is
+not fixed here and the row says why: the state it describes cannot be
+built.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
@@ -714,8 +665,26 @@ what closed it and the commit. A closure **adds** a finding; it withdraws
 no earlier measurement, so it owes no quote.
 
 - `Three guard suites still read raw source or exempt by file name` —
-  closed by Tasks 1 and 2. Record both directions of all three
-  measurements.
+  closed by Tasks 1 and 2, but **not in the way the row expects**, and the
+  row must say so. Two of its three findings were fixed and measured both
+  directions. Its SECOND finding — the exemption by bare file name — is
+  **closed by a measurement, not by a change**, and the row records why:
+
+  > Measured 2026-10-05. The state this row calls silently exempted cannot
+  > be built. A second `SessionTab.swift` anywhere under
+  > `Sources/MacSCPAppKit` makes SwiftPM fail with `couldn't build
+  > .../MacSCPAppKit.build/SessionTab.swift.o because of multiple
+  > producers`, because it maps both files to one object path. This row
+  > said such a file "would be silently exempted from the only negative
+  > that suite exists for"; that is withdrawn — it describes a tree the
+  > build refuses. The two spellings differ in exactly one reachable case,
+  > the owner moving into a subdirectory, and there the bare name keeps
+  > exempting it correctly while a relative path would go red for no
+  > violation. The maintainer struck the change on the same day.
+
+  Reproduce the build error yourself before writing it down, and quote what
+  your own run printed, not what this plan predicts. Remove the probe with
+  `rm` afterwards and read `git status --porcelain` back.
 - `` `outcome(forUnanswered:)`'s comment claims three readers where a fourth decides the same question ``
   — closed by Task 3.
 - `Four rows in this file carry citations that were stale before the typed-findings plan`
