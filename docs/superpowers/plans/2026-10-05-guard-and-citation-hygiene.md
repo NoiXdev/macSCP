@@ -107,6 +107,8 @@ what this task assumes.
 
 - [ ] **Step 3: Make the A1 change**
 
+> Superseded — see the correction note under this task's heading.
+
 In `onlySessionTabReadsShowsFilesOffTheSession`, change the read from
 `text(of:)` to `code(of:)`:
 
@@ -158,6 +160,8 @@ instead, in Task 5.
 
 - [ ] **Step 11: Write the measurement into the suite's doc comment**
 
+> Superseded — see the correction note under this task's heading.
+
 The doc comment on `onlySessionTabReadsShowsFilesOffTheSession` currently
 reads:
 
@@ -200,6 +204,8 @@ Expected: PASS except the known `ViewTestabilitySpike` failure. Quote the
 final summary line into your report.
 
 - [ ] **Step 13: Commit**
+
+> Superseded — see the correction note under this task's heading.
 
 Stage only the test file and commit:
 
