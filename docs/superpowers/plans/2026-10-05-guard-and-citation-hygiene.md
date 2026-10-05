@@ -729,7 +729,20 @@ no earlier measurement, so it owes no quote.
   your own run printed, not what this plan predicts. Remove the probe with
   `rm` afterwards and read `git status --porcelain` back.
 - `` `outcome(forUnanswered:)`'s comment claims three readers where a fourth decides the same question ``
-  — closed by Task 3.
+  — closed by Task 3, **and made stale by it in two places of its own.** The
+  row says the function and its comment "now sit at
+  `…+Jump.swift:314-322`" and names "the declaration
+  (`ConnectionDiagnostics+Jump.swift:322`)". Both were honest dated
+  re-derivations on 2026-10-01 and both are false from Task 3's commit on,
+  because the corrected comment is ten lines longer and the declaration
+  moved to `:332`. Replace both with the symbol and quote the withdrawn
+  numbers verbatim. Re-derive the current position yourself; do not copy
+  `:332` out of this plan.
+
+  This is the row's own failure mode happening to the row while it is being
+  closed, which is worth one sentence in the closure: a citation by line
+  number goes stale when the thing above it grows, and the thing above it
+  grew because this row asked for it.
 - `Four rows in this file carry citations that were stale before the typed-findings plan`
   — closed by Task 4.
 
