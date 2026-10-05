@@ -303,6 +303,18 @@ message:
   is a verification command that contradicts the figure standing next to
   it, which is the failure the bullet above is about, arriving through
   the counting primitive rather than through the quoting.
+  The same distinction binds a SWEEP, not only a count. On a file that
+  keeps a record per line, a citation sweep has to classify **per
+  match, not per line**: a line whose head is a quotation can still
+  carry a live claim in its tail, and a sweep that reads the head and
+  moves on is a `grep -c` in prose. Measured 2026-10-05 on the
+  candidate-listing branch: a sweep corrected four row-number
+  citations in the closing section of `docs/BACKLOG.md` and missed a
+  fifth, on a line that opens with a withdrawal quoting the row
+  numbers of a 2026-10-02 run — so the line read as already accounted
+  for — while its tail carried a live “row 285 is 286 because a row
+  was added above it”, by then 287. Skipping the line skipped the live
+  claim along with the quoted one.
 - **Run it again after writing the sentence.** The sentence can change
   the answer, and that is not a corner case: it happened twice here,
   the second time inside the fix for the first.
