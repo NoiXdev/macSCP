@@ -701,6 +701,15 @@ no earlier measurement, so it owes no quote.
   defect. That header sentence is withdrawn in Task 1's commit, with the
   wording quoted; the row notes that it existed.
 
+  Its THIRD finding is fixed, and the closure states what the fix does NOT
+  reach. `CLISourceWalk` keys `slices` and `declarations` by function name,
+  so a second `-> HostKeyDecider` function under a subdirectory whose name
+  is ALREADY declared — `makeDecider`, say — still overwrites that entry
+  instead of adding a builder, and `builders.count` still reads 1.
+  Descending makes the walk see more files; it does not change the keying.
+  That is pre-existing and was never in this row's scope, but a closure
+  that implies the hole is shut would be the next stale sentence.
+
   Its SECOND finding — the exemption by bare file name — is
   **closed by a measurement, not by a change**, and the row records why:
 
