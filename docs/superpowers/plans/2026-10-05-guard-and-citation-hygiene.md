@@ -942,9 +942,57 @@ own that wanted their own entries went into `docs/BACKLOG.md` as rows 287,
 
 One finding the review raised that is nobody's to park, because it is a
 decision: **the candidate listing's closure-marker filter owns no row
-asking for it to be fixed.** The index caveat documents the blind spot and
-row 288 instantiates it, but nothing says repair it. The review's reading is
+asking for it to be fixed.** **Withdrawn 2026-10-05**, by the pass the
+maintainer asked for after reading this entry. It read: “The review's
+reading is
 that it looks like a one-character change — anchoring the closure-marker
 half to the cell start, as the `^ \*\*Open` half already is — which would
-also retire row 288's de-bolding workaround. That is the maintainer's to
-take, and deliberately not written as a row by the branch that found it.
+also retire row 288's de-bolding workaround.” The one-character change
+removes the filter instead of sharpening it, because no row that opens
+`**Open` can also open `**Done`, so the anchored negative excludes
+nothing. Anchored, run from the repository root on 2026-10-05, it counts
+the whole set:
+
+```
+awk -F'|' '/^\|/ && $3 ~ /^ \*\*Open/ { if ($3 !~ /^ \*\*(Done|Closed|Fixed|Resolved)/) n++ } END{print n}' docs/BACKLOG.md
+```
+
+printed **78**, against the committed unanchored form, same date, same
+root:
+
+```
+awk -F'|' '/^\|/ && $3 ~ /^ \*\*Open/ { if ($3 !~ /\*\*(Done|Closed|Fixed|Resolved)[^*]*\*\*/) n++ } END{print n}' docs/BACKLOG.md
+```
+
+which printed **40**. The one sub-clause that survives survives for the
+wrong reason: anchoring would indeed retire row 288's de-bolding
+workaround, because a bold mid-cell marker would stop matching — it
+retires the workaround by retiring the filter, which is not the sense in
+which it was offered.
+
+Nor is there a cheap textual signal to anchor onto instead, checked on
+the two rows that would have to differ and do not: `docs/BACKLOG.md`'s
+row 147, fully closed, and row 263, the Metal row, part-closed with an
+open decision, both open `**Open, recorded ` and both end in prose with
+no terminal marker of any kind.
+
+**What the defect turned out to be: invisibility, not mis-selection** —
+which is what the index caveat's own sentence said, “what it removes is
+invisible”. So the repair is not a filter that selects differently but a
+listing that stops hiding: the selection is now a committed command in
+that section, printing every removed row labelled `REMOVED` beside every
+candidate labelled `CANDIDATE`, with both counts and a
+`halves-sum-to-total` consistency check, which puts a positive beside
+the negative without changing which rows are candidates. The counts are
+unmoved by the repair — `candidates=40 removed=38 opens-Open=78` — and
+the Metal row, the worked example a reader could previously not see at
+all, prints on a `REMOVED` line carrying row number 263.
+
+Two more sentences of this entry went with the reading above, and are
+quoted because they have been overtaken rather than falsified. “The index
+caveat documents the blind spot and row 288 instantiates it, but nothing
+says repair it.” — something says it now: the maintainer asked, and the
+asking is what this withdrawal records. “That is the maintainer's to
+take, and deliberately not written as a row by the branch that found it.”
+— taken, on 2026-10-05, and still not a row: the repair landed in the
+index section itself rather than as an item in it.
