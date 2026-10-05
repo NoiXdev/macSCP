@@ -19,6 +19,27 @@
 #   TIMEOUT   seconds before a run counts as hung (default 240)
 #   OUT       evidence directory             (default .hang-evidence, git-ignored)
 #
+# A run that tested NOTHING is refused, not counted (2026-10-05). After run 1
+# the worker checks for `warning: No matching test cases were run` AND for a
+# `Test run with N tests` line, and on either failure it stops, keeps that
+# run's log and returns non-zero. `--filter` matches TYPE and FUNCTION names,
+# never a suite's DISPLAY name, so `FILTER='A probe that never began'` matches
+# nothing where `FILTER=ProbeStartTests` matches a suite; before this gate the
+# first spelling printed "N runs, no hang" and exited 0. The companion rule is
+# scripts/mutation-probe's NO TESTS RAN outcome. The zero-test run is told apart
+# from a real one by two facts measured on 2026-10-05: it prints that warning,
+# and it prints NO `Test run with N tests` line at all (a matching run prints
+# one), so the second check does work the first cannot.
+#
+# Exit status (it meant nothing before 2026-10-05: a failed prebuild or a
+# refused run was swallowed by a bare `wait` and the script exited 0):
+#   non-zero  a worker refused (nothing ran) or its prebuild failed
+#   0         a hang was captured — finding one is this script's PURPOSE, not
+#             a failure of it, so evidence in $OUT is success; look for HANG-*
+#   0         every run finished inside TIMEOUT ("N runs, no hang")
+# A refusal and a prebuild failure both win over a captured hang in another
+# worker, so non-zero always means "this loop did not test what you asked".
+#
 # Each worker uses its OWN scratch path so the loop never contends with a
 # normal `swift test` in this checkout for the .build lock — lock contention is
 # a DIFFERENT failure that already cost this project a day (M20/T12: a gated
@@ -82,12 +103,54 @@ worker() {
         fi
 
         wait "$pid" 2>/dev/null
+
+        # A run that tested NOTHING is its own outcome, distinct from green
+        # and from hung — the same distinction scripts/mutation-probe draws
+        # with its NO TESTS RAN line, and for the same reason: a harness that
+        # only watches for failure reads "nothing ran" as "nothing wrong".
+        # `--filter` matches TYPE and FUNCTION names, never a suite's DISPLAY
+        # name, so a filter spelling the display name matches nothing and
+        # SwiftPM exits 0. docs/BACKLOG.md records a 40-run loop lost to it.
+        # Checked on the FIRST run only: a filter cannot start matching
+        # halfway through a loop.
+        if [ "$i" -eq 1 ]; then
+            if grep -q 'No matching test cases were run' "$log"; then
+                echo "w$id: REFUSED after run 1 — that run tested NOTHING."
+                echo "w$id: 'swift test' printed 'No matching test cases were run' and exited 0."
+                echo "w$id: FILTER='$FILTER' matched no type or function name."
+                echo "w$id: --filter matches TYPE and FUNCTION names, never a suite's display name."
+                echo "w$id: log kept at $log"
+                return 1
+            fi
+            # The positive beside that negative, because a negative check that
+            # greps one known string goes quiet the day SwiftPM rewords it:
+            # the run must also SAY how many tests it ran.
+            local ran
+            ran=$(grep -oE 'Test run with [0-9]+ test' "$log" | head -1 | grep -oE '[0-9]+')
+            if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+                echo "w$id: REFUSED after run 1 — no evidence that any test ran."
+                echo "w$id: its output carries no 'Test run with N tests' line."
+                echo "w$id: FILTER='$FILTER'"
+                echo "w$id: log kept at $log"
+                return 1
+            fi
+            echo "w$id: run 1 ran $ran test(s) — looping."
+        fi
+
         rm -f "$log"
     done
     echo "w$id: $RUNS runs, no hang"
 }
 
-for w in $(seq 1 "$WORKERS"); do worker "$w" & done
-wait
+# A bare `wait` returns 0 whatever its jobs returned, so every worker's pid is
+# waited on by itself and a non-zero is remembered. The exit is the LAST
+# statement: the trailing `ls | grep || echo` succeeds unconditionally and
+# would otherwise overwrite it.
+pids=()
+for w in $(seq 1 "$WORKERS"); do worker "$w" & pids+=($!); done
+status=0
+for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || status=1; done
 echo "done"
 ls "$OUT" | grep HANG || echo "no hang captured"
+[ "$status" -ne 0 ] && echo "at least one worker REFUSED or failed its prebuild — see the w<N>: lines above"
+exit "$status"
