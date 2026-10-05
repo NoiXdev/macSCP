@@ -52,6 +52,8 @@ For each of the four, record the function name on the line below it. They should
 
 - [ ] **Step 2: Confirm the one guard that could go red, by reading it**
 
+> Fix round 1: this step's premise was wrong. The heading's "the one guard that could go red" and the closing "this task's safety rests on that reading" are withdrawn: the guard cannot go red on this file, because it never examines it (see Task 3, Step 3). The per-file reading below is correct and was confirmed; it just carries no weight here. What this task rests on is that the four cases still run and pass under the suite's bound, which applies to them because they sit directly in the struct with no nested `@Suite`.
+
 `PollingGuardTests.everyCallerOfPollUntilDeclaresATimeLimit` requires a suite file that calls `pollUntil(` or a polling helper to carry `.timeLimit(`. Read it and establish for yourself whether it is a **per-file** or a per-test check — the plan's claim is per-file, because it filters `callers.filter { !$0.text.contains(".timeLimit(") }` over whole files, which the suite annotation alone satisfies.
 
 If you read it as per-test, stop and report: this task's safety rests on that reading.
@@ -100,7 +102,7 @@ grep -c 'timeLimit(' Tests/macSCPCoreTests/ConnectionDiagnosticsJumpTests.swift
 grep -c '@Test$' Tests/macSCPCoreTests/ConnectionDiagnosticsJumpTests.swift
 ```
 
-Expected: the first prints `1` — the suite annotation, which is what keeps `everyCallerOfPollUntilDeclaresATimeLimit` satisfied. Record what the second printed; it is not a target, only evidence that four plain `@Test` lines now exist where the annotations were.
+Expected: the first prints `1` — the suite annotation. (Fix round 1 withdraws "which is what keeps `everyCallerOfPollUntilDeclaresATimeLimit` satisfied": that guard does not consider this file. And it printed `2`, not `1`, because the doc comment below quotes the removed override; the code carries exactly one.) Record what the second printed; it is not a target, only evidence that four plain `@Test` lines now exist where the annotations were.
 
 - [ ] **Step 6: Run the guard, then the suite, then the whole suite**
 
@@ -142,6 +144,8 @@ minute is a test that hangs, which is the defect the bound exists to catch.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
+
+> Fix round 1: the message above is not what was committed. It was committed with "from 5 to 2" for "from 5 to 1", and amended again to withdraw "everyCallerOfPollUntilDeclaresATimeLimit stays satisfied because it is a per-file check and the suite annotation remains": that guard does not consider this file, and the count is 2 because the doc comment quotes the removed override.
 
 ---
 
@@ -331,11 +335,13 @@ Then record what was done: the four overrides removed rather than widened, `Prob
 
 Both came out of the design and neither is in scope. One row, in the "Security and testability" section, carrying both with their measurements:
 
-- `PollingGuardTests.everyCallerOfPollUntilDeclaresATimeLimit` is weak in **two** ways, and Task 1 relies on both readings, which is exactly why they are worth a row.
+- `PollingGuardTests.everyCallerOfPollUntilDeclaresATimeLimit` is weak in **two** ways. (Fix round 1 withdraws "and Task 1 relies on both readings, which is exactly why they are worth a row": Task 1 relies on neither, see below. The two weaknesses are real and are the row's subject.)
 
   It is a **per-file** check: `callers.filter { !$0.text.contains(".timeLimit(") }`. So a file satisfies it with one suite annotation while a `@Test` that needs its own bound has none — the guard cannot tell a file that bounds every case from one that bounds the suite and forgets a case.
 
-  And it reads **raw text**, not a comment-blanked view, so a `.timeLimit(` inside a COMMENT satisfies it. `PollingGuardTests.sources()` returns `(path: String, text: String, code: String)` — the blanked view is already in the same tuple and the check uses the raw one, so the repair is one word. CLAUDE.md has a rule about exactly this ("Source-scanning guards read comments too"). **Record the live instance Task 1 created:** after that task, `ConnectionDiagnosticsJumpTests.swift` carries `.timeLimit(` twice — once in the suite annotation and once inside the doc comment that quotes the removed override — so that file now satisfies the guard from a comment as well as from code. Measure both occurrences and name which is which.
+  And it reads **raw text**, not a comment-blanked view, so a `.timeLimit(` inside a COMMENT satisfies it. `PollingGuardTests.sources()` returns `(path: String, text: String, code: String)` — the blanked view is already in the same tuple and the check uses the raw one, so the repair is one word. CLAUDE.md has a rule about exactly this ("Source-scanning guards read comments too"). **Do not record a live instance from Task 1.** Fix round 1 withdraws the sentence that stood here, "Record the live instance Task 1 created: after that task, `ConnectionDiagnosticsJumpTests.swift` carries `.timeLimit(` twice — once in the suite annotation and once inside the doc comment that quotes the removed override — so that file now satisfies the guard from a comment as well as from code." The two occurrences are real (counted 2026-10-05: raw text 2, comment-blanked view 1), but the guard never examines that file: it considers only suite files containing `pollUntil(` or calling a polling helper, and this file contains neither (`grep -c -F` of `pollUntil(`, `waitFor(`, `waitForFailure(` and `waitForRequests(` each prints 0). A reviewer removed the suite annotation and the comment's mention so the file carried no `timeLimit(` at all, and the guard still passed. So the weakness has no instance there, and the file does not "satisfy the guard" from anywhere, because it is not asked to.
+
+  **Whether any file IS an instance was measured, and none is.** Derive the caller set exactly as the guard does (suite files containing `pollUntil(`, plus suite files calling `waitFor`, `waitForFailure` or `waitForRequests`: 39 direct and 5 indirect callers, 44 in all, counted 2026-10-05 through a temporary probe test over the guard's own `sources()` and `pollingHelperFunctionNames(in:)`, removed again) and ask which members carry `.timeLimit(` in the raw text but not in the comment-blanked `code` view. Result: raw 44, code 44, comment-only none. Positive beside it, so "none" can be told from a broken search: the caller set is non-empty (44), and the same probe over `ConnectionDiagnosticsJumpTests.swift` printed raw 2, code 1, so the raw/blanked comparison does detect a comment-only mention when one exists. State the weakness in the row as **latent: looked for, no instance found**, with that measurement, rather than as a live one.
 - `scripts/hang-hunt` deletes the log of every non-hanging run. Task 2 keeps it on the refusal paths only; whether a passing run's log should survive is undecided, and a passing run's log is the only place a future warning would appear.
 
 Mark it `Not started.` so the candidate listing can see it.
@@ -375,9 +381,11 @@ one. The five minutes are also one case's justification rather than a
 project precedent.
 
 One new row carries the two findings this work does not fix: that
-everyCallerOfPollUntilDeclaresATimeLimit is a per-file check, which Task 1
-relies on and which cannot tell a file that bounds every case from one that
-bounds the suite and forgets a case; and that hang-hunt still deletes a
+everyCallerOfPollUntilDeclaresATimeLimit is a per-file check, which
+cannot tell a file that bounds every case from one that
+bounds the suite and forgets a case, and which never examined the file
+this work edited (Fix round 1 withdraws "which Task 1
+relies on"); and that hang-hunt still deletes a
 passing run's log, which is the only place a future warning would appear.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
