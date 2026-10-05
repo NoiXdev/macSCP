@@ -331,7 +331,11 @@ Then record what was done: the four overrides removed rather than widened, `Prob
 
 Both came out of the design and neither is in scope. One row, in the "Security and testability" section, carrying both with their measurements:
 
-- `PollingGuardTests.everyCallerOfPollUntilDeclaresATimeLimit` is a **per-file** check: `callers.filter { !$0.text.contains(".timeLimit(") }`. So a file satisfies it with one suite annotation while a `@Test` that needs its own bound has none. Task 1 **relies** on that reading, which is exactly why it is worth a row: the guard cannot tell a file that bounds every case from one that bounds the suite and forgets a case.
+- `PollingGuardTests.everyCallerOfPollUntilDeclaresATimeLimit` is weak in **two** ways, and Task 1 relies on both readings, which is exactly why they are worth a row.
+
+  It is a **per-file** check: `callers.filter { !$0.text.contains(".timeLimit(") }`. So a file satisfies it with one suite annotation while a `@Test` that needs its own bound has none — the guard cannot tell a file that bounds every case from one that bounds the suite and forgets a case.
+
+  And it reads **raw text**, not a comment-blanked view, so a `.timeLimit(` inside a COMMENT satisfies it. `PollingGuardTests.sources()` returns `(path: String, text: String, code: String)` — the blanked view is already in the same tuple and the check uses the raw one, so the repair is one word. CLAUDE.md has a rule about exactly this ("Source-scanning guards read comments too"). **Record the live instance Task 1 created:** after that task, `ConnectionDiagnosticsJumpTests.swift` carries `.timeLimit(` twice — once in the suite annotation and once inside the doc comment that quotes the removed override — so that file now satisfies the guard from a comment as well as from code. Measure both occurrences and name which is which.
 - `scripts/hang-hunt` deletes the log of every non-hanging run. Task 2 keeps it on the refusal paths only; whether a passing run's log should survive is undecided, and a passing run's log is the only place a future warning would appear.
 
 Mark it `Not started.` so the candidate listing can see it.
