@@ -897,3 +897,54 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
   `Sources/MacSCPCLI` declares, so no call has to be added anywhere. Every
   task still reads `git status --porcelain` back after removing its probe.
 - **Nothing here is user-visible**, so no noix-docs work is owed.
+
+## Parked findings, with their rulings (2026-10-05)
+
+The whole-branch review's residual findings. They live here because the SDD
+ledger they were raised in sits under `.superpowers/`, which is gitignored
+and goes with the worktree — a parked finding whose only record is scratch
+is a discarded finding with better manners. Three findings of this branch's
+own that wanted their own entries went into `docs/BACKLOG.md` as rows 287,
+288 and 289 instead, because they are open work rather than rulings.
+
+- **`95b42f0a`'s "the last flat whole-directory reader among this project's
+  source-scanning guards" carries no command.** Ruling: park as **verified
+  true**. The review derived the command this branch never wrote:
+  `grep -rn 'SourceCorpus.children(of:' Tests/` returned 15 lines on
+  2026-10-05 — 7 doc-comment mentions, 7 uses as the flat control inside a
+  descends-positive, 1 in `SourceCorpusScope`'s own helper, and **zero** as
+  a guard's source listing. The claim stands; only its evidence was
+  missing, and it is written down here rather than in the commit message,
+  which cannot be amended without falsifying five citations that
+  `docs/BACKLOG.md` now makes by hash.
+- **`outcome(forUnanswered:)`'s "It cannot drift apart from this one
+  either, because it compares the SYMBOL" ties down the sentence, not the
+  classification.** True: if `.neverBegan`'s mapping changed in
+  `outcome(forUnanswered:)`, `InternetSpeedProbe` would still say
+  `notStarted`. Ruling: park. The paragraph above it scopes "disagree" to
+  "what a probe that never began says to a reader", and the reason given is
+  explicitly about the sentence, so the comment is defensible as written.
+- **The corrected comment dropped its old `(counted 2026-09-27)`
+  attribution without quoting it.** Ruling: park, nothing owed. The
+  correction rule binds the rows of `docs/BACKLOG.md`, the documents under
+  `docs/superpowers/` and the SDD ledgers — not a source doc comment. Worth
+  one clause if anyone is in that file anyway.
+- **Row 147's own `:86`, `:81` and `:642` were made stale by this branch
+  (`326ead00`, `95b42f0a`), while sibling row 148 received an explicit
+  withdrawal for the same thing.** Ruling: park, the asymmetry is
+  deliberate. Row 148's two were re-derivations dated 2026-10-01 and stated
+  as current ("now sit at"), so they claimed to describe the tree. Row
+  147's three sit inside text scoped by its opening
+  `**Open, recorded 2026-09-28**`, which is this file's convention for
+  reading a closed row as a record of its own date. Reviewed twice and
+  judged defensible both times; recorded here so it is a decision rather
+  than an oversight.
+
+One finding the review raised that is nobody's to park, because it is a
+decision: **the candidate listing's closure-marker filter owns no row
+asking for it to be fixed.** The index caveat documents the blind spot and
+row 288 instantiates it, but nothing says repair it. The review's reading is
+that it looks like a one-character change — anchoring the closure-marker
+half to the cell start, as the `^ \*\*Open` half already is — which would
+also retire row 288's de-bolding workaround. That is the maintainer's to
+take, and deliberately not written as a row by the branch that found it.
