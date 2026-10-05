@@ -80,12 +80,45 @@ That is CLAUDE.md's own corollary ("prefer the symbol to the line number")
 applied to the rows that most need it, and the command above is itself the
 evidence for why.
 
-## Part A — three guard repairs (row 147)
+## Part A — two guard repairs (row 147)
 
-One commit. Three changes, each a few words, each proven by a planted
+Two commits. Two changes, each a few words, each proven by a planted
 violation measured red and green. The suite's own doc comment already
 carries a measurement in this form from 2026-09-27 ("green 3 of 3 against
 the flat listing and red 3 of 3 against this walk"); these join it.
+
+**Corrected 2026-10-05, after this branch finished.** The heading above read
+`## Part A — three guard repairs (row 147)`, and the paragraph above
+opened, on one line here so a reader can grep it:
+
+"One commit. Three changes, each a few words, each proven by a planted violation measured red and green."
+
+Both counts are withdrawn, and so is "each proven by a planted violation
+measured red and green" as a statement about three. A2 was struck in
+`73070827` and its section below carries the strike: its plant could not be
+built, so it was settled by a build failure — `couldn't build .../MacSCPAppKit.build/SessionTab.swift.o because of multiple producers`,
+quoted whole on row 147 of `docs/BACKLOG.md` — rather than by a planted
+violation measured red and green. The clause stands over the two that
+remained, A1 and A3, each of which was measured both ways 3 of 3. Derived
+rather than remembered, 2026-10-05:
+
+```
+git log --oneline 35664708..dc12ad24 -- Tests/
+```
+
+prints two lines, `95b42f0a` (A3) and `326ead00` (A1), and
+
+```
+git log --oneline 35664708..dc12ad24 -- Sources/ Tests/
+```
+
+prints three, those two and `2b142bd9` (Part B's comment) — so no third
+commit outside `docs/` carries a Part A change, which is the positive check
+beside the count. `docs/BACKLOG.md` says the same in its index section —
+"item 3 by Tasks 1 and 2 (`326ead00`, `95b42f0a`) and, for its second
+finding, by a measurement rather than a change" — and row 147's own closure
+opens "**Done 2026-10-05** by Tasks 1 and 2"; this frame was the one place
+left saying three.
 
 ### A1 — the guard reads raw text where every sibling reads code
 
@@ -266,13 +299,54 @@ quotations — item 2 above, and the two in the plan — are on single long line
 for the same reason. Measured 2026-10-05, while they were still wrapped: a
 raw search for each of the three returned 0 against a positive control of 1
 for the row-106 quotation above. One thing is weaker about them and is said
-rather than glossed: what they quote is this document's own earlier prose,
-which was itself wrapped, so their single line is a whitespace normalisation
-of it and not a byte copy — and the wrapped original of the quoted sentences
-sits in this file's own history (`git log -p` on it), not in another file a
-reader can grep today. That is the asymmetry: for a quotation of another
-file's CURRENT text, grep is the only check a reader has, which is why the
-rule was written for those first.
+rather than glossed: what each of the three quotes is its OWN document's
+earlier prose — item 2 above quotes this file's, and the two in the plan
+quote the plan's — which was itself wrapped, so each single line is a
+whitespace normalisation of its original and not a byte copy. The wrapped
+original is reachable only from the history of the file that carries the
+quotation, and each of those histories is one commit. That is the asymmetry:
+for a quotation of another file's CURRENT text, grep is the only check a
+reader has, which is why the rule was written for those first.
+
+The two commits are derived rather than remembered, 2026-10-05:
+
+```
+git log --oneline -S'one citation of a sibling is stale' -- docs/superpowers/specs/2026-10-05-guard-and-citation-hygiene-design.md
+git log --oneline -S'correct its one stale citation' -- docs/superpowers/plans/2026-10-05-guard-and-citation-hygiene.md
+git log --oneline -S'also had one stale citation of its own' -- docs/superpowers/plans/2026-10-05-guard-and-citation-hygiene.md
+```
+
+The second and third print one line each, `dce0d512`, the commit that wrote
+the plan. The first prints **two**: `a496c825`, the commit that wrote this
+spec, and the commit carrying this correction — predicted rather than
+discovered, because the command's own text adds a second occurrence of its
+pattern to this file, so `-S` sees the count change and names the commit that
+made it. That self-match is also the positive check the three commands need:
+a misspelled pattern prints nothing at all, which reads exactly like a
+sentence nobody ever wrote. The `--` pathspec is load-bearing on all three,
+since this file now spells all three patterns; without it every answer gains
+this commit. The wrapped originals are read back with, on one line each,
+
+```
+git show a496c825:docs/superpowers/specs/2026-10-05-guard-and-citation-hygiene-design.md
+git show dce0d512:docs/superpowers/plans/2026-10-05-guard-and-citation-hygiene.md
+```
+
+which carry item 2's sentence and the plan's two wrapped as they stood.
+
+**Corrected 2026-10-05, after this branch finished.** The sentence above
+first read, on one line here so a reader can grep it:
+
+"what they quote is this document's own earlier prose, which was itself wrapped, so their single line is a whitespace normalisation of it and not a byte copy — and the wrapped original of the quoted sentences sits in this file's own history (`git log -p` on it), not in another file a reader can grep today."
+
+"this document's own earlier prose" and "this file's own history" are
+withdrawn **as locators**, because two of the three quotations live in the
+plan and quote the plan's prose: a reader following "this file" found nothing
+for two of three. What is NOT withdrawn is the weakness the sentence was
+written to name — a whitespace normalisation rather than a byte copy — which
+is true of all three, nor the asymmetry that follows it. The paragraph also
+carried no command, which is how a locator this wrong survived being written;
+it carries five now.
 
 **Corrected 2026-10-05** (Task 4, fix round 1). This paragraph first gave
 row 106's marker as “Before this correction this row cited `mapStatus` at
@@ -317,9 +391,19 @@ failure the section exists to avoid.
 
 ## Testing
 
-- Part A: the existing suites must stay green, and each of the three probes
-  must produce the stated red and the stated green, repeated to a count.
-  `swift test --build-system native` for the whole suite at the end.
+- Part A: the existing suites must stay green, and each of the two probes
+  that remained must produce the stated red and the stated green, repeated
+  to a count. `swift test --build-system native` for the whole suite at the
+  end.
+
+  **Corrected 2026-10-05, after this branch finished.** This bullet read, on
+  one line here so a reader can grep it:
+
+  "- Part A: the existing suites must stay green, and each of the three probes must produce the stated red and the stated green, repeated to a count."
+
+  "three" is withdrawn for the reason the note under "Part A" measures and
+  derives: A2 was struck in `73070827`, its plant could not be built, and two
+  probes ran.
 - Part B: no test. The comment is prose about code; the verification is the
   re-run `grep`, and `swift test` proves the file still builds.
 - Parts C and D: no test exists for a backlog row. Every command written
