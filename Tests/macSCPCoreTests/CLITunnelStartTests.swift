@@ -630,6 +630,19 @@ struct CLITunnelStartDeciderGuardTests {
 /// functions can be reached from one command's own file, and what one
 /// function's body says. It is a test fixture, not a parser, and every
 /// question put to it is checked for having found something at all.
+///
+/// Reads `SourceCorpus.files(under:)`, which descends, not
+/// `children(of:)`, which does not. `Sources/MacSCPCLI` is flat today, so
+/// this changes nothing at HEAD — it closes a latent hole:
+/// `derivedBuilder()`'s `#expect(builders.count == 1)` would have stayed
+/// green at 1 if a second function returning `HostKeyDecider` appeared
+/// under a future subdirectory, which is a negative that reads like a
+/// check that is satisfied (CLAUDE.md, "a negative check whose SPAN is
+/// wrong can never match"). Measured 2026-10-05: a second builder planted
+/// one directory down was green 3 of 3 against the flat listing and red
+/// 3 of 3 against this walk.
+/// `CLISessionsCommandGuardTests.everySessionTargetCommandCarriesTheCompletion`
+/// made the same choice for the same reason.
 struct CLISourceWalk {
     /// Function name → the text of its body.
     private var slices: [String: String] = [:]
@@ -639,7 +652,7 @@ struct CLISourceWalk {
     private(set) var visitedCount = 0
 
     init(directory: URL) throws {
-        let files = try SourceCorpus.children(of: directory)
+        let files = try SourceCorpus.files(under: directory)
             .filter { $0.pathExtension == "swift" }
         guard !files.isEmpty else {
             throw CLISourceWalkError.noSources(directory.path(percentEncoded: false))
