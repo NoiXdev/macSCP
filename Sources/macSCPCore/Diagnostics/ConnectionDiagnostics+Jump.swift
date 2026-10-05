@@ -315,10 +315,20 @@ extension ConnectionDiagnostics {
     /// deadline's own `timedOut` for a body that ran and overran, and
     /// `notStarted` for one this Mac never gave a thread.
     ///
-    /// Spelled ONCE, and read from three places (counted 2026-09-27:
-    /// `dialJump`, `race` above, and `bounded(_:_:)` for a contribution), so
-    /// the three cannot come to disagree about what a probe that never began
-    /// says to a reader.
+    /// Spelled ONCE here and called from three places (recounted
+    /// 2026-10-05: `dialJump`, `race` above, and `bounded(_:_:)` for a
+    /// contribution), so those three cannot come to disagree about what a
+    /// probe that never began says to a reader.
+    ///
+    /// FOUR places decide that question, not three. `InternetSpeedProbe`
+    /// maps `.unanswered(.neverBegan)` to
+    /// `DiagnosticReason.probeNotStarted` without calling this, and reads
+    /// it back as `.notStarted` later. It cannot drift apart from this one
+    /// either, because it compares the SYMBOL rather than carrying a second
+    /// copy of the sentence — but it is a second decision site, and this
+    /// comment said "read from three places" in a sentence whose whole
+    /// point was that every reader is here. Counted 2026-09-28 by the
+    /// cleanup plan's final review, recounted before this was written.
     static func outcome(forUnanswered start: ProbeStart) -> DiagnosticOutcome {
         switch start {
         case .began: return .timedOut
