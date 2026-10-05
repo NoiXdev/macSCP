@@ -25,9 +25,17 @@ import Testing
 ///   `browserSession.showsFiles`). A copy bound to a name that does not say
 ///   "session" (`let s = tab.session`, then `s.showsFiles`) slips past.
 ///   Aimed at the accidental read, not a hostile one.
-/// - Comments are not stripped: a comment that spells `session.showsFiles`
-///   is flagged too. That is deliberate — the wrong shape should not be
-///   modelled anywhere in the target, least of all in prose someone copies.
+/// - Comments are stripped, string literals are not. This bullet used to
+///   read "Comments are not stripped: a comment that spells
+///   `session.showsFiles` is flagged too. That is deliberate — the wrong
+///   shape should not be modelled anywhere in the target, least of all in
+///   prose someone copies." That is withdrawn: the guard reads
+///   `commentFree(of:)`, so a comment spelling the property is no longer
+///   flagged. A plain string literal spelling it still IS, because literals
+///   survive that view — the price of keeping an interpolated read
+///   (`"\(session.showsFiles)"`) visible, which the stricter `code(of:)`
+///   view would blank along with its literal. The doc comment on
+///   `onlySessionTabReadsShowsFilesOffTheSession` carries the measurements.
 /// - `visibility.showsFiles` and any other `PaneVisibility` read is
 ///   untouched; the receiver is not a session. `theScannerAcceptsAPaneVisibilityRead`
 ///   pins that this is deliberate rather than a gap.
@@ -76,6 +84,39 @@ struct PaneVisibilityOwnershipGuardTests {
 
     /// The guard: `SessionTab.swift` owns this property, nobody else touches
     /// it.
+    ///
+    /// Reads `commentFree(of:)`, not `text(of:)` and not `code(of:)`. Not
+    /// `text(of:)`: a doc comment spelling `session.showsFiles` is not a
+    /// read of it, and this project scans source while writing long
+    /// explanatory comments, which is exactly where the two collide
+    /// (CLAUDE.md, "Source-scanning guards read comments too"). Not
+    /// `code(of:)`: this guard is a NEGATIVE check, and
+    /// `SwiftSource.blankingCommentsAndStrings` says of those that "a
+    /// negative one must be read as 'not present outside a literal'" — an
+    /// interpolated expression is blanked along with the literal carrying
+    /// it, so `"\(session.showsFiles)"` is a real read that view cannot
+    /// see. `commentFree(of:)` blanks comments and keeps literals.
+    ///
+    /// Measured 2026-10-05, each repeated to a count. A planted doc comment
+    /// spelling the property: red 3 of 3 against `text(of:)`, green 3 of 3
+    /// against `code(of:)`, green 3 of 3 against `commentFree(of:)`. A
+    /// planted interpolated read, `"\(session.showsFiles)"`: green 3 of 3
+    /// against `code(of:)` — the false negative — and red 3 of 3 against
+    /// `commentFree(of:)`. What `commentFree(of:)` still gets wrong is a
+    /// plain string literal that merely spells the property: a planted
+    /// `"session.showsFiles is the property"` was red 3 of 3. Both views are
+    /// the same length in `Character`s — `SourceCorpus.lengthCheckedView`
+    /// refuses one that is not — so the offender line numbers are unchanged.
+    ///
+    /// The exemption stays a bare file name on purpose. A second
+    /// `SessionTab.swift` under this target — the case a relative path
+    /// would guard against — cannot exist: with `--build-system native`
+    /// SwiftPM maps both to one object path and the build fails with
+    /// "multiple producers" (measured 2026-10-05; the default build system
+    /// was not exercised, SwiftTerm's `Shaders.metal` breaks it here). The
+    /// only case the two spellings part company on is the owner moving into
+    /// a subdirectory, and there the bare name keeps exempting it, where a
+    /// relative path would go red for no violation.
     @Test func onlySessionTabReadsShowsFilesOffTheSession() throws {
         let files = try Self.appSwiftFiles()
             .filter { $0.lastPathComponent != "SessionTab.swift" }
@@ -83,7 +124,7 @@ struct PaneVisibilityOwnershipGuardTests {
 
         var offenders: [String] = []
         for file in files {
-            let lines = try SourceCorpus.text(of: file).components(separatedBy: "\n")
+            let lines = try SourceCorpus.commentFree(of: file).components(separatedBy: "\n")
             for (index, line) in lines.enumerated() where Self.readsShowsFilesOffASession(line) {
                 offenders.append("\(Self.relativePath(of: file)):\(index + 1)")
             }

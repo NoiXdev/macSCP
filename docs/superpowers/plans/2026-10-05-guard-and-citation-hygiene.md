@@ -51,7 +51,19 @@ branch `guard-and-citation-hygiene`.
 
 ---
 
-### Task 1: The pane-visibility guard reads code, and exempts by path
+### Task 1: The pane-visibility guard reads comment-free source
+
+> **Corrected 2026-10-05, fix round 1.** This heading used to read "The
+> pane-visibility guard reads code, and exempts by path". Both halves are
+> withdrawn. "Exempts by path" was struck after the first run (steps 6 to 10
+> below, and the note that records why). "Reads code" is replaced by
+> `SourceCorpus.commentFree(of:)`: `SwiftSource.blankingCommentsAndStrings`
+> says a negative check "must be read as 'not present outside a literal'",
+> and this guard is a negative check, so `code(of:)` made the interpolated
+> read `"\(session.showsFiles)"` invisible. Measured green 3 of 3 against
+> `code(of:)` and red 3 of 3 against `commentFree(of:)`. The steps below are
+> kept as originally written, and they say `code(of:)`; the suite's own doc
+> comment carries the measurements.
 
 **Files:**
 - Modify: `Tests/macSCPAppKitTests/PaneVisibilityOwnershipGuardTests.swift`
