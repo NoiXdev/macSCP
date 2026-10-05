@@ -9,5 +9,5 @@ dist/
 .claude/
 .superpowers/
 
-# Evidence from scripts/hang-hunt (see docs/superpowers/specs/2026-08-08-testsuite-haenger-untersuchung.md)
+# Evidence from scripts/hang-hunt (see docs/superpowers/specs/2026-08-08-testsuite-hang-investigation.md)
 .hang-evidence/
