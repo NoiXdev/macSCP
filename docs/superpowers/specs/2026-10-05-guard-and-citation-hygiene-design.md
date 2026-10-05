@@ -64,12 +64,23 @@ offender — CLAUDE.md, "Source-scanning guards read comments too". `a22658df`
 widened the walk from 116 to 119 files without touching the read, so the
 blast radius grew.
 
-**Change:** `text(of:)` → `code(of:)` (comments *and* string literals
-blanked). `SourceCorpus` guarantees every view is exactly as long in
+**Change:** `text(of:)` → `commentFree(of:)` (comments blanked, string
+literals kept). `SourceCorpus` guarantees every view is exactly as long in
 `Character`s as the text it came from — `lengthCheckedView` refuses
 otherwise — so the line numbering the offender message reports is unchanged.
-`commentFree(of:)` is the wrong choice here: a string literal spelling the
-property is a false positive too, and only `code(of:)` blanks those.
+
+**Corrected 2026-10-05, fix round 1.** This section first read "`text(of:)` →
+`code(of:)` (comments *and* string literals blanked)" and "`commentFree(of:)`
+is the wrong choice here: a string literal spelling the property is a false
+positive too, and only `code(of:)` blanks those." Both are withdrawn. This
+guard is a negative check, and `SwiftSource.blankingCommentsAndStrings`
+documents that "a negative one must be read as 'not present outside a
+literal'", because an interpolated expression is blanked with the literal
+carrying it. Measured: a planted `"\(session.showsFiles)"` was green 3 of 3
+against `code(of:)` (the false negative) and red 3 of 3 against
+`commentFree(of:)`. The price is the one the withdrawn sentence named: a
+plain string literal spelling the property is still flagged (measured red
+3 of 3).
 
 **Probe:** plant a doc comment line reading `/// if session.showsFiles {`
 in an App source file that is not `SessionTab.swift`. Red before the change
@@ -77,6 +88,16 @@ in an App source file that is not `SessionTab.swift`. Red before the change
 repeated to a count, and the count written into the suite.
 
 ### A2 — the exemption is a bare file name
+
+**Struck 2026-10-05, after Task 1's first run.** The premise below, that "a
+`SessionTab.swift` in any subdirectory would be silently exempted", describes
+a tree that cannot be built: with `--build-system native` SwiftPM maps two
+files of one name in one target to one object path and fails with `couldn't
+build .../MacSCPAppKit.build/SessionTab.swift.o because of multiple
+producers`. The only reachable case where the two spellings differ is the
+owner moving into a subdirectory, where the bare name keeps exempting it
+correctly and a relative path would go red for no violation. The maintainer
+struck the change; the text below is kept as written and is not the plan.
 
 `:81` exempts `$0.lastPathComponent != "SessionTab.swift"`. Since the walk
 descends (`files(under:)`, widened 2026-09-27), a `SessionTab.swift` in any
