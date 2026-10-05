@@ -31,14 +31,39 @@
 # and it prints NO `Test run with N tests` line at all (a matching run prints
 # one), so the second check does work the first cannot.
 #
-# Exit status (it meant nothing before 2026-10-05: a failed prebuild or a
-# refused run was swallowed by a bare `wait` and the script exited 0):
-#   non-zero  a worker refused (nothing ran) or its prebuild failed
-#   0         a hang was captured — finding one is this script's PURPOSE, not
-#             a failure of it, so evidence in $OUT is success; look for HANG-*
-#   0         every run finished inside TIMEOUT ("N runs, no hang")
-# A refusal and a prebuild failure both win over a captured hang in another
-# worker, so non-zero always means "this loop did not test what you asked".
+# Exit status — 0 no hang, 1 refused or prebuild failed, 2 hang captured:
+#   0  every run finished inside TIMEOUT ("N runs, no hang")
+#   1  a worker refused (nothing ran) or its prebuild failed
+#   2  a hang was CAPTURED — finding one is this script's PURPOSE, not a
+#      failure of it, so 2 is success; the evidence is in $OUT as HANG-*
+# A refusal and a prebuild failure win over a captured hang in another worker,
+# so 1 always means "this loop did not test what you asked".
+#
+# Before 2026-10-05 the status told none of these apart. What was swallowed was
+# a failed PREBUILD: a bare `wait` returns 0 whatever its jobs returned, so the
+# worker's 1 was lost and the script exited 0 — measured 2026-10-05 by running
+# `git show 14ca8f35^:scripts/hang-hunt` from a directory holding no
+# Package.swift, which printed "w1: prebuild FAILED", then "done" and "no hang
+# captured", and exited 0. A refused run was NOT swallowed then: refusal did not
+# exist before the gate above, added the same day. What 2026-10-05 added here is
+# the third code — until it, "hang captured" and "no hang" both exited 0.
+#
+# $OUT ACCUMULATES ACROSS INVOCATIONS, so the HANG-* listing the tail prints is
+# not necessarily THIS run's. Measured 2026-10-05: `FILTER=ProbeStartTests
+# RUNS=1` printed "w1: 1 runs, no hang" and then `HANG-w1-1-context.txt`, left
+# by a `TIMEOUT=1` capture one invocation earlier. `ls "$OUT" | grep HANG` was
+# the only documented discriminator and it is not run-scoped; the exit code is,
+# which is the measured reason it was needed.
+#
+# STILL NOT SEEN BY THIS SCRIPT (undecided, recorded in docs/BACKLOG.md):
+# `wait "$pid" 2>/dev/null` discards `swift test`'s own exit status and the
+# `rm -f "$log"` below then deletes that run's log, so a loop of FAILING runs
+# reports "N runs, no hang" with nothing left to read. Measured 2026-10-05:
+# `FILTER=ViewTestabilitySpike RUNS=1` printed "w1: run 1 ran 7 test(s) —
+# looping." and "w1: 1 runs, no hang" and exited 0, over a run that `swift test`
+# ended with status 1 and the line "✘ Test run with 7 tests in 1 suite failed".
+# The gate reads its count out of that very line, so it counts a FAILED run as
+# evidence that the loop tested something.
 #
 # Each worker uses its OWN scratch path so the loop never contends with a
 # normal `swift test` in this checkout for the .build lock — lock contention is
@@ -99,7 +124,10 @@ worker() {
             pkill -9 -f "$scratch" 2>/dev/null
             kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
             echo "w$id: evidence in $OUT/HANG-w$id-$i-*"
-            return 0
+            # 2, not 0: a captured hang is this script's purpose and must be
+            # told apart from "no hang" by the status, because the $OUT listing
+            # below cannot tell them apart (see the header).
+            return 2
         fi
 
         wait "$pid" 2>/dev/null
@@ -143,14 +171,33 @@ worker() {
 }
 
 # A bare `wait` returns 0 whatever its jobs returned, so every worker's pid is
-# waited on by itself and a non-zero is remembered. The exit is the LAST
-# statement: the trailing `ls | grep || echo` succeeds unconditionally and
-# would otherwise overwrite it.
+# waited on by itself and its code is remembered. 1 (refused or prebuild failed)
+# wins over 2 (hang captured): a loop that did not test what you asked is the
+# more important thing to learn, and anything a worker returns that is neither
+# 0 nor 2 is treated as 1. The exit is the LAST statement: the `ls | grep ||
+# echo` below succeeds unconditionally and would otherwise overwrite it.
 pids=()
 for w in $(seq 1 "$WORKERS"); do worker "$w" & pids+=($!); done
 status=0
-for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || status=1; done
+for p in ${pids[@]+"${pids[@]}"}; do
+    wait "$p"
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+        [ "$status" -eq 0 ] && status=2
+    elif [ "$rc" -ne 0 ]; then
+        status=1
+    fi
+done
+# The verdict goes FIRST, above `done` and the HANG listing. Until 2026-10-05 it
+# came last, so a refusal printed "done" and "no hang captured" ABOVE the line
+# correcting them — a reader skimming the tail met the clean negative first.
+if [ "$status" -eq 1 ]; then
+    echo "at least one worker REFUSED or failed its prebuild — see the w<N>: lines above"
+elif [ "$status" -eq 2 ]; then
+    echo "a hang was CAPTURED — that is what this script is for; evidence in $OUT"
+fi
 echo "done"
+# Not run-scoped: $OUT keeps every earlier invocation's HANG-* files, so read
+# the exit status, not this listing.
 ls "$OUT" | grep HANG || echo "no hang captured"
-[ "$status" -ne 0 ] && echo "at least one worker REFUSED or failed its prebuild — see the w<N>: lines above"
 exit "$status"
