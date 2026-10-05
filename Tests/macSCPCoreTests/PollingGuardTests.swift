@@ -364,17 +364,7 @@ struct PollingGuardTests {
     /// is a helper name. A suite file that calls `pollUntil(` directly, or
     /// calls one of those helper names, must carry `.timeLimit(`.
     @Test func everyCallerOfPollUntilDeclaresATimeLimit() throws {
-        let sources = try Self.sources()
-        let helperFiles = sources.filter { !$0.text.contains("@Suite") && !$0.text.contains("@Test") }
-        let suiteFiles = sources.filter { $0.text.contains("@Suite") || $0.text.contains("@Test") }
-
-        let helperNames = try Self.pollingHelperFunctionNames(in: helperFiles)
-
-        let directCallers = suiteFiles.filter { $0.text.contains("pollUntil(") }
-        let indirectCallers = suiteFiles.filter { file in
-            !file.text.contains("pollUntil(")
-                && helperNames.contains { file.text.contains("\($0)(") }
-        }
+        let (helperNames, directCallers, indirectCallers) = try Self.pollUntilCallers()
         let callers = directCallers + indirectCallers
         let withoutLimit = callers.filter { !$0.text.contains(".timeLimit(") }.map(\.path)
 
@@ -387,6 +377,68 @@ struct PollingGuardTests {
         #expect(!directCallers.isEmpty)
 
         #expect(withoutLimit.isEmpty, "\(withoutLimit)")
+    }
+
+    /// The suite files this guard treats as reaching `pollUntil`, split the
+    /// way the check above needs them: DIRECT callers contain `pollUntil(`
+    /// itself, INDIRECT ones call a helper that does. Both are decided on
+    /// the files' RAW text — a mention in a comment counts, which is what
+    /// `everyCallerOfPollUntilDeclaresATimeLimit` does and what
+    /// `noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment` reads back.
+    /// One definition, so the two checks cannot drift onto different sets.
+    private static func pollUntilCallers() throws -> (
+        helperNames: Set<String>,
+        direct: [(path: String, text: String, code: String)],
+        indirect: [(path: String, text: String, code: String)]
+    ) {
+        let sources = try Self.sources()
+        let helperFiles = sources.filter { !$0.text.contains("@Suite") && !$0.text.contains("@Test") }
+        let suiteFiles = sources.filter { $0.text.contains("@Suite") || $0.text.contains("@Test") }
+
+        let helperNames = try Self.pollingHelperFunctionNames(in: helperFiles)
+
+        let direct = suiteFiles.filter { $0.text.contains("pollUntil(") }
+        let indirect = suiteFiles.filter { file in
+            !file.text.contains("pollUntil(")
+                && helperNames.contains { file.text.contains("\($0)(") }
+        }
+        return (helperNames, direct, indirect)
+    }
+
+    /// Watches `everyCallerOfPollUntilDeclaresATimeLimit`'s second weakness:
+    /// it reads each caller's RAW text, so a `.timeLimit(` that lives only
+    /// in a comment satisfies it while no time limit exists. Today no
+    /// caller is in that state; this check fails the day one is, instead of
+    /// leaving the property to a one-off measurement (2026-10-05, the
+    /// jump-diagnostics hang-bound task, which found the weakness by
+    /// reading and had no way to keep watching it).
+    ///
+    /// It does not repair the existing check, which still reads raw text:
+    /// a comment still satisfies THAT. Whether to switch its filter to
+    /// `code` is a separate decision.
+    ///
+    /// The negative reads the comment-and-string-blanked `code` view the
+    /// existing check leaves unused. Beside it, positives, so that a
+    /// negative over nothing — or over a blanking that erased everything —
+    /// cannot read as a pass: the helper names and the caller set are not
+    /// empty, and at least one caller's BLANKED view really holds
+    /// `.timeLimit(`. The failure
+    /// messages carry the caller set's size and its direct/indirect split,
+    /// so the figures a reader wants are re-derived on every run.
+    @Test func noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment() throws {
+        let (helperNames, direct, indirect) = try Self.pollUntilCallers()
+        let callers = direct + indirect
+        let census = "callers=\(callers.count) direct=\(direct.count) indirect=\(indirect.count)"
+
+        let commentOnly = callers.filter { $0.text.contains(".timeLimit(") && !$0.code.contains(".timeLimit(") }
+            .map(\.path)
+        #expect(commentOnly.isEmpty, "\(commentOnly) — \(census)")
+
+        // Positives: the set is there, and the blanked view is not empty of
+        // the very thing the negative compares it for.
+        #expect(!helperNames.isEmpty, "\(census)")
+        #expect(!callers.isEmpty, "\(census)")
+        #expect(callers.contains { $0.code.contains(".timeLimit(") }, "no caller's blanked view holds .timeLimit( — \(census)")
     }
 
     /// Negative: no `while` loop in `Tests/` waits by sleeping with its
