@@ -23,11 +23,43 @@ rather than read out of the row. Three results changed the design:
    `:81` filters `$0.lastPathComponent != "SessionTab.swift"`, and
    `CLITunnelStartTests.swift:642` — inside `CLISourceWalk.init(directory:)`
    — reads `SourceCorpus.children(of:)`.
-2. **Row 147's one citation of a sibling is stale**: it names the
-   `files(under:)` precedent at `CLISessionsCommandGuardTests.swift:408`; it
-   is at `:414`, inside
+2. **Row 147's one citation of a sibling names the explanation, not the
+   call.** It cites the `files(under:)` precedent as
+   `CLISessionsCommandGuardTests.swift:408`, and `:408` is the comment that
+   says why that choice was made; the call itself is at `:414`, inside
    `everySessionTargetCommandCarriesTheCompletion`. The row is to be
-   corrected with the rest.
+   corrected with the rest — by the symbol, on the prefer-the-symbol rule.
+
+   **Corrected 2026-10-05, fix round 1** (by Task 5, which falsified it).
+   This item first read, on one line here so a reader can grep it:
+
+   "**Row 147's one citation of a sibling is stale**: it names the `files(under:)` precedent at `CLISessionsCommandGuardTests.swift:408`; it is at `:414`, inside `everySessionTargetCommandCarriesTheCompletion`. The row is to be corrected with the rest."
+
+   The characterisation **"is stale" is
+   withdrawn**. The sub-clause "it is at `:414`" is true of the CALL and was
+   never false; what is false is the implication that `:408` had moved
+   there. That file has not changed since `b22d20ca`, 2026-09-19, nine days
+   before row 147 was recorded in `1933f8ab` (2026-09-28):
+
+   ```
+   git log -1 --format='%h %ad' --date=short -- Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift
+   ```
+
+   prints `b22d20ca 2026-09-19`, and
+
+   ```
+   grep -n 'files(under:' Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift
+   ```
+
+   prints two lines on 2026-10-05, `408` — the comment naming
+   `files(under:)` and `children(of:)` and saying why — and `414`, the call.
+   `git show 1933f8ab:Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift`
+   has both at the same two numbers, so neither moved. Row 147 says the
+   sibling "already chose `files(under:)` **and says why**"; its `:408`
+   cites the second half of that and not the first, which is imprecise and
+   not stale. The swap to the symbol stands, because the rule asks for the
+   symbol wherever a symbol names the thing, not only where a number has
+   gone wrong.
 3. **Row 285's own replacement line numbers have already gone stale.** It
    gives the nine S3 endpoint sites as `:1064`, `:1069`, `:1380`, `:1387`,
    `:1397`, `:1496`, `:1502`, `:1511`, `:1555`, measured at `2428a642`. At
@@ -228,6 +260,19 @@ each was verbatim only modulo this document's own line breaks: measured
 nothing while a whitespace-normalised one found it. A quotation a reader
 cannot grep is a claim they have to take on trust, which is the failure this
 document exists to remove.
+
+The rule covers a SELF-quotation too, and fix round 1's three withdrawal
+quotations — item 2 above, and the two in the plan — are on single long lines
+for the same reason. Measured 2026-10-05, while they were still wrapped: a
+raw search for each of the three returned 0 against a positive control of 1
+for the row-106 quotation above. One thing is weaker about them and is said
+rather than glossed: what they quote is this document's own earlier prose,
+which was itself wrapped, so their single line is a whitespace normalisation
+of it and not a byte copy — and the wrapped original of the quoted sentences
+sits in this file's own history (`git log -p` on it), not in another file a
+reader can grep today. That is the asymmetry: for a quotation of another
+file's CURRENT text, grep is the only check a reader has, which is why the
+rule was written for those first.
 
 **Corrected 2026-10-05** (Task 4, fix round 1). This paragraph first gave
 row 106's marker as “Before this correction this row cited `mapStatus` at

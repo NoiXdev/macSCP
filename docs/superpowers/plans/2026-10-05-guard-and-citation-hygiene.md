@@ -746,12 +746,32 @@ no earlier measurement, so it owes no quote.
 - `Four rows in this file carry citations that were stale before the typed-findings plan`
   — closed by Task 4.
 
-While closing the first, correct its one stale citation: it names the
-`files(under:)` precedent at `CLISessionsCommandGuardTests.swift:408`,
-and on 2026-10-05 that is at `:414`, inside
-`everySessionTargetCommandCarriesTheCompletion`. Replace the number with
-the symbol and quote the withdrawn citation — this correction is inside a
-row of the measurement record, so the rule binds it.
+While closing the first, correct its one citation of a sibling: it names the
+`files(under:)` precedent as `CLISessionsCommandGuardTests.swift:408`, which
+is the comment that says why that choice was made, where the call itself is
+at `:414`, inside `everySessionTargetCommandCarriesTheCompletion`. Replace
+the number with the symbol and quote the withdrawn citation — this
+correction is inside a row of the measurement record, so the rule binds it.
+
+> **Corrected 2026-10-05, fix round 1** (by Task 5, which falsified it).
+> This paragraph first read, on one line here so a reader can grep it:
+>
+> "While closing the first, correct its one stale citation: it names the `files(under:)` precedent at `CLISessionsCommandGuardTests.swift:408`, and on 2026-10-05 that is at `:414`, inside `everySessionTargetCommandCarriesTheCompletion`."
+>
+> **"one stale citation" is withdrawn**, and so is the reading of "that is
+> at `:414`" as the number `:408` having moved. `:414` is where the CALL is,
+> which was never false. Nothing moved:
+> `git log -1 --format='%h %ad' --date=short -- Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift`
+> prints `b22d20ca 2026-09-19`, nine days before row 147 was recorded in
+> `1933f8ab` (2026-09-28), and
+> `grep -n 'files(under:' Tests/macSCPCoreTests/CLISessionsCommandGuardTests.swift`
+> prints two lines, `408` (the comment, which names `files(under:)` and
+> `children(of:)` and says why) and `414` (the call) — the same two numbers
+> `git show 1933f8ab:` gives for that file. The row's citation is imprecise
+> about which half of "already chose `files(under:)` and says why" it names,
+> not stale. The replacement by the symbol still happens, on the
+> prefer-the-symbol rule rather than as a repair, and Task 5's closure says
+> so. The design's item 2 carries the same correction.
 
 - [ ] **Step 2: Choose three new candidates by READING the rows**
 
@@ -824,13 +844,28 @@ section's preamble documents having made on 2026-10-02. Three replacements
 are read out of the table rather than remembered, and the section's
 assertion command is rewritten for them and re-run from the committed text.
 
-The first closed row also had one stale citation of its own: it named the
-files(under:) precedent at CLISessionsCommandGuardTests.swift:408, which on
-2026-10-05 is at :414. Replaced by the symbol, with the withdrawn citation
-quoted.
+The first closed row also cited a sibling imprecisely: it named the
+files(under:) precedent at CLISessionsCommandGuardTests.swift:408, which is
+the comment saying why, where the call is at :414. Nothing had moved —
+that file's last commit is b22d20ca, 2026-09-19, nine days before the row was
+recorded. Replaced by the symbol on the prefer-the-symbol rule, with the
+withdrawn citation quoted.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
+
+> **Corrected 2026-10-05, fix round 1** (by Task 5). The paragraph inside the
+> block above first read, on one line here so a reader can grep it:
+>
+> "The first closed row also had one stale citation of its own: it named the files(under:) precedent at CLISessionsCommandGuardTests.swift:408, which on 2026-10-05 is at :414. Replaced by the symbol, with the withdrawn citation quoted."
+>
+> **"one stale citation" is withdrawn**, for the reason the corrected Step 1
+> paragraph above gives. This is a prescription rather than a measurement,
+> but the sentence it prescribed is a claim about the tree, so it is
+> corrected like one. The commit that closes Task 5 carries the corrected
+> version — no hash is named here, because the commit this correction
+> travels in cannot cite its own, and an earlier draft named one that the
+> amend then destroyed.
 
 ---
 
