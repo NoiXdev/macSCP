@@ -39,6 +39,17 @@
 # A refusal and a prebuild failure win over a captured hang in another worker,
 # so 1 always means "this loop did not test what you asked".
 #
+# EXIT 2 MEANS A CAPTURE WAS ATTEMPTED AND THE STATUS SET — NOT that what landed
+# in $OUT is usable. Measured 2026-10-05 with `TIMEOUT=1 FILTER=ProbeStartTests
+# RUNS=1`: the script exited 2, and `HANG-w1-1-context.txt` came out 136 bytes and
+# 4 lines — an EMPTY `### ps` section and an empty test log, the run's own log 0
+# bytes — with NO `HANG-*-sample-*.txt` written at all, because at one second
+# nothing matched the `pgrep` and `swift test` had printed nothing yet. The
+# `ps`/`sample` half is what the paragraph at the top of this file calls "THE POINT
+# OF THIS SCRIPT", and no run on the branch that added these codes exercised it:
+# only the 240 s default against a real hang can. So read 2 as "a capture ran",
+# then read $OUT before believing it.
+#
 # Before 2026-10-05 the status told none of these apart. What was swallowed was
 # a failed PREBUILD: a bare `wait` returns 0 whatever its jobs returned, so the
 # worker's 1 was lost and the script exited 0 — measured 2026-10-05 by running
