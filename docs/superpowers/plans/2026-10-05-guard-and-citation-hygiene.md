@@ -678,8 +678,30 @@ no earlier measurement, so it owes no quote.
 
 - `Three guard suites still read raw source or exempt by file name` —
   closed by Tasks 1 and 2, but **not in the way the row expects**, and the
-  row must say so. Two of its three findings were fixed and measured both
-  directions. Its SECOND finding — the exemption by bare file name — is
+  row must say so in three particulars.
+
+  Its FIRST finding is fixed, but by `commentFree(of:)`, not `code(of:)`.
+  The row names both as acceptable; only one is. `code(of:)` blanks string
+  literals *with their interpolations*, so `"\(session.showsFiles)"` — a
+  real read — would have gone invisible, which
+  `blankingCommentsAndStrings`'s own doc comment warns against for a
+  negative check. Measured 2026-10-05: that interpolated read was green 3
+  of 3 against `code(of:)` and red 3 of 3 against `commentFree(of:)`.
+  **The row must not claim string literals are fixed.** A plain literal
+  spelling the property is still flagged — measured red 3 of 3 — and that
+  is the price of keeping interpolated reads visible. The row says "a doc
+  comment or string literal spelling `session.showsFiles` is reported as an
+  offender"; half of that is withdrawn and half still stands, and the
+  closure says which is which.
+
+  A second thing the row did not know, and the closure records: the suite's
+  own header documented the flagging of comments as **deliberate** — "the
+  wrong shape should not be modelled anywhere in the target, least of all
+  in prose someone copies". The row called a documented intention a
+  defect. That header sentence is withdrawn in Task 1's commit, with the
+  wording quoted; the row notes that it existed.
+
+  Its SECOND finding — the exemption by bare file name — is
   **closed by a measurement, not by a change**, and the row records why:
 
   > Measured 2026-10-05. The state this row calls silently exempted cannot
