@@ -287,6 +287,22 @@ message:
 - **The command must run in the form it is committed.** Inside a
   `docs/BACKLOG.md` table cell that means no pipe at all — several
   `-e` patterns instead of one `-E` alternation.
+- **`grep -c` counts matching LINES, and the records here put a record
+  on one line**, so it is the wrong tool for a figure that is a number
+  of occurrences. Every row of `docs/BACKLOG.md`, and every paragraph of
+  its prose sections, is one physical line; two occurrences of the same
+  string therefore usually share a line, and `grep -c` reports **1**
+  where the count is **2**. The property is reproducible with no file at
+  all — `grep -c a <<< 'a a'` prints `1`, `grep -o a <<< 'a a' | wc -l`
+  prints `2` — and it was measured on 2026-10-06 against
+  `docs/BACKLOG.md`, on the lead sentence that the index section's own
+  correction record quotes beside the command that searches for it: the
+  same two figures, 1 and 2. Count occurrences with `grep -o` and
+  `wc -l`; keep `grep -c` for a figure that really is a number of lines,
+  where it is the right tool and cheaper. The cost of getting this wrong
+  is a verification command that contradicts the figure standing next to
+  it, which is the failure the bullet above is about, arriving through
+  the counting primitive rather than through the quoting.
 - **Run it again after writing the sentence.** The sentence can change
   the answer, and that is not a corner case: it happened twice here,
   the second time inside the fix for the first.
