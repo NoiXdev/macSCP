@@ -22,7 +22,12 @@ Not "tests pass" — which command, and what it printed. The suite is:
 
     swift test
 
-If `swift test` fails on `Shaders.metal`, add `--build-system native`.
+If `swift test` fails on `Shaders.metal` with
+`cannot execute tool 'metal' due to missing Metal Toolchain`, the Metal
+toolchain component is missing rather than the build broken: run
+`xcodebuild -downloadComponent MetalToolchain` once. Do not add
+`--build-system native` — it is deprecated, and CI runs `swift test`
+without it.
 
 The gated suites do not run by default and are not required for most changes:
 `MACSCP_ITEST=1` needs the Docker rig
