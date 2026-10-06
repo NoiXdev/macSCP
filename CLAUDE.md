@@ -68,6 +68,19 @@
   (one test that parks the whole GCD global queue to prove the subprocess
   runner's readers need no thread — it cannot share a parallel run, measured
   on CI run 33705649537; run it alone).
+- **No build-system flag.** `swift build` and `swift test` run on the
+  default build system (Swift Build, since Swift 6.4 / Xcode 27);
+  `--build-system native` is deprecated, and passing it prints a warning
+  — last, after all build output, so a run truncated through `head` hides
+  it. A build that fails on SwiftTerm's `Shaders.metal` with
+  `cannot execute tool 'metal' due to missing Metal Toolchain` names an
+  absent toolchain component, not a broken build system: run
+  `xcodebuild -downloadComponent MetalToolchain` once. CI carries a step
+  that does the same, so local and CI agree. `scripts/package-app` keeps its own
+  `--build-system native` pin for an unrelated reason — two architecture
+  slices landing in one directory, `3522be3c` — so do not tidy it away.
+  Decided 2026-10-06; the measurements are in `docs/BACKLOG.md`, row
+  "Xcode 27 / Swift 6.4: the default build system needs Metal".
 - Docker rig: `docker compose -f docker/test-server/compose.yml up -d`
   (SSH on 127.0.0.1:2222, testuser/testpass; the S3 store on
   127.0.0.1:19000, `macscp`/`macscpsecretkey`, buckets `macscp-seed` and
