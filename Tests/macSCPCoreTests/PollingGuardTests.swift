@@ -470,15 +470,20 @@ struct PollingGuardTests {
     /// **It is subsumed, and that is arithmetic rather than judgement.** Call
     /// this check's hit set `D` = callers whose `text` holds `.timeLimit(`
     /// and whose `code` does not, and the switched check's `N` = callers
-    /// whose `code` does not hold it. Every member of `D` fails the second
-    /// conjunct of its own definition, which IS `N`'s predicate, so
+    /// whose `code` does not hold it. Every member of `D` SATISFIES the
+    /// second conjunct of its own definition — `code` does not hold it —
+    /// and that conjunct IS `N`'s predicate, so
     /// `D ⊆ N` by construction — there is no file this check can name that
     /// the switched check does not also name. The inclusion is proper
     /// whenever a caller carries `.timeLimit(` in NEITHER view, which is
     /// exactly the state the switched check exists for and which `D` is blind
-    /// to. Both sets are empty in this tree (measured 2026-10-06: both checks
-    /// green at `7dd2e64c`, and the two together are what prove `N` empty —
-    /// this check alone cannot, for the reason just given).
+    /// to. Both sets are empty in this tree. Measured 2026-10-06: both checks
+    /// were green at `7dd2e64c`, where the other one STILL READ RAW TEXT, and
+    /// the two together are what prove `N` empty there — this one alone cannot,
+    /// for the reason just given, and the other alone cannot either at that
+    /// anchor, since raw text is what it was green under. After the switch the
+    /// other check alone does give `N` empty, so the anchor is load-bearing
+    /// and not decoration.
     ///
     /// **What it still does, job one: the DIAGNOSIS.** The switched check
     /// reports one thing, "this caller has no `.timeLimit(`", for two
