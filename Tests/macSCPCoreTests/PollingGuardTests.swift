@@ -363,10 +363,54 @@ struct PollingGuardTests {
     /// uses in the App target for the same reason — contains `pollUntil(`
     /// is a helper name. A suite file that calls `pollUntil(` directly, or
     /// calls one of those helper names, must carry `.timeLimit(`.
+    ///
+    /// The `.timeLimit(` is looked for in the comment-and-string-blanked
+    /// `code` view, not in the raw text — switched 2026-10-06, the one
+    /// identifier this change is. Until then a `.timeLimit(` inside a
+    /// COMMENT satisfied this check while no bound existed (CLAUDE.md,
+    /// "Source-scanning guards read comments too").
+    ///
+    /// **Why `code` here, where `commentFree` was the answer one file away.**
+    /// `PaneVisibilityOwnershipGuardTests.onlySessionTabReadsShowsFilesOffTheSession`
+    /// made the opposite call on 2026-10-05 and says so in its own doc
+    /// comment: it rejected `code(of:)` for `commentFree(of:)` because it is
+    /// a NEGATIVE check — nothing may read that property — and
+    /// `SwiftSource.blankingCommentsAndStrings` blanks an interpolated
+    /// expression together with the literal carrying it, so
+    /// `"\(session.showsFiles)"` is a real read the strict view cannot see.
+    /// The two checks differ in DIRECTION, and that is the whole of it:
+    ///
+    /// - A negative asks that a shape be ABSENT. Over-blanking deletes
+    ///   occurrences, so it can delete a real one, and a real read CAN sit
+    ///   inside a literal. Blinder, therefore — a false negative, which is
+    ///   the failure mode that goes quiet.
+    /// - This check asks that a shape be PRESENT. Over-blanking can only
+    ///   take the requirement further from satisfied, never nearer, so it is
+    ///   stricter and never blinder. And it cannot even be wrongly strict
+    ///   here: a real `.timeLimit(` is a trait in code, outside every
+    ///   comment and literal, and `code` keeps exactly that. A
+    ///   `.timeLimit(` the blanking removes was in a comment or a string,
+    ///   and neither bounds anything.
+    ///
+    /// Written out because the next reader will otherwise "fix" one of these
+    /// two to match the other. The rule is not "always `commentFree`" or
+    /// "always `code`"; it is that the bias of a blanked view helps a
+    /// positive requirement and hurts a negative one.
+    ///
+    /// Red first, 2026-10-06, on one untracked plant repeated five times (an
+    /// all-comment file under `Tests/macSCPCoreTests/` whose raw text holds
+    /// `@Suite`, `pollUntil(` and the only `.timeLimit(` in it): against the
+    /// raw-text filter this check passed 5 of 5 — the defect — and against
+    /// the `code` filter below it failed 5 of 5, naming that path. With the
+    /// plant in place the sibling check's failure message printed
+    /// `callers=45 direct=40 indirect=5` on all five runs. The tree's own
+    /// figures are 44/39/5 BY SUBTRACTION and not by observation: that census
+    /// is printed only by a failing expectation, so while both checks are
+    /// green nothing prints it, and the plant is one direct caller.
     @Test func everyCallerOfPollUntilDeclaresATimeLimit() throws {
         let (helperNames, directCallers, indirectCallers) = try Self.pollUntilCallers()
         let callers = directCallers + indirectCallers
-        let withoutLimit = callers.filter { !$0.text.contains(".timeLimit(") }.map(\.path)
+        let withoutLimit = callers.filter { !$0.code.contains(".timeLimit(") }.map(\.path)
 
         // Positive pairing: the helper set is not accidentally empty (it
         // must at least contain the one this check exists for), and there
@@ -382,9 +426,14 @@ struct PollingGuardTests {
     /// The suite files this guard treats as reaching `pollUntil`, split the
     /// way the check above needs them: DIRECT callers contain `pollUntil(`
     /// itself, INDIRECT ones call a helper that does. Both are decided on
-    /// the files' RAW text — a mention in a comment counts, which is what
-    /// `everyCallerOfPollUntilDeclaresATimeLimit` does and what
-    /// `noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment` reads back.
+    /// the files' RAW text — a mention in a comment makes a file a caller,
+    /// which is deliberate: a file that only talks about polling is cheap to
+    /// bound and a file that polls must be. MEMBERSHIP is raw text for both
+    /// checks above; what each then asks of a member is not. Since
+    /// 2026-10-06 `everyCallerOfPollUntilDeclaresATimeLimit` looks for
+    /// `.timeLimit(` in the blanked `code` view, and
+    /// `noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment` is what reads
+    /// the two views against each other.
     /// One definition, so the two checks cannot drift onto different sets.
     private static func pollUntilCallers() throws -> (
         helperNames: Set<String>,
@@ -405,26 +454,60 @@ struct PollingGuardTests {
         return (helperNames, direct, indirect)
     }
 
-    /// Watches `everyCallerOfPollUntilDeclaresATimeLimit`'s second weakness:
-    /// it reads each caller's RAW text, so a `.timeLimit(` that lives only
-    /// in a comment satisfies it while no time limit exists. Today no
-    /// caller is in that state; this check fails the day one is, instead of
-    /// leaving the property to a one-off measurement (2026-10-05, the
-    /// jump-diagnostics hang-bound task, which found the weakness by
-    /// reading and had no way to keep watching it).
+    /// Written 2026-10-05 to WATCH a weakness in
+    /// `everyCallerOfPollUntilDeclaresATimeLimit` — then reading raw text, so
+    /// a `.timeLimit(` living only in a comment satisfied it while no bound
+    /// existed. That weakness was repaired on 2026-10-06 by switching that
+    /// check to the `code` view, which changes what this one is FOR. The
+    /// 2026-10-05 wording is withdrawn in two places: "It does not repair the
+    /// existing check, which still reads raw text: a comment still satisfies
+    /// THAT. Whether to switch its filter to `code` is a separate decision."
+    /// — the switch has been made — and the claim that this check "fails the
+    /// day one is" in a state nothing else catches. It no longer detects
+    /// anything independently, and the maintainer kept it anyway for the two
+    /// jobs below.
     ///
-    /// It does not repair the existing check, which still reads raw text:
-    /// a comment still satisfies THAT. Whether to switch its filter to
-    /// `code` is a separate decision.
+    /// **It is subsumed, and that is arithmetic rather than judgement.** Call
+    /// this check's hit set `D` = callers whose `text` holds `.timeLimit(`
+    /// and whose `code` does not, and the switched check's `N` = callers
+    /// whose `code` does not hold it. Every member of `D` fails the second
+    /// conjunct of its own definition, which IS `N`'s predicate, so
+    /// `D ⊆ N` by construction — there is no file this check can name that
+    /// the switched check does not also name. The inclusion is proper
+    /// whenever a caller carries `.timeLimit(` in NEITHER view, which is
+    /// exactly the state the switched check exists for and which `D` is blind
+    /// to. Both sets are empty in this tree (measured 2026-10-06: both checks
+    /// green at `7dd2e64c`, and the two together are what prove `N` empty —
+    /// this check alone cannot, for the reason just given).
     ///
-    /// The negative reads the comment-and-string-blanked `code` view the
-    /// existing check leaves unused. Beside it, positives, so that a
-    /// negative over nothing — or over a blanking that erased everything —
-    /// cannot read as a pass: the helper names and the caller set are not
-    /// empty, and at least one caller's BLANKED view really holds
-    /// `.timeLimit(`. The failure
-    /// messages carry the caller set's size and its direct/indirect split,
-    /// so the figures a reader wants are re-derived on every run.
+    /// **What it still does, job one: the DIAGNOSIS.** The switched check
+    /// reports one thing, "this caller has no `.timeLimit(`", for two
+    /// situations that want different repairs — an author who wrote no bound,
+    /// and an author who wrote one in a comment or a string literal. This
+    /// check separates the second out and names it, so the fix is "move it
+    /// into the annotation" rather than a hunt for something already there.
+    ///
+    /// **Job two is NOT a vacuity guard the switched check lacks — that was
+    /// the ruling's third reason for keeping this check, and it does not
+    /// survive being checked.** The three positives below do guard THIS
+    /// check's own negative, which passes in the healthy state and so needs
+    /// them (CLAUDE.md, "a negative check needs a positive check beside it").
+    /// But the switched check implies all three, so none of them is
+    /// something it is missing: `!helperNames.isEmpty` is asserted there
+    /// verbatim; `!callers.isEmpty` follows from its `!directCallers.isEmpty`
+    /// because `callers` IS `direct + indirect`; and "at least one caller's
+    /// blanked view holds `.timeLimit(`" follows from its two assertions
+    /// together — pick any member of the non-empty `directCallers`, and
+    /// `withoutLimit.isEmpty` says that member's `code` holds it. The
+    /// switched check is in fact strictly stronger on the positive side: it
+    /// also pins the helper set by name (`waitForRequests`). Nor is this
+    /// check differentially sensitive to the blanking itself: a `code` view
+    /// that came back empty turns BOTH red, and one that blanked nothing
+    /// leaves both green, so neither watches the other's view for it.
+    ///
+    /// So what remains is job one. The failure messages carry the caller
+    /// set's size and its direct/indirect split, so the figures a reader
+    /// wants are re-derived on every run.
     @Test func noCallerOfPollUntilReliesOnATimeLimitOnlyInAComment() throws {
         let (helperNames, direct, indirect) = try Self.pollUntilCallers()
         let callers = direct + indirect
