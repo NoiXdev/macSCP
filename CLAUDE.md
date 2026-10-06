@@ -432,6 +432,44 @@ own:
    greps only for failing test names read a build failure — zero tests
    ran — as an all-clear (measured 2026-09-03).
 
+   **A plant that EDITS A TRACKED FILE goes through that harness, never
+   through a hand-rolled plant-and-restore.** There is no plant it cannot
+   carry: `--apply` takes an arbitrary shell command, and
+   `grep -nF 'eval "$APPLY"' scripts/mutation-probe` prints the one line
+   that makes it so (the `-F` matters — without it BSD grep reads the
+   pattern's mid-string `$` as an end anchor and the command returns
+   nothing). What it does that a hand-rolled restore does not: it REFUSES
+   a dirty tree — `grep -n 'diff --name-only' scripts/mutation-probe`,
+   whose first line is the gate, exiting 2 and listing the files, in the
+   script since `287d4d2d` (2026-09-03) — and it reverts INDEX-SAFELY,
+   capturing `git write-tree` before the plant and running `git read-tree`
+   before its own `git checkout -- .`. The usual hand-rolled spelling,
+   `git checkout -- <file>`, does neither: it restores from the index and
+   takes every uncommitted edit in that file with it, silently. That loss
+   is worse than the staged one, which has been recovered here with
+   `git fsck --unreachable` — an unstaged edit is never hashed, so no
+   object exists to recover from (measured 2026-10-06). And git offers no
+   way to catch it: `post-checkout` does fire on a pathspec checkout, but
+   after the working tree is overwritten and with no pathspec passed, so
+   it can neither prevent the loss nor name it, and there is no
+   `pre-checkout` hook (measured 2026-10-06, git 2.54.0).
+
+   **A plant that is a NEW, UNTRACKED FILE needs none of this.** `rm`
+   removes it, no `checkout` is involved, nothing of yours is on its path,
+   and the harness buys nothing — use it or don't. That distinction IS
+   the rule: one written as though it bound every plant would be ignored
+   on the cheap ones first and on the expensive ones straight after.
+
+   **Why this is written down at all: the protection already existed and
+   the work went around it.** The dirty-tree gate had been in the script
+   for twenty-five days when the typed-findings plan lost an uncommitted
+   edit to a hand-run `git checkout -- <file>`, and the backlog row opened
+   for that loss proposed as work-to-be-done the two things the harness
+   was already doing. A guard nothing routes through protects nothing. The
+   record, with every command, is the `docs/BACKLOG.md` row whose title
+   begins "`git checkout -- <file>` restores a mutation probe from the
+   INDEX", closed 2026-10-06.
+
 ## A value a test must not leak has two exits, not one
 
 Measured on 2026-08-30, while proving that a substituted placeholder value
