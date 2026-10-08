@@ -2363,7 +2363,18 @@ sheet's answer names. Reload the listing when the activity goes idle.
    line. Do it for both formats rather than only for tar: a directory that
    already exists costs `unzip` nothing, and one code path is easier to hold
    than a per-tool exception.
-2. **Check `ArchiveRefusal.gzTargetExists` before starting a `.gz`
+2. **Hand `ExtractPreview.make` the UNFILTERED listing.** The pane has a
+   `showHiddenFiles` setting, and a pane that hides dotfiles would
+   under-report an `.env`-style collision — the direction this feature is not
+   allowed to be wrong in. Pass the names the file system returned, not the
+   names the table is showing.
+3. **A typed subfolder name is not checked against existing names.** The
+   sheet prefills a free one, but the user may type over it; a name that
+   already exists then merges the archive into that folder. The
+   skip-existing flags still protect the files, so this is a wording and
+   confirmation question rather than a data one — decide it and say which
+   way in the task's report.
+4. **Check `ArchiveRefusal.gzTargetExists` before starting a `.gz`
    compression.** Task 1 declared that case for the reason Task 11 measured —
    `gzip -k` refuses an existing target itself, prints
    `gzip: f.gz already exists -- skipping` and exits 1, leaving the target
