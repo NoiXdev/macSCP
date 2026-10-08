@@ -31,6 +31,22 @@ final actor RecordingArchiveChannel: ArchiveCommandChannel {
     }
 }
 
+/// A channel that always fails with one exit code. Lives beside
+/// `RecordingArchiveChannel` so there is one place to extend when the
+/// protocol grows a requirement.
+final actor FailingArchiveChannel: ArchiveCommandChannel {
+    private let exitCode: Int
+    init(exitCode: Int) { self.exitCode = exitCode }
+
+    func run(_ line: ArchiveCommandLine, stdin: Data?) async throws -> Int {
+        throw ArchiveCommandExitFailure(exitCode: exitCode)
+    }
+
+    func listing(of line: ArchiveCommandLine, limit: Int) async throws -> [String] {
+        throw ArchiveCommandExitFailure(exitCode: exitCode)
+    }
+}
+
 @Suite(.timeLimit(.minutes(1)))
 struct ArchiveCommandChannelTests {
     @Test func aChannelIsHandedTheLineAndTheBytesSeparately() async throws {
