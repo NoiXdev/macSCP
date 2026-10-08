@@ -26,7 +26,7 @@ public enum ArchiveNaming {
         }
         let stem = selection.count == 1
             ? first.name
-            : CoreL10n.string("archive.defaultName")
+            : CoreL10n.string("core.archive.defaultName")
         return stem + "." + format.fileExtension
     }
 

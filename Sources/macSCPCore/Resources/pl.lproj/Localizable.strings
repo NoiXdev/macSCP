@@ -205,4 +205,4 @@
 "core.finding.noSuchBucket" = "To połączenie zaczyna się od listy bucketów, więc ścieżka musi wskazywać bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Serwer nie potwierdził części %@ wysyłania";
 "core.finding.requestBodyUnencodable" = "Wartości w żądaniu nie da się zapisać w formacie, którego wymaga serwer";
-"archive.defaultName" = "Archiwum";
+"core.archive.defaultName" = "Archiwum";
