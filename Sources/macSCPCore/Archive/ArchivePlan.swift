@@ -61,6 +61,12 @@ public struct ArchivePlan: Sendable, Equatable {
     /// `archiveName` is the caller's, from `ArchiveNaming` — it is not
     /// derived here, because the dialog shows it to the user before anything
     /// runs and the two must be the same string.
+    ///
+    /// The name is derived from the selected item's own name, so it can begin
+    /// with a dash; in the `zip` and `tar` plans it goes in prefixed `./`
+    /// (measured 2026-10-08: `zip` rejects a bare `-v2.zip` with exit 16,
+    /// the `./` form works for both tools). The `gzip` plan terminates its
+    /// options with `--` instead.
     public static func compress(
         _ format: ArchiveFormat, selection: [RemoteFileItem],
         workingDirectory: String, archiveName: String
@@ -76,7 +82,7 @@ public struct ArchivePlan: Sendable, Equatable {
             return ArchivePlan(
                 operation: .compress(format), workingDirectory: workingDirectory,
                 tool: "zip",
-                words: [.flag("-r"), .flag("-@"), .operand(archiveName)],
+                words: [.flag("-r"), .flag("-@"), .operand("./" + archiveName)],
                 stdin: Data(selection.map(\.name).joined(separator: "\n").utf8) + Data([0x0A]))
         case .tarGz:
             var bytes = Data()
@@ -89,7 +95,7 @@ public struct ArchivePlan: Sendable, Equatable {
                 tool: "tar",
                 words: [
                     .flag("--null"), .flag("-T"), .flag("-"),
-                    .flag("-czf"), .operand(archiveName),
+                    .flag("-czf"), .operand("./" + archiveName),
                 ],
                 stdin: bytes)
         case .gz:
@@ -127,7 +133,9 @@ public struct ArchivePlan: Sendable, Equatable {
     /// The archive's own name is the one user-controlled word on an
     /// extraction, and it is prefixed `./` rather than terminated with
     /// `--`: a name beginning with a dash is then not an option to any of
-    /// these tools, and this project has measured `--` for `gzip` only.
+    /// these tools. `--` is measured for `gzip` and `gunzip` (both
+    /// 2026-10-08), not for `unzip` or `tar`, which is why those two get
+    /// the prefix.
     public static func extract(
         _ archive: RemoteFileItem, format: ArchiveExtractFormat,
         workingDirectory: String, into destination: ExtractDestination
