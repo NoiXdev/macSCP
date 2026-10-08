@@ -1330,11 +1330,22 @@ struct ArchiveRunnerTests {
             .zip, selection: selection, workingDirectory: dir.path,
             archiveName: "many.zip")
         _ = try await LocalArchiveRunner().run(plan)
-        let entries = try await LocalArchiveRunner().run(
-            ArchivePlan(
-                operation: .extract(.zip), workingDirectory: dir.path,
-                tool: "unzip", words: [.flag("-l"), .operand("./many.zip")], stdin: nil))
-        #expect(entries == .finished)
+
+        // The floor, stated as a COUNT rather than as an outcome: if `run`
+        // returned before `zip` had finished, the archive would hold fewer
+        // than the 200 entries that went in. An earlier version of this case
+        // asserted only `== .finished` on a second run, which every
+        // implementation passes including one that returns immediately --
+        // a test that could not fail is worse than no test, so it was
+        // replaced rather than kept.
+        let listed = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/unzip"),
+            arguments: ["-Z1", "./many.zip"],
+            currentDirectory: dir,
+            timeout: ArchiveBudget.run)
+        let entryCount = listed.stdoutText
+            .split(separator: "\n", omittingEmptySubsequences: true).count
+        #expect(entryCount == 200)
     }
 }
 
@@ -1591,7 +1602,12 @@ In `BrowserContextMenu.swift`, add to `BrowserMenuEntry`:
 ```
 
 Add the parameter to `entries(for:side:…)` — `supportsArchiving: Bool = false`,
-documented like `supportsChecksum` is — and emit, immediately before
+documented like `supportsChecksum` is. **Declare it immediately after
+`supportsChecksum` and before `scope`.** Swift requires arguments in
+declaration order, and this suite calls
+`entries(for:side:supportsArchiving:)` and
+`entries(for:side:supportsArchiving:scope:)` — both of which compile only at
+that position. Emit, immediately before
 `entries.append(.delete)`:
 
 ```swift
