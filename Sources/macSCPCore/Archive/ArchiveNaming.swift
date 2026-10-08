@@ -47,6 +47,47 @@ public enum ArchiveNaming {
         }
     }
 
+    /// A name as the file system compares it. APFS ignores case and
+    /// normalization form, and so do most desktop file systems; a remote
+    /// server may not. Folding both sides over-reports there, which is the
+    /// safe direction for every question asked of it: a collision warned
+    /// about but not real costs the user a different name, where the
+    /// opposite error leaves an entry silently skipped (`unzip -n` and
+    /// `tar --keep-old-files` both skip `a.txt` beside an existing
+    /// `A.txt`, measured by the reviewer 2026-10-09) or an existing archive
+    /// opened by `zip` / truncated by `tar -czf`.
+    ///
+    /// This lives here, not at a caller: only the code holding both sets can
+    /// fold them, and a caller cannot know whether a remote file system is
+    /// case-sensitive.
+    static func folded(_ name: String) -> String {
+        name.lowercased().precomposedStringWithCanonicalMapping
+    }
+
+    /// Whether `name` is one of `names` the way the file system compares.
+    static func isTaken(_ name: String, among names: Set<String>) -> Bool {
+        let key = folded(name)
+        return names.contains { folded($0) == key }
+    }
+
+    /// `free(_:takenNames:)` under the folded comparison, without changing
+    /// `free`'s own contract. Handing `free` a folded set would not work: it
+    /// compares its own candidates, `Backup`, `Backup 2`, as written, and a
+    /// folded set holds `backup`. So `free` is asked repeatedly instead:
+    /// every candidate the folded comparison rejects is added to the taken
+    /// set, and `free` then proposes the next counter. The proposal's own
+    /// casing survives in the result.
+    static func freeFolded(_ proposed: String, takenNames: Set<String>) -> String {
+        let takenFolded = Set(takenNames.map(folded(_:)))
+        var taken = takenNames
+        var candidate = free(proposed, takenNames: taken)
+        while takenFolded.contains(folded(candidate)) {
+            taken.insert(candidate)
+            candidate = free(proposed, takenNames: taken)
+        }
+        return candidate
+    }
+
     /// `name` as (stem, extension-with-its-dot). The extension is one of the
     /// known archive extensions or empty; an unknown trailing component is
     /// left in the stem, so a folder called `report.2026` counts up as

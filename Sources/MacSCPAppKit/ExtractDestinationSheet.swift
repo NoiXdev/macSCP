@@ -16,7 +16,7 @@ import macSCPCore
 /// collision count cannot be read from the run itself, because both
 /// skip-existing flags are silent about what they skipped.
 ///
-/// Presented by nobody yet: the menu entry's handler is Task 8's wiring.
+/// Presented by `BrowserPane`, which owns every sheet its menu entries open.
 struct ExtractDestinationSheet: View {
     let archiveName: String
     let preview: ExtractPreview
@@ -66,6 +66,20 @@ struct ExtractDestinationSheet: View {
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
                     .disabled(choice != .subfolder)
+
+                // A typed name that exists is refused rather than merged
+                // into: "a new folder" promises a new one, and the collision
+                // note below is withheld for exactly that promise. The
+                // prefilled name is free by construction, so this shows only
+                // after the user has typed over it.
+                if choice == .subfolder, nameIsTaken {
+                    Text(L10n.string(
+                        "archive.extract.subfolderTaken",
+                        "A file or folder with this name already exists here."))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 // A compressed file is unpacked beside itself and cannot be
                 // sent anywhere else, so there is no choice to offer.
@@ -123,6 +137,12 @@ struct ExtractDestinationSheet: View {
 
     private var canExtract: Bool {
         guard preview.allowsSubfolder, choice == .subfolder else { return true }
-        return ExtractPreview.isUsableSubfolderName(subfolderName)
+        return ExtractPreview.isUsableSubfolderName(subfolderName) && !nameIsTaken
+    }
+
+    /// Whether the name in the field is already in the folder, judged the
+    /// way the file system compares (`ExtractPreview`).
+    private var nameIsTaken: Bool {
+        preview.isSubfolderNameTaken(subfolderName)
     }
 }

@@ -154,7 +154,10 @@ struct BrowserPane: View {
     // internally (M7b/T3): rename, info, new folder, new file, delete and
     // the checksum run — six, counted in the pass that writes this — never
     // reach the external `onMenuAction` callback; see the wrapper below.
-    // This comment said "four" until the count was taken.
+    // This comment said "four" until the count was taken. The two archive
+    // entries are handled here too (`BrowserPane+Archive.swift`) and are not
+    // among the six: their state is the extract dialog and an alert, and
+    // their run lives on the view model.
     @State private var renameTarget: RemoteFileItem?
     @State private var infoTarget: RemoteFileItem?
     @State private var deleteRequest: [RemoteFileItem]?
@@ -172,6 +175,13 @@ struct BrowserPane: View {
     /// success, so `PathBar` is never touched, never enters its edit state,
     /// and never steals focus for the (usual, successful) round-trip.
     @State private var symlinkNavigationFailure: SymlinkNavigationFailure?
+    /// The extract dialog, from the moment the archive has been previewed
+    /// until the user answers it. Internal (not `private`) because the
+    /// archive entries live in `BrowserPane+Archive.swift`.
+    @State var extractRequest: ExtractRequest?
+    /// The one sentence an archive alert shows: a refusal, a listing that
+    /// could not be read, or "another operation is still running".
+    @State var archiveAlertMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -240,6 +250,10 @@ struct BrowserPane: View {
                     .frame(height: 1)
             }
 
+            // The archive operation this pane has running, if any (decision
+            // 3: at most one per pane, shown non-modally with a cancel).
+            ArchiveActivityRow(activity: viewModel.archiveActivity)
+
             ZStack {
                 RemoteFileTableView(
                     items: viewModel.items,
@@ -301,6 +315,10 @@ struct BrowserPane: View {
                         case .computeChecksum:
                             checksumBatch = ChecksumBatch(
                                 selection: selection, algorithm: checksumAlgorithm)
+                        case .compressTo(let format):
+                            startCompress(format, selection: selection)
+                        case .extractArchive(let format):
+                            beginExtract(format, selection: selection)
                         default: onMenuAction?(entry, selection)
                         }
                     },
@@ -458,6 +476,16 @@ struct BrowserPane: View {
                 },
                 supportsPermissions: supportsPermissions)
         }
+        .sheet(item: $extractRequest) { request in
+            ExtractDestinationSheet(
+                archiveName: request.archive.name,
+                preview: request.preview,
+                onExtract: { destination in
+                    extractRequest = nil
+                    startExtract(request, into: destination)
+                },
+                onCancel: { extractRequest = nil })
+        }
         .sheet(item: $checksumBatch) { batch in
             ChecksumBatchSheet(batch: batch) { item in
                 await computeChecksum(of: item, algorithm: batch.algorithm)
@@ -480,6 +508,25 @@ struct BrowserPane: View {
             }
         } message: { doomed in
             Text(deleteMessage(for: doomed))
+        }
+        .alert(
+            ArchivePresentation.alertTitle,
+            isPresented: Binding(
+                get: { archiveAlertMessage != nil },
+                set: { if !$0 { archiveAlertMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(archiveAlertMessage ?? "")
+        }
+        // The listing is the report: when the pane's archive operation ends,
+        // for any reason, it is re-read. A partial result of a cancel or a
+        // failure is then on screen too, which is true.
+        .onChange(of: viewModel.archiveActivity.state) { previous, current in
+            if current == .idle, previous != .idle {
+                Task { await viewModel.refresh() }
+            }
         }
         .alert(
             L10n.string("delete.failedTitle", "Delete failed"),

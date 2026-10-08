@@ -202,3 +202,33 @@ struct ExtractPreviewTests {
         #expect(preview.proposedSubfolder == String(name.prefix(4)))
     }
 }
+
+// MARK: A typed subfolder name
+
+extension ExtractPreviewTests {
+    /// The sheet prefills a free name, but the user may type over it. A name
+    /// that already exists would merge the archive into that folder -- or
+    /// fail, where it is a file -- so the preview can say whether a typed
+    /// name is taken, compared the way the file system compares.
+    @Test func aTypedSubfolderNameThatExistsIsTaken() {
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: ["a"], namesInFolder: ["Docs", ".cache", "ar"])
+        #expect(preview.isSubfolderNameTaken("Docs"))
+        #expect(preview.isSubfolderNameTaken("docs"))
+        #expect(preview.isSubfolderNameTaken("  Docs "))
+        #expect(preview.isSubfolderNameTaken(".cache"))
+        #expect(preview.isSubfolderNameTaken("caf\u{E9}") == false)
+    }
+
+    /// The positive beside the negatives above: the name the sheet prefills
+    /// is by construction not taken, so the Extract button starts enabled.
+    @Test func theProposedNameIsNeverTaken() {
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: ["a"], namesInFolder: ["ar", "AR 2"])
+        #expect(preview.isSubfolderNameTaken(preview.proposedSubfolder) == false)
+        #expect(preview.isSubfolderNameTaken("ar"))
+        #expect(preview.isSubfolderNameTaken("Ar 2"))
+    }
+}

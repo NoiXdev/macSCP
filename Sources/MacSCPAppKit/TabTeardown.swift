@@ -29,9 +29,10 @@ import macSCPCore
 /// panel was ever opened for it.
 @MainActor
 enum TabTeardown {
-    /// Tab-local teardown, in the invariant order: bridge dismiss →
-    /// `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
-    /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
+    /// Tab-local teardown, in the invariant order: bridge dismiss → both
+    /// panes' archive operations cancelled (not a stage: a synchronous
+    /// signal, see the call) → `cancelAll` → `editManager.stopAll` →
+    /// `terminal.shutdown` → `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
     /// queues and forms are untouched.
     ///
     /// `reason` (connection-liveness plan, Task 8; required — see
@@ -109,6 +110,14 @@ enum TabTeardown {
             // otherwise keep the decider prompt open, which `cancelAll`
             // (documented) hangs on until it's answered — deadlock on disconnect.
             tab.conflictBridge.cancelOpenPrompt()
+            // A pane's archive operation is not a transfer and is not in the
+            // queue, so `cancelAll` below does not reach it. Cancelling is
+            // synchronous and waits on nothing: it only raises the task's
+            // cancellation, which is what closes the exec channel or ends
+            // the child process. The ending is then recorded by the task
+            // itself on the main actor, whenever it unwinds.
+            session.local.archiveActivity.cancel()
+            session.remote.archiveActivity.cancel()
             // Called directly, NOT through `TeardownStage.runBounded` (see
             // this function's doc comment): a bound would put a suspension
             // point in front of the sweep, and the queue sweep running in

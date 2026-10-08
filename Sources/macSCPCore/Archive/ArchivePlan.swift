@@ -121,6 +121,40 @@ public struct ArchivePlan: Sendable, Equatable {
         }
     }
 
+    /// The plan that compresses `selection` under a name that is free in the
+    /// folder, and that refuses what a tool would refuse.
+    ///
+    /// `namesInFolder` must be the names the FILE SYSTEM returned, not the
+    /// names a pane shows: a pane that hides dotfiles would otherwise offer
+    /// `.env.zip` over a real `.env.zip`, which `zip` would open and add to
+    /// and `tar -czf` would truncate. Free is judged the way the file system
+    /// compares (`ArchiveNaming.freeFolded`), because `tar -czf` truncates a
+    /// differently-cased `Backup.tar.gz` on a case-insensitive volume.
+    ///
+    /// A `.gz` is the exception to "pick a free name": `gzip -k` writes
+    /// `<name>.gz` and takes no say in it, so a name that is not free cannot
+    /// be counted up -- it is refused. `gzip` refuses itself (measured
+    /// 2026-10-08: `gzip: f.gz already exists -- skipping`, exit 1, target
+    /// untouched); macSCP says so before running instead of surfacing that
+    /// line.
+    public static func compress(
+        _ format: ArchiveFormat, selection: [RemoteFileItem],
+        workingDirectory: String, namesInFolder: Set<String>
+    ) throws -> ArchivePlan {
+        let proposed = try ArchiveNaming.proposedName(format: format, selection: selection)
+        if format == .gz {
+            guard !ArchiveNaming.isTaken(proposed, among: namesInFolder) else {
+                throw ArchiveRefusal.gzTargetExists(name: proposed)
+            }
+            return try compress(
+                format, selection: selection, workingDirectory: workingDirectory,
+                archiveName: proposed)
+        }
+        return try compress(
+            format, selection: selection, workingDirectory: workingDirectory,
+            archiveName: ArchiveNaming.freeFolded(proposed, takenNames: namesInFolder))
+    }
+
     /// The plan that unpacks `archive` into `destination`.
     ///
     /// Both tools are given their SKIP-EXISTING flag, `unzip -n` and
