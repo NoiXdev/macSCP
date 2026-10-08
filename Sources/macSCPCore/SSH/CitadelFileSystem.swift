@@ -1682,6 +1682,102 @@ extension CitadelFileSystem: ChecksumCommandChannel {
     }
 }
 
+extension CitadelFileSystem: ArchiveCommandChannel {
+    /// Runs `line` as an SSH `exec` request on the SAME connection SFTP and
+    /// the terminal use, writing `stdin` into the channel and then signalling
+    /// end-of-input so the tool reading it terminates at all.
+    ///
+    /// `withExec` rather than `collectingStandardOutput(of:limit:)` above:
+    /// that helper has no standard input, and the selection is exactly what
+    /// has to go there. `withExec` opens the same kind of child channel —
+    /// 8-bit safe, no PTY — and hands out a `TTYStdinWriter`.
+    ///
+    /// Standard output and standard error are drained and dropped. They are
+    /// an archive tool's progress chatter; keeping them would mean deciding
+    /// a bound for an unbounded stream, and nothing above this reads them.
+    /// Draining is not optional, though, and for two reasons: a far side
+    /// whose output nobody reads fills the channel's window and stops, and
+    /// the drain is where the far side's VERDICT arrives — Citadel finishes
+    /// the inbound stream with `CommandFailed` once the exit status and the
+    /// channel's end have both been seen.
+    ///
+    /// **Why the write and the half-close are tolerated rather than
+    /// propagated.** A far side that exits BEFORE reading its standard
+    /// input — which is what a missing tool does, the shell exiting 127
+    /// while this is still writing names — leaves the channel in a state
+    /// where neither call can succeed. Measured against the Docker rig on
+    /// 2026-10-08, with 5.2 MB of names so that the write is still in
+    /// flight: the pending write is failed with `ChannelError.eof` when the
+    /// far side closes, and `closeStandardInput()` then answers
+    /// `ChannelError.alreadyClosed`. Each of those, allowed out of this
+    /// closure, replaces the exit status — separately measured, one plant
+    /// each. A third is documented on `TTYStdinWriter.closeStandardInput()`
+    /// and was NOT observed here: in the window where the peer's EOF has
+    /// arrived and its close has not, the half-close is sent in
+    /// `.halfClosedRemote` and NIO answers
+    /// `NIOSSHError.protocolViolation("Sent EOF out of sequence.")`, which
+    /// Citadel's handler turns into the inbound stream's own error.
+    ///
+    /// None of the three is an answer the caller can act on; exit 127 is. So
+    /// both calls are swallowed and the drain below runs regardless, which
+    /// is what lets the far side's own status win over a channel error
+    /// raised on the way to it. Letting either throw out of this closure is
+    /// exactly the masking that `ArchiveCommandExitFailure.isToolMissing`
+    /// would never see through, and the rig case
+    /// `amissingToolIsReported127EvenWhileStdinIsStillBeingWritten` is what
+    /// holds this closure to it.
+    func run(_ line: ArchiveCommandLine, stdin: Data?) async throws -> Int {
+        do {
+            try await client.withExec(line.text) { inbound, outbound in
+                if let stdin {
+                    try? await outbound.write(ByteBuffer(bytes: stdin))
+                }
+                // Called exactly once, which is this type's contract for it,
+                // and called even when the write above failed: a tool that
+                // IS reading standard input never terminates without it, and
+                // a hang is the one outcome worse than a wrong status.
+                try? await outbound.closeStandardInput()
+                // Draining, discarding: see the comment above.
+                for try await _ in inbound {}
+            }
+        } catch let failure as SSHClient.CommandFailed {
+            // Translated HERE, at the one place this file's exec plumbing
+            // meets the archive layer, so nothing above it ever sees
+            // Citadel's error types.
+            throw ArchiveCommandExitFailure(exitCode: failure.exitCode)
+        }
+        return 0
+    }
+
+    /// A listing line's standard output, split one entry per line.
+    ///
+    /// This one has no standard input, so it goes through the same
+    /// `collectingStandardOutput(of:limit:)` the checksum channel uses
+    /// rather than opening a `withExec` channel of its own — the bound is
+    /// the whole reason it is a separate requirement, and that helper is
+    /// where the bound already lives.
+    ///
+    /// Past the bound this throws instead of returning what fitted:
+    /// a truncated listing would under-report how many entries an
+    /// extraction is about to collide with, and that is the one direction
+    /// this feature must not be wrong in.
+    func listing(of line: ArchiveCommandLine, limit: Int) async throws -> [String] {
+        let output: RemoteCommandOutput
+        do {
+            output = try await client.collectingStandardOutput(of: line.text, limit: limit)
+        } catch is RemoteCommandOutputTooLarge {
+            throw RemoteFSError.protocolError(
+                reason: "archive listing past \(limit) bytes")
+        }
+        guard output.exitStatus == 0 else {
+            throw ArchiveCommandExitFailure(exitCode: output.exitStatus)
+        }
+        return output.standardOutput
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+}
+
 /// What one `exec` request answered: its standard output, and the exit
 /// status the far side reported — `0` when it reported none.
 struct RemoteCommandOutput: Sendable, Equatable {
