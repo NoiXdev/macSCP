@@ -1303,3 +1303,164 @@ The fork does not cap authentication attempts, which matters only if
 macSCP ever grows a server role. It has none, and none is planned.
 
 **Nothing found here blocks a release.**
+
+## Done 2026-10-08 — Citadel `0.12.1-noix.4`: the stdin half-close that unblocks the archive actions' remote half
+
+Task 10 of `.superpowers/sdd/2026-10-08-archive-actions`. The fork gains the
+one thing a client driving `tar -xf -` over an exec channel cannot do without,
+and loses a second defect in the same function that would have hidden the only
+archive failure a user can act on.
+
+- **`0.12.1-noix.4`** (`ffe3518` on `feat/stdin-half-close`; annotated tag
+  object `06e44ab4b4b0f85f2141b5d9b67e571b055c4fef`, read back with
+  `git ls-remote --tags origin | grep noix.4`, which also peels to
+  `ffe3518fb0f97e8a3f185e9cb53489482c061e69`). Both halves are in
+  `Sources/Citadel/TTY/Client/TTY.swift`:
+  - **`TTYStdinWriter.closeStandardInput()`** = `channel.close(mode: .output)`.
+    Measured against the tag before writing anything: the writer had exactly
+    TWO public methods, `write` (`:80`) and `changeSize` (`:84`), its
+    `channel` is `internal` (`:76`), and all **9** occurrences of `eof` in
+    that file — lines 30, 101, 133, 143, 151, 167, 284, 285, 303, counted with
+    `grep -o -i eof … | wc -l`, not `grep -c`, which counts lines — are
+    INBOUND, the far side's EOF arriving at us. So there was no outbound EOF
+    to reach. The spelling is not a choice: `sed -n '109p'
+    .build/checkouts/swift-nio-ssh/Sources/NIOSSH/Docs.docc/index.md` reads
+    "To send EOF yourself, call `close(mode: .output)`", and
+    `SSHChildChannel._actuallyClose0` implements `.output` as an `.eof` frame
+    appended to the pending writes and flushed, while failing `.input` with
+    `ChannelError.operationUnsupported`. The inbound half stays open for the
+    remaining output and the exit status, and `.all` still works afterwards.
+    The server side already had the matching hook — `ExecHandler` forwards
+    `ChannelEvent.inputClosed` to `ExecCommandContext.inputClosed()` — so only
+    the client half was missing. Named `closeStandardInput()` rather than
+    `close()` because on a writer a bare `close()` reads as closing the
+    channel, which is the opposite of what it does.
+  - **`withExec` no longer loses `CommandFailed`.** Its `catch` called
+    `close()` and then rethrew, so a channel the far side had already closed
+    threw `ChannelError.alreadyClosed` OVER the
+    `SSHClient.CommandFailed` carrying the exit status — hiding exit 127, a
+    POSIX shell's report of a missing command, from `isToolMissing`. The
+    `catch` now closes with `try?`, and `close()` itself tolerates
+    `ChannelError.alreadyClosed` (narrowed to that one error), because the
+    same masking sat one line earlier on the SUCCESS path: a command that
+    exited 0 whose channel the far side closed first turned a successful
+    `withExec` into a throw.
+- **Red first, both halves, quoted from the runs.** The half-close:
+  `XCTAssertEqual failed: ("") is not equal to ("drained")` plus
+  `failed - Test timed out after 5.0 seconds`, the case failing after
+  **5.162 s** — the macSCP rig's "Time limit was exceeded: 300.000 seconds"
+  reproduced in-process. The masking: `failed - Expected CommandFailed, got
+  Already closed`, red **10 runs out of 10** on the untouched baseline, which
+  needs no new API. Sensitivity of the half-close test, measured by
+  repetition: **5 of 5 red** with the `closeStandardInput()` call deleted and
+  the implementation left in, **5 of 5 green** with it.
+- **Fork suite:** `WithExecTests` 11 of 11 green. Whole suite 64 tests, 5
+  skipped, 1 failure — the pre-existing `Citadel2Tests testSFTPUpload`, which
+  hosts on hardcoded port 2222; `lsof -nP -iTCP:2222` names the holder, the
+  Docker container `macscp-test-sshd` publishing `0.0.0.0:2222`, i.e. macSCP's
+  own rig. It fails identically on `0.12.1-noix.3` in a clean worktree.
+- **macSCP:** `Package.swift` → `exact: "0.12.1-noix.4"`. `swift build`
+  complete, `swift test --filter Archive` green — 42 tests in 4 suites plus 1
+  in the AppKit target, the three archive suites among them
+  (`ArchiveCommandLineTests`, `ArchiveFormatTests`, `ArchivePlanTests`).
+  `Package.resolved` changed in exactly three lines: the Citadel revision,
+  its version, and `originHash`. Worth knowing for anyone repeating the
+  pre-push verification: pointing the manifest at a local clone with
+  `.package(path:)` DOES drag an unrelated `swift-log` 1.15.0→1.16.1 bump into
+  `Package.resolved` (it is a `from:` dependency, and the override forces a
+  full re-resolve), while this `exact:` bump did not. Restore that file too,
+  not only `Package.swift`.
+
+### The fork debt, measured 2026-10-08 — and the count is zero
+
+```
+git log --oneline 0.12.1..upstream/main | wc -l      ->  0
+git rev-parse upstream/main 0.12.1                   ->  ae8562f…, ae8562f…
+git log --oneline upstream/main..0.12.1 | wc -l       ->  0
+gh api repos/orlandos-nl/Citadel/security-advisories ->  []
+```
+
+`upstream/main` **is** the `0.12.1` commit (`ae8562f`), so there are **0**
+commits since the fork base — nothing to classify as security, correctness,
+feature or noise — and the advisories query returns an empty list. Measured
+**twice** on 2026-10-08, independently, by the implementer and by the
+coordinator, same result both times. CLAUDE.md requires this written down
+even at zero: a zero measured on a date is evidence, a zero remembered is
+not. `gh api repos/orlandos-nl/Citadel --jq '.pushed_at'` gives
+`2026-06-12T15:11:41Z`, and `.archived` is `false`.
+
+The fork is **5 commits ahead, 0 behind** `upstream/main`.
+
+### Retirement: NO
+
+Upstream carries none of what the fork carries. The five commits ahead are
+`ac2ac0e`, `2ec2751`, `d228998`, `b1f1dfd`, `186b1a8` — the RFC 8332 work and
+the ECDSA `openssh-key-v1` parser — plus `ffe3518` added here. The PR that
+would retire the first and last of them is still open:
+
+```
+gh pr view 135 --repo orlandos-nl/Citadel --json number,state,mergedAt,title
+  {"mergedAt":null,"number":135,"state":"OPEN","title":"Add RFC 8332 rsa-sha2-256 / rsa-sha2-512 signature algorithms"}
+```
+
+Every retirement condition is unmet: #135 unmerged, no upstream equivalent of
+`hostKeyAlgorithmNames` / `userAuthAlgorithmName` (those live in the
+`swift-nio-ssh` fork this one depends on at `exact: "0.3.10"`), and no
+upstream counterpart to the ECDSA parser. The fork's distance grew by one
+commit today.
+
+### Decided 2026-10-08 — NO upstream PR for this tag, a deliberate deviation
+
+CLAUDE.md's fork rule 3 says "Every change the fork makes that is not a
+cherry-pick is a PR candidate against upstream; open it, and name the PR in
+the fork record. A fork that never sends anything back grows its distance
+forever." **The maintainer chose not to open one for `0.12.1-noix.4`**, with
+that rule quoted to them, and asked for the decision to be recorded as a
+deviation rather than left as an omission — so that a later reader sees a
+choice and not a lapse.
+
+This is recorded, not endorsed, and the debt it names is still open: both
+halves of this tag are general, neither depends on anything fork-specific,
+and the half-close uses the spelling nio-ssh's own documentation prescribes,
+so both remain good PR candidates whenever the decision is revisited. The
+context for the choice: upstream has not pushed since 2026-06-12 and PR #135
+has sat open since the RSA work, so an upstream merge cannot be counted on.
+
+### A third defect, found by fixing the second, and left marked
+
+Fixing the `alreadyClosed` masking made a pre-existing assertion REACHABLE,
+and it is red. This is the "negative check that reads like a satisfied one"
+shape from CLAUDE.md, one layer up: the fork suite's own `runTest` helper
+carried `catch let error as ChannelError where error == .alreadyClosed {}`,
+which swallowed exactly the defect-2 throw — and with it **every assertion
+written after a `withExec` call**.
+
+`testExecStdinReachesServer` had therefore **never evaluated its own claim**.
+Measured, not inferred: in a clean `git worktree` at `0.12.1-noix.3` its
+expected value was replaced with `"THIS VALUE CAN NEVER ARRIVE"` and the test
+still passed, 3 runs out of 3.
+
+Reachable, it fails — `XCTAssertEqual failed: ("nil") is not equal to
+("Optional("hello from stdin")")` — and not as a race. Probed: the client's
+stdin bytes DO reach the server's SSH child channel (a probe in
+`GlueHandler.channelRead` fires once, and the glue's `read` is forwarded
+rather than parked as `pendingRead`), but the delegate's `stdinPipe`
+`readabilityHandler` never fires, with or without a 300 ms head start before
+the write. All probes were reverted; `Sources/Citadel/NIOGlueHandler.swift` is
+byte-identical to its committed state.
+
+That is **server-side routing in the fork's in-process test rig only** —
+macSCP talks to a real OpenSSH server, and EOF demonstrably arrives end to
+end, which is the whole basis of the new test passing through
+`ExecCommandContext.inputClosed()`. So the swallow is **removed** (it is what
+made a vacuous pass possible) and the assertion is marked `XCTExpectFailure`
+with the measurement and the probe written beside it, rather than deleted,
+weakened, or restored to silent green. **It wants its own task**, in the fork.
+
+### Also decided 2026-10-08 — `withPTY` / `withTTY` not touched
+
+Both carry the IDENTICAL close-masks-the-error shape as `withExec`. The
+maintainer ruled them out of this change: fixing them changes what macSCP's
+terminal path reports on an abort, which is a behaviour change with no tests
+behind it and not what this feature needs. A `docs/BACKLOG.md` row carries it
+instead.
