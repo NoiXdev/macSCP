@@ -160,8 +160,12 @@ extension SSHForwardingConnection {
     /// diagnosis's jump connection, `DiagnosticJumpConnection.run(_:into:)` —
     /// no other text can reach the jump host. The module as a whole can:
     /// `SSHClient.collectingStandardOutput(of:limit:onStandardOutput:)`, the
-    /// plumbing underneath, is internal and takes any `String`, and the
-    /// checksum channel is its other caller.
+    /// plumbing underneath, is internal and takes any `String`, and it has
+    /// two other callers — the checksum channel and the archive listing,
+    /// both in `CitadelFileSystem.swift`. (Said "the checksum channel is its
+    /// other caller" until 2026-10-08, when the archive listing became the
+    /// third; the figure and the command that counts it are on the helper
+    /// itself.)
     ///
     /// Each chunk of standard output also goes into `transcript` as it
     /// arrives, so a step its budget cuts off still has what the command
