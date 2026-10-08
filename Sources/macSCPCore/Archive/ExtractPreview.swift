@@ -18,6 +18,24 @@ public struct ExtractPreview: Sendable, Equatable {
     /// `false` for `.gz`: `gunzip` cannot be told a directory without a
     /// shell redirection this design does not build.
     public let allowsSubfolder: Bool
+    /// Every name in the folder, folded for the file system's comparison.
+    /// Kept so a name the user TYPES can be checked against the same
+    /// folder the count was made over, without asking for it again.
+    private let takenFolded: Set<String>
+
+    /// Whether `name`, as the user typed it, names something that already
+    /// exists in this folder -- compared the way the file system compares,
+    /// after trimming the way the sheet does before it hands the name back.
+    ///
+    /// The sheet prefills a free name but the field is editable, and a name
+    /// that exists would merge the archive into that folder (or, where it is
+    /// a file, make extraction fail). "Into a new folder" promises a new one,
+    /// and the collision note is shown only for "this folder" on exactly
+    /// that promise, so the sheet refuses a taken name instead of merging.
+    public func isSubfolderNameTaken(_ name: String) -> Bool {
+        takenFolded.contains(
+            ArchiveNaming.folded(name.trimmingCharacters(in: .whitespaces)))
+    }
 
     public static func make(
         archiveName: String, format: ArchiveExtractFormat,
@@ -25,47 +43,14 @@ public struct ExtractPreview: Sendable, Equatable {
     ) -> ExtractPreview {
         let stem = Self.stem(of: archiveName, format: format)
         let entries = archiveEntries ?? [stem]
-        let folded = Set(namesInFolder.map(Self.folded(_:)))
-        let tops = Set(entries.compactMap(Self.topComponent(of:)).map(Self.folded(_:)))
+        let folded = Set(namesInFolder.map(ArchiveNaming.folded(_:)))
+        let tops = Set(entries.compactMap(Self.topComponent(of:)).map(ArchiveNaming.folded(_:)))
         return ExtractPreview(
             entryCount: entries.count,
             collidingHere: tops.intersection(folded).count,
-            proposedSubfolder: Self.freeName(stem, takenFolded: folded, taken: namesInFolder),
-            allowsSubfolder: format != .gz)
-    }
-
-    /// A name as the file system compares it. APFS ignores case and
-    /// normalization form, and so do most desktop file systems; a remote
-    /// server may not. Folding both sides over-reports there, which is the
-    /// safe direction: a collision warned about but not real costs the user
-    /// a subfolder, where the opposite error leaves an entry silently
-    /// skipped (`unzip -n` and `tar --keep-old-files` both skip `a.txt`
-    /// beside an existing `A.txt`, measured by the reviewer 2026-10-09).
-    ///
-    /// This lives here, not at the caller: `make` is the one place that
-    /// holds both sets, and a caller cannot know whether a remote file
-    /// system is case-sensitive.
-    private static func folded(_ name: String) -> String {
-        name.lowercased().precomposedStringWithCanonicalMapping
-    }
-
-    /// `ArchiveNaming.free` under the folded comparison, without changing
-    /// `free` (which compress naming shares). Handing `free` a folded set
-    /// would not work: it compares its own candidates, `Backup`, `Backup 2`,
-    /// as written, and a folded set holds `backup`. So `free` is asked
-    /// repeatedly instead: every candidate the folded comparison rejects is
-    /// added to the taken set, and `free` then proposes the next counter.
-    /// The archive's own casing survives in the result.
-    private static func freeName(
-        _ stem: String, takenFolded: Set<String>, taken: Set<String>
-    ) -> String {
-        var taken = taken
-        var candidate = ArchiveNaming.free(stem, takenNames: taken)
-        while takenFolded.contains(folded(candidate)) {
-            taken.insert(candidate)
-            candidate = ArchiveNaming.free(stem, takenNames: taken)
-        }
-        return candidate
+            proposedSubfolder: ArchiveNaming.freeFolded(stem, takenNames: namesInFolder),
+            allowsSubfolder: format != .gz,
+            takenFolded: folded)
     }
 
     /// Whether `name` can be the new subfolder: ONE path component that is

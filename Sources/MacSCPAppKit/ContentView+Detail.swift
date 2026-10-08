@@ -461,7 +461,7 @@ extension ContentView {
                                         case .backendFileAction:
                                             break   // never contributed on the LOCAL pane (fileActions is nil here)
                                         case .compressTo, .extractArchive:
-                                            break   // wired in Task 8 of the archive plan
+                                            break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
                                         }
                                     },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
@@ -549,7 +549,7 @@ extension ContentView {
                                             .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
                                         case .compressTo, .extractArchive:
-                                            break   // wired in Task 8 of the archive plan
+                                            break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
                                         case .backendFileAction(let action):
                                             // Currently the only backend-contributed action is
                                             // S3's presigned URL (M14/T5) — keyed off `action.id`

@@ -69,6 +69,12 @@ public final class RemoteBrowserViewModel {
     /// changing it — the filter is presentation-only, never in the FS layer.
     public var showHiddenFiles = false
 
+    /// The archive operation this pane has running, if any. Per pane and
+    /// per session, so a pane that is remounted by the window does not lose
+    /// track of a run still going. See `ArchiveActivity` for why this is
+    /// not a transfer-queue item.
+    public let archiveActivity = ArchiveActivity()
+
     private let fs: any RemoteFileSystem
 
     /// Diagnostic-log category this pane's `load()` events are filed under.
