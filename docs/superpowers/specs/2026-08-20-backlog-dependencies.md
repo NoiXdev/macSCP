@@ -1335,11 +1335,38 @@ archive failure a user can act on.
     (a) `grep -c` is the wrong tool for this figure: it counts matching LINES,
     and line 284/285 are two separate records while a single line could carry
     two occurrences, so `grep -c` under-reports an occurrence count.
-    (b) The revision matters. The same command against the WORKING TREE after
-    this change — `grep -o -i eof Sources/Citadel/TTY/Client/TTY.swift | wc -l`
-    — prints **11**, because `closeStandardInput()`'s own doc comment says
-    `EOF` twice. Nine is the count of what was there BEFORE, which is what the
-    claim is about. The spelling is not a choice: `sed -n '109p'
+    (b) The revision matters, and **fix round 2 corrects this half in place.**
+    It first read: "The same command against the WORKING TREE after this
+    change — `grep -o -i eof Sources/Citadel/TTY/Client/TTY.swift | wc -l` —
+    prints **11**, because `closeStandardInput()`'s own doc comment says `EOF`
+    twice." That was false of the tree it named by the time it was written.
+    The fork commit that expanded the same doc comment for review Minor 4
+    (`49533a7`) landed **39 seconds before** the macSCP commit carrying the
+    sentence (`cc268e97`), and it added three more occurrences —
+    `sendChannelEOF`, `"Sent message after EOF."` and
+    `"Sent EOF out of sequence."` — so the real figure was 14, not 11. The
+    commit message of `cc268e97` says "Both forms re-run as committed and
+    print 9 and 11"; **that message overstated what it had verified**, and it
+    cannot be corrected, being history. This passage is the correction.
+
+    So **every figure here is now pinned to a revision**, which is the only
+    shape that cannot be invalidated by the next sentence anybody writes — the
+    failure that has now happened twice in this record. No claim is made about
+    "the working tree", because that is the one input a reader cannot pin:
+
+    ```
+    git show 0.12.1-noix.3:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
+    git show 0.12.1-noix.4:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
+    git show 49533a7:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
+    ```
+
+    They print **9**, **11** and **14**. The ladder: `noix.3` is the baseline
+    of nine inbound occurrences; `noix.4` adds the two in
+    `closeStandardInput()`'s first doc comment (`EOF` in "until it sees EOF"
+    and in `SSH_MSG_CHANNEL_EOF`); `49533a7` adds the three named above when
+    that comment grew to say what a write after EOF costs. **Nine is the
+    figure the claim needs** — it counts what was in the file BEFORE any of
+    this, which is what "there was no outbound EOF to reach" is about. The spelling is not a choice: `sed -n '109p'
     .build/checkouts/swift-nio-ssh/Sources/NIOSSH/Docs.docc/index.md` reads
     "To send EOF yourself, call `close(mode: .output)`", and
     `SSHChildChannel._actuallyClose0` implements `.output` as an `.eof` frame
