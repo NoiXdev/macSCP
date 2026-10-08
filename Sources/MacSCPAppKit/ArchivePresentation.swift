@@ -19,6 +19,7 @@ enum ArchivePresentation {
         switch ending {
         case .finished, .cancelled: nil
         case .failed(let failure): message(for: failure)
+        case .refused(let refusal): message(for: refusal)
         case .couldNotRun: couldNotRun
         }
     }

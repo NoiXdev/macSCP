@@ -523,6 +523,16 @@ struct BrowserPane: View {
         // The listing is the report: when the pane's archive operation ends,
         // for any reason, it is re-read. A partial result of a cancel or a
         // failure is then on screen too, which is true.
+        //
+        // A refusal (the name, the format or the folder did not allow the
+        // plan) is the alert's sentence, not the row's: it asks the user to
+        // change something.
+        .onChange(of: viewModel.archiveActivity.lastOutcome) { _, outcome in
+            if case .refused(let refusal) = outcome {
+                archiveAlertMessage = ArchivePresentation.message(for: refusal)
+                viewModel.archiveActivity.dismissOutcome()
+            }
+        }
         .onChange(of: viewModel.archiveActivity.state) { previous, current in
             if current == .idle, previous != .idle {
                 Task { await viewModel.refresh() }

@@ -34,6 +34,11 @@ public final class ArchiveActivity {
         case finished
         case cancelled
         case failed(ArchiveFailure)
+        /// The plan could not be made: the name, the format or the folder
+        /// did not allow it, and nothing ran. Every case of
+        /// `ArchiveRefusal` is a sentence for the user, which is why this is
+        /// kept whole where `.couldNotRun` is not.
+        case refused(ArchiveRefusal)
         /// The run did not reach a verdict from the tool: the preparation
         /// before it failed (the subfolder could not be created), or the
         /// channel failed with something that is not an `ArchiveFailure` (a
@@ -52,11 +57,16 @@ public final class ArchiveActivity {
     public private(set) var lastOutcome: Ending?
 
     private var task: Task<Void, Never>?
+    private var previewTask: Task<Void, Never>?
+    private var previewGeneration = 0
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init() {}
 
     public var isRunning: Bool { state != .idle }
+
+    /// Whether a preview (`preview(_:completion:)`) is still being made.
+    public var isPreviewing: Bool { previewTask != nil }
 
     /// Starts `plan` on `runner`. Returns `false`, and starts nothing, while
     /// an operation is already running.
@@ -71,17 +81,48 @@ public final class ArchiveActivity {
         _ plan: ArchivePlan, runner: any ArchiveRunner,
         prepare: (@Sendable () async throws -> Void)? = nil
     ) -> Bool {
+        start(
+            operation: plan.operation, title: plan.title, runner: runner,
+            makePlan: { plan }, prepare: prepare)
+    }
+
+    /// Starts an operation whose plan is made INSIDE it.
+    ///
+    /// **Why the plan is made here.** Naming a compression reads the folder,
+    /// and that read takes as long as the far side takes. Done in a task of
+    /// the caller's, nothing owned it: a tab closed in that window found no
+    /// running operation to cancel, and the run started afterwards on a pane
+    /// that no longer existed, with an hour's budget and no Cancel to press.
+    /// Made here, the read is under the same task as the run, so the one
+    /// `cancel()` the teardown already calls reaches it, and a plan that
+    /// arrives after the cancel is never run: `Task.checkCancellation()`
+    /// stands between the two.
+    ///
+    /// `title` is what the row says until the plan exists; it becomes the
+    /// plan's own title the moment it does. A refusal thrown by `makePlan`
+    /// ends the operation as `.refused`, anything else as `.couldNotRun`.
+    @discardableResult
+    public func start(
+        operation: ArchiveOperation, title: String, runner: any ArchiveRunner,
+        makePlan: @escaping @Sendable () async throws -> ArchivePlan,
+        prepare: (@Sendable () async throws -> Void)? = nil
+    ) -> Bool {
         guard state == .idle else { return false }
-        state = .running(title: plan.title)
-        operation = plan.operation
+        state = .running(title: title)
+        self.operation = operation
         lastOutcome = nil
         task = Task { [self] in
             let ending: Ending
             do {
+                let plan = try await makePlan()
+                try Task.checkCancellation()
+                state = .running(title: plan.title)
                 try await prepare?()
                 ending = try await runner.run(plan) == .finished ? .finished : .cancelled
             } catch let failure as ArchiveFailure {
                 ending = .failed(failure)
+            } catch let refusal as ArchiveRefusal {
+                ending = .refused(refusal)
             } catch {
                 // A cancelled channel may surface as any error at all; the
                 // task's own flag is the reliable witness.
@@ -93,18 +134,50 @@ public final class ArchiveActivity {
         return true
     }
 
-    /// Cancels the running operation, if any. The ending arrives through
-    /// the task, as `.cancelled`.
-    public func cancel() { task?.cancel() }
+    /// Runs `work` as a preview the pane is waiting on (the extract dialog's
+    /// listing) and hands its result to `completion` on the main actor,
+    /// unless it was cancelled meanwhile.
+    ///
+    /// Owned here for the reason `start(operation:...)` makes its plan here:
+    /// a listing can run as long as the archive is large, and a tab closed
+    /// during it must not leave a child process reading on. `cancel()`
+    /// reaches it, and a cancelled preview delivers nothing. A new preview
+    /// supersedes one still running.
+    public func preview<Value: Sendable>(
+        _ work: @escaping @Sendable () async throws -> Value,
+        completion: @escaping @MainActor (Result<Value, any Error>) -> Void
+    ) {
+        previewTask?.cancel()
+        previewGeneration += 1
+        let generation = previewGeneration
+        previewTask = Task { [self] in
+            let result: Result<Value, any Error>
+            do { result = .success(try await work()) } catch { result = .failure(error) }
+            // Cancelled, or superseded while it ran: nobody is waiting for it.
+            if !Task.isCancelled, generation == previewGeneration { completion(result) }
+            if generation == previewGeneration {
+                previewTask = nil
+                resumeWaitersIfSettled()
+            }
+        }
+    }
+
+    /// Cancels the running operation and the preview, if any. The ending of
+    /// an operation arrives through its task, as `.cancelled`.
+    public func cancel() {
+        task?.cancel()
+        previewTask?.cancel()
+    }
 
     /// Forgets the last ending, so the pane stops showing it.
     public func dismissOutcome() { lastOutcome = nil }
 
-    /// Returns once no operation is running. An `await` over a continuation
-    /// the finishing task raises: no polling and no sleeping, which would be
-    /// a wall-clock wait in a suite that is not allowed one.
+    /// Returns once no operation is running and no preview is being made. An
+    /// `await` over a continuation the finishing task raises: no polling and
+    /// no sleeping, which would be a wall-clock wait in a suite that is not
+    /// allowed one.
     public func waitUntilIdle() async {
-        guard state != .idle else { return }
+        guard state != .idle || previewTask != nil else { return }
         await withCheckedContinuation { idleWaiters.append($0) }
     }
 
@@ -113,6 +186,11 @@ public final class ArchiveActivity {
         operation = nil
         lastOutcome = ending
         state = .idle
+        resumeWaitersIfSettled()
+    }
+
+    private func resumeWaitersIfSettled() {
+        guard state == .idle, previewTask == nil else { return }
         let waiters = idleWaiters
         idleWaiters = []
         for waiter in waiters { waiter.resume() }

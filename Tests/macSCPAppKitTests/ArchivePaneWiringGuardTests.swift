@@ -71,6 +71,78 @@ struct ArchivePaneWiringGuardTests {
         #expect(code.contains("if current == .idle, previous != .idle { Task { await viewModel.refresh() } }"))
     }
 
+    // MARK: The alert is the route for the sentences the row does not carry
+
+    /// A refusal (`gzTargetExists` among them), a listing too large to
+    /// preview, and "another operation is running" reach the user ONLY through
+    /// this alert. Dropping or re-binding it makes all of them silent while
+    /// every mapping test stays green, because the mapping is still exercised
+    /// directly -- so the alert's title, its binding to the message, and the
+    /// message's own text are each pinned.
+    @Test func theAlertThatCarriesTheArchiveSentencesIsBoundToTheirState() throws {
+        let code = try Self.code("BrowserPane.swift")
+        #expect(code.contains("@State var archiveAlertMessage: String?"))
+        #expect(code.contains(".alert(ArchivePresentation.alertTitle,"))
+        #expect(code.contains("get: { archiveAlertMessage != nil }"))
+        #expect(code.contains("set: { if !$0 { archiveAlertMessage = nil } }"))
+        #expect(code.contains("message: { Text(archiveAlertMessage ?? \"\") }"))
+        // The title and binding are one `.alert`, not two things that merely
+        // both appear in the file.
+        let alert = try #require(code.range(of: ".alert(ArchivePresentation.alertTitle,"))
+        let tail = String(code[alert.upperBound...].prefix(400))
+        #expect(tail.contains("get: { archiveAlertMessage != nil }"))
+        #expect(tail.contains("message: { Text(archiveAlertMessage ?? \"\") }"))
+    }
+
+    /// The writers of that state: the positive beside the alert above. Each
+    /// is a sentence from `ArchivePresentation`, never a literal.
+    @Test func everyWriterOfTheAlertStateSpeaksThroughThePresentation() throws {
+        let code = try Self.code("BrowserPane+Archive.swift") + " " + Self.code("BrowserPane.swift")
+        #expect(Self.occurrences(of: "archiveAlertMessage = ", in: code) >= 4)
+        #expect(code.contains("archiveAlertMessage = ArchivePresentation.busy"))
+        #expect(code.contains("archiveAlertMessage = ArchivePresentation.message(for: error)"))
+        #expect(code.contains("archiveAlertMessage = ArchivePresentation.message(for: refusal)"))
+        // Every assignment other than the alert's own dismissal (`= nil`)
+        // goes through `ArchivePresentation`.
+        var rest = Substring(code)
+        var checked = 0
+        while let hit = rest.range(of: "archiveAlertMessage = ") {
+            let after = rest[hit.upperBound...]
+            if !after.hasPrefix("nil") {
+                #expect(after.hasPrefix("ArchivePresentation."), "\(after.prefix(60))")
+                checked += 1
+            }
+            rest = after
+        }
+        #expect(checked >= 3)
+    }
+
+    /// A refusal ends the activity as `.refused` and the pane turns it into
+    /// the alert; the row deliberately does not show it.
+    @Test func aRefusalReachesTheAlertAndNotTheRow() throws {
+        let code = try Self.code("BrowserPane.swift")
+        #expect(code.contains(".onChange(of: viewModel.archiveActivity.lastOutcome)"))
+        #expect(code.contains("if case .refused(let refusal) = outcome {"))
+        let row = try Self.code("ArchiveActivityRow.swift")
+        #expect(row.contains("!ending.isRefusal"))
+    }
+
+    // MARK: Nothing owns a preparation but the activity
+
+    /// The plan is made, and the archive listed, INSIDE `ArchiveActivity`, so
+    /// the one `cancel()` a tab's teardown calls reaches both. An unstructured
+    /// `Task` here would be owned by nothing: a tab closed while the folder
+    /// was being read found no operation to cancel, and the run started
+    /// afterwards on a pane that no longer existed.
+    @Test func noPreparationRunsInATaskNothingOwns() throws {
+        let code = try Self.code("BrowserPane+Archive.swift")
+        #expect(code.contains("makePlan:"))
+        #expect(code.contains("viewModel.archiveActivity.preview("))
+        #expect(!code.contains("Task {"))
+        #expect(!code.contains("Task("))
+        #expect(!code.contains("Task.detached"))
+    }
+
     // MARK: What the names and the preview are built from
 
     /// The pane's table can be hiding dotfiles; a collision count or a free
