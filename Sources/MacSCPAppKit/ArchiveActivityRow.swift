@@ -8,6 +8,9 @@ import macSCPCore
 /// control is the one that matters, Cancel. Cancelling cancels the task, and
 /// the task is what closes the exec channel or ends the child process.
 ///
+/// A refusal is not shown here: the pane turns it into an alert
+/// (`BrowserPane`), because it asks the user to change something.
+///
 /// Reads `ArchiveActivity` and nothing else, so what it shows is decided
 /// there and in `ArchivePresentation`. A success or a cancel leaves no row:
 /// the pane reloads its listing when the activity goes idle, and that is
@@ -31,7 +34,7 @@ struct ArchiveActivityRow: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 4)
             Rectangle().fill(DesignTokens.hairline).frame(height: 1)
-        } else if let ending = activity.lastOutcome,
+        } else if let ending = activity.lastOutcome, !ending.isRefusal,
             let message = ArchivePresentation.message(for: ending)
         {
             HStack(spacing: 8) {
@@ -53,5 +56,11 @@ struct ArchiveActivityRow: View {
             .padding(.vertical, 4)
             Rectangle().fill(DesignTokens.hairline).frame(height: 1)
         }
+    }
+}
+
+private extension ArchiveActivity.Ending {
+    var isRefusal: Bool {
+        if case .refused = self { true } else { false }
     }
 }

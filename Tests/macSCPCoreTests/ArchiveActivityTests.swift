@@ -161,6 +161,128 @@ struct ArchiveActivityTests {
         #expect(activity.lastOutcome == nil)
     }
 
+    // MARK: - Choosing the plan is part of the operation
+
+    /// The listing that names an archive happens INSIDE the operation, under
+    /// the same cancel: a teardown that arrives while the folder is still
+    /// being read must leave nothing to run afterwards. Before this, the
+    /// listing ran in a task nothing owned, `cancel()` found nothing to
+    /// cancel, and the run started on a pane that no longer existed.
+    @Test func cancellingWhileThePlanIsStillBeingMadeStartsNothing() async throws {
+        let activity = ArchiveActivity()
+        let runner = ParkedRunner()
+        let planning = AsyncSignal()
+        let plan = try Self.zipPlan()
+
+        let started = activity.start(
+            operation: .compress(.zip), title: "a", runner: runner,
+            makePlan: { _ = await planning.wait(); return plan })
+        #expect(started)
+        // Read BEFORE the healing: while the plan is still being made the
+        // operation counts as running, so a cancel has something to reach,
+        // and the runner has not been asked.
+        #expect(activity.state == .running(title: "a"))
+        #expect(runner.hasStartedForTest == false)
+
+        activity.cancel()
+        // The plan arrives anyway, as a listing that finished a moment too
+        // late would. Nothing may run on it.
+        planning.signal()
+        await activity.waitUntilIdle()
+        #expect(runner.hasStartedForTest == false)
+        #expect(activity.lastOutcome == .cancelled)
+    }
+
+    @Test func theTitleBecomesThePlansOnceThePlanIsMade() async throws {
+        let activity = ArchiveActivity()
+        let runner = ParkedRunner()
+        let plan = try Self.zipPlan()
+        activity.start(
+            operation: .compress(.zip), title: "while choosing", runner: runner,
+            makePlan: { plan })
+        await runner.whenStarted()
+        #expect(activity.state == .running(title: "out.zip"))
+        runner.releaseNow()
+        await activity.waitUntilIdle()
+    }
+
+    @Test func aRefusalWhileMakingThePlanIsKeptAsTheRefusal() async throws {
+        let activity = ArchiveActivity()
+        let runner = ParkedRunner()
+        activity.start(
+            operation: .compress(.gz), title: "f.log", runner: runner,
+            makePlan: { throw ArchiveRefusal.gzTargetExists(name: "f.log.gz") })
+        await activity.waitUntilIdle()
+        #expect(activity.lastOutcome == .refused(.gzTargetExists(name: "f.log.gz")))
+        #expect(runner.hasStartedForTest == false)
+    }
+
+    @Test func anotherErrorWhileMakingThePlanIsCouldNotRunAndKeepsNoText() async throws {
+        let activity = ArchiveActivity()
+        let runner = ParkedRunner()
+        activity.start(
+            operation: .compress(.zip), title: "a", runner: runner,
+            makePlan: { throw Unrelated() })
+        await activity.waitUntilIdle()
+        #expect(activity.lastOutcome == .couldNotRun)
+        #expect(runner.hasStartedForTest == false)
+    }
+
+    // MARK: - A preview is owned too
+
+    @MainActor private final class Collected {
+        var results: [Int] = []
+        var failures = 0
+    }
+
+    @Test func aPreviewDeliversItsResultOnTheMainActor() async throws {
+        let activity = ArchiveActivity()
+        let collected = Collected()
+        activity.preview({ 7 }) { result in
+            switch result {
+            case .success(let value): collected.results.append(value)
+            case .failure: collected.failures += 1
+            }
+        }
+        await activity.waitUntilIdle()
+        #expect(collected.results == [7])
+        #expect(collected.failures == 0)
+    }
+
+    /// A tab torn down while an archive is being listed: the listing is
+    /// cancelled and nobody is told its answer. Read while it is still
+    /// parked, before the release that would let it finish.
+    @Test func cancellingAPreviewDeliversNothing() async throws {
+        let activity = ArchiveActivity()
+        let collected = Collected()
+        let parked = AsyncSignal()
+        activity.preview({ _ = await parked.wait(); return 1 }) { _ in
+            collected.results.append(1)
+        }
+        #expect(activity.isPreviewing)
+
+        activity.cancel()
+        parked.signal()
+        await activity.waitUntilIdle()
+        #expect(collected.results.isEmpty)
+        #expect(activity.isPreviewing == false)
+    }
+
+    @Test func aNewPreviewSupersedesTheOneStillRunning() async throws {
+        let activity = ArchiveActivity()
+        let collected = Collected()
+        let parked = AsyncSignal()
+        activity.preview({ _ = await parked.wait(); return 1 }) { _ in
+            collected.results.append(1)
+        }
+        activity.preview({ 2 }) { result in
+            if case .success(let value) = result { collected.results.append(value) }
+        }
+        parked.signal()
+        await activity.waitUntilIdle()
+        #expect(collected.results == [2])
+    }
+
     // MARK: - The title
 
     @Test func theTitleIsTheNameTheOperationIsAbout() throws {

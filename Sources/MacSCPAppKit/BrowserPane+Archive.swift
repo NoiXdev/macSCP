@@ -52,19 +52,22 @@ extension BrowserPane {
         }
         let directory = viewModel.currentPath
         let fileSystem = fileSystem
-        Task { @MainActor in
-            do {
+        // The plan is made INSIDE the activity, so the one cancel a tab's
+        // teardown calls reaches the folder read as well as the run; a task
+        // started here would be owned by nothing. A refusal or a failure
+        // ends the activity, and `.onChange` below turns it into the alert.
+        let started = activity.start(
+            operation: .compress(format),
+            title: (try? ArchiveNaming.proposedName(format: format, selection: selection))
+                ?? selection.first?.name ?? "",
+            runner: runner,
+            makePlan: {
                 // Named against the folder as the file system lists it, not
                 // against the table, which may be hiding dotfiles.
-                let plan = try await ArchivePreparation.compress(
+                try await ArchivePreparation.compress(
                     format, selection: selection, in: directory, fileSystem: fileSystem)
-                if !activity.start(plan, runner: runner) {
-                    archiveAlertMessage = ArchivePresentation.busy
-                }
-            } catch {
-                archiveAlertMessage = ArchivePresentation.message(for: error)
-            }
-        }
+            })
+        if !started { archiveAlertMessage = ArchivePresentation.busy }
     }
 
     /// Reads the folder and the archive, then opens the dialog. Nothing is
@@ -79,16 +82,21 @@ extension BrowserPane {
         }
         let directory = viewModel.currentPath
         let fileSystem = fileSystem
-        Task { @MainActor in
-            do {
-                // A listing past the byte bound throws and no dialog opens:
-                // a truncated list would under-report collisions.
-                let preview = try await ArchivePreparation.extractPreview(
-                    archive: archive, format: format, in: directory,
-                    fileSystem: fileSystem, runner: runner)
+        // Owned by the activity, like the compress plan: a tab closed while
+        // the archive is being listed cancels the listing, and a cancelled
+        // preview opens no dialog.
+        viewModel.archiveActivity.preview({
+            // A listing past the byte bound throws and no dialog opens:
+            // a truncated list would under-report collisions.
+            try await ArchivePreparation.extractPreview(
+                archive: archive, format: format, in: directory,
+                fileSystem: fileSystem, runner: runner)
+        }) { result in
+            switch result {
+            case .success(let preview):
                 extractRequest = ExtractRequest(
                     archive: archive, format: format, directory: directory, preview: preview)
-            } catch {
+            case .failure(let error):
                 archiveAlertMessage = ArchivePresentation.message(for: error)
             }
         }
