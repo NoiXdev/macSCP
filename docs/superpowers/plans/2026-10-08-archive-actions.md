@@ -233,12 +233,24 @@ struct ArchiveFormatTests {
     /// Several objects have no shared name to inherit, so the archive gets a
     /// fixed one from Core's catalogue rather than the first row's name,
     /// which would read as if only that row were in it.
+    ///
+    /// Asserted against the CATALOGUE's answer, not against a literal, and
+    /// with a positive beside it that the answer is not the fallback.
+    /// `CoreL10n.string(_:)` is
+    /// `bundle.localizedString(forKey: key, value: key, table: nil)`
+    /// (`Sources/macSCPCore/L10n/CoreL10n.swift:61`-`:62`), so a MISSING key
+    /// comes back as the key itself. This case first read
+    /// `#expect(name.hasSuffix(".zip"))` with `#expect(name != "a.zip")` and
+    /// `#expect(name != "b.zip")` — withdrawn, because the fallback string
+    /// satisfies all three and the case passed whether or not the catalogue
+    /// held the key. Task 1's implementer found that, not a reviewer.
     @Test func severalObjectsGetTheCatalogueName() throws {
+        let fallbackIsNotWhatWeGot = CoreL10n.string("core.archive.defaultName")
+            != "core.archive.defaultName"
+        #expect(fallbackIsNotWhatWeGot)
         let name = try ArchiveNaming.proposedName(
             format: .zip, selection: [file("a"), folder("b")])
-        #expect(name.hasSuffix(".zip"))
-        #expect(name != "a.zip")
-        #expect(name != "b.zip")
+        #expect(name == CoreL10n.string("core.archive.defaultName") + ".zip")
     }
 
     @Test func gzRefusesMoreThanOneObject() {
@@ -404,7 +416,7 @@ public enum ArchiveNaming {
         }
         let stem = selection.count == 1
             ? first.name
-            : CoreL10n.string("archive.defaultName")
+            : CoreL10n.string("core.archive.defaultName")
         return stem + "." + format.fileExtension
     }
 
@@ -445,11 +457,26 @@ public enum ArchiveNaming {
 
 `Sources/macSCPCore/Resources/en.lproj/Localizable.strings`:
 ```
-"archive.defaultName" = "Archive";
+"core.archive.defaultName" = "Archive";
 ```
-`de.lproj`: `"archive.defaultName" = "Archiv";`
-`fr.lproj`: `"archive.defaultName" = "Archive";`
-`pl.lproj`: `"archive.defaultName" = "Archiwum";`
+`de.lproj`: `"core.archive.defaultName" = "Archiv";`
+`fr.lproj`: `"core.archive.defaultName" = "Archive";`
+`pl.lproj`: `"core.archive.defaultName" = "Archiwum";`
+
+**Corrected after Task 1's first round.** This step first wrote the key as
+`"archive.defaultName"`, with no prefix. Withdrawn: every other key in Core's
+catalogue carries one. Measured 2026-10-08 —
+
+```
+grep -o '^"[a-z][a-zA-Z]*\.' Sources/macSCPCore/Resources/en.lproj/Localizable.strings | sort | uniq -c
+```
+
+printed `122 "core.` against `1 "archive.`, out of 123 keys, and that single
+exception was the one this task had just added. Core prefixes everything
+`core.`; the App catalogue, by contrast, is organised by FEATURE
+(`settings.` 181 keys, `diagnostics.` 116, `menu.` 38, out of 1277), which is
+why Task 6's `menu.*` and Task 7's new `archive.*` family are right as they
+stand and are NOT renamed.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -1952,9 +1979,22 @@ subfolder option is disabled when `allowsSubfolder` is `false`. Keys:
 "archive.extract.gzHereOnly" = "A compressed file is always extracted into this folder.";
 ```
 The two counted lines are PLURALS and belong in
-`Localizable.stringsdict` beside the catalogue, not in it — `pl` carries
-`few`/`many` where `de`, `en` and `fr` carry only `one`/`other`. Write all
-four, in every language, with the German addressing the user as **du**.
+`Localizable.stringsdict` beside the catalogue, not in it. Measured
+2026-10-08 against the existing files, so the shape is copied rather than
+guessed: all four languages hold **14** plural entries
+(`grep -c 'NSStringLocalizedFormatKey' Sources/MacSCPAppKit/Resources/<l>.lproj/Localizable.stringsdict`),
+`en`, `de` and `fr` use `one`/`other` throughout, and `pl` uses
+`one`/`few`/`many` —
+
+```
+grep -o '<key>\(zero\|one\|two\|few\|many\|other\)</key>' Sources/MacSCPAppKit/Resources/pl.lproj/Localizable.stringsdict | sort | uniq -c
+```
+
+printed `14 few`, `14 many`, `14 one` and **`8 other`**. So six of the
+existing Polish entries carry no `other` at all. **Write the new entries with
+`one`/`few`/`many`/`other`** — the shape the 8 use, not the 6: a Polish
+plural without `other` has no rule left for a fractional or unmatched count.
+The German addresses the user as **du**.
 
 - [ ] **Step 6: Run the tests and the whole suite**
 
