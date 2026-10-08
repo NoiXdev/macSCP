@@ -84,6 +84,21 @@ struct ArchiveRunnerTests {
         }
     }
 
+    /// A cancel arriving after a failed exit must not hide the failure. The
+    /// recording double does not look at cancellation, so the status is
+    /// reached with the task already cancelled.
+    @Test func aCancelAfterANonZeroStatusDoesNotHideTheFailure() async throws {
+        let channel = RecordingArchiveChannel(exitStatus: 3)
+        let plan = try ArchivePlan.compress(
+            .zip, selection: [RemoteFileItem(name: "a", path: "/d/a", kind: .file)],
+            workingDirectory: "/d", archiveName: "out.zip")
+        let task = Task { try await RemoteArchiveRunner(channel: channel).run(plan) }
+        task.cancel()
+        await #expect(throws: ArchiveFailure.exited(status: 3)) {
+            try await task.value
+        }
+    }
+
     @Test func theremoteRunnerKeepsAnyOtherExitStatusAsItIs() async throws {
         let channel = FailingArchiveChannel(exitCode: 12)
         let plan = try ArchivePlan.compress(
