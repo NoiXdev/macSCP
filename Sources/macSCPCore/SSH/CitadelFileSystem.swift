@@ -1854,10 +1854,19 @@ extension SSHClient {
     ///
     ///     /usr/bin/grep -rn 'client.collectingStandardOutput(' Sources/ | wc -l
     ///
-    /// → 3, at `CitadelFileSystem.swift:1668` and `:1767` and
-    /// `SSHForwardingConnection.swift:172`. (`/usr/bin/grep` deliberately:
-    /// the pattern carries no `$`, but the project's record of the ugrep /
-    /// BSD grep split says which binary a figure was taken with.)
+    /// → **4** as this file stands, and the subtraction is named rather than
+    /// left for the reader: ONE of those four is the line just above — this
+    /// comment quoting its own command — so the call sites are **3**. The
+    /// figure was re-run AFTER this sentence was written, which is how that
+    /// is known: it read 3 before the command was quoted here, and quoting
+    /// it changed its own answer. The three are
+    /// `CitadelFileSystem.standardOutput(of:)`,
+    /// `CitadelFileSystem.listing(of:limit:)` and
+    /// `SSHForwardingConnection.standardOutput(of:into:)`, named by symbol
+    /// rather than by line because the line numbers moved twice while this
+    /// paragraph was being written. (`/usr/bin/grep` deliberately: the
+    /// pattern carries no `$`, but the project's record of the ugrep / BSD
+    /// grep split says which binary a figure was taken with.)
     ///
     /// **What the third one does differently, because it bears on this
     /// helper's contract:** it is the only caller that SPLITS the output
