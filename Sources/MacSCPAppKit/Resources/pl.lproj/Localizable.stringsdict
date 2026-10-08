@@ -270,5 +270,45 @@
             <string>%1$lld elementu, w tym foldery z całą zawartością, zostanie pobrane do „%2$@”.</string>
         </dict>
     </dict>
+    <key>archive.extract.entries %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld element w archiwum.</string>
+            <key>few</key>
+            <string>%lld elementy w archiwum.</string>
+            <key>many</key>
+            <string>%lld elementów w archiwum.</string>
+            <key>other</key>
+            <string>%lld elementu w archiwum.</string>
+        </dict>
+    </dict>
+    <key>archive.extract.collisions %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld nazwa z archiwum już istnieje w tym folderze. Istniejące pliki nie zostaną nadpisane.</string>
+            <key>few</key>
+            <string>%lld nazwy z archiwum już istnieją w tym folderze. Istniejące pliki nie zostaną nadpisane.</string>
+            <key>many</key>
+            <string>%lld nazw z archiwum już istnieje w tym folderze. Istniejące pliki nie zostaną nadpisane.</string>
+            <key>other</key>
+            <string>%lld nazwy z archiwum już istnieje w tym folderze. Istniejące pliki nie zostaną nadpisane.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

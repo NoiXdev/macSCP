@@ -387,6 +387,14 @@
 "archive.format.zip" = "Archiwum ZIP";
 "archive.format.tarGz" = "Skompresowane archiwum tar";
 "archive.format.gz" = "Skompresowany plik";
+"archive.extract.title" = "Wypakuj archiwum";
+"archive.extract.here" = "Do tego folderu";
+"archive.extract.subfolder" = "Do nowego folderu:";
+"archive.extract.subfolderName" = "Nazwa folderu";
+"archive.extract.gzHereOnly" = "Skompresowany plik jest zawsze wypakowywany do tego folderu.";
+"archive.extract.confirm" = "Wypakuj";
+"archive.extract.entries %lld" = "%lld elementu w archiwum.";
+"archive.extract.collisions %lld" = "%lld nazwy z archiwum już istnieje w tym folderze. Istniejące pliki nie zostaną nadpisane.";
 "menu.openEditor" = "Otwórz";
 "menu.rename" = "Zmień nazwę…";
 "menu.info" = "Informacje i uprawnienia…";

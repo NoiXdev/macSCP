@@ -385,6 +385,14 @@
 "archive.format.zip" = "ZIP-Archiv";
 "archive.format.tarGz" = "Komprimiertes Tar-Archiv";
 "archive.format.gz" = "Komprimierte Datei";
+"archive.extract.title" = "Archiv entpacken";
+"archive.extract.here" = "In diesen Ordner";
+"archive.extract.subfolder" = "In einen neuen Ordner:";
+"archive.extract.subfolderName" = "Ordnername";
+"archive.extract.gzHereOnly" = "Eine komprimierte Datei wird immer in diesen Ordner entpackt.";
+"archive.extract.confirm" = "Entpacken";
+"archive.extract.entries %lld" = "%lld Einträge im Archiv.";
+"archive.extract.collisions %lld" = "%lld Namen aus dem Archiv gibt es hier schon. Vorhandene Dateien werden nicht überschrieben.";
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";
