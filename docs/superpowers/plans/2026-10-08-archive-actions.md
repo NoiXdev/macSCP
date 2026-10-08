@@ -1801,7 +1801,13 @@ that position. Emit, immediately before
             if selection.count == 1, selection[0].kind == .file {
                 entries.append(.compressTo(.gz))
             }
-            if selection.count == 1,
+            // `kind == .file` added after Task 6's review, 2026-10-09. This
+            // condition first checked only the count and the name, so a
+            // FOLDER called `backup.zip` offered "Extract…" — an omission in
+            // this plan rather than a choice. A directory is not an archive
+            // whatever it is called, and `unzip`/`tar` would fail on it after
+            // the user had already answered the destination dialog.
+            if selection.count == 1, selection[0].kind == .file,
                let format = ArchiveExtractFormat.detected(inName: selection[0].name) {
                 entries.append(.extractArchive(format))
             }
