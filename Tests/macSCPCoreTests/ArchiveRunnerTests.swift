@@ -47,14 +47,19 @@ struct ArchiveRunnerTests {
             workingDirectory: "/d", archiveName: "out.zip")
         let outcome = try await RemoteArchiveRunner(channel: channel).run(plan)
         #expect(outcome == .finished)
-        #expect(await channel.lines.count == 1)
+        // Both halves travel: the line, and the selection on stdin. The names
+        // reach `tar --null -T -` ONLY on stdin, and an empty list there
+        // writes an empty archive and exits 0.
+        #expect(await channel.lines == [try plan.remoteCommandLine().text])
+        #expect(await channel.stdins == [plan.stdin])
+        #expect(plan.stdin != nil)
     }
 
     /// The positive half and the negative half sit together: a backend that
     /// answers the capability yields a runner, one that does not yields none.
     @Test func aBackendIsAskedForTheCapabilityInsideTheModule() async throws {
         #expect(RemoteArchiveRunner(backend: RecordingArchiveChannel()) != nil)
-        #expect(RemoteArchiveRunner(backend: "not a channel") == nil)
+        #expect(RemoteArchiveRunner(backend: LocalFileSystem()) == nil)
     }
 
     @Test func theremoteRunnerTurns127IntoAMissingTool() async throws {
@@ -87,6 +92,47 @@ struct ArchiveRunnerTests {
         await #expect(throws: ArchiveFailure.exited(status: 12)) {
             try await RemoteArchiveRunner(channel: channel).run(plan)
         }
+    }
+
+    @Test func aLocalToolThatExitsNonZeroIsAFailure() async throws {
+        let plan = ArchivePlan(
+            operation: .compress(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "false", words: [], stdin: nil)
+        await #expect(throws: ArchiveFailure.exited(status: 1)) {
+            try await LocalArchiveRunner().run(plan)
+        }
+    }
+
+    /// `env` exits 127 when the command it is asked to run is not there,
+    /// which is the status path (the executable itself exists).
+    @Test func aLocalToolThatExits127IsAMissingTool() async throws {
+        let plan = ArchivePlan(
+            operation: .compress(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "env", words: [.operand("macscp-no-such-archiver")], stdin: nil)
+        await #expect(throws: ArchiveFailure.toolMissing(tool: "env")) {
+            try await LocalArchiveRunner().run(plan)
+        }
+    }
+
+    /// `tail -f /dev/null` never ends by itself, so the only way out is the
+    /// bound. No elapsed-time assertion: the outcome is the property.
+    @Test func aLocalRunPastItsBudgetIsTimedOutAndCarriesNoText() async throws {
+        let plan = ArchivePlan(
+            operation: .compress(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "tail", words: [.flag("-f"), .operand("/dev/null")], stdin: nil)
+        await #expect(throws: ArchiveFailure.timedOut) {
+            try await LocalArchiveRunner(timeout: .milliseconds(300)).run(plan)
+        }
+    }
+
+    @Test func cancellingALocalRunEndsItAsCancelled() async throws {
+        let plan = ArchivePlan(
+            operation: .compress(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "tail", words: [.flag("-f"), .operand("/dev/null")], stdin: nil)
+        let task = Task { try await LocalArchiveRunner().run(plan) }
+        task.cancel()
+        let outcome = try await task.value
+        #expect(outcome == .cancelled)
     }
 
     /// A FLOOR, not a ceiling: the runner must not return before the tool
