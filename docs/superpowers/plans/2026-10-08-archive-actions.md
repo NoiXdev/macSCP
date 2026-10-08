@@ -2283,10 +2283,20 @@ running. `cancel()` cancels the stored `Task`. `waitUntilIdle()` is an
 suite needs, and it must be an `await`, never a poll and never a sleep.
 `state` is `.idle` or `.running(title:)`; `lastOutcome` keeps
 `.finished`/`.cancelled` or the `ArchiveFailure`, so the pane can show one
-sentence. Map `ArchiveFailure.toolMissing(tool:)` to the catalogue key
-`archive.error.toolMissing` and `.exited(status:)` to
-`archive.error.exited`; **no tool output goes into either** — a far side's
-text is not ours to pass on.
+sentence. Map `ArchiveFailure` to catalogue keys: `.toolMissing(tool:)` to
+`archive.error.toolMissing`, `.exited(status:)` to `archive.error.exited`,
+and **`.timedOut` to `archive.error.timedOut`** — in en, de, fr and pl, with
+the German in du-form. **No tool output goes into any of them** — a far
+side's text is not ours to pass on.
+
+**Added after Task 5, 2026-10-08.** This step first named two cases only.
+`.timedOut` did not exist when the plan was written; Task 5's review found
+that a local cancel or timeout never became `.cancelled` at all, because
+`SubprocessRunner.run` THROWS `SubprocessCancelled`/`SubprocessTimeout`, and
+that both those types' `description` embeds "stderr so far: <text>" — so the
+fix catches both, returns `.cancelled` for a cancel, and adds a payload-free
+`.timedOut` for the timeout. A third key is owed, and a switch over
+`ArchiveFailure` that still has two arms will not compile.
 
 - [ ] **Step 4: Wire it**
 
