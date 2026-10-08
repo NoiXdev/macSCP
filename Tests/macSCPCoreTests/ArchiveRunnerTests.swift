@@ -188,4 +188,137 @@ struct ArchiveRunnerTests {
             .split(separator: "\n", omittingEmptySubsequences: true).count
         #expect(entryCount == 200)
     }
+
+    // MARK: Listing (the extract dialog's source of entry names)
+
+    private static func scratchDirectory() throws -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Makes `name` (a `.zip`) holding files called `entries`, with the real
+    /// `zip`, and returns the directory.
+    private static func zip(holding entries: [String], as name: String) async throws -> URL {
+        let dir = try scratchDirectory()
+        for entry in entries {
+            try Data("x".utf8).write(to: dir.appendingPathComponent(entry))
+        }
+        let plan = try ArchivePlan.compress(
+            .zip,
+            selection: entries.map {
+                RemoteFileItem(name: $0, path: dir.appendingPathComponent($0).path, kind: .file)
+            },
+            workingDirectory: dir.path, archiveName: name)
+        _ = try await LocalArchiveRunner().run(plan)
+        return dir
+    }
+
+    @Test func theLocalListingReturnsOneElementPerEntry() async throws {
+        let dir = try await Self.zip(holding: ["alpha", "it's $(x)"], as: "ar.zip")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+        let entries = try await LocalArchiveRunner().listing(plan, limit: 4096)
+        #expect(entries == ["alpha", "it's $(x)"])
+    }
+
+    /// The bound is in BYTES of standard output and is inclusive: output of
+    /// exactly `limit` bytes is kept, one byte more is refused. `"aaaa\n"` and
+    /// `"bbbb\n"` are 10 bytes. The refusal is the property; the numbers only
+    /// place it.
+    @Test func theLocalListingRefusesPastItsByteBoundAndKeepsExactlyAtIt() async throws {
+        let dir = try await Self.zip(holding: ["aaaa", "bbbb"], as: "ar.zip")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+
+        let atTheBound = try await LocalArchiveRunner().listing(plan, limit: 10)
+        #expect(atTheBound == ["aaaa", "bbbb"])
+
+        await #expect(throws: ArchiveListingTooLarge(limit: 9)) {
+            try await LocalArchiveRunner().listing(plan, limit: 9)
+        }
+    }
+
+    /// A listing past the bound must never come back SHORT: a truncated list
+    /// under-reports collisions. Asserted as "no list at all" with a bound
+    /// far below the output.
+    @Test func aLocalListingPastItsBoundYieldsNoPartialList() async throws {
+        let names = (0..<50).map { "entry-number-\($0)" }
+        let dir = try await Self.zip(holding: names, as: "ar.zip")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+        var returned: [String]?
+        do { returned = try await LocalArchiveRunner().listing(plan, limit: 16) } catch {}
+        #expect(returned == nil)
+    }
+
+    @Test func aLocalListingOfAMissingArchiveIsAFailureNotAnEmptyList() async throws {
+        let dir = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plan = ArchivePlan.listing(of: "absent.zip", format: .zip, workingDirectory: dir.path)
+        var returned: [String]?
+        var failure: ArchiveFailure?
+        do {
+            returned = try await LocalArchiveRunner().listing(plan, limit: 4096)
+        } catch let error as ArchiveFailure {
+            failure = error
+        }
+        #expect(returned == nil)
+        if case .exited? = failure {} else {
+            Issue.record("expected ArchiveFailure.exited, got \(String(describing: failure))")
+        }
+    }
+
+    /// `yes` never stops by itself, so the only way this call can return is
+    /// the bound ending the child: it proves the bound acts WHILE output
+    /// arrives and does not merely check the total afterwards. No
+    /// wall-clock assertion; the suite's hang bound is the ceiling.
+    @Test func theBoundEndsAChildThatWouldNeverStopWriting() async throws {
+        let plan = ArchivePlan(
+            operation: .extract(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "yes", words: [], stdin: nil)
+        await #expect(throws: ArchiveListingTooLarge(limit: 100)) {
+            try await LocalArchiveRunner().listing(plan, limit: 100)
+        }
+    }
+
+    @Test func aLocalListingPastItsBudgetIsTimedOut() async throws {
+        let plan = ArchivePlan(
+            operation: .extract(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "tail", words: [.flag("-f"), .operand("/dev/null")], stdin: nil)
+        await #expect(throws: ArchiveFailure.timedOut) {
+            try await LocalArchiveRunner(timeout: .milliseconds(300)).listing(plan, limit: 4096)
+        }
+    }
+
+    @Test func aLocalListingToolThatIsNotThereIsAMissingTool() async throws {
+        let plan = ArchivePlan(
+            operation: .extract(.zip), workingDirectory: NSTemporaryDirectory(),
+            tool: "macscp-no-such-archiver", words: [.operand("x")], stdin: nil)
+        await #expect(throws: ArchiveFailure.toolMissing(tool: "macscp-no-such-archiver")) {
+            try await LocalArchiveRunner().listing(plan, limit: 4096)
+        }
+    }
+
+    @Test func theRemoteListingHandsTheChannelTheLineAndTheByteBound() async throws {
+        let channel = RecordingArchiveChannel(listingEntries: ["a", "b/"])
+        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
+        let entries = try await RemoteArchiveRunner(channel: channel).listing(plan, limit: 777)
+        #expect(entries == ["a", "b/"])
+        #expect(await channel.listedLines == [plan.remoteCommandLine().text])
+        #expect(await channel.listedLimits == [777])
+    }
+
+    @Test func aRemoteListingThatFailsMapsTheSameWayARunDoes() async throws {
+        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
+        await #expect(throws: ArchiveFailure.toolMissing(tool: "unzip")) {
+            try await RemoteArchiveRunner(channel: FailingArchiveChannel(exitCode: 127))
+                .listing(plan, limit: 4096)
+        }
+        await #expect(throws: ArchiveFailure.exited(status: 9)) {
+            try await RemoteArchiveRunner(channel: FailingArchiveChannel(exitCode: 9))
+                .listing(plan, limit: 4096)
+        }
+    }
 }

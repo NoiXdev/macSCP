@@ -226,5 +226,37 @@
             <string>%1$lld éléments, dont des dossiers avec tout leur contenu, seront téléchargés dans « %2$@ ».</string>
         </dict>
     </dict>
+    <key>archive.extract.entries %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld élément dans l’archive.</string>
+            <key>other</key>
+            <string>%lld éléments dans l’archive.</string>
+        </dict>
+    </dict>
+    <key>archive.extract.collisions %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld nom de l’archive existe déjà ici. Les fichiers existants ne sont pas écrasés.</string>
+            <key>other</key>
+            <string>%lld noms de l’archive existent déjà ici. Les fichiers existants ne sont pas écrasés.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

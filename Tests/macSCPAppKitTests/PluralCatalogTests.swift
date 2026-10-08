@@ -6,10 +6,13 @@ import Testing
 
 /// Guards the `%lld`-count messages that would read as "1 snippets"/"1
 /// logins"/"1 of them" without real plural support. Counted while writing
-/// this sentence (2026-09-19), `catalogKeys()` carries five:
+/// this sentence (2026-09-19), `catalogKeys()` carried five:
 /// `snippets.export.confirm.message %lld`, `logins.export.summary %lld`,
 /// `tabs.closeOthers.incomingTransfers %lld`,
 /// `tunnel.state.activeWithFailures %lld` and `tunnel.state.degraded %lld`.
+/// The extract dialog (2026-10-09) added two more, `archive.extract.entries %lld`
+/// and `archive.extract.collisions %lld`, which makes seven; the list inside
+/// `catalogKeys()` is the count to trust, not this sentence.
 /// A sixth key, `tabs.closeOthers.activeTransfers %1$lld %2$lld`, is held on
 /// its own (`activeTransfersKey`) because only its first argument is
 /// pluralized.
@@ -53,6 +56,11 @@ struct PluralCatalogTests {
             ),
             ("tunnel.state.activeWithFailures %lld", "Active · %lld connections failed"),
             ("tunnel.state.degraded %lld", "Degraded · %lld connections failed in a row"),
+            ("archive.extract.entries %lld", "%lld entries in this archive."),
+            (
+                "archive.extract.collisions %lld",
+                "%lld names from this archive already exist here. Existing files are not overwritten."
+            ),
         ]
     }
 

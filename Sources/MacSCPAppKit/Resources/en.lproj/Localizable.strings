@@ -392,6 +392,14 @@
 "archive.format.zip" = "ZIP Archive";
 "archive.format.tarGz" = "Compressed Tarball";
 "archive.format.gz" = "Compressed File";
+"archive.extract.title" = "Extract Archive";
+"archive.extract.here" = "Into this folder";
+"archive.extract.subfolder" = "Into a new folder:";
+"archive.extract.subfolderName" = "Folder name";
+"archive.extract.gzHereOnly" = "A compressed file is always extracted into this folder.";
+"archive.extract.confirm" = "Extract";
+"archive.extract.entries %lld" = "%lld entries in this archive.";
+"archive.extract.collisions %lld" = "%lld names from this archive already exist here. Existing files are not overwritten.";
 "menu.openEditor" = "Open";
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";

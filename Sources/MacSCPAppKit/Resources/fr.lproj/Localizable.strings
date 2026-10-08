@@ -388,6 +388,14 @@
 "archive.format.zip" = "Archive ZIP";
 "archive.format.tarGz" = "Archive tar compressée";
 "archive.format.gz" = "Fichier compressé";
+"archive.extract.title" = "Extraire l’archive";
+"archive.extract.here" = "Dans ce dossier";
+"archive.extract.subfolder" = "Dans un nouveau dossier :";
+"archive.extract.subfolderName" = "Nom du dossier";
+"archive.extract.gzHereOnly" = "Un fichier compressé est toujours extrait dans ce dossier.";
+"archive.extract.confirm" = "Extraire";
+"archive.extract.entries %lld" = "%lld éléments dans l’archive.";
+"archive.extract.collisions %lld" = "%lld noms de l’archive existent déjà ici. Les fichiers existants ne sont pas écrasés.";
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";

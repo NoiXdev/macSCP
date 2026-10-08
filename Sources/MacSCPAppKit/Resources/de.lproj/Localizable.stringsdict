@@ -226,5 +226,37 @@
             <string>%1$lld Elemente, darunter Ordner mit ihrem gesamten Inhalt, werden nach „%2$@“ heruntergeladen.</string>
         </dict>
     </dict>
+    <key>archive.extract.entries %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld Eintrag im Archiv.</string>
+            <key>other</key>
+            <string>%lld Einträge im Archiv.</string>
+        </dict>
+    </dict>
+    <key>archive.extract.collisions %lld</key>
+    <dict>
+        <key>NSStringLocalizedFormatKey</key>
+        <string>%#@count@</string>
+        <key>count</key>
+        <dict>
+            <key>NSStringFormatSpecTypeKey</key>
+            <string>NSStringPluralRuleType</string>
+            <key>NSStringFormatValueTypeKey</key>
+            <string>lld</string>
+            <key>one</key>
+            <string>%lld Name aus dem Archiv gibt es hier schon. Vorhandene Dateien werden nicht überschrieben.</string>
+            <key>other</key>
+            <string>%lld Namen aus dem Archiv gibt es hier schon. Vorhandene Dateien werden nicht überschrieben.</string>
+        </dict>
+    </dict>
 </dict>
 </plist>
