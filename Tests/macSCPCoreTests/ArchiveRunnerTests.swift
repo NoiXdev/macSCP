@@ -249,8 +249,12 @@ struct ArchiveRunnerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
         var returned: [String]?
-        do { returned = try await LocalArchiveRunner().listing(plan, limit: 16) } catch {}
+        var thrown: (any Error)?
+        do { returned = try await LocalArchiveRunner().listing(plan, limit: 16) } catch { thrown = error }
         #expect(returned == nil)
+        // The refusal is the bound's, not some other failure that also
+        // happens to return no list.
+        #expect(thrown is ArchiveListingTooLarge)
     }
 
     @Test func aLocalListingOfAMissingArchiveIsAFailureNotAnEmptyList() async throws {
