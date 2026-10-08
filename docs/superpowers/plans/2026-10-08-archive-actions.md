@@ -1875,8 +1875,13 @@ git commit -m "feat(archive): the context-menu entries, absent where a backend c
 **Files:**
 - Create: `Sources/macSCPCore/Archive/ExtractPreview.swift`
 - Create: `Sources/MacSCPAppKit/ExtractDestinationSheet.swift`
-- Modify: `Sources/macSCPCore/Archive/ArchiveCommandChannel.swift` (the seam
-  gains its bounded listing requirement — see the note below)
+- **Not modified any more:** `Sources/macSCPCore/Archive/ArchiveCommandChannel.swift`.
+  This line first read "(the seam gains its bounded listing requirement — see
+  the note below)". Withdrawn: Task 4 delivered BOTH requirements, as this
+  plan's own interfaces section told it to, and gave `listing(of:limit:)` a
+  rig test as well. Task 7 only CALLS it. Its `limit` is in **bytes** — pass
+  a byte bound, not an entry count, or a 300-entry archive's listing trips a
+  bound meant as a number of entries.
 - Modify: `Sources/MacSCPAppKit/Resources/{en,de,fr,pl}.lproj/Localizable.strings`
 - Test: `Tests/macSCPCoreTests/ExtractPreviewTests.swift`
 
@@ -2072,7 +2077,16 @@ extension ArchivePlan {
 }
 ```
 
-- [ ] **Step 4: Give the seam its bounded listing**
+- [ ] **Step 4: ~~Give the seam its bounded listing~~ — already done in Task 4**
+
+Withdrawn, not deleted, so the task numbering and the reasoning stay
+readable. This step said to add a second requirement to
+`ArchiveCommandChannel` and to update the fakes in two test files. Task 4
+wrote both requirements and both conformances, plus rig coverage for the
+listing, so there is nothing to add here. What remains for Task 7 is to CALL
+`listing(of:limit:)` with a byte bound.
+
+<details><summary>The withdrawn step, kept for the record</summary>
 
 `ArchiveCommandChannel` (Task 4) gains a second requirement:
 
@@ -2094,6 +2108,8 @@ newlines. Add the method to `RecordingArchiveChannel` and
 `FailingArchiveChannel` in the test files, and to a `LocalArchiveChannel` the
 local pane uses — the local side reaches the same listing through
 `SubprocessRunner.run`'s `stdout`.
+
+</details>
 
 - [ ] **Step 5: Build the sheet**
 
