@@ -183,7 +183,10 @@ public enum BrowserContextMenu {
             if selection.count == 1, selection[0].kind == .file {
                 entries.append(.compressTo(.gz))
             }
-            if selection.count == 1,
+            // A directory is not an archive whatever it is called: `unzip`
+            // and `tar` would fail on it after the user had already answered
+            // the destination dialog, so the entry is not offered for one.
+            if selection.count == 1, selection[0].kind == .file,
                let format = ArchiveExtractFormat.detected(inName: selection[0].name) {
                 entries.append(.extractArchive(format))
             }

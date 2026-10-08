@@ -73,6 +73,13 @@ struct ArchiveMenuEntriesTests {
         #expect(entries([file("notes.txt")]).contains(where: isExtract) == false)
     }
 
+    /// Both sides of the kind gate: a FILE named `ar.zip` offers extract, a
+    /// DIRECTORY of the same name does not.
+    @Test func extractIsOfferedForAFileButNotForAFolderOfTheSameName() {
+        #expect(entries([file("ar.zip")]).contains(.extractArchive(.zip)))
+        #expect(entries([folder("ar.zip")]).contains(where: isExtract) == false)
+    }
+
     @Test func extractIsNotOfferedForSeveralRows() {
         #expect(entries([file("a.zip"), file("b.zip")]).contains(where: isExtract) == false)
     }
