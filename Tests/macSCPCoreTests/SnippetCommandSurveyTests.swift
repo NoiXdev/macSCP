@@ -931,7 +931,14 @@ struct SnippetCommandSurveyTests {
     /// removed by measuring, and an entry whose stated reason moves to another
     /// file moves with it.
     ///
-    /// Counted 2026-10-01: seven entries below, four above.
+    /// `ArchiveCommandLine.swift` (2026-10-08) is the eighth caller: it hands
+    /// every `.operand` of an `ArchivePlan` to `PosixQuoting.singleQuoted`
+    /// and reads no shell text back, so it asks no per-element question of
+    /// its own.
+    ///
+    /// Counted 2026-10-01: seven entries below, four above. Withdrawn
+    /// 2026-10-08, quoted: "seven entries below" is eight with
+    /// `ArchiveCommandLine.swift` added; the four above are unchanged.
     /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
     /// this list's only reader; the list above has a second one,
     /// `shellLexingSourceFiles()`, which is where its missing-name throw and
@@ -944,6 +951,7 @@ struct SnippetCommandSurveyTests {
         "FileChecksum.swift",
         "SSHKeyConverter.swift",
         "JumpProbeCommand.swift",
+        "ArchiveCommandLine.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {
