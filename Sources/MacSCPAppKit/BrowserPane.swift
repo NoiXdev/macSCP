@@ -71,6 +71,11 @@ struct BrowserPane: View {
     /// the menu entry and turns the info sheet's block into the sentence
     /// that says why — never into a disabled control.
     var supportsChecksum: Bool = false
+    /// Whether this pane can run the archive actions: `true` for the local
+    /// pane, and for the remote one whether `RemoteArchiveRunner(backend:)`
+    /// can be made over its file system. Forwarded to the table, which
+    /// forwards it to the menu model; `false` removes the entries.
+    var supportsArchiving: Bool = false
     /// Whether this pane's backend has a permission model the info sheet's
     /// editor speaks — `PermissionsAvailability.isOffered(for:)` for the
     /// remote pane, the local file system's own declaration for the local
@@ -308,6 +313,7 @@ struct BrowserPane: View {
                     crossSessionTargets: crossSessionTargets,
                     fileActions: fileActions,
                     supportsChecksum: supportsChecksum,
+                    supportsArchiving: supportsArchiving,
                     supportsPermissions: supportsPermissions,
                     visibleColumns: visibleColumns,
                     checksumLedger: checksumLedger,

@@ -382,6 +382,11 @@
 /* Menu kontekstowe przeglądarki (M7b/T2) */
 "menu.transfer" = "Transferuj";
 "menu.transfer.otherPane" = "Do drugiego panelu";
+"menu.compress" = "Kompresuj";
+"menu.extract" = "Wypakuj…";
+"archive.format.zip" = "Archiwum ZIP";
+"archive.format.tarGz" = "Skompresowane archiwum tar";
+"archive.format.gz" = "Skompresowany plik";
 "menu.openEditor" = "Otwórz";
 "menu.rename" = "Zmień nazwę…";
 "menu.info" = "Informacje i uprawnienia…";

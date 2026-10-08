@@ -71,6 +71,12 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// leaves the entry OUT where this is `false` rather than adding a
     /// disabled one.
     var supportsChecksum: Bool = false
+    /// Whether this pane can run the archive actions — `true` for the local
+    /// pane, and for the remote one whether a `RemoteArchiveRunner` can be
+    /// made over its file system. Forwarded verbatim to the menu model,
+    /// which leaves the Compress and Extract entries OUT where this is
+    /// `false` rather than adding disabled ones.
+    var supportsArchiving: Bool = false
     /// Whether this pane's backend has a permission model the info sheet's
     /// editor speaks (see `PermissionsAvailability`). Read here for one
     /// thing only: the TITLE of the entry that opens that sheet — "Info &
@@ -139,6 +145,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
         coordinator.supportsChecksum = supportsChecksum
+        coordinator.supportsArchiving = supportsArchiving
         coordinator.supportsPermissions = supportsPermissions
         coordinator.checksumLedger = checksumLedger
         coordinator.checksumAlgorithm = checksumAlgorithm
@@ -445,6 +452,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
         context.coordinator.supportsChecksum = supportsChecksum
+        context.coordinator.supportsArchiving = supportsArchiving
         context.coordinator.supportsPermissions = supportsPermissions
         // A newly recorded checksum (or a different algorithm setting)
         // changes the TEXT of rows that are otherwise byte-for-byte the
@@ -695,6 +703,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
         var supportsChecksum = false
+        var supportsArchiving = false
         var supportsPermissions = false
         var onSortChange: ((FileSortKey, Bool) -> Void)?
         /// Refreshed on every `updateNSView`, like `supportsChecksum` and
@@ -1064,8 +1073,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
                 fileActions: fileActions?() ?? [],
-                supportsChecksum: supportsChecksum, scope: scope,
-                destination: currentDestinationScope)
+                supportsChecksum: supportsChecksum, supportsArchiving: supportsArchiving,
+                scope: scope, destination: currentDestinationScope)
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"
@@ -1098,6 +1107,19 @@ struct RemoteFileTableView: NSViewRepresentable {
                     menu.addItem(makeTransferItem(
                         selection: selection, targets: targets,
                         includesOtherPane: includesOtherPane))
+                    continue
+                }
+                // The archive run is flat in the model and one "Compress"
+                // submenu here, the way the transfer run above is. Only
+                // `.compressTo` entries are consumed; an `.extractArchive`
+                // right after the run is an ordinary item.
+                if case .compressTo = entry {
+                    var formats: [ArchiveFormat] = []
+                    while index < entries.count, case .compressTo(let format) = entries[index] {
+                        formats.append(format)
+                        index += 1
+                    }
+                    menu.addItem(makeCompressItem(selection: selection, formats: formats))
                     continue
                 }
                 if entry == .delete, menu.items.isEmpty == false {
@@ -1148,6 +1170,32 @@ struct RemoteFileTableView: NSViewRepresentable {
             return parent
         }
 
+        /// Builds the single "Compress" submenu from the run of
+        /// `.compressTo` entries the Core model emitted: one action item per
+        /// format, in the model's order, titled by the format's own noun.
+        private func makeCompressItem(
+            selection: [RemoteFileItem], formats: [ArchiveFormat]
+        ) -> NSMenuItem {
+            let parent = NSMenuItem(
+                title: L10n.string("menu.compress", "Compress"), action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for format in formats {
+                submenu.addItem(actionItem(
+                    title: archiveFormatTitle(format),
+                    entry: .compressTo(format), selection: selection))
+            }
+            parent.submenu = submenu
+            return parent
+        }
+
+        private func archiveFormatTitle(_ format: ArchiveFormat) -> String {
+            switch format {
+            case .zip: L10n.string("archive.format.zip", "ZIP Archive")
+            case .tarGz: L10n.string("archive.format.tarGz", "Compressed Tarball")
+            case .gz: L10n.string("archive.format.gz", "Compressed File")
+            }
+        }
+
         /// Backend badge label for a cross-session target (M16 T4) — reads
         /// the canonical M12 `BackendDescriptor` source, same as
         /// `SessionSidebar.swift`/`TabStripView.swift`/`TransferQueueBar.swift`,
@@ -1172,6 +1220,18 @@ struct RemoteFileTableView: NSViewRepresentable {
                     action: nil, keyEquivalent: "")
                 placeholder.isEnabled = false
                 return placeholder
+            case .compressTo:
+                // Consumed inline by `menuNeedsUpdate` (folded into one
+                // "Compress" submenu via `makeCompressItem`) — never reaches
+                // here. Same degrade-gracefully shape as the transfer arm.
+                assertionFailure("compressTo is folded into one submenu in menuNeedsUpdate")
+                let placeholder = NSMenuItem(
+                    title: L10n.string("menu.compress", "Compress"), action: nil, keyEquivalent: "")
+                placeholder.isEnabled = false
+                return placeholder
+            case .extractArchive:
+                return actionItem(
+                    title: L10n.string("menu.extract", "Extract…"), entry: entry, selection: selection)
             case .openInEditor:
                 return actionItem(title: L10n.string("menu.openEditor", "Open"), entry: entry, selection: selection)
             case .rename:
