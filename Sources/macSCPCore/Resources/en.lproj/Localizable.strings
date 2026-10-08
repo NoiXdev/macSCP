@@ -219,4 +219,4 @@
 "core.finding.noSuchBucket" = "This connection starts at the bucket list, so the path has to name a bucket";
 "core.finding.uploadPartUnacknowledged %@" = "The server did not confirm part %@ of the upload";
 "core.finding.requestBodyUnencodable" = "A value in the request cannot be written in the format the server needs";
-"archive.defaultName" = "Archive";
+"core.archive.defaultName" = "Archive";

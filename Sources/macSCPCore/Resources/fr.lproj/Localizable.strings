@@ -206,4 +206,4 @@
 "core.finding.noSuchBucket" = "Cette connexion démarre sur la liste des buckets, le chemin doit donc désigner un bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Le serveur n'a pas confirmé la partie %@ de l'envoi";
 "core.finding.requestBodyUnencodable" = "Une valeur de la requête ne peut pas être écrite dans le format que le serveur exige";
-"archive.defaultName" = "Archive";
+"core.archive.defaultName" = "Archive";

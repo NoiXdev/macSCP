@@ -55,12 +55,20 @@ struct ArchiveFormatTests {
     /// Several objects have no shared name to inherit, so the archive gets a
     /// fixed one from Core's catalogue rather than the first row's name,
     /// which would read as if only that row were in it.
+    ///
+    /// Asserted against the CATALOGUE's answer, not against a literal, and
+    /// with a positive beside it that the answer is not the fallback:
+    /// `CoreL10n.string(_:)` returns the KEY when the key is missing
+    /// (`localizedString(forKey: key, value: key, table: nil)`), so a case
+    /// that only checked the suffix and the two row names would pass with no
+    /// catalogue entry at all.
     @Test func severalObjectsGetTheCatalogueName() throws {
+        let fallbackIsNotWhatWeGot = CoreL10n.string("core.archive.defaultName")
+            != "core.archive.defaultName"
+        #expect(fallbackIsNotWhatWeGot)
         let name = try ArchiveNaming.proposedName(
             format: .zip, selection: [file("a"), folder("b")])
-        #expect(name.hasSuffix(".zip"))
-        #expect(name != "a.zip")
-        #expect(name != "b.zip")
+        #expect(name == CoreL10n.string("core.archive.defaultName") + ".zip")
     }
 
     @Test func gzRefusesMoreThanOneObject() {
