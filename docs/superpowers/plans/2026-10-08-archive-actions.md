@@ -1273,14 +1273,69 @@ extension CitadelFileSystem: ArchiveCommandChannel {
 }
 ```
 
-> **Note for the implementer:** the exact spelling of closing stdin after the
-> write, and of `ByteBuffer(bytes:)`, must be checked against the pinned
-> Citadel (`0.12.1-noix.3`, `Package.swift:30`) rather than assumed. If the
-> tool hangs waiting for end-of-input, that is the missing piece: read
-> `TTYStdinWriter` (`TTY.swift:75`–`:98`) and the channel it wraps. Report
-> what you found in your report file; if closing stdin is not reachable
-> through the public API, STOP and report BLOCKED rather than switching to a
-> PTY — a PTY breaks the 8-bit path the whole stdin design rests on.
+> **Updated 2026-10-08.** The note that stood here told the implementer to
+> find out whether stdin could be closed and to report BLOCKED if not. It
+> did, and it was: Citadel `0.12.1-noix.3` had no way to signal end-of-input.
+> Task 10 added one, and the pin is now `0.12.1-noix.4`
+> (`Package.swift:43`), so the call exists: **`TTYStdinWriter.closeStandardInput()`**,
+> which is `channel.close(mode: .output)`. A reviewer traced the NIO state
+> machine and confirmed it leaves the inbound half delivering output and the
+> exit status: `SSHChildChannel._actuallyClose0`'s `.output` case only
+> appends `.eof` to the pending writes and flushes, never touching the close
+> promise.
+>
+> **But calling it is not enough, and this is a HARD REQUIREMENT of this
+> task.** `sendChannelEOF` throws `protocolViolation "Sent EOF out of
+> sequence."` in `.halfClosedRemote`, and that throw reaches the inbound
+> stream through `errorEncountered`. So when a far side exits BEFORE reading
+> its standard input — which is exactly what a missing tool does, the shell
+> exiting 127 and OpenSSH sending CHANNEL_EOF while macSCP is still writing
+> archive bytes — a naive closure lets that error replace
+> `CommandFailed(exitCode: 127)`, and `isToolMissing` never sees 127. The
+> masking Task 10's tag removes would come straight back by another path.
+>
+> So the closure MUST: tolerate a throw from the write and from
+> `closeStandardInput()` rather than propagating it, keep draining `inbound`
+> afterwards so the far side's own verdict arrives, and let the exit status
+> win over any channel error. The doc comment says so, and the rig case
+> below proves it.
+
+- [ ] **Step 4b: The rig case that pins exit 127 against a real server**
+
+Required by the paragraph above, and the reason it is a rig case rather than
+a fake: only a real `sshd` sends CHANNEL_EOF at the moment that triggers the
+defect.
+
+```swift
+    /// A tool the far side does not have exits 127 WHILE macSCP is still
+    /// writing the name list, so OpenSSH sends CHANNEL_EOF mid-write and the
+    /// half-close then runs in `.halfClosedRemote`, where `sendChannelEOF`
+    /// throws. If the closure lets that throw out, the caller sees a channel
+    /// error and `isToolMissing` never sees 127 — the masking
+    /// `0.12.1-noix.4` exists to remove, returning by another path.
+    @Test(.timeLimit(.minutes(5)))
+    func amissingToolIsReported127EvenWhileStdinIsStillBeingWritten() async throws {
+        let fs = try await /* the connected rig file system, as the neighbouring gated suite builds it */
+        let channel = try #require(fs as? ArchiveCommandChannel)
+        let home = try await fs.homeDirectoryPath()
+        // Big enough that the write is still in flight when the far side
+        // gives up: the point of the case is the overlap.
+        let manyNames = Data(
+            (0..<20_000).map { "name-\($0)" }.joined(separator: "\n").utf8)
+        let plan = ArchivePlan(
+            operation: .compress(.zip), workingDirectory: home,
+            tool: "macscp-no-such-archiver",
+            words: [.flag("-r"), .flag("-@"), .operand("./out.zip")],
+            stdin: manyNames)
+        await #expect(throws: ArchiveCommandExitFailure(exitCode: 127)) {
+            try await channel.run(plan.remoteCommandLine(), stdin: plan.stdin)
+        }
+    }
+```
+
+Run it, and if it comes back with a channel error instead of 127, the closure
+is not yet tolerant enough — that is the finding this case exists for, not a
+reason to widen the expectation.
 
 - [ ] **Step 5: Run the tests**
 
