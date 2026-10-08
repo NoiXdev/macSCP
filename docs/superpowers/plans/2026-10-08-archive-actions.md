@@ -540,7 +540,7 @@ struct ArchivePlanTests {
             .zip, selection: [folder("d"), file("top file")],
             workingDirectory: "/d", archiveName: "out.zip")
         #expect(plan.tool == "zip")
-        #expect(plan.words == [.flag("-r"), .flag("-@"), .operand("out.zip")])
+        #expect(plan.words == [.flag("-r"), .flag("-@"), .operand("./out.zip")])
         #expect(names(of: plan) == ["d", "top file"])
     }
 
@@ -550,7 +550,7 @@ struct ArchivePlanTests {
             workingDirectory: "/d", archiveName: "out.tar.gz")
         #expect(plan.tool == "tar")
         #expect(plan.words == [
-            .flag("--null"), .flag("-T"), .flag("-"), .flag("-czf"), .operand("out.tar.gz"),
+            .flag("--null"), .flag("-T"), .flag("-"), .flag("-czf"), .operand("./out.tar.gz"),
         ])
         #expect(names(of: plan) == ["d", "top file"])
     }
@@ -568,7 +568,7 @@ struct ArchivePlanTests {
             if case .operand(let value) = word { return value }
             return nil
         }
-        #expect(operands == ["out.zip"])
+        #expect(operands == ["./out.zip"])
         #expect(names(of: plan) == [hostile])
     }
 
@@ -641,7 +641,7 @@ struct ArchivePlanTests {
             workingDirectory: "/d", archiveName: "out.zip")
         let invocation = try plan.localInvocation(resolvingToolWith: { "/usr/bin/" + $0 })
         #expect(invocation.executable == URL(fileURLWithPath: "/usr/bin/zip"))
-        #expect(invocation.arguments == ["-r", "-@", "out.zip"])
+        #expect(invocation.arguments == ["-r", "-@", "./out.zip"])
         #expect(invocation.currentDirectory == URL(fileURLWithPath: "/d"))
         #expect(invocation.stdin == Data("a'b\n".utf8))
     }
@@ -724,6 +724,16 @@ public struct ArchivePlan: Sendable, Equatable {
         workingDirectory: String, archiveName: String
     ) throws -> ArchivePlan {
         guard !selection.isEmpty else { throw ArchiveRefusal.emptySelection }
+        // Every operand macSCP did not choose goes in `./`-prefixed, including
+        // the archive name: `ArchiveNaming.proposedName` derives it from the
+        // SELECTED item's name, so a file called `-v` would otherwise put a
+        // leading dash on the command line. Added in Task 2's fix round 1
+        // after a reviewer measured it, 2026-10-08:
+        // `printf -- '-v\n' | zip -q -r -@ '-v2.zip'` answered "Invalid
+        // command arguments (short option '.' not supported)" and exited 16,
+        // where the `./` form created the archive. tar accepts both forms
+        // (measured the same day, with and without a leading dash), so this
+        // is one rule rather than a zip exception.
         switch format {
         case .zip:
             // One path per line, so a name holding a newline cannot be
@@ -734,7 +744,7 @@ public struct ArchivePlan: Sendable, Equatable {
             return ArchivePlan(
                 operation: .compress(format), workingDirectory: workingDirectory,
                 tool: "zip",
-                words: [.flag("-r"), .flag("-@"), .operand(archiveName)],
+                words: [.flag("-r"), .flag("-@"), .operand("./" + archiveName)],
                 stdin: Data(selection.map(\.name).joined(separator: "\n").utf8) + Data([0x0A]))
         case .tarGz:
             var bytes = Data()
@@ -747,7 +757,7 @@ public struct ArchivePlan: Sendable, Equatable {
                 tool: "tar",
                 words: [
                     .flag("--null"), .flag("-T"), .flag("-"),
-                    .flag("-czf"), .operand(archiveName),
+                    .flag("-czf"), .operand("./" + archiveName),
                 ],
                 stdin: bytes)
         case .gz:
@@ -889,7 +899,7 @@ struct ArchiveCommandLineTests {
         let plan = try ArchivePlan.compress(
             .zip, selection: [file("a")], workingDirectory: "/srv/data",
             archiveName: "out.zip")
-        #expect(plan.remoteCommandLine().text == "cd '/srv/data' && zip -r -@ 'out.zip'")
+        #expect(plan.remoteCommandLine().text == "cd '/srv/data' && zip -r -@ './out.zip'")
     }
 
     @Test func everyFlagIsUnquotedAndEveryOperandIsQuoted() throws {
@@ -898,7 +908,7 @@ struct ArchiveCommandLineTests {
             archiveName: "out.tar.gz")
         #expect(
             plan.remoteCommandLine().text
-                == "cd '/d' && tar --null -T - -czf 'out.tar.gz'")
+                == "cd '/d' && tar --null -T - -czf './out.tar.gz'")
     }
 
     /// The archive name is the one user-controlled word on the line, so it
@@ -913,7 +923,8 @@ struct ArchiveCommandLineTests {
         let plan = try ArchivePlan.compress(
             .tarGz, selection: [file("x")], workingDirectory: "/d",
             archiveName: hostile)
-        let expected = "cd '/d' && tar --null -T - -czf " + PosixQuoting.singleQuoted(hostile)
+        let expected = "cd '/d' && tar --null -T - -czf "
+            + PosixQuoting.singleQuoted("./" + hostile)
         let matches = plan.remoteCommandLine().text == expected
         #expect(matches)
     }
@@ -925,7 +936,7 @@ struct ArchiveCommandLineTests {
         let plan = try ArchivePlan.compress(
             .zip, selection: [file("x")], workingDirectory: "/d",
             archiveName: "report.zip")
-        #expect(plan.remoteCommandLine().text.contains("'report.zip'"))
+        #expect(plan.remoteCommandLine().text.contains("'./report.zip'"))
     }
 
     @Test func theSelectionIsNowhereInTheLine() throws {
@@ -1073,7 +1084,7 @@ struct ArchiveCommandChannelTests {
             workingDirectory: "/d", archiveName: "out.tar.gz")
         let status = try await channel.run(plan.remoteCommandLine(), stdin: plan.stdin)
         #expect(status == 0)
-        #expect(await channel.lines == ["cd '/d' && tar --null -T - -czf 'out.tar.gz'"])
+        #expect(await channel.lines == ["cd '/d' && tar --null -T - -czf './out.tar.gz'"])
         #expect(await channel.stdins == [Data("a b\0".utf8)])
     }
 
