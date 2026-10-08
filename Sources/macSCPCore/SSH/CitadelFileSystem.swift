@@ -1711,12 +1711,25 @@ extension CitadelFileSystem: ArchiveCommandChannel {
     /// far side closes, and `closeStandardInput()` then answers
     /// `ChannelError.alreadyClosed`. Each of those, allowed out of this
     /// closure, replaces the exit status — separately measured, one plant
-    /// each. A third is documented on `TTYStdinWriter.closeStandardInput()`
-    /// and was NOT observed here: in the window where the peer's EOF has
-    /// arrived and its close has not, the half-close is sent in
-    /// `.halfClosedRemote` and NIO answers
-    /// `NIOSSHError.protocolViolation("Sent EOF out of sequence.")`, which
-    /// Citadel's handler turns into the inbound stream's own error.
+    /// each. A third path exists in NIO's own state machine and was NOT
+    /// observed here: in the window where the peer's EOF has arrived and
+    /// its close has not, the half-close is sent from `.halfClosedRemote`,
+    /// and `ChildChannelStateMachine.sendChannelEOF` answers that state with
+    /// `NIOSSHError.protocolViolation("Sent EOF out of sequence.")` —
+    /// `SSHChildChannel.processOutboundMessage`'s `catch` then calls
+    /// `errorEncountered`, which fires `errorCaught` into Citadel's
+    /// `ExecCommandHandler`, whose `.eof(error)` branch prefers the error
+    /// over the exit code it has already recorded. Read off those symbols in
+    /// `swift-nio-ssh` and `Citadel` on 2026-10-08, not off a line number,
+    /// because they move.
+    ///
+    /// That is NOT what `TTYStdinWriter.closeStandardInput()`'s own doc
+    /// comment describes, and the difference matters to anyone repairing
+    /// this: that comment documents the same violation string for a THIRD
+    /// call of the half-close (from `.quiescent`), and
+    /// `"Sent message after EOF."` for a write issued after it. So the
+    /// repair it would suggest — call `closeStandardInput()` again — is the
+    /// one thing the fork says must happen exactly once per channel.
     ///
     /// None of the three is an answer the caller can act on; exit 127 is. So
     /// both calls are swallowed and the drain below runs regardless, which
@@ -1726,16 +1739,41 @@ extension CitadelFileSystem: ArchiveCommandChannel {
     /// would never see through, and the rig case
     /// `amissingToolIsReported127EvenWhileStdinIsStillBeingWritten` is what
     /// holds this closure to it.
+    ///
+    /// **Tolerated is not the same as succeeded, and that distinction is
+    /// load-bearing.** Swallowing the write means this method cannot tell a
+    /// write that landed from one that did not, and the two have different
+    /// right answers: when the far side has gone, the exit status is the
+    /// answer; when the far side is ALIVE and only the write failed, the
+    /// tool is handed a short or empty name list, archives what it was
+    /// given, and exits 0 — `tar --null -T -` on an empty list writes an
+    /// empty archive and exits 0, measured by this task's `no-stdin` probe.
+    /// Returning success there would report an archive that is missing part
+    /// of the selection, and no listing afterwards would contradict it,
+    /// because the archive really does hold what it holds. So the failure is
+    /// REMEMBERED, and a status of 0 on top of a failed write is a throw,
+    /// not a success. A non-zero status still wins: that is the far side's
+    /// own verdict and it says more than "our write broke".
     func run(_ line: ArchiveCommandLine, stdin: Data?) async throws -> Int {
+        var standardInputFailure: Error?
         do {
             try await client.withExec(line.text) { inbound, outbound in
                 if let stdin {
-                    try? await outbound.write(ByteBuffer(bytes: stdin))
+                    do {
+                        try await outbound.write(ByteBuffer(bytes: stdin))
+                    } catch {
+                        standardInputFailure = error
+                    }
                 }
                 // Called exactly once, which is this type's contract for it,
                 // and called even when the write above failed: a tool that
                 // IS reading standard input never terminates without it, and
                 // a hang is the one outcome worse than a wrong status.
+                //
+                // Its own failure is NOT remembered the way the write's is.
+                // The half-close carries no bytes, so a failed one cannot
+                // truncate anything; it fails only when the channel has
+                // already gone, which is a thing the status describes better.
                 try? await outbound.closeStandardInput()
                 // Draining, discarding: see the comment above.
                 for try await _ in inbound {}
@@ -1745,6 +1783,14 @@ extension CitadelFileSystem: ArchiveCommandChannel {
             // meets the archive layer, so nothing above it ever sees
             // Citadel's error types.
             throw ArchiveCommandExitFailure(exitCode: failure.exitCode)
+        }
+        if standardInputFailure != nil {
+            // Exit 0 over a standard input this process could not deliver.
+            // Deliberately not an `ArchiveCommandExitFailure`: the far side
+            // did not fail, so there is no exit status to report, and
+            // `isToolMissing` must not be asked about this.
+            throw RemoteFSError.protocolError(
+                reason: "the archive command exited 0 but its standard input was not written")
         }
         return 0
     }
@@ -1795,14 +1841,36 @@ extension SSHClient {
     /// beside whatever else this connection carries — and collects its
     /// STANDARD OUTPUT and exit status.
     ///
-    /// The one exec plumbing this module has, and two callers use it: the
-    /// checksum channel (`CitadelFileSystem.standardOutput(of:)`) and the
+    /// The one exec plumbing this module has, and THREE callers use it: the
+    /// checksum channel (`CitadelFileSystem.standardOutput(of:)`), the
     /// diagnosis's probes on a jump host (`SSHForwardingConnection
-    /// .standardOutput(of:into:)`). Counted when the second arrived,
-    /// 2026-09-18, and again in fix round 1: still these two.
+    /// .standardOutput(of:into:)`), and the archive listing
+    /// (`CitadelFileSystem.listing(of:limit:)`). Counted when the second
+    /// arrived, 2026-09-18, and again when the third did, 2026-10-08 — this
+    /// sentence said "two callers … still these two" until the archive
+    /// listing made it three, which is the failure mode a number in a
+    /// comment has. The command that produces the figure, run from the
+    /// repository root:
     ///
-    /// **Standard error is dropped, never merged.** Both callers parse what
-    /// comes back: a checksum reader refuses more than one line, and a far
+    ///     /usr/bin/grep -rn 'client.collectingStandardOutput(' Sources/ | wc -l
+    ///
+    /// → 3, at `CitadelFileSystem.swift:1668` and `:1767` and
+    /// `SSHForwardingConnection.swift:172`. (`/usr/bin/grep` deliberately:
+    /// the pattern carries no `$`, but the project's record of the ugrep /
+    /// BSD grep split says which binary a figure was taken with.)
+    ///
+    /// **What the third one does differently, because it bears on this
+    /// helper's contract:** it is the only caller that SPLITS the output
+    /// into lines and hands back each as an entry. The other two read one
+    /// answer — a digest, a probe's transcript — so a trailing newline or an
+    /// extra blank line costs them nothing, while the listing turns every
+    /// line into an element someone counts. Anyone changing what this
+    /// returns (trimming it, folding streams, truncating at the bound
+    /// instead of throwing) changes a COUNT for that caller, not just a
+    /// string.
+    ///
+    /// **Standard error is dropped, never merged.** All three callers parse
+    /// what comes back: a checksum reader refuses more than one line, a far
     /// side that writes a word of its own — a banner, a shell complaining
     /// about a locale, `command not found` — would otherwise turn every answer
     /// into an unreadable one. Citadel offers this as `executeCommand(_:

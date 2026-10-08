@@ -40,11 +40,21 @@ protocol ArchiveCommandChannel: Sendable {
     /// The STANDARD OUTPUT of a listing line, one entry per line of output,
     /// bounded.
     ///
+    /// **`limit` is a number of BYTES of standard output, not a number of
+    /// entries.** It is the whole output's size, measured before anything is
+    /// split, so a caller sizing it has to think in the far side's bytes:
+    /// 10_000 is not "ten thousand entries", it is about 300 paths of
+    /// average length. Passing an entry count would refuse ordinary
+    /// archives — the kind of mistake that reads as a bug in the preview
+    /// rather than in the number.
+    ///
     /// The bound exists because an archive can hold millions of entries and
     /// this output is read into memory; past it the channel THROWS rather
     /// than truncating, because a truncated listing would under-report
     /// collisions, which is the one direction this feature must not be
-    /// wrong in.
+    /// wrong in. What it throws is a channel-level failure, not an
+    /// `ArchiveCommandExitFailure`: the far side's command succeeded, it is
+    /// this side that will not keep the answer.
     ///
     /// Nothing calls this yet — the extraction preview does, later in this
     /// plan. It is declared here with `run(_:stdin:)` rather than added

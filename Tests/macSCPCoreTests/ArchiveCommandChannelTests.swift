@@ -256,8 +256,67 @@ struct ArchiveCommandChannelRigTests {
         let entries = try await channel.listing(of: list.remoteCommandLine(), limit: 64 * 1024)
         #expect(entries.sorted() == ["first.txt", "second.txt"])
 
-        await #expect(throws: (any Error).self) {
-            try await channel.listing(of: list.remoteCommandLine(), limit: 4)
+        // By CASE, not by `(any Error).self`: a bound that let
+        // `RemoteCommandOutputTooLarge` escape untranslated, or that threw
+        // `ArchiveCommandExitFailure(exitCode: 0)`, would satisfy "some
+        // error was thrown" and leave refuses-rather-than-truncates
+        // unpinned. The reason TEXT is deliberately not asserted — it is
+        // not a contract — only that this is a channel-level protocol
+        // failure and not the far side's exit status.
+        do {
+            let fitted = try await channel.listing(of: list.remoteCommandLine(), limit: 4)
+            Issue.record("a listing past the bound must not come back: \(fitted)")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("expected a protocol error, got \(error)")
+                return
+            }
+        }
+    }
+
+    /// A far side that exits 0 WITHOUT having been handed its standard
+    /// input must not read as success.
+    ///
+    /// `run` swallows a failed write on purpose — when the far side has
+    /// gone, its exit status is the better answer — but a swallowed write is
+    /// otherwise indistinguishable from one that landed, and the two differ
+    /// exactly here: a tool that is alive and gets a short or empty name
+    /// list archives what it was given and exits 0. `tar --null -T -` on an
+    /// empty list writes an empty archive and exits 0 (measured by this
+    /// task's `no-stdin` probe), so a truncated selection would be reported
+    /// as a finished archive and no listing afterwards would contradict it.
+    ///
+    /// `true` is the far side here because it is the shortest tool that
+    /// exits 0 without reading a byte: the 5.2 MB write cannot complete
+    /// (nothing drains the channel's window), so it fails, and the status
+    /// is nevertheless 0. Pinned against the rig rather than against a
+    /// fake: the behaviour lives in `CitadelFileSystem`'s closure, which no
+    /// double can stand in for.
+    @Test("a command that exits 0 without having been given its stdin is not a success")
+    func acommandThatExitsZeroWithoutItsStandardInputIsNotASuccess() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let channel = try #require(fs as (any ArchiveCommandChannel)?)
+        let home = try await fs.homeDirectoryPath()
+        let manyNames = Data(
+            (0..<400_000).map { "name-\($0)" }.joined(separator: "\n").utf8)
+        let plan = ArchivePlan(
+            operation: .compress(.tarGz), workingDirectory: home,
+            tool: "true", words: [], stdin: manyNames)
+        do {
+            let status = try await channel.run(plan.remoteCommandLine(), stdin: plan.stdin)
+            Issue.record("an unwritten standard input must not return success (\(status))")
+        } catch let error as RemoteFSError {
+            guard case .protocolError = error else {
+                Issue.record("expected a protocol error, got \(error)")
+                return
+            }
+        } catch let failure as ArchiveCommandExitFailure {
+            // Not the answer this case wants, and worth naming rather than
+            // letting it read as "some error, fine": `true` exits 0, so an
+            // exit status here would mean the far side was not the one the
+            // plan names.
+            Issue.record("expected a protocol error, got exit \(failure.exitCode)")
         }
     }
 }
