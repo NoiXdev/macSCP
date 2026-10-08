@@ -1320,10 +1320,26 @@ archive failure a user can act on.
     Measured against the tag before writing anything: the writer had exactly
     TWO public methods, `write` (`:80`) and `changeSize` (`:84`), its
     `channel` is `internal` (`:76`), and all **9** occurrences of `eof` in
-    that file — lines 30, 101, 133, 143, 151, 167, 284, 285, 303, counted with
-    `grep -o -i eof … | wc -l`, not `grep -c`, which counts lines — are
+    that file — lines 30, 101, 133, 143, 151, 167, 284, 285, 303 — are
     INBOUND, the far side's EOF arriving at us. So there was no outbound EOF
-    to reach. The spelling is not a choice: `sed -n '109p'
+    to reach. **The figure is against the TAG, not the working tree**, and
+    this is the whole command, run from the fork clone:
+
+    ```
+    git show 0.12.1-noix.3:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
+    ```
+
+    It prints `9`. Two things about it that a shorter spelling got wrong here
+    first — this passage carried `grep -o -i eof … | wc -l`, with a literal
+    ellipsis in place of the argument, which cannot run as committed at all.
+    (a) `grep -c` is the wrong tool for this figure: it counts matching LINES,
+    and line 284/285 are two separate records while a single line could carry
+    two occurrences, so `grep -c` under-reports an occurrence count.
+    (b) The revision matters. The same command against the WORKING TREE after
+    this change — `grep -o -i eof Sources/Citadel/TTY/Client/TTY.swift | wc -l`
+    — prints **11**, because `closeStandardInput()`'s own doc comment says
+    `EOF` twice. Nine is the count of what was there BEFORE, which is what the
+    claim is about. The spelling is not a choice: `sed -n '109p'
     .build/checkouts/swift-nio-ssh/Sources/NIOSSH/Docs.docc/index.md` reads
     "To send EOF yourself, call `close(mode: .output)`", and
     `SSHChildChannel._actuallyClose0` implements `.output` as an `.eof` frame
