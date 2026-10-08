@@ -155,11 +155,31 @@ format cannot be added as a magic string.
 the outcome. Two conformers:
 
 - **`RemoteArchiveRunner`** over a new Core capability seam,
-  `RemoteCommandRunner`, which `CitadelFileSystem` conforms to using
+  **`ArchiveCommandChannel`**, which `CitadelFileSystem` conforms to using
   `withExec`. The seam is queried with `as?`, exactly as
   `RemoteShellProvider`, `PresignedURLProvider` and `RemoteChecksumProvider`
   already are — the established way this project asks a backend what it can
   do.
+
+  **Correction, 2026-10-08.** This bullet first named that seam
+  `RemoteCommandRunner`, and the gate below first read
+  `as? RemoteCommandRunner`. Withdrawn: a seam of that name takes a command,
+  which makes it the general execution entry point this project has already
+  refused in writing. `Sources/macSCPCore/RemoteFS/RemoteChecksumProvider.swift`
+  says of its own narrow capability: "A general execution entry point would
+  have been the alternative, and it would have been a new surface every future
+  reviewer had to watch." The spec was written without reading that file, and
+  the reasoning there binds this feature exactly as much as it bound that one.
+
+  So the seam is shaped like `ChecksumCommandChannel`
+  (`RemoteChecksumProvider.swift:113`, one method,
+  `standardOutput(of line: ChecksumCommandLine) async throws -> String`),
+  not like a command runner: `ArchiveCommandChannel` takes an
+  **`ArchiveCommandLine`** plus the stdin bytes, and `ArchiveCommandLine`
+  carries a `fileprivate init`, the way `ChecksumCommandLine` does
+  (`FileChecksum.swift:325-331`), so no file outside the one that builds
+  archive commands can phrase a command line at all. The stdin parameter is
+  the one thing the checksum seam does not have and this one needs.
 - **`LocalArchiveRunner`** over `SubprocessRunner.run`, with its own budget
   rather than the 60-second default.
 
@@ -175,7 +195,7 @@ Link…" contribution and its id comparison are left exactly as they are; this
 design neither extends nor retires them.
 
 The gate: remote panes offer the entries when the file system answers
-`as? RemoteCommandRunner`; local panes always do. Where the gate is closed the
+`as? ArchiveCommandChannel`; local panes always do. Where the gate is closed the
 entry is **absent, not disabled** — the same judgement `computeChecksum`
 already carries (`Sources/macSCPCore/Presentation/BrowserContextMenu.swift:37`),
 for the same reason stated there: a dead menu item is not an answer.
@@ -204,9 +224,25 @@ So the selection — unbounded in size and arbitrary in content — never
 touches a shell: it goes to the tool as bytes on stdin. What remains on the
 command line is this project's own fixed vocabulary plus **one**
 user-controlled token: the archive's name (on extraction, the archive's own
-name). That token goes through a single central POSIX quoting helper, pure and
-in Core, wrapping in single quotes and rewriting `'` as `'\''`, with its own
-battery of hostile names.
+name). That token goes through **`PosixQuoting.singleQuoted`**
+(`Sources/macSCPCore/Terminal/PosixQuoting.swift:27`).
+
+**Correction, 2026-10-08.** This sentence first read: "That token goes through
+a single central POSIX quoting helper, pure and in Core, wrapping in single
+quotes and rewriting `'` as `'\''`, with its own battery of hostile names."
+Withdrawn as a thing to build — it exists, and building a second one is the
+drift its own doc comment was written to prevent ("Two quoting routines that
+drift apart is the failure this extraction exists to prevent"). It is already
+the quoting the checksum command lines use (`FileChecksum.swift:275`), and it
+already has the battery: `Tests/macSCPCoreTests/PosixQuotingTests.swift`
+beside `Tests/macSCPCoreTests/ShellQuotingExecutionTests.swift`.
+
+Reusing it also inherits a bug nobody would think to re-fix: it is written as
+a walk over `Unicode.Scalar`s rather than as
+`replacingOccurrences(of: "'", with: "'\\''")`, because that call matches on
+grapheme clusters, so an apostrophe carrying a combining mark went unescaped
+and met this wrapper's own closing quote as live shell syntax — which executed
+arbitrary commands in real `bash`.
 
 Two consequences stated rather than hidden:
 
