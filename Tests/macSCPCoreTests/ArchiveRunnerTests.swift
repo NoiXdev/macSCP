@@ -67,6 +67,18 @@ struct ArchiveRunnerTests {
         }
     }
 
+    /// A channel may also RETURN a status instead of throwing it; the runner
+    /// must not read a returned non-zero as success.
+    @Test func aReturnedNonZeroStatusIsNotASuccess() async throws {
+        let channel = RecordingArchiveChannel(exitStatus: 3)
+        let plan = try ArchivePlan.compress(
+            .zip, selection: [RemoteFileItem(name: "a", path: "/d/a", kind: .file)],
+            workingDirectory: "/d", archiveName: "out.zip")
+        await #expect(throws: ArchiveFailure.exited(status: 3)) {
+            try await RemoteArchiveRunner(channel: channel).run(plan)
+        }
+    }
+
     @Test func theremoteRunnerKeepsAnyOtherExitStatusAsItIs() async throws {
         let channel = FailingArchiveChannel(exitCode: 12)
         let plan = try ArchivePlan.compress(
