@@ -14,6 +14,10 @@ public enum ArchiveFailure: Error, Equatable, Sendable {
     case toolMissing(tool: String)
     /// Any other non-zero status.
     case exited(status: Int)
+    /// The run outlived its budget and was ended. Carries no text: the
+    /// runner's own timeout error embeds the tool's stderr so far, which
+    /// names files, and that is a far side's text.
+    case timedOut
 }
 
 /// The budget an archive run gets. Far above `SubprocessRunner.run`'s own
@@ -32,22 +36,41 @@ public protocol ArchiveRunner: Sendable {
 
 /// The local pane's runner. No shell anywhere on this path.
 public struct LocalArchiveRunner: ArchiveRunner {
-    public init() {}
+    private let timeout: Duration
+
+    public init() { timeout = ArchiveBudget.run }
+
+    /// Internal: a test needs a budget it can outlive without waiting an hour.
+    init(timeout: Duration) { self.timeout = timeout }
 
     public func run(_ plan: ArchivePlan) async throws -> ArchiveOutcome {
         let invocation = try plan.localInvocation(resolvingToolWith: Self.resolve(_:))
         guard FileManager.default.isExecutableFile(atPath: invocation.executable.path) else {
             throw ArchiveFailure.toolMissing(tool: plan.tool)
         }
-        let result = try await SubprocessRunner.run(
-            invocation.executable,
-            arguments: invocation.arguments,
-            currentDirectory: invocation.currentDirectory,
-            stdin: invocation.stdin,
-            timeout: ArchiveBudget.run)
-        if Task.isCancelled { return .cancelled }
+        let result: SubprocessResult
+        do {
+            result = try await SubprocessRunner.run(
+                invocation.executable,
+                arguments: invocation.arguments,
+                currentDirectory: invocation.currentDirectory,
+                stdin: invocation.stdin,
+                timeout: timeout)
+        } catch is SubprocessCancelled {
+            // The runner has ended the child. Reported as an outcome rather
+            // than rethrown as `CancellationError`: a user cancelling a long
+            // archive did nothing wrong, and `ArchiveOutcome.cancelled`
+            // exists so the caller need not tell a cancel from a failure by
+            // catching. The error is dropped unread: its description embeds
+            // the tool's stderr.
+            return .cancelled
+        } catch is SubprocessTimeout {
+            throw ArchiveFailure.timedOut
+        }
+        // Status first, then cancellation: a cancel arriving after a failed
+        // exit must not hide the failure.
         switch result.status {
-        case 0: return .finished
+        case 0: return Task.isCancelled ? .cancelled : .finished
         case 127: throw ArchiveFailure.toolMissing(tool: plan.tool)
         case let status: throw ArchiveFailure.exited(status: Int(status))
         }
@@ -78,7 +101,14 @@ public struct RemoteArchiveRunner: ArchiveRunner {
     }
 
     /// The runner over `backend`, or `nil` when the backend does not answer
-    /// the archive capability. The `as?` happens here, inside the module that
+    /// the archive capability.
+    ///
+    /// The cost of this seam, stated so nobody discovers it: `any Sendable`
+    /// accepts ANY argument, so a wrong argument at a call site compiles and
+    /// yields `nil` forever. The only guard is a test that passes a real
+    /// conforming backend and a real non-conforming one.
+    ///
+    /// The `as?` happens here, inside the module that
     /// owns the protocol, so a caller in another target asks "can this
     /// backend do it" without ever naming the seam.
     package init?(backend: any Sendable) {
@@ -89,9 +119,8 @@ public struct RemoteArchiveRunner: ArchiveRunner {
     public func run(_ plan: ArchivePlan) async throws -> ArchiveOutcome {
         do {
             let status = try await channel.run(plan.remoteCommandLine(), stdin: plan.stdin)
-            if Task.isCancelled { return .cancelled }
             guard status == 0 else { throw ArchiveFailure.exited(status: status) }
-            return .finished
+            return Task.isCancelled ? .cancelled : .finished
         } catch let failure as ArchiveCommandExitFailure {
             if failure.isToolMissing { throw ArchiveFailure.toolMissing(tool: plan.tool) }
             throw ArchiveFailure.exited(status: failure.exitCode)
