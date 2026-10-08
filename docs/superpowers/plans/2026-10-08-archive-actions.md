@@ -2352,6 +2352,24 @@ pane. For `.extractArchive`, run the listing plan
 first, build the `ExtractPreview`, show the sheet, and start the plan the
 sheet's answer names. Reload the listing when the activity goes idle.
 
+**Two things Task 7 found that are Task 8's to do, added 2026-10-09:**
+
+1. **Create the subfolder before a tar extract.** Measured: `unzip -d ./nope`
+   creates the directory, and `tar … -C ./nope` does NOT — it prints
+   `tar: could not chdir to './nope'` and extracts nothing. So a
+   `.subfolder` destination on a `.tar`/`.tar.gz` needs the directory made
+   first, through the file system (`createDirectory(at:)` remotely,
+   `FileManager` locally), never by adding a shell `mkdir` to the command
+   line. Do it for both formats rather than only for tar: a directory that
+   already exists costs `unzip` nothing, and one code path is easier to hold
+   than a per-tool exception.
+2. **Check `ArchiveRefusal.gzTargetExists` before starting a `.gz`
+   compression.** Task 1 declared that case for the reason Task 11 measured —
+   `gzip -k` refuses an existing target itself, prints
+   `gzip: f.gz already exists -- skipping` and exits 1, leaving the target
+   untouched — and nothing has checked it yet. macSCP says so before running,
+   rather than surfacing that line.
+
 Surface every `ArchiveRefusal` as the sheet or an alert, through the
 catalogue — the refusals are all user-facing, which is why they carry names
 rather than numbers.
