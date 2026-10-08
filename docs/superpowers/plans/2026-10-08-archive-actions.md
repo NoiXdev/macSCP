@@ -1659,10 +1659,26 @@ the decision logic stays unit-testable in Core, which is what that file's own
 header says it is for.
 
 **The gate:** `supportsArchiving` defaults to `false`, so every existing call
-site keeps exactly the menu it has. The caller passes `fs is ArchiveCommandChannel`
-for a remote pane and `true` for a local one. Where it is `false` the entries
-are **absent, not disabled** — the `computeChecksum` judgement at
+site keeps exactly the menu it has. Where it is `false` the entries are
+**absent, not disabled** — the `computeChecksum` judgement at
 `BrowserContextMenu.swift:37`.
+
+**Corrected after Task 5, 2026-10-08.** This paragraph first read: "The
+caller passes `fs is ArchiveCommandChannel` for a remote pane and `true` for
+a local one." Withdrawn, because it does not compile from the App target:
+`ArchiveCommandChannel` is **internal to macSCPCore** on purpose, and Swift
+will not let a `package` or `public` signature name it. Task 5's implementer
+hit this and built the seam instead —
+`RemoteArchiveRunner.init?(backend: any Sendable)`
+(`Sources/macSCPCore/Archive/ArchiveRunner.swift:84`), which does the `as?`
+inside the module that owns the protocol and answers `nil` when the backend
+cannot archive.
+
+So the caller passes `RemoteArchiveRunner(backend: fs) != nil` for a remote
+pane and `true` for a local one. That is a better gate than a protocol check
+and not merely a workaround: the menu then offers archiving exactly when a
+runner can be made for that pane, so the entry and the thing that would run
+it cannot disagree.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2277,9 +2293,16 @@ text is not ours to pass on.
 At the `onMenuAction` site in `ContentView+Detail.swift`, handle the two new
 entries: build the plan (`ArchiveNaming.proposedName` →
 `ArchiveNaming.free(_:takenNames:)` over the names the pane holds →
-`ArchivePlan.compress`), choose the runner (`fs as? ArchiveCommandChannel`
-→ `RemoteArchiveRunner`, local pane → `LocalArchiveRunner`), and hand it to
-the pane's `ArchiveActivity`. For `.extractArchive`, run the listing plan
+`ArchivePlan.compress`), choose the runner, and hand it to the pane's
+`ArchiveActivity`.
+
+**Corrected after Task 5, 2026-10-08.** The runner choice first read
+"(`fs as? ArchiveCommandChannel` → `RemoteArchiveRunner`, local pane →
+`LocalArchiveRunner`)". Withdrawn: that `as?` cannot compile from the App
+target, because `ArchiveCommandChannel` is internal to macSCPCore. Use
+`RemoteArchiveRunner(backend: fs)` — a failable initializer that does the
+capability question inside Core — and `LocalArchiveRunner()` for the local
+pane. For `.extractArchive`, run the listing plan
 first, build the `ExtractPreview`, show the sheet, and start the plan the
 sheet's answer names. Reload the listing when the activity goes idle.
 
