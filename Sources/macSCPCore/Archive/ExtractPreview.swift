@@ -11,7 +11,7 @@ public struct ExtractPreview: Sendable, Equatable {
     public let entryCount: Int
     /// How many distinct names in this folder extraction would land on.
     /// Counted on the TOP path component, because that is what extraction
-    /// creates here.
+    /// creates here, and compared case- and normalization-insensitively.
     public let collidingHere: Int
     /// The free subfolder name to prefill.
     public let proposedSubfolder: String
@@ -25,12 +25,47 @@ public struct ExtractPreview: Sendable, Equatable {
     ) -> ExtractPreview {
         let stem = Self.stem(of: archiveName, format: format)
         let entries = archiveEntries ?? [stem]
-        let tops = Set(entries.compactMap(Self.topComponent(of:)))
+        let folded = Set(namesInFolder.map(Self.folded(_:)))
+        let tops = Set(entries.compactMap(Self.topComponent(of:)).map(Self.folded(_:)))
         return ExtractPreview(
             entryCount: entries.count,
-            collidingHere: tops.intersection(namesInFolder).count,
-            proposedSubfolder: ArchiveNaming.free(stem, takenNames: namesInFolder),
+            collidingHere: tops.intersection(folded).count,
+            proposedSubfolder: Self.freeName(stem, takenFolded: folded, taken: namesInFolder),
             allowsSubfolder: format != .gz)
+    }
+
+    /// A name as the file system compares it. APFS ignores case and
+    /// normalization form, and so do most desktop file systems; a remote
+    /// server may not. Folding both sides over-reports there, which is the
+    /// safe direction: a collision warned about but not real costs the user
+    /// a subfolder, where the opposite error leaves an entry silently
+    /// skipped (`unzip -n` and `tar --keep-old-files` both skip `a.txt`
+    /// beside an existing `A.txt`, measured by the reviewer 2026-10-09).
+    ///
+    /// This lives here, not at the caller: `make` is the one place that
+    /// holds both sets, and a caller cannot know whether a remote file
+    /// system is case-sensitive.
+    private static func folded(_ name: String) -> String {
+        name.lowercased().precomposedStringWithCanonicalMapping
+    }
+
+    /// `ArchiveNaming.free` under the folded comparison, without changing
+    /// `free` (which compress naming shares). Handing `free` a folded set
+    /// would not work: it compares its own candidates, `Backup`, `Backup 2`,
+    /// as written, and a folded set holds `backup`. So `free` is asked
+    /// repeatedly instead: every candidate the folded comparison rejects is
+    /// added to the taken set, and `free` then proposes the next counter.
+    /// The archive's own casing survives in the result.
+    private static func freeName(
+        _ stem: String, takenFolded: Set<String>, taken: Set<String>
+    ) -> String {
+        var taken = taken
+        var candidate = ArchiveNaming.free(stem, takenNames: taken)
+        while takenFolded.contains(folded(candidate)) {
+            taken.insert(candidate)
+            candidate = ArchiveNaming.free(stem, takenNames: taken)
+        }
+        return candidate
     }
 
     /// Whether `name` can be the new subfolder: ONE path component that is
@@ -97,10 +132,14 @@ extension ArchivePlan {
                 tool: "tar", words: [.flag(format == .tarGz ? "-tzf" : "-tf"), source],
                 stdin: nil)
         case .gz:
-            // Never used: `ExtractPreview.make` is given `nil` entries for
-            // this format and derives the one name itself. Returning a plan
-            // that lists the archive's own name keeps the function total
-            // rather than trapping.
+            // This branch exists ONLY to keep the function total, and
+            // nothing calls it: `ExtractPreview.make` is given `nil` entries
+            // for this format and derives the one name itself. Its plan is
+            // NOT a listing of names -- `gzip -l` prints sizes -- so a
+            // caller that ran it and read the output as entries would be
+            // wrong. Kept as a plan rather than made unreachable in the
+            // type because `ArchiveExtractFormat` is shared with the
+            // extract plan, which needs the `.gz` case.
             return ArchivePlan(
                 operation: .extract(format), workingDirectory: workingDirectory,
                 tool: "gzip", words: [.flag("-l"), .flag("--"), source], stdin: nil)

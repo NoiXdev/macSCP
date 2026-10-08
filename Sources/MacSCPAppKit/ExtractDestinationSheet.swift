@@ -4,11 +4,12 @@ import macSCPCore
 /// The extract dialog: where an archive unpacks, and what that will touch.
 ///
 /// A small modal choice in the shape `ImportConflictSheet` and
-/// `PresignedURLSheet` already use — the same padding and spacing, buttons
-/// in a trailing row with Cancel first and the default action last, and
-/// `.interactiveDismissDisabled(true)`, so that only a button resolves it
-/// and whatever presents this sheet can rely on `onCancel` or `onExtract`
-/// being called exactly once.
+/// `PresignedURLSheet` already use — the same padding and spacing, and
+/// buttons in a trailing row with Cancel first and the default action last.
+/// The dismissal contract is `ImportConflictSheet`'s alone
+/// (`PresignedURLSheet` has none): `.interactiveDismissDisabled(true)`, so
+/// that only a button resolves the sheet and whatever presents it can rely
+/// on `onCancel` or `onExtract` being called exactly once.
 ///
 /// The sheet decides nothing about the archive. Everything it shows comes
 /// from `ExtractPreview` (Core), which was built from a LISTING: the

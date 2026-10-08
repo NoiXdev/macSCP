@@ -119,4 +119,86 @@ struct ExtractPreviewTests {
         #expect(ExtractPreview.isUsableSubfolderName("a\0b") == false)
         #expect(ExtractPreview.isUsableSubfolderName("a\r\nb") == false)
     }
+
+    // MARK: Fix round 1
+
+    /// APFS is case-insensitive and normalization-insensitive: with `A.txt`
+    /// present, `unzip -n` of an archive holding `a.txt` creates nothing. A
+    /// case-sensitive comparison says 0 collisions and then the entry is
+    /// silently skipped, which is the dialog's whole purpose failing.
+    @Test func aDifferentlyCasedNameInTheFolderIsACollision() {
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: ["a.txt"], namesInFolder: ["A.txt"])
+        #expect(preview.collidingHere == 1)
+    }
+
+    /// `e` + U+0301 and U+00E9 are one name to the file system.
+    @Test func aDifferentlyNormalizedNameInTheFolderIsACollision() {
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: ["caf\u{65}\u{301}"], namesInFolder: ["caf\u{E9}"])
+        #expect(preview.collidingHere == 1)
+    }
+
+    /// Two entries that differ only by case are ONE name on such a file
+    /// system, so they count once against one folder name.
+    @Test func entriesThatFoldToTheSameNameCountOnce() {
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: ["a.txt", "A.TXT"], namesInFolder: ["A.txt"])
+        #expect(preview.collidingHere == 1)
+    }
+
+    /// The prefill is held to the same comparison: with a folder `Backup`
+    /// present, `backup.zip` must not propose `backup`, which would extract
+    /// into the existing directory.
+    @Test func theProposedSubfolderAvoidsADifferentlyCasedFolder() {
+        let preview = ExtractPreview.make(
+            archiveName: "backup.zip", format: .zip,
+            archiveEntries: ["a"], namesInFolder: ["Backup"])
+        #expect(preview.proposedSubfolder == "backup 2")
+    }
+
+    @Test func theProposedSubfolderKeepsTheArchivesOwnCaseWhenItIsFree() {
+        let preview = ExtractPreview.make(
+            archiveName: "Backup.zip", format: .zip,
+            archiveEntries: ["a"], namesInFolder: ["other"])
+        #expect(preview.proposedSubfolder == "Backup")
+    }
+
+    @Test func theProposedSubfolderSkipsEveryDifferentlyCasedCounterToo() {
+        let preview = ExtractPreview.make(
+            archiveName: "backup.zip", format: .zip,
+            archiveEntries: ["a"], namesInFolder: ["BACKUP", "Backup 2"])
+        #expect(preview.proposedSubfolder == "backup 3")
+    }
+
+    /// The entry count is the archive's entries, not its top-level names: a
+    /// 300-entry archive under one folder is 300 entries.
+    @Test func manyEntriesUnderOneTopAreStillManyEntries() {
+        let entries = ["top/"] + (0..<299).map { "top/f\($0)" }
+        let preview = ExtractPreview.make(
+            archiveName: "ar.zip", format: .zip,
+            archiveEntries: entries, namesInFolder: [])
+        #expect(preview.entryCount == 300)
+    }
+
+    /// Every format drops ITS extension from the prefill.
+    @Test(arguments: [
+        ("site.zip", ArchiveExtractFormat.zip),
+        ("site.tar", .tar),
+        ("site.tar.gz", .tarGz),
+        ("site.tgz", .tarGz),
+        ("site.gz", .gz),
+        ("SITE.ZIP", .zip),
+    ] as [(String, ArchiveExtractFormat)])
+    func everyFormatDropsItsOwnExtensionFromThePrefill(
+        name: String, format: ArchiveExtractFormat
+    ) {
+        let preview = ExtractPreview.make(
+            archiveName: name, format: format,
+            archiveEntries: format == .gz ? nil : ["a"], namesInFolder: [])
+        #expect(preview.proposedSubfolder == String(name.prefix(4)))
+    }
 }
