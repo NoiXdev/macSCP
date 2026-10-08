@@ -2133,6 +2133,36 @@ local pane uses — the local side reaches the same listing through
 
 </details>
 
+- [ ] **Step 4c: The LOCAL listing, which nothing delivers yet**
+
+Added 2026-10-09, after measuring: `grep -rn 'func listing(' Sources/` prints
+exactly two lines, the protocol requirement and `CitadelFileSystem`'s
+conformance. **There is no local listing path at all** —
+`LocalArchiveRunner` has only `run`. The dialog needs an archive's entries on
+BOTH panes, so this is a gap in this plan rather than something Task 4 left
+out, and it is closed here.
+
+Give `LocalArchiveRunner` a method with the same shape as the channel's:
+
+```swift
+    /// The entries `plan` lists, one per element, bounded in BYTES of
+    /// standard output.
+    ///
+    /// Same contract as `ArchiveCommandChannel.listing(of:limit:)`, and the
+    /// same reason for the bound: an archive can hold millions of entries and
+    /// this output is read into memory. Past the bound it THROWS rather than
+    /// truncating, because a truncated listing under-reports collisions, and
+    /// that is the one direction this feature must not be wrong in.
+    func listing(_ plan: ArchivePlan, limit: Int) async throws -> [String]
+```
+
+built on `SubprocessRunner.run` over `plan.localInvocation(…)`, splitting
+`stdout` on newlines and dropping empties. A non-zero status is an
+`ArchiveFailure` exactly as `run` maps it. Test it against a real `zip` in a
+temporary directory, and test the bound by listing an archive whose entry
+names exceed a deliberately tiny limit — the refusal is the property, not the
+number.
+
 - [ ] **Step 5: Build the sheet**
 
 `ExtractDestinationSheet.swift`, following whichever sheet pattern this
