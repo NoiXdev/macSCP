@@ -460,6 +460,8 @@ extension ContentView {
                                             break   // handled inside BrowserPane, never forwarded
                                         case .backendFileAction:
                                             break   // never contributed on the LOCAL pane (fileActions is nil here)
+                                        case .compressTo, .extractArchive:
+                                            break   // wired in Task 8 of the archive plan
                                         }
                                     },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
@@ -500,6 +502,10 @@ extension ContentView {
                                     // `ChecksumAvailability`.
                                     supportsChecksum: ChecksumAvailability.isOffered(
                                         byLocalFileSystem: session.localFS),
+                                    // The local pane archives with the
+                                    // system's own tools, so there is no
+                                    // capability to read: always offered.
+                                    supportsArchiving: true,
                                     // Likewise off the local file system's own
                                     // declaration, since there is no descriptor.
                                     supportsPermissions: PermissionsAvailability.isOfferedByTheLocalFileSystem
@@ -542,6 +548,8 @@ extension ContentView {
                                         case .rename, .infoAndPermissions, .newFolder, .newFile,
                                             .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
+                                        case .compressTo, .extractArchive:
+                                            break   // wired in Task 8 of the archive plan
                                         case .backendFileAction(let action):
                                             // Currently the only backend-contributed action is
                                             // S3's presigned URL (M14/T5) — keyed off `action.id`
@@ -601,6 +609,16 @@ extension ContentView {
                                     // tell an offer from an empty one.
                                     supportsChecksum: ChecksumAvailability.isOffered(
                                         for: tab.connectionViewModel.kind),
+                                    // Offered exactly when a runner can be
+                                    // made over THIS pane's file system, so
+                                    // the entry and what would run it cannot
+                                    // disagree. The argument is the file
+                                    // system and nothing else: the
+                                    // parameter is `any Sendable`, so a wrong
+                                    // argument would compile and answer nil
+                                    // forever.
+                                    supportsArchiving: RemoteArchiveRunner(
+                                        backend: session.remoteFS) != nil,
                                     // Same shape: the descriptor's permission
                                     // model, read through the one function
                                     // that turns it into an offer.

@@ -387,6 +387,11 @@
 /* Browser context menu (M7b/T2) */
 "menu.transfer" = "Transfer";
 "menu.transfer.otherPane" = "To the other pane";
+"menu.compress" = "Compress";
+"menu.extract" = "Extract…";
+"archive.format.zip" = "ZIP Archive";
+"archive.format.tarGz" = "Compressed Tarball";
+"archive.format.gz" = "Compressed File";
 "menu.openEditor" = "Open";
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";

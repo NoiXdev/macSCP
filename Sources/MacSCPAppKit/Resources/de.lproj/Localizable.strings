@@ -380,6 +380,11 @@
 /* Browser-Kontextmenü (M7b/T2) */
 "menu.transfer" = "Übertragen";
 "menu.transfer.otherPane" = "Zum anderen Fenster";
+"menu.compress" = "Komprimieren";
+"menu.extract" = "Entpacken…";
+"archive.format.zip" = "ZIP-Archiv";
+"archive.format.tarGz" = "Komprimiertes Tar-Archiv";
+"archive.format.gz" = "Komprimierte Datei";
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";

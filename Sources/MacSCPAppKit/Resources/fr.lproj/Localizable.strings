@@ -383,6 +383,11 @@
 /* Menu contextuel du navigateur (M7b/T2) */
 "menu.transfer" = "Transférer";
 "menu.transfer.otherPane" = "Vers l'autre volet";
+"menu.compress" = "Compresser";
+"menu.extract" = "Extraire…";
+"archive.format.zip" = "Archive ZIP";
+"archive.format.tarGz" = "Archive tar compressée";
+"archive.format.gz" = "Fichier compressé";
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";

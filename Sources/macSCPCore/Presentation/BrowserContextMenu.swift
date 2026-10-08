@@ -35,6 +35,8 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case newFile               // always (also on background click) — M18a
     case copyPath              // any non-empty selection
     case computeChecksum       // any selection holding at least one FILE, and only where the backend can answer
+    case compressTo(ArchiveFormat)             // one per offered format; the App folds the run into one submenu
+    case extractArchive(ArchiveExtractFormat)  // single row whose name names a format
     case delete                // any non-empty selection
     case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
 }
@@ -53,6 +55,15 @@ public enum BrowserContextMenu {
     /// is shown in the info sheet, where there is room to say it.
     ///
     /// Defaulted to `false`, so a call site that predates checksums keeps
+    /// exactly the menu it had.
+    ///
+    /// `supportsArchiving` says whether this pane can run the archive
+    /// actions at all: `true` for a local pane, and for a remote one
+    /// whether a `RemoteArchiveRunner` can be made over its file system
+    /// (`RemoteArchiveRunner(backend:) != nil`), so the entry and the thing
+    /// that would run it cannot disagree. Where it is `false` the entries
+    /// are ABSENT, not disabled — the `computeChecksum` judgement above —
+    /// and its default keeps every call site that predates archiving on
     /// exactly the menu it had.
     ///
     /// `scope` is THIS pane — the rows being acted on, and the source of any
@@ -92,6 +103,7 @@ public enum BrowserContextMenu {
         crossSessionTargets: [CrossSessionTarget] = [],
         fileActions: [FileActionContribution] = [],
         supportsChecksum: Bool = false,
+        supportsArchiving: Bool = false,
         scope: BrowserScope = .ordinary,
         destination: BrowserScope = .ordinary
     ) -> [BrowserMenuEntry] {
@@ -158,6 +170,23 @@ public enum BrowserContextMenu {
         // guessing which of the selected rows caused it to vanish.
         if supportsChecksum, selection.contains(where: { $0.kind == .file }) {
             entries.append(.computeChecksum)
+        }
+        // The archive run, flat and in format order; the AppKit layer folds
+        // it into one "Compress" submenu the way it folds the transfer run.
+        // `.gz` compresses exactly one FILE and produces no container, so it
+        // is offered only there — `ArchiveNaming.proposedName` refuses the
+        // other cases and a menu entry whose only outcome is a refusal is
+        // not an offer (the `computeChecksum` reasoning above).
+        if supportsArchiving {
+            entries.append(.compressTo(.zip))
+            entries.append(.compressTo(.tarGz))
+            if selection.count == 1, selection[0].kind == .file {
+                entries.append(.compressTo(.gz))
+            }
+            if selection.count == 1,
+               let format = ArchiveExtractFormat.detected(inName: selection[0].name) {
+                entries.append(.extractArchive(format))
+            }
         }
         entries.append(.delete)
         return entries
