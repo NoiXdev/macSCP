@@ -1299,6 +1299,19 @@ extension CitadelFileSystem: ArchiveCommandChannel {
 > afterwards so the far side's own verdict arrives, and let the exit status
 > win over any channel error. The doc comment says so, and the rig case
 > below proves it.
+>
+> **Corrected after Task 4, 2026-10-08.** The paragraph above predicted the
+> masking error would be `protocolViolation "Sent EOF out of sequence."`
+> That prediction is withdrawn as the OBSERVED cause: measured against the
+> real rig, a propagating write gives `ChannelError.eof` ("End of file") and
+> a propagating half-close gives `ChannelError.alreadyClosed`; the
+> `protocolViolation` never occurred. The REQUIREMENT is unchanged and was
+> confirmed necessary — both tolerances are independently load-bearing. One
+> thing stays unmeasured and is recorded as such rather than claimed: in the
+> narrow window where `sendChannelEOF` really would throw, tolerance cannot
+> help, because the throw poisons the inbound stream and Citadel prefers a
+> stream error over the recorded exit code. Recovering from that would be a
+> fork change, and it was not taken.
 
 - [ ] **Step 4b: The rig case that pins exit 127 against a real server**
 
@@ -1318,10 +1331,18 @@ defect.
         let fs = try await /* the connected rig file system, as the neighbouring gated suite builds it */
         let channel = try #require(fs as? ArchiveCommandChannel)
         let home = try await fs.homeDirectoryPath()
-        // Big enough that the write is still in flight when the far side
-        // gives up: the point of the case is the overlap.
+        // 400_000, about 5.2 MB, which is PAST the channel's outbound
+        // window — and that is a guard's sensitivity, not a style choice.
+        // This line first read `(0..<20_000)`, with the comment "Big enough
+        // that the write is still in flight when the far side gives up: the
+        // point of the case is the overlap." Withdrawn: measured
+        // 2026-10-08, at 20_000 the case was VACUOUS — with both tolerances
+        // removed (`try?` changed to `try`) the probe came back
+        // "GREEN — 7 ran, none noticed". At 400_000 each tolerance is red
+        // on its own, 3 of 3 per plant. Shrinking this number disarms the
+        // case.
         let manyNames = Data(
-            (0..<20_000).map { "name-\($0)" }.joined(separator: "\n").utf8)
+            (0..<400_000).map { "name-\($0)" }.joined(separator: "\n").utf8)
         let plan = ArchivePlan(
             operation: .compress(.zip), workingDirectory: home,
             tool: "macscp-no-such-archiver",
