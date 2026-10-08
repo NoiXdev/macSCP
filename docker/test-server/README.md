@@ -433,6 +433,85 @@ Measured 2026-09-27, with the gated case above: the jump's own dial is `ok`
 `failed(the jump host does not forward connections)` — which is
 `DiagnosticReason.jumpForwardingProhibited`, the code-1 arm.
 
+## The archive tools on `sshd` (2026-10-08)
+
+The `sshd` service (container `macscp-test-sshd`, host port **2222**) is no
+longer the stock image. It is built from `sshd/Dockerfile`: the same pinned
+`lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230` plus
+`apk add --no-cache zip tar`, tagged `macscp-test-sshd:10.3_p1-r0-ls230-archive`.
+`sshd2`, the host-key services, `sshd-nosftp` and `sshd-noforward` are
+unchanged and still run the stock image.
+
+Why: the remote half of the archive actions runs GNU `tar --null -T -` and
+`zip -@` on the server, and the stock image could run neither. Measured
+2026-10-08 in the running container, before the change:
+
+```
+$ docker compose -f docker/test-server/compose.yml exec -T sshd sh -c 'command -v zip || echo "zip ABSENT"; tar --version | head -1; tar --null -T /dev/null -cf /dev/null; echo tar-null-exit=$?'
+zip ABSENT
+tar: unrecognized option: null
+tar (busybox) 1.37.0
+tar-null-exit=1
+```
+
+`unzip` (`/usr/bin/unzip`), `gzip` (`/bin/gzip`) and `gunzip` (`/bin/gunzip`)
+were already there.
+
+Why a Dockerfile and not a hook: the image has two documented ways to add
+packages, a `/custom-cont-init.d` script and `DOCKER_MODS`
+(`linuxserver/mods:universal-package-install`). Both fetch the packages on
+every container start, so a cold `up -d` without network would come up
+without the tools. A build installs them once and the image carries them.
+(The rig's other hooks, `custom-cont-init.d-hostkey` and
+`custom-cont-init.d-nosftp`, edit configuration and need no network.) The
+`FROM` tag in `sshd/Dockerfile` must be bumped together with the pin the other
+services carry in `compose.yml`. The `apk` packages themselves are not
+version-pinned: Alpine's repository drops old versions, so a pin would break
+the build; the proof below is what says what a rebuild must produce.
+
+Applying it to a running rig touches only this service:
+
+```
+docker compose -f docker/test-server/compose.yml up -d --build --force-recreate --no-deps sshd
+```
+
+A plain `up -d` builds the image if it is missing (checked 2026-10-08 by
+removing the container and the image and running `up -d sshd`: it printed
+`Image macscp-test-sshd:10.3_p1-r0-ls230-archive Built` and the tools were
+there), but does not rebuild an existing one, so after editing the Dockerfile
+pass `--build`. Recreating the container regenerates its host keys (they live
+in the container's own `/config`), so anything that pinned the old key has to
+re-pin; the gated suites pin per run.
+
+### Proof, measured 2026-10-08
+
+`apk` replaced the BusyBox applet at `/bin/tar`; there is no `/usr/bin/tar`.
+`command -v` with several names prints only the first one under BusyBox `ash`,
+so the check is a loop:
+
+```
+$ docker compose -f docker/test-server/compose.yml exec -T sshd sh -c 'for t in zip unzip gzip gunzip tar; do command -v $t || echo "$t ABSENT"; done; tar --version | head -1'
+/usr/bin/zip
+/usr/bin/unzip
+/bin/gzip
+/bin/gunzip
+/bin/tar
+tar (GNU tar) 1.35
+```
+
+A name with a quote in it, through a NUL-separated tar list and a
+newline-separated zip list:
+
+```
+$ docker compose -f docker/test-server/compose.yml exec -T sshd sh -c 'cd /tmp && rm -rf p && mkdir p && cd p && printf x > a && printf "y" > "b'"'"'c" && printf "a\0b'"'"'c\0" | tar --null -T - -czf ../p.tgz && tar -tzf ../p.tgz && printf "a\nb'"'"'c\n" | zip -q -@ ../p.zip && unzip -Z1 ../p.zip'
+a
+b'c
+a
+b'c
+```
+
+The first pair is `tar -tzf`, the second `unzip -Z1`.
+
 ## SFTPGo — the rig's Go-based SSH server (2026-09-02)
 
 `sftpgo` (`drakkan/sftpgo:v2.6.6`, arm64 and amd64 both in the manifest;

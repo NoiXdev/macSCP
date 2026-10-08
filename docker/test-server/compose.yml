@@ -1,6 +1,11 @@
 services:
+  # Built from ./sshd/Dockerfile: the same pinned image plus GNU tar and zip
+  # for the archive actions' remote half (see README.md, "The archive tools
+  # on sshd"). Only this service; sshd2 and the variants below stay the
+  # stock image.
   sshd:
-    image: lscr.io/linuxserver/openssh-server:10.3_p1-r0-ls230
+    build: ./sshd
+    image: macscp-test-sshd:10.3_p1-r0-ls230-archive
     container_name: macscp-test-sshd
     ports:
       - "2222:2222"
