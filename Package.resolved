@@ -1,5 +1,5 @@
 {
-  "originHash" : "711b34979737ae83f64c1784f5e442decf078513f9adc1dc4090b6cffe89970d",
+  "originHash" : "f66683fba996dc9b5d0a912e14a032508f96d92d7766ee050f91abb25b74e987",
   "pins" : [
     {
       "identity" : "bigint",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/NoiXdev/Citadel.git",
       "state" : {
-        "revision" : "186b1a802d36a87789532d6f08506333c134c6e9",
-        "version" : "0.12.1-noix.3"
+        "revision" : "ffe3518fb0f97e8a3f185e9cb53489482c061e69",
+        "version" : "0.12.1-noix.4"
       }
     },
     {

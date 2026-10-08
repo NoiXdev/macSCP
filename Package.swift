@@ -24,10 +24,23 @@ let package = Package(
         // (`SHA2PublicKey.publicKeyPrefix`) and moves the RFC 8332 name to
         // the new `userAuthAlgorithmName` that swift-nio-ssh 0.3.10 below
         // reads — the split that makes a Go-based server accept an RSA
-        // login. It therefore requires 0.3.10 exactly. The fork record with
+        // login. It therefore requires 0.3.10 exactly.
+        // 0.12.1-noix.4 is what makes the ARCHIVE actions' remote half
+        // possible at all. Two things, both in `TTY/Client/TTY.swift`:
+        // `TTYStdinWriter` gains the public `closeStandardInput()`
+        // (`channel.close(mode: .output)`, the spelling swift-nio-ssh's own
+        // documentation prescribes for SSH_MSG_CHANNEL_EOF), so a remote tool
+        // reading standard input to end-of-input terminates and the caller
+        // reaches its exit status — before this, the writer could only
+        // `write` and `changeSize`, and every `eof` in that file was inbound;
+        // and `withExec` stops closing the channel in a way that lets
+        // `ChannelError.alreadyClosed` take the place of the
+        // `SSHClient.CommandFailed` carrying the exit status, which hid
+        // exit 127 — a POSIX shell's report of a missing command, and the one
+        // archive failure a user can act on. The fork record with
         // the measurements behind each tag is in
         // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
-        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.3"),
+        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.4"),
         // Citadel depends on Wellz26/swift-nio-ssh, a fork with a deleted
         // parent that is behind Apple on signature validation and mangles
         // RFC 4253 §4.2 preamble lines into the version string. This root
