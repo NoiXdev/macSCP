@@ -73,6 +73,54 @@ withdraw two prescriptions the first draft made).
    item that opens a dialog carries an ellipsis on macOS, so the title is
    "Extract…". The decision's substance is unchanged; only the title is.
 
+## The stdin blocker, and the two decisions it forced (2026-10-08)
+
+Task 4 came back **BLOCKED**, and the block is real. Both claims below were
+measured by the implementer and then re-measured by the controller.
+
+**Citadel 0.12.1-noix.3 cannot signal end-of-input on an exec channel.**
+`TTYStdinWriter` (`.build/checkouts/Citadel/Sources/Citadel/TTY/Client/TTY.swift:75`)
+has exactly two public methods, `write` and `changeSize`; its `channel` is
+`internal`. Every `eof` in that file is INBOUND — the far side's EOF reaching
+us. And `withExec` closes the channel only AFTER its closure returns, while
+the closure cannot return until it has drained `inbound`, which for a
+stdin-reading tool never ends. Observed: the rig case ran to its
+`.timeLimit`, "Time limit was exceeded: 300.000 seconds", while the same
+pipeline run inside the container exited 0 at once.
+
+**The rig cannot exercise these tools either.** Measured in the `sshd`
+container: `zip` **ABSENT**, `tar` is BusyBox 1.37.0 and rejects `--null`
+("unrecognized option: null", exit 1). Only `unzip`, `gzip` and `gunzip` are
+present.
+
+A third thing the implementer found while blocked, and worth its own test
+once unblocked: a tool that exits before reading stdin surfaces as
+`ChannelError.alreadyClosed` rather than as its exit status, because
+`withExec`'s catch block calls `close()` before rethrowing and that throws on
+an already-closed channel — which would also hide exit 127 from
+`isToolMissing`.
+
+**Maintainer's rulings, 2026-10-08.** A list-file-over-SFTP route was measured
+working and offered (`tar --null -T <ourfile>`, `zip -@ < <ourfile>`, both
+handling a name with an apostrophe, no user-controlled byte on the command
+line) and was NOT taken. Instead:
+
+1. **Extend the Citadel fork** with a public stdin half-close, and fix the
+   close-masks-the-error case. This is **Task 10**, below, and it runs BEFORE
+   Task 4.
+2. **Add the archive tools to the rig image.** This is **Task 11**, below, and
+   it also runs before Task 4.
+
+So the execution order is **1, 2, 3, 11, 10, 4, 5, 6, 7, 8, 9** — the two new
+tasks are numbered at the end only so that every existing cross-reference in
+this plan keeps pointing at the task it means. Task 4's brief is unchanged
+except that its conformance may now call the half-close Task 10 adds.
+
+Task 4's blocked attempt is not lost: the conformance diff, the protocol file
+and the test file are saved under
+`.superpowers/sdd/2026-10-08-archive-actions/task-4-attempt/`, and the patch
+was verified to apply cleanly against a clean tree.
+
 ## What was measured, so no task re-derives it
 
 All on 2026-10-08, on this machine, each command run in the form written here.
@@ -2223,3 +2271,158 @@ Run after the last task, by the coordinator, not a subagent:
    must print nothing: that escape belongs to `PosixQuoting` alone.
 4. **No wall-clock ceiling got in.**
    `grep -rn 'elapsed <' Tests/macSCPCoreTests/Archive*` must print nothing.
+
+---
+
+### Task 10: The Citadel fork gains a stdin half-close
+
+**Runs BEFORE Task 4.** Numbered 10 so every cross-reference above keeps
+pointing at the task it means.
+
+**Repositories:** a clone of `https://github.com/NoiXdev/Citadel` (none
+exists on this machine yet — make it outside `/Users/noidee/macSCP`, e.g.
+`/Users/noidee/_dev/Citadel`), plus `Package.swift` here.
+
+**Files:**
+- In the fork: `Sources/Citadel/TTY/Client/TTY.swift` (`TTYStdinWriter`, and
+  `withExec`'s `catch`), plus a test in the fork's own suite.
+- Here: `Package.swift` (the `exact:` pin) and
+  `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` (the fork
+  record).
+
+**What the change is.** Two things, both measured as missing:
+
+1. `TTYStdinWriter` gains a public method that half-closes the channel's
+   outbound side, so a tool reading standard input sees end-of-input while
+   the inbound half stays open for the remaining output and the exit status.
+   In NIO terms that is a channel `close(mode: .output)`; check what the
+   handler chain actually supports before settling on a spelling.
+2. `withExec`'s `catch` calls `close()` and then rethrows, so a channel the
+   far side already closed throws `ChannelError.alreadyClosed` OVER the
+   `CommandFailed` that carries the exit status — which would hide exit 127
+   from `isToolMissing`. The original error must survive.
+
+- [ ] **Step 1: The fork debt check, BEFORE touching anything**
+
+CLAUDE.md requires this at every fork change, and requires the numbers to be
+written down even when they are zero. In the fork clone:
+
+```bash
+git remote add upstream https://github.com/orlandos-nl/Citadel.git
+git fetch upstream
+git log --oneline 0.12.1..upstream/main
+gh api repos/orlandos-nl/Citadel/security-advisories
+```
+
+Classify every commit security / correctness / feature / noise. **A security
+commit upstream is cherry-picked FIRST, before any feature work.** Then
+answer, in the report: can the fork be retired — does upstream now carry
+what it carries? Write the count and the date into the fork record either
+way.
+
+- [ ] **Step 2: Write the failing test in the fork's own suite**
+
+A test that writes bytes, half-closes, and asserts the command both
+terminated and reported its status. Follow the fork's existing test style;
+do not import anything from macSCP.
+
+- [ ] **Step 3: Run it to see it fail**
+
+Expected: the command never terminates, or the status is missing. Quote the
+exact failure.
+
+- [ ] **Step 4: Implement both halves, and run the fork's whole suite**
+
+Green, and quoted in the report.
+
+- [ ] **Step 5: Verify against macSCP WITHOUT pushing**
+
+Point this repository's `Package.swift` at the local clone
+(`.package(path: "/Users/noidee/_dev/Citadel")`) **as a temporary local
+edit you do not commit**, run `swift build`, and confirm the half-close is
+reachable from `CitadelFileSystem`. Then put the `exact:` pin back.
+
+- [ ] **Step 6: STOP and report**
+
+Pushing a branch and a tag to `NoiXdev/Citadel`, and opening a PR against
+`orlandos-nl/Citadel`, are outward-facing actions on a shared repository.
+Do them only on the maintainer's explicit go-ahead. Report: the upstream
+count and date, the retirement answer, the observed red, the green, what the
+half-close is spelled as, and that nothing was pushed.
+
+- [ ] **Step 7: After the go-ahead — tag, pin, record**
+
+Tag `0.12.1-noix.4`, push it, bump the `exact:` pin here with a comment
+saying what the tag carries and why, open the upstream PR, and write the
+tag, the PR and the measurements into the fork record. Every fork change is
+reviewed like code here: red first, the fork's own suite green, a real
+observed red in the commit message, and **no fabricated hash**.
+
+---
+
+### Task 11: The rig image gains the archive tools
+
+**Runs BEFORE Task 4**, and is independent of Task 10.
+
+**Files:**
+- Modify: `docker/test-server/` — whatever file builds or configures the
+  `sshd` service (read the compose file first; the service may need a small
+  Dockerfile where it currently uses an image directly).
+- Modify: `docker/test-server/README.md` — the rig's own record.
+
+**What is missing, measured 2026-10-08 in the running `sshd` container:**
+
+| tool | state |
+|---|---|
+| `zip` | **absent** |
+| `tar` | BusyBox 1.37.0 — rejects `--null` ("unrecognized option: null", exit 1) |
+| `unzip` | `/usr/bin/unzip` |
+| `gzip` | `/bin/gzip` |
+| `gunzip` | `/bin/gunzip` |
+
+The image is `lscr.io/linuxserver/openssh-server`, which is Alpine-based, so
+`zip` and GNU `tar` are `apk add zip tar` away — but confirm that rather than
+assume it, and prefer the image's own documented way of installing extra
+packages over a hand-rolled Dockerfile if one exists.
+
+- [ ] **Step 1: Add the packages**
+
+- [ ] **Step 2: Recreate the service and measure, from the MAIN checkout only**
+
+```bash
+docker compose -f docker/test-server/compose.yml up -d --force-recreate sshd
+docker compose -f docker/test-server/compose.yml exec -T sshd sh -c 'command -v zip unzip gzip gunzip tar; tar --version | head -1'
+```
+
+Expected: all five present, and `tar --version` naming GNU tar rather than
+BusyBox.
+
+- [ ] **Step 3: Prove `--null` and `-@` now work there**
+
+```bash
+docker compose -f docker/test-server/compose.yml exec -T sshd sh -c 'cd /tmp && rm -rf p && mkdir p && cd p && printf x > a && printf "y" > "b'"'"'c" && printf "a\0b'"'"'c\0" | tar --null -T - -czf ../p.tgz && tar -tzf ../p.tgz && printf "a\nb'"'"'c\n" | zip -q -@ ../p.zip && unzip -Z1 ../p.zip'
+```
+
+Expected: both listings naming `a` and `b'c`. Quote the output.
+
+- [ ] **Step 4: Record it in the rig's README**
+
+What was added, why, and the measurement above. `docker/test-server/README.md`
+is the rig's own record, and the next person to rebuild the image reads it
+rather than this plan.
+
+- [ ] **Step 5: Verify the existing gated suites still pass**
+
+```bash
+MACSCP_ITEST=1 swift test
+```
+
+A changed image must not break the rig suites that already use it. Quote the
+result.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docker/test-server
+git commit -m "test(rig): the archive tools the remote half needs"
+```
