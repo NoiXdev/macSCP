@@ -21,7 +21,8 @@ struct ArchivePlanTests {
             .zip, selection: [folder("d"), file("top file")],
             workingDirectory: "/d", archiveName: "out.zip")
         #expect(plan.tool == "zip")
-        #expect(plan.words == [.flag("-r"), .flag("-@"), .operand("out.zip")])
+        #expect(plan.operation == .compress(.zip))
+        #expect(plan.words == [.flag("-r"), .flag("-@"), .operand("./out.zip")])
         #expect(names(of: plan) == ["d", "top file"])
     }
 
@@ -31,9 +32,12 @@ struct ArchivePlanTests {
             workingDirectory: "/d", archiveName: "out.tar.gz")
         #expect(plan.tool == "tar")
         #expect(plan.words == [
-            .flag("--null"), .flag("-T"), .flag("-"), .flag("-czf"), .operand("out.tar.gz"),
+            .flag("--null"), .flag("-T"), .flag("-"), .flag("-czf"), .operand("./out.tar.gz"),
         ])
         #expect(names(of: plan) == ["d", "top file"])
+        // Exact bytes: `names(of:)` splits and so drops an empty tail, which
+        // would hide a missing trailing NUL.
+        #expect(plan.stdin == Data("d\0top file\0".utf8))
     }
 
     /// The selection reaches the tool as BYTES, never as a word, so nothing
@@ -49,7 +53,7 @@ struct ArchivePlanTests {
             if case .operand(let value) = word { return value }
             return nil
         }
-        #expect(operands == ["out.zip"])
+        #expect(operands == ["./out.zip"])
         #expect(names(of: plan) == [hostile])
     }
 
@@ -122,8 +126,85 @@ struct ArchivePlanTests {
             workingDirectory: "/d", archiveName: "out.zip")
         let invocation = try plan.localInvocation(resolvingToolWith: { "/usr/bin/" + $0 })
         #expect(invocation.executable == URL(fileURLWithPath: "/usr/bin/zip"))
-        #expect(invocation.arguments == ["-r", "-@", "out.zip"])
+        #expect(invocation.arguments == ["-r", "-@", "./out.zip"])
         #expect(invocation.currentDirectory == URL(fileURLWithPath: "/d"))
         #expect(invocation.stdin == Data("a'b\n".utf8))
+    }
+
+    @Test func extractingATarKeepsOldFilesAndDoesNotGunzip() throws {
+        let plan = try ArchivePlan.extract(
+            file("ar.tar"), format: .tar, workingDirectory: "/d", into: .thisFolder)
+        #expect(plan.tool == "tar")
+        #expect(plan.words == [
+            .flag("--keep-old-files"), .flag("-xf"), .operand("./ar.tar"),
+        ])
+    }
+
+    @Test func extractingATarballIntoASubfolderNamesItWithC() throws {
+        let plan = try ArchivePlan.extract(
+            file("ar.tar.gz"), format: .tarGz, workingDirectory: "/d",
+            into: .subfolder("ar 2"))
+        #expect(plan.operation == .extract(.tarGz))
+        #expect(plan.words == [
+            .flag("--keep-old-files"), .flag("-xzf"), .operand("./ar.tar.gz"),
+            .flag("-C"), .operand("./ar 2"),
+        ])
+    }
+
+    @Test func extractingAGzKeepsTheArchiveAndTerminatesOptions() throws {
+        let plan = try ArchivePlan.extract(
+            file("f.gz"), format: .gz, workingDirectory: "/d", into: .thisFolder)
+        #expect(plan.tool == "gunzip")
+        #expect(plan.words == [.flag("-k"), .flag("--"), .operand("./f.gz")])
+        #expect(plan.stdin == nil)
+    }
+
+    @Test func extractingAGzIntoASubfolderIsRefused() {
+        #expect(throws: ArchiveRefusal.gzExtractsIntoThisFolderOnly) {
+            try ArchivePlan.extract(
+                file("f.gz"), format: .gz, workingDirectory: "/d",
+                into: .subfolder("f 2"))
+        }
+    }
+
+    /// `compress` re-checks what `ArchiveNaming.proposedName` already checks,
+    /// deliberately; these pin the duplicates, which Task 1's tests do not
+    /// reach.
+    @Test func compressRefusesAnEmptySelection() {
+        #expect(throws: ArchiveRefusal.emptySelection) {
+            try ArchivePlan.compress(
+                .zip, selection: [], workingDirectory: "/d", archiveName: "out.zip")
+        }
+    }
+
+    @Test func gzCompressRefusesTwoFiles() {
+        #expect(throws: ArchiveRefusal.gzTakesExactlyOneFile(count: 2)) {
+            try ArchivePlan.compress(
+                .gz, selection: [file("a"), file("b")],
+                workingDirectory: "/d", archiveName: "a.gz")
+        }
+    }
+
+    @Test func gzCompressRefusesAFolder() {
+        #expect(throws: ArchiveRefusal.gzTakesAFileNotAFolder(name: "d")) {
+            try ArchivePlan.compress(
+                .gz, selection: [folder("d")],
+                workingDirectory: "/d", archiveName: "d.gz")
+        }
+    }
+
+    /// The archive name comes from the SELECTED item's own name
+    /// (`ArchiveNaming.proposedName`), so a file called `-v` would put a
+    /// leading dash on the command line. Measured 2026-10-08:
+    /// `zip -q -r -@ '-v2.zip'` answered "Invalid command arguments (short
+    /// option '.' not supported)" and exited 16, while the `./` form
+    /// created the archive. tar accepts both, so the prefix is one rule
+    /// rather than a per-tool exception.
+    @Test(arguments: [ArchiveFormat.zip, ArchiveFormat.tarGz])
+    func anArchiveNameBeginningWithADashIsNotAnOption(format: ArchiveFormat) throws {
+        let plan = try ArchivePlan.compress(
+            format, selection: [file("x")], workingDirectory: "/d",
+            archiveName: "-v." + format.fileExtension)
+        #expect(plan.words.contains(.operand("./-v." + format.fileExtension)))
     }
 }
