@@ -72,7 +72,7 @@
 "settings.terminal.pasteOnRightClick" = "Mit Rechtsklick einfügen";
 "settings.terminal.pasteOnRightClick.footer" = "Solange ein Rechtsklick einfügt, öffnest du das Snippet-Menü mit einem Rechtsklick bei gedrückter Wahltaste.";
 "settings.terminal.optionAsMeta" = "Wahltaste als Meta-Taste verwenden";
-"settings.terminal.optionAsMeta.footer" = "Ausgeschaltet komponiert die Wahltaste Zeichen — auf einer deutschen Tastatur tippst du so @, den senkrechten Strich und die Klammern. Eingeschaltet schickt die Wahltaste ein ESC voraus, was Programme wie Emacs als Meta lesen. Mit Wahl-Befehl-O schaltest du es für das Terminal um, das du gerade vor dir hast — bis du diese Einstellung änderst oder den Tab neu öffnest.";
+"settings.terminal.optionAsMeta.footer" = "Ausgeschaltet komponiert die Wahltaste Zeichen — auf einer deutschen Tastatur tippst du so @, den senkrechten Strich und die Klammern. Eingeschaltet schickt die Wahltaste ein ESC voraus, was Programme wie Emacs als Meta lesen. Mit Wahl-Befehl-O schaltest du es für das Terminal um, das du gerade vor dir hast. Das hält, bis du diese Einstellung änderst oder bis das Terminal neu aufgebaut wird — es mit Befehl-T auszublenden und wieder einzublenden tut das, und seinen Tab in ein anderes Fenster zu verschieben ebenso.";
 "settings.terminal.type" = "Terminaltyp";
 "settings.terminal.type.footer" = "Der Name, den der Server erfährt (TERM); er entscheidet, welche Funktionen Programme auf dem Server nutzen. Das Terminal selbst ändert sich nicht. Gilt für die nächste Shell, die sich öffnet; eine Sitzung kann in ihrem Editor einen eigenen wählen.";
 "terminal.type.xterm-256color" = "xterm-256color (256 Farben)";

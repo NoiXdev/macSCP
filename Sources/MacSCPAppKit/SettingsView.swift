@@ -1159,7 +1159,7 @@ private struct TerminalSettingsTab: View {
                 } footer: {
                     Text(L10n.string(
                         "settings.terminal.optionAsMeta.footer",
-                        "Off, the Option key composes characters — on many keyboards that is how you type @, the vertical bar and the braces. On, Option sends an ESC prefix first, which programs like Emacs read as Meta. Option-Command-O switches it for the terminal you are looking at, until you change this setting or reopen the tab."))
+                        "Off, the Option key composes characters — on many keyboards that is how you type @, the vertical bar and the braces. On, Option sends an ESC prefix first, which programs like Emacs read as Meta. Option-Command-O switches it for the terminal you are looking at. That lasts until you change this setting, or until the terminal is built again — hiding it with Command-T and showing it again does that, and so does moving its tab to another window."))
                         .foregroundStyle(.secondary)
                 }
 

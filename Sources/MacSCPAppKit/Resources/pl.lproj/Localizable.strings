@@ -74,7 +74,7 @@
 "settings.terminal.pasteOnRightClick" = "Wklejaj prawym przyciskiem myszy";
 "settings.terminal.pasteOnRightClick.footer" = "Gdy prawy przycisk myszy wkleja, menu fragmentów otwiera kliknięcie prawym przyciskiem z wciśniętym klawiszem Option.";
 "settings.terminal.optionAsMeta" = "Używaj klawisza Option jako Meta";
-"settings.terminal.optionAsMeta.footer" = "Wyłączone — klawisz Option składa znaki; na wielu klawiaturach tak wpisuje się @, kreskę pionową i nawiasy klamrowe. Włączone — Option najpierw wysyła przedrostek ESC, co programy takie jak Emacs odczytują jako Meta. Option-Command-O przełącza to dla widocznego terminala, dopóki nie zmienisz tego ustawienia lub nie otworzysz karty ponownie.";
+"settings.terminal.optionAsMeta.footer" = "Wyłączone — klawisz Option składa znaki; na wielu klawiaturach tak wpisuje się @, kreskę pionową i nawiasy klamrowe. Włączone — Option najpierw wysyła przedrostek ESC, co programy takie jak Emacs odczytują jako Meta. Option-Command-O przełącza to dla widocznego terminala. Działa to do chwili, gdy zmienisz to ustawienie albo gdy terminal zostanie zbudowany na nowo — ukrycie go skrótem Command-T i ponowne pokazanie go to robi, podobnie jak przeniesienie jego karty do innego okna.";
 "settings.terminal.type" = "Typ terminala";
 "settings.terminal.type.footer" = "Nazwa przekazywana serwerowi (TERM); od niej zależy, z jakich funkcji korzystają programy na serwerze. Sam terminal się nie zmienia. Obowiązuje od następnej otwartej powłoki; sesja może wybrać własny typ w swoim edytorze.";
 "terminal.type.xterm-256color" = "xterm-256color (256 kolorów)";
