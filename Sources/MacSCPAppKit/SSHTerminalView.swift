@@ -47,7 +47,7 @@ struct SSHTerminalView: NSViewRepresentable {
         terminal.copyOnSelect = settingsStore.terminalCopyOnSelect
         terminal.pasteOnRightClick = settingsStore.terminalPasteOnRightClick
         terminal.optionAsMetaKey = settingsStore.terminalOptionAsMetaKey
-        context.coordinator.appliedOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey
+        context.coordinator.settingOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey
 
         context.coordinator.onRunSnippet = onRunSnippet
         Self.attachSnippetMenu(to: terminal, model: snippetMenu, coordinator: context.coordinator)
@@ -117,9 +117,9 @@ struct SSHTerminalView: NSViewRepresentable {
         // view without moving the record, and only a changed setting
         // reaches the view.
         let desiredOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey
-        if context.coordinator.appliedOptionAsMetaKey != desiredOptionAsMetaKey {
+        if context.coordinator.settingOptionAsMetaKey != desiredOptionAsMetaKey {
             terminal.optionAsMetaKey = desiredOptionAsMetaKey
-            context.coordinator.appliedOptionAsMetaKey = desiredOptionAsMetaKey
+            context.coordinator.settingOptionAsMetaKey = desiredOptionAsMetaKey
         }
 
         // Refreshed on EVERY render, deliberately: rebuilding the menu is
@@ -221,12 +221,14 @@ struct SSHTerminalView: NSViewRepresentable {
         /// change.
         var appliedTheme: TerminalTheme?
         /// Last value of `optionAsMetaKey` the SETTINGS dictated (plan of
-        /// 2026-10-09) — deliberately not what the view currently carries.
+        /// 2026-10-09). Named for the setting, not `applied…` like its three
+        /// neighbours above and below, because it deliberately does not hold
+        /// what the view currently carries.
         /// `Option+Command+O` flips the view's own flag inside SwiftTerm,
         /// and this record does not move with it, so `updateNSView` sees no
         /// difference and a routine re-render leaves the chord standing. A
         /// changed setting does differ, and then the setting wins.
-        var appliedOptionAsMetaKey: Bool?
+        var settingOptionAsMetaKey: Bool?
         /// Model the attached right-click menu was built from (Task 9) —
         /// compared in `updateNSView` so a routine SwiftUI re-render does
         /// not throw away a menu the user may have open right now.
