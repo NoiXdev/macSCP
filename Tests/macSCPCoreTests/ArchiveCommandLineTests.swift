@@ -35,7 +35,7 @@ struct ArchiveCommandLineTests {
     @Test(arguments: [
         "a'b", "$(reboot)", "`id`", "a;rm -rf /", "a b", "a|b", "a\\b", "a\nb", "ä€🙂",
     ])
-    func ahostileArchiveNameIsRoutedThroughTheQuotingHelper(hostile: String) throws {
+    func aHostileArchiveNameIsRoutedThroughTheQuotingHelper(hostile: String) throws {
         let plan = try ArchivePlan.compress(
             .tarGz, selection: [file("x")], workingDirectory: "/d",
             archiveName: hostile)
@@ -52,7 +52,7 @@ struct ArchiveCommandLineTests {
     @Test(arguments: [
         "/home/o'brien", "/d/$(reboot)", "/d/`id`", "/d/a b", "/d/a;b", "/d/ä€🙂",
     ])
-    func ahostileWorkingDirectoryIsRoutedThroughTheQuotingHelper(hostile: String) throws {
+    func aHostileWorkingDirectoryIsRoutedThroughTheQuotingHelper(hostile: String) throws {
         let plan = try ArchivePlan.compress(
             .zip, selection: [file("x")], workingDirectory: hostile,
             archiveName: "out.zip")

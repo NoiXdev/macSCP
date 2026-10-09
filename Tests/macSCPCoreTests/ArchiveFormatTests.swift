@@ -97,7 +97,7 @@ struct ArchiveFormatTests {
         }
     }
 
-    @Test func afreeNameIsTheProposedOneWhenNothingIsTaken() {
+    @Test func aFreeNameIsTheProposedOneWhenNothingIsTaken() {
         #expect(ArchiveNaming.free("a.zip", takenNames: ["b.zip"]) == "a.zip")
     }
 
@@ -105,8 +105,9 @@ struct ArchiveFormatTests {
     /// a second copy of the format knowledge, and a missing entry sends the
     /// counter to the wrong side of the dot with nothing else going red:
     /// drop `"zip"` from it and `a.zip` counts up to `a.zip 2`, which is no
-    /// longer a zip. The last two rows pin the uppercase path and the
-    /// no-known-extension path the doc comment claims.
+    /// longer a zip. Row 6 pins the uppercase path; rows 7 and 8 both pin
+    /// the no-known-extension path (a dot that is not an extension, and no
+    /// dot at all) the doc comment claims.
     @Test(arguments: [
         ("a.zip", "a 2.zip"),
         ("a.tar.gz", "a 2.tar.gz"),
@@ -117,11 +118,11 @@ struct ArchiveFormatTests {
         ("report.2026", "report.2026 2"),
         ("folder", "folder 2"),
     ])
-    func afreeNameCountsBeforeEveryKnownExtension(taken: String, expected: String) {
+    func aFreeNameCountsBeforeEveryKnownExtension(taken: String, expected: String) {
         #expect(ArchiveNaming.free(taken, takenNames: [taken]) == expected)
     }
 
-    @Test func afreeNameKeepsCountingWhileTheCandidateIsTaken() {
+    @Test func aFreeNameKeepsCountingWhileTheCandidateIsTaken() {
         #expect(
             ArchiveNaming.free("a.tar.gz", takenNames: ["a.tar.gz", "a 2.tar.gz"])
                 == "a 3.tar.gz")

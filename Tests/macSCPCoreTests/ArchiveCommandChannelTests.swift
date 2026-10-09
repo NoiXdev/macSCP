@@ -65,7 +65,7 @@ struct ArchiveCommandChannelTests {
     /// first caller: adding it later would mean editing every fake in two
     /// finished test files, and a reviewer cannot tell a deliberate
     /// extension from a forgotten one.
-    @Test func alistingIsHandedTheLineAndTheBoundSeparately() async throws {
+    @Test func aListingIsHandedTheLineAndTheBoundSeparately() async throws {
         let channel = RecordingArchiveChannel(listingEntries: ["a b", "c/"])
         let plan = try ArchivePlan.compress(
             .tarGz,
@@ -137,7 +137,7 @@ struct ArchiveCommandChannelRigTests {
     }
 
     @Test("a selection reaches the far side through stdin and the archive appears")
-    func aselectionReachesTheFarSideThroughStdinAndTheArchiveAppears() async throws {
+    func aSelectionReachesTheFarSideThroughStdinAndTheArchiveAppears() async throws {
         let fs = try await connect()
         let home = try await fs.homeDirectoryPath()
         let dir = home + "/archive-itest-\(UUID().uuidString)"
@@ -187,7 +187,7 @@ struct ArchiveCommandChannelRigTests {
     /// error and `isToolMissing` never sees 127 — the masking
     /// `0.12.1-noix.4` exists to remove, returning by another path.
     @Test("a missing tool is reported 127 even while stdin is still being written")
-    func amissingToolIsReported127EvenWhileStdinIsStillBeingWritten() async throws {
+    func aMissingToolIsReported127EvenWhileStdinIsStillBeingWritten() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let channel = try #require(fs as (any ArchiveCommandChannel)?)
@@ -219,7 +219,7 @@ struct ArchiveCommandChannelRigTests {
     /// own, not 127, so `isToolMissing` has something to be false about
     /// against a real shell.
     @Test("a tool that refuses its arguments reports its own status, not 127")
-    func atoolThatRefusesItsArgumentsReportsItsOwnStatus() async throws {
+    func aToolThatRefusesItsArgumentsReportsItsOwnStatus() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let channel = try #require(fs as (any ArchiveCommandChannel)?)
@@ -242,7 +242,7 @@ struct ArchiveCommandChannelRigTests {
     /// here is the channel's own contract — standard output split one entry
     /// per line, and a bound that refuses rather than truncates.
     @Test("a listing comes back one entry per line, and a small bound refuses it")
-    func alistingComesBackOneEntryPerLineAndASmallBoundRefusesIt() async throws {
+    func aListingComesBackOneEntryPerLineAndASmallBoundRefusesIt() async throws {
         let fs = try await connect()
         let home = try await fs.homeDirectoryPath()
         let dir = home + "/archive-itest-\(UUID().uuidString)"
@@ -309,7 +309,7 @@ struct ArchiveCommandChannelRigTests {
     /// fake: the behaviour lives in `CitadelFileSystem`'s closure, which no
     /// double can stand in for.
     @Test("a command that exits 0 without having been given its stdin is not a success")
-    func acommandThatExitsZeroWithoutItsStandardInputIsNotASuccess() async throws {
+    func aCommandThatExitsZeroWithoutItsStandardInputIsNotASuccess() async throws {
         let fs = try await connect()
         defer { Task { await fs.disconnect() } }
         let channel = try #require(fs as (any ArchiveCommandChannel)?)

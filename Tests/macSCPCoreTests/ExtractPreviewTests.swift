@@ -4,14 +4,14 @@ import Foundation
 
 @Suite(.timeLimit(.minutes(1)))
 struct ExtractPreviewTests {
-    @Test func thelistingCommandForAZipAsksUnzipForNamesOnly() {
+    @Test func theListingCommandForAZipAsksUnzipForNamesOnly() {
         let plan = ArchivePlan.listing(
             of: "ar.zip", format: .zip, workingDirectory: "/d")
         #expect(plan.tool == "unzip")
         #expect(plan.words == [.flag("-Z1"), .operand("./ar.zip")])
     }
 
-    @Test func thelistingCommandForATarballAsksTarForNamesOnly() {
+    @Test func theListingCommandForATarballAsksTarForNamesOnly() {
         let plan = ArchivePlan.listing(
             of: "ar.tar.gz", format: .tarGz, workingDirectory: "/d")
         #expect(plan.tool == "tar")
@@ -20,7 +20,7 @@ struct ExtractPreviewTests {
 
     /// The uncompressed tarball has its own flag; reading it with `-tzf`
     /// would ask `gzip` to decompress something that is not gzip.
-    @Test func thelistingCommandForAPlainTarDoesNotAskForDecompression() {
+    @Test func theListingCommandForAPlainTarDoesNotAskForDecompression() {
         let plan = ArchivePlan.listing(
             of: "ar.tar", format: .tar, workingDirectory: "/d")
         #expect(plan.tool == "tar")
@@ -40,7 +40,7 @@ struct ExtractPreviewTests {
 
     /// A `.gz` holds exactly one file and no listing tool is needed: the
     /// name is the archive's own, minus the extension.
-    @Test func agzNeedsNoListingBecauseItsOneEntryIsItsName() {
+    @Test func aGzNeedsNoListingBecauseItsOneEntryIsItsName() {
         let preview = ExtractPreview.make(
             archiveName: "big.log.gz", format: .gz,
             archiveEntries: nil, namesInFolder: ["big.log"])
@@ -94,7 +94,7 @@ struct ExtractPreviewTests {
         #expect(preview.proposedSubfolder == "site")
     }
 
-    @Test func agzRefusesASubfolderPlanBelowTheUserInterfaceToo() {
+    @Test func aGzRefusesASubfolderPlanBelowTheUserInterfaceToo() {
         #expect(throws: ArchiveRefusal.gzExtractsIntoThisFolderOnly) {
             try ArchivePlan.extract(
                 RemoteFileItem(name: "f.gz", path: "/d/f.gz", kind: .file),
@@ -134,6 +134,14 @@ struct ExtractPreviewTests {
     }
 
     /// `e` + U+0301 and U+00E9 are one name to the file system.
+    ///
+    /// A regression guard, not a pin on the
+    /// `precomposedStringWithCanonicalMapping` call in
+    /// `ArchiveNaming.folded`: this
+    /// case was GREEN BEFORE the fold was added, because Swift's `String`
+    /// equality is already canonical-equivalence based, so removing the fold
+    /// does not turn it red. It guards the behaviour (one name, one
+    /// collision), not the mechanism that currently provides it.
     @Test func aDifferentlyNormalizedNameInTheFolderIsACollision() {
         let preview = ExtractPreview.make(
             archiveName: "ar.zip", format: .zip,
