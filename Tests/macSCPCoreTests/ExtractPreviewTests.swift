@@ -4,15 +4,15 @@ import Foundation
 
 @Suite(.timeLimit(.minutes(1)))
 struct ExtractPreviewTests {
-    @Test func theListingCommandForAZipAsksUnzipForNamesOnly() {
-        let plan = ArchivePlan.listing(
+    @Test func theListingCommandForAZipAsksUnzipForNamesOnly() throws {
+        let plan = try ArchivePlan.listing(
             of: "ar.zip", format: .zip, workingDirectory: "/d")
         #expect(plan.tool == "unzip")
         #expect(plan.words == [.flag("-Z1"), .operand("./ar.zip")])
     }
 
-    @Test func theListingCommandForATarballAsksTarForNamesOnly() {
-        let plan = ArchivePlan.listing(
+    @Test func theListingCommandForATarballAsksTarForNamesOnly() throws {
+        let plan = try ArchivePlan.listing(
             of: "ar.tar.gz", format: .tarGz, workingDirectory: "/d")
         #expect(plan.tool == "tar")
         #expect(plan.words == [.flag("-tzf"), .operand("./ar.tar.gz")])
@@ -20,8 +20,8 @@ struct ExtractPreviewTests {
 
     /// The uncompressed tarball has its own flag; reading it with `-tzf`
     /// would ask `gzip` to decompress something that is not gzip.
-    @Test func theListingCommandForAPlainTarDoesNotAskForDecompression() {
-        let plan = ArchivePlan.listing(
+    @Test func theListingCommandForAPlainTarDoesNotAskForDecompression() throws {
+        let plan = try ArchivePlan.listing(
             of: "ar.tar", format: .tar, workingDirectory: "/d")
         #expect(plan.tool == "tar")
         #expect(plan.words == [.flag("-tf"), .operand("./ar.tar")])
@@ -29,8 +29,8 @@ struct ExtractPreviewTests {
 
     /// The archive's name is the one user-controlled word, so a name that
     /// begins with a dash must still arrive as an operand.
-    @Test func theArchivesNameIsAnOperandEvenWhenItBeginsWithADash() {
-        let plan = ArchivePlan.listing(
+    @Test func theArchivesNameIsAnOperandEvenWhenItBeginsWithADash() throws {
+        let plan = try ArchivePlan.listing(
             of: "-v.zip", format: .zip, workingDirectory: "/d")
         #expect(plan.words.last == .operand("./-v.zip"))
         #expect(plan.words.dropLast().allSatisfy { word in

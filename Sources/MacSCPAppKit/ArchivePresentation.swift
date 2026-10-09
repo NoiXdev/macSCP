@@ -69,6 +69,11 @@ enum ArchivePresentation {
             String(format: L10n.string(
                 "archive.refusal.gzTargetExists",
                 "“%@” already exists here. Rename or remove it, then compress again."), name)
+        case .wildcardInNameUnsupportedByUnzip(let name):
+            String(format: L10n.string(
+                "archive.refusal.wildcardInName",
+                "“%@” has a wildcard character in its name (*, ? or [). A ZIP archive with such a name cannot be told apart from the other names here, so it was not extracted. Rename it, then extract again."),
+                name)
         case .gzExtractTargetExists(let name):
             String(format: L10n.string(
                 "archive.refusal.gzExtractTargetExists",

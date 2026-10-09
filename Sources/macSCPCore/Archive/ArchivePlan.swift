@@ -244,6 +244,7 @@ public struct ArchivePlan: Sendable, Equatable {
         let tool: String
         switch format {
         case .zip:
+            try requireUnzipReadsTheNameLiterally(archive.name)
             tool = "unzip"
             words = [.flag("-n"), .flag("-q"), source]
             if case .subfolder(let name) = destination {
@@ -301,6 +302,24 @@ public struct ArchivePlan: Sendable, Equatable {
         return try extract(
             archive, format: format, workingDirectory: workingDirectory,
             into: destination, tarSkipExisting: tarSkipExisting)
+    }
+
+    /// The characters `unzip` reads as wildcards in the archive name it is
+    /// given, and the refusal for a name that carries one. See
+    /// `ArchiveRefusal.wildcardInNameUnsupportedByUnzip` for the
+    /// measurements, including which characters are NOT in this set.
+    ///
+    /// Spelled as a set of scalars rather than as a predicate over the
+    /// string, so the enumeration is one thing a reader can count. Both
+    /// `unzip` plans go through it -- the extraction and the listing the
+    /// dialog is built from -- because the glob is in the operand, not in
+    /// the flags.
+    static let unzipWildcards: Set<Unicode.Scalar> = ["*", "?", "["]
+
+    static func requireUnzipReadsTheNameLiterally(_ name: String) throws {
+        guard !name.unicodeScalars.contains(where: unzipWildcards.contains) else {
+            throw ArchiveRefusal.wildcardInNameUnsupportedByUnzip(name: name)
+        }
     }
 
     /// The plan that asks the far side's `tar` whether it takes

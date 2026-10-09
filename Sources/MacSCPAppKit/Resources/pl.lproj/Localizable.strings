@@ -412,6 +412,7 @@
 "archive.refusal.newlineInName" = "„%@” ma w nazwie znak nowego wiersza, którego archiwum ZIP nie obsłuży. Użyj zamiast tego skompresowanego archiwum tar.";
 "archive.refusal.gzTargetExists" = "„%@” już tu istnieje. Zmień jego nazwę lub usuń go, a potem skompresuj ponownie.";
 "archive.refusal.gzExtractTargetExists" = "„%@” już tu istnieje, a skompresowany plik można wypakować tylko obok siebie. Zmień jego nazwę lub usuń go, a potem wypakuj ponownie.";
+"archive.refusal.wildcardInName" = "„%@” ma w nazwie znak wieloznaczny (*, ? lub [). Archiwum ZIP o takiej nazwie nie da się odróżnić od innych nazw w tym folderze, więc nie zostało wypakowane. Zmień jego nazwę, a potem wypakuj ponownie.";
 "menu.openEditor" = "Otwórz";
 "menu.rename" = "Zmień nazwę…";
 "menu.info" = "Informacje i uprawnienia…";

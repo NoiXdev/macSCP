@@ -247,7 +247,7 @@ struct ArchiveRunnerTests {
     @Test func theLocalListingReturnsOneElementPerEntry() async throws {
         let dir = try await Self.zip(holding: ["alpha", "it's $(x)"], as: "ar.zip")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+        let plan = try ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
         let entries = try await LocalArchiveRunner().listing(plan, limit: 4096)
         #expect(entries == ["alpha", "it's $(x)"])
     }
@@ -259,7 +259,7 @@ struct ArchiveRunnerTests {
     @Test func theLocalListingRefusesPastItsByteBoundAndKeepsExactlyAtIt() async throws {
         let dir = try await Self.zip(holding: ["aaaa", "bbbb"], as: "ar.zip")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+        let plan = try ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
 
         let atTheBound = try await LocalArchiveRunner().listing(plan, limit: 10)
         #expect(atTheBound == ["aaaa", "bbbb"])
@@ -276,7 +276,7 @@ struct ArchiveRunnerTests {
         let names = (0..<50).map { "entry-number-\($0)" }
         let dir = try await Self.zip(holding: names, as: "ar.zip")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
+        let plan = try ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: dir.path)
         var returned: [String]?
         var thrown: (any Error)?
         do { returned = try await LocalArchiveRunner().listing(plan, limit: 16) } catch { thrown = error }
@@ -289,7 +289,7 @@ struct ArchiveRunnerTests {
     @Test func aLocalListingOfAMissingArchiveIsAFailureNotAnEmptyList() async throws {
         let dir = try Self.scratchDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let plan = ArchivePlan.listing(of: "absent.zip", format: .zip, workingDirectory: dir.path)
+        let plan = try ArchivePlan.listing(of: "absent.zip", format: .zip, workingDirectory: dir.path)
         var returned: [String]?
         var failure: ArchiveFailure?
         do {
@@ -336,7 +336,7 @@ struct ArchiveRunnerTests {
 
     @Test func theRemoteListingHandsTheChannelTheLineAndTheByteBound() async throws {
         let channel = RecordingArchiveChannel(listingEntries: ["a", "b/"])
-        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
+        let plan = try ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
         let entries = try await RemoteArchiveRunner(channel: channel).listing(plan, limit: 777)
         #expect(entries == ["a", "b/"])
         #expect(await channel.listedLines == [plan.remoteCommandLine().text])
@@ -344,7 +344,7 @@ struct ArchiveRunnerTests {
     }
 
     @Test func aRemoteListingThatFailsMapsTheSameWayARunDoes() async throws {
-        let plan = ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
+        let plan = try ArchivePlan.listing(of: "ar.zip", format: .zip, workingDirectory: "/d")
         await #expect(throws: ArchiveFailure.toolMissing(tool: "unzip")) {
             try await RemoteArchiveRunner(channel: FailingArchiveChannel(exitCode: 127))
                 .listing(plan, limit: 4096)

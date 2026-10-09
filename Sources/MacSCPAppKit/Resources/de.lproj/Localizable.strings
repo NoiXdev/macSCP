@@ -410,6 +410,7 @@
 "archive.refusal.newlineInName" = "„%@“ enthält einen Zeilenumbruch im Namen, den ein ZIP-Archiv nicht aufnehmen kann. Verwende stattdessen ein komprimiertes Tar-Archiv.";
 "archive.refusal.gzTargetExists" = "„%@“ gibt es hier bereits. Benenne die Datei um oder lösche sie und komprimiere dann erneut.";
 "archive.refusal.gzExtractTargetExists" = "„%@“ gibt es hier bereits, und eine komprimierte Datei kann nur neben sich selbst entpackt werden. Benenne die Datei um oder lösche sie und entpacke dann erneut.";
+"archive.refusal.wildcardInName" = "„%@“ enthält im Namen ein Platzhalterzeichen (*, ? oder [). Ein ZIP-Archiv mit so einem Namen lässt sich nicht von den anderen Namen hier unterscheiden und wurde deshalb nicht entpackt. Benenne es um und entpacke dann erneut.";
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";
