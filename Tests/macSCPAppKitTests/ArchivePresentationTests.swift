@@ -49,7 +49,7 @@ struct ArchivePresentationTests {
             .emptySelection, .gzTakesExactlyOneFile(count: 2),
             .gzTakesAFileNotAFolder(name: "dir"),
             .newlineInNameUnsupportedByZip(name: "a\nb"),
-            .unknownArchiveFormat(name: "x.rar"), .gzExtractsIntoThisFolderOnly,
+            .gzExtractsIntoThisFolderOnly,
             .gzTargetExists(name: "f.gz"),
         ]
         let sentences = refusals.map { ArchivePresentation.message(for: $0) }
