@@ -144,6 +144,18 @@ All on 2026-10-08, on this machine, each command run in the form written here.
   `b`, exited **0**, and printed nothing at all. **So a count of skipped
   entries cannot be read from either tool's output.** Task 6 gets that count
   from a listing instead; do not try to parse it from the run.
+  **Corrected 2026-10-09 by the final whole-branch review; this bullet's
+  heading, "Both skip-existing flags are silent.", is withdrawn.** It is true
+  of `unzip -n` and of bsdtar's `--keep-old-files` (the LOCAL side, bsdtar
+  3.5.3: keeps the old file, extracts the rest, silent, exit 0), and false
+  of GNU tar 1.35 (the REMOTE side, the rig): `--keep-old-files` there keeps
+  the old file, extracts the rest, prints `tar: a: Cannot open: File exists`
+  and **exits 2**, while `--skip-old-files` on the same input is silent,
+  exit 0, same data. bsdtar 3.5.3 rejects `--skip-old-files` outright
+  (`Option --skip-old-files is not supported`). The sentence "likewise kept
+  the old `a`, extracted `b`, exited **0**, and printed nothing at all" holds
+  for bsdtar only. The open row for this is in `docs/BACKLOG.md`, the one
+  beginning "Remote tar extraction onto an existing name fails".
 - Listing commands: `unzip -Z1 <archive>` and `tar -tzf <archive>` each print
   one entry per line.
 
@@ -839,6 +851,12 @@ public struct ArchivePlan: Sendable, Equatable {
     /// 2026-10-08: both keep the old file, extract the rest, and exit 0 —
     /// and BOTH ARE SILENT about what they skipped, which is why the count
     /// the dialog shows comes from a listing instead.
+    /// (Corrected 2026-10-09, withdrawing "both keep the old file, extract
+    /// the rest, and exit 0 — and BOTH ARE SILENT": that holds for `unzip -n`
+    /// and bsdtar 3.5.3, the local side; GNU tar 1.35, the remote side,
+    /// prints `tar: a: Cannot open: File exists` and exits 2 under
+    /// `--keep-old-files`; on the remote path that is reported as
+    /// `ArchiveFailure.exited(status: 2)`, an open `docs/BACKLOG.md` row.)
     ///
     /// The archive's own name is the one user-controlled word on an
     /// extraction, and it is prefixed `./` rather than terminated with
@@ -1921,6 +1939,11 @@ many — and that count comes from a LISTING, because both skip-existing flags
 are silent: measured 2026-10-08, `unzip -n` named only what it extracted and
 `tar --keep-old-files` printed nothing, both exiting 0. Do not try to read the
 count from the run.
+*Corrected 2026-10-09: "both skip-existing flags are silent" and "`tar
+--keep-old-files` printed nothing, both exiting 0" are withdrawn for GNU tar
+1.35, the remote side, which prints `tar: a: Cannot open: File exists` and
+exits 2; they hold for `unzip -n` and bsdtar 3.5.3 (local). The count still
+comes from a listing, which is why it survives the correction.*
 
 The skip-existing flags stay on the "this folder" plan anyway (Task 2). They
 are not the reporting mechanism; they are what keeps the promise when the
@@ -2413,7 +2436,10 @@ archive half is now done and the builder half is not, so the row must say
 exactly that — and the withdrawal quotes the two words it replaces. Name the
 commits, the spec, this plan, and the measured facts a later reader would
 otherwise have to re-derive (the `zip -@` newline limit, the two silent skip
-flags, `gzip -k`'s own refusal).
+flags, `gzip -k`'s own refusal). *Corrected 2026-10-09: "the two silent skip
+flags" is withdrawn — `unzip -n` and bsdtar's `--keep-old-files` are silent,
+GNU tar's `--keep-old-files` is not (it exits 2); see the correction in the
+measurements section above.*
 
 Every figure gets the command that produced it, the command must run in the
 form it is committed (a `docs/BACKLOG.md` cell takes **no pipe** — several
