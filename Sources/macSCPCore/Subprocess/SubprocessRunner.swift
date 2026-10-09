@@ -6,6 +6,20 @@ package struct SubprocessResult: Sendable {
     package let status: Int32
     package let stdout: Data
     package let stderr: Data
+    /// Whether every byte of `stdin` reached the child's pipe. `true` when
+    /// there was no `stdin` to write, and `true` for a child that read all of
+    /// it; `false` when the write stopped short — the child closed its end
+    /// (`EPIPE`) or exited without reading it all, or the descriptor failed.
+    ///
+    /// The runner has always treated a short write as "nobody left to write
+    /// for" and said nothing, which is right for a caller that does not care
+    /// (a child that ignores its input) and wrong for one that hands over a
+    /// LIST: `tar --null -T -` reaches EOF after a partial list, archives
+    /// what it got and exits 0. Such a caller reads this next to `status`.
+    /// It is monotonic and is set BEFORE the child can see the bytes it
+    /// covers, so a child that read everything cannot have raced it to
+    /// `false`.
+    package let stdinDelivered: Bool
 
     /// The two streams as text, for the many call sites that assert on
     /// output. Lossy decoding, deliberately: a test that fails because a
@@ -359,8 +373,11 @@ package enum SubprocessRunner {
         // grandchild path. (`withExtendedLifetime` has no `async` overload,
         // hence the `defer` rather than a wrapping call.)
         defer { withExtendedLifetime((stdoutPipe, stderrPipe, stdinPipe)) {} }
+        let delivery: StdinDelivery?
         if let stdin, let stdinPipe {
-            Self.write(stdin, to: stdinPipe.fileHandleForWriting)
+            delivery = Self.write(stdin, to: stdinPipe.fileHandleForWriting)
+        } else {
+            delivery = nil
         }
 
         // "Settled" means all three: a child can exit while a reader still
@@ -418,7 +435,8 @@ package enum SubprocessRunner {
             return SubprocessResult(
                 status: process.terminationStatus,
                 stdout: stdoutBox.read(),
-                stderr: stderrBox.read())
+                stderr: stderrBox.read(),
+                stdinDelivered: delivery?.isComplete ?? true)
         case .timedOut:
             let grace = await reap()
             throw SubprocessTimeout(
@@ -468,17 +486,22 @@ package enum SubprocessRunner {
     /// The handle's lifetime is the caller's `withExtendedLifetime` above;
     /// a child that exits without reading everything leaves the source to be
     /// cancelled with the pipe when `run` returns, and nothing parked.
-    private static func write(_ input: Data, to handle: FileHandle) {
+    ///
+    /// Returns what became of the input, read at the end by `run` as
+    /// `SubprocessResult.stdinDelivered`. The handler still treats a failed
+    /// write as the end of the writing, exactly as before; the only addition
+    /// is that how far it got is no longer thrown away.
+    private static func write(_ input: Data, to handle: FileHandle) -> StdinDelivery {
         let fd = handle.fileDescriptor
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        let delivery = StdinDelivery(total: input.count)
         guard !input.isEmpty else {
             try? handle.close()
-            return
+            return delivery
         }
-        let cursor = Mutex(0)
         handle.writeabilityHandler = { handle in
-            let finished: Bool = cursor.withLock { offset in
+            let finished: Bool = delivery.cursor.withLock { offset in
                 while offset < input.count {
                     let written = input.withUnsafeBytes { bytes -> Int in
                         guard let base = bytes.baseAddress else { return 0 }
@@ -501,6 +524,18 @@ package enum SubprocessRunner {
                 try? handle.close()
             }
         }
+        return delivery
+    }
+
+    /// How far the stdin writer got: the byte offset it has written to, and
+    /// the length it was asked to write.
+    private final class StdinDelivery: Sendable {
+        let total: Int
+        let cursor = Mutex(0)
+
+        init(total: Int) { self.total = total }
+
+        var isComplete: Bool { cursor.withLock { $0 >= total } }
     }
 
     /// Where a background pipe read accumulates what it has collected.
