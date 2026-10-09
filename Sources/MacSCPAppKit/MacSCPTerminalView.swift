@@ -6,7 +6,10 @@ import SwiftTerm
 /// Task 6). Everything else is SwiftTerm's.
 ///
 /// `SSHTerminalView` builds this class and hands it both settings on every
-/// render.
+/// render. It sets one further flag on the same instance — SwiftTerm's own
+/// `optionAsMetaKey`, the terminal's one keyboard setting (plan of
+/// 2026-10-09) — and that one deliberately NOT on every render: it is
+/// gated there, so `Option+Command+O` survives a routine re-render.
 class MacSCPTerminalView: TerminalView {
     /// `SettingsStore.terminalCopyOnSelect`.
     var copyOnSelect = false

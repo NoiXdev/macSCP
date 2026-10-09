@@ -75,13 +75,23 @@ struct TerminalKeyboardWiringGuardTests {
             of: "func makeNSView(", in: code)
         #expect(make.contains("terminal.optionAsMetaKey = settingsStore.terminalOptionAsMetaKey"))
         #expect(make.contains(
-            "context.coordinator.appliedOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey"))
+            "context.coordinator.settingOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey"))
     }
 
     /// `updateNSView` writes only through the gate. Four anchors spell the
-    /// gate, and the count forbids a second assignment beside it: one that
-    /// read the store directly would defeat the gate while every anchor
-    /// above still matched.
+    /// gate, and the count pins how often the body carries the exact
+    /// spelling `terminal.optionAsMetaKey =`: once. A second assignment
+    /// written that same way, reading the store directly, would defeat the
+    /// gate while every anchor above still matched.
+    ///
+    /// That is all the count pins, and it is narrow in both directions. It
+    /// does NOT catch a write through an alias receiver
+    /// (`let t = terminal; t.optionAsMetaKey = …`), nor an ungated write in
+    /// a helper that `updateNSView` calls. And it over-matches: the needle
+    /// is a prefix of `terminal.optionAsMetaKey ==`, so a mere comparison
+    /// added to this body would turn the count red with no second write
+    /// anywhere — a false red, to be read as such rather than worked
+    /// around.
     @Test func theWrapperWritesTheSettingOnlyThroughTheGate() throws {
         let code = try Self.views(Self.wrapperFile).code
         let update = try TransferQueueBarCancelGuardTests.declarationBody(
@@ -89,10 +99,10 @@ struct TerminalKeyboardWiringGuardTests {
         #expect(update.contains(
             "let desiredOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey"))
         #expect(update.contains(
-            "if context.coordinator.appliedOptionAsMetaKey != desiredOptionAsMetaKey"))
+            "if context.coordinator.settingOptionAsMetaKey != desiredOptionAsMetaKey"))
         #expect(update.contains("terminal.optionAsMetaKey = desiredOptionAsMetaKey"))
         #expect(update.contains(
-            "context.coordinator.appliedOptionAsMetaKey = desiredOptionAsMetaKey"))
+            "context.coordinator.settingOptionAsMetaKey = desiredOptionAsMetaKey"))
         #expect(Self.occurrences(of: "terminal.optionAsMetaKey =", in: update) == 1)
     }
 
@@ -110,12 +120,26 @@ struct TerminalKeyboardWiringGuardTests {
         }
     }
 
+    /// Both keys, in all four catalogues, PRESENT AND NON-EMPTY — these
+    /// are long footer strings, and an empty value is invisible in the UI
+    /// while a presence check passes. Then the same keys resolved through
+    /// `L10n` at run time, against a sentinel default, so a key that no
+    /// bundle actually serves cannot hide behind the English default its
+    /// call site carries. The shape is
+    /// `TerminalThemeWiringGuardTests.everyStringTheThemeSurfacesShowIsInAllFourCatalogues`'s.
     @Test func bothKeysAreInAllFourCatalogues() throws {
         for locale in ["en", "de", "fr", "pl"] {
             let entries = try Self.catalog(locale)
             for key in Self.keys {
-                #expect(entries[key] != nil, "\(locale) has no \(key)")
+                #expect(
+                    (entries[key] ?? "").isEmpty == false,
+                    "\(locale) has no non-empty \(key)")
             }
+        }
+        for key in Self.keys {
+            #expect(
+                L10n.string(key, "ZZ-UNRESOLVED-ZZ") != "ZZ-UNRESOLVED-ZZ",
+                "L10n does not resolve \(key)")
         }
     }
 
@@ -126,18 +150,32 @@ struct TerminalKeyboardWiringGuardTests {
     }
 
     /// The footer exists largely to say the chord out loud: it works today
-    /// and the UI mentions it nowhere. All four catalogues name it.
+    /// and nothing else in the UI mentions it. All four catalogues name it.
     ///
-    /// A weak anchor, deliberately: `-O` is what survives translating
-    /// "Option-Command-O" into four languages, and it would also match a
-    /// hyphen before any word starting with O. It pins that the chord was
-    /// not dropped in translation, not that the sentence around it is the
-    /// right sentence — that one is the reviewer's to read.
+    /// The anchor is per locale, because each catalogue spells the chord
+    /// in its own words: `Option-Command-O` in en and pl,
+    /// `Option-Commande-O` in fr, `Wahl-Befehl-O` in de. Three of the four
+    /// therefore pin the modifier along with the letter; de keeps the bare
+    /// `-O`, which is all its spelling shares with the others.
+    ///
+    /// What that buys over a bare `-O` everywhere: `-O` alone also matches
+    /// a hyphen before any word starting with O, so a translation that
+    /// mangled the chord into one could pass. What it still does not pin,
+    /// de's row least of all: that the sentence AROUND the chord is the
+    /// right sentence. That one is the reviewer's to read, not the test's.
     @Test func everyFooterNamesTheChord() throws {
-        for locale in ["en", "de", "fr", "pl"] {
+        let anchors = [
+            ("en", "-Command-O"),
+            ("de", "-O"),
+            ("fr", "-Commande-O"),
+            ("pl", "-Command-O"),
+        ]
+        for (locale, anchor) in anchors {
             let footer = try #require(
                 try Self.catalog(locale)["settings.terminal.optionAsMeta.footer"])
-            #expect(footer.contains("-O"), "\(locale) footer does not name the chord")
+            #expect(
+                footer.contains(anchor),
+                "\(locale) footer does not name the chord (expected \(anchor))")
         }
     }
 }
