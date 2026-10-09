@@ -334,27 +334,71 @@ struct ArchivePreparationTests {
 
     // MARK: Which skip-existing flag this tar takes
 
-    /// The probe's answer is its EXIT STATUS. A runner whose listing comes
-    /// back fine says "this tar takes `--skip-old-files`"; one that exits
-    /// non-zero says it does not.
+    /// A far side's `tar`, as the probe can see it: the set of long flags it
+    /// accepts. Each probe plan names exactly one, so the double answers by
+    /// looking for it in the plan's own words -- which also pins that the
+    /// plan asks per flag rather than once for both.
     private struct ProbeRunner: ArchiveRunner {
+        /// The three flavours measured 2026-10-09, by what they accept.
+        static let gnu: Set<String> = ["--skip-old-files", "--keep-old-files"]
+        static let bsd: Set<String> = ["--keep-old-files"]
+        static let busybox: Set<String> = []
+
+        let accepts: Set<String>
+        /// Raised instead of an exit status, for the failures that are not
+        /// answers.
         let failure: ArchiveFailure?
+
+        init(accepts: Set<String> = ProbeRunner.gnu, failure: ArchiveFailure? = nil) {
+            self.accepts = accepts
+            self.failure = failure
+        }
+
         func run(_ plan: ArchivePlan) async throws -> ArchiveOutcome { .finished }
         func listing(_ plan: ArchivePlan, limit: Int) async throws -> [String] {
             if let failure { throw failure }
-            return ["tar (GNU tar) 1.35"]
+            let asked = plan.words.compactMap { word -> String? in
+                if case .flag(let value) = word, value != "--version" { value } else { nil }
+            }
+            guard asked.allSatisfy(accepts.contains) else {
+                throw ArchiveFailure.exited(status: 1)
+            }
+            return ["tar (a flavour) 1.0"]
         }
     }
 
     @Test func aTarThatTakesTheSkipFlagIsAskedForIt() async throws {
         let flavour = try await ArchivePreparation.tarSkipExisting(
-            in: "/d", runner: ProbeRunner(failure: nil))
+            in: "/d", runner: ProbeRunner(accepts: ProbeRunner.gnu))
         #expect(flavour == .skipOldFiles)
     }
 
-    @Test func aTarThatRefusesTheSkipFlagGetsTheOneBothAccept() async throws {
+    /// Each probe plan names ONE flag and `--version`, which is what makes
+    /// the three cases above distinguishable at all: a single plan naming
+    /// both flags would be rejected by every flavour that takes only one.
+    @Test(arguments: [TarSkipExisting.skipOldFiles, .keepOldFiles])
+    func eachProbePlanAsksForOneFlagAndNothingElse(flavour: TarSkipExisting) {
+        let plan = ArchivePlan.tarSkipExistingProbe(for: flavour, workingDirectory: "/d")
+        #expect(plan.tool == "tar")
+        #expect(plan.words == [.flag(flavour.flag), .flag("--version")])
+    }
+
+    /// A tar that takes NEITHER long flag must not be handed one. Measured
+    /// 2026-10-09 in the rig against BusyBox v1.37.0, which is what an
+    /// Alpine, OpenWrt or NAS remote runs: `busybox tar --skip-old-files
+    /// --version` and `busybox tar --keep-old-files --version` both printed
+    /// `tar: unrecognized option: …` and exited 1, and `busybox tar
+    /// --keep-old-files -xf t.tar` extracted NOTHING and exited 1.
+    @Test func aTarThatTakesNeitherFlagIsRefusedRatherThanGivenOne() async {
+        await #expect(throws: ArchiveRefusal.tarHasNoSkipExistingFlag) {
+            try await ArchivePreparation.tarSkipExisting(
+                in: "/d", runner: ProbeRunner(accepts: ProbeRunner.busybox))
+        }
+    }
+
+    @Test func aTarThatTakesOnlyTheKeepFlagIsAskedForThatOne() async throws {
         let flavour = try await ArchivePreparation.tarSkipExisting(
-            in: "/d", runner: ProbeRunner(failure: .exited(status: 1)))
+            in: "/d", runner: ProbeRunner(accepts: ProbeRunner.bsd))
         #expect(flavour == .keepOldFiles)
     }
 
@@ -365,7 +409,7 @@ struct ArchivePreparationTests {
     func aFailureThatIsNotAnAnswerIsNotSwallowed(failure: ArchiveFailure) async {
         await #expect(throws: failure) {
             try await ArchivePreparation.tarSkipExisting(
-                in: "/d", runner: ProbeRunner(failure: failure))
+                in: "/d", runner: ProbeRunner(accepts: ProbeRunner.gnu, failure: failure))
         }
     }
 

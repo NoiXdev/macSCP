@@ -10,12 +10,19 @@ import Foundation
 public struct ExtractPreparation: Sendable, Equatable {
     /// What the dialog shows.
     public let preview: ExtractPreview
-    /// Which flag `ArchivePlan.extract` gives `tar`.
+    /// Which flag `ArchivePlan.extract` gives `tar`, measured on the far
+    /// side for `.tar` and `.tar.gz`.
     ///
-    /// Measured for `.tar` and `.tar.gz`. For a `.zip` or a `.gz` no probe
-    /// is run — their plans name no `tar` flag at all — and this is
-    /// `.keepOldFiles`, the flag both flavours accept and neither
-    /// overwrites under, so reading it cannot produce an unsafe plan.
+    /// For a `.zip` or a `.gz` no probe is run — their plans name no `tar`
+    /// flag at all — and this is `.keepOldFiles`. Fix round 2 scoped what
+    /// that is worth: this comment read "`.keepOldFiles`, the flag both
+    /// flavours accept and neither overwrites under, so reading it cannot
+    /// produce an unsafe plan", and the second half is withdrawn. It is the
+    /// flag the two MEASURED flavours accept; BusyBox tar 1.37.0 rejects it
+    /// (measured 2026-10-09, see
+    /// `ArchiveRefusal.tarHasNoSkipExistingFlag`). What is still true, and
+    /// is the only claim this field needs, is that no plan for those two
+    /// formats reads it.
     public let tarSkipExisting: TarSkipExisting
 }
 
@@ -87,12 +94,22 @@ public enum ArchivePreparation {
     }
 
     /// Which skip-existing flag the `tar` in `directory`'s host takes, asked
-    /// as a capability question: `ArchivePlan.tarSkipExistingProbe`'s exit
-    /// status is the whole answer.
+    /// as a capability question PER FLAG:
+    /// `ArchivePlan.tarSkipExistingProbe`'s exit status is the whole answer.
+    ///
+    /// **Both cases are measured; neither is a fallback.** The quiet flag is
+    /// asked for first because GNU tar is the common remote and answers it,
+    /// so that host pays for one `exec`; bsdtar answers the second. A tar
+    /// that answers for neither is REFUSED
+    /// (`ArchiveRefusal.tarHasNoSkipExistingFlag`) rather than handed a flag
+    /// measured to fail on it — fix round 2's correction, after this
+    /// function returned `.keepOldFiles` for anything it could not identify
+    /// and BusyBox tar 1.37.0 turned out to reject that flag outright. The
+    /// sentence it replaces read: "so it is caught and turned into
+    /// `.keepOldFiles`, the flag both flavours accept".
     ///
     /// A NON-ZERO status is an answer here and not a failure — it means
-    /// "this tar does not take that flag" — so it is caught and turned into
-    /// `.keepOldFiles`, the flag both flavours accept. `.toolMissing` and
+    /// "this tar does not take that flag". `.toolMissing` and
     /// `.timedOut` are NOT answers and are rethrown: a far side with no
     /// `tar` should say so while the dialog is being built, not after the
     /// user has pressed Extract. So is everything that is not an
@@ -104,14 +121,24 @@ public enum ArchivePreparation {
     static func tarSkipExisting(
         in directory: String, runner: any ArchiveRunner
     ) async throws -> TarSkipExisting {
+        for flavour in [TarSkipExisting.skipOldFiles, .keepOldFiles] {
+            if try await tarTakes(flavour, in: directory, runner: runner) { return flavour }
+        }
+        throw ArchiveRefusal.tarHasNoSkipExistingFlag
+    }
+
+    /// Whether the far side's `tar` accepts `flavour`'s flag.
+    private static func tarTakes(
+        _ flavour: TarSkipExisting, in directory: String, runner: any ArchiveRunner
+    ) async throws -> Bool {
         do {
             _ = try await runner.listing(
-                ArchivePlan.tarSkipExistingProbe(workingDirectory: directory),
+                ArchivePlan.tarSkipExistingProbe(for: flavour, workingDirectory: directory),
                 limit: ArchiveBudget.probeBytes)
-            return .skipOldFiles
+            return true
         } catch let failure as ArchiveFailure {
             guard case .exited = failure else { throw failure }
-            return .keepOldFiles
+            return false
         }
     }
 

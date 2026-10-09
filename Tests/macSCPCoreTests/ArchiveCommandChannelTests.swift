@@ -361,6 +361,47 @@ struct ArchiveCommandChannelRigTests {
         #expect(String(decoding: otherBytes, as: UTF8.self) == "B\n")
     }
 
+    /// The third flavour, pinned against the real binary so the refusal it
+    /// justifies cannot rot: BusyBox tar accepts NEITHER long flag.
+    ///
+    /// The rig image carries `busybox` beside GNU tar, so this asks the same
+    /// two questions `ArchivePreparation.tarSkipExisting` asks, of a tar that
+    /// answers no to both. The plan is built by hand with `tool: "busybox"`
+    /// because `tarSkipExistingProbe` names `tar`, which on this host is the
+    /// GNU one -- the same reason the cases above build plans around `true`
+    /// and a tool that does not exist.
+    @Test("busybox tar accepts neither skip-existing flag, and is reachable")
+    func busyboxTarAcceptsNeitherSkipExistingFlag() async throws {
+        let fs = try await connect()
+        defer { Task { await fs.disconnect() } }
+        let channel = try #require(fs as (any ArchiveCommandChannel)?)
+        let home = try await fs.homeDirectoryPath()
+        func probe(_ words: [ArchiveWord]) -> ArchivePlan {
+            ArchivePlan(
+                operation: .extract(.tar), workingDirectory: home,
+                tool: "busybox", words: words, stdin: nil)
+        }
+        // The positive first, so a missing or renamed `busybox` cannot read
+        // as "it rejects everything": it answers `--version` at exit 0.
+        let reachable = try await channel.listing(
+            of: probe([.flag("tar"), .flag("--version")]).remoteCommandLine(),
+            limit: ArchiveBudget.probeBytes)
+        #expect(reachable.isEmpty == false)
+        // And then the two questions, both answered no.
+        for flavour in TarSkipExisting.allCases {
+            do {
+                let output = try await channel.listing(
+                    of: probe([.flag("tar"), .flag(flavour.flag), .flag("--version")])
+                        .remoteCommandLine(),
+                    limit: ArchiveBudget.probeBytes)
+                Issue.record("busybox tar accepted \(flavour.flag): \(output)")
+            } catch let failure as ArchiveCommandExitFailure {
+                #expect(failure.exitCode != 0)
+                #expect(failure.isToolMissing == false)
+            }
+        }
+    }
+
     /// A far side that exits 0 WITHOUT having been handed its standard
     /// input must not read as success.
     ///

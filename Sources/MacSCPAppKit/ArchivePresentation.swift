@@ -69,6 +69,10 @@ enum ArchivePresentation {
             String(format: L10n.string(
                 "archive.refusal.gzTargetExists",
                 "“%@” already exists here. Rename or remove it, then compress again."), name)
+        case .tarHasNoSkipExistingFlag:
+            L10n.string(
+                "archive.refusal.tarHasNoSkipExistingFlag",
+                "The archive tool on this server cannot unpack a tarball without replacing files that are already here, so nothing was extracted.")
         case .wildcardInNameUnsupportedByUnzip(let name):
             String(format: L10n.string(
                 "archive.refusal.wildcardInName",
