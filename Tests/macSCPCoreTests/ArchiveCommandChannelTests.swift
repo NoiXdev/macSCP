@@ -322,22 +322,43 @@ struct ArchiveCommandChannelRigTests {
 
         let archive = RemoteFileItem(
             name: "t.tar.gz", path: dir + "/t.tar.gz", kind: .file)
-        // Both names are still there, so every entry collides. The flag is
-        // the one the far side's own `tar` answered for, measured in the
-        // same step as the listing.
+        // `a` is REWRITTEN before the extraction, and that is what makes the
+        // last expectation a guard rather than a sentence. Fix round 2 of the
+        // family fix found this case asserting `a == "A\n"` over a file the
+        // fixture had never changed: the archive member and the file on disk
+        // held the same bytes, so the assertion passed whether the flag
+        // skipped or overwrote. Measured with `scripts/mutation-probe` on
+        // 2026-10-09 -- with `TarSkipExisting.skipOldFiles.flag` planted as
+        // `"--overwrite"` the case was GREEN, 1 test ran, nothing noticed.
+        try await upload(Data("kept\n".utf8), to: dir + "/a", over: fs)
+        // And `b` is REMOVED, so the archive has one colliding entry and one
+        // that has to be written. Without the removal both halves of the
+        // outcome would be satisfied by a run that did nothing at all.
+        try await fs.delete(path: dir + "/b")
+        // The flag is the one the far side's own `tar` answered for, measured
+        // in the same step as the listing.
         let preparation = try await ArchivePreparation.extractPreview(
             archive: archive, format: .tarGz, in: dir, fileSystem: fs, runner: runner)
-        #expect(preparation.preview.collidingHere == 2)
+        #expect(preparation.preview.collidingHere == 1)
         #expect(preparation.tarSkipExisting == .skipOldFiles)
         let extract = try ArchivePlan.extract(
             archive, format: .tarGz, workingDirectory: dir, into: .thisFolder,
             tarSkipExisting: preparation.tarSkipExisting)
         #expect(try await runner.run(extract) == .finished)
-        // The old content is kept, which is the property the flag exists for.
+        // The file on disk still holds what THIS side wrote, not what the
+        // archive carries: nothing was overwritten, which is the property the
+        // flag exists for.
         let kept = try await fs.readStream(path: dir + "/a")
         var bytes = Data()
         for try await chunk in kept { bytes.append(chunk) }
-        #expect(String(decoding: bytes, as: UTF8.self) == "A\n")
+        #expect(String(decoding: bytes, as: UTF8.self) == "kept\n")
+        // And the entry that did NOT collide was extracted, so a flag that
+        // refused the whole archive, or a run that did nothing, cannot pass
+        // either.
+        let other = try await fs.readStream(path: dir + "/b")
+        var otherBytes = Data()
+        for try await chunk in other { otherBytes.append(chunk) }
+        #expect(String(decoding: otherBytes, as: UTF8.self) == "B\n")
     }
 
     /// A far side that exits 0 WITHOUT having been handed its standard
