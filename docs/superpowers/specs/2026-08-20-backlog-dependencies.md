@@ -1359,14 +1359,20 @@ archive failure a user can act on.
     ```
     git show 0.12.1-noix.3:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
     git show 0.12.1-noix.4:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
-    git show 49533a7:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
+    git show 0.12.1-noix.5:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l
     ```
 
     They print **9**, **11** and **14**. The ladder: `noix.3` is the baseline
     of nine inbound occurrences; `noix.4` adds the two in
     `closeStandardInput()`'s first doc comment (`EOF` in "until it sees EOF"
-    and in `SSH_MSG_CHANNEL_EOF`); `49533a7` adds the three named above when
-    that comment grew to say what a write after EOF costs. **Nine is the
+    and in `SSH_MSG_CHANNEL_EOF`); `noix.5` adds the three named above when
+    that comment grew to say what a write after EOF costs. **The third
+    command was re-pinned on 2026-10-09**: it first read `git show
+    49533a7:Sources/Citadel/TTY/Client/TTY.swift | grep -o -i eof | wc -l`,
+    citing a commit that was then UNPUSHED, so the figure did not resolve from
+    a fresh clone — the reason the maintainer authorised `0.12.1-noix.5`.
+    `49533a7` is that tag's commit, so the figure is unchanged at 14 and all
+    three now resolve from a clone. **Nine is the
     figure the claim needs** — it counts what was in the file BEFORE any of
     this, which is what "there was no outbound EOF to reach" is about. The spelling is not a choice: `sed -n '109p'
     .build/checkouts/swift-nio-ssh/Sources/NIOSSH/Docs.docc/index.md` reads
@@ -1415,6 +1421,91 @@ archive failure a user can act on.
   `Package.resolved` (it is a `from:` dependency, and the override forces a
   full re-resolve), while this `exact:` bump did not. Restore that file too,
   not only `Package.swift`.
+
+### `0.12.1-noix.5`, tagged 2026-10-09 — the same behaviour, pinned so it stays
+
+- **`0.12.1-noix.5`** (`49533a7` on `feat/stdin-half-close`; annotated tag
+  object `e9f6c81e65e76a9c684998ba9ca0fdaee16fa480`, read back FROM THE REMOTE
+  with `git ls-remote --tags origin | grep noix.5`, which peels to
+  `49533a7b8c1101af709212e235ec37cdd7aeb21c`). It changes no behaviour over
+  `noix.4`; it adds the two things that keep `noix.4`'s behaviour from being
+  undone, both from review round 1.
+  - **`testWithExecSucceedsWhenTheFarSideClosedTheChannelFirst`** pins the
+    SUCCESS path of the close handling, which the exit-status case cannot
+    reach: that one only ever enters `withExec`'s `catch`, so the `try?` there
+    is enough to make it green while the `catch ChannelError.alreadyClosed`
+    inside `close()` goes unpinned. The new case awaits the channel's
+    `closeFuture` before returning from the closure, so it asserts against a
+    channel that is definitely already closed rather than against a race, and
+    it wraps the `withExec` call in no `do`/`catch`, because absorbing a throw
+    is the one thing that would make it pass while the defect is present. Red
+    with that inner catch reverted — `failed: caught error: "Already closed"`
+    — **5 runs of 5**; green with it restored, **5 of 5**.
+  - **`closeStandardInput()`'s doc comment** now says what a LATER write
+    costs, and that the once-only rule is a caller contract nothing checks.
+    Read off
+    `swift-nio-ssh/Sources/NIOSSH/Child Channels/ChildChannelStateMachine.swift`:
+    `sendChannelData` in `.halfClosedLocal` throws
+    `protocolViolation … "Sent message after EOF."` (`:443`), and
+    `SSHChildChannel` routes a state-machine throw through
+    `errorEncountered`, which fails the pending writes, fires `errorCaught`
+    and notifies the channel inactive — so Citadel's
+    `ExecCommandHandler.errorCaught` finishes the inbound stream with that
+    error and **the remaining output and the exit status go with it**, not
+    just the write that was attempted. On the once-only rule: a SECOND call
+    does not throw, `sendChannelEOF`'s `.halfClosedLocal` branch moving
+    silently to `.quiescent` (`:377`); a THIRD does, from `.quiescent`, as
+    `"Sent EOF out of sequence."` (`:385`). Neither side enforces it.
+- **Why a tag at all, since the behaviour is identical.** This record cited
+  `49533a7` three times while it was unpushed, so those citations did not
+  resolve from a fresh clone — a measurement record whose revisions cannot be
+  fetched is not one. The maintainer authorised the tag on that ground on
+  2026-10-09. The third `eof` figure above is now pinned to `noix.5` for the
+  same reason.
+- **macSCP:** `Package.swift` → `exact: "0.12.1-noix.5"`. `swift build`
+  complete; `swift test --filter Archive` green; `swift test --filter
+  ThirdPartyNotices` green. `THIRD_PARTY_NOTICES.md` regenerated — one line,
+  `citadel` `0.12.1-noix.4` → `0.12.1-noix.5` — and
+  `scripts/third-party-notices --check` exits **0** with
+  "THIRD_PARTY_NOTICES.md is up to date".
+- **A note on the notices, measured rather than assumed.** The pin bump at
+  `17a74047` DID leave the notices stale: `git show
+  17a74047:THIRD_PARTY_NOTICES.md` still carried `noix.3`, and CI's
+  "Third-party notices are up to date" step would have caught it. It was
+  repaired separately by `203b5588`, "build(notices): regenerate for the
+  Citadel 0.12.1-noix.4 pin". **A Citadel pin bump is therefore a
+  TWO-file change**, and the notices half is easy to forget because nothing
+  in `Package.swift` mentions it. Checked here before regenerating: `--check`
+  exited 1 and named the one stale row.
+- **Upstream PR:** still none, by the maintainer's ruling of 2026-10-08
+  recorded below. That ruling has not changed, and `noix.5` does not revisit
+  it.
+
+### The fork debt, re-measured 2026-10-09 for the `noix.5` tag — still zero
+
+CLAUDE.md requires this at EVERY fork change, not only the first, which is why
+it is here a second time rather than referred back to. Run in the fork clone
+after `git fetch upstream`:
+
+```
+git log --oneline 0.12.1..upstream/main | wc -l      ->  0
+git rev-parse upstream/main 0.12.1                   ->  ae8562f…, ae8562f…
+git log --oneline upstream/main..0.12.1 | wc -l       ->  0
+gh api repos/orlandos-nl/Citadel/security-advisories ->  []
+gh api repos/orlandos-nl/Citadel --jq '.pushed_at'   ->  2026-06-12T15:11:41Z
+```
+
+**Zero commits and no advisory, measured 2026-10-09** — the same figures as
+2026-10-08, and written down again rather than referred back to, because a
+zero measured on a date is evidence and a zero remembered is not. Two dates
+now carry the same zero, which is more than the one date did. No security
+commit was owed, so nothing was cherry-picked before the tag. The fork is
+**7 commits ahead, 0 behind** — `git log --oneline upstream/main..49533a7 |
+wc -l` and its reverse, run after this sentence was written, which is how the
+figure got corrected: it was first written here as "**6 commits ahead, 0
+behind**", from the shape of the answer (five original plus two) rather than
+from the command. The retirement answer below is unchanged: PR #135 is still
+open.
 
 ### The fork debt, measured 2026-10-08 — and the count is zero
 

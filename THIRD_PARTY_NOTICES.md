@@ -7,7 +7,7 @@
 | Identity | Version | Licence | Source |
 |---|---|---|---|
 | bigint | 5.7.0 | Copyright (c) 2016-2017 Károly Lőrentey | https://github.com/attaswift/BigInt |
-| citadel | 0.12.1-noix.4 | MIT License | https://github.com/NoiXdev/Citadel |
+| citadel | 0.12.1-noix.5 | MIT License | https://github.com/NoiXdev/Citadel |
 | swift-argument-parser | 1.8.2 | Apache License | https://github.com/apple/swift-argument-parser |
 | swift-asn1 | 1.7.1 | Apache License | https://github.com/apple/swift-asn1 |
 | swift-atomics | 1.3.1 | Apache License | https://github.com/apple/swift-atomics |
