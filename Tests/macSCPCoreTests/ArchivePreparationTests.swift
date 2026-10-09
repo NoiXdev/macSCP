@@ -105,14 +105,14 @@ struct ArchivePreparationTests {
         try Data("x".utf8).write(to: dir.appendingPathComponent(".env"))
         try Data("x".utf8).write(to: dir.appendingPathComponent("visible"))
 
-        let preview = try await ArchivePreparation.extractPreview(
+        let preparation = try await ArchivePreparation.extractPreview(
             archive: RemoteFileItem(
                 name: "ar.zip", path: dir.appendingPathComponent("ar.zip").path, kind: .file),
             format: .zip, in: dir.path, fileSystem: LocalFileSystem(),
             runner: ListingRunner(entries: [".env", "other"]))
 
-        #expect(preview.entryCount == 2)
-        #expect(preview.collidingHere == 1)
+        #expect(preparation.preview.entryCount == 2)
+        #expect(preparation.preview.collidingHere == 1)
     }
 
     /// A `.gz` has no listing: its one entry is its own name, derived by the
@@ -127,12 +127,91 @@ struct ArchivePreparationTests {
         let dir = try Self.scratch()
         defer { try? FileManager.default.removeItem(at: dir) }
         try Data("x".utf8).write(to: dir.appendingPathComponent("f.log"))
-        let preview = try await ArchivePreparation.extractPreview(
+        let preparation = try await ArchivePreparation.extractPreview(
             archive: RemoteFileItem(
                 name: "f.log.gz", path: dir.appendingPathComponent("f.log.gz").path, kind: .file),
             format: .gz, in: dir.path, fileSystem: LocalFileSystem(), runner: Refusing())
-        #expect(preview.entryCount == 1)
-        #expect(preview.collidingHere == 1)
+        #expect(preparation.preview.entryCount == 1)
+        #expect(preparation.preview.collidingHere == 1)
+        // No probe either: `Refusing` would have thrown for that too.
+        #expect(preparation.tarSkipExisting == .keepOldFiles)
+    }
+
+    // MARK: Which skip-existing flag this tar takes
+
+    /// The probe's answer is its EXIT STATUS. A runner whose listing comes
+    /// back fine says "this tar takes `--skip-old-files`"; one that exits
+    /// non-zero says it does not.
+    private struct ProbeRunner: ArchiveRunner {
+        let failure: ArchiveFailure?
+        func run(_ plan: ArchivePlan) async throws -> ArchiveOutcome { .finished }
+        func listing(_ plan: ArchivePlan, limit: Int) async throws -> [String] {
+            if let failure { throw failure }
+            return ["tar (GNU tar) 1.35"]
+        }
+    }
+
+    @Test func aTarThatTakesTheSkipFlagIsAskedForIt() async throws {
+        let flavour = try await ArchivePreparation.tarSkipExisting(
+            in: "/d", runner: ProbeRunner(failure: nil))
+        #expect(flavour == .skipOldFiles)
+    }
+
+    @Test func aTarThatRefusesTheSkipFlagGetsTheOneBothAccept() async throws {
+        let flavour = try await ArchivePreparation.tarSkipExisting(
+            in: "/d", runner: ProbeRunner(failure: .exited(status: 1)))
+        #expect(flavour == .keepOldFiles)
+    }
+
+    /// A non-zero status is an ANSWER; a missing tool and a timeout are not,
+    /// and must reach the user while the dialog is being built rather than
+    /// after Extract is pressed.
+    @Test(arguments: [ArchiveFailure.toolMissing(tool: "tar"), .timedOut])
+    func aFailureThatIsNotAnAnswerIsNotSwallowed(failure: ArchiveFailure) async {
+        await #expect(throws: failure) {
+            try await ArchivePreparation.tarSkipExisting(
+                in: "/d", runner: ProbeRunner(failure: failure))
+        }
+    }
+
+    /// The real local tool, which is bsdtar: it rejects `--skip-old-files`
+    /// (`tar: Option --skip-old-files is not supported`, exit 1, measured
+    /// 2026-10-09), so the probe must come back with the flag both
+    /// flavours accept. The GNU answer is the rig case
+    /// `aRemoteTarExtractionOntoAnExistingNameFinishes`.
+    @Test func theLocalTarTakesKeepOldFiles() async throws {
+        let flavour = try await ArchivePreparation.tarSkipExisting(
+            in: NSTemporaryDirectory(), runner: LocalArchiveRunner())
+        #expect(flavour == .keepOldFiles)
+    }
+
+    /// The whole local path, with the real tools: a tarball extracted over a
+    /// name that is already there keeps the old file, extracts the rest, and
+    /// is reported as FINISHED. This is the local half of the finding; GNU
+    /// tar's half can only be shown against the rig.
+    @Test func aLocalTarExtractionOntoAnExistingNameFinishes() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("A".utf8).write(to: dir.appendingPathComponent("a"))
+        try Data("B".utf8).write(to: dir.appendingPathComponent("b"))
+        let pack = try ArchivePlan.compress(
+            .tarGz, selection: [Self.item("a"), Self.item("b")],
+            workingDirectory: dir.path, namesInFolder: ["a", "b"])
+        #expect(try await LocalArchiveRunner().run(pack) == .finished)
+        try Data("old".utf8).write(to: dir.appendingPathComponent("a"))
+
+        let archive = RemoteFileItem(
+            name: pack.title, path: dir.appendingPathComponent(pack.title).path, kind: .file)
+        let preparation = try await ArchivePreparation.extractPreview(
+            archive: archive, format: .tarGz, in: dir.path,
+            fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
+        #expect(preparation.preview.collidingHere == 2)
+        let extract = try ArchivePlan.extract(
+            archive, format: .tarGz, workingDirectory: dir.path, into: .thisFolder,
+            tarSkipExisting: preparation.tarSkipExisting)
+        #expect(try await LocalArchiveRunner().run(extract) == .finished)
+        #expect(
+            try Data(contentsOf: dir.appendingPathComponent("a")) == Data("old".utf8))
     }
 
     // MARK: The subfolder
@@ -180,7 +259,10 @@ struct ArchivePreparationTests {
         try await ArchivePreparation.makeDestination(
             destination, in: dir.path, fileSystem: LocalFileSystem())
         let extract = try ArchivePlan.extract(
-            archive, format: extractFormat, workingDirectory: dir.path, into: destination)
+            archive, format: extractFormat, workingDirectory: dir.path, into: destination,
+            // The LOCAL tool is bsdtar, which takes only this flag; measured
+            // through the real tool by `theLocalTarTakesKeepOldFiles`.
+            tarSkipExisting: .keepOldFiles)
         #expect(try await LocalArchiveRunner().run(extract) == .finished)
 
         #expect(FileManager.default.fileExists(
