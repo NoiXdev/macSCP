@@ -331,7 +331,29 @@ Expected: 2 tests, 0 failures. (Task 3 adds four more cases to this file.)
 
 - [ ] **Step 5: Prove the count anchor is sensitive**
 
-Through the harness, never by hand — it refuses a dirty tree and reverts index-safely, which `git checkout -- <file>` does not:
+Through the harness, never by hand — it refuses a dirty tree and reverts index-safely, which `git checkout -- <file>` does not. The plant goes in a file OUTSIDE the worktree, so it cannot become an untracked file in the tree the harness is about to measure; these are three plain commands, not one chain:
+
+```bash
+cat > "$TMPDIR/plant-option-as-meta.py" <<'PY'
+import io
+p='Sources/MacSCPAppKit/SSHTerminalView.swift'
+s=io.open(p,encoding='utf-8').read()
+old='        let desiredOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey'
+assert s.count(old)==1, 'anchor not unique: %d' % s.count(old)
+s=s.replace(old, '        terminal.optionAsMetaKey = settingsStore.terminalOptionAsMetaKey\n'+old)
+io.open(p,'w',encoding='utf-8').write(s)
+PY
+```
+
+```bash
+scripts/mutation-probe --filter TerminalKeyboardWiringGuardTests --apply "python3 -I $TMPDIR/plant-option-as-meta.py"
+```
+
+```bash
+rm -f "$TMPDIR/plant-option-as-meta.py"
+```
+
+**Corrected 2026-10-09 by Task 4, and this withdraws the command this step first committed**, quoted verbatim as it stood:
 
 ```bash
 scripts/mutation-probe --filter TerminalKeyboardWiringGuardTests --apply "python3 -I -c \"
@@ -344,6 +366,24 @@ s=s.replace(old, '        terminal.optionAsMetaKey = settingsStore.terminalOptio
 io.open(p,'w',encoding='utf-8').write(s)
 \""
 ```
+
+That form does not run here. The session's worktree guard refuses it — "this command is too complex to verify that it stays inside the worktree ... Split it into plain, separate commands" — so Task 2's implementer ran the identical plant from a script file instead and disclosed the deviation in `0b16e7be`'s body and in the Task 2 report. A command that has to be repaired before it runs invites the next reader to repeat the author's assumption while repairing it, which is the failure this project's "a number travels with the command that produced it" rule exists for, so the step now commits the form that ran. The python is byte-identical to the python the withdrawn inline form carried — same anchor, same `assert s.count(old)==1`, same replacement; `diff` against the file Task 2 passed to `--apply` reported no difference. Only the delivery changed: a file instead of `-c`, written under `$TMPDIR` rather than into a session scratchpad whose path no reader shares.
+
+Task 4 ran the three commands above in exactly the form committed here, from the repository root at `5aaa9f65`, with a clean tree, and the harness printed:
+
+```
+── plant
+   Sources/MacSCPAppKit/SSHTerminalView.swift | 1 +
+   1 file changed, 1 insertion(+)
+── (baseline: staged tree at 5aaa9f65)
+── build
+── test --filter TerminalKeyboardWiringGuardTests
+RESULT: RED — 6 test(s) ran, and the plant was caught by:
+  macSCPAppKitTests.TerminalKeyboardWiringGuardTests/theWrapperWritesTheSettingOnlyThroughTheGate()/TerminalKeyboardWiringGuardTests.swift:85:6
+── revert
+```
+
+Six tests, not the two Task 2 saw, because Task 3 added four cases to the same file; the case that catches the plant is the same one. `git status --porcelain` printed nothing afterwards, so the revert was clean.
 
 (`scripts/mutation-probe --filter <regex> --apply <shell command>` is the form its own usage line commits, so `--filter` comes first.)
 
