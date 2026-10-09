@@ -607,6 +607,35 @@ struct SettingsStoreTests {
         #expect(afterPaste.terminalPasteOnRightClick == true)
     }
 
+    // MARK: - Option as Meta (plan of 2026-10-09)
+
+    /// Default OFF, which is the opposite of SwiftTerm's own default for
+    /// the property this feeds. While Option is Meta, the characters a
+    /// non-US keyboard composes with Option never reach the shell.
+    @Test func terminalOptionAsMetaKeyDefaultsOff() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        #expect(store.terminalOptionAsMetaKey == false)
+    }
+
+    /// Its own switch: it survives a reload on its own, and flipping it
+    /// moves neither mouse switch.
+    @Test func terminalOptionAsMetaKeyRoundtripsWithoutMovingTheMouseSwitches() {
+        let dir = makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SettingsStore(directory: dir)
+        store.terminalOptionAsMetaKey = true
+        let afterOn = SettingsStore(directory: dir)
+        #expect(afterOn.terminalOptionAsMetaKey == true)
+        #expect(afterOn.terminalCopyOnSelect == false)
+        #expect(afterOn.terminalPasteOnRightClick == false)
+
+        store.terminalOptionAsMetaKey = false
+        let afterOff = SettingsStore(directory: dir)
+        #expect(afterOff.terminalOptionAsMetaKey == false)
+    }
+
     // MARK: - Notifications (next build of 2026-09-17, Task 7)
 
     /// One switch gates all three notifications, and it starts ON: the
