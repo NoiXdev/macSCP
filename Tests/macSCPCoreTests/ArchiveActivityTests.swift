@@ -193,6 +193,35 @@ struct ArchiveActivityTests {
         #expect(activity.lastOutcome == .cancelled)
     }
 
+    /// The same window one step later: the subfolder is made by `prepare`,
+    /// a real round trip on a remote pane, and a cancel that lands during it
+    /// must not be followed by a run. Read while `prepare` is still parked,
+    /// before the release that lets it return.
+    @Test func cancellingWhilePrepareIsInFlightStartsNothing() async throws {
+        let activity = ArchiveActivity()
+        let runner = ParkedRunner()
+        let entered = AsyncSignal()
+        let parked = AsyncSignal()
+        let plan = try Self.zipPlan()
+
+        let started = activity.start(
+            operation: plan.operation, title: plan.title, runner: runner,
+            makePlan: { plan },
+            prepare: { entered.signal(); _ = await parked.wait() })
+        #expect(started)
+        _ = await entered.wait()
+        // Before the healing: prepare is in flight, the operation is
+        // running, and the runner has not been asked.
+        #expect(activity.state == .running(title: "out.zip"))
+        #expect(runner.hasStartedForTest == false)
+
+        activity.cancel()
+        parked.signal()
+        await activity.waitUntilIdle()
+        #expect(runner.hasStartedForTest == false)
+        #expect(activity.lastOutcome == .cancelled)
+    }
+
     @Test func theTitleBecomesThePlansOnceThePlanIsMade() async throws {
         let activity = ArchiveActivity()
         let runner = ParkedRunner()
