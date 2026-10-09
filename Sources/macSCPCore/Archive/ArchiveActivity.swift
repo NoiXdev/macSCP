@@ -118,6 +118,10 @@ public final class ArchiveActivity {
                 try Task.checkCancellation()
                 state = .running(title: plan.title)
                 try await prepare?()
+                // Same reason as above, one step later: `prepare` is the
+                // subfolder's creation, a round trip on a remote pane, and a
+                // cancel landing during it must not be followed by a run.
+                try Task.checkCancellation()
                 ending = try await runner.run(plan) == .finished ? .finished : .cancelled
             } catch let failure as ArchiveFailure {
                 ending = .failed(failure)

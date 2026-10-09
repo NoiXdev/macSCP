@@ -141,6 +141,12 @@ struct ArchivePaneWiringGuardTests {
         #expect(!code.contains("Task {"))
         #expect(!code.contains("Task("))
         #expect(!code.contains("Task.detached"))
+        // Other spellings of the same thing, so the guard does not buy one
+        // spelling and reveal another.
+        #expect(!code.contains("Task.init"))
+        #expect(!code.contains("Task<"))
+        #expect(!code.contains("DispatchQueue"))
+        #expect(!code.contains("Thread"))
     }
 
     // MARK: What the names and the preview are built from
