@@ -429,8 +429,15 @@ public enum ArchiveRefusal: Error, Equatable, Sendable {
     /// name holding a newline cannot be handed to it safely. `.tar.gz` and
     /// `.gz` are unaffected — `tar --null -T -` is NUL-separated.
     case newlineInNameUnsupportedByZip(name: String)
-    /// The selected row's name claims no format this build can extract.
-    case unknownArchiveFormat(name: String)
+    /// WITHDRAWN 2026-10-09 by the final whole-branch review (`7d4e2727`):
+    /// this case was built as prescribed here, with a sentence in four
+    /// languages, and nothing ever threw it — `ArchivePlan.extract` takes an
+    /// `ArchiveExtractFormat`, so an unknown format cannot reach it, and
+    /// `ArchiveExtractFormat.detected(inName:)` answers `nil` to the context
+    /// menu, which then offers no extract entry. The prescription stays
+    /// quoted so the plan still reads as what was asked for:
+    /// "/// The selected row's name claims no format this build can extract.
+    /// case unknownArchiveFormat(name: String)".
     /// `gunzip` writes its one file beside the archive and cannot be told a
     /// destination directory without a shell redirection this design does
     /// not build, so that format extracts into the archive's own folder or
