@@ -213,6 +213,22 @@ struct ArchivePaneWiringGuardTests {
 
     // MARK: The sheet
 
+    /// The sheet does not offer an Extract the plan would refuse. The plan
+    /// stays the single enforcement point -- the sheet asks `ExtractPreview`
+    /// the same question, which it already holds the answer to -- but a
+    /// dialog that says "Existing files are not overwritten", offers one
+    /// destination and then meets a refusal has told the user something it
+    /// knew was not the whole truth.
+    ///
+    /// The negative (the button is gated) has its positive beside it: the
+    /// sheet names the refusal AND the field the plan refuses on.
+    @Test func theSheetWillNotOfferAnExtractionThePlanWouldRefuse() throws {
+        let code = try Self.code("ExtractDestinationSheet.swift")
+        #expect(code.contains("preview.takenGzOutput"))
+        #expect(code.contains("ArchiveRefusal.gzExtractTargetExists(name: taken)"))
+        #expect(code.contains("preview.takenGzOutput == nil"))
+    }
+
     @Test func theSheetRefusesATypedNameThatExists() throws {
         let code = try Self.code("ExtractDestinationSheet.swift")
         #expect(code.contains("preview.isSubfolderNameTaken(subfolderName)"))
