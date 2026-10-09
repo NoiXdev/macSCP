@@ -115,12 +115,25 @@ extension ArchivePlan {
     /// 2026-10-08). This is the only archive plan whose STANDARD OUTPUT is
     /// read, which is why it is run through the runners' bounded `listing`
     /// and never through `run`.
+    ///
+    /// **One entry per line is only true of ONE archive.** Given more than
+    /// one, `unzip -Z1` prints each archive's entries, a blank line after
+    /// each, and a closing `N archives were successfully processed.` --
+    /// prose, which the splitting above this would count as an entry. The
+    /// only way it is ever given more than one is the glob this function now
+    /// refuses: `throws` is here for that refusal, and with the name read
+    /// literally there is exactly one archive and no trailer. Measured
+    /// 2026-10-09 on UnZip 6.00: one archive, no trailer, no blank lines.
+    /// No filter for the trailer, deliberately -- it would be a negative
+    /// check on prose that can no longer reach it, which this project's
+    /// rules call a comment that runs.
     public static func listing(
         of archiveName: String, format: ArchiveExtractFormat, workingDirectory: String
-    ) -> ArchivePlan {
+    ) throws -> ArchivePlan {
         let source = ArchiveWord.operand("./" + archiveName)
         switch format {
         case .zip:
+            try requireUnzipReadsTheNameLiterally(archiveName)
             return ArchivePlan(
                 operation: .extract(format), workingDirectory: workingDirectory,
                 tool: "unzip", words: [.flag("-Z1"), source], stdin: nil)

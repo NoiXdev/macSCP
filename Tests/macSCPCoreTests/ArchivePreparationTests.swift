@@ -137,6 +137,119 @@ struct ArchivePreparationTests {
         #expect(preparation.tarSkipExisting == .keepOldFiles)
     }
 
+    // MARK: The archive name `unzip` is given
+
+    /// `unzip` reads the ARCHIVE NAME it is handed as a pattern, so a folder
+    /// holding both `b*.zip` and `bb.zip` answers one selection with two
+    /// archives. Not a shell injection -- the single-quoting holds -- but the
+    /// same class: a user-controlled name stops being a name.
+    @Test func anArchiveNameWithAWildcardIsRefusedRatherThanMatched() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("selected".utf8).write(to: dir.appendingPathComponent("picked"))
+        try Data("not selected".utf8).write(to: dir.appendingPathComponent("sibling"))
+        for (archive, member) in [("b*.zip", "picked"), ("bb.zip", "sibling")] {
+            let pack = try ArchivePlan.compress(
+                .zip, selection: [Self.item(member)], workingDirectory: dir.path,
+                archiveName: archive)
+            #expect(try await LocalArchiveRunner().run(pack) == .finished)
+        }
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("picked"))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("sibling"))
+
+        let archive = RemoteFileItem(
+            name: "b*.zip", path: dir.appendingPathComponent("b*.zip").path, kind: .file)
+        // Refused while the dialog is being built, so the run never happens
+        // and the count the dialog would have shown is never made. Before
+        // this refusal existed the preview answered entryCount 3 for a
+        // one-entry archive -- both archives' entries plus `unzip`'s own
+        // prose summary line -- and the extraction unpacked `sibling` too.
+        await #expect(throws: ArchiveRefusal.wildcardInNameUnsupportedByUnzip(name: "b*.zip")) {
+            try await ArchivePreparation.extractPreview(
+                archive: archive, format: .zip, in: dir.path,
+                fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
+        }
+        // Neither archive was touched, and the member of neither was written.
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("picked").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("sibling").path))
+    }
+
+    /// The positive beside it, through the real tools: the sibling is still
+    /// there, the name is literal, and the preview counts ONE entry -- not
+    /// two, and not a summary line. Without this the refusal above could be
+    /// unconditional, or the listing could be refusing every zip.
+    @Test func aLiteralArchiveNameCountsItsOwnEntriesBesideASibling() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("selected".utf8).write(to: dir.appendingPathComponent("picked"))
+        try Data("not selected".utf8).write(to: dir.appendingPathComponent("sibling"))
+        for (archive, member) in [("ba.zip", "picked"), ("bb.zip", "sibling")] {
+            let pack = try ArchivePlan.compress(
+                .zip, selection: [Self.item(member)], workingDirectory: dir.path,
+                archiveName: archive)
+            #expect(try await LocalArchiveRunner().run(pack) == .finished)
+        }
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("picked"))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("sibling"))
+
+        let archive = RemoteFileItem(
+            name: "ba.zip", path: dir.appendingPathComponent("ba.zip").path, kind: .file)
+        let preparation = try await ArchivePreparation.extractPreview(
+            archive: archive, format: .zip, in: dir.path,
+            fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
+        #expect(preparation.preview.entryCount == 1)
+        let plan = try ArchivePlan.extract(
+            archive, format: .zip, workingDirectory: dir.path, into: .thisFolder,
+            tarSkipExisting: preparation.tarSkipExisting, preview: preparation.preview)
+        #expect(try await LocalArchiveRunner().run(plan) == .finished)
+        #expect(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("picked").path))
+        #expect(!FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("sibling").path))
+    }
+
+    /// Each character of the measured set, and the two that were measured NOT
+    /// to be in it. A `tar` name carrying the same characters is fine, which
+    /// is why the refusal is per format rather than per feature.
+    @Test(arguments: ["b*.zip", "b?.zip", "b[a].zip"])
+    func everyWildcardCharacterIsRefusedForAZip(name: String) {
+        let archive = RemoteFileItem(name: name, path: "/d/" + name, kind: .file)
+        #expect(throws: ArchiveRefusal.wildcardInNameUnsupportedByUnzip(name: name)) {
+            try ArchivePlan.extract(
+                archive, format: .zip, workingDirectory: "/d", into: .thisFolder,
+                tarSkipExisting: .keepOldFiles)
+        }
+        #expect(throws: ArchiveRefusal.wildcardInNameUnsupportedByUnzip(name: name)) {
+            try ArchivePlan.listing(of: name, format: .zip, workingDirectory: "/d")
+        }
+    }
+
+    /// Measured 2026-10-09: a lone `]` and a `\` are taken literally by
+    /// `unzip` and open the archive that is named, so they are not refused.
+    /// And `tar -xf './q*.tar'` does not glob at all.
+    @Test(arguments: ["b].zip", "b\\c.zip"])
+    func aCharacterUnzipTakesLiterallyIsNotRefused(name: String) throws {
+        let archive = RemoteFileItem(name: name, path: "/d/" + name, kind: .file)
+        let plan = try ArchivePlan.extract(
+            archive, format: .zip, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
+        #expect(plan.words.contains(.operand("./" + name)))
+    }
+
+    @Test(arguments: [ArchiveExtractFormat.tar, .tarGz])
+    func aTarNameWithTheSameCharactersIsNotRefused(format: ArchiveExtractFormat) throws {
+        let name = "q*[a]?.tar"
+        let archive = RemoteFileItem(name: name, path: "/d/" + name, kind: .file)
+        let plan = try ArchivePlan.extract(
+            archive, format: format, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
+        #expect(plan.words.contains(.operand("./" + name)))
+        let list = try ArchivePlan.listing(of: name, format: format, workingDirectory: "/d")
+        #expect(list.words.contains(.operand("./" + name)))
+    }
+
     // MARK: The .gz extraction target
 
     /// `ArchivePlan.compress` refuses a `.gz` whose target exists; extraction

@@ -97,4 +97,39 @@ public enum ArchiveRefusal: Error, Equatable, Sendable {
     /// showing a status. The `.gz` format has no subfolder option, so there
     /// is no second destination to offer instead.
     case gzExtractTargetExists(name: String)
+    /// `unzip` reads the ARCHIVE NAME it is given as a PATTERN, so a
+    /// user-controlled name stops being a name. Not a shell injection --
+    /// the single-quoting in `remoteCommandLine()` holds -- but the same
+    /// class, and worse in one way: it is silent.
+    ///
+    /// Measured 2026-10-09 against UnZip 6.00 (the host's and the rig's), with
+    /// the operand quoted exactly as `remoteCommandLine()` renders it. In a
+    /// folder holding both the pattern-bearing archive and a second one its
+    /// pattern matches:
+    /// - `*`: `unzip -n -q './b*.zip'` answered "2 archives were
+    ///   successfully processed.", exit 0, and extracted from BOTH; the
+    ///   matching `unzip -Z1` printed both archives' entries, a blank line
+    ///   after each, and that summary line.
+    /// - `?`: the same, two archives.
+    /// - `[`: `./x[a]y.zip` opened `xay.zip` -- a DIFFERENT archive, the
+    ///   only one it matched -- exit 0, no summary line, nothing to notice.
+    ///
+    /// Not metacharacters there, measured the same way and listed so the set
+    /// above is not widened on a guess: a lone `]` and a `\` are both taken
+    /// literally and open the archive that is named.
+    ///
+    /// `unzip` offers no way to turn this off: a backslash escape, which its
+    /// manual describes for MEMBER patterns, is not stripped from the
+    /// archive name -- `unzip -Z1 './b\*.zip'` answered `cannot find or
+    /// open ./b\*.zip, ./b\*.zip.zip or ./b\*.zip.ZIP.`, exit 9. So the
+    /// name is refused rather than neutralised, per format, as
+    /// `newlineInNameUnsupportedByZip` is. Refusing also refuses a name
+    /// whose pattern happens to match only itself, which extracts correctly
+    /// today; that is the cost, and the alternative is a rule that holds
+    /// only while the folder does not change.
+    ///
+    /// `tar` does not glob the archive name and `zip` does not glob its
+    /// output name (both measured 2026-10-08/09), so this is `unzip`'s
+    /// alone -- the extract plan and the listing plan.
+    case wildcardInNameUnsupportedByUnzip(name: String)
 }

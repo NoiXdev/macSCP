@@ -71,7 +71,7 @@ public enum ArchivePreparation {
         let entries: [String]? = format == .gz
             ? nil
             : try await runner.listing(
-                ArchivePlan.listing(
+                try ArchivePlan.listing(
                     of: archive.name, format: format, workingDirectory: directory),
                 limit: ArchiveBudget.listingBytes)
         let skip: TarSkipExisting

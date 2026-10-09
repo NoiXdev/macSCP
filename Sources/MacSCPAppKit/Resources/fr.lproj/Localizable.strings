@@ -413,6 +413,7 @@
 "archive.refusal.newlineInName" = "« %@ » contient un saut de ligne dans son nom, qu’une archive ZIP ne peut pas prendre en charge. Utilisez plutôt une archive tar compressée.";
 "archive.refusal.gzTargetExists" = "« %@ » existe déjà ici. Renommez-le ou supprimez-le, puis recommencez la compression.";
 "archive.refusal.gzExtractTargetExists" = "« %@ » existe déjà ici, et un fichier compressé ne peut être extrait qu’à côté de lui-même. Renommez-le ou supprimez-le, puis recommencez l’extraction.";
+"archive.refusal.wildcardInName" = "« %@ » contient un caractère joker (*, ? ou [) dans son nom. Une archive ZIP portant un tel nom ne peut pas être distinguée des autres noms présents ici ; elle n’a donc pas été extraite. Renommez-la, puis recommencez l’extraction.";
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";
