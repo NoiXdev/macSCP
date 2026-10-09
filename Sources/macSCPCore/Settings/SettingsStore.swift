@@ -69,6 +69,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = "terminalCursorBlink"
         static let terminalCopyOnSelect = "terminalCopyOnSelect"
         static let terminalPasteOnRightClick = "terminalPasteOnRightClick"
+        static let terminalOptionAsMetaKey = "terminalOptionAsMetaKey"
         static let terminalType = "terminalType"
         static let terminalTheme = "terminalTheme"
         static let terminalImportedTheme = "terminalImportedTheme"
@@ -112,6 +113,7 @@ public final class SettingsStore {
         static let terminalCursorBlink = true
         static let terminalCopyOnSelect = false
         static let terminalPasteOnRightClick = false
+        static let terminalOptionAsMetaKey = false
         static let notificationsEnabled = true
         static let updateCheckEnabled = true
         static let menuBarEnabled = true
@@ -334,6 +336,23 @@ public final class SettingsStore {
     public var terminalPasteOnRightClick: Bool {
         get { boolValue(for: Keys.terminalPasteOnRightClick, default: Defaults.terminalPasteOnRightClick) }
         set { setBool(newValue, for: Keys.terminalPasteOnRightClick) }
+    }
+
+    /// Whether the terminal treats Option as the Meta key — SwiftTerm's
+    /// `optionAsMetaKey`, which `SSHTerminalView` feeds from here.
+    ///
+    /// Default OFF, and that is the **opposite** of SwiftTerm's own
+    /// default: while it is ON, Option sends an ESC prefix instead of the
+    /// character it composes, and on a German keyboard that swallows the
+    /// vertical bar, `@`, `~`, `\`, `{`, `}`, `[` and `]`. Someone running
+    /// Emacs over SSH wants it ON, and turns it on (maintainer decision,
+    /// 2026-10-09). SwiftTerm's `Option+Command+O` toggles the view's own
+    /// flag for one open terminal without changing this value.
+    public var terminalOptionAsMetaKey: Bool {
+        get {
+            boolValue(for: Keys.terminalOptionAsMetaKey, default: Defaults.terminalOptionAsMetaKey)
+        }
+        set { setBool(newValue, for: Keys.terminalOptionAsMetaKey) }
     }
 
     /// The terminal type a shell opens with unless its session overrides
