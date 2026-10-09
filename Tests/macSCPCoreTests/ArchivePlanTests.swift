@@ -45,7 +45,7 @@ struct ArchivePlanTests {
     /// exists for; it is asserted on the plan, where it is checkable without
     /// a server.
     @Test(arguments: ["$(reboot)", "a'b", "a b", "`id`", "-rf", "a;b", "a|b", "a\\b", "ä€🙂"])
-    func ahostileNameNeverBecomesAWord(hostile: String) throws {
+    func aHostileNameNeverBecomesAWord(hostile: String) throws {
         let plan = try ArchivePlan.compress(
             .zip, selection: [file(hostile)],
             workingDirectory: "/d", archiveName: "out.zip")
@@ -114,13 +114,13 @@ struct ArchivePlanTests {
     /// has not measured `--` against `unzip` or `tar`. The `./` prefix makes
     /// a leading dash harmless without claiming support for a terminator
     /// that was never tested.
-    @Test func auserSuppliedArchiveNameIsPrefixedSoALeadingDashIsNotAnOption() throws {
+    @Test func aUserSuppliedArchiveNameIsPrefixedSoALeadingDashIsNotAnOption() throws {
         let plan = try ArchivePlan.extract(
             file("-rf.zip"), format: .zip, workingDirectory: "/d", into: .thisFolder)
         #expect(plan.words.contains(.operand("./-rf.zip")))
     }
 
-    @Test func thelocalInvocationIsArgvWithNoQuotingAndNoShell() throws {
+    @Test func theLocalInvocationIsArgvWithNoQuotingAndNoShell() throws {
         let plan = try ArchivePlan.compress(
             .zip, selection: [file("a'b")],
             workingDirectory: "/d", archiveName: "out.zip")

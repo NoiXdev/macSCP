@@ -7,7 +7,7 @@ struct ArchiveRunnerTests {
     /// A real `zip` over a real directory. No network, no rig: the local
     /// runner's whole job is argv plus bytes, and this is the cheapest place
     /// to prove a hostile name survives it.
-    @Test func thelocalRunnerCompressesAnApostropheAndADollarSign() async throws {
+    @Test func theLocalRunnerCompressesAnApostropheAndADollarSign() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -30,7 +30,7 @@ struct ArchiveRunnerTests {
             atPath: dir.appendingPathComponent(awkward).path))
     }
 
-    @Test func thelocalRunnerReportsAMissingToolApart() async throws {
+    @Test func theLocalRunnerReportsAMissingToolApart() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         let plan = ArchivePlan(
             operation: .compress(.zip), workingDirectory: dir.path,
@@ -40,7 +40,7 @@ struct ArchiveRunnerTests {
         }
     }
 
-    @Test func theremoteRunnerHandsThePlanToItsChannel() async throws {
+    @Test func theRemoteRunnerHandsThePlanToItsChannel() async throws {
         let channel = RecordingArchiveChannel()
         let plan = try ArchivePlan.compress(
             .zip, selection: [RemoteFileItem(name: "a", path: "/d/a", kind: .file)],
@@ -62,7 +62,7 @@ struct ArchiveRunnerTests {
         #expect(RemoteArchiveRunner(backend: LocalFileSystem()) == nil)
     }
 
-    @Test func theremoteRunnerTurns127IntoAMissingTool() async throws {
+    @Test func theRemoteRunnerTurns127IntoAMissingTool() async throws {
         let channel = FailingArchiveChannel(exitCode: 127)
         let plan = try ArchivePlan.compress(
             .zip, selection: [RemoteFileItem(name: "a", path: "/d/a", kind: .file)],
@@ -99,7 +99,7 @@ struct ArchiveRunnerTests {
         }
     }
 
-    @Test func theremoteRunnerKeepsAnyOtherExitStatusAsItIs() async throws {
+    @Test func theRemoteRunnerKeepsAnyOtherExitStatusAsItIs() async throws {
         let channel = FailingArchiveChannel(exitCode: 12)
         let plan = try ArchivePlan.compress(
             .zip, selection: [RemoteFileItem(name: "a", path: "/d/a", kind: .file)],
@@ -153,7 +153,7 @@ struct ArchiveRunnerTests {
     /// A FLOOR, not a ceiling: the runner must not return before the tool
     /// has finished. A ceiling here would measure the machine, which this
     /// project has three CI reds on record for.
-    @Test func thelocalRunnerDoesNotReturnBeforeTheArchiveExists() async throws {
+    @Test func theLocalRunnerDoesNotReturnBeforeTheArchiveExists() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -1737,7 +1737,7 @@ extension CitadelFileSystem: ArchiveCommandChannel {
     /// raised on the way to it. Letting either throw out of this closure is
     /// exactly the masking that `ArchiveCommandExitFailure.isToolMissing`
     /// would never see through, and the rig case
-    /// `amissingToolIsReported127EvenWhileStdinIsStillBeingWritten` is what
+    /// `aMissingToolIsReported127EvenWhileStdinIsStillBeingWritten` is what
     /// holds this closure to it.
     ///
     /// **Tolerated is not the same as succeeded, and that distinction is

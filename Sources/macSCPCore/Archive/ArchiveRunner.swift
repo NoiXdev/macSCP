@@ -101,6 +101,16 @@ public struct LocalArchiveRunner: ArchiveRunner {
         }
         // Status first, then cancellation: a cancel arriving after a failed
         // exit must not hide the failure.
+        //
+        // Do not swap the two to "check cancellation first". A local cancel
+        // makes `SubprocessRunner` end the child and throw
+        // `SubprocessCancelled` (caught above) before any status exists, so
+        // this switch is reached under a cancelled task only when a child
+        // exited by itself exactly as the cancel landed. That is a race, and
+        // this project forbids a racy fixture: no test can make it happen on
+        // purpose, so the order is not pinned by one and a swap would go
+        // unnoticed. Task 5 of the archive-actions plan closed a finding on
+        // exactly this order.
         switch result.status {
         case 0: return Task.isCancelled ? .cancelled : .finished
         case 127: throw ArchiveFailure.toolMissing(tool: plan.tool)

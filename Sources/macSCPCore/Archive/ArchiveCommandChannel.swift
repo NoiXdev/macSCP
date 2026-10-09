@@ -56,10 +56,12 @@ protocol ArchiveCommandChannel: Sendable {
     /// `ArchiveCommandExitFailure`: the far side's command succeeded, it is
     /// this side that will not keep the answer.
     ///
-    /// Nothing calls this yet — the extraction preview does, later in this
-    /// plan. It is declared here with `run(_:stdin:)` rather than added
-    /// afterwards so that a reviewer of the fakes in the test suites cannot
-    /// mistake a deliberate extension for a forgotten one.
+    /// Called by the extraction preview: `ArchivePreparation.extractPreview`
+    /// reaches it through `ArchiveRunner.listing`. (Corrected 2026-10-09; this
+    /// comment first read "**Nothing calls this yet** — the extraction preview
+    /// does, later in this plan.") It is declared with `run(_:stdin:)` so that
+    /// a reviewer of the fakes in the test suites cannot mistake a deliberate
+    /// extension for a forgotten one.
     func listing(of line: ArchiveCommandLine, limit: Int) async throws -> [String]
 }
 
