@@ -103,6 +103,20 @@ struct ExtractDestinationSheet: View {
                     "A compressed file is always extracted into this folder."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                // And when the one file it would write is already there, the
+                // plan will refuse: `gunzip` cannot be told another name and
+                // there is no second destination to offer. The sheet says so
+                // and greys Extract out, rather than offering a button whose
+                // only outcome is that refusal. The sentence is the plan's
+                // own, through the one catalogue entry that states the fact.
+                if let taken = preview.takenGzOutput {
+                    Text(ArchivePresentation.message(
+                        for: ArchiveRefusal.gzExtractTargetExists(name: taken)))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Text(String(
@@ -149,7 +163,11 @@ struct ExtractDestinationSheet: View {
         return .subfolder(subfolderName.trimmingCharacters(in: .whitespaces))
     }
 
+    /// `ArchivePlan.extract(…preview:)` refuses a `.gz` whose one output
+    /// file is already there, and it stays the single enforcement point: this
+    /// asks the same value, it does not duplicate the rule.
     private var canExtract: Bool {
+        guard preview.takenGzOutput == nil else { return false }
         guard preview.allowsSubfolder, choice == .subfolder else { return true }
         return ExtractPreview.isUsableSubfolderName(subfolderName) && !nameIsTaken
     }
