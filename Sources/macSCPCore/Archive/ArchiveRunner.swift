@@ -61,6 +61,13 @@ extension ArchiveBudget {
     /// memory while it is read, so an archive past this is refused a
     /// preview rather than read in full.
     public static let listingBytes = 4 * 1024 * 1024
+
+    /// The bound the `tar` flavour probe passes: **bytes of standard
+    /// output**, like `listingBytes`. The probe reads no output at all — its
+    /// answer is the exit status — so this only has to be wider than a
+    /// version banner. Measured 2026-10-09: 313 bytes from GNU tar 1.35,
+    /// 72 from bsdtar 3.5.3.
+    public static let probeBytes = 64 * 1024
 }
 
 /// Runs a plan. Holds no policy: which command to run was decided by

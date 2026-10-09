@@ -92,7 +92,7 @@ struct ArchiveCommandLineTests {
     @Test func anExtractionQuotesTheArchiveNameItWasGiven() throws {
         let plan = try ArchivePlan.extract(
             file("ar.zip"), format: .zip, workingDirectory: "/d",
-            into: .subfolder("ar 2"))
+            into: .subfolder("ar 2"), tarSkipExisting: .keepOldFiles)
         #expect(
             plan.remoteCommandLine().text
                 == "cd '/d' && unzip -n -q './ar.zip' -d './ar 2'")

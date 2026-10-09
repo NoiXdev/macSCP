@@ -5,13 +5,18 @@ import macSCPCore
 /// the run needs, captured when the preview was made.
 ///
 /// The `directory` is the one the preview was counted over, so the run goes
-/// where the dialog said even if the pane has navigated since.
+/// where the dialog said even if the pane has navigated since. The
+/// `preparation` is `ArchivePreparation`'s own answer, carried whole rather
+/// than unpacked: it holds what the sheet shows AND which skip-existing flag
+/// this far side's `tar` takes, and the two were measured in one round trip.
 struct ExtractRequest: Identifiable {
     let id = UUID()
     let archive: RemoteFileItem
     let format: ArchiveExtractFormat
     let directory: String
-    let preview: ExtractPreview
+    let preparation: ExtractPreparation
+
+    var preview: ExtractPreview { preparation.preview }
 }
 
 /// The pane's two archive entries, from the menu to `ArchiveActivity`.
@@ -93,9 +98,10 @@ extension BrowserPane {
                 fileSystem: fileSystem, runner: runner)
         }) { result in
             switch result {
-            case .success(let preview):
+            case .success(let preparation):
                 extractRequest = ExtractRequest(
-                    archive: archive, format: format, directory: directory, preview: preview)
+                    archive: archive, format: format, directory: directory,
+                    preparation: preparation)
             case .failure(let error):
                 archiveAlertMessage = ArchivePresentation.message(for: error)
             }
@@ -112,7 +118,12 @@ extension BrowserPane {
         do {
             plan = try ArchivePlan.extract(
                 request.archive, format: request.format,
-                workingDirectory: request.directory, into: destination)
+                workingDirectory: request.directory, into: destination,
+                // The flavour the preview measured, never a default: a
+                // `tar` given the flag it does not take, or the one that
+                // exits 2 over a collision, is exactly the defect this
+                // parameter exists for.
+                tarSkipExisting: request.preparation.tarSkipExisting)
         } catch {
             archiveAlertMessage = ArchivePresentation.message(for: error)
             return

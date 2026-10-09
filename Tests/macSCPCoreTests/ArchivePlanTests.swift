@@ -87,7 +87,8 @@ struct ArchivePlanTests {
 
     @Test func extractingIntoThisFolderSkipsWhatIsAlreadyThere() throws {
         let plan = try ArchivePlan.extract(
-            file("ar.zip"), format: .zip, workingDirectory: "/d", into: .thisFolder)
+            file("ar.zip"), format: .zip, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
         #expect(plan.tool == "unzip")
         #expect(plan.words == [.flag("-n"), .flag("-q"), .operand("./ar.zip")])
     }
@@ -95,18 +96,27 @@ struct ArchivePlanTests {
     @Test func extractingIntoASubfolderNamesItAsTheDestination() throws {
         let plan = try ArchivePlan.extract(
             file("ar.zip"), format: .zip, workingDirectory: "/d",
-            into: .subfolder("ar 2"))
+            into: .subfolder("ar 2"), tarSkipExisting: .keepOldFiles)
         #expect(plan.words == [
             .flag("-n"), .flag("-q"), .operand("./ar.zip"), .flag("-d"), .operand("./ar 2"),
         ])
     }
 
-    @Test func extractingATarballKeepsOldFiles() throws {
+    /// The flavour decides the flag, and both answers are pinned: a
+    /// positive for each, so neither branch can go quietly wrong.
+    @Test(arguments: [
+        (TarSkipExisting.keepOldFiles, "--keep-old-files"),
+        (TarSkipExisting.skipOldFiles, "--skip-old-files"),
+    ])
+    func extractingATarballSkipsExistingWithTheFlagThatFlavourTakes(
+        flavour: TarSkipExisting, flag: String
+    ) throws {
         let plan = try ArchivePlan.extract(
-            file("ar.tar.gz"), format: .tarGz, workingDirectory: "/d", into: .thisFolder)
+            file("ar.tar.gz"), format: .tarGz, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: flavour)
         #expect(plan.tool == "tar")
         #expect(plan.words == [
-            .flag("--keep-old-files"), .flag("-xzf"), .operand("./ar.tar.gz"),
+            .flag(flag), .flag("-xzf"), .operand("./ar.tar.gz"),
         ])
     }
 
@@ -116,7 +126,8 @@ struct ArchivePlanTests {
     /// that was never tested.
     @Test func aUserSuppliedArchiveNameIsPrefixedSoALeadingDashIsNotAnOption() throws {
         let plan = try ArchivePlan.extract(
-            file("-rf.zip"), format: .zip, workingDirectory: "/d", into: .thisFolder)
+            file("-rf.zip"), format: .zip, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
         #expect(plan.words.contains(.operand("./-rf.zip")))
     }
 
@@ -133,7 +144,8 @@ struct ArchivePlanTests {
 
     @Test func extractingATarKeepsOldFilesAndDoesNotGunzip() throws {
         let plan = try ArchivePlan.extract(
-            file("ar.tar"), format: .tar, workingDirectory: "/d", into: .thisFolder)
+            file("ar.tar"), format: .tar, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
         #expect(plan.tool == "tar")
         #expect(plan.words == [
             .flag("--keep-old-files"), .flag("-xf"), .operand("./ar.tar"),
@@ -143,7 +155,7 @@ struct ArchivePlanTests {
     @Test func extractingATarballIntoASubfolderNamesItWithC() throws {
         let plan = try ArchivePlan.extract(
             file("ar.tar.gz"), format: .tarGz, workingDirectory: "/d",
-            into: .subfolder("ar 2"))
+            into: .subfolder("ar 2"), tarSkipExisting: .keepOldFiles)
         #expect(plan.operation == .extract(.tarGz))
         #expect(plan.words == [
             .flag("--keep-old-files"), .flag("-xzf"), .operand("./ar.tar.gz"),
@@ -153,7 +165,8 @@ struct ArchivePlanTests {
 
     @Test func extractingAGzKeepsTheArchiveAndTerminatesOptions() throws {
         let plan = try ArchivePlan.extract(
-            file("f.gz"), format: .gz, workingDirectory: "/d", into: .thisFolder)
+            file("f.gz"), format: .gz, workingDirectory: "/d", into: .thisFolder,
+            tarSkipExisting: .keepOldFiles)
         #expect(plan.tool == "gunzip")
         #expect(plan.words == [.flag("-k"), .flag("--"), .operand("./f.gz")])
         #expect(plan.stdin == nil)
@@ -163,7 +176,7 @@ struct ArchivePlanTests {
         #expect(throws: ArchiveRefusal.gzExtractsIntoThisFolderOnly) {
             try ArchivePlan.extract(
                 file("f.gz"), format: .gz, workingDirectory: "/d",
-                into: .subfolder("f 2"))
+                into: .subfolder("f 2"), tarSkipExisting: .keepOldFiles)
         }
     }
 

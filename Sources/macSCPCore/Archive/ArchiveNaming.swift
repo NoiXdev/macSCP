@@ -54,7 +54,10 @@ public enum ArchiveNaming {
     /// about but not real costs the user a different name, where the
     /// opposite error leaves an entry silently skipped (`unzip -n` and
     /// `tar --keep-old-files` both skip `a.txt` beside an existing
-    /// `A.txt`, measured by the reviewer 2026-10-09) or an existing archive
+    /// `A.txt`, measured by the reviewer 2026-10-09; the sentence named that
+    /// one tar flag when a tar extraction could only be given it, and a
+    /// remote one is now given `--skip-old-files` instead when the far side
+    /// takes it -- see `TarSkipExisting`) or an existing archive
     /// opened by `zip` / truncated by `tar -czf`.
     ///
     /// This lives here, not at a caller: only the code holding both sets can

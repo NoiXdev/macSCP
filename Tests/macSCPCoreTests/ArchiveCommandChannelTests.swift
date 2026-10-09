@@ -290,6 +290,56 @@ struct ArchiveCommandChannelRigTests {
         }
     }
 
+    /// A protective extraction is not a failure: the remote `tar` is GNU
+    /// tar, whose skip-existing flag prints `Cannot open: File exists` and
+    /// exits 2 although it kept the old file and extracted every other
+    /// entry. Measured 2026-10-09 in the rig; bsdtar, the local side, is
+    /// silent at exit 0 over the same input, which is why only the remote
+    /// half can show this.
+    @Test("a remote tar extraction onto an existing name finishes")
+    func aRemoteTarExtractionOntoAnExistingNameFinishes() async throws {
+        let fs = try await connect()
+        let home = try await fs.homeDirectoryPath()
+        let dir = home + "/archive-itest-\(UUID().uuidString)"
+        defer {
+            Task {
+                try? await fs.deleteTree(at: dir)
+                await fs.disconnect()
+            }
+        }
+        try await fs.createDirectory(at: dir)
+        try await upload(Data("A\n".utf8), to: dir + "/a", over: fs)
+        try await upload(Data("B\n".utf8), to: dir + "/b", over: fs)
+        let runner = try #require(RemoteArchiveRunner(backend: fs))
+        let pack = try ArchivePlan.compress(
+            .tarGz,
+            selection: [
+                RemoteFileItem(name: "a", path: dir + "/a", kind: .file),
+                RemoteFileItem(name: "b", path: dir + "/b", kind: .file),
+            ],
+            workingDirectory: dir, archiveName: "t.tar.gz")
+        #expect(try await runner.run(pack) == .finished)
+
+        let archive = RemoteFileItem(
+            name: "t.tar.gz", path: dir + "/t.tar.gz", kind: .file)
+        // Both names are still there, so every entry collides. The flag is
+        // the one the far side's own `tar` answered for, measured in the
+        // same step as the listing.
+        let preparation = try await ArchivePreparation.extractPreview(
+            archive: archive, format: .tarGz, in: dir, fileSystem: fs, runner: runner)
+        #expect(preparation.preview.collidingHere == 2)
+        #expect(preparation.tarSkipExisting == .skipOldFiles)
+        let extract = try ArchivePlan.extract(
+            archive, format: .tarGz, workingDirectory: dir, into: .thisFolder,
+            tarSkipExisting: preparation.tarSkipExisting)
+        #expect(try await runner.run(extract) == .finished)
+        // The old content is kept, which is the property the flag exists for.
+        let kept = try await fs.readStream(path: dir + "/a")
+        var bytes = Data()
+        for try await chunk in kept { bytes.append(chunk) }
+        #expect(String(decoding: bytes, as: UTF8.self) == "A\n")
+    }
+
     /// A far side that exits 0 WITHOUT having been handed its standard
     /// input must not read as success.
     ///

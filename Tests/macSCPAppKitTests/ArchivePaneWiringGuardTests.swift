@@ -170,6 +170,22 @@ struct ArchivePaneWiringGuardTests {
         #expect(!code.contains("namesInFolder:"))
     }
 
+    /// The `tar` flavour the extract plan is given is the one the preview
+    /// MEASURED, never a literal: a flag chosen by this file rather than by
+    /// the far side is the defect `TarSkipExisting` exists for -- bsdtar
+    /// rejects `--skip-old-files` outright, and GNU tar exits 2 under
+    /// `--keep-old-files` over a collision.
+    ///
+    /// The negative below (no literal flavour at the call site) has the
+    /// positive above it, as this project requires: without one it would
+    /// pass just as happily on a file that names no flavour at all.
+    @Test func theExtractPlanIsGivenTheFlavourThePreviewMeasured() throws {
+        let code = try Self.code("BrowserPane+Archive.swift")
+        #expect(code.contains("tarSkipExisting: request.preparation.tarSkipExisting"))
+        #expect(!code.contains("tarSkipExisting: .keepOldFiles"))
+        #expect(!code.contains("tarSkipExisting: .skipOldFiles"))
+    }
+
     // MARK: The subfolder
 
     /// The directory is created through the file system, inside the

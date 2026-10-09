@@ -327,7 +327,8 @@ struct ArchiveActivityTests {
 
         let extract = try ArchivePlan.extract(
             RemoteFileItem(name: "-v.zip", path: "/d/-v.zip", kind: .file),
-            format: .zip, workingDirectory: "/d", into: .subfolder("sub"))
+            format: .zip, workingDirectory: "/d", into: .subfolder("sub"),
+            tarSkipExisting: .keepOldFiles)
         #expect(extract.title == "-v.zip")
     }
 }

@@ -23,6 +23,13 @@ import macSCPCore
 /// and the open row in `docs/BACKLOG.md`). The count still comes from the
 /// listing, which is why the conclusion survives.
 ///
+/// Corrected again the same day, by the family fix: the clause above read
+/// "and the open row in `docs/BACKLOG.md`", which is withdrawn — that row is
+/// closed, because `ArchivePlan.extract` is now given the flag the far
+/// side's own `tar` answered for (`TarSkipExisting`). GNU tar's
+/// `--keep-old-files` still prints and still exits 2; it is no longer the
+/// flag a remote extraction is given.
+///
 /// Presented by `BrowserPane`, which owns every sheet its menu entries open.
 struct ExtractDestinationSheet: View {
     let archiveName: String

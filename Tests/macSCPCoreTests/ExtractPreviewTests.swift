@@ -98,7 +98,8 @@ struct ExtractPreviewTests {
         #expect(throws: ArchiveRefusal.gzExtractsIntoThisFolderOnly) {
             try ArchivePlan.extract(
                 RemoteFileItem(name: "f.gz", path: "/d/f.gz", kind: .file),
-                format: .gz, workingDirectory: "/d", into: .subfolder("f"))
+                format: .gz, workingDirectory: "/d", into: .subfolder("f"),
+                tarSkipExisting: .keepOldFiles)
         }
     }
 
