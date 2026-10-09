@@ -59,10 +59,6 @@ enum ArchivePresentation {
                 "archive.refusal.newlineInName",
                 "“%@” has a line break in its name, which a ZIP archive cannot carry. Use a compressed tarball instead."),
                 name)
-        case .unknownArchiveFormat(let name):
-            String(format: L10n.string(
-                "archive.refusal.unknownFormat",
-                "“%@” is not an archive format macSCP can extract."), name)
         case .gzExtractsIntoThisFolderOnly:
             // The sentence the sheet already shows beside the choice it
             // removes; one catalogue entry for one fact.

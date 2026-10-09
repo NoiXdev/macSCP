@@ -408,7 +408,6 @@
 "archive.refusal.gzTakesExactlyOneFile" = "Eine komprimierte Datei enthält genau eine Datei. Wähle eine einzelne Datei aus.";
 "archive.refusal.gzTakesAFileNotAFolder" = "„%@“ ist ein Ordner. Eine komprimierte Datei enthält nur eine einzelne Datei; verwende für Ordner ein ZIP-Archiv oder ein komprimiertes Tar-Archiv.";
 "archive.refusal.newlineInName" = "„%@“ enthält einen Zeilenumbruch im Namen, den ein ZIP-Archiv nicht aufnehmen kann. Verwende stattdessen ein komprimiertes Tar-Archiv.";
-"archive.refusal.unknownFormat" = "„%@“ ist kein Archivformat, das macSCP entpacken kann.";
 "archive.refusal.gzTargetExists" = "„%@“ gibt es hier bereits. Benenne die Datei um oder lösche sie und komprimiere dann erneut.";
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";

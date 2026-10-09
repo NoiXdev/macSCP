@@ -410,7 +410,6 @@
 "archive.refusal.gzTakesExactlyOneFile" = "Skompresowany plik zawiera dokładnie jeden plik. Zaznacz pojedynczy plik.";
 "archive.refusal.gzTakesAFileNotAFolder" = "„%@” to folder. Skompresowany plik zawiera tylko jeden plik; dla folderów użyj archiwum ZIP lub skompresowanego archiwum tar.";
 "archive.refusal.newlineInName" = "„%@” ma w nazwie znak nowego wiersza, którego archiwum ZIP nie obsłuży. Użyj zamiast tego skompresowanego archiwum tar.";
-"archive.refusal.unknownFormat" = "„%@” nie jest formatem archiwum, który macSCP potrafi wypakować.";
 "archive.refusal.gzTargetExists" = "„%@” już tu istnieje. Zmień jego nazwę lub usuń go, a potem skompresuj ponownie.";
 "menu.openEditor" = "Otwórz";
 "menu.rename" = "Zmień nazwę…";

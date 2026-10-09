@@ -411,7 +411,6 @@
 "archive.refusal.gzTakesExactlyOneFile" = "Un fichier compressé contient exactement un fichier. Sélectionnez un seul fichier.";
 "archive.refusal.gzTakesAFileNotAFolder" = "« %@ » est un dossier. Un fichier compressé ne contient qu’un seul fichier ; utilisez une archive ZIP ou une archive tar compressée pour les dossiers.";
 "archive.refusal.newlineInName" = "« %@ » contient un saut de ligne dans son nom, qu’une archive ZIP ne peut pas prendre en charge. Utilisez plutôt une archive tar compressée.";
-"archive.refusal.unknownFormat" = "« %@ » n’est pas un format d’archive que macSCP peut extraire.";
 "archive.refusal.gzTargetExists" = "« %@ » existe déjà ici. Renommez-le ou supprimez-le, puis recommencez la compression.";
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
