@@ -30,6 +30,35 @@ struct ArchiveRunnerTests {
             atPath: dir.appendingPathComponent(awkward).path))
     }
 
+    /// A tool that exits 0 without reading its standard input, over a list far
+    /// larger than a pipe holds. The names reach `tar --null -T -` and
+    /// `zip -@` only on stdin, so this must not be `.finished`: the remote
+    /// half has refused the same shape since the stdin write was made to be
+    /// remembered. `/usr/bin/true` is the tool because it ends at once with
+    /// 0, which makes the outcome the same under every schedule.
+    @Test func aLocalToolThatLeavesItsInputUnreadIsNotAFinishedRun() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let plan = ArchivePlan(
+            operation: .compress(.tarGz), workingDirectory: dir.path,
+            tool: "true", words: [],
+            stdin: Data(repeating: 0x61, count: 4 * 1024 * 1024))
+        await #expect(throws: ArchiveStandardInputIncomplete.self) {
+            try await LocalArchiveRunner().run(plan)
+        }
+    }
+
+    /// The positive control for the case above: the same runner, a tool that
+    /// reads all of its input, finishes.
+    @Test func aLocalToolThatReadsAllOfItsInputFinishes() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        let plan = ArchivePlan(
+            operation: .compress(.tarGz), workingDirectory: dir.path,
+            tool: "wc", words: [.flag("-c")],
+            stdin: Data(repeating: 0x61, count: 4 * 1024 * 1024))
+        let outcome = try await LocalArchiveRunner().run(plan)
+        #expect(outcome == .finished)
+    }
+
     @Test func theLocalRunnerReportsAMissingToolApart() async throws {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
         let plan = ArchivePlan(

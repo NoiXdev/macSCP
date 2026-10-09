@@ -630,6 +630,31 @@ struct SubprocessRunnerTests {
             URL(fileURLWithPath: "/bin/cat"), arguments: [], stdin: payload)
         #expect(result.status == 0)
         #expect(result.stdout == payload)
+        // The positive half of the next test: a child that reads everything
+        // leaves `stdinDelivered` true, so the `false` below is the write
+        // stopping short and not a flag that is always false.
+        #expect(result.stdinDelivered)
+    }
+
+    /// A child that stops reading while the input is far larger than a pipe
+    /// holds: the writer is refused (`EPIPE`) or the child is gone, and the
+    /// result must SAY the input was cut short, because the status alone
+    /// cannot (`head` exits 0 here, as `tar --null -T -` does over a partial
+    /// list). 4 MiB against a pipe of 64 KiB, so no schedule can deliver it
+    /// all: the child consumes at most what a pipe holds, whatever the
+    /// timing. No wall-clock bound, only the outcome.
+    @Test func aChildThatStopsReadingLeavesTheInputUndelivered() async throws {
+        let payload = Data(repeating: UInt8(ascii: "z"), count: 4 * 1024 * 1024)
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/head"), arguments: ["-c", "1"], stdin: payload)
+        #expect(result.status == 0)
+        #expect(result.stdinDelivered == false)
+    }
+
+    @Test func noStdinIsDeliveredTrivially() async throws {
+        let result = try await SubprocessRunner.run(
+            URL(fileURLWithPath: "/usr/bin/true"), arguments: [])
+        #expect(result.stdinDelivered)
     }
 
     @Test func theEnvironmentAndWorkingDirectoryReachTheChild() async throws {

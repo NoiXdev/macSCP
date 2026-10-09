@@ -21,6 +21,19 @@ public enum ArchiveFailure: Error, Equatable, Sendable {
     case timedOut
 }
 
+/// The run's tool exited 0 over a standard input this side could not hand
+/// over in full. Deliberately NOT an `ArchiveFailure`: the tool did not fail,
+/// so there is no status to report and no sentence about a tool to show, and
+/// the activity ends it as `couldNotRun`, exactly as it ends the remote
+/// half's equivalent (`RemoteFSError.protocolError` out of
+/// `CitadelFileSystem.run`). Carries no text.
+///
+/// The reason it must not pass as `.finished`: the names of a selection reach
+/// `tar --null -T -` and `zip -@` ONLY on standard input, so a list cut short
+/// yields an archive that holds part of the selection, exit 0, and nothing
+/// afterwards contradicts it.
+public struct ArchiveStandardInputIncomplete: Error, Equatable, Sendable {}
+
 /// The budget an archive run gets. Far above `SubprocessRunner.run`'s own
 /// 60-second default, which is sized for short CLI calls: compressing a
 /// large folder legitimately takes many minutes, and a budget that cuts it
@@ -112,7 +125,11 @@ public struct LocalArchiveRunner: ArchiveRunner {
         // unnoticed. Task 5 of the archive-actions plan closed a finding on
         // exactly this order.
         switch result.status {
-        case 0: return Task.isCancelled ? .cancelled : .finished
+        case 0:
+            // After the status, as on the remote half: a non-zero status is
+            // the tool's own verdict and says more than "our write broke".
+            guard result.stdinDelivered else { throw ArchiveStandardInputIncomplete() }
+            return Task.isCancelled ? .cancelled : .finished
         case 127: throw ArchiveFailure.toolMissing(tool: plan.tool)
         case let status: throw ArchiveFailure.exited(status: Int(status))
         }
