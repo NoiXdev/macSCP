@@ -46,6 +46,8 @@ struct SSHTerminalView: NSViewRepresentable {
 
         terminal.copyOnSelect = settingsStore.terminalCopyOnSelect
         terminal.pasteOnRightClick = settingsStore.terminalPasteOnRightClick
+        terminal.optionAsMetaKey = settingsStore.terminalOptionAsMetaKey
+        context.coordinator.appliedOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey
 
         context.coordinator.onRunSnippet = onRunSnippet
         Self.attachSnippetMenu(to: terminal, model: snippetMenu, coordinator: context.coordinator)
@@ -106,6 +108,19 @@ struct SSHTerminalView: NSViewRepresentable {
         // on every render costs nothing and restarts nothing.
         terminal.copyOnSelect = settingsStore.terminalCopyOnSelect
         terminal.pasteOnRightClick = settingsStore.terminalPasteOnRightClick
+
+        // NOT assigned on every render, unlike the two above. SwiftTerm's
+        // own Option-Command-O chord flips this flag inside the view, and
+        // an unconditional write here would undo it on the next unrelated
+        // re-render. The record on the coordinator holds what the SETTING
+        // last said — not what the view carries — so a chord moves the
+        // view without moving the record, and only a changed setting
+        // reaches the view.
+        let desiredOptionAsMetaKey = settingsStore.terminalOptionAsMetaKey
+        if context.coordinator.appliedOptionAsMetaKey != desiredOptionAsMetaKey {
+            terminal.optionAsMetaKey = desiredOptionAsMetaKey
+            context.coordinator.appliedOptionAsMetaKey = desiredOptionAsMetaKey
+        }
 
         // Refreshed on EVERY render, deliberately: rebuilding the menu is
         // gated on the model below, so this is what keeps an already-built
@@ -205,6 +220,13 @@ struct SSHTerminalView: NSViewRepresentable {
         /// routine re-render does not reinstall a palette that did not
         /// change.
         var appliedTheme: TerminalTheme?
+        /// Last value of `optionAsMetaKey` the SETTINGS dictated (plan of
+        /// 2026-10-09) — deliberately not what the view currently carries.
+        /// `Option+Command+O` flips the view's own flag inside SwiftTerm,
+        /// and this record does not move with it, so `updateNSView` sees no
+        /// difference and a routine re-render leaves the chord standing. A
+        /// changed setting does differ, and then the setting wins.
+        var appliedOptionAsMetaKey: Bool?
         /// Model the attached right-click menu was built from (Task 9) —
         /// compared in `updateNSView` so a routine SwiftUI re-render does
         /// not throw away a menu the user may have open right now.
