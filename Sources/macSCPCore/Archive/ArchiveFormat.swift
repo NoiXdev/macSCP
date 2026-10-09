@@ -132,4 +132,23 @@ public enum ArchiveRefusal: Error, Equatable, Sendable {
     /// output name (both measured 2026-10-08/09), so this is `unzip`'s
     /// alone -- the extract plan and the listing plan.
     case wildcardInNameUnsupportedByUnzip(name: String)
+    /// The far side's `tar` answered for neither skip-existing flag, so
+    /// there is no way to extract without risking an overwrite -- and this
+    /// feature never overwrites.
+    ///
+    /// Measured 2026-10-09 in the rig against BusyBox v1.37.0, which is what
+    /// an Alpine, OpenWrt or NAS remote runs: `busybox tar
+    /// --skip-old-files --version` and `busybox tar --keep-old-files
+    /// --version` both printed `tar: unrecognized option: …` and exited 1,
+    /// and `busybox tar --keep-old-files -xf t.tar` extracted NOTHING and
+    /// exited 1. Its own spelling, `-k`, is not an equivalent: over one
+    /// colliding entry `busybox tar -k -xf t.tar` printed `tar: can't open
+    /// 'f': File exists`, exited 1 and stopped there, leaving the
+    /// non-colliding entry unextracted. So this refusal is where that tar
+    /// lands, deliberately, rather than a third flag whose outcome was
+    /// measured to be a failed, partial extraction.
+    ///
+    /// Carries no name: it is about the far side's tool, not about anything
+    /// the user picked.
+    case tarHasNoSkipExistingFlag
 }

@@ -53,6 +53,7 @@ struct ArchivePresentationTests {
             .gzTargetExists(name: "f.gz"),
             .gzExtractTargetExists(name: "notes.txt"),
             .wildcardInNameUnsupportedByUnzip(name: "b*.zip"),
+            .tarHasNoSkipExistingFlag,
         ]
         let sentences = refusals.map { ArchivePresentation.message(for: $0) }
         #expect(Set(sentences).count == refusals.count)

@@ -414,6 +414,7 @@
 "archive.refusal.gzTargetExists" = "« %@ » existe déjà ici. Renommez-le ou supprimez-le, puis recommencez la compression.";
 "archive.refusal.gzExtractTargetExists" = "« %@ » existe déjà ici, et un fichier compressé ne peut être extrait qu’à côté de lui-même. Renommez-le ou supprimez-le, puis recommencez l’extraction.";
 "archive.refusal.wildcardInName" = "« %@ » contient un caractère joker (*, ? ou [) dans son nom. Une archive ZIP portant un tel nom ne peut pas être distinguée des autres noms présents ici ; elle n’a donc pas été extraite. Renommez-la, puis recommencez l’extraction.";
+"archive.refusal.tarHasNoSkipExistingFlag" = "L’outil d’archivage de ce serveur ne peut pas extraire une archive tar sans remplacer des fichiers déjà présents ici ; rien n’a donc été extrait.";
 "menu.openEditor" = "Ouvrir";
 "menu.rename" = "Renommer…";
 "menu.info" = "Infos et autorisations…";

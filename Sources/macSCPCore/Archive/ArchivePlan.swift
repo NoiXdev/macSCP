@@ -29,11 +29,26 @@ public enum ArchiveWord: Sendable, Equatable {
 ///   **2** over a collision, where `--skip-old-files` is silent at exit 0
 ///   over the same input and leaves the same data.
 ///
-/// So `.keepOldFiles` is the answer that is always SAFE (neither flavour
-/// overwrites) and `.skipOldFiles` is the answer that is also QUIET, and the
-/// difference is only visible once something collides.
-/// `ArchivePreparation.tarSkipExisting(in:runner:)` measures which one the
-/// far side takes.
+/// Of the two flavours above, `.keepOldFiles` is the one BOTH accept and
+/// `.skipOldFiles` is the one that is also QUIET, and the difference is
+/// only visible once something collides. **Neither is a fallback**: fix
+/// round 2 of the family fix withdrew the reading that it was. This comment
+/// read "So `.keepOldFiles` is the answer that is always SAFE (neither
+/// flavour overwrites)" -- true of the two flavours measured, and an
+/// inference about every other tar, which is wrong for one that is common.
+/// Measured 2026-10-09 in the rig against BusyBox v1.37.0, what an Alpine,
+/// OpenWrt or NAS remote runs: `busybox tar --keep-old-files -xf t.tar`
+/// printed `tar: unrecognized option: keep-old-files`, extracted NOTHING
+/// and exited 1. BusyBox spells the property `-k`, which is not an
+/// equivalent either -- `busybox tar -k -xf t.tar` over one colliding entry
+/// printed `tar: can't open 'f': File exists`, exited 1 and stopped there,
+/// leaving the non-colliding entry unextracted.
+///
+/// So each case is MEASURED, never inferred:
+/// `ArchivePreparation.tarSkipExisting(in:runner:)` asks for one and then
+/// the other, and a tar that answers for neither is refused
+/// (`ArchiveRefusal.tarHasNoSkipExistingFlag`) rather than handed a flag it
+/// will reject.
 public enum TarSkipExisting: Sendable, Equatable, CaseIterable {
     /// GNU tar's flag: silent, exit 0. bsdtar rejects it.
     case skipOldFiles
@@ -322,32 +337,41 @@ public struct ArchivePlan: Sendable, Equatable {
         }
     }
 
-    /// The plan that asks the far side's `tar` whether it takes
-    /// `--skip-old-files`, by its EXIT STATUS and nothing else.
+    /// The plan that asks the far side's `tar` whether it takes `flavour`'s
+    /// flag, by its EXIT STATUS and nothing else.
     ///
     /// **Why a capability question and not `tar --version`.** The version
-    /// line distinguishes the two flavours by brand — `bsdtar 3.5.3 -
-    /// libarchive …` against `tar (GNU tar) 1.35`, measured 2026-10-09 on
-    /// the host and in the rig — and then needs a third answer for every
-    /// text that is neither, which is a guess about a tar nobody measured.
-    /// This plan asks the thing the plan actually needs to know, and the two
-    /// answers are the two cases of `TarSkipExisting`. Measured 2026-10-09:
-    /// `/usr/bin/tar --skip-old-files --version` on bsdtar 3.5.3 printed
-    /// `tar: Option --skip-old-files is not supported` and exited **1**; the
-    /// same line on GNU tar 1.35 in the rig printed its version banner and
-    /// exited **0**. A tar that does not understand `--version` either
-    /// exits non-zero and gets the flag both flavours accept, which is the
-    /// safe answer rather than a wrong one.
+    /// line distinguishes flavours by brand — `bsdtar 3.5.3 - libarchive …`,
+    /// `tar (GNU tar) 1.35`, `tar (busybox) 1.37.0`, all measured 2026-10-09
+    /// on the host and in the rig — and a brand is not the question: it has
+    /// to be mapped to a flag by a table that is wrong about every tar not
+    /// in it. This plan asks the thing the plan actually needs to know, once
+    /// per flag.
+    ///
+    /// Measured 2026-10-09, each line run as this plan renders it:
+    /// - `--skip-old-files --version`: GNU tar 1.35 exit **0**; bsdtar 3.5.3
+    ///   `tar: Option --skip-old-files is not supported`, exit **1**;
+    ///   BusyBox 1.37.0 `tar: unrecognized option: skip-old-files`, exit 1.
+    /// - `--keep-old-files --version`: GNU tar 1.35 exit **0**; bsdtar 3.5.3
+    ///   exit **0**; BusyBox 1.37.0 `tar: unrecognized option:
+    ///   keep-old-files`, exit 1.
+    ///
+    /// So both cases of `TarSkipExisting` are answered by a probe and
+    /// neither is inferred, which is fix round 2's correction: a tar that
+    /// answers for neither is refused instead of being handed a flag that
+    /// was measured to fail on it.
     ///
     /// `operation` is `.extract(.tar)` because `ArchiveOperation` has no
     /// third kind and this plan is never started as an activity — nothing
     /// shows its title. It is run through a runner's `listing`, whose
     /// standard output is discarded here; see
     /// `ArchivePreparation.tarSkipExisting(in:runner:)`.
-    public static func tarSkipExistingProbe(workingDirectory: String) -> ArchivePlan {
+    public static func tarSkipExistingProbe(
+        for flavour: TarSkipExisting, workingDirectory: String
+    ) -> ArchivePlan {
         ArchivePlan(
             operation: .extract(.tar), workingDirectory: workingDirectory,
             tool: "tar",
-            words: [.flag("--skip-old-files"), .flag("--version")], stdin: nil)
+            words: [.flag(flavour.flag), .flag("--version")], stdin: nil)
     }
 }

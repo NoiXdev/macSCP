@@ -418,6 +418,7 @@
 "archive.refusal.gzTargetExists" = "“%@” already exists here. Rename or remove it, then compress again.";
 "archive.refusal.gzExtractTargetExists" = "“%@” already exists here, and a compressed file can only be unpacked beside itself. Rename or remove it, then extract again.";
 "archive.refusal.wildcardInName" = "“%@” has a wildcard character in its name (*, ? or [). A ZIP archive with such a name cannot be told apart from the other names here, so it was not extracted. Rename it, then extract again.";
+"archive.refusal.tarHasNoSkipExistingFlag" = "The archive tool on this server cannot unpack a tarball without replacing files that are already here, so nothing was extracted.";
 "menu.openEditor" = "Open";
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";
