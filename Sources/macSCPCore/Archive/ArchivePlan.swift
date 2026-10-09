@@ -210,8 +210,18 @@ public struct ArchivePlan: Sendable, Equatable {
     /// Both tools are given their SKIP-EXISTING flag, `unzip -n` and the
     /// `tar` flag `tarSkipExisting` names, so nothing is overwritten even
     /// when the directory changed between the dialog and the run. The count
-    /// the dialog shows comes from a listing, because neither tool reports
-    /// what it skipped.
+    /// the dialog shows comes from a LISTING, because no tool here reports a
+    /// count of what it skipped — which is the claim that holds, and is not
+    /// the one this sentence made. It read "because neither tool reports
+    /// what it skipped": withdrawn twice over. A two-item cardinality four
+    /// lines above its own enumeration of THREE tools, and false of one of
+    /// them — GNU tar names the entry it kept (`tar: f: Cannot open: File
+    /// exists`, re-measured 2026-10-09) and `unzip -n` names what it
+    /// extracted, so a reader could in principle subtract. Neither answer is
+    /// a count, both are prose this project does not parse, and bsdtar says
+    /// nothing at all; so the listing is still where the count comes from.
+    /// `1ea946be` rewrote the first half of this sentence and left the
+    /// second, which is why fix round 2 had to come back to it.
     ///
     /// Corrected 2026-10-09 (final whole-branch review). This comment first
     /// read: "Measured 2026-10-08: both keep the old file, extract the rest,

@@ -16,9 +16,14 @@ package struct SubprocessResult: Sendable {
     /// (a child that ignores its input) and wrong for one that hands over a
     /// LIST: `tar --null -T -` reaches EOF after a partial list, archives
     /// what it got and exits 0. Such a caller reads this next to `status`.
-    /// It is monotonic and is set BEFORE the child can see the bytes it
-    /// covers, so a child that read everything cannot have raced it to
-    /// `false`.
+    /// It is monotonic, and a child that read everything cannot have raced
+    /// it to `false` — but not for the reason this sentence gave. It read
+    /// "and is set BEFORE the child can see the bytes it covers", which is
+    /// withdrawn: the cursor is advanced AFTER `Darwin.write` returns, so
+    /// the child can already have seen those bytes. What makes the race
+    /// impossible is the lock, not the order: `isComplete` is read under the
+    /// same `Mutex` the write loop holds throughout, so it is never observed
+    /// part-way through a write.
     package let stdinDelivered: Bool
 
     /// The two streams as text, for the many call sites that assert on

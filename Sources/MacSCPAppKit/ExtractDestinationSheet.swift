@@ -13,8 +13,14 @@ import macSCPCore
 ///
 /// The sheet decides nothing about the archive. Everything it shows comes
 /// from `ExtractPreview` (Core), which was built from a LISTING: the
-/// collision count cannot be read from the run itself, because no
-/// skip-existing flag reports what it skipped.
+/// collision count cannot be read from the run itself, because no tool here
+/// reports a COUNT of what it skipped. That last clause read "because no
+/// skip-existing flag reports what it skipped", which is withdrawn: GNU
+/// tar's names the entry it kept (`tar: f: Cannot open: File exists`,
+/// re-measured 2026-10-09) and `unzip -n` names what it extracted. Neither
+/// answer is a count, both are prose this project does not parse, and
+/// bsdtar's flag really is silent — so the conclusion survives and the
+/// reason had to be narrowed.
 ///
 /// Corrected 2026-10-09: this comment first read "because both
 /// skip-existing flags are silent about what they skipped". `unzip -n` and
