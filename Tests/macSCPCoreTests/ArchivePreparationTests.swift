@@ -394,19 +394,27 @@ struct ArchivePreparationTests {
             workingDirectory: dir.path, namesInFolder: ["a", "b"])
         #expect(try await LocalArchiveRunner().run(pack) == .finished)
         try Data("old".utf8).write(to: dir.appendingPathComponent("a"))
+        // `b` is removed so the archive carries one colliding entry and one
+        // that has to be written. Fix round 2: without it both halves of the
+        // outcome were satisfied by a run that wrote nothing -- a plant that
+        // turned `-xzf` into `-tzf` was caught by the rig twin and NOT by
+        // this case (measured 2026-10-09, `scripts/mutation-probe`).
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("b"))
 
         let archive = RemoteFileItem(
             name: pack.title, path: dir.appendingPathComponent(pack.title).path, kind: .file)
         let preparation = try await ArchivePreparation.extractPreview(
             archive: archive, format: .tarGz, in: dir.path,
             fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
-        #expect(preparation.preview.collidingHere == 2)
+        #expect(preparation.preview.collidingHere == 1)
         let extract = try ArchivePlan.extract(
             archive, format: .tarGz, workingDirectory: dir.path, into: .thisFolder,
             tarSkipExisting: preparation.tarSkipExisting)
         #expect(try await LocalArchiveRunner().run(extract) == .finished)
         #expect(
             try Data(contentsOf: dir.appendingPathComponent("a")) == Data("old".utf8))
+        #expect(
+            try Data(contentsOf: dir.appendingPathComponent("b")) == Data("B".utf8))
     }
 
     // MARK: The subfolder
