@@ -95,4 +95,49 @@ struct TerminalKeyboardWiringGuardTests {
             "context.coordinator.appliedOptionAsMetaKey = desiredOptionAsMetaKey"))
         #expect(Self.occurrences(of: "terminal.optionAsMetaKey =", in: update) == 1)
     }
+
+    // MARK: - Settings tab
+
+    @Test func theSettingsTabBindsTheToggleThroughTheCatalogueKeys() throws {
+        let views = try Self.views(Self.settingsViewFile)
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: Self.settingsTab, in: views.code)
+        let code = TransferQueueBarCancelGuardTests.slice(range, of: views.code)
+        let literals = TransferQueueBarCancelGuardTests.slice(range, of: views.withLiterals)
+        #expect(code.contains("$store.terminalOptionAsMetaKey"))
+        for key in Self.keys {
+            #expect(literals.contains("\"\(key)\""), "TerminalSettingsTab does not use \(key)")
+        }
+    }
+
+    @Test func bothKeysAreInAllFourCatalogues() throws {
+        for locale in ["en", "de", "fr", "pl"] {
+            let entries = try Self.catalog(locale)
+            for key in Self.keys {
+                #expect(entries[key] != nil, "\(locale) has no \(key)")
+            }
+        }
+    }
+
+    @Test func theGermanFooterAddressesTheUserAsDu() throws {
+        let footer = try #require(
+            try Self.catalog("de")["settings.terminal.optionAsMeta.footer"])
+        #expect(footer.contains(" du "))
+    }
+
+    /// The footer exists largely to say the chord out loud: it works today
+    /// and the UI mentions it nowhere. All four catalogues name it.
+    ///
+    /// A weak anchor, deliberately: `-O` is what survives translating
+    /// "Option-Command-O" into four languages, and it would also match a
+    /// hyphen before any word starting with O. It pins that the chord was
+    /// not dropped in translation, not that the sentence around it is the
+    /// right sentence — that one is the reviewer's to read.
+    @Test func everyFooterNamesTheChord() throws {
+        for locale in ["en", "de", "fr", "pl"] {
+            let footer = try #require(
+                try Self.catalog(locale)["settings.terminal.optionAsMeta.footer"])
+            #expect(footer.contains("-O"), "\(locale) footer does not name the chord")
+        }
+    }
 }
