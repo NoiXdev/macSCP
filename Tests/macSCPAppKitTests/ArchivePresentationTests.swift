@@ -51,6 +51,7 @@ struct ArchivePresentationTests {
             .newlineInNameUnsupportedByZip(name: "a\nb"),
             .gzExtractsIntoThisFolderOnly,
             .gzTargetExists(name: "f.gz"),
+            .gzExtractTargetExists(name: "notes.txt"),
         ]
         let sentences = refusals.map { ArchivePresentation.message(for: $0) }
         #expect(Set(sentences).count == refusals.count)

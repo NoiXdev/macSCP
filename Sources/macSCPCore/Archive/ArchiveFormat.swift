@@ -86,4 +86,15 @@ public enum ArchiveRefusal: Error, Equatable, Sendable {
     /// 1, target unchanged). macSCP says so before running rather than
     /// surfacing that line.
     case gzTargetExists(name: String)
+    /// The mirror of the case above, on the way back: `gunzip -k` writes
+    /// its one file beside the archive, takes no say in the name, and
+    /// refuses an existing one -- measured 2026-10-09, local
+    /// `/usr/bin/gunzip -k -- ./x.gz` with `x` present printed
+    /// `gunzip: ./x already exists -- skipping`, exit 1, `x` unchanged, and
+    /// the rig's BusyBox `gunzip` printed `can't open './x': File exists`,
+    /// also exit 1, also unchanged. Nothing is lost either way; it is a
+    /// protective outcome, and macSCP says so before running instead of
+    /// showing a status. The `.gz` format has no subfolder option, so there
+    /// is no second destination to offer instead.
+    case gzExtractTargetExists(name: String)
 }

@@ -18,6 +18,17 @@ public struct ExtractPreview: Sendable, Equatable {
     /// `false` for `.gz`: `gunzip` cannot be told a directory without a
     /// shell redirection this design does not build.
     public let allowsSubfolder: Bool
+    /// The ONE file a `.gz` extraction would write, when a name the file
+    /// system would call the same is already here; `nil` when it is free.
+    ///
+    /// `nil` for every other format: their output names are the archive's
+    /// own entries, `collidingHere` counts them, and each of their tools
+    /// skips a collision at exit 0 (`unzip -n`) or is given a flag that
+    /// does (`tar`, see `TarSkipExisting`). `gunzip` has no such flag --
+    /// it writes its one file beside the archive, refuses an existing one
+    /// and exits 1 -- so the answer is carried as a name rather than as a
+    /// count, and `ArchivePlan.extract(…preview:)` refuses on it.
+    public let takenGzOutput: String?
     /// Every name in the folder, folded for the file system's comparison.
     /// Kept so a name the user TYPES can be checked against the same
     /// folder the count was made over, without asking for it again.
@@ -45,11 +56,13 @@ public struct ExtractPreview: Sendable, Equatable {
         let entries = archiveEntries ?? [stem]
         let folded = Set(namesInFolder.map(ArchiveNaming.folded(_:)))
         let tops = Set(entries.compactMap(Self.topComponent(of:)).map(ArchiveNaming.folded(_:)))
+        let gzOutputTaken = format == .gz && folded.contains(ArchiveNaming.folded(stem))
         return ExtractPreview(
             entryCount: entries.count,
             collidingHere: tops.intersection(folded).count,
             proposedSubfolder: ArchiveNaming.freeFolded(stem, takenNames: namesInFolder),
             allowsSubfolder: format != .gz,
+            takenGzOutput: gzOutputTaken ? stem : nil,
             takenFolded: folded)
     }
 

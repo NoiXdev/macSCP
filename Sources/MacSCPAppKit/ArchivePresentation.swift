@@ -69,6 +69,11 @@ enum ArchivePresentation {
             String(format: L10n.string(
                 "archive.refusal.gzTargetExists",
                 "“%@” already exists here. Rename or remove it, then compress again."), name)
+        case .gzExtractTargetExists(let name):
+            String(format: L10n.string(
+                "archive.refusal.gzExtractTargetExists",
+                "“%@” already exists here, and a compressed file can only be unpacked beside itself. Rename or remove it, then extract again."),
+                name)
         }
     }
 

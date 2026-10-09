@@ -186,6 +186,16 @@ struct ArchivePaneWiringGuardTests {
         #expect(!code.contains("tarSkipExisting: .skipOldFiles"))
     }
 
+    /// The extract plan is built through the overload that CAN refuse -- the
+    /// one that is given the folder the preview was counted over. The plainer
+    /// overload beside it makes the same plan and refuses nothing, so a
+    /// `.gz` whose one output file is already there would reach `gunzip` and
+    /// come back as a status instead of as a sentence.
+    @Test func theExtractPlanIsBuiltFromThePreviewSoItCanRefuse() throws {
+        let code = try Self.code("BrowserPane+Archive.swift")
+        #expect(code.contains("preview: request.preparation.preview"))
+    }
+
     // MARK: The subfolder
 
     /// The directory is created through the file system, inside the

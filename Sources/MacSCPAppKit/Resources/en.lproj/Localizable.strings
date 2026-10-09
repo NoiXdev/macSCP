@@ -416,6 +416,7 @@
 "archive.refusal.gzTakesAFileNotAFolder" = "“%@” is a folder. A compressed file holds a single file; use a ZIP archive or a compressed tarball for folders.";
 "archive.refusal.newlineInName" = "“%@” has a line break in its name, which a ZIP archive cannot carry. Use a compressed tarball instead.";
 "archive.refusal.gzTargetExists" = "“%@” already exists here. Rename or remove it, then compress again.";
+"archive.refusal.gzExtractTargetExists" = "“%@” already exists here, and a compressed file can only be unpacked beside itself. Rename or remove it, then extract again.";
 "menu.openEditor" = "Open";
 "menu.rename" = "Rename…";
 "menu.info" = "Info & Permissions…";
