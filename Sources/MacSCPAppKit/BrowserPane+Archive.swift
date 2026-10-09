@@ -123,7 +123,11 @@ extension BrowserPane {
                 // `tar` given the flag it does not take, or the one that
                 // exits 2 over a collision, is exactly the defect this
                 // parameter exists for.
-                tarSkipExisting: request.preparation.tarSkipExisting)
+                tarSkipExisting: request.preparation.tarSkipExisting,
+                // And the folder the preview was counted over, which is what
+                // lets the plan refuse a `.gz` whose one output file is
+                // already there instead of surfacing `gunzip`'s status 1.
+                preview: request.preparation.preview)
         } catch {
             archiveAlertMessage = ArchivePresentation.message(for: error)
             return

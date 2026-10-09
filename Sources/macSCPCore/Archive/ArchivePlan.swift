@@ -275,6 +275,34 @@ public struct ArchivePlan: Sendable, Equatable {
             tool: tool, words: words, stdin: nil)
     }
 
+    /// The plan that unpacks `archive` into `destination`, refusing what the
+    /// tool would refuse.
+    ///
+    /// The mirror of `compress(_:selection:workingDirectory:namesInFolder:)`,
+    /// and deliberately the same shape: the overload that is given what the
+    /// FOLDER holds is the one that can refuse, and the plainer one above
+    /// stays for a caller that has already decided. `preview` is where the
+    /// folder's answer lives, counted over the names the file system
+    /// returned.
+    ///
+    /// One refusal today, and it is the `.gz` one: `gunzip` writes its one
+    /// file beside the archive, cannot be told another name, and exits 1
+    /// over an existing one. Every other format's tool skips a collision at
+    /// exit 0, so there is nothing to refuse there -- the dialog's note that
+    /// existing files are not overwritten is the whole answer.
+    public static func extract(
+        _ archive: RemoteFileItem, format: ArchiveExtractFormat,
+        workingDirectory: String, into destination: ExtractDestination,
+        tarSkipExisting: TarSkipExisting, preview: ExtractPreview
+    ) throws -> ArchivePlan {
+        if let taken = preview.takenGzOutput {
+            throw ArchiveRefusal.gzExtractTargetExists(name: taken)
+        }
+        return try extract(
+            archive, format: format, workingDirectory: workingDirectory,
+            into: destination, tarSkipExisting: tarSkipExisting)
+    }
+
     /// The plan that asks the far side's `tar` whether it takes
     /// `--skip-old-files`, by its EXIT STATUS and nothing else.
     ///

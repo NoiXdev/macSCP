@@ -137,6 +137,88 @@ struct ArchivePreparationTests {
         #expect(preparation.tarSkipExisting == .keepOldFiles)
     }
 
+    // MARK: The .gz extraction target
+
+    /// `ArchivePlan.compress` refuses a `.gz` whose target exists; extraction
+    /// must refuse the mirror case. Measured 2026-10-09: local
+    /// `/usr/bin/gunzip -k -- ./x.gz` with `x` present printed `gunzip: ./x
+    /// already exists -- skipping` and exited **1**, leaving `x` unchanged;
+    /// the rig's BusyBox `gunzip` printed `can't open './x': File exists`
+    /// and also exited 1. Nothing is lost either way -- it is a protective
+    /// outcome reported as a failure.
+    @Test func aGzExtractionOntoAnExistingNameIsRefusedBeforeRunning() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("payload".utf8).write(to: dir.appendingPathComponent("notes.txt"))
+        let pack = try ArchivePlan.compress(
+            .gz, selection: [Self.item("notes.txt")], workingDirectory: dir.path,
+            namesInFolder: ["notes.txt"])
+        #expect(try await LocalArchiveRunner().run(pack) == .finished)
+
+        let archive = RemoteFileItem(
+            name: "notes.txt.gz",
+            path: dir.appendingPathComponent("notes.txt.gz").path, kind: .file)
+        let preparation = try await ArchivePreparation.extractPreview(
+            archive: archive, format: .gz, in: dir.path,
+            fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
+        #expect(preparation.preview.takenGzOutput == "notes.txt")
+        #expect(throws: ArchiveRefusal.gzExtractTargetExists(name: "notes.txt")) {
+            try ArchivePlan.extract(
+                archive, format: .gz, workingDirectory: dir.path, into: .thisFolder,
+                tarSkipExisting: preparation.tarSkipExisting,
+                preview: preparation.preview)
+        }
+    }
+
+    /// The positive beside it: with the output name free the plan is made,
+    /// and the real `gunzip` finishes. Without this the refusal above could
+    /// be unconditional and nothing would notice.
+    @Test func aGzExtractionWhoseOutputNameIsFreeIsPlannedAndRuns() async throws {
+        let dir = try Self.scratch()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("payload".utf8).write(to: dir.appendingPathComponent("notes.txt"))
+        let pack = try ArchivePlan.compress(
+            .gz, selection: [Self.item("notes.txt")], workingDirectory: dir.path,
+            namesInFolder: ["notes.txt"])
+        #expect(try await LocalArchiveRunner().run(pack) == .finished)
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("notes.txt"))
+
+        let archive = RemoteFileItem(
+            name: "notes.txt.gz",
+            path: dir.appendingPathComponent("notes.txt.gz").path, kind: .file)
+        let preparation = try await ArchivePreparation.extractPreview(
+            archive: archive, format: .gz, in: dir.path,
+            fileSystem: LocalFileSystem(), runner: LocalArchiveRunner())
+        #expect(preparation.preview.takenGzOutput == nil)
+        let plan = try ArchivePlan.extract(
+            archive, format: .gz, workingDirectory: dir.path, into: .thisFolder,
+            tarSkipExisting: preparation.tarSkipExisting, preview: preparation.preview)
+        #expect(try await LocalArchiveRunner().run(plan) == .finished)
+        #expect(
+            try Data(contentsOf: dir.appendingPathComponent("notes.txt"))
+                == Data("payload".utf8))
+    }
+
+    /// The folder's own comparison, as the compress side is held to it: a
+    /// differently-cased `NOTES.TXT` is the same name on this volume.
+    @Test func aGzExtractionTargetIsComparedTheWayTheFileSystemDoes() {
+        let preview = ExtractPreview.make(
+            archiveName: "notes.txt.gz", format: .gz, archiveEntries: nil,
+            namesInFolder: ["NOTES.TXT"])
+        #expect(preview.takenGzOutput == "notes.txt")
+    }
+
+    /// And no other format carries the answer, because no other format's
+    /// tool needs it: `unzip -n` and `tar` skip a collision at exit 0.
+    @Test(arguments: [ArchiveExtractFormat.zip, .tar, .tarGz])
+    func onlyAGzCarriesATakenOutputName(format: ArchiveExtractFormat) {
+        let preview = ExtractPreview.make(
+            archiveName: "notes.txt", format: format, archiveEntries: ["notes.txt"],
+            namesInFolder: ["notes.txt"])
+        #expect(preview.collidingHere == 1)
+        #expect(preview.takenGzOutput == nil)
+    }
+
     // MARK: Which skip-existing flag this tar takes
 
     /// The probe's answer is its EXIT STATUS. A runner whose listing comes

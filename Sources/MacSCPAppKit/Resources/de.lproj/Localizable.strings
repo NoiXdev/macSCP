@@ -409,6 +409,7 @@
 "archive.refusal.gzTakesAFileNotAFolder" = "„%@“ ist ein Ordner. Eine komprimierte Datei enthält nur eine einzelne Datei; verwende für Ordner ein ZIP-Archiv oder ein komprimiertes Tar-Archiv.";
 "archive.refusal.newlineInName" = "„%@“ enthält einen Zeilenumbruch im Namen, den ein ZIP-Archiv nicht aufnehmen kann. Verwende stattdessen ein komprimiertes Tar-Archiv.";
 "archive.refusal.gzTargetExists" = "„%@“ gibt es hier bereits. Benenne die Datei um oder lösche sie und komprimiere dann erneut.";
+"archive.refusal.gzExtractTargetExists" = "„%@“ gibt es hier bereits, und eine komprimierte Datei kann nur neben sich selbst entpackt werden. Benenne die Datei um oder lösche sie und entpacke dann erneut.";
 "menu.openEditor" = "Öffnen";
 "menu.rename" = "Umbenennen…";
 "menu.info" = "Informationen & Rechte…";
