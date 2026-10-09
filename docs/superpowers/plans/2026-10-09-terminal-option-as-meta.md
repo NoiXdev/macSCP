@@ -356,6 +356,8 @@ rm -f "$TMPDIR/plant-option-as-meta.py"
 **Corrected 2026-10-09 by Task 4, and this withdraws the command this step first committed**, quoted verbatim as it stood:
 
 ```bash
+# WITHDRAWN — quoted verbatim for the record. This form does NOT run here; do
+# not copy it. The command that runs is the three-step one above.
 scripts/mutation-probe --filter TerminalKeyboardWiringGuardTests --apply "python3 -I -c \"
 import io
 p='Sources/MacSCPAppKit/SSHTerminalView.swift'
