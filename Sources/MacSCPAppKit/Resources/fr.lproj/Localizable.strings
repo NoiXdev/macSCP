@@ -73,6 +73,8 @@
 "settings.terminal.copyOnSelect" = "Copier le texte dès sa sélection";
 "settings.terminal.pasteOnRightClick" = "Coller avec un clic droit";
 "settings.terminal.pasteOnRightClick.footer" = "Tant que le clic droit colle, un clic droit avec la touche Option ouvre le menu des snippets.";
+"settings.terminal.optionAsMeta" = "Utiliser Option comme touche Meta";
+"settings.terminal.optionAsMeta.footer" = "Désactivé, la touche Option compose des caractères — sur de nombreux claviers, c'est ainsi que l'on tape @, la barre verticale et les accolades. Activé, Option envoie d'abord un préfixe ESC, que des programmes comme Emacs lisent comme Meta. Option-Commande-O le change pour le terminal affiché, jusqu'à ce que vous modifiiez ce réglage ou rouvriez l'onglet.";
 "settings.terminal.type" = "Type de terminal";
 "settings.terminal.type.footer" = "Le nom communiqué au serveur (TERM) ; il détermine les fonctions qu’utilisent les programmes sur le serveur. Le terminal lui-même ne change pas. S’applique au prochain shell ouvert ; une session peut choisir le sien dans son éditeur.";
 "terminal.type.xterm-256color" = "xterm-256color (256 couleurs)";

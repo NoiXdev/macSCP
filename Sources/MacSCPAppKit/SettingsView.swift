@@ -1149,6 +1149,20 @@ private struct TerminalSettingsTab: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // Keyboard, not mouse — its own section because the one
+                // above carries a mouse footer. Plan of 2026-10-09.
+                Section {
+                    Toggle(
+                        L10n.string(
+                            "settings.terminal.optionAsMeta", "Use Option as the Meta key"),
+                        isOn: $store.terminalOptionAsMetaKey)
+                } footer: {
+                    Text(L10n.string(
+                        "settings.terminal.optionAsMeta.footer",
+                        "Off, the Option key composes characters — on many keyboards that is how you type @, the vertical bar and the braces. On, Option sends an ESC prefix first, which programs like Emacs read as Meta. Option-Command-O switches it for the terminal you are looking at, until you change this setting or reopen the tab."))
+                        .foregroundStyle(.secondary)
+                }
+
                 // Plan of 2026-09-19, Task 4. A session can override this
                 // in its editor; the list is `TerminalType.allCases`, the
                 // names SwiftTerm honours.
