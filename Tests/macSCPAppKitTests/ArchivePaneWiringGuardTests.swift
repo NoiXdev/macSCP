@@ -145,6 +145,10 @@ struct ArchivePaneWiringGuardTests {
         // spelling and reveal another.
         #expect(!code.contains("Task.init"))
         #expect(!code.contains("Task<"))
+        // `Task{ @MainActor in … }` is legal Swift, and the whitespace
+        // collapse above leaves it as `Task{`, which `"Task {"` does not
+        // match (found by the final whole-branch review, 2026-10-09).
+        #expect(!code.contains("Task{"))
         #expect(!code.contains("DispatchQueue"))
         #expect(!code.contains("Thread"))
     }
