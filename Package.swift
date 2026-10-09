@@ -37,10 +37,24 @@ let package = Package(
         // `ChannelError.alreadyClosed` take the place of the
         // `SSHClient.CommandFailed` carrying the exit status, which hid
         // exit 127 — a POSIX shell's report of a missing command, and the one
-        // archive failure a user can act on. The fork record with
-        // the measurements behind each tag is in
+        // archive failure a user can act on.
+        // 0.12.1-noix.5 adds nothing to the behaviour of either, and two
+        // things that keep them from being undone. A test pins the SUCCESS
+        // path of that close handling, which the exit-status case cannot
+        // reach: it only ever enters `withExec`'s `catch`, so the `try?`
+        // there was enough to make it green while the
+        // `catch ChannelError.alreadyClosed` inside `close()` — the path
+        // taken when the closure returned normally — went unpinned. And
+        // `closeStandardInput()`'s doc comment now says what a LATER write
+        // costs: not that write alone, but the remaining output and the exit
+        // status with it, because the state machine rejects data in
+        // `.halfClosedLocal` and that throw tears the channel down. The same
+        // comment stops implying the once-only rule is enforced — a second
+        // call is silently accepted, a third throws — so it is a caller
+        // contract, which is what the archive line has to honour. The fork
+        // record with the measurements behind each tag is in
         // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
-        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.4"),
+        .package(url: "https://github.com/NoiXdev/Citadel.git", exact: "0.12.1-noix.5"),
         // Citadel depends on Wellz26/swift-nio-ssh, a fork with a deleted
         // parent that is behind Apple on signature validation and mangles
         // RFC 4253 §4.2 preamble lines into the version string. This root
