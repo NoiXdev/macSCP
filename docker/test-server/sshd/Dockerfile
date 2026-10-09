@@ -4,9 +4,11 @@
 # The base image ships BusyBox `tar`, which rejects `--null`, and no `zip`.
 # The remote command lines the app writes use GNU `tar --null -T -` and
 # `zip -@`, so a gated test of that half needs the real tools. `tar` here is
-# Alpine's GNU tar package: once installed it takes the /usr/bin/tar path
-# ahead of the BusyBox applet at /bin/tar, which the README's proof section
-# measures (`tar --version` names GNU tar).
+# Alpine's GNU tar package: once installed it replaces the BusyBox applet at
+# /bin/tar -- there is no /usr/bin/tar -- which the README's proof section
+# measures (`tar --version` names GNU tar). Corrected 2026-10-09; this comment
+# first read: "once installed it takes the /usr/bin/tar path ahead of the
+# BusyBox applet at /bin/tar", which the README it cites refutes.
 #
 # Installed at BUILD time rather than by a /custom-cont-init.d script or a
 # DOCKER_MODS entry: both of those fetch packages on every container start,

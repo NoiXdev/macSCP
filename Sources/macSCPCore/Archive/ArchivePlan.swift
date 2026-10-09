@@ -159,10 +159,33 @@ public struct ArchivePlan: Sendable, Equatable {
     ///
     /// Both tools are given their SKIP-EXISTING flag, `unzip -n` and
     /// `tar --keep-old-files`, so nothing is overwritten even when the
-    /// directory changed between the dialog and the run. Measured
-    /// 2026-10-08: both keep the old file, extract the rest, and exit 0 —
-    /// and BOTH ARE SILENT about what they skipped, which is why the count
-    /// the dialog shows comes from a listing instead.
+    /// directory changed between the dialog and the run. The count the
+    /// dialog shows comes from a listing, because neither tool reports what
+    /// it skipped.
+    ///
+    /// Corrected 2026-10-09 (final whole-branch review). This comment first
+    /// read: "Measured 2026-10-08: both keep the old file, extract the rest,
+    /// and exit 0 — and BOTH ARE SILENT about what they skipped". That is
+    /// false for one of the three tools; what was measured, per tool:
+    /// - `unzip -n`: keeps the old file, extracts the rest, names only what
+    ///   it extracted (never what it skipped), exit 0.
+    /// - bsdtar 3.5.3 (the LOCAL side), `--keep-old-files`: keeps the old
+    ///   file, extracts the rest, silent, exit 0. It rejects
+    ///   `--skip-old-files` outright (`Option --skip-old-files is not
+    ///   supported`), so this flag is the only one both tars accept.
+    /// - GNU tar 1.35 (the REMOTE side, the rig), `--keep-old-files`: keeps
+    ///   the old file, extracts the rest, prints `tar: a: Cannot open: File
+    ///   exists` and **exits 2**. `--skip-old-files` on the same input is
+    ///   silent, exit 0, same data.
+    ///
+    /// Consequence, so it is not misdiagnosed: on the remote path a tar
+    /// extraction onto a colliding name is reported as
+    /// `ArchiveFailure.exited(status: 2)` today although the data is fine and
+    /// every other entry was extracted. That is a known open row in
+    /// `docs/BACKLOG.md` ("Remote tar extraction onto an existing name
+    /// fails, because the skip-existing flag is the GNU one that errors"),
+    /// not a regression of this code, and this function deliberately does
+    /// not branch on the flavour.
     ///
     /// The archive's own name is the one user-controlled word on an
     /// extraction, and it is prefixed `./` rather than terminated with

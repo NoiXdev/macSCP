@@ -1332,6 +1332,8 @@ archive failure a user can act on.
     It prints `9`. Two things about it that a shorter spelling got wrong here
     first — this passage carried `grep -o -i eof … | wc -l`, with a literal
     ellipsis in place of the argument, which cannot run as committed at all.
+    The withdrawn clause, verbatim as `17a74047` wrote it: "counted with
+    `grep -o -i eof … | wc -l`, not `grep -c`, which counts lines".
     (a) `grep -c` is the wrong tool for this figure: it counts matching LINES,
     and line 284/285 are two separate records while a single line could carry
     two occurrences, so `grep -c` under-reports an occurrence count.

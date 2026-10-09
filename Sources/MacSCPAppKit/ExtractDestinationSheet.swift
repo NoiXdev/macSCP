@@ -13,8 +13,15 @@ import macSCPCore
 ///
 /// The sheet decides nothing about the archive. Everything it shows comes
 /// from `ExtractPreview` (Core), which was built from a LISTING: the
-/// collision count cannot be read from the run itself, because both
-/// skip-existing flags are silent about what they skipped.
+/// collision count cannot be read from the run itself, because no
+/// skip-existing flag reports what it skipped.
+///
+/// Corrected 2026-10-09: this comment first read "because both
+/// skip-existing flags are silent about what they skipped". `unzip -n` and
+/// bsdtar's `--keep-old-files` are silent; GNU tar's is not (it prints
+/// `tar: a: Cannot open: File exists` and exits 2 — see `ArchivePlan.extract`
+/// and the open row in `docs/BACKLOG.md`). The count still comes from the
+/// listing, which is why the conclusion survives.
 ///
 /// Presented by `BrowserPane`, which owns every sheet its menu entries open.
 struct ExtractDestinationSheet: View {
