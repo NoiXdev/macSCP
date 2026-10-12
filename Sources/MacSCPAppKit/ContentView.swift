@@ -612,6 +612,9 @@ struct ContentView: View {
     /// Same no-item-payload shape as `showSSHKeysSheet` above; the sheet
     /// reads and writes `snippetStore` directly.
     @State var showSnippetsSheet = false
+    /// The file-action management sheet (file-actions plan, Task 11) — the
+    /// window-scoped presentation `showSnippetsSheet` uses.
+    @State var showFileActionsSheet = false
 
     /// The snippet a multi-line insert was just refused for — drives the
     /// refusal alert below. Non-nil only between `triggerSnippet` hitting
@@ -1001,6 +1004,13 @@ struct ContentView: View {
     /// keeps the directory named in a single place.
     var snippetStore: SnippetStore {
         SnippetStore(directory: SessionStore.defaultDirectory)
+    }
+
+    /// The file-action store (file-actions plan, Task 11): the same
+    /// stateless struct over the same directory, in its own file —
+    /// `file-actions.json` — so an action and a snippet never share one.
+    var fileActionStore: FileActionStore {
+        FileActionStore(directory: SessionStore.defaultDirectory)
     }
 
     /// The remembered-variable-values store this window reads and writes

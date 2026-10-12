@@ -1291,6 +1291,11 @@ private struct SnippetEditorView: View {
 
 /// One variable declaration while it is being edited (Task 5).
 ///
+/// Internal rather than private since the file-action editor
+/// (`FileActionEditor.swift`) edits the same kind of declaration with the
+/// same drafts; a second draft type would be a second answer to how a
+/// declaration is held while it is half typed.
+///
 /// `SnippetVariable`'s own stored properties are `let` — deliberately, so
 /// nothing later in the app can mutate a declaration in place — which means
 /// SwiftUI's controls cannot bind straight into one. This draft is the
@@ -1303,7 +1308,7 @@ private struct SnippetEditorView: View {
 /// user be in while they fix it. Using `name` itself as the `ForEach` id
 /// would instead make SwiftUI's identity collide at the same moment the
 /// error text appears.
-private struct VariableDraft: Identifiable {
+struct VariableDraft: Identifiable {
     let id = UUID()
     var name = ""
     var prompt = ""

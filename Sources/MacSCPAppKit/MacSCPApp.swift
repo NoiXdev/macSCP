@@ -159,6 +159,10 @@ final class TabCommands {
     /// "Manage Snippets…" — same bridge shape as `showLogins` above, opens
     /// the snippet management sheet in the focused window.
     var showSnippets: (() -> Void)?
+    /// "Manage File Actions…" — the same bridge shape, opens the file-action
+    /// management sheet in the focused window. Reachable without a
+    /// connection, like the entry above.
+    var showFileActions: (() -> Void)?
     /// "Move Tab to New Window" (Detachable Tabs plan, Task 2) — the Window
     /// menu's route to the action the tab strip's context menu also offers.
     /// Same bridge shape as the entries above; it moves the ACTIVE tab of

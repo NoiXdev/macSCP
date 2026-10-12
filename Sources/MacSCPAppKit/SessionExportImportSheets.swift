@@ -23,6 +23,12 @@ extension UTType {
     /// above, including the matching `Info.plist` entry in
     /// `scripts/package-app`.
     static let macscpSnippets = UTType(exportedAs: "dev.noix.macscp.snippets", conformingTo: .json)
+    /// `.macscpactions` (file-actions plan, Task 11) — same declaration story
+    /// as the three above, including the matching `Info.plist` entry in
+    /// `scripts/package-app`. Its own type and its own extension, so a Finder
+    /// double-click cannot offer an actions file to the snippet import.
+    static let macscpFileActions = UTType(
+        exportedAs: "dev.noix.macscp.fileactions", conformingTo: .json)
 }
 
 /// Write-only `FileDocument` wrapper around already-encoded export bytes.
@@ -84,6 +90,29 @@ struct LoginSetExportDocument: FileDocument {
 struct SnippetExportDocument: FileDocument {
     static var readableContentTypes: [UTType] { [] }
     static var writableContentTypes: [UTType] { [.macscpSnippets] }
+
+    let data: Data
+
+    init(data: Data) {
+        self.data = data
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.fileReadUnsupportedScheme)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
+    }
+}
+
+/// Write-only `FileDocument` for `.macscpactions` bytes — the file-action twin
+/// of `SnippetExportDocument` above, with the same read path deliberately left
+/// unimplemented: import reads `Data` from the chosen URL and hands it to
+/// `FileActionExportCodec` (`FileActionsSheet.handleImportFileSelection`).
+struct FileActionExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [] }
+    static var writableContentTypes: [UTType] { [.macscpFileActions] }
 
     let data: Data
 

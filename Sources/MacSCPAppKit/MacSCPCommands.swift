@@ -293,5 +293,10 @@ struct MacSCPCommands: Commands {
         Button(L10n.string("menu.snippets.manage", "Manage Snippets…")) {
             tabCommands?.showSnippets?()
         }
+        // The same property, for the same reason: writing a file action needs
+        // no server, so this is not tied to a connection either.
+        Button(L10n.string("menu.fileActions.manage", "Manage File Actions…")) {
+            tabCommands?.showFileActions?()
+        }
     }
 }
