@@ -175,8 +175,18 @@ about to run exists before it runs rather than after.
 anything runs, a sheet shows the **resolved** command or commands, reusing
 `SnippetDryRun`." The clause "reusing `SnippetDryRun`" was not met. What was
 built is `FileActionPlanDisplay` (`Sources/MacSCPAppKit/FileActionConfirmSheet.swift`),
-which renders a `FileActionPlan` directly and draws every invisible or control
-scalar as a `<U+XXXX>` marker. The reason is that a `SnippetDryRun` describes a
+which renders a `FileActionPlan` directly and draws a control, format,
+line-separator or paragraph-separator scalar as a `<U+XXXX>` marker, U+200D
+excluded. [WITHDRAWN 2026-10-12: this clause first read “draws every
+invisible or control scalar as a `<U+XXXX>` marker”, which claims more than
+the code does. `needsMarker`
+(`Sources/MacSCPAppKit/FileActionConfirmSheet.swift`) switches on
+`scalar.properties.generalCategory` and marks four categories, so an invisible
+scalar outside them carries no marker. Measured 2026-10-12 with
+`/usr/bin/python3 -I -c "import unicodedata as u; print(u.category(chr(0x00A0)), u.category(chr(0x3164)), u.category(chr(0x2800)))"`,
+which prints `Zs Lo So`: the no-break space, the Hangul filler and the blank
+Braille pattern are each invisible and none of them is marked. The doc comment
+above `needsMarker` was precise; this sentence was not.] The reason is that a `SnippetDryRun` describes a
 SEND — a `SnippetSendPlan`, a send form, bracketed paste — and none of that is
 true of a LOCAL action, which is spawned as an argv with no shell, so a
 snippet-shaped description of one would have been false. The extraction the
