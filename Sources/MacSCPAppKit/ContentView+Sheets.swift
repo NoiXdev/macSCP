@@ -356,6 +356,13 @@ extension ContentView {
                     snippetVariableMemoryStore?.value(snippetID: snippetID, name: name)
                 })
         }
+        // File actions sheet (file-actions plan, Task 11) — the same
+        // window-scoped presentation as the snippets sheet above. The store
+        // is read afresh by the context menu at each right click, so nothing
+        // needs refreshing when this closes.
+        .sheet(isPresented: $showFileActionsSheet) {
+            FileActionsSheet(store: fileActionStore)
+        }
         // Hidden-imports sheet (M11f/T2) — `fullImportedHosts` is the SAME
         // full inventory `refreshImportedHosts()` reads from, so the sheet's
         // "still in config"/"orphaned" split matches the sidebar exactly.
@@ -575,6 +582,14 @@ extension ContentView {
     /// hierarchy reads it as `nil`.
     func presentSnippets() {
         showSnippetsSheet = true
+    }
+
+    /// "Manage File Actions…" — the Terminal menu's route to the file-action
+    /// management sheet, assigned to `TabCommands.showFileActions` in
+    /// `wireTabCommands()`. Not tied to a window's focus for the reason
+    /// `presentSnippets` documents.
+    func presentFileActions() {
+        showFileActionsSheet = true
     }
 
     /// What the window's one forwarding sheet is showing, and what closing

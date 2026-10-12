@@ -3,9 +3,13 @@ import Foundation
 /// Whether one invocation covers the whole selection or each file gets its
 /// own. `zip -r out.zip a b c` wants the first; `gzip a` wants the second,
 /// because the tool takes one operand.
-public enum FileActionPerSelection: String, Codable, Equatable, Sendable {
-    case onceWithEveryPath
+///
+/// `CaseIterable` so the editor's picker offers exactly the forms there are;
+/// the declaration order is the picker's order, and the stored value is the
+/// raw string, so reordering the cases changes no file.
+public enum FileActionPerSelection: String, Codable, CaseIterable, Equatable, Sendable {
     case oncePerFile
+    case onceWithEveryPath
 }
 
 /// A user-authored command template, run from the file context menu on the

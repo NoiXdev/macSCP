@@ -138,6 +138,16 @@ enum FileActionPlanDisplay {
         return result
     }
 
+    /// `text` as a plain string with every marked scalar spelled out as its
+    /// `<U+XXXX>` marker, for the surfaces that hand a name to something
+    /// other than `attributed(_:)` — an alert's message, a menu title, a
+    /// sentence built with `String(format:)`. The same decision as `runs`,
+    /// so a name cannot look different on two surfaces, but it carries no
+    /// colour: use `attributed` wherever a `Text` can show one.
+    static func visible(_ text: String) -> String {
+        runs(of: text).map(\.text).joined()
+    }
+
     /// One entry per command the plan will run. A shell line is shown as
     /// planned. An invocation has no shell, so it is shown with each
     /// argument quoted: joined bare, `a b` as one argument and `a` `b` as two

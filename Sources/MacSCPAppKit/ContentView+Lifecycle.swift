@@ -858,6 +858,7 @@ extension ContentView {
             triggerSnippet(snippet, execute: execute)
         }
         tabCommands.showSnippets = presentSnippets
+        tabCommands.showFileActions = presentFileActions
     }
 
     /// Publishes THIS window's tabs and window-raising closures to the

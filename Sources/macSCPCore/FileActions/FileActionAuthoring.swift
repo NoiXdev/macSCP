@@ -38,6 +38,11 @@ public enum FileActionAuthoring {
     public struct Refused: Equatable, Sendable {
         public let name: String
         public let reason: Reason
+
+        public init(name: String, reason: Reason) {
+            self.name = name
+            self.reason = reason
+        }
     }
 
     /// What an import would do.
@@ -50,6 +55,12 @@ public enum FileActionAuthoring {
         /// same content (or an earlier entry of this file did), so
         /// importing the same file twice does not double the menu.
         public let alreadyPresent: Int
+
+        public init(accepted: [FileAction], refused: [Refused], alreadyPresent: Int) {
+            self.accepted = accepted
+            self.refused = refused
+            self.alreadyPresent = alreadyPresent
+        }
     }
 
     /// Validates every entry of `payload` against the gate and sorts it into
