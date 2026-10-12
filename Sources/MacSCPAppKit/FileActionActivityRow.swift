@@ -51,12 +51,17 @@ struct FileActionActivityRow: View {
     }
 }
 
-/// The sentences of the row. The action's name is the user's own text, so it
-/// is the only thing from outside that appears in them; a program's output
-/// and an error's description never do.
+/// The sentences of the row. The action's name is the only thing from outside
+/// that appears in them; a program's output and an error's description never
+/// do. It is the user's own text OR an imported file's, so it is spelled
+/// through `FileActionPlanDisplay.visible`: a right-to-left override or a
+/// line break in it would otherwise rearrange the sentence, and the row's
+/// `lineLimit` would hide the break.
 enum FileActionPresentation {
     static func runningText(title: String) -> String {
-        String(format: L10n.string("fileAction.activity.running", "Running “%@”"), title)
+        String(
+            format: L10n.string("fileAction.activity.running", "Running “%@”"),
+            FileActionPlanDisplay.visible(title))
     }
 
     /// `nil` for an ending that needs no sentence: a success and a cancel are
@@ -68,17 +73,17 @@ enum FileActionPresentation {
         case .failed:
             return String(
                 format: L10n.string("fileAction.activity.failed", "“%@” ended with an error."),
-                outcome.title)
+                FileActionPlanDisplay.visible(outcome.title))
         case .timedOut:
             return String(
                 format: L10n.string(
                     "fileAction.activity.timedOut", "“%@” took too long and was stopped."),
-                outcome.title)
+                FileActionPlanDisplay.visible(outcome.title))
         case .couldNotRun:
             return String(
                 format: L10n.string(
                     "fileAction.activity.couldNotRun", "“%@” could not be started."),
-                outcome.title)
+                FileActionPlanDisplay.visible(outcome.title))
         }
     }
 }

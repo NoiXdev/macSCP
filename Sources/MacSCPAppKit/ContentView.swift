@@ -1013,6 +1013,18 @@ struct ContentView: View {
         FileActionStore(directory: SessionStore.defaultDirectory)
     }
 
+    /// The actions a pane's context menu offers from, read from the store
+    /// each time it is asked. Without this nothing in the App handed the user's
+    /// actions to a menu and the feature was complete and unreachable.
+    ///
+    /// Read at menu-build time and not captured when the pane is built, so an
+    /// action saved in the sheet is in the very next menu. An unreadable store
+    /// offers none, as the snippet entries do (`FileActionsLoad`): the sheet is
+    /// where that is explained.
+    func fileActionsForMenu() -> [FileAction] {
+        FileActionsLoad(reading: fileActionStore).actions
+    }
+
     /// The remembered-variable-values store this window reads and writes
     /// (Snippet-Variablen, Task 6). `SnippetVariableMemoryStore` is a
     /// class, not a struct like `SnippetStore` above (see that type's own
