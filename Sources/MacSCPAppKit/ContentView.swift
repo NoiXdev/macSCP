@@ -1443,14 +1443,24 @@ struct ContentView: View {
         return terminal
     }
 
-    /// Types `bytes` into the active tab's shell for a user-defined file
-    /// action, the way `sendSnippet` sends a snippet's. `false` when the tab
-    /// has no shell, so the pane can say so instead of doing nothing.
+    /// Types `bytes` into `terminal` for a user-defined file action, the way
+    /// `sendSnippet` sends a snippet's. `false` when that terminal is not the
+    /// active tab's, or the tab has no shell, so the pane can say so instead
+    /// of doing nothing.
+    ///
+    /// The destination is NAMED by the caller (the pane's own session), and
+    /// the bytes go there or nowhere: revealing the panel and persisting its
+    /// visibility are the active tab's, so a terminal that is not the active
+    /// tab's is refused rather than sent to by way of `activeTab`. That makes
+    /// "typed into this pane's shell" true by construction, and not by the
+    /// pane being remounted per tab.
     ///
     /// Unlike `sendSnippet` this records no audit event: the action's text is
     /// resolved from a selection, and no audit kind describes it.
-    func typeFileActionBytes(_ bytes: [UInt8]) -> Bool {
-        guard activeTabSupportsShell, let terminal = openActiveShell() else { return false }
+    func typeFileActionBytes(_ bytes: [UInt8], into terminal: TerminalPanelViewModel) -> Bool {
+        guard activeTabSupportsShell, activeTab.session?.terminal === terminal,
+            openActiveShell() === terminal
+        else { return false }
         terminal.send(bytes)
         return true
     }

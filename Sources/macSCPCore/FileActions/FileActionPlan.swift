@@ -96,6 +96,9 @@ public enum FileActionPlanner {
         /// control: a user recognising `<U+0015>` is not a security
         /// property.
         ///
+        /// Scalars above U+007F are not covered, and whether they need to be
+        /// has not been measured; see `holdsLineEditorControl`.
+        ///
         /// This overlaps `valueHoldsANulCharacter` on U+0000 for a different
         /// reason on a different path (`execve` truncating an argument,
         /// there; a byte the line editor acts on, here). The overlap is
@@ -148,32 +151,33 @@ public enum FileActionPlanner {
     /// Asked of the values the template PLACES, found with
     /// `SnippetVariableSubstitution.occurrences` as `resolve` finds them, so
     /// a name the template never uses reaches no shell and does not stop the
-    /// action. Names are asked in a fixed order, and `PATHS` item by item.
+    /// action. Names are asked in sorted order, and `PATHS` item by item.
+    ///
+    /// **The names are read, not spelled**: the values are what
+    /// `FileActionSelectionValues.values` binds, filtered by
+    /// `FileActionTemplate.names(fitting:)` exactly as the local path does
+    /// (`localReplacements`). A selection value added to either would reach
+    /// this check by construction, instead of being quoted into a remote
+    /// line with nothing asking about it.
     private static func controlCharacterRefusal(
         _ action: FileAction, _ group: [RemoteFileItem]
     ) -> Refusal? {
         guard !group.isEmpty else { return nil }
         let bound = FileActionSelectionValues.values(for: group[0])
+        let fitting = FileActionTemplate.names(fitting: action.perSelection)
         func placed(_ name: String) -> Bool {
             !SnippetVariableSubstitution.occurrences(of: name, in: action.command).isEmpty
         }
-        switch action.perSelection {
-        case .oncePerFile:
-            for name in ["PATH", "DIR", "NAME"] where placed(name) {
-                if let value = bound[name], holdsLineEditorControl(value) {
-                    return .valueHoldsAControlCharacter(name: name, value: value)
-                }
+        for name in bound.keys.sorted() where fitting.contains(name) && placed(name) {
+            if let value = bound[name], holdsLineEditorControl(value) {
+                return .valueHoldsAControlCharacter(name: name, value: value)
             }
-        case .onceWithEveryPath:
-            if placed("DIR"), let value = bound["DIR"], holdsLineEditorControl(value) {
-                return .valueHoldsAControlCharacter(name: "DIR", value: value)
-            }
-            if placed(listName) {
-                for item in group {
-                    let itemPath = path(of: item)
-                    if holdsLineEditorControl(itemPath) {
-                        return .valueHoldsAControlCharacter(name: listName, value: itemPath)
-                    }
+        }
+        if fitting.contains(listName), placed(listName) {
+            for item in group {
+                let itemPath = path(of: item)
+                if holdsLineEditorControl(itemPath) {
+                    return .valueHoldsAControlCharacter(name: listName, value: itemPath)
                 }
             }
         }
@@ -441,9 +445,18 @@ public enum FileActionPlanner {
     }
 
     /// Whether `value` holds a scalar in U+0000 to U+001F, or U+007F, asked
-    /// scalar by scalar. C1 (U+0080 to U+009F) is not included: in a UTF-8
-    /// terminal those code points arrive as two-byte sequences that the line
-    /// discipline does not treat as controls.
+    /// scalar by scalar.
+    ///
+    /// **Scalars above U+007F are NOT covered, and whether that is safe has
+    /// not been measured.** The actor at a shell prompt is the shell's own
+    /// line editor, not the terminal's line discipline, and readline's
+    /// defaults (`input-meta` off, `convert-meta` on whenever the locale's
+    /// codeset is not eight-bit) can turn a high scalar into a control or
+    /// an `ESC`-prefixed command. A server with no generated locales gives
+    /// exactly that codeset, and macSCP sends no `LANG` or `LC_*` with the
+    /// shell channel. So whether a remote line editor takes U+0080 and above
+    /// literally is an open question, not a settled one; this function's
+    /// range is where the boundary stands today and nothing more.
     private static func holdsLineEditorControl(_ value: String) -> Bool {
         for scalar in value.unicodeScalars where scalar.value <= 0x1F || scalar.value == 0x7F {
             return true
