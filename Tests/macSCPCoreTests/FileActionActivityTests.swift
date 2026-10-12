@@ -203,22 +203,27 @@ struct FileActionActivityTests {
 
     // MARK: - The remote path keeps what the sheet showed
 
-    /// A NUL is deliberately not refused on the remote path: it reaches the
-    /// PTY inside the single quotes. The send path must carry it through
-    /// byte for byte, or the sheet and the shell would disagree again.
-    @Test func aNulInARemoteLineReachesTheBytesTheShellIsSent() throws {
-        let name = "a\u{0}b"
-        let action = FileAction(name: "n", command: "wc -l {{PATH}}", runsOn: [.remote])
+    /// The send path does not drop or normalise a byte of a line. A NUL can
+    /// no longer arrive from a SELECTION on the remote path (the planner
+    /// refuses a control character there), but it can still arrive from the
+    /// user's own prompted value, and what is sent must be exactly what the
+    /// confirmation sheet showed.
+    @Test func aNulInAPromptedValueReachesTheBytesTheShellIsSent() throws {
+        let note = SnippetVariable(
+            name: "NOTE", prompt: "", kind: .freeText, placement: .placeholder,
+            defaultValue: "", remembersLastValue: false)
+        let action = FileAction(
+            name: "n", command: "echo {{NOTE}}", variables: [note], runsOn: [.remote])
         let plan = try FileActionPlanner.plan(
             action: action,
-            selection: [RemoteFileItem(name: name, path: "/d/" + name, kind: .file)],
-            side: .remote).get()
+            selection: [RemoteFileItem(name: "x", path: "/d/x", kind: .file)],
+            side: .remote, promptedValues: ["NOTE": "a\u{0}b"]).get()
         guard case .shellLines(let lines) = plan else {
             Issue.record("expected shell lines")
             return
         }
         #expect(lines.count == 1)
-        let expected = Array(("wc -l '/d/a\u{0}b'").utf8) + [0x0D]
+        let expected = Array(("echo 'a\u{0}b'").utf8) + [0x0D]
         for bracketed in [false, true] {
             let sent = SnippetSendPlanner.plan(
                 command: lines[0], execute: true, bracketedPaste: bracketed)

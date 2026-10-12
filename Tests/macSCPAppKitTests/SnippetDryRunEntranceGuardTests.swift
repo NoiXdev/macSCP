@@ -94,6 +94,16 @@ struct SnippetDryRunEntranceGuardTests {
     /// confirmation sheet before this point, so there is no template left to
     /// describe and no second description to drift from: the call sends what
     /// the sheet showed, through the same planner a snippet's Execute uses.
+    ///
+    /// Why this caller is legitimate, in the guard's own terms: the guard
+    /// forbids a surface assembling a description "out of the parts that
+    /// function composes", because two assemblies would be two answers to
+    /// "what would this send". There is still one assembly here.
+    /// `FileActionPlanner` produces the line, the sheet displays THAT line,
+    /// and this call sends THAT line: one assembly, two consumers. Routing it
+    /// through `SnippetDryRun.describing` would have produced a
+    /// snippet-shaped description of a file action, which really would be a
+    /// second assembly.
     /// Held as a set equality, like the colouring file above, so the entry
     /// fails in both directions: a second file that starts planning, and
     /// this one stopping.

@@ -71,10 +71,12 @@ extension BrowserPane {
     ///
     /// Every line goes through `SnippetSendPlanner`, the decision the
     /// snippet surfaces share, and its bytes reach the shell unchanged: a
-    /// NUL inside a quoted value is kept, because `FileActionPlanner` does not
-    /// refuse one on this path and the confirmation sheet drew it as a
-    /// marker. Dropping or normalising it here would make the sheet and the
-    /// shell disagree about what ran.
+    /// control character in a prompted value is kept, because the
+    /// confirmation sheet drew it as a marker. Dropping or normalising it
+    /// here would make the sheet and the shell disagree about what ran. The
+    /// same character in a SELECTION-derived value never gets here:
+    /// `FileActionPlanner` refuses it, since these lines are typed and the
+    /// line editor acts on a C0 byte whatever quotes surround it.
     ///
     /// A failure of one line does not stop the rest: nothing reads the
     /// shell's output, so there is nothing to decide on.
