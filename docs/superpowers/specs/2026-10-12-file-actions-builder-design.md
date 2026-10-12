@@ -165,12 +165,26 @@ are what decides it, so the refusal is derived rather than guessed.
 
 ## The confirmation step
 
-Before anything runs, a sheet shows the **resolved** command or commands,
-reusing `SnippetDryRun`. It is not optional, and it earns its place three
-times over: the user sees what the server's names became inside their own
-template; a selection of forty files cannot become forty commands
-unnoticed; and the record of what was about to run exists before it runs
-rather than after.
+Before anything runs, a sheet shows the **resolved** command or commands. It
+is not optional, and it earns its place three times over: the user sees what
+the server's names became inside their own template; a selection of forty
+files cannot become forty commands unnoticed; and the record of what was
+about to run exists before it runs rather than after.
+
+**Withdrawn 2026-10-12, quoted.** The first sentence above read: "Before
+anything runs, a sheet shows the **resolved** command or commands, reusing
+`SnippetDryRun`." The clause "reusing `SnippetDryRun`" was not met. What was
+built is `FileActionPlanDisplay` (`Sources/MacSCPAppKit/FileActionConfirmSheet.swift`),
+which renders a `FileActionPlan` directly and draws every invisible or control
+scalar as a `<U+XXXX>` marker. The reason is that a `SnippetDryRun` describes a
+SEND — a `SnippetSendPlan`, a send form, bracketed paste — and none of that is
+true of a LOCAL action, which is spawned as an argv with no shell, so a
+snippet-shaped description of one would have been false. The extraction the
+clause anticipated was made all the same and still stands,
+`SnippetDryRun.describing(command:variables:skipsPlacementCheck:values:execute:bracketedPaste:)`,
+with no production caller; its own doc comment records that, and
+`FileActionEditorWiringGuardTests` forbids reaching for it from the file-action
+editor. Nothing else in this section changed.
 
 **On the remote path with "once per file", N lines are sent in order, and a
 failure does not stop the rest.** The app does not read the shell's output,

@@ -376,9 +376,13 @@ struct SnippetDryRunTests {
 
     // MARK: - The two overloads agree
 
-    /// The same description, reached without a `Snippet`. The file-actions
-    /// plan of 2026-10-12 needs this overload; the `Snippet` one forwards to
-    /// it, so the two cannot drift.
+    /// The same description, reached without a `Snippet`. The overload was
+    /// extracted for the file-actions plan of 2026-10-12 and has no
+    /// production caller: that surface shows `FileActionPlanDisplay`
+    /// instead, because a snippet-shaped description would be false of a
+    /// local action. This case is what earns the overload its keep — the
+    /// `Snippet` entry point forwards to it, so the pieces and the whole
+    /// cannot drift.
     @Test func describingTakesThePiecesAndAgreesWithTheSnippetOverload() {
         let snippet = Snippet(name: "n", command: "wc -l {{F}}", variables: [
             SnippetVariable(
