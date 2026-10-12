@@ -62,16 +62,20 @@ public struct FileAction: Identifiable, Codable, Equatable, Sendable {
         perSelection = try container.decode(FileActionPerSelection.self, forKey: .perSelection)
     }
 
-    /// Writes `runsOn` as an array SORTED BY RAW VALUE. A `Set`'s own order
-    /// is not stable across process launches, so encoding it directly would
-    /// make the store file's bytes change on a save that changed nothing.
+    /// Writes `runsOn` in the declaration order of `BrowserPaneSide`, by
+    /// walking `allCases` and keeping the members the set holds. A `Set`'s
+    /// own iteration order is not stable across process launches, so
+    /// encoding it directly would make the store file's bytes change on a
+    /// save that changed nothing. `allCases` is the ordered source: a side
+    /// added later is written in its declared position with no edit here.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(command, forKey: .command)
         try container.encode(variables, forKey: .variables)
-        try container.encode(runsOn.map(\.rawValue).sorted(), forKey: .runsOn)
+        try container.encode(
+            BrowserPaneSide.allCases.filter(runsOn.contains).map(\.rawValue), forKey: .runsOn)
         try container.encode(perSelection, forKey: .perSelection)
     }
 }
