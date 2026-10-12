@@ -48,4 +48,44 @@ private func item(
             left: [item("b"), item("a")], right: [])
         #expect(pairs.map(\.name) == ["a", "b"])
     }
+
+    /// The UTF-8 bytes of a name. Swift's `String` equality and hashing are
+    /// canonical equivalence, so these are the only faithful way to say
+    /// "the same spelling" in an assertion.
+    private func bytes(_ name: String) -> [UInt8] { Array(name.utf8) }
+
+    /// Regression. Two distinct files on one side, spelled NFC and NFD, must
+    /// both survive; keying a map on the normalized form merged them.
+    @Test func twoSpellingsOfOneNameOnOneSideBothSurvive() {
+        let pairs = ComparisonPairing.pairs(
+            left: [item("\u{00E4}"), item("a\u{0308}")], right: [])
+        #expect(pairs.count == 2)
+        #expect(pairs.allSatisfy { $0.right == nil })
+        #expect(Set(pairs.map { bytes($0.name) }).count == 2)
+    }
+
+    /// An exact match is never ambiguous, so it wins over a normalization
+    /// match. Here the decomposed left name must pair with the decomposed
+    /// right name, and the composed right name stays one-sided.
+    @Test func anExactNameMatchWinsOverANormalizationMatch() {
+        let pairs = ComparisonPairing.pairs(
+            left: [item("a\u{0308}")],
+            right: [item("a\u{0308}"), item("\u{00E4}")])
+        #expect(pairs.count == 2)
+        let both = pairs.filter { $0.left != nil && $0.right != nil }
+        #expect(both.count == 1)
+        #expect(both.first?.right.map { bytes($0.name) } == bytes("a\u{0308}"))
+        #expect(pairs.contains { $0.left == nil && $0.right.map { bytes($0.name) } == bytes("\u{00E4}") })
+    }
+
+    /// Two distinct remote files that are canonically equivalent to one local
+    /// name form an ambiguous group. Pairing them would be a guess about which
+    /// one maps to the local file, so all three stay one-sided.
+    @Test func anAmbiguousNormalizationGroupIsLeftUnpairedNotGuessed() {
+        let pairs = ComparisonPairing.pairs(
+            left: [item("a\u{0323}\u{0308}")],
+            right: [item("a\u{0308}\u{0323}"), item("\u{1EA1}\u{0308}")])
+        #expect(pairs.count == 3)
+        #expect(pairs.allSatisfy { $0.left == nil || $0.right == nil })
+    }
 }
