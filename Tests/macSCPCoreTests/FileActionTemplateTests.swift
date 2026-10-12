@@ -85,6 +85,42 @@ struct FileActionTemplateTests {
         #expect(FileActionTemplate.isOneSimpleCommand("ls > f") == false)
     }
 
+    /// The survey treats a line feed as a command separator and appends no
+    /// span for it, so it has to count as an uncovered scalar. A skip that
+    /// is any wider than a blank or a tab (`isBlank`) would wave it through
+    /// as whitespace, and `wc -l {{PATH}}` followed by a second line would
+    /// be "one simple command".
+    @Test func aLineFeedSeparatesCommandsSoItIsNotOneSimpleCommand() {
+        #expect(FileActionTemplate.isOneSimpleCommand("ls\nrm -rf x") == false)
+        #expect(FileActionTemplate.isOneSimpleCommand("wc -l {{PATH}}\ntouch y") == false)
+        #expect(
+            FileActionTemplate.firstProblem(in: localAction("wc -l {{PATH}}\ntouch y"))
+                == .notOneSimpleCommandForLocal)
+    }
+
+    /// `VAR=x cmd` needs a shell; an argv would run a binary named `VAR=x`.
+    /// The survey reads the `VAR=` run as a command-name span, so the
+    /// refusal comes from looking for `=` inside such a span.
+    @Test func anAssignmentPrefixIsNotOneSimpleCommand() {
+        #expect(FileActionTemplate.isOneSimpleCommand("VAR=x cmd") == false)
+        #expect(
+            FileActionTemplate.isOneSimpleCommand("PGPASSWORD='secret' psql -h {{HOST}}") == false)
+        // An `=` inside an argument is not an assignment.
+        #expect(FileActionTemplate.isOneSimpleCommand("ls --color=auto {{PATH}}"))
+    }
+
+    /// The rest of the boundary. Every `false` below is the safe direction:
+    /// the survey leaves `$NAME` and a backslash unclassified, so they read
+    /// as uncovered and a local-capable action cannot use them, which is
+    /// right, because an argv does no expansion and no unescaping.
+    @Test func theBoundaryOfOneSimpleCommandIsPinnedOnBothSides() {
+        #expect(FileActionTemplate.isOneSimpleCommand("echo 'a b  c'"))
+        #expect(FileActionTemplate.isOneSimpleCommand("wc -l {{PATH}} # note"))
+        #expect(FileActionTemplate.isOneSimpleCommand("sleep 1 &") == false)
+        #expect(FileActionTemplate.isOneSimpleCommand("ls $HOME") == false)
+        #expect(FileActionTemplate.isOneSimpleCommand("ls my\\ file") == false)
+    }
+
     /// Without the synthesized variables the position of `{{PATH}}` would
     /// never be checked, and a quoted placeholder is exactly the position
     /// `.argument` exists to insist on. This is the test that pins the
@@ -92,10 +128,35 @@ struct FileActionTemplateTests {
     /// security claim.
     @Test func aSelectionPlaceholderInsideQuotesIsRefusedThoughNobodyDeclaredIt() {
         let action = remoteAction("wc -l '{{PATH}}'")
-        let problem = FileActionTemplate.firstProblem(in: action)
-        let isDeclarationProblem: Bool
-        if case .declaration = problem { isDeclarationProblem = true } else { isDeclarationProblem = false }
-        #expect(isDeclarationProblem)
+        #expect(
+            FileActionTemplate.firstProblem(in: action)
+                == .declaration(.placeholderInsideQuotes(name: "PATH")))
+    }
+
+    /// `String.contains` compares by `Character`, and a combining mark after
+    /// the closing braces fuses with the last `}` into one `Character`, so a
+    /// cluster search does not find `{{PATH}}` there at all. The substitution
+    /// finder walks scalars and does find it, so a gate that searched by
+    /// cluster would answer "no problem" about a template whose server-chosen
+    /// name then lands inside the author's quotes.
+    @Test func aCombiningMarkAfterThePlaceholderDoesNotHideItFromThePositionCheck() {
+        let action = remoteAction("wc -l '{{PATH}}\u{0308}'")
+        #expect(
+            FileActionTemplate.firstProblem(in: action)
+                == .declaration(.placeholderInsideQuotes(name: "PATH")))
+        #expect(
+            FileActionTemplate.syntheticVariables(for: "wc -l '{{PATH}}\u{0308}'").map(\.name)
+                == ["PATH"])
+    }
+
+    /// The same search feeds the form-fit check.
+    @Test func aCombiningMarkAfterAPerFileNameDoesNotHideItFromTheFormCheck() {
+        let action = FileAction(
+            name: "n", command: "cp a {{NAME}}\u{0308}", runsOn: [.remote],
+            perSelection: .onceWithEveryPath)
+        #expect(
+            FileActionTemplate.firstProblem(in: action)
+                == .reservedNameDoesNotFitTheForm(name: "NAME", form: .onceWithEveryPath))
     }
 
     @Test func syntheticVariablesNamesOnlyTheReservedNamesTheCommandUses() {
@@ -159,7 +220,8 @@ struct FileActionTemplateTests {
                            "remembersLastValue":false}]}
             """
         let action = try JSONDecoder().decode(FileAction.self, from: Data(json.utf8))
-        let problem = FileActionTemplate.firstProblem(in: action)
-        #expect(problem != nil)
+        #expect(
+            FileActionTemplate.firstProblem(in: action)
+                == .declaration(.placeholderInsideQuotes(name: "MODE")))
     }
 }

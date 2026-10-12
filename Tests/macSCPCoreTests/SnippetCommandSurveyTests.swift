@@ -887,11 +887,17 @@ struct SnippetCommandSurveyTests {
     /// is fail-closed twice over: a name that no longer exists fails here,
     /// and a file that joins the shell path without being named fails
     /// `everySourceFileOnTheShellPathIsClassified`.
+    ///
+    /// `FileActionTemplate.swift` (2026-10-12) is the fifth: `isOneSimpleCommand`
+    /// walks a command's scalars asking `ShellScalar.isBlank` of each, which is
+    /// lexing in this list's sense, so it is held to the ban and not parked
+    /// among the callers.
     private static let shellLexingFileNames = [
         "ShellScalar.swift",
         "PosixQuoting.swift",
         "SnippetCommandSurvey.swift",
         "SnippetVariableSubstitution.swift",
+        "FileActionTemplate.swift",
     ]
 
     /// Core files that CALL the shell-lexing code without lexing themselves.
@@ -939,6 +945,9 @@ struct SnippetCommandSurveyTests {
     /// Counted 2026-10-01: seven entries below, four above. Withdrawn
     /// 2026-10-08, quoted: "seven entries below" is eight with
     /// `ArchiveCommandLine.swift` added; the four above are unchanged.
+    /// Withdrawn 2026-10-12, quoted: "the four above are unchanged" is five
+    /// above with `FileActionTemplate.swift` added; the eight below are
+    /// unchanged.
     /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
     /// this list's only reader; the list above has a second one,
     /// `shellLexingSourceFiles()`, which is where its missing-name throw and
