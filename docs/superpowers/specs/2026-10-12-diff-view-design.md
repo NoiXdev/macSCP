@@ -165,8 +165,33 @@ classifies each pair:
 | `onlyLeft` / `onlyRight` | the relative path exists on one side only |
 | `differs` | the sizes differ, or the sizes match and the checksums differ |
 | `same` | the sizes match and the checksums match |
-| `undetermined(reason)` | the sizes match and at least one side answered `unavailableOnThisConnection` |
+| `undetermined(reason)` | the sizes match and the two checksums cannot be compared — see the four reasons below |
 | `typeMismatch` | the relative path is a folder on one side and a file on the other |
+
+**Corrected 2026-10-12, during the plan's pre-flight scan**, which found that
+two checksums cannot simply be compared by their hex. The `undetermined` row
+above read "the sizes match and at least one side answered
+`unavailableOnThisConnection`", and the `differs` row's second clause read
+"or the sizes match and the checksums differ" — both are withdrawn as
+written, because each assumed the two sides answer in the same currency. They
+do not. `FileChecksum` carries an `algorithm` and a `ChecksumProvenance`, and
+an S3 side answers from its ETag with `algorithm: .md5` and a provenance of
+`.objectStorageETagSinglePart` or `.objectStorageETagMultipart(partCount:)`,
+the latter documented in the tree as "An MD5 over the parts' MD5s. Not the
+file's hash, whatever it looks like." Comparing a locally computed sha256
+against a multipart ETag finds them unequal and would have reported `differs`
+for two IDENTICAL files on every S3 connection holding a multipart object —
+a comparison that lies, which is the one outcome this design exists to
+prevent.
+
+So `undetermined` has four reasons, not one: the connection cannot hash at
+all (an SSH far side with no tool, every WebDAV connection, a backend that is
+not a `RemoteChecksumProvider`); the connection cannot hash with the chosen
+algorithm; the two sides answered with different algorithms; and one side's
+value is a multipart ETag, which is not a hash of the file's bytes. A
+multipart ETag is never compared in either direction — it can neither
+establish `same` nor `differs` — and the pair is settled, where the user asks
+for it, by reading the bytes.
 
 The order matters and is the cheap half of the design: **size decides
 first**, and a checksum is asked for only where the sizes are equal. A grown
