@@ -1,0 +1,77 @@
+import Foundation
+
+/// Whether one invocation covers the whole selection or each file gets its
+/// own. `zip -r out.zip a b c` wants the first; `gzip a` wants the second,
+/// because the tool takes one operand.
+public enum FileActionPerSelection: String, Codable, Equatable, Sendable {
+    case onceWithEveryPath
+    case oncePerFile
+}
+
+/// A user-authored command template, run from the file context menu on the
+/// current selection.
+///
+/// Deliberately NOT a `Snippet`, on the maintainer's ruling of 2026-10-12,
+/// so that an export of one kind cannot carry the other. What it shares with
+/// a snippet is the security machinery, not the type: both
+/// `SnippetVariableSubstitution.resolve` and `.firstDeclarationProblem` take
+/// a command and `[SnippetVariable]` rather than a `Snippet`, so they are
+/// used here directly.
+///
+/// **There is no `skipsPlaceholderPlacementCheck`, and that is the point.**
+/// A snippet's values are typed by the user, so waiving the position check
+/// is a decision about their own input. An action's values come from the
+/// server's directory listing, where the check is the protection rather than
+/// a hurdle. The waiver is therefore not expressible, rather than available
+/// and discouraged.
+public struct FileAction: Identifiable, Codable, Equatable, Sendable {
+    public let id: UUID
+    public var name: String
+    public let command: String
+    public let variables: [SnippetVariable]
+    /// The panes this action may run on. Never empty — `FileActionTemplate`
+    /// refuses an action that declares no side.
+    public let runsOn: Set<BrowserPaneSide>
+    public let perSelection: FileActionPerSelection
+
+    public init(
+        id: UUID = UUID(), name: String, command: String,
+        variables: [SnippetVariable] = [],
+        runsOn: Set<BrowserPaneSide> = [.remote],
+        perSelection: FileActionPerSelection = .onceWithEveryPath
+    ) {
+        self.id = id
+        self.name = name
+        self.command = command
+        self.variables = variables
+        self.runsOn = runsOn
+        self.perSelection = perSelection
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, command, variables, runsOn, perSelection
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        command = try container.decode(String.self, forKey: .command)
+        variables = try container.decodeIfPresent([SnippetVariable].self, forKey: .variables) ?? []
+        runsOn = Set(try container.decode([BrowserPaneSide].self, forKey: .runsOn))
+        perSelection = try container.decode(FileActionPerSelection.self, forKey: .perSelection)
+    }
+
+    /// Writes `runsOn` as an array SORTED BY RAW VALUE. A `Set`'s own order
+    /// is not stable across process launches, so encoding it directly would
+    /// make the store file's bytes change on a save that changed nothing.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(command, forKey: .command)
+        try container.encode(variables, forKey: .variables)
+        try container.encode(runsOn.map(\.rawValue).sorted(), forKey: .runsOn)
+        try container.encode(perSelection, forKey: .perSelection)
+    }
+}

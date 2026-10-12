@@ -2,7 +2,12 @@ import Foundation
 
 /// Which pane a context menu belongs to (M7b) — the editor entry exists
 /// only on the remote side.
-public enum BrowserPaneSide: Sendable { case local, remote }
+/// Raw values and `Codable`/`Hashable` since the file-actions plan of
+/// 2026-10-12: a `FileAction` persists which sides it may run on, and a
+/// stored side has to survive a relaunch by name rather than by ordinal.
+public enum BrowserPaneSide: String, Codable, Hashable, Sendable {
+    case local, remote
+}
 
 /// Cross-session transfer target (M8b). Identifies a remote pane in another
 /// tab as a destination for "Transfer" menu actions.
