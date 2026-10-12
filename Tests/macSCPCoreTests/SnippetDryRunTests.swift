@@ -374,6 +374,26 @@ struct SnippetDryRunTests {
         #expect(inForm == false)
     }
 
+    // MARK: - The two overloads agree
+
+    /// The same description, reached without a `Snippet`. The file-actions
+    /// plan of 2026-10-12 needs this overload; the `Snippet` one forwards to
+    /// it, so the two cannot drift.
+    @Test func describingTakesThePiecesAndAgreesWithTheSnippetOverload() {
+        let snippet = Snippet(name: "n", command: "wc -l {{F}}", variables: [
+            SnippetVariable(
+                name: "F", prompt: "p", kind: .freeText, placement: .placeholder,
+                defaultValue: "", remembersLastValue: false)
+        ])
+        let viaSnippet = SnippetDryRun.describing(
+            snippet, values: ["F": "/a/x"], execute: true, bracketedPaste: false)
+        let viaPieces = SnippetDryRun.describing(
+            command: snippet.command, variables: snippet.variables,
+            skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck,
+            values: ["F": "/a/x"], execute: true, bracketedPaste: false)
+        #expect(viaPieces == viaSnippet)
+    }
+
     // MARK: - Helper
 
     private func sentBytes(of dryRun: SnippetDryRun) -> [UInt8]? {

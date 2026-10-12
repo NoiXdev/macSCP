@@ -90,17 +90,32 @@ public struct SnippetDryRun: Equatable, Sendable {
         self.tokens = tokens
     }
 
-    /// What triggering `snippet` with `values` would show.
+    /// The `Snippet` entry point, kept so every existing caller is
+    /// unchanged. It forwards; there is one implementation.
+    public static func describing(
+        _ snippet: Snippet, values: [String: String], execute: Bool, bracketedPaste: Bool
+    ) -> SnippetDryRun {
+        describing(
+            command: snippet.command, variables: snippet.variables,
+            skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck,
+            values: values, execute: execute, bracketedPaste: bracketedPaste)
+    }
+
+    /// The same description from the three pieces a `Snippet` carries, so a
+    /// `FileAction` reaches it without this file knowing that type exists
+    /// (file-actions plan, 2026-10-12).
     ///
-    /// Takes the whole `Snippet` rather than a command, its declarations
-    /// and a flag. `SnippetVariableSubstitution.firstDeclarationProblem`'s
+    /// What triggering a snippet with `values` would show, from its command,
+    /// its declarations and its placement waiver.
+    ///
+    /// `SnippetVariableSubstitution.firstDeclarationProblem`'s
     /// `skipsPlacementCheck` parameter carries the SAFE default, so a
-    /// caller holding a `Snippet` can leave it out and be answered about a
-    /// different snippet than the one in its hand, silently and with the
-    /// compiler content. Here there is no argument to leave out: the field
-    /// is read off `snippet`, and the two verdicts that depend on it are
-    /// pinned in `SnippetDryRunTests
-    /// .theWaiverOnTheSnippetIsTheOneThatCounts`.
+    /// caller can leave it out and be answered about a different snippet
+    /// than the one in its hand, silently and with the compiler content.
+    /// Here there is no default to leave out: `skipsPlacementCheck` is a
+    /// required argument, and the `Snippet` overload reads it off the
+    /// snippet. The two verdicts that depend on it are pinned in
+    /// `SnippetDryRunTests.theWaiverOnTheSnippetIsTheOneThatCounts`.
     ///
     /// The declaration verdict is asked about the TEMPLATE and outranks the
     /// send plan's own refusal when both apply, because that is the order
@@ -110,18 +125,20 @@ public struct SnippetDryRun: Equatable, Sendable {
     ///
     /// `SnippetLanguage` is a parameter of the highlighter and not a field
     /// on `Snippet` — see `SnippetLanguage`'s own doc comment for why. When
-    /// a second language arrives it belongs on `Snippet`, and this reads it
-    /// from there instead of naming a case.
+    /// a second language arrives it belongs with the other pieces of a
+    /// description and reaches this function as one more argument, instead
+    /// of this naming a case.
     public static func describing(
-        _ snippet: Snippet, values: [String: String], execute: Bool, bracketedPaste: Bool
+        command: String, variables: [SnippetVariable], skipsPlacementCheck: Bool,
+        values: [String: String], execute: Bool, bracketedPaste: Bool
     ) -> SnippetDryRun {
         let resolved = SnippetVariableSubstitution.resolve(
-            command: snippet.command, variables: snippet.variables, values: values)
+            command: command, variables: variables, values: values)
         let plan = SnippetSendPlanner.plan(
             command: resolved, execute: execute, bracketedPaste: bracketedPaste)
         let problem = SnippetVariableSubstitution.firstDeclarationProblem(
-            command: snippet.command, variables: snippet.variables,
-            skipsPlacementCheck: snippet.skipsPlaceholderPlacementCheck)
+            command: command, variables: variables,
+            skipsPlacementCheck: skipsPlacementCheck)
 
         let sendForm: SendForm
         if let problem {
