@@ -101,9 +101,23 @@ public struct SnippetDryRun: Equatable, Sendable {
             values: values, execute: execute, bracketedPaste: bracketedPaste)
     }
 
-    /// The same description from the three pieces a `Snippet` carries, so a
-    /// `FileAction` reaches it without this file knowing that type exists
-    /// (file-actions plan, 2026-10-12).
+    /// The same description from the three pieces a `Snippet` carries.
+    ///
+    /// **It has no production caller today.** This overload was extracted
+    /// for the file-actions plan of 2026-10-12, and the surface that plan
+    /// built went another way: a file action's confirmation sheet shows
+    /// `FileActionPlanDisplay`, because a snippet-shaped description would
+    /// be false of a LOCAL action — there is no shell, no send form and no
+    /// bracketed paste on that path, so `SnippetSendPlan` would describe
+    /// bytes nobody types. `FileActionEditorWiringGuardTests` now forbids
+    /// `SnippetDryRun.describing(` in that editor, deliberately.
+    ///
+    /// It is kept rather than reverted because it is the better-shaped
+    /// form: there is ONE implementation, and the `Snippet` entry point
+    /// above forwards to it, so the pieces and the whole cannot disagree
+    /// (`SnippetDryRunTests.describingTakesThePiecesAndAgreesWithTheSnippetOverload`).
+    /// Reverting would churn a shared, well-reviewed file to delete two
+    /// lines of signature.
     ///
     /// What triggering a snippet with `values` would show, from its command,
     /// its declarations and its placement waiver.
