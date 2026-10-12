@@ -17,7 +17,7 @@ import Testing
     }
 
     /// `FileChecksum.init` is private and every factory returns an Optional,
-    /// so this unwraps once, here, rather than at seven call sites.
+    /// so this unwraps once, here, rather than at every call site.
     ///
     /// The factories accept only a digest of exactly the algorithm's length
     /// (`ChecksumAlgorithm.hexDigitCount`), so a short `seed` such as "aa" is
@@ -141,6 +141,40 @@ import Testing
         #expect(state == .undetermined(.algorithmsDiffer))
     }
 
+    /// The same algorithm on both sides is what makes each multipart check
+    /// bite: the multipart ETag is MD5 like the other side's value, so
+    /// without that check the pair would reach the hex compare and report
+    /// `differs` for two files that may be identical. The value sits on
+    /// the left in one order and on the right in the other, so deleting
+    /// either side's check turns exactly one of these red.
+    @Test func aMultipartETagOnEitherSideIsNeverComparedEvenAgainstTheSameAlgorithm() async throws {
+        let multipart = "\"d41d8cd98f00b204e9800998ecf8427e-3\""
+        let valueOnRight = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7),
+            leftChecksum: hash("aa", algorithm: .md5),
+            rightChecksum: etag(multipart))
+        #expect(valueOnRight == .undetermined(.etagIsNotAFileHash))
+
+        let valueOnLeft = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7),
+            leftChecksum: etag(multipart),
+            rightChecksum: hash("aa", algorithm: .md5))
+        #expect(valueOnLeft == .undetermined(.etagIsNotAFileHash))
+    }
+
+    /// The positive check beside the two `count == 0` assertions: `Asked`
+    /// really does count, so those zeros mean something.
+    @Test func equalSizesAskForBothChecksumsAndTheCounterSeesIt() async throws {
+        let asked = Asked()
+        let value = try #require(FileChecksum.computedOnRemote(.sha256, hex: String(repeating: "aa", count: 32)))
+        let state = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7),
+            leftChecksum: { await asked.record(); return .checksum(value) },
+            rightChecksum: { await asked.record(); return .checksum(value) })
+        #expect(state == .same)
+        #expect(await asked.count == 2)
+    }
+
     /// Pre-flight finding F2: the third outcome case carries its own reason,
     /// because the remedy differs — the user can change the algorithm.
     @Test func anUnavailableAlgorithmIsItsOwnReason() async throws {
@@ -149,6 +183,26 @@ import Testing
             leftChecksum: { .algorithmUnavailable(.sha1) },
             rightChecksum: hash("aa"))
         #expect(state == .undetermined(.algorithmUnavailable(.sha1)))
+    }
+
+    @Test func anUnavailableAlgorithmOnTheRightIsItsOwnReasonToo() async throws {
+        let state = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7),
+            leftChecksum: hash("aa"),
+            rightChecksum: { .algorithmUnavailable(.md5) })
+        #expect(state == .undetermined(.algorithmUnavailable(.md5)))
+    }
+
+    @Test func aPairPresentOnTheRightOnly() async throws {
+        let onlyRight = ComparisonPair(
+            name: "f",
+            left: nil,
+            right: RemoteFileItem(
+                name: "f", path: "/r/f", kind: .file, size: 1,
+                modifiedAt: nil, permissions: nil, owner: nil, group: nil))
+        let state = try await ComparisonClassification.state(
+            for: onlyRight, leftChecksum: unavailable, rightChecksum: unavailable)
+        #expect(state == .onlyRight)
     }
 
     /// `.same` means two files whose contents were compared and matched, and
