@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/NoiXdev/macSCP?label=release)](https://github.com/NoiXdev/macSCP/releases/latest)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-555)](#install)
 [![License: MIT](https://img.shields.io/github/license/NoiXdev/macSCP?label=license)](LICENSE)
+[![Discord](https://img.shields.io/discord/1550965846594289727?style=for-the-badge&label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/sHcvJfXhq)
 
 **A fast, native SFTP client for the Mac — two panes, saved sessions, and a
 built-in terminal.**
@@ -313,6 +314,13 @@ material and no credentials from a server address.
 If you think you have found a security problem, do not open an issue —
 write to **security@noix.dev**. [SECURITY.md](SECURITY.md) says what is in
 scope and what to include.
+
+## Community & Support
+
+Questions, ideas, or running into something? Join the NoiXdev Discord — the
+fastest way to get help and talk to us and other users.
+
+[![Join our Discord](https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/sHcvJfXhq)
 
 ## License
 
