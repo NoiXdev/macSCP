@@ -36,11 +36,16 @@ public struct FileAction: Identifiable, Codable, Equatable, Sendable {
     public let runsOn: Set<BrowserPaneSide>
     public let perSelection: FileActionPerSelection
 
+    /// `perSelection` defaults to `.oncePerFile`: it is the commoner shape for
+    /// a context-menu action (`gzip`, `chmod`, `wc -l` take one operand), and
+    /// it is the form in which `{{PATH}}` — the first placeholder an author
+    /// reaches for — has a single value. Under `.onceWithEveryPath`
+    /// `FileActionTemplate` refuses `{{PATH}}`.
     public init(
         id: UUID = UUID(), name: String, command: String,
         variables: [SnippetVariable] = [],
         runsOn: Set<BrowserPaneSide> = [.remote],
-        perSelection: FileActionPerSelection = .onceWithEveryPath
+        perSelection: FileActionPerSelection = .oncePerFile
     ) {
         self.id = id
         self.name = name

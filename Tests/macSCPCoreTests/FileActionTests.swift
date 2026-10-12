@@ -42,6 +42,12 @@ struct FileActionTests {
         #expect(json.contains("[\"local\",\"remote\"]"))
     }
 
+    /// The default form is the per-file one, so that a template written with
+    /// `{{PATH}}` and no further choices is not refused by the gate.
+    @Test func theDefaultSelectionFormIsPerFile() {
+        #expect(FileAction(name: "n", command: "c").perSelection == .oncePerFile)
+    }
+
     /// An absent `variables` key decodes to none, so a store file written
     /// before an action had variables keeps loading.
     @Test func anAbsentVariablesKeyDecodesToNone() throws {

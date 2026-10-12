@@ -5,23 +5,19 @@ import Testing
 
 @Suite("FileActionTemplate")
 struct FileActionTemplateTests {
-    // These fixtures use `{{PATH}}`, which is one file's path and so needs
-    // the per-file form. `FileAction`'s default form is
-    // `.onceWithEveryPath`, where the gate refuses `{{PATH}}`.
+    // These fixtures leave the selection form at `FileAction`'s default on
+    // purpose: they use `{{PATH}}`, so they also pin that the default form is
+    // one in which the gate accepts it.
     private func remoteAction(
         _ command: String, variables: [SnippetVariable] = []
     ) -> FileAction {
-        FileAction(
-            name: "n", command: command, variables: variables, runsOn: [.remote],
-            perSelection: .oncePerFile)
+        FileAction(name: "n", command: command, variables: variables, runsOn: [.remote])
     }
 
     private func localAction(
         _ command: String, variables: [SnippetVariable] = []
     ) -> FileAction {
-        FileAction(
-            name: "n", command: command, variables: variables, runsOn: [.local],
-            perSelection: .oncePerFile)
+        FileAction(name: "n", command: command, variables: variables, runsOn: [.local])
     }
 
     private func declared(_ name: String, placement: SnippetVariable.Placement) -> SnippetVariable {
