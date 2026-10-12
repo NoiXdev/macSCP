@@ -29,8 +29,10 @@ public struct FileAction: Identifiable, Codable, Equatable, Sendable {
     public var name: String
     public let command: String
     public let variables: [SnippetVariable]
-    /// The panes this action may run on. Never empty — `FileActionTemplate`
-    /// refuses an action that declares no side.
+    /// The panes this action may run on. The type does not keep this
+    /// non-empty — the initializer and the decoder both accept an empty set.
+    /// `FileActionTemplate.firstProblem` is what refuses an action that
+    /// declares no side, so an action that has not passed it may be empty.
     public let runsOn: Set<BrowserPaneSide>
     public let perSelection: FileActionPerSelection
 
