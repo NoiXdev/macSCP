@@ -37,7 +37,7 @@ public enum FileActionTemplate {
     /// placement it would overwrite the user's own `PATH` for the rest of
     /// that shell session.
     ///
-    /// Four rather than three because the list has its own name. A single
+    /// Three plus the list name, because the list has its own. A single
     /// name meaning one file in one action and a list in another would read
     /// correctly while being written and change what a command does when
     /// the form is switched, with nothing on screen saying so.
@@ -67,12 +67,23 @@ public enum FileActionTemplate {
     /// `{{PATH}}` there, so its POSITION is checked here either way.
     public static func syntheticVariables(for command: String) -> [SnippetVariable] {
         reservedNames.sorted()
-            .filter { command.contains("{{\($0)}}") }
+            .filter { uses($0, in: command) }
             .map {
                 SnippetVariable(
                     name: $0, prompt: "", kind: .freeText, placement: .placeholder,
                     defaultValue: "", remembersLastValue: false)
             }
+    }
+
+    /// Whether `command` contains `{{name}}`, asked of the one finder the
+    /// substitution itself uses. `String.contains` would not do: it compares
+    /// by `Character`, and a combining mark after the closing braces fuses
+    /// with the last `}`, so a cluster search misses a placeholder that the
+    /// scalar-based finder, at resolve time, does find and fill. A gate that
+    /// searched differently from the emitter could pass a template whose
+    /// server-chosen name then lands somewhere nothing checked.
+    private static func uses(_ name: String, in command: String) -> Bool {
+        !SnippetVariableSubstitution.occurrences(of: name, in: command).isEmpty
     }
 
     /// The first reason this action cannot run, or `nil`.
@@ -85,7 +96,7 @@ public enum FileActionTemplate {
 
         let fitting = names(fitting: action.perSelection)
         for name in reservedNames.sorted()
-        where !fitting.contains(name) && action.command.contains("{{\(name)}}") {
+        where !fitting.contains(name) && uses(name, in: action.command) {
             return .reservedNameDoesNotFitTheForm(name: name, form: action.perSelection)
         }
 
@@ -111,34 +122,54 @@ public enum FileActionTemplate {
     }
 
     /// Whether `command` is one simple command — no operator that begins a
-    /// second command, and no redirection.
+    /// second command, no redirection, and no assignment prefix.
     ///
     /// Derived from `SnippetCommandSurvey`'s public reading rather than from
-    /// a second tokenizer: the survey appends a span for every word and for
-    /// a comment, and appends NONE for an operator (`|` and `&` are
+    /// a second tokenizer. The survey appends a span for every word and for
+    /// a comment, and appends none for an operator (`|` and `&` are
     /// `advance()` then `beginCommand()`; a redirection operator is consumed
-    /// by its own reader). So an operator is exactly a non-whitespace scalar
-    /// that no span covers.
+    /// by its own reader) nor for a line feed, which it treats as a command
+    /// separator. So an operator is an uncovered scalar that is not a blank
+    /// or a tab. Those two are skipped by `ShellScalar.isBlank` and by
+    /// nothing wider: that file says "Shell lexing must use `isBlank`", and
+    /// the wider Unicode whitespace test would skip the line feed too.
+    ///
+    /// Coverage is a test for the absence of an operator, not a definition
+    /// of one: it can refuse a command that is in fact one simple command,
+    /// because the survey leaves some ordinary text uncovered — a plain
+    /// `$NAME`, and a backslash with the scalar it escapes. `ls $HOME` and `ls my\ file` are therefore refused. That is
+    /// the safe direction for the local side, because an argv does no
+    /// expansion and no unescaping.
     ///
     /// Counting `.commandName` spans would have been the obvious derivation
     /// and it is wrong: an assignment prefix contributes `.commandName`
-    /// spans of its own, which that placement's comment in the survey names
-    /// in those terms.
+    /// spans of its own.
     ///
-    /// Where this is uncertain it refuses. An assignment prefix whose `=`
-    /// falls outside a span reads as "not simple", and that is the right
-    /// answer regardless — `VAR=x cmd` needs a shell, and an argv cannot
-    /// express it.
+    /// An assignment prefix is refused by looking at exactly that: the
+    /// survey closes the literal run `VAR=` as one `.commandName` span, so
+    /// the `=` is covered, and the coverage test alone accepts
+    /// `VAR=x cmd`. A `.commandName` span that contains `=` is refused
+    /// instead, wherever the prefix sits. `--flag=x` is an `.argument` and
+    /// is not touched. `VAR=x cmd` needs a shell, and an argv built from it
+    /// would run a binary named `VAR=x`.
+    ///
+    /// A trailing comment is covered by a `.comment` span, so
+    /// `wc -l {{PATH}} # note` counts as one simple command. That is right
+    /// as shell, but whoever builds an argv from the words must drop the
+    /// comment spans.
     public static func isOneSimpleCommand(_ command: String) -> Bool {
         guard case .surveyed(let spans) = SnippetCommandSurvey.survey(command) else {
             return false
         }
         let scalars = command.unicodeScalars
-        var index = scalars.startIndex
-        while index < scalars.endIndex {
-            defer { index = scalars.index(after: index) }
-            if scalars[index].properties.isWhitespace { continue }
-            let covered = spans.contains { $0.range.contains(index) }
+        for span in spans where span.placement == .commandName {
+            if scalars[span.range].contains { scalar in scalar == "=" } { return false }
+        }
+        var scalarIndex = scalars.startIndex
+        while scalarIndex < scalars.endIndex {
+            defer { scalarIndex = scalars.index(after: scalarIndex) }
+            if ShellScalar.isBlank(scalars[scalarIndex]) { continue }
+            let covered = spans.contains { span in span.range.contains(scalarIndex) }
             if !covered { return false }
         }
         return true
