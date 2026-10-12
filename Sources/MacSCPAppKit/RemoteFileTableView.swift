@@ -1261,6 +1261,10 @@ struct RemoteFileTableView: NSViewRepresentable {
                 // `action.id` — this file never inspects it either.
                 return actionItem(
                     title: L10n.string(action.titleKey, action.titleDefault), entry: entry, selection: selection)
+            case .userFileAction(let action):
+                // The title is the user's own text, so it is not looked up in
+                // a catalogue: there is no key for a name somebody typed.
+                return actionItem(title: action.name, entry: entry, selection: selection)
             }
         }
 
