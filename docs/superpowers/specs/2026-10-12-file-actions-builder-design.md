@@ -177,7 +177,11 @@ failure does not stop the rest.** The app does not read the shell's output,
 so it has nothing to decide on. This is written down because it is the kind
 of behaviour that is otherwise discovered the third time it matters.
 
-## Three consequences found while planning, 2026-10-12
+## Six consequences found while planning, 2026-10-12
+
+**This heading read "Three consequences found while planning, 2026-10-12"**
+until the plan's self-review found three more; the count is withdrawn and
+replaced, and nothing else in the first three changed.
 
 Added after the design was approved, by reading the machinery it builds on
 rather than by reasoning about it. Each is an addition, not a withdrawal.
@@ -207,6 +211,38 @@ The cost is that a file literally named `-foo` cannot be processed by a local
 action; that is a protective outcome, the same shape as the archive design's
 `gzExtractTargetExists`, and it is visible before anything runs rather than
 after. `{{PATH}}` and `{{DIR}}` are unaffected, because they are absolute.
+
+**4. The list has its own name, `{{PATHS}}`, and the form decides which
+name is allowed.** The values table above lists three names; there is a
+fourth. In the `onceWithEveryPath` form `{{PATH}}` has no single value and
+`{{PATHS}}` is the whole selection's paths; in `oncePerFile` it is the other
+way round. The alternative — one name whose meaning follows the form — was
+refused by the maintainer on 2026-10-12: it reads correctly while it is being
+written, and switching the form would change what the command does with
+nothing on screen saying so. `{{DIR}}` fits both forms, because a pane's
+listing never spans directories: `FileSearch` is "bounded strictly to the
+entries already loaded -- no recursion into subdirectories".
+
+**5. A local-capable template may hold no quoting.** The local argv is built
+by splitting the template into words, and a quoted run spans word
+boundaries, so a template holding quotes cannot be split that way. The
+survey's spans are runs rather than words, so reconstructing a word from
+them would mean a second tokenizer. Refusing quoting for a local-capable
+action is the narrower and checkable answer, it is shown in the editor, and
+it costs little: an argv needs no quoting in the first place.
+
+**6. The selection's names must be synthesized as `SnippetVariable`s, or
+their placement is never checked.** This is the load-bearing one, and the
+design as approved did not say it.
+`SnippetVariableSubstitution.firstDeclarationProblem` checks the placement of
+the variables it is **given**, and `{{PATH}}`, `{{PATHS}}`, `{{DIR}}` and
+`{{NAME}}` are not declared by the author — so without synthesizing a
+`SnippetVariable` for each reserved name the command actually uses, the
+position of `{{PATH}}` would never be checked at all. The position check is
+the whole of what keeps a server-chosen name one literal word, so the design's
+central claim rested on a call that was not being made. The plan's Task 2
+synthesizes them, and the test that pins it plants a `{{PATH}}` inside quotes
+that nobody declared.
 
 ## Testing
 
