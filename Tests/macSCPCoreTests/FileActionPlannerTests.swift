@@ -387,6 +387,64 @@ struct FileActionPlannerTests {
         #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(name))"])
     }
 
+    /// Nothing stops an author declaring one name twice, so the template
+    /// holds two identical ranges for it. Assembling the word must skip the
+    /// second rather than slice backwards over the first, which traps.
+    @Test func aVariableDeclaredTwiceFillsItsPlaceholderOnceOnTheLocalPath() throws {
+        let twice = FileAction(
+            name: "n", command: "gzip {{LEVEL}}",
+            variables: [variable("LEVEL"), variable("LEVEL")], runsOn: [.local])
+        let produced = try invocations(
+            twice, [item("/a/x", "x")], promptedValues: ["LEVEL": "-9"])
+        #expect(produced == [FileActionInvocation(executable: "gzip", arguments: ["-9"])])
+    }
+
+    /// The remote path reaches the same declarations through `resolve`,
+    /// which carries its own guard; pinned so that stays true.
+    @Test func aVariableDeclaredTwiceFillsItsPlaceholderOnceOnTheRemotePath() throws {
+        let twice = FileAction(
+            name: "n", command: "gzip {{LEVEL}}",
+            variables: [variable("LEVEL"), variable("LEVEL")], runsOn: [.remote])
+        let plan = try FileActionPlanner.plan(
+            action: twice, selection: [item("/a/x", "x")], side: .remote,
+            promptedValues: ["LEVEL": "-9"]).get()
+        #expect(plan == .shellLines(["gzip '-9'"]))
+    }
+
+    @Test func theSamePlaceholderTwiceInOneLocalWordIsFilledTwice() throws {
+        let produced = try invocations(
+            action("cp {{PATH}} {{NAME}}-{{NAME}}", runsOn: [.local]), [item("/a/x", "x")])
+        #expect(
+            produced == [FileActionInvocation(executable: "cp", arguments: ["/a/x", "x-x"])])
+    }
+
+    @Test func twoAdjacentPlaceholdersInOneLocalWordAreFilledInOrder() throws {
+        let produced = try invocations(
+            action("echo {{DIR}}{{NAME}}", runsOn: [.local]), [item("/a/x", "x")])
+        #expect(produced == [FileActionInvocation(executable: "echo", arguments: ["/ax"])])
+    }
+
+    /// One hostile item among ordinary ones refuses the whole plan: nothing
+    /// is returned for the ordinary items, so nothing runs on a selection
+    /// the user did not see refused.
+    @Test func oneHostileItemAmongOrdinaryOnesRefusesTheWholeLocalPlan() throws {
+        let selection = [item("/a/x", "x"), item("/a/-rf", "-rf"), item("/a/y", "y")]
+        let result = FileActionPlanner.plan(
+            action: action("gzip {{NAME}}", runsOn: [.local]), selection: selection,
+            side: .local)
+        #expect(result == .failure(.valueWouldBeReadAsAnOption(name: "NAME", value: "-rf")))
+
+        // The positive beside it: the same selection through `{{PATH}}` is
+        // three ordinary invocations, in order.
+        let produced = try invocations(action("gzip {{PATH}}", runsOn: [.local]), selection)
+        #expect(
+            produced == [
+                FileActionInvocation(executable: "gzip", arguments: ["/a/x"]),
+                FileActionInvocation(executable: "gzip", arguments: ["/a/-rf"]),
+                FileActionInvocation(executable: "gzip", arguments: ["/a/y"]),
+            ])
+    }
+
     /// A declared variable's prompted value fills its placeholder on the
     /// local path; it is the user's own text, so a leading hyphen is theirs.
     @Test func aPromptedValueFillsItsPlaceholderOnTheLocalPath() throws {

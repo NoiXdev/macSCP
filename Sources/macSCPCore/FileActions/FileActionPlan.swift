@@ -41,9 +41,12 @@ public enum FileActionPlan: Equatable, Sendable {
 ///   `replacingOccurrences` compare `Character`s and miss a placeholder
 ///   followed by a combining mark; see `ShellScalar`.
 ///
-/// This file lexes no shell text. The remote line is assembled by
+/// This file cuts no shell text itself: the remote line is assembled by
 /// `SnippetVariableSubstitution.resolve`, and the local argv is cut along the
-/// spans `SnippetCommandSurvey` reports.
+/// spans `SnippetCommandSurvey` reports. It is on `shellLexingFileNames` in
+/// `SnippetCommandSurveyTests` all the same, because it asks scalar-level
+/// questions of server-chosen values on their way into an argv, and so it is
+/// held to that list's `Character` ban.
 public enum FileActionPlanner {
     public enum Refusal: Error, Equatable, Sendable {
         case template(FileActionTemplate.Problem)
@@ -201,8 +204,15 @@ public enum FileActionPlanner {
         // Checked again here rather than trusted from the gate: this is the
         // function that is about to spawn, and it must not depend on a
         // property that only `firstProblem` establishes.
-        guard case .surveyed(let spans) = SnippetCommandSurvey.survey(action.command) else {
-            return .failure(.template(.notOneSimpleCommandForLocal))
+        // The gate refuses a template the survey cannot read before this runs,
+        // so the reason is carried through only so that a disagreement between
+        // the two shows which construct stopped the reading.
+        let spans: [SnippetCommandSurvey.Span]
+        switch SnippetCommandSurvey.survey(action.command) {
+        case .surveyed(let read):
+            spans = read
+        case .refused(let refusal):
+            return .failure(.template(.declaration(.unanalyzableContext(kind: refusal))))
         }
         guard spans.allSatisfy({ $0.placement != .quoted }) else {
             return .failure(.quotingIsNotRunnableLocally)
@@ -259,6 +269,12 @@ public enum FileActionPlanner {
             var leaderKnown = false
             var cursor = word.range.lowerBound
             for replacement in inside {
+                // Skips a replacement that starts before the last one ended.
+                // That IS reachable: nothing stops an author declaring one
+                // variable name twice, and neither gate rejects it, so the
+                // template then holds two identical ranges for it.
+                // `resolve` has the same guard in its own assembly loop.
+                guard replacement.range.lowerBound >= cursor else { continue }
                 if case .selection(let name) = replacement.source,
                     holdsNul(replacement.value)
                 {
@@ -330,8 +346,18 @@ public enum FileActionPlanner {
 
     /// The absolute path of `item`, normalized as the other selection values
     /// are.
+    ///
+    /// A missing `PATH` stops the process rather than becoming an empty
+    /// string, which would put an empty element into an argv or a quoted
+    /// `''` into a command, silently. `FileActionSelectionValues.values`
+    /// binds all of its keys for every item, so this is a violated
+    /// invariant and not a state a listing can produce; the duplicate
+    /// declaration above is different, because an author can write it.
     private static func path(of item: RemoteFileItem) -> String {
-        FileActionSelectionValues.values(for: item)["PATH"] ?? ""
+        guard let path = FileActionSelectionValues.values(for: item)["PATH"] else {
+            preconditionFailure("FileActionSelectionValues.values(for:) did not bind PATH")
+        }
+        return path
     }
 
     /// Whether the first scalar of `scalars` is a hyphen. Asked of the
