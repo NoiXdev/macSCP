@@ -43,10 +43,12 @@ import macSCPCore
 /// A seventh hazard, closed later than the first six (the residual left
 /// open in `docs/BACKLOG.md` on 2026-09-02, "the row's insert path
 /// appends at the end"): the variable row's "Insert in command" button
-/// lives in `SnippetsSheet.swift`, nowhere near this view, and SwiftUI
-/// hands it no way to reach the `Coordinator` this file already builds
-/// the caret-aware insert on top of (`SnippetBodyInsertion`, Core). See
-/// `SnippetCommandEditorController`, below, for the reach.
+/// lives in whichever editor presents this field — the snippet editor,
+/// and since 2026-10-12 the file-action editor too — nowhere near this
+/// view, and SwiftUI hands it no way to reach the `Coordinator` this file
+/// already builds the caret-aware insert on top of
+/// (`SnippetBodyInsertion`, Core). See `SnippetCommandEditorController`,
+/// below, for the reach.
 struct SnippetCommandEditor: NSViewRepresentable {
     @Binding var text: String
     /// The reach the variable row's insert button needs into this field's
@@ -55,8 +57,8 @@ struct SnippetCommandEditor: NSViewRepresentable {
     let controller: SnippetCommandEditorController
     /// VoiceOver's name for this field. The `TextField(commandLabel, ...)`
     /// this replaced supplied one implicitly, from its own title parameter;
-    /// a raw `NSTextView` supplies none on its own, so the caller
-    /// (`SnippetsSheet`) hands in the exact same localized string its
+    /// a raw `NSTextView` supplies none on its own, so each caller hands in
+    /// the exact same localized string its own
     /// `FormRow` label uses — that label is `.accessibilityHidden(true)`
     /// for precisely this reason (see `FormRow`'s own doc comment: the
     /// wrapped control is expected to carry its own accessibility label).
@@ -389,14 +391,14 @@ struct SnippetCommandEditor: NSViewRepresentable {
     }
 }
 
-/// A mailbox between the variable row's "Insert in command" button
-/// (`SnippetsSheet.swift`) and the command field's live `NSTextView`
-/// (this file). SwiftUI hands the button no way to reach a view built
-/// elsewhere in the sheet, and `SnippetCommandEditor`'s own `Coordinator`
-/// — which already holds that view, from `makeNSView` — is exactly that
-/// reach.
+/// A mailbox between the variable row's "Insert in command" button and the
+/// command field's live `NSTextView` (this file). SwiftUI hands the button
+/// no way to reach a view built elsewhere in the same sheet, and
+/// `SnippetCommandEditor`'s own `Coordinator` — which already holds that
+/// view, from `makeNSView` — is exactly that reach.
 ///
-/// `@State`-held in `SnippetEditorView` so both sides see the same
+/// `@State`-held by whichever editor owns the field — `SnippetEditorView`,
+/// and since 2026-10-12 `FileActionEditor` — so both sides see the same
 /// instance across body re-evaluations: the reference itself never
 /// changes, even though `coordinator` does, filled in once
 /// `SnippetCommandEditor.makeCoordinator()` runs. `coordinator` is `weak`
