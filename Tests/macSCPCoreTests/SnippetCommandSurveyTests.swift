@@ -892,12 +892,19 @@ struct SnippetCommandSurveyTests {
     /// walks a command's scalars asking `ShellScalar.isBlank` of each, which is
     /// lexing in this list's sense, so it is held to the ban and not parked
     /// among the callers.
+    ///
+    /// `FileActionPlan.swift` (2026-10-12) is the sixth: it quotes the
+    /// `{{PATHS}}` list through `PosixQuoting`, but it also asks a per-element
+    /// question of server-chosen text on its way into an argv (whether a
+    /// value begins with a hyphen, whether it holds a NUL), and its first
+    /// spelling of that question compared `Character`s and was wrong.
     private static let shellLexingFileNames = [
         "ShellScalar.swift",
         "PosixQuoting.swift",
         "SnippetCommandSurvey.swift",
         "SnippetVariableSubstitution.swift",
         "FileActionTemplate.swift",
+        "FileActionPlan.swift",
     ]
 
     /// Core files that CALL the shell-lexing code without lexing themselves.
@@ -947,15 +954,9 @@ struct SnippetCommandSurveyTests {
     /// `ArchiveCommandLine.swift` added; the four above are unchanged.
     /// Withdrawn 2026-10-12, quoted: "the four above are unchanged" is five
     /// above with `FileActionTemplate.swift` added; the eight below are
-    /// unchanged. Withdrawn 2026-10-12 again, quoted: "the eight below are
-    /// unchanged" is nine below with `FileActionPlan.swift` added.
-    ///
-    /// `FileActionPlan.swift` (2026-10-12) is the ninth caller: it hands
-    /// every selection-derived path in a `{{PATHS}}` list to
-    /// `PosixQuoting.singleQuoted` and reads no shell text back. The local
-    /// argv is cut along the spans `SnippetCommandSurvey` reports, so it
-    /// asks no per-element question of shell text itself; the one scalar it
-    /// compares is the first of a VALUE, against a hyphen.
+    /// unchanged. Withdrawn 2026-10-12 again, quoted: "is five
+    /// above with `FileActionTemplate.swift` added" is six above with
+    /// `FileActionPlan.swift` added; the eight below are still unchanged.
     /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
     /// this list's only reader; the list above has a second one,
     /// `shellLexingSourceFiles()`, which is where its missing-name throw and
@@ -969,7 +970,6 @@ struct SnippetCommandSurveyTests {
         "SSHKeyConverter.swift",
         "JumpProbeCommand.swift",
         "ArchiveCommandLine.swift",
-        "FileActionPlan.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {

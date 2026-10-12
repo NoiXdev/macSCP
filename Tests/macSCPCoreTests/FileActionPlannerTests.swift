@@ -352,6 +352,41 @@ struct FileActionPlannerTests {
         #expect(isTemplateRefusal)
     }
 
+    /// `execve` truncates an argument at the first NUL, so `a\0b` would run
+    /// on a file called `a` while the confirmation sheet displayed another.
+    /// A POSIX path cannot hold one; an SFTP name can.
+    @Test func aNameHoldingANulCharacterIsRefusedOnTheLocalPath() {
+        let name = "a\u{0}b"
+        let result = FileActionPlanner.plan(
+            action: action("gzip {{NAME}}", runsOn: [.local]),
+            selection: [item("/a/" + name, name)], side: .local)
+        #expect(result == .failure(.valueHoldsANulCharacter(name: "NAME", value: name)))
+    }
+
+    @Test func aPathHoldingANulCharacterIsRefusedOnTheLocalPath() {
+        let path = "/a/x\u{0}y"
+        let result = FileActionPlanner.plan(
+            action: action("gzip {{PATH}}", runsOn: [.local]),
+            selection: [item(path, "xy")], side: .local)
+        #expect(result == .failure(.valueHoldsANulCharacter(name: "PATH", value: path)))
+    }
+
+    @Test func aNulCharacterInOneOfEveryPathIsRefusedOnTheLocalPath() {
+        let hostile = "/a/y\u{0}z"
+        let result = FileActionPlanner.plan(
+            action: action("zip out.zip {{PATHS}}", runsOn: [.local], form: .onceWithEveryPath),
+            selection: [item("/a/x", "x"), item(hostile, "yz")], side: .local)
+        #expect(result == .failure(.valueHoldsANulCharacter(name: "PATHS", value: hostile)))
+    }
+
+    /// The refusal belongs to the LOCAL path, where `execve` is the reader.
+    /// On the remote path the value is quoted text typed into a shell.
+    @Test func aNameHoldingANulCharacterIsNotRefusedOnTheRemotePath() throws {
+        let name = "a\u{0}b"
+        let produced = try lines(action("wc -l {{NAME}}"), [item("/a/" + name, name)])
+        #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(name))"])
+    }
+
     /// A declared variable's prompted value fills its placeholder on the
     /// local path; it is the user's own text, so a leading hyphen is theirs.
     @Test func aPromptedValueFillsItsPlaceholderOnTheLocalPath() throws {
