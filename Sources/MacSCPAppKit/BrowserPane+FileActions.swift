@@ -10,6 +10,17 @@ struct FileActionRequest: Identifiable {
     let outcome: Result<FileActionPlan, FileActionPlanner.Refusal>
 }
 
+/// An action that declares variables, waiting for their values. Held from the
+/// moment the menu entry is chosen until the user answers the prompt; nothing
+/// has been planned yet, because the plan needs the values.
+struct FileActionPrompt: Identifiable {
+    let id = UUID()
+    let action: FileAction
+    let selection: [RemoteFileItem]
+    let snippet: Snippet
+    let initialValues: [String: String]
+}
+
 /// How a remote action reaches the user's own shell: the pane is handed this
 /// by the window, because the terminal belongs to the tab and not to a pane.
 ///
@@ -32,11 +43,35 @@ extension BrowserPane {
     /// The side is the pane's own `side`, the single source for which pane
     /// this is. It is not derived from `supportsArchiving`, which says what
     /// the pane can do and is `false` on a remote pane that cannot archive.
+    ///
+    /// **An action that declares variables asks for their values first.**
+    /// The planner fills a declared placeholder from `promptedValues` and,
+    /// given none, with the empty string, so planning such an action here
+    /// would type or spawn it with an empty argument where its author
+    /// expected a value. The prompt is the snippet trigger's own sheet and
+    /// remembers nothing; confirming it plans, cancelling it does not.
     func beginFileAction(_ action: FileAction, selection: [RemoteFileItem]) {
+        guard action.variables.isEmpty else {
+            fileActionPrompt = FileActionPrompt(
+                action: action, selection: selection,
+                snippet: fileActionPromptSnippet(for: action),
+                initialValues: fileActionPromptValues(for: action))
+            return
+        }
+        presentFileActionRequest(action, selection, promptedValues: [:])
+    }
+
+    /// Plans with the values given and opens the confirmation sheet. The one
+    /// place a plan is made for the menu, so the values the user typed are
+    /// the values the sheet shows and the run sends.
+    func presentFileActionRequest(
+        _ action: FileAction, _ selection: [RemoteFileItem], promptedValues: [String: String]
+    ) {
         fileActionRequest = FileActionRequest(
             action: action, selection: selection,
             outcome: FileActionPlanner.plan(
-                action: action, selection: selection, side: side))
+                action: action, selection: selection, side: side,
+                promptedValues: promptedValues))
     }
 
     /// Starts what the user confirmed. The two paths are deliberately
