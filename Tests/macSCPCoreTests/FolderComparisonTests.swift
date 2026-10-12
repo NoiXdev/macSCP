@@ -1,0 +1,377 @@
+import Foundation
+import Synchronization
+import Testing
+
+@testable import macSCPCore
+
+/// `@MainActor` because `FolderComparison.walk` is: its two callbacks are
+/// plain closures that mutate the locals captured here.
+@Suite @MainActor struct FolderComparisonTests {
+    @Test func rowsCarryThePathRelativeToEachRoot() async throws {
+        let left = FakeFS(listings: ["/l": [dir("sub")], "/l/sub": [file("a", 1)]])
+        let right = FakeFS(listings: ["/r": [dir("sub")], "/r/sub": [file("a", 2)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.contains { $0.relativePath == "sub/a" && $0.state == .differs })
+        // The directory pair is descended into and not reported itself: a
+        // `.bothDirectories` row would say nothing the children do not.
+        #expect(!rows.contains { $0.relativePath == "sub" })
+        // Positive control for the check above: the walk did reach "sub".
+        #expect(left.listedPaths == ["/l", "/l/sub"])
+    }
+
+    /// A root of "/" must not produce "//sub" for its children.
+    @Test func aRootOfSlashJoinsWithoutDoubledSeparators() async throws {
+        let left = FakeFS(listings: ["/": [dir("sub")], "/sub": [file("a", 1)]])
+        let right = FakeFS(listings: ["/": [dir("sub")], "/sub": [file("a", 2)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/", right: right, rightRoot: "/",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.map(\.relativePath) == ["sub/a"])
+        #expect(left.listedPaths == ["/", "/sub"])
+    }
+
+    @Test func aDirectoryOnOneSideOnlyIsOneRowAndIsNotDescendedInto() async throws {
+        let left = FakeFS(listings: ["/l": [dir("gone")], "/l/gone": [file("x", 1)]])
+        let right = FakeFS(listings: ["/r": []])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.map(\.relativePath) == ["gone"])
+        #expect(rows.first?.state == .onlyLeft)
+        #expect(left.listCalls == 1)  // the root only
+    }
+
+    /// Descent follows `.bothDirectories` and nothing else. A matching file
+    /// pair is `.same`, is reported, and is never listed.
+    @Test func aMatchingFilePairIsReportedAndNotDescendedInto() async throws {
+        let hex = String(repeating: "a", count: 64)
+        let left = FakeFS(
+            listings: ["/l": [file("a", 7)], "/l/a": [file("trap", 1)]],
+            checksums: ["/l/a": [.sha256: hex]])
+        let right = FakeFS(
+            listings: ["/r": [file("a", 7)], "/r/a": [file("trap", 1)]],
+            checksums: ["/r/a": [.sha256: hex]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows == [ComparisonRow(relativePath: "a", state: .same)])
+        #expect(left.listedPaths == ["/l"])
+        // Positive control: the pair really was compared, so `.same` is a
+        // measured answer and not a default.
+        #expect(left.checksumCalls == 1)
+    }
+
+    /// Review Focus 5: the cancel must stop the WALK, not just the reporting.
+    /// The task is created on the main actor and cancelled before this test
+    /// next suspends, so it cannot have begun: the first check must stop it
+    /// before a single listing.
+    @Test func cancellingStopsTheWalkRatherThanOnlyTheReporting() async throws {
+        let left = FakeFS(listings: deepTree(prefix: "/l", depth: 40))
+        let right = FakeFS(listings: deepTree(prefix: "/r", depth: 40))
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { _ in }, onProgress: { _ in })
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.listCalls == 0)
+        #expect(right.listCalls == 0)
+    }
+
+    /// The per-directory check, alone: a level of empty directories has no
+    /// pairs, so the per-pair check never runs and only the check before each
+    /// listing can stop the walk. Cancelled from inside the second listing;
+    /// without that check all ten children would still be listed.
+    @Test func aCancelAcrossEmptyDirectoriesIsStoppedByTheCheckBeforeEachListing() async throws {
+        let names = (0..<10).map { "e\($0)" }
+        var listings: [String: [RemoteFileItem]] = ["/l": names.map { dir($0) }]
+        var rightListings: [String: [RemoteFileItem]] = ["/r": names.map { dir($0) }]
+        for name in names {
+            listings["/l/" + name] = []
+            rightListings["/r/" + name] = []
+        }
+        let left = FakeFS(listings: listings)
+        let right = FakeFS(listings: rightListings)
+        left.onList = { count in
+            if count == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { _ in }, onProgress: { _ in })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.listCalls == 2)  // the root, then the one that was cancelled
+    }
+
+    /// The same property with the mechanism proven to have run: the walk is
+    /// cancelled from INSIDE its third listing, after it has demonstrably
+    /// descended twice, and must not list a fourth directory. The count is
+    /// exact because nothing between a listing and the next check can list.
+    @Test func aCancelDuringTheWalkStopsItBeforeTheNextListing() async throws {
+        let left = FakeFS(listings: deepTree(prefix: "/l", depth: 40))
+        let right = FakeFS(listings: deepTree(prefix: "/r", depth: 40))
+        left.onList = { count in
+            if count == 3 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        var progressReports = 0
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { _ in }, onProgress: { _ in progressReports += 1 })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.listCalls == 3)
+        #expect(right.listCalls == 3)
+        // Positive control: levels 1 and 2 ran to completion first.
+        #expect(progressReports == 2)
+    }
+
+    /// The per-pair check: a flat directory of equal-size files, cancelled
+    /// while the second pair is being classified. The pair in flight finishes;
+    /// the third is never asked about.
+    @Test func aCancelDuringAPairStopsBeforeTheNextPair() async throws {
+        let hex = String(repeating: "c", count: 64)
+        let items = (0..<10).map { file("f\($0)", 5) }
+        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        for item in items {
+            leftSums["/l/" + item.name] = [.sha256: hex]
+            rightSums["/r/" + item.name] = [.sha256: hex]
+        }
+        let left = FakeFS(listings: ["/l": items], checksums: leftSums)
+        let right = FakeFS(listings: ["/r": items], checksums: rightSums)
+        left.onChecksum = { count in
+            if count == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        var rows: [ComparisonRow] = []
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.checksumCalls == 2)
+        #expect(rows.count == 2)
+    }
+
+    /// The ordinary local-to-S3 pair: one side answers from an ETag, which is
+    /// always MD5, the other computes the user's choice. Without the retry
+    /// every equal-size pair comes back `.algorithmsDiffer`.
+    @Test func anETagSideIsRetriedWithMD5RatherThanLeftUndetermined() async throws {
+        let md5 = "d41d8cd98f00b204e9800998ecf8427e"
+        let left = FakeFS(
+            listings: ["/l": [file("a", 7)]],
+            checksums: ["/l/a": [.sha256: String(repeating: "e", count: 64), .md5: md5]])
+        let right = FakeFS(
+            listings: ["/r": [file("a", 7)]],
+            checksums: ["/r/a": [.md5: md5]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.first { $0.relativePath == "a" }?.state == .same)
+        // Positive control: the first pass asked for sha256, the retry for md5.
+        #expect(left.askedAlgorithms == [.sha256, .md5])
+    }
+
+    /// The retry must not loop: two sides that still disagree under MD5 stay
+    /// undetermined rather than retrying forever. Each side answers with an
+    /// algorithm of its own whatever it is asked, so both passes disagree.
+    @Test func theRetryHappensAtMostOnce() async throws {
+        let left = FakeFS(
+            listings: ["/l": [file("a", 7)]],
+            checksums: ["/l/a": [.md5: String(repeating: "a", count: 32)]])
+        let right = FakeFS(
+            listings: ["/r": [file("a", 7)]],
+            checksums: ["/r/a": [.sha1: String(repeating: "b", count: 40)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.first?.state == .undetermined(.algorithmsDiffer))
+        #expect(left.askedAlgorithms == [.sha256, .md5])  // first pass, one retry, no third
+    }
+
+    /// With MD5 already chosen there is nothing different to retry with.
+    @Test func chosenMD5IsNotRetried() async throws {
+        let left = FakeFS(
+            listings: ["/l": [file("a", 7)]],
+            checksums: ["/l/a": [.md5: String(repeating: "a", count: 32)]])
+        let right = FakeFS(
+            listings: ["/r": [file("a", 7)]],
+            checksums: ["/r/a": [.sha1: String(repeating: "b", count: 40)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .md5, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.first?.state == .undetermined(.algorithmsDiffer))
+        #expect(left.askedAlgorithms == [.md5])
+    }
+
+    /// The laziness the design rests on: a size difference settles a pair
+    /// without any checksum, retry or not.
+    @Test func aSizeDifferenceAsksNoChecksumAtAll() async throws {
+        let left = FakeFS(listings: ["/l": [file("a", 1)]])
+        let right = FakeFS(listings: ["/r": [file("a", 2)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.first?.state == .differs)
+        #expect(left.checksumCalls == 0)
+        #expect(right.checksumCalls == 0)
+    }
+
+    @Test func progressReportsTheDirectoriesSeenSoFar() async throws {
+        let left = FakeFS(listings: ["/l": [dir("a")], "/l/a": []])
+        let right = FakeFS(listings: ["/r": [dir("a")], "/r/a": []])
+        var seen: [Int] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { _ in },
+            onProgress: { seen.append($0.directoriesVisited) })
+        #expect(seen == [1, 2])
+    }
+
+    @Test func progressCountsTheRowsProducedSoFar() async throws {
+        let left = FakeFS(listings: ["/l": [dir("a"), file("x", 1)], "/l/a": [file("y", 1)]])
+        let right = FakeFS(listings: ["/r": [dir("a"), file("x", 2)], "/r/a": []])
+        var last: ComparisonProgress?
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { _ in }, onProgress: { last = $0 })
+        // x differs; a/y is only on the left.
+        #expect(last == ComparisonProgress(directoriesVisited: 2, rowsProduced: 2))
+    }
+}
+
+// MARK: - Helpers
+
+private func dir(_ name: String) -> RemoteFileItem {
+    RemoteFileItem(name: name, path: name, kind: .directory)
+}
+
+private func file(_ name: String, _ size: UInt64) -> RemoteFileItem {
+    RemoteFileItem(name: name, path: name, kind: .file, size: size)
+}
+
+/// `prefix` lists one directory "d", which lists one directory "d", and so on
+/// `depth` levels down; the last one is empty.
+private func deepTree(prefix: String, depth: Int) -> [String: [RemoteFileItem]] {
+    var listings: [String: [RemoteFileItem]] = [:]
+    var path = prefix
+    for _ in 0..<depth {
+        listings[path] = [dir("d")]
+        path = RemotePath.join(path, "d")
+    }
+    listings[path] = []
+    return listings
+}
+
+/// A file system that answers `list` from a dictionary and checksums from
+/// another, and COUNTS both, so a test can assert that a walk stopped rather
+/// than merely stopped reporting.
+///
+/// `list` rewrites each item's `path` to `directory + name`, as a real
+/// backend does, so the checksum table can be keyed by the path a file really
+/// has. A directory that is not in `listings` throws `notFound`: a walk that
+/// asks for a path it should not have built fails loudly instead of reading
+/// as an empty folder.
+///
+/// A checksum request is answered with the requested algorithm when the table
+/// has it, and otherwise with whatever the table does hold for that path,
+/// which is what an object store does (its ETag is MD5 whatever was asked).
+/// A path with no table entry answers `.unavailableOnThisConnection`.
+private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
+    private struct State {
+        var listedPaths: [String] = []
+        var asked: [ChecksumAlgorithm] = []
+        var onList: (@Sendable (Int) -> Void)?
+        var onChecksum: (@Sendable (Int) -> Void)?
+    }
+
+    private let listings: [String: [RemoteFileItem]]
+    private let checksums: [String: [ChecksumAlgorithm: String]]
+    private let state = Mutex(State())
+
+    init(
+        listings: [String: [RemoteFileItem]],
+        checksums: [String: [ChecksumAlgorithm: String]] = [:]
+    ) {
+        self.listings = listings
+        self.checksums = checksums
+    }
+
+    // Read after a walk ends, never during one.
+    var listCalls: Int { state.withLock { $0.listedPaths.count } }
+    var listedPaths: [String] { state.withLock { $0.listedPaths } }
+    var checksumCalls: Int { state.withLock { $0.asked.count } }
+    var askedAlgorithms: [ChecksumAlgorithm] { state.withLock { $0.asked } }
+
+    /// Fired with the 1-based call number, after the call is counted.
+    var onList: (@Sendable (Int) -> Void)? {
+        get { state.withLock { $0.onList } }
+        set { state.withLock { $0.onList = newValue } }
+    }
+    var onChecksum: (@Sendable (Int) -> Void)? {
+        get { state.withLock { $0.onChecksum } }
+        set { state.withLock { $0.onChecksum = newValue } }
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] {
+        let (count, hook) = state.withLock { s -> (Int, (@Sendable (Int) -> Void)?) in
+            s.listedPaths.append(path)
+            return (s.listedPaths.count, s.onList)
+        }
+        hook?(count)
+        guard let items = listings[path] else { throw RemoteFSError.notFound(path: path) }
+        return items.map {
+            RemoteFileItem(
+                name: $0.name, path: RemotePath.join(path, $0.name), kind: $0.kind, size: $0.size)
+        }
+    }
+
+    func remoteChecksum(
+        forFileAt path: String, algorithm: ChecksumAlgorithm
+    ) async throws -> RemoteChecksumOutcome {
+        let (count, hook) = state.withLock { s -> (Int, (@Sendable (Int) -> Void)?) in
+            s.asked.append(algorithm)
+            return (s.asked.count, s.onChecksum)
+        }
+        hook?(count)
+        guard let table = checksums[path] else { return .unavailableOnThisConnection }
+        let answered = table[algorithm].map { (algorithm, $0) }
+            ?? table.first.map { ($0.key, $0.value) }
+        guard let (answeredAlgorithm, hex) = answered,
+            let value = FileChecksum.computedOnRemote(answeredAlgorithm, hex: hex)
+        else { return .unavailableOnThisConnection }
+        return .checksum(value)
+    }
+
+    func stat(path: String) async throws -> RemoteFileItem {
+        throw RemoteFSError.notFound(path: path)
+    }
+    func readStream(
+        path: String, fromOffset offset: UInt64
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+    func write(
+        path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>
+    ) async throws {}
+    func delete(path: String) async throws {}
+    func createDirectory(at path: String) async throws {}
+    func rename(from: String, to: String) async throws {}
+    func setPermissions(path: String, permissions: UInt32) async throws {}
+    func deleteTree(at path: String) async throws {}
+    func homeDirectoryPath() async throws -> String { "/" }
+    func disconnect() async {}
+}
