@@ -219,6 +219,25 @@ returns a reason when it cannot. Two refusals, both new in this design:
   git's own heuristic and is adopted here by name rather than invented; or
   content that is not valid UTF-8.
 - **Too large.** A starting ceiling of **4 MiB per side**, refusing above it.
+  **Corrected 2026-10-13, on Task 5's report: this bullet described the whole
+  of the protection, and it is not.** `FileDiff`'s table grows with the
+  PRODUCT of the two LINE counts, and a 4 MiB file of one-character lines
+  holds about two million lines. Derived 2026-10-13 with the command below,
+  which is on one line so that it runs in the form it is committed — an
+  earlier draft of this bullet wrapped it mid-sentence, where it could not be
+  extracted and run at all:
+
+  ```
+  /usr/bin/python3 -I -c "c=4*1024*1024; n=c//2; e=(n+1)*(n+1); print(f'{n:,} lines, {e:.3e} entries, {e*8/1e12:.1f} TB')"
+  ```
+
+  It prints `2,097,152 lines, 4.398e+12 entries, 35.2 TB`.
+  A pair that passes this ceiling can therefore still ask for 35 terabytes. A
+  bound in bytes cannot bound a quantity measured in lines, and no byte
+  ceiling small enough to do so would admit an ordinary source file. Task 6
+  settles the bound that binds — a line count, a product, or a diff that does
+  not allocate the table — and the refusal reaches the user as a reason
+  rather than as a crash.
   **This number is a starting value and not a measurement.** Nothing in the
   tree sets a precedent, and a line diff's cost is dominated by the number of
   differences rather than by the file size, so the plan carries the
