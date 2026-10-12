@@ -2,10 +2,11 @@ import Foundation
 
 /// Which pane a context menu belongs to (M7b) — the editor entry exists
 /// only on the remote side.
-/// Raw values and `Codable`/`Hashable` since the file-actions plan of
-/// 2026-10-12: a `FileAction` persists which sides it may run on, and a
-/// stored side has to survive a relaunch by name rather than by ordinal.
-public enum BrowserPaneSide: String, Codable, Hashable, Sendable {
+/// Raw values, `CaseIterable` and `Codable`/`Hashable` since the file-actions
+/// plan of 2026-10-12: a `FileAction` persists which sides it may run on, a
+/// stored side has to survive a relaunch by name rather than by ordinal, and
+/// `allCases` gives the encoder an ordered source to walk.
+public enum BrowserPaneSide: String, CaseIterable, Codable, Hashable, Sendable {
     case local, remote
 }
 

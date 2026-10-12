@@ -14,10 +14,27 @@ struct FileActionTests {
         #expect(back == action)
     }
 
+    /// The custom encoder and decoder branch on `variables` and on a
+    /// two-element `runsOn`, which the test above does not reach.
+    @Test func roundTripsWithVariablesAndBothSides() throws {
+        let variable = SnippetVariable(
+            name: "MODE", prompt: "Mode?", kind: .selection(["fast", "safe"]),
+            placement: .placeholder, defaultValue: "fast", remembersLastValue: false)
+        let action = FileAction(
+            name: "Archive", command: "tar -czf {{MODE}}.tgz {{PATH}}",
+            variables: [variable], runsOn: [.local, .remote], perSelection: .oncePerFile)
+        let data = try JSONEncoder().encode(action)
+        let back = try JSONDecoder().decode(FileAction.self, from: data)
+        #expect(back == action)
+    }
+
     /// A `Set`'s iteration order is not stable across process launches, so an
     /// encoder that wrote it straight out would rewrite the store file
-    /// differently on every save. The encoding sorts by raw value instead.
-    @Test func runsOnEncodesSortedByRawValue() throws {
+    /// differently on every save. The encoding walks `BrowserPaneSide.allCases`
+    /// instead. This is a single probe of that property, not a sensitivity
+    /// measurement: the hashing seed is fixed for the life of a process, so a
+    /// two-element set presents one of its two hash orders per run.
+    @Test func runsOnEncodesInDeclarationOrder() throws {
         let action = FileAction(
             name: "n", command: "c", runsOn: [.remote, .local],
             perSelection: .oncePerFile)
