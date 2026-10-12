@@ -370,4 +370,46 @@ struct BrowserContextMenuTests {
 
         #expect(entries == [.copyPath])
     }
+
+    // MARK: - User-defined actions (file-actions plan, 2026-10-12)
+
+    @Test func aUserActionIsOfferedOnTheSideItDeclares() {
+        let remoteOnly = FileAction(name: "Count", command: "wc -l {{PATH}}", runsOn: [.remote])
+        let onRemote = BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, userFileActions: [remoteOnly])
+        let onLocal = BrowserContextMenu.entries(
+            for: [file("a")], side: .local, userFileActions: [remoteOnly])
+        #expect(onRemote.contains(.userFileAction(remoteOnly)))
+        #expect(onLocal.contains(.userFileAction(remoteOnly)) == false)
+    }
+
+    /// A store file can hold an action the editor would have refused. It is
+    /// not offered, rather than offered and failing when clicked.
+    @Test func anInvalidActionIsNotOffered() {
+        let invalid = FileAction(name: "Broken", command: "wc -l '{{PATH}}'", runsOn: [.remote])
+        #expect(FileActionTemplate.firstProblem(in: invalid) != nil)
+        let entries = BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, userFileActions: [invalid])
+        #expect(entries.contains(.userFileAction(invalid)) == false)
+    }
+
+    /// Offered last, so adding one never moves an entry a user's hand has
+    /// learned. The positive beside that: `delete` is still present.
+    @Test func userActionsComeAfterEveryBuiltInEntry() {
+        let action = FileAction(name: "Count", command: "wc -l {{PATH}}", runsOn: [.remote])
+        let entries = BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, userFileActions: [action])
+        let deleteIndex = entries.firstIndex(of: .delete)
+        let actionIndex = entries.firstIndex(of: .userFileAction(action))
+        #expect(deleteIndex != nil)
+        #expect(actionIndex != nil)
+        if let deleteIndex, let actionIndex { #expect(actionIndex > deleteIndex) }
+    }
+
+    @Test func noUserActionsLeavesTheMenuExactlyAsItWas() {
+        let without = BrowserContextMenu.entries(for: [file("a")], side: .remote)
+        let withEmpty = BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, userFileActions: [])
+        #expect(withEmpty == without)
+    }
 }

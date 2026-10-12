@@ -460,6 +460,8 @@ extension ContentView {
                                             break   // handled inside BrowserPane, never forwarded
                                         case .backendFileAction:
                                             break   // never contributed on the LOCAL pane (fileActions is nil here)
+                                        case .userFileAction:
+                                            break   // dispatched inside BrowserPane once the file-actions plan wires it, never forwarded
                                         case .compressTo, .extractArchive:
                                             break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
                                         }
@@ -550,6 +552,8 @@ extension ContentView {
                                             break   // handled inside BrowserPane, never forwarded
                                         case .compressTo, .extractArchive:
                                             break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
+                                        case .userFileAction:
+                                            break   // dispatched inside BrowserPane once the file-actions plan wires it, never forwarded
                                         case .backendFileAction(let action):
                                             // Currently the only backend-contributed action is
                                             // S3's presigned URL (M14/T5) — keyed off `action.id`

@@ -45,6 +45,12 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case extractArchive(ArchiveExtractFormat)  // single row whose name names a format
     case delete                // any non-empty selection
     case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
+    /// An action the USER wrote (file-actions plan, 2026-10-12). Its own
+    /// case rather than a `FileActionContribution`: that type carries an
+    /// id and a title and has nowhere to put a template, and a backend's
+    /// action is a capability of the connection while this one is
+    /// something the user authored.
+    case userFileAction(FileAction)
 }
 
 public enum BrowserContextMenu {
@@ -52,6 +58,10 @@ public enum BrowserContextMenu {
     /// The `crossSessionTargets` parameter lists remote panes from other tabs
     /// that can receive transfers — these appear in the submenu right after
     /// the "to other pane" item when `transferToOtherPane` is present.
+    /// `fileActions` are the BACKEND's contributions (a capability of the
+    /// connection); `userFileActions` are the ones the user wrote. They are
+    /// different things and keep different parameters and different entries.
+    ///
     /// `supportsChecksum` says whether this pane's backend can answer the
     /// checksum question at all — `ChecksumAvailability.isOffered(for:)` for
     /// a remote pane, the local file system's own conformance for the local
@@ -108,6 +118,7 @@ public enum BrowserContextMenu {
         for selection: [RemoteFileItem], side: BrowserPaneSide,
         crossSessionTargets: [CrossSessionTarget] = [],
         fileActions: [FileActionContribution] = [],
+        userFileActions: [FileAction] = [],
         supportsChecksum: Bool = false,
         supportsArchiving: Bool = false,
         scope: BrowserScope = .ordinary,
@@ -198,6 +209,15 @@ public enum BrowserContextMenu {
             }
         }
         entries.append(.delete)
+        // Offered LAST, after `delete`: adding an action must never move an
+        // entry a user's hand has learned. Only actions that declare this
+        // side and that `FileActionTemplate` finds no problem with — a
+        // hand-edited store file can hold one the editor would have refused,
+        // and an entry that fails when clicked is worse than one that is
+        // absent.
+        entries += userFileActions
+            .filter { $0.runsOn.contains(side) && FileActionTemplate.firstProblem(in: $0) == nil }
+            .map { .userFileAction($0) }
         return entries
     }
 }
