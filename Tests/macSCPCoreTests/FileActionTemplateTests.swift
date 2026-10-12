@@ -71,6 +71,35 @@ struct FileActionTemplateTests {
         #expect(FileActionTemplate.firstProblem(in: remoteAction(command)) == nil)
     }
 
+    /// An empty command passes every other check: with no declared variable
+    /// there is nothing for the declaration check to look at, and an empty
+    /// survey is "one simple command". The gate has to say so itself, or an
+    /// import stores an action that types a bare newline into a shell.
+    @Test func aCommandOfNothingButBlanksIsRefusedOnEverySide() {
+        for command in ["", "   ", "\n", " \t\r\n "] {
+            for sides: Set<BrowserPaneSide> in [[.remote], [.local], [.local, .remote]] {
+                let action = FileAction(name: "n", command: command, runsOn: sides)
+                #expect(
+                    FileActionTemplate.firstProblem(in: action) == .emptyCommand,
+                    "\(command.debugDescription) on \(sides)")
+            }
+        }
+    }
+
+    /// The control beside it: one word is a command, so the refusal is about
+    /// there being nothing, not about short commands.
+    @Test func aOneWordCommandIsNotEmpty() {
+        #expect(FileActionTemplate.firstProblem(in: remoteAction("ls")) == nil)
+        #expect(FileActionTemplate.firstProblem(in: localAction("ls")) == nil)
+    }
+
+    /// An action with no side AND no command says the side first: the order
+    /// the gate has always answered in, so no existing sentence moves.
+    @Test func noSideStillOutranksAnEmptyCommand() {
+        let action = FileAction(name: "n", command: "", runsOn: [])
+        #expect(FileActionTemplate.firstProblem(in: action) == .noSideDeclared)
+    }
+
     /// Quoting cannot be run locally: the argv is cut along word spans and a
     /// quoted span would have to be unquoted, which nothing on that path
     /// does. It used to be met only when the action was RUN; the gate now

@@ -76,6 +76,10 @@ func fileActionProblemText(for problem: FileActionTemplate.Problem) -> String {
             "Choose where this action runs: in the remote pane, in the local pane, or in both.")
     case .reservedNameDoesNotFitTheForm(let name, let form):
         return fileActionFormMismatchText(name: name, form: form)
+    case .emptyCommand:
+        return L10n.string(
+            "fileAction.problem.noCommand",
+            "Type the command this action runs: there is nothing to run yet.")
     case .quotingIsNotRunnableLocally:
         return L10n.string(
             "fileAction.problem.quotingLocal",

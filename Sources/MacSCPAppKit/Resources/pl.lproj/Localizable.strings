@@ -1592,3 +1592,4 @@
 "menu.fileActions.manage" = "Zarządzaj akcjami na plikach…";
 "fileAction.plan.shell" = "Wpisywane w powłoce tego połączenia.";
 "fileAction.plan.direct" = "Uruchamiane bezpośrednio na tym Macu, bez powłoki.";
+"fileAction.problem.noCommand" = "Wpisz polecenie, które ta akcja uruchamia: na razie nie ma czego uruchomić.";

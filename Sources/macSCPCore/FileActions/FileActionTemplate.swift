@@ -36,6 +36,12 @@ public enum FileActionTemplate {
         /// interprets quoting. Part of the gate rather than found when the
         /// action is run, so that the editor can refuse it at save time.
         case quotingIsNotRunnableLocally
+        /// The command holds nothing but blanks and line breaks. Nothing else
+        /// in the gate looks at an empty command: with no declared variables
+        /// `firstDeclarationProblem` has nothing to check and an empty survey
+        /// is one simple command, so an action that would type a bare newline
+        /// into a shell, or spawn nothing, would otherwise pass.
+        case emptyCommand
     }
 
     /// Every name the selection supplies. A declared variable may not take
@@ -95,6 +101,7 @@ public enum FileActionTemplate {
     /// The first reason this action cannot run, or `nil`.
     public static func firstProblem(in action: FileAction) -> Problem? {
         if action.runsOn.isEmpty { return .noSideDeclared }
+        if !hasText(action.command) { return .emptyCommand }
 
         for variable in action.variables where reservedNames.contains(variable.name) {
             return .reservedVariableName(variable.name)
@@ -132,6 +139,17 @@ public enum FileActionTemplate {
             return .quotingIsNotRunnableLocally
         }
         return nil
+    }
+
+    /// Whether `command` holds anything but white space. Asked of each
+    /// `Unicode.Scalar`, as the rest of this file asks its questions, and with
+    /// the Unicode White_Space property, which covers every blank and line
+    /// break the editor's trim removes.
+    private static func hasText(_ command: String) -> Bool {
+        for scalar in command.unicodeScalars where !scalar.properties.isWhitespace {
+            return true
+        }
+        return false
     }
 
     /// Whether the survey reads any span of `command` as quoted. A command

@@ -24,7 +24,14 @@ struct FileActionsPresentationTests {
             .noSideDeclared,
             .reservedNameDoesNotFitTheForm(name: "PATHS", form: .oncePerFile),
             .quotingIsNotRunnableLocally,
+            .emptyCommand,
         ]
+    }
+
+    /// The case name of a value or of a source line: the text up to the first
+    /// parenthesis, colon or comma.
+    private func caseName(_ text: some StringProtocol) -> String {
+        String(text.prefix { $0 != "(" && $0 != ":" && $0 != "," && $0 != " " })
     }
 
     // MARK: - One sentence per case
@@ -41,8 +48,10 @@ struct FileActionsPresentationTests {
         let enumStart = try #require(template.range(of: "public enum Problem"))
         let enumBody = String(template[enumStart.upperBound...])
         let enumEnd = try #require(enumBody.range(of: "\n    }\n"))
-        let declared = enumBody[..<enumEnd.lowerBound]
-            .split(separator: "\n").filter { $0.hasPrefix("        case ") }.count
+        let declaredLines = enumBody[..<enumEnd.lowerBound]
+            .split(separator: "\n").filter { $0.hasPrefix("        case ") }
+        let declaredNames = Set(declaredLines.map { caseName($0.dropFirst("        case ".count)) })
+        let declared = declaredLines.count
 
         let presentation = try SourceCorpus.code(
             of: Self.repoRoot.appendingPathComponent(
@@ -52,11 +61,17 @@ struct FileActionsPresentationTests {
         let body = String(presentation[start.upperBound...])
         let end = try #require(body.range(of: "\n}\n"))
         let function = body[..<end.lowerBound]
-        let arms = function.split(separator: "\n").filter { $0.hasPrefix("    case .") }.count
+        let armLines = function.split(separator: "\n").filter { $0.hasPrefix("    case .") }
+        let armNames = Set(armLines.map { caseName($0.dropFirst("    case .".count)) })
+        let arms = armLines.count
 
         #expect(declared > 0, "the enum could not be read")
         #expect(arms == declared, "\(declared) cases, \(arms) arms")
-        #expect(problems().count == declared, "the fixture list is out of step with the enum")
+        // By name and not only by number: a case added to the enum is named
+        // in the failure, whichever of the arms or the fixture lacks it.
+        #expect(armNames == declaredNames, "arms differ from the enum by \(armNames.symmetricDifference(declaredNames))")
+        let fixtureNames = Set(problems().map { caseName(String(describing: $0)) })
+        #expect(fixtureNames == declaredNames, "the fixture differs from the enum by \(fixtureNames.symmetricDifference(declaredNames))")
         #expect(function.contains("default:") == false)
     }
 
