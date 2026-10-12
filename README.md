@@ -4,7 +4,6 @@
 [![Latest release](https://img.shields.io/github/v/release/NoiXdev/macSCP?label=release)](https://github.com/NoiXdev/macSCP/releases/latest)
 [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-555)](#install)
 [![License: MIT](https://img.shields.io/github/license/NoiXdev/macSCP?label=license)](LICENSE)
-[![Discord](https://img.shields.io/discord/1550965846594289727?style=for-the-badge&label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/sHcvJfXhq)
 
 **A fast, native SFTP client for the Mac — two panes, saved sessions, and a
 built-in terminal.**
