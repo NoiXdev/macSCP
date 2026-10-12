@@ -79,28 +79,18 @@ struct FileActionPlannerTests {
 
     // MARK: - Review Focus 2: a newline in a file name
 
-    /// POSIX permits it. The resolved line then holds a newline, and that
-    /// makes `SnippetSendPlanner.plan` refuse an insert it would otherwise
-    /// send — a send SHAPE chosen by server data. The planner's job is to produce the line
-    /// correctly; this test records that the shape changes, so the App task
-    /// that sends it cannot be written in ignorance of it.
-    @Test func aNameHoldingANewlineIsStillOneQuotedWordAndChangesTheSendShape() throws {
+    /// POSIX permits one in a file name. This test used to record that the
+    /// line came out as "one quoted word" and only changed the send shape
+    /// (`aNameHoldingANewlineIsStillOneQuotedWordAndChangesTheSendShape`).
+    /// That is withdrawn: a single-line remote command is typed with no
+    /// bracketed paste, so a newline in a value is Enter to the line
+    /// editor and quoting cannot help. It is refused instead; the whole
+    /// family is pinned in "Fix round 1" below.
+    @Test func aNameHoldingANewlineIsRefusedOnTheRemotePath() {
         let path = "/tmp/two\nlines"
-        let produced = try lines(action("wc -l {{PATH}}"), [item(path, "two\nlines")])
-        #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(path))"])
-
-        // Inserting without executing is the shape a newline changes: the
-        // same call refuses a multi-line command and sends a one-line one.
-        // (`bracketedPaste: true` would not show it, because that path
-        // sends the multi-line command too, wrapped in the paste markers.)
-        let hostile = SnippetSendPlanner.plan(
-            command: produced[0], execute: false, bracketedPaste: false)
-        #expect(hostile == .refusedMultilineInsert)
-
-        let plainLine = try lines(action("wc -l {{PATH}}"), [item("/tmp/one", "one")])
-        let plain = SnippetSendPlanner.plan(
-            command: plainLine[0], execute: false, bracketedPaste: false)
-        #expect(plain != .refusedMultilineInsert)
+        let result = FileActionPlanner.plan(
+            action: action("wc -l {{PATH}}"), selection: [item(path, "two\nlines")], side: .remote)
+        #expect(result == .failure(.valueHoldsAControlCharacter(name: "PATH", value: path)))
     }
 
     // MARK: - Review Focus 3: a name beginning with a hyphen
@@ -379,12 +369,98 @@ struct FileActionPlannerTests {
         #expect(result == .failure(.valueHoldsANulCharacter(name: "PATHS", value: hostile)))
     }
 
-    /// The refusal belongs to the LOCAL path, where `execve` is the reader.
-    /// On the remote path the value is quoted text typed into a shell.
-    @Test func aNameHoldingANulCharacterIsNotRefusedOnTheRemotePath() throws {
-        let name = "a\u{0}b"
-        let produced = try lines(action("wc -l {{NAME}}"), [item("/a/" + name, name)])
-        #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(name))"])
+    // MARK: - Fix round 1: a control character in a server value, remote path
+
+    /// A single-line remote command is TYPED into the terminal with no
+    /// bracketed paste, so a C0 byte inside a quoted value reaches the line
+    /// discipline and the line editor, which act on it below the shell's
+    /// parser. Quoting cannot help. U+0015 (^U) kills the line being typed,
+    /// a tab completes, a newline is Enter, DEL erases.
+    private static let hostileControls: [(label: String, scalar: String)] = [
+        ("ctrl-U", "\u{15}"), ("tab", "\t"), ("newline", "\n"), ("DEL", "\u{7F}"),
+        ("NUL", "\u{0}"), ("ESC", "\u{1B}"), ("ctrl-C", "\u{3}"), ("CR", "\r"),
+        ("unit separator, the last C0", "\u{1F}"),
+    ]
+
+    @Test func aControlCharacterInANameIsRefusedOnTheRemotePath() {
+        for (label, scalar) in Self.hostileControls {
+            let name = "a" + scalar + "b"
+            let result = FileActionPlanner.plan(
+                action: action("wc -l {{NAME}}"), selection: [item("/a/x", name)], side: .remote)
+            #expect(
+                result == .failure(.valueHoldsAControlCharacter(name: "NAME", value: name)),
+                "\(label) in NAME")
+        }
+    }
+
+    @Test func aControlCharacterInAPathOrADirectoryIsRefusedOnTheRemotePath() {
+        let path = "/a\u{15}/x"
+        let byPath = FileActionPlanner.plan(
+            action: action("wc -l {{PATH}}"), selection: [item(path, "x")], side: .remote)
+        #expect(byPath == .failure(.valueHoldsAControlCharacter(name: "PATH", value: path)))
+
+        // `DIR` is the parent of the normalized path, so the same path
+        // reaches it when the template asks for the directory alone.
+        let byDir = FileActionPlanner.plan(
+            action: action("ls {{DIR}}"), selection: [item(path, "x")], side: .remote)
+        #expect(byDir == .failure(.valueHoldsAControlCharacter(name: "DIR", value: "/a\u{15}")))
+    }
+
+    @Test func aControlCharacterInOneOfEveryPathIsRefusedOnTheRemotePath() {
+        let hostile = "/a/y\t"
+        let result = FileActionPlanner.plan(
+            action: action("zip out.zip {{PATHS}}", form: .onceWithEveryPath),
+            selection: [item("/a/x", "x"), item(hostile, "y")], side: .remote)
+        #expect(result == .failure(.valueHoldsAControlCharacter(name: "PATHS", value: hostile)))
+    }
+
+    /// The refusal is about a value that is PLACED. A name the template never
+    /// uses reaches no shell, so it does not stop the action.
+    @Test func aControlCharacterInAValueTheTemplateDoesNotUseIsNotRefused() throws {
+        let produced = try lines(action("ls {{DIR}}"), [item("/a/x\u{15}", "x\u{15}")])
+        #expect(produced == ["ls '/a'"])
+    }
+
+    /// A prompted value is the user's own text, and an author's template is
+    /// the author's: neither is server data, and neither is refused here.
+    @Test func aPromptedValueHoldingACtrlUIsNotRefusedOnTheRemotePath() throws {
+        let withVariable = FileAction(
+            name: "n", command: "echo {{NOTE}} {{PATH}}", variables: [variable("NOTE")],
+            runsOn: [.remote])
+        let plan = try FileActionPlanner.plan(
+            action: withVariable, selection: [item("/a/x", "x")], side: .remote,
+            promptedValues: ["NOTE": "a\u{15}b"]).get()
+        #expect(plan == .shellLines(["echo 'a\u{15}b' '/a/x'"]))
+    }
+
+    /// The same name is accepted on the local path: no line editor sits
+    /// between an argv and the program, so only NUL (`execve`) matters there.
+    /// The two refusals overlap on NUL for different reasons on different
+    /// paths, and that is deliberate.
+    @Test func theSameNameIsAcceptedOnTheLocalPathExceptForNul() throws {
+        for (label, scalar) in Self.hostileControls where scalar != "\u{0}" {
+            let name = "a" + scalar + "b"
+            let produced = try invocations(
+                action("gzip {{NAME}}", runsOn: [.local]), [item("/a/x", name)])
+            #expect(
+                produced == [FileActionInvocation(executable: "gzip", arguments: [name])],
+                "\(label) in NAME, local")
+        }
+        let nul = "a\u{0}b"
+        #expect(
+            FileActionPlanner.plan(
+                action: action("gzip {{NAME}}", runsOn: [.local]),
+                selection: [item("/a/x", nul)], side: .local)
+                == .failure(.valueHoldsANulCharacter(name: "NAME", value: nul)))
+    }
+
+    /// The boundary of the refusal: the first scalar above C0 and the
+    /// printable ones stay legal, so an ordinary unicode name still runs.
+    @Test func theScalarsAroundTheRefusedRangeAreNotRefused() throws {
+        for name in ["a b", "a~b", "a\u{80}b", "ä", "日本語"] {
+            let produced = try lines(action("wc -l {{NAME}}"), [item("/a/x", name)])
+            #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(name))"], "\(name)")
+        }
     }
 
     /// Nothing stops an author declaring one name twice, so the template

@@ -74,6 +74,35 @@ public enum FileActionPlanner {
         /// check. Refused on the local path, the only one that spawns
         /// without a shell.
         case valueHoldsANulCharacter(name: String, value: String)
+        /// A selection-derived value holds a C0 control character
+        /// (U+0000 to U+001F) or DEL (U+007F). Refused on the REMOTE path.
+        ///
+        /// **Quoting cannot help, because the interpretation happens below
+        /// the parser.** A single-line remote command is typed into the
+        /// terminal as keystrokes, with no bracketed paste, so these bytes
+        /// reach the line discipline and the line editor before any shell
+        /// parses a quote. U+0015 (^U) kills the line typed so far, and the
+        /// rest of the name then types a command of the server's choosing,
+        /// whose trailing `#` comments out the stray closing quote; a tab
+        /// triggers completion; a newline is Enter; DEL erases. The remote
+        /// side's argument that every value is single-quoted never reached
+        /// this layer.
+        ///
+        /// Only a SELECTION-derived value that the template places is
+        /// refused (`PATH`, `PATHS`, `DIR`, `NAME`). An author's own
+        /// template is the author's, and a prompted value is the user's own
+        /// text; neither is server data. The confirmation sheet still draws
+        /// these scalars as markers, as defence in depth and not as the
+        /// control: a user recognising `<U+0015>` is not a security
+        /// property.
+        ///
+        /// This overlaps `valueHoldsANulCharacter` on U+0000 for a different
+        /// reason on a different path (`execve` truncating an argument,
+        /// there; a byte the line editor acts on, here). The overlap is
+        /// deliberate and neither refusal subsumes the other: the local path
+        /// accepts every other control character, because no line editor sits
+        /// between an argv and a program.
+        case valueHoldsAControlCharacter(name: String, value: String)
     }
 
     public static func plan(
@@ -94,6 +123,9 @@ public enum FileActionPlanner {
 
         switch side {
         case .remote:
+            for group in groups {
+                if let refusal = controlCharacterRefusal(action, group) { return .failure(refusal) }
+            }
             return .success(.shellLines(groups.map { remoteLine(action, $0, promptedValues) }))
         case .local:
             var invocations: [FileActionInvocation] = []
@@ -108,6 +140,45 @@ public enum FileActionPlanner {
     }
 
     // MARK: - Remote
+
+    /// The first selection-derived value this group would place into a
+    /// remote line that holds a C0 control character or DEL; see
+    /// `Refusal.valueHoldsAControlCharacter` for why.
+    ///
+    /// Asked of the values the template PLACES, found with
+    /// `SnippetVariableSubstitution.occurrences` as `resolve` finds them, so
+    /// a name the template never uses reaches no shell and does not stop the
+    /// action. Names are asked in a fixed order, and `PATHS` item by item.
+    private static func controlCharacterRefusal(
+        _ action: FileAction, _ group: [RemoteFileItem]
+    ) -> Refusal? {
+        guard !group.isEmpty else { return nil }
+        let bound = FileActionSelectionValues.values(for: group[0])
+        func placed(_ name: String) -> Bool {
+            !SnippetVariableSubstitution.occurrences(of: name, in: action.command).isEmpty
+        }
+        switch action.perSelection {
+        case .oncePerFile:
+            for name in ["PATH", "DIR", "NAME"] where placed(name) {
+                if let value = bound[name], holdsLineEditorControl(value) {
+                    return .valueHoldsAControlCharacter(name: name, value: value)
+                }
+            }
+        case .onceWithEveryPath:
+            if placed("DIR"), let value = bound["DIR"], holdsLineEditorControl(value) {
+                return .valueHoldsAControlCharacter(name: "DIR", value: value)
+            }
+            if placed(listName) {
+                for item in group {
+                    let itemPath = path(of: item)
+                    if holdsLineEditorControl(itemPath) {
+                        return .valueHoldsAControlCharacter(name: listName, value: itemPath)
+                    }
+                }
+            }
+        }
+        return nil
+    }
 
     /// `{{PATHS}}` is not a value `resolve` can place: it substitutes one
     /// single-quoted value per name, and a list is not one value.
@@ -366,6 +437,17 @@ public enum FileActionPlanner {
     /// `-`, while a tool reads the bytes and sees an option.
     private static func beginsWithHyphen(_ scalars: String.UnicodeScalarView) -> Bool {
         for scalar in scalars { return scalar == "-" }
+        return false
+    }
+
+    /// Whether `value` holds a scalar in U+0000 to U+001F, or U+007F, asked
+    /// scalar by scalar. C1 (U+0080 to U+009F) is not included: in a UTF-8
+    /// terminal those code points arrive as two-byte sequences that the line
+    /// discipline does not treat as controls.
+    private static func holdsLineEditorControl(_ value: String) -> Bool {
+        for scalar in value.unicodeScalars where scalar.value <= 0x1F || scalar.value == 0x7F {
+            return true
+        }
         return false
     }
 
