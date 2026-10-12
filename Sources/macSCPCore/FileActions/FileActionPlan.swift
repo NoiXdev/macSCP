@@ -59,10 +59,6 @@ public enum FileActionPlanner {
         /// option. Only `{{NAME}}` can reach this: `{{PATH}}`, `{{DIR}}` and
         /// `{{PATHS}}` are absolute.
         case valueWouldBeReadAsAnOption(name: String, value: String)
-        /// A local-capable template holds quoting. The argv is cut along
-        /// the survey's word spans, and a quoted span is not one: it would
-        /// have to be unquoted, and nothing on this path interprets quoting.
-        case quotingIsNotRunnableLocally
         /// `{{PATHS}}` stands inside a longer local word. It becomes
         /// several arguments, so it can only be a word of its own.
         case everyPathNeedsAWordOfItsOwn
@@ -290,7 +286,7 @@ public enum FileActionPlanner {
             return .failure(.template(.declaration(.unanalyzableContext(kind: refusal))))
         }
         guard spans.allSatisfy({ $0.placement != .quoted }) else {
-            return .failure(.quotingIsNotRunnableLocally)
+            return .failure(.template(.quotingIsNotRunnableLocally))
         }
         guard FileActionTemplate.isOneSimpleCommand(action.command) else {
             return .failure(.template(.notOneSimpleCommandForLocal))
