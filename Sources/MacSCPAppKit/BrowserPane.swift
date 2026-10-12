@@ -191,6 +191,9 @@ struct BrowserPane: View {
     /// same reason as `extractRequest`: the entry lives in
     /// `BrowserPane+FileActions.swift`.
     @State var fileActionRequest: FileActionRequest?
+    /// The values prompt of a file action that declares variables, before
+    /// anything is planned. Internal for the same reason as the request.
+    @State var fileActionPrompt: FileActionPrompt?
     /// The one sentence a file action's alert shows: another action is still
     /// running, or the connection has no shell to type into.
     @State var fileActionAlertMessage: String?
@@ -510,6 +513,16 @@ struct BrowserPane: View {
                     startExtract(request, into: destination)
                 },
                 onCancel: { extractRequest = nil })
+        }
+        .sheet(item: $fileActionPrompt) { prompt in
+            SnippetVariablePromptSheet(
+                snippet: prompt.snippet, initialValues: prompt.initialValues,
+                onConfirm: { values in
+                    fileActionPrompt = nil
+                    presentFileActionRequest(
+                        prompt.action, prompt.selection, promptedValues: values)
+                },
+                onCancel: { fileActionPrompt = nil })
         }
         .sheet(item: $fileActionRequest) { request in
             FileActionConfirmSheet(

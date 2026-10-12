@@ -271,3 +271,27 @@ func fileActionPreviewValue(for variable: SnippetVariable) -> String {
     if case .selection(let options) = variable.kind, let first = options.first { return first }
     return L10n.string("snippets.editor.preview.sample", "sample")
 }
+
+// MARK: - Asking for a declared variable's value
+
+/// What the values prompt is opened with for an action that declares
+/// variables: the snippet prompt's own input, `SnippetVariablePromptSheet`
+/// taking a `Snippet`, built from the action's id, command and declarations.
+/// A second prompt shape would be a second answer to "what is a value here".
+///
+/// The name goes through `FileActionPlanDisplay.visible`: the prompt shows it
+/// in its title, and an action's name can come from an imported file. The
+/// snippet is made for the prompt and stored nowhere.
+func fileActionPromptSnippet(for action: FileAction) -> Snippet {
+    Snippet(
+        id: action.id, name: FileActionPlanDisplay.visible(action.name),
+        command: action.command, variables: action.variables)
+}
+
+/// The values the prompt opens with: each declaration's default. An action
+/// remembers nothing between runs (`FileActionStore` has no such memory, and
+/// `FileAction` no flag that would ask for one), so there is no remembered
+/// value to prefer.
+func fileActionPromptValues(for action: FileAction) -> [String: String] {
+    snippetVariablePromptValues(for: fileActionPromptSnippet(for: action)) { _ in nil }
+}
