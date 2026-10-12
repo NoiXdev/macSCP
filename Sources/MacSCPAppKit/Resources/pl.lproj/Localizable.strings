@@ -1535,3 +1535,10 @@
 "notifications.transferFailed.title" = "Transfer nie powiódł się";
 "notifications.forwardingFailed.title" = "Przekierowanie portu nie powiodło się";
 "notifications.body.unsavedConnection" = "Niezapisane połączenie";
+
+/* User-defined file actions: the confirmation sheet */
+"fileAction.confirm.title" = "Uruchom akcję";
+"fileAction.confirm.message" = "Oto, co zostanie uruchomione. Nazwy plików pochodzą z serwera, więc przeczytaj je przed kontynuowaniem.";
+"fileAction.confirm.run" = "Uruchom";
+"fileAction.confirm.cancel" = "Anuluj";
+"fileAction.confirm.refused" = "Tej akcji nie można zastosować do tego wyboru.";

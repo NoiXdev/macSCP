@@ -1533,3 +1533,10 @@
 "notifications.transferFailed.title" = "Übertragung fehlgeschlagen";
 "notifications.forwardingFailed.title" = "Portweiterleitung fehlgeschlagen";
 "notifications.body.unsavedConnection" = "Nicht gespeicherte Verbindung";
+
+/* User-defined file actions: the confirmation sheet */
+"fileAction.confirm.title" = "Aktion ausführen";
+"fileAction.confirm.message" = "Das wird ausgeführt. Die Dateinamen kommen vom Server, also lies sie, bevor du weitermachst.";
+"fileAction.confirm.run" = "Ausführen";
+"fileAction.confirm.cancel" = "Abbrechen";
+"fileAction.confirm.refused" = "Diese Aktion lässt sich auf diese Auswahl nicht anwenden.";

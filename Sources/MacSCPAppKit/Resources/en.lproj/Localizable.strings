@@ -1539,3 +1539,10 @@
 "notifications.transferFailed.title" = "Transfer failed";
 "notifications.forwardingFailed.title" = "Port forwarding failed";
 "notifications.body.unsavedConnection" = "Unsaved connection";
+
+/* User-defined file actions: the confirmation sheet */
+"fileAction.confirm.title" = "Run action";
+"fileAction.confirm.message" = "This is what will run. The file names come from the server, so read them before you continue.";
+"fileAction.confirm.run" = "Run";
+"fileAction.confirm.cancel" = "Cancel";
+"fileAction.confirm.refused" = "This action cannot run on this selection.";

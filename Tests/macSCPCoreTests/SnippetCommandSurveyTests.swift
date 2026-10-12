@@ -957,6 +957,12 @@ struct SnippetCommandSurveyTests {
     /// unchanged. Withdrawn 2026-10-12 again, quoted: "is five
     /// above with `FileActionTemplate.swift` added" is six above with
     /// `FileActionPlan.swift` added; the eight below are still unchanged.
+    /// Withdrawn 2026-10-12 a third time, quoted: "the eight below are still
+    /// unchanged" is nine below with `FileActionConfirmSheet.swift` added,
+    /// which hands each argument of a planned invocation to
+    /// `PosixQuoting.singleQuoted` so that the confirmation sheet can show
+    /// where one argument ends. It displays the result and lexes nothing;
+    /// the six above are unchanged.
     /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
     /// this list's only reader; the list above has a second one,
     /// `shellLexingSourceFiles()`, which is where its missing-name throw and
@@ -970,6 +976,7 @@ struct SnippetCommandSurveyTests {
         "SSHKeyConverter.swift",
         "JumpProbeCommand.swift",
         "ArchiveCommandLine.swift",
+        "FileActionConfirmSheet.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {

@@ -1125,6 +1125,14 @@ struct RemoteFileTableView: NSViewRepresentable {
                 if entry == .delete, menu.items.isEmpty == false {
                     menu.addItem(.separator())
                 }
+                // The user's own actions are the last run in the model, after
+                // `delete`, so without this they would sit directly under
+                // "Delete…". One divider before the first of them.
+                if case .userFileAction = entry, menu.items.isEmpty == false {
+                    var followsAnother = false
+                    if index > 0, case .userFileAction = entries[index - 1] { followsAnother = true }
+                    if !followsAnother { menu.addItem(.separator()) }
+                }
                 menu.addItem(makeItem(entry, selection: selection))
                 index += 1
             }

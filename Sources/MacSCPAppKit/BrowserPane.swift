@@ -157,7 +157,9 @@ struct BrowserPane: View {
     // This comment said "four" until the count was taken. The two archive
     // entries are handled here too (`BrowserPane+Archive.swift`) and are not
     // among the six: their state is the extract dialog and an alert, and
-    // their run lives on the view model.
+    // their run lives on the view model. A user-defined file action is
+    // handled here as well (`BrowserPane+FileActions.swift`) and is not among
+    // the six either: its state is the confirmation sheet.
     @State private var renameTarget: RemoteFileItem?
     @State private var infoTarget: RemoteFileItem?
     @State private var deleteRequest: [RemoteFileItem]?
@@ -179,6 +181,11 @@ struct BrowserPane: View {
     /// until the user answers it. Internal (not `private`) because the
     /// archive entries live in `BrowserPane+Archive.swift`.
     @State var extractRequest: ExtractRequest?
+    /// The confirmation sheet of a user-defined file action, from the moment
+    /// the menu entry builds its plan until the user answers. Internal for the
+    /// same reason as `extractRequest`: the entry lives in
+    /// `BrowserPane+FileActions.swift`.
+    @State var fileActionRequest: FileActionRequest?
     /// The one sentence an archive alert shows: a refusal, a listing that
     /// could not be read, or "another operation is still running".
     @State var archiveAlertMessage: String?
@@ -319,6 +326,8 @@ struct BrowserPane: View {
                             startCompress(format, selection: selection)
                         case .extractArchive(let format):
                             beginExtract(format, selection: selection)
+                        case .userFileAction(let action):
+                            beginFileAction(action, selection: selection)
                         default: onMenuAction?(entry, selection)
                         }
                     },
@@ -485,6 +494,14 @@ struct BrowserPane: View {
                     startExtract(request, into: destination)
                 },
                 onCancel: { extractRequest = nil })
+        }
+        .sheet(item: $fileActionRequest) { request in
+            FileActionConfirmSheet(
+                request: request,
+                // Nothing runs yet: the confirmation only closes the sheet.
+                // The run attaches here.
+                onRun: { fileActionRequest = nil },
+                onCancel: { fileActionRequest = nil })
         }
         .sheet(item: $checksumBatch) { batch in
             ChecksumBatchSheet(batch: batch) { item in
