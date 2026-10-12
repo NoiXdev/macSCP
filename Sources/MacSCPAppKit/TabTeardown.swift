@@ -118,6 +118,13 @@ enum TabTeardown {
             // itself on the main actor, whenever it unwinds.
             session.local.archiveActivity.cancel()
             session.remote.archiveActivity.cancel()
+            // A local file action is the same kind of thing: not a transfer,
+            // not in the queue, and a program that would otherwise run on
+            // after its tab. The remote pane's actions are typed into the
+            // shell and never run in an activity, so its call only keeps
+            // the two panes alike.
+            session.local.fileActionActivity.cancel()
+            session.remote.fileActionActivity.cancel()
             // Called directly, NOT through `TeardownStage.runBounded` (see
             // this function's doc comment): a bound would put a suspension
             // point in front of the sweep, and the queue sweep running in

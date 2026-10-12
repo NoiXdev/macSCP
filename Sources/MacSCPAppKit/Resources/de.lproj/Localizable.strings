@@ -1540,3 +1540,11 @@
 "fileAction.confirm.run" = "Ausführen";
 "fileAction.confirm.cancel" = "Abbrechen";
 "fileAction.confirm.refused" = "Diese Aktion lässt sich auf diese Auswahl nicht anwenden.";
+"fileAction.activity.running" = "„%@“ läuft";
+"fileAction.activity.failed" = "„%@“ wurde mit einem Fehler beendet.";
+"fileAction.activity.couldNotRun" = "„%@“ konnte nicht gestartet werden.";
+"fileAction.activity.timedOut" = "„%@“ hat zu lange gedauert und wurde gestoppt.";
+"fileAction.activity.dismiss" = "Meldung ausblenden";
+"fileAction.run.busy" = "In diesem Bereich läuft noch eine andere Aktion. Warte, bis sie fertig ist, oder brich sie ab.";
+"fileAction.run.noShell" = "Diese Aktion wird in eine Shell getippt, und diese Verbindung hat keine.";
+"fileAction.alert.title" = "Aktion";

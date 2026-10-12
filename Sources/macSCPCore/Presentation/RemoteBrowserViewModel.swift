@@ -75,6 +75,13 @@ public final class RemoteBrowserViewModel {
     /// not a transfer-queue item.
     public let archiveActivity = ArchiveActivity()
 
+    /// The local file action this pane has running, if any. Held here for
+    /// the reason `archiveActivity` is: the pane's teardown calls its
+    /// `cancel()`, so a run started by the pane is owned by something that
+    /// can be reached. The remote pane's actions are typed into the shell and
+    /// never run here, so on that pane it stays idle.
+    public let fileActionActivity = FileActionActivity()
+
     private let fs: any RemoteFileSystem
 
     /// Diagnostic-log category this pane's `load()` events are filed under.

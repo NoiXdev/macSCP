@@ -1543,3 +1543,11 @@
 "fileAction.confirm.run" = "Exécuter";
 "fileAction.confirm.cancel" = "Annuler";
 "fileAction.confirm.refused" = "Cette action ne peut pas s’appliquer à cette sélection.";
+"fileAction.activity.running" = "Exécution de « %@ »";
+"fileAction.activity.failed" = "« %@ » s’est terminée par une erreur.";
+"fileAction.activity.couldNotRun" = "« %@ » n’a pas pu être démarrée.";
+"fileAction.activity.timedOut" = "« %@ » a pris trop de temps et a été arrêtée.";
+"fileAction.activity.dismiss" = "Masquer le message";
+"fileAction.run.busy" = "Une autre action est encore en cours dans ce volet. Attendez qu’elle se termine, ou annulez-la.";
+"fileAction.run.noShell" = "Cette action est saisie dans un shell, et cette connexion n’en a pas.";
+"fileAction.alert.title" = "Action";

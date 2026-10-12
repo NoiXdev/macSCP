@@ -1542,3 +1542,11 @@
 "fileAction.confirm.run" = "Uruchom";
 "fileAction.confirm.cancel" = "Anuluj";
 "fileAction.confirm.refused" = "Tej akcji nie można zastosować do tego wyboru.";
+"fileAction.activity.running" = "Uruchomiona: „%@”";
+"fileAction.activity.failed" = "„%@” zakończyła się błędem.";
+"fileAction.activity.couldNotRun" = "Nie udało się uruchomić „%@”.";
+"fileAction.activity.timedOut" = "„%@” trwała zbyt długo i została zatrzymana.";
+"fileAction.activity.dismiss" = "Ukryj komunikat";
+"fileAction.run.busy" = "W tym panelu nadal działa inna akcja. Poczekaj, aż się zakończy, albo ją anuluj.";
+"fileAction.run.noShell" = "Ta akcja jest wpisywana w powłoce, a to połączenie jej nie ma.";
+"fileAction.alert.title" = "Akcja";
