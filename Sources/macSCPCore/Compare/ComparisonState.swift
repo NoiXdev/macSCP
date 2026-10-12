@@ -26,8 +26,14 @@ public enum UndeterminedReason: Equatable, Sendable {
 public enum ComparisonState: Equatable, Sendable {
     case onlyLeft
     case onlyRight
+    /// Two files whose contents were compared and matched. This is the only
+    /// meaning of `same`: a state nobody measured is never reported as it.
     case same
     case differs
+    /// Both sides hold a directory at this path. Nothing about their
+    /// contents has been measured, so this is NOT a match; the walk descends
+    /// into the pair and reports its children rather than the pair itself.
+    case bothDirectories
     case typeMismatch
     case undetermined(UndeterminedReason)
 }
@@ -56,7 +62,7 @@ public enum ComparisonClassification {
             return .undetermined(.unsupportedKind)
         }
         if left.kind != right.kind { return .typeMismatch }
-        if left.kind == .directory { return .same }
+        if left.kind == .directory { return .bothDirectories }
 
         if let l = left.size, let r = right.size, l != r { return .differs }
 
