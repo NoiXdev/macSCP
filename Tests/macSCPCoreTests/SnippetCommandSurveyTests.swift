@@ -907,7 +907,13 @@ struct SnippetCommandSurveyTests {
         "FileActionPlan.swift",
     ]
 
-    /// Core files that CALL the shell-lexing code without lexing themselves.
+    /// Source files that CALL the shell-lexing code without lexing
+    /// themselves. Withdrawn 2026-10-12, quoted: this header read "Core
+    /// files that CALL the shell-lexing code without lexing themselves."
+    /// It became false in this same branch, which added the App-layer
+    /// `FileActionConfirmSheet.swift` below; the list has never been
+    /// restricted to Core by anything but that sentence, since
+    /// `everySourceFileOnTheShellPathIsClassified` walks `Sources` whole.
     /// They are excluded from the `Character` ban for stated reasons:
     /// `SSHConnectionConfig` keeps `Character` allow lists (see the guard
     /// above); `FileChecksum` walks a digest field it requires to be ASCII
@@ -1006,9 +1012,23 @@ struct SnippetCommandSurveyTests {
     /// The walk covers `Sources` whole and not just `Sources/macSCPCore`.
     /// A review measured that gap: an App-layer file lexing shell text and
     /// calling `PosixQuoting` was invisible here, and `PosixQuoting` is
-    /// `public`, so nothing stops one existing. No file outside Core names
-    /// either type today, which is exactly why widening the walk costs
-    /// nothing and closes the case before there is one.
+    /// `public`, so nothing stops one existing.
+    ///
+    /// Withdrawn 2026-10-12, quoted: this paragraph ended "No file outside
+    /// Core names either type today, which is exactly why widening the walk
+    /// costs nothing and closes the case before there is one." Both halves
+    /// are false now, and were falsified by the branch that wrote this
+    /// correction. One file outside Core names one of the two types:
+    /// `/usr/bin/grep -rln -e PosixQuoting -e ShellScalar
+    /// Sources/MacSCPAppKit/` prints `FileActionConfirmSheet.swift` and
+    /// nothing else (run from the repository root on 2026-10-12, after this
+    /// sentence was written — the sentence names the path it searches, so
+    /// re-running it afterwards is the only way the figure is the current
+    /// one; the output is a file list, not a count, and the pattern it
+    /// matches on does not appear in this test file's own code lines, which
+    /// `codeLines` filters a doc comment out of anyway). So the widened
+    /// walk did not cost nothing: it is what put that file on this list,
+    /// which is the case being closed rather than one that had not arrived.
     ///
     /// The gap it still does not close, recorded rather than claimed shut: a
     /// file that brings its OWN alphabet — lexes shell text in `Character`s
