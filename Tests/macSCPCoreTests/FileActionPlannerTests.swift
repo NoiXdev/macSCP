@@ -454,9 +454,28 @@ struct FileActionPlannerTests {
                 == .failure(.valueHoldsANulCharacter(name: "NAME", value: nul)))
     }
 
-    /// The boundary of the refusal: the first scalar above C0 and the
-    /// printable ones stay legal, so an ordinary unicode name still runs.
-    @Test func theScalarsAroundTheRefusedRangeAreNotRefused() throws {
+    /// The directory of a whole-selection action is checked as its own
+    /// value: `DIR` is asked under `.onceWithEveryPath` too, and it is
+    /// named, so a refusal that dropped that arm would name `PATHS` instead
+    /// (every path sits under the directory, so the list is refused anyway).
+    @Test func aControlCharacterInTheDirectoryOfAWholeSelectionIsRefusedAsTheDirectory() {
+        let directory = "/a\u{15}"
+        let result = FileActionPlanner.plan(
+            action: action(
+                "tar -C {{DIR}} -cf out.tar {{PATHS}}", form: .onceWithEveryPath),
+            selection: [item(directory + "/x", "x"), item(directory + "/y", "y")],
+            side: .remote)
+        #expect(result == .failure(.valueHoldsAControlCharacter(name: "DIR", value: directory)))
+    }
+
+    /// **This pins TODAY'S BOUNDARY, not safety.** The refusal covers
+    /// U+0000 to U+001F and U+007F; everything above is accepted, and that
+    /// is all this test records. Whether a remote line editor treats a
+    /// scalar above U+007F literally has NOT been measured (readline's
+    /// `input-meta` / `convert-meta` and an absent `LANG` make it an open
+    /// question), so nothing here claims `a\u{80}b` or `ä` is harmless.
+    /// Moving the boundary should move this test, deliberately.
+    @Test func todaysBoundaryIsC0AndDelAndNothingAboveItIsRefusedYet() throws {
         for name in ["a b", "a~b", "a\u{80}b", "ä", "日本語"] {
             let produced = try lines(action("wc -l {{NAME}}"), [item("/a/x", name)])
             #expect(produced == ["wc -l \(PosixQuoting.singleQuoted(name))"], "\(name)")

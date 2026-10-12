@@ -628,13 +628,18 @@ extension ContentView {
                                     // that turns it into an offer.
                                     supportsPermissions: PermissionsAvailability.isOffered(
                                         for: tab.connectionViewModel.kind),
-                                    // A remote action is typed into this
-                                    // tab's shell, through the path a
-                                    // snippet takes. Only this pane gets it:
-                                    // the local one spawns.
+                                    // A remote action is typed into THIS
+                                    // session's shell (`session.terminal`,
+                                    // named in both closures), through the
+                                    // path a snippet takes. Only this pane
+                                    // gets it: the local one spawns.
                                     shell: FileActionShell(
-                                        wantsBracketedPaste: { bracketedPasteOnActiveTab },
-                                        type: { typeFileActionBytes($0) })
+                                        wantsBracketedPaste: {
+                                            session.terminal.remoteWantsBracketedPaste
+                                        },
+                                        type: {
+                                            typeFileActionBytes($0, into: session.terminal)
+                                        })
                                 )
                                 .frame(minWidth: 280)
                             }
