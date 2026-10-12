@@ -63,6 +63,14 @@ public enum FileActionPlanner {
         /// `{{PATHS}}` stands inside a longer local word. It becomes
         /// several arguments, so it can only be a word of its own.
         case everyPathNeedsAWordOfItsOwn
+        /// A selection-derived value holds U+0000. A POSIX path cannot, but
+        /// an SFTP name is a length-prefixed string, so a hostile server can
+        /// send one, and `execve` truncates an argument at the first NUL.
+        /// The program would then run on a different file than the one the
+        /// confirmation sheet displayed, and that sheet is the user's only
+        /// check. Refused on the local path, the only one that spawns
+        /// without a shell.
+        case valueHoldsANulCharacter(name: String, value: String)
     }
 
     public static func plan(
@@ -113,8 +121,8 @@ public enum FileActionPlanner {
         _ action: FileAction, _ group: [RemoteFileItem], _ promptedValues: [String: String]
     ) -> String {
         var values = promptedValues
-        if let first = group.first {
-            let bound = FileActionSelectionValues.values(for: first)
+        if !group.isEmpty {
+            let bound = FileActionSelectionValues.values(for: group[0])
             switch action.perSelection {
             case .oncePerFile:
                 values.merge(bound) { _, new in new }
@@ -128,16 +136,16 @@ public enum FileActionPlanner {
         let variables = action.variables + FileActionTemplate.syntheticVariables(for: command)
 
         let listPositions = action.perSelection == .onceWithEveryPath
-            ? SnippetVariableSubstitution.occurrences(of: "PATHS", in: command) : []
+            ? SnippetVariableSubstitution.occurrences(of: listName, in: command) : []
         guard !listPositions.isEmpty else {
             return SnippetVariableSubstitution.resolve(
                 command: command, variables: variables, values: values)
         }
 
         let list = group.map { PosixQuoting.singleQuoted(path(of: $0)) }.joined(separator: " ")
-        // `PATHS` is among the synthetic variables so that its position was
-        // checked; here it is placed by hand, so `resolve` must not see it.
-        let others = variables.filter { $0.name != "PATHS" }
+        // The list name is among the synthetic variables so that its position
+        // was checked; here it is placed by hand, so `resolve` must not see it.
+        let others = variables.filter { $0.name != listName }
         let placeholders = others.filter { $0.placement == .placeholder }
         let environment = others.filter { $0.placement == .environment }
 
@@ -161,13 +169,22 @@ public enum FileActionPlanner {
 
     // MARK: - Local
 
+    /// Where a local replacement's value came from.
+    private enum Source: Equatable {
+        /// The selection, and so the server. Carries the reserved name.
+        case selection(name: String)
+        /// The whole selection's list. Its value is expanded by the caller,
+        /// because it is several arguments and not one.
+        case everyPath
+        /// A prompted value: text the user typed.
+        case typed
+    }
+
     /// One value that goes into a local argument, found in the template.
     private struct Replacement {
         let range: Range<String.Index>
         let value: String
-        /// The reserved name, when the value came from the selection and so
-        /// from the server; `nil` for a value the user typed.
-        let selectionName: String?
+        let source: Source
     }
 
     /// The argv is cut along the survey's word spans, not along whitespace.
@@ -196,11 +213,12 @@ public enum FileActionPlanner {
         // A comment is covered by a span and so counts as part of one simple
         // command. It is not a word.
         let words = spans.filter { $0.placement != .comment }
-        // Two spans in one word would mean a split the checks above refuse.
-        let adjacent = zip(words, words.dropFirst()).contains {
-            $0.range.upperBound >= $1.range.lowerBound
+        guard !words.isEmpty, words[0].placement == .commandName else {
+            return .failure(.template(.notOneSimpleCommandForLocal))
         }
-        guard let program = words.first, program.placement == .commandName, !adjacent else {
+        // Two spans in one word would mean a split the checks above refuse.
+        for (before, after) in zip(words, words.dropFirst())
+        where before.range.upperBound >= after.range.lowerBound {
             return .failure(.template(.notOneSimpleCommandForLocal))
         }
 
@@ -217,17 +235,20 @@ public enum FileActionPlanner {
                 word.range.lowerBound <= $0.range.lowerBound
                     && $0.range.upperBound <= word.range.upperBound
             }
-            // `{{PATHS}}` alone in its word is every path as its own
-            // argument; the list is told apart from a value by its being
-            // the only replacement that is not for one file.
-            if inside.count == 1, let only = inside.first, only.range == word.range,
-                only.selectionName == "PATHS"
-            {
+            // The list is every path as its own argument, so it can only be
+            // a word of its own.
+            if !inside.filter({ $0.source == .everyPath }).isEmpty {
+                guard inside.count == 1, inside[0].range == word.range else {
+                    return .failure(.everyPathNeedsAWordOfItsOwn)
+                }
+                for item in group {
+                    let itemPath = path(of: item)
+                    if holdsNul(itemPath) {
+                        return .failure(.valueHoldsANulCharacter(name: listName, value: itemPath))
+                    }
+                }
                 arguments.append(contentsOf: group.map { path(of: $0) })
                 continue
-            }
-            if inside.contains(where: { $0.selectionName == "PATHS" }) {
-                return .failure(.everyPathNeedsAWordOfItsOwn)
             }
 
             var assembled = String.UnicodeScalarView()
@@ -238,6 +259,12 @@ public enum FileActionPlanner {
             var leaderKnown = false
             var cursor = word.range.lowerBound
             for replacement in inside {
+                if case .selection(let name) = replacement.source,
+                    holdsNul(replacement.value)
+                {
+                    return .failure(
+                        .valueHoldsANulCharacter(name: name, value: replacement.value))
+                }
                 assembled.append(contentsOf: scalars[cursor..<replacement.range.lowerBound])
                 if !assembled.isEmpty, !leaderKnown { leaderKnown = true }
                 assembled.append(contentsOf: replacement.value.unicodeScalars)
@@ -248,39 +275,41 @@ public enum FileActionPlanner {
                 cursor = replacement.range.upperBound
             }
             assembled.append(contentsOf: scalars[cursor..<word.range.upperBound])
-            if let leader, let name = leader.selectionName, assembled.first == "-" {
+            if let leader, case .selection(let name) = leader.source,
+                beginsWithHyphen(assembled)
+            {
                 return .failure(.valueWouldBeReadAsAnOption(name: name, value: leader.value))
             }
             arguments.append(String(assembled))
         }
         return .success(
             FileActionInvocation(
-                executable: String(scalars[program.range]), arguments: arguments))
+                executable: String(scalars[words[0].range]), arguments: arguments))
     }
 
     /// Every placeholder in the template that has a value, with its value,
     /// in template order. Found on the ORIGINAL command, so no value is ever
     /// read for a placeholder.
     ///
-    /// `{{PATHS}}` is recorded with the name `PATHS` and an empty value; the
-    /// caller expands it, because it is several arguments and not one.
+    /// The list is recorded with an empty value; the caller expands it.
     private static func localReplacements(
         _ action: FileAction, _ group: [RemoteFileItem], _ promptedValues: [String: String]
     ) -> [Replacement] {
         var found: [Replacement] = []
         let command = action.command
-        if let first = group.first {
+        if !group.isEmpty {
             let fitting = FileActionTemplate.names(fitting: action.perSelection)
-            for (name, value) in FileActionSelectionValues.values(for: first)
+            for (name, value) in FileActionSelectionValues.values(for: group[0])
             where fitting.contains(name) {
                 for range in SnippetVariableSubstitution.occurrences(of: name, in: command) {
-                    found.append(Replacement(range: range, value: value, selectionName: name))
+                    found.append(
+                        Replacement(range: range, value: value, source: .selection(name: name)))
                 }
             }
         }
         if action.perSelection == .onceWithEveryPath {
-            for range in SnippetVariableSubstitution.occurrences(of: "PATHS", in: command) {
-                found.append(Replacement(range: range, value: "", selectionName: "PATHS"))
+            for range in SnippetVariableSubstitution.occurrences(of: listName, in: command) {
+                found.append(Replacement(range: range, value: "", source: .everyPath))
             }
         }
         // Declared variables, as `resolve` treats them: an invalid name is
@@ -290,15 +319,33 @@ public enum FileActionPlanner {
         where SnippetVariable.isValidName(variable.name) && variable.placement == .placeholder {
             let value = promptedValues[variable.name] ?? ""
             for range in SnippetVariableSubstitution.occurrences(of: variable.name, in: command) {
-                found.append(Replacement(range: range, value: value, selectionName: nil))
+                found.append(Replacement(range: range, value: value, source: .typed))
             }
         }
         return found.sorted { $0.range.lowerBound < $1.range.lowerBound }
     }
 
+    /// The name of the whole selection's list.
+    private static let listName = "PATHS"
+
     /// The absolute path of `item`, normalized as the other selection values
     /// are.
     private static func path(of item: RemoteFileItem) -> String {
         FileActionSelectionValues.values(for: item)["PATH"] ?? ""
+    }
+
+    /// Whether the first scalar of `scalars` is a hyphen. Asked of the
+    /// scalars and not of a `String`, whose first element is a `Character`:
+    /// a hyphen followed by a combining mark is one `Character` that is not
+    /// `-`, while a tool reads the bytes and sees an option.
+    private static func beginsWithHyphen(_ scalars: String.UnicodeScalarView) -> Bool {
+        for scalar in scalars { return scalar == "-" }
+        return false
+    }
+
+    /// Whether `value` holds U+0000, asked scalar by scalar.
+    private static func holdsNul(_ value: String) -> Bool {
+        for scalar in value.unicodeScalars where scalar == "\u{0}" { return true }
+        return false
     }
 }
