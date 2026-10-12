@@ -177,6 +177,37 @@ failure does not stop the rest.** The app does not read the shell's output,
 so it has nothing to decide on. This is written down because it is the kind
 of behaviour that is otherwise discovered the third time it matters.
 
+## Three consequences found while planning, 2026-10-12
+
+Added after the design was approved, by reading the machinery it builds on
+rather than by reasoning about it. Each is an addition, not a withdrawal.
+
+**1. A local-capable action's declared variables must all be
+`.placeholder`.** `SnippetVariable.Placement` has a second case,
+`.environment`, which prepends `export NAME='value';` as its own statement.
+There is no shell on the local path, so there is nothing to export into. The
+editor refuses `.environment` for an action that declares it may run locally,
+and the refusal is derived from the placement, not from a list.
+
+**2. `PATH`, `DIR` and `NAME` are reserved and cannot be declared.** They are
+the selection-derived names, so a declared variable of the same name would
+have two sources. One of the three is worse than a collision: a declared
+`PATH` with `.environment` placement would emit `export PATH='…';` into the
+user's own shell and break every later command in that session.
+
+**3. A selection-derived value that begins with `-` is refused on the LOCAL
+path, rather than prefixed `./`.** The archive work prefixes its own operands
+(`6` occurrences, counted above), and it can, because it knows each operand
+is a path it chose the position of. A template's author places `{{NAME}}`
+wherever they like, so macSCP cannot know whether a `./` would be correct
+there. On the local path there is no shell, so the only way a value stops
+being a value is by being read as an option — and the honest answer is to
+refuse and say so in the confirmation sheet, which is already being shown.
+The cost is that a file literally named `-foo` cannot be processed by a local
+action; that is a protective outcome, the same shape as the archive design's
+`gzExtractTargetExists`, and it is visible before anything runs rather than
+after. `{{PATH}}` and `{{DIR}}` are unaffected, because they are absolute.
+
 ## Testing
 
 **Core.** The survey and the substitution have their own suites already; what
