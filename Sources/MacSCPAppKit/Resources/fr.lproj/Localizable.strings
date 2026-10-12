@@ -1594,3 +1594,4 @@
 "fileAction.plan.shell" = "Saisi dans le shell de cette connexion.";
 "fileAction.plan.direct" = "Exécuté directement sur ce Mac, sans shell.";
 "fileAction.problem.noCommand" = "Saisissez la commande que cette action exécute : il n’y a encore rien à exécuter.";
+"fileAction.problem.commandControlCharacter" = "La commande contient le caractère de contrôle invisible « %@ ». Un shell agit sur un tel caractère au lieu de le lire comme du texte ; une action ne peut donc pas en contenir. Supprimez-le, ou ressaisissez la partie de la commande où il se trouve.";

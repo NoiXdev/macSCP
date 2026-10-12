@@ -86,6 +86,53 @@ struct FileActionTemplateTests {
         }
     }
 
+    /// A C0 control character or DEL in the COMMAND is refused on every
+    /// side, because the template's author need not be the user: an imported
+    /// action's command is text from somebody else's file, and a remote
+    /// action's command is TYPED into the user's own shell, where the line
+    /// editor acts on such a byte before any parser reads a quote.
+    ///
+    /// `\u{15}` is the worst of them (`^U` kills the line typed so far), but
+    /// the range is refused whole rather than case by case. The scalar is
+    /// carried so the sentence can name what to look for: the editor draws
+    /// the author's own text, where such a scalar is invisible.
+    @Test func aControlCharacterInTheCommandIsRefusedOnEverySide() {
+        for scalar in ["\u{0}", "\u{15}", "\u{1B}", "\u{7F}"] {
+            for sides: Set<BrowserPaneSide> in [[.remote], [.local], [.local, .remote]] {
+                let action = FileAction(
+                    name: "n", command: "wc -l\(scalar) {{PATH}}", runsOn: sides)
+                #expect(
+                    FileActionTemplate.firstProblem(in: action)
+                        == .commandHoldsAControlCharacter(
+                            scalar: scalar.unicodeScalars.first!),
+                    "\(scalar.debugDescription) on \(sides)")
+            }
+        }
+    }
+
+    /// The line feed is refused the same way on a remote-only action, which
+    /// is the side that has no `isOneSimpleCommand` check to catch it first.
+    /// A local-capable action still gets the more specific sentence, because
+    /// the local block runs before this check.
+    @Test func aLineFeedInTheCommandIsRefusedOnTheRemoteSideToo() {
+        #expect(
+            FileActionTemplate.firstProblem(in: remoteAction("wc -l {{PATH}}\ntouch y"))
+                == .commandHoldsAControlCharacter(scalar: "\u{0A}"))
+        #expect(
+            FileActionTemplate.firstProblem(in: localAction("wc -l {{PATH}}\ntouch y"))
+                == .notOneSimpleCommandForLocal)
+    }
+
+    /// The control beside the refusal: an ordinary command, and a command
+    /// that merely SPELLS a code point, are untouched. Only a real control
+    /// scalar is refused, so the gate cannot be read as refusing the text
+    /// `U+0015`.
+    @Test func anOrdinaryCommandAndASpelledCodePointAreNotRefused() {
+        #expect(FileActionTemplate.firstProblem(in: remoteAction("wc -l {{PATH}}")) == nil)
+        #expect(
+            FileActionTemplate.firstProblem(in: remoteAction("echo U+0015 {{PATH}}")) == nil)
+    }
+
     /// The control beside it: one word is a command, so the refusal is about
     /// there being nothing, not about short commands.
     @Test func aOneWordCommandIsNotEmpty() {

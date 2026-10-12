@@ -1597,3 +1597,4 @@
 "fileAction.plan.shell" = "Typed into the shell of this connection.";
 "fileAction.plan.direct" = "Run directly on this Mac, with no shell.";
 "fileAction.problem.noCommand" = "Type the command this action runs: there is nothing to run yet.";
+"fileAction.problem.commandControlCharacter" = "The command holds the invisible control character “%@”. A shell acts on such a character instead of reading it as text, so an action cannot carry one. Delete it, or retype the part of the command it sits in.";

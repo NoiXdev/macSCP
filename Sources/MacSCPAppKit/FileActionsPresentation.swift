@@ -84,6 +84,12 @@ func fileActionProblemText(for problem: FileActionTemplate.Problem) -> String {
         return L10n.string(
             "fileAction.problem.quotingLocal",
             "Quotes can't be used in an action that runs in the local pane, because nothing there interprets them. Take the quotes out, or switch off the local pane.")
+    case .commandHoldsAControlCharacter(let scalar):
+        return String(
+            format: L10n.string(
+                "fileAction.problem.commandControlCharacter",
+                "The command holds the invisible control character “%@”. A shell acts on such a character instead of reading it as text, so an action cannot carry one. Delete it, or retype the part of the command it sits in."),
+            FileActionPlanDisplay.visible(String(scalar)))
     }
 }
 
