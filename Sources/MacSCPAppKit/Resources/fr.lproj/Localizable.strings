@@ -1536,3 +1536,10 @@
 "notifications.transferFailed.title" = "Échec du transfert";
 "notifications.forwardingFailed.title" = "Échec de la redirection de port";
 "notifications.body.unsavedConnection" = "Connexion non enregistrée";
+
+/* User-defined file actions: the confirmation sheet */
+"fileAction.confirm.title" = "Exécuter l'action";
+"fileAction.confirm.message" = "Voici ce qui va être exécuté. Les noms de fichiers viennent du serveur : lisez-les avant de continuer.";
+"fileAction.confirm.run" = "Exécuter";
+"fileAction.confirm.cancel" = "Annuler";
+"fileAction.confirm.refused" = "Cette action ne peut pas s'appliquer à cette sélection.";
