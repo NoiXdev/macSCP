@@ -87,6 +87,18 @@ struct SnippetDryRunEntranceGuardTests {
     /// an equality fails in both directions.
     private static let fileAllowedToColourWhileTyping: Set<String> = ["SnippetCommandEditor.swift"]
 
+    /// The one App-layer file allowed to plan bytes itself:
+    /// `BrowserPane+FileActions.swift` types the lines of a confirmed
+    /// user-defined file action into the shell (file-actions plan, Task 10).
+    /// Those lines were resolved by `FileActionPlanner` and shown on the
+    /// confirmation sheet before this point, so there is no template left to
+    /// describe and no second description to drift from: the call sends what
+    /// the sheet showed, through the same planner a snippet's Execute uses.
+    /// Held as a set equality, like the colouring file above, so the entry
+    /// fails in both directions: a second file that starts planning, and
+    /// this one stopping.
+    private static let fileAllowedToPlanResolvedLines: Set<String> = ["BrowserPane+FileActions.swift"]
+
     // MARK: - The positive check: both entrances exist, and only those two
 
     @Test func theTwoEntrancesAreTheOnesThatDescribe() throws {
@@ -117,7 +129,9 @@ struct SnippetDryRunEntranceGuardTests {
     @Test func neitherEntranceAssemblesADescriptionOfItsOwn() throws {
         #expect(try Self.fileNamesCalling(Self.describeMarker) == Self.entranceFileNames)
 
-        #expect(try Self.fileNamesCalling("SnippetSendPlanner.plan(").isEmpty, """
+        #expect(
+            try Self.fileNamesCalling("SnippetSendPlanner.plan(") == Self.fileAllowedToPlanResolvedLines,
+            """
             An App-layer file plans a snippet's bytes for itself. What a snippet would send is \
             described in one place (`SnippetDryRun.describing`); a surface that plans again is a \
             second answer to the same question, and it is the one that will drift.

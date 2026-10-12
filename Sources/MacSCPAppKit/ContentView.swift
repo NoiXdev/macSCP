@@ -1405,12 +1405,7 @@ struct ContentView: View {
     /// `SnippetAuditDetailTests.variableValuesStayOutOfTheAuditLog`, and
     /// `SnippetVariablePromptWiringGuardTests` for the call site itself.
     func sendSnippet(_ dryRun: SnippetDryRun, of snippet: Snippet, execute: Bool) {
-        guard let terminal = activeTab.session?.terminal else { return }
-        if !terminal.isVisible {
-            terminal.toggle()
-            persistActivePaneVisibility()
-        }
-        terminal.openIfNeeded()
+        guard let terminal = openActiveShell() else { return }
 
         guard case .send(let bytes) = dryRun.plan else {
             // The remote cannot take a multi-line paste without running it,
@@ -1428,6 +1423,36 @@ struct ContentView: View {
             recorder?.recordAction(
                 AuditEvent(kind: .snippetExecuted, detail: SnippetAuditDetail.text(for: snippet)))
         }
+    }
+
+    /// The active tab's terminal, revealed and with its shell opened, or
+    /// `nil` when the tab has none. The first half of every send to the
+    /// shell, extracted from `sendSnippet` unchanged so that a snippet and a
+    /// user-defined file action reach the shell through one function: the
+    /// panel is closed until the user opens it, and a send must work on a tab
+    /// that has just connected. See `sendSnippet` for why the reveal goes
+    /// through `toggle()` and `persistActivePaneVisibility()`, and why
+    /// `openIfNeeded()` still runs when the panel was already visible.
+    func openActiveShell() -> TerminalPanelViewModel? {
+        guard let terminal = activeTab.session?.terminal else { return nil }
+        if !terminal.isVisible {
+            terminal.toggle()
+            persistActivePaneVisibility()
+        }
+        terminal.openIfNeeded()
+        return terminal
+    }
+
+    /// Types `bytes` into the active tab's shell for a user-defined file
+    /// action, the way `sendSnippet` sends a snippet's. `false` when the tab
+    /// has no shell, so the pane can say so instead of doing nothing.
+    ///
+    /// Unlike `sendSnippet` this records no audit event: the action's text is
+    /// resolved from a selection, and no audit kind describes it.
+    func typeFileActionBytes(_ bytes: [UInt8]) -> Bool {
+        guard activeTabSupportsShell, let terminal = openActiveShell() else { return false }
+        terminal.send(bytes)
+        return true
     }
 
     /// Persists every opted-in value (`SnippetVariable.remembersLastValue

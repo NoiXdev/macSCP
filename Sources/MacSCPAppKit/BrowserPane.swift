@@ -186,6 +186,12 @@ struct BrowserPane: View {
     /// same reason as `extractRequest`: the entry lives in
     /// `BrowserPane+FileActions.swift`.
     @State var fileActionRequest: FileActionRequest?
+    /// The one sentence a file action's alert shows: another action is still
+    /// running, or the connection has no shell to type into.
+    @State var fileActionAlertMessage: String?
+    /// How a remote action reaches the user's shell. `nil` on the local pane,
+    /// which spawns and has no shell, and wherever a call site passes none.
+    var shell: FileActionShell? = nil
     /// The one sentence an archive alert shows: a refusal, a listing that
     /// could not be read, or "another operation is still running".
     @State var archiveAlertMessage: String?
@@ -260,6 +266,10 @@ struct BrowserPane: View {
             // The archive operation this pane has running, if any (decision
             // 3: at most one per pane, shown non-modally with a cancel).
             ArchiveActivityRow(activity: viewModel.archiveActivity)
+
+            // The local file action this pane has running, if any: the same
+            // shape, and the same one-at-a-time rule.
+            FileActionActivityRow(activity: viewModel.fileActionActivity)
 
             ZStack {
                 RemoteFileTableView(
@@ -498,9 +508,12 @@ struct BrowserPane: View {
         .sheet(item: $fileActionRequest) { request in
             FileActionConfirmSheet(
                 request: request,
-                // Nothing runs yet: the confirmation only closes the sheet.
-                // The run attaches here.
-                onRun: { fileActionRequest = nil },
+                // The sheet is closed first and the run started after, so the
+                // request is taken out of the binding before it is used.
+                onRun: {
+                    fileActionRequest = nil
+                    runFileAction(request)
+                },
                 onCancel: { fileActionRequest = nil })
         }
         .sheet(item: $checksumBatch) { batch in
@@ -536,6 +549,22 @@ struct BrowserPane: View {
             Button(L10n.string("common.ok", "OK"), role: .cancel) {}
         } message: {
             Text(archiveAlertMessage ?? "")
+        }
+        .alert(
+            L10n.string("fileAction.alert.title", "Action"),
+            isPresented: Binding(
+                get: { fileActionAlertMessage != nil },
+                set: { if !$0 { fileActionAlertMessage = nil } }
+            )
+        ) {
+            Button(L10n.string("common.ok", "OK"), role: .cancel) {}
+        } message: {
+            Text(fileActionAlertMessage ?? "")
+        }
+        // A local action may have written or removed files: when it ends, for
+        // any reason, the listing is re-read, as it is after an archive.
+        .onChange(of: viewModel.fileActionActivity.state) { previous, current in
+            if current == .idle, previous != .idle { Task { await viewModel.refresh() } }
         }
         // The listing is the report: when the pane's archive operation ends,
         // for any reason, it is re-read. A partial result of a cancel or a

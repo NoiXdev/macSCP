@@ -1546,3 +1546,11 @@
 "fileAction.confirm.run" = "Run";
 "fileAction.confirm.cancel" = "Cancel";
 "fileAction.confirm.refused" = "This action cannot run on this selection.";
+"fileAction.activity.running" = "Running “%@”";
+"fileAction.activity.failed" = "“%@” ended with an error.";
+"fileAction.activity.couldNotRun" = "“%@” could not be started.";
+"fileAction.activity.timedOut" = "“%@” took too long and was stopped.";
+"fileAction.activity.dismiss" = "Dismiss message";
+"fileAction.run.busy" = "Another action is still running in this pane. Wait for it to finish, or cancel it.";
+"fileAction.run.noShell" = "This action is typed into a shell, and this connection has none.";
+"fileAction.alert.title" = "Action";
