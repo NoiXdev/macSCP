@@ -102,8 +102,9 @@ struct FileActionConfirmSheet: View {
 /// The same rule covers what a terminal or a text layout would act on rather
 /// than draw — line breaks, and the invisible bidirectional and zero-width
 /// format characters a spoofed file name uses to reorder what is shown around
-/// it. Asked scalar by scalar, as `FileActionPlanner` asks its questions of
-/// server-chosen values.
+/// it — except the joiner and variation selectors an emoji is built from
+/// (see `needsMarker`). Asked scalar by scalar, as `FileActionPlanner` asks
+/// its questions of server-chosen values.
 enum FileActionPlanDisplay {
     struct Run: Equatable {
         let text: String
@@ -171,7 +172,21 @@ enum FileActionPlanDisplay {
         return result
     }
 
+    /// Whether `scalar` is drawn as a marker instead of passed through.
+    ///
+    /// U+200D ZERO WIDTH JOINER is let through: it composes one emoji out of
+    /// several (a family, a profession), so a name with one is ordinary, and a
+    /// sheet that decorated ordinary names with markers would teach the user
+    /// to ignore markers. The variation selectors U+FE00 to U+FE0F pass for
+    /// the same reason without being named here: they are nonspacing marks,
+    /// not format characters, so the category test below never reaches them.
+    /// Every other format character stays marked, in particular each
+    /// bidirectional control (U+200E, U+200F, U+202A to U+202E, U+2066 to
+    /// U+2069), which reorders what the user reads, and the zero-width space
+    /// and non-joiner (U+200B, U+200C), which hide a difference between two
+    /// names instead of composing one glyph.
     private static func needsMarker(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar == "\u{200D}" { return false }
         switch scalar.properties.generalCategory {
         case .control, .format, .lineSeparator, .paragraphSeparator: return true
         default: return false
