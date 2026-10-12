@@ -7,13 +7,29 @@ import macSCPCore
 /// anything the moment it sees `snippet.variables` is non-empty; a snippet
 /// with no declarations never reaches this view at all.
 ///
-/// Two presenters, counted here: `ContentView` opens it to RUN a snippet,
-/// and the snippet editor's "Test" button opens it to describe one
-/// (Snippet-Probelauf, Task 4). Deliberately the same view for both —
-/// a second prompt shape would be a second answer to "what is a value
-/// here", and the rehearsal would be the half that drifted. What differs
-/// is entirely in the caller's `onConfirm`: the editor's reaches
-/// `SnippetDryRun.describing` and stops there, remembering nothing.
+/// Presented by every surface that needs values before it does something
+/// with a template — to RUN a snippet, to DESCRIBE one (the snippet
+/// editor's "Test" button, Snippet-Probelauf, Task 4), and to RUN a file
+/// action (the file-actions work of 2026-10-12, which wraps the action's
+/// declarations in a `Snippet` for this sheet). Counted while writing this
+/// and re-run afterwards, 2026-10-12, from the repository root:
+/// `/usr/bin/grep -rn 'SnippetVariablePromptSheet($' Sources/` prints
+/// three lines. The `$` is an end anchor, which both the BSD grep at
+/// `/usr/bin/grep` and the ugrep a Claude session's `grep` function runs
+/// agree on at the end of a pattern (checked side by side) — and it is
+/// what keeps THIS sentence out of its own answer: a presentation puts the
+/// opening parenthesis last on the line, and the sentence quoting the
+/// command does not. The unanchored form prints four lines, the fourth
+/// being this comment. The kinds are named above rather than counted here
+/// all the same, so that a fourth surface makes the sentence incomplete
+/// rather than false.
+///
+/// Deliberately the same view for all of them — a second prompt shape would
+/// be a second answer to "what is a value here", and the rehearsal would be
+/// the half that drifted. What differs is entirely in the caller's
+/// `onConfirm`: the editor's reaches `SnippetDryRun.describing` and stops
+/// there, remembering nothing; the file action's goes on to its own
+/// confirmation sheet.
 ///
 /// Cancelling sends nothing: `onCancel` is the only other way out besides
 /// `onConfirm`, and neither `SnippetVariableSubstitution.resolve` nor
@@ -23,10 +39,12 @@ import macSCPCore
 /// no store access of its own.
 ///
 /// Each field starts from `initialValues[variable.name]` — the remembered
-/// value if there is one, else `SnippetVariable.defaultValue`. Both
-/// presenters compute that through `snippetVariablePromptValues` before
-/// presenting this sheet; this view looks nothing up itself, which is what
-/// keeps the two from opening on different values for the same snippet.
+/// value if there is one, else `SnippetVariable.defaultValue`. Every
+/// presenter computes that through `snippetVariablePromptValues` before
+/// presenting this sheet — the file action's through
+/// `fileActionPromptValues`, which forwards to it — and this view looks
+/// nothing up itself, which is what keeps them from opening on different
+/// values for the same declarations.
 ///
 /// ## The empty-`.selection` decision (carried forward from Task 5)
 ///

@@ -197,12 +197,15 @@ func snippetImportErrorText(for error: SessionExportError) -> String {
 /// Maps a `SnippetVariableSubstitution.Problem` to the sentence the user
 /// reads.
 ///
-/// One mapping for two surfaces: the editor shows it under the variables
-/// section while Save is disabled, and `snippetDryRunRefusalText` shows it
+/// One mapping, read by every surface that words a declaration problem: the
+/// snippet editor shows it under the variables section while Save is
+/// disabled (`snippetVariablesFault`), `snippetDryRunRefusalText` shows it
 /// in the dry run that refuses to run a snippet whose declarations never
-/// passed an editor — an imported one. Two switches over the same enum
-/// would drift, and the half that drifted would be the one nobody looks
-/// at.
+/// passed an editor — an imported one — and `fileActionDeclarationText`
+/// forwards the cases it does not reword itself. Several switches over the
+/// same enum would drift, and the one that drifted would be the one nobody
+/// looks at. The surfaces are named rather than counted, because a fourth
+/// one makes a count wrong without touching this file.
 ///
 /// Names are interpolated, values are NOT: a `Problem` never carries one,
 /// and this project's rule keeps a typed value out of every message.
@@ -359,11 +362,12 @@ func snippetDryRunRefusalText(
 /// The values a snippet-variable prompt opens with: what was remembered for
 /// a declaration, else its `defaultValue`.
 ///
-/// One function for both prompts. The trigger path opens the prompt to run
-/// a snippet and the editor's "Test" button opens the same prompt to
-/// rehearse one; computing the starting values twice would be two answers
-/// to "what is this value right now", and the one that drifted would be the
-/// rehearsal — the half nobody checks against a real run.
+/// One function for every prompt. The trigger path opens the prompt to run
+/// a snippet, the editor's "Test" button opens the same prompt to rehearse
+/// one, and `fileActionPromptValues` forwards to this for a file action's
+/// prompt; computing the starting values more than once would be several
+/// answers to "what is this value right now", and the one that drifted
+/// would be the rehearsal — the half nobody checks against a real run.
 ///
 /// `remembered` is a READ, and that is the whole of the editor's access to
 /// what was remembered: a closure that returns a value can never store one,
@@ -611,7 +615,12 @@ func snippetCollapsedVariableSummary(for variable: SnippetVariable) -> String {
 // MARK: - Placeholder help (snippet editor operation, part 2)
 
 /// Whether `variable` belongs in the command as `{{NAME}}` — the ONE
-/// question both entrances ask before offering a name.
+/// question every entrance asks before offering a name. There are two
+/// KINDS of entrance, named rather than counted so that a second editor
+/// does not falsify this: a variable row's "Insert in command" button, and
+/// the completion list on the opening braces. Each kind exists in the
+/// snippet editor and, since 2026-10-12, in the file-action editor, which
+/// reaches both through the same helpers.
 ///
 /// One question, so an environment declaration is missing from the row's
 /// insert control and from the completion list by construction, rather than
@@ -621,7 +630,7 @@ func snippetCollapsedVariableSummary(for variable: SnippetVariable) -> String {
 /// of what its placement says: text nothing fills in, next to a value the
 /// command never mentions.
 ///
-/// **And it is not offered as `$NAME` either**, in either entrance. In a
+/// **And it is not offered as `$NAME` either**, in any entrance. In a
 /// single-line assignment PREFIX the shell expands `$NAME` before the
 /// assignment takes effect (`P=neu echo "$P"` prints the old value), so a
 /// control that inserted it would be silently wrong in a single-line
@@ -637,8 +646,9 @@ func snippetBelongsInCommandAsPlaceholder(_ variable: SnippetVariable) -> Bool {
     variable.placement == .placeholder && SnippetVariable.isValidName(variable.name)
 }
 
-/// The names either entrance may offer, in declaration order, without
-/// repeats.
+/// The names an entrance may offer, in declaration order, without repeats
+/// (the kinds of entrance are named on
+/// `snippetBelongsInCommandAsPlaceholder`).
 ///
 /// Repeats are dropped because two declarations sharing a name is a state
 /// the editor lets the user be in while they fix it

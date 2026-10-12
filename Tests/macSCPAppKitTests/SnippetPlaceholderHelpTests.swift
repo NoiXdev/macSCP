@@ -10,7 +10,7 @@ import macSCPCore
 /// that opens at `{{`.
 ///
 /// All three rest on functions that decide something without a view, and
-/// that is what this suite covers: which names either entrance offers for a
+/// that is what this suite covers: which names an entrance offers for a
 /// given set of declarations, and which `{{NAME}}` in a command text no
 /// declaration carries. What it cannot cover is whether the list at the
 /// `NSTextView` feels right while typing — named as unprovable in the
