@@ -21,6 +21,13 @@ public enum UndeterminedReason: Equatable, Sendable {
     case etagIsNotAFileHash
     /// A symlink or an `other` entry: no content comparison is meaningful.
     case unsupportedKind
+    /// Listing a directory, or classifying a pair, threw. The walk reports the
+    /// path with this reason and carries on, because one unreadable directory
+    /// must not discard the rest of the comparison; the row names the path, so
+    /// nothing is hidden. A cancel is never reported this way: it ends the
+    /// walk. The ROOT of either side is not covered either — with a chosen
+    /// folder unreadable there is nothing to compare, and the walk throws.
+    case unreadable
 }
 
 public enum ComparisonState: Equatable, Sendable {

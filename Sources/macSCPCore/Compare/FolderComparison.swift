@@ -33,6 +33,13 @@ public enum FolderComparison {
     /// descended into: naming every file under it would bury the fact that
     /// the whole directory is missing.
     ///
+    /// A directory below the root that cannot be listed, or a pair that
+    /// cannot be classified, is one `.undetermined(.unreadable)` row and the
+    /// walk goes on: aborting an hour-long comparison over one
+    /// permission-denied folder would discard everything else it found. A
+    /// cancel is the exception and still ends the walk, as is a failure
+    /// listing the root itself.
+    ///
     /// `@MainActor` so the two callbacks can be plain closures: they are
     /// invoked across `await` boundaries, and their caller is a main-actor
     /// model whose observable state they drive. The network `await`s suspend
@@ -56,15 +63,40 @@ public enum FolderComparison {
             let leftPath = join(leftRoot, relative)
             let rightPath = join(rightRoot, relative)
 
-            let leftItems = try await left.list(path: leftPath)
-            let rightItems = try await right.list(path: rightPath)
+            let leftItems: [RemoteFileItem]
+            let rightItems: [RemoteFileItem]
+            do {
+                leftItems = try await left.list(path: leftPath)
+                rightItems = try await right.list(path: rightPath)
+            } catch {
+                try propagateCancellation(error)
+                // The root is the folder pair the user chose; with either side
+                // unreadable there is nothing to compare.
+                if relative.isEmpty { throw error }
+                // Below the root, a directory nobody could read is one row and
+                // is not descended into; the rest of the tree is still worth
+                // having, and the row names the path.
+                directoriesVisited += 1
+                onRow(ComparisonRow(relativePath: relative, state: .undetermined(.unreadable)))
+                rowsProduced += 1
+                onProgress(ComparisonProgress(
+                    directoriesVisited: directoriesVisited, rowsProduced: rowsProduced))
+                continue
+            }
             directoriesVisited += 1
 
             for pair in ComparisonPairing.pairs(left: leftItems, right: rightItems) {
                 try Task.checkCancellation()
                 let childRelative = relative.isEmpty ? pair.name : relative + "/" + pair.name
-                let state = try await classify(
-                    pair, left: left, right: right, algorithm: algorithm)
+                let state: ComparisonState
+                do {
+                    state = try await classify(
+                        pair, left: left, right: right, algorithm: algorithm)
+                } catch {
+                    try propagateCancellation(error)
+                    // A failed fetch fails this one pair, not the comparison.
+                    state = .undetermined(.unreadable)
+                }
 
                 // `.bothDirectories`, never `.same`: a directory pair is not
                 // content anybody measured, and `ComparisonState` gave it its
@@ -81,6 +113,21 @@ public enum FolderComparison {
             onProgress(ComparisonProgress(
                 directoriesVisited: directoriesVisited, rowsProduced: rowsProduced))
         }
+    }
+
+    /// Rethrows when `error` is a cancel, and returns for anything else.
+    ///
+    /// Called first in every `catch` above, because a blanket catch would turn
+    /// a cancel into a tree of `.unreadable` rows and the walk would run to
+    /// completion: the failure the per-directory and per-pair checks exist to
+    /// prevent, arriving through the error path. Two tests, not one: a
+    /// `CancellationError` is a cancel, and so is ANY error a backend throws
+    /// while this task is cancelled (a cancelled URL session reports
+    /// `URLError.cancelled`, a socket reports its own), which is why the task
+    /// is asked as well as the error.
+    private static func propagateCancellation(_ error: any Error) throws {
+        if error is CancellationError { throw error }
+        try Task.checkCancellation()
     }
 
     /// `RemotePath.join`, not a bare `root + "/" + relative`: a root of "/"
