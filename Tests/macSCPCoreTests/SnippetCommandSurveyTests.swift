@@ -947,7 +947,15 @@ struct SnippetCommandSurveyTests {
     /// `ArchiveCommandLine.swift` added; the four above are unchanged.
     /// Withdrawn 2026-10-12, quoted: "the four above are unchanged" is five
     /// above with `FileActionTemplate.swift` added; the eight below are
-    /// unchanged.
+    /// unchanged. Withdrawn 2026-10-12 again, quoted: "the eight below are
+    /// unchanged" is nine below with `FileActionPlan.swift` added.
+    ///
+    /// `FileActionPlan.swift` (2026-10-12) is the ninth caller: it hands
+    /// every selection-derived path in a `{{PATHS}}` list to
+    /// `PosixQuoting.singleQuoted` and reads no shell text back. The local
+    /// argv is cut along the spans `SnippetCommandSurvey` reports, so it
+    /// asks no per-element question of shell text itself; the one scalar it
+    /// compares is the first of a VALUE, against a hyphen.
     /// `everySourceFileOnTheShellPathIsClassified` reads their union and is
     /// this list's only reader; the list above has a second one,
     /// `shellLexingSourceFiles()`, which is where its missing-name throw and
@@ -961,6 +969,7 @@ struct SnippetCommandSurveyTests {
         "SSHKeyConverter.swift",
         "JumpProbeCommand.swift",
         "ArchiveCommandLine.swift",
+        "FileActionPlan.swift",
     ]
 
     private static func shellLexingSourceFiles() throws -> [URL] {
