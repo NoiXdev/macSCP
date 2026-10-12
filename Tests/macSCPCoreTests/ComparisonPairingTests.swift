@@ -82,10 +82,38 @@ private func item(
     /// name form an ambiguous group. Pairing them would be a guess about which
     /// one maps to the local file, so all three stay one-sided.
     @Test func anAmbiguousNormalizationGroupIsLeftUnpairedNotGuessed() {
+        let group = ["a\u{0323}\u{0308}", "a\u{0308}\u{0323}", "\u{1EA1}\u{0308}"]
+        pinEquivalentButByteDistinct(group)
         let pairs = ComparisonPairing.pairs(
-            left: [item("a\u{0323}\u{0308}")],
-            right: [item("a\u{0308}\u{0323}"), item("\u{1EA1}\u{0308}")])
+            left: [item(group[0])],
+            right: [item(group[1]), item(group[2])])
         #expect(pairs.count == 3)
+        #expect(pairs.filter { $0.left != nil }.count == 1)
+        #expect(pairs.filter { $0.right != nil }.count == 2)
         #expect(pairs.allSatisfy { $0.left == nil || $0.right == nil })
+    }
+
+    /// The mirror of the case above: two local names against one remote.
+    /// Same code path, but pinned from this side too, so an asymmetry
+    /// introduced by a later refactor is caught.
+    @Test func anAmbiguousGroupOnTheLocalSideIsLeftUnpairedToo() {
+        let group = ["a\u{0323}\u{0308}", "a\u{0308}\u{0323}", "\u{1EA1}\u{0308}"]
+        pinEquivalentButByteDistinct(group)
+        let pairs = ComparisonPairing.pairs(
+            left: [item(group[1]), item(group[2])],
+            right: [item(group[0])])
+        #expect(pairs.count == 3)
+        #expect(pairs.filter { $0.left != nil }.count == 2)
+        #expect(pairs.filter { $0.right != nil }.count == 1)
+        #expect(pairs.allSatisfy { $0.left == nil || $0.right == nil })
+    }
+
+    /// Positive premise for the ambiguity tests above. Without it, "nothing
+    /// pairs" would also hold if the names were simply different files, and
+    /// the test would prove nothing. The names must share an NFC form while
+    /// their UTF-8 bytes stay pairwise distinct.
+    private func pinEquivalentButByteDistinct(_ names: [String]) {
+        #expect(Set(names.map { bytes($0.precomposedStringWithCanonicalMapping) }).count == 1)
+        #expect(Set(names.map { bytes($0) }).count == names.count)
     }
 }
