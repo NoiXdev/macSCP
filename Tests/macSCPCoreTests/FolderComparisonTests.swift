@@ -179,7 +179,29 @@ import Testing
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
         #expect(rows.first { $0.relativePath == "a" }?.state == .same)
         // Positive control: the first pass asked for sha256, the retry for md5.
+        // Both sides are asserted: the ETag side answers md5 whatever it is
+        // asked, so only its own record shows what the retry asked of it.
         #expect(left.askedAlgorithms == [.sha256, .md5])
+        #expect(right.askedAlgorithms == [.sha256, .md5])
+    }
+
+    /// The mirror: the ETag is on the LEFT. The retry is symmetric, so it
+    /// must not matter which side held it.
+    @Test func anETagOnTheLeftIsRetriedWithMD5Too() async throws {
+        let md5 = "d41d8cd98f00b204e9800998ecf8427e"
+        let left = FakeFS(
+            listings: ["/l": [file("a", 7)]],
+            checksums: ["/l/a": [.md5: md5]])
+        let right = FakeFS(
+            listings: ["/r": [file("a", 7)]],
+            checksums: ["/r/a": [.sha256: String(repeating: "e", count: 64), .md5: md5]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.first { $0.relativePath == "a" }?.state == .same)
+        #expect(left.askedAlgorithms == [.sha256, .md5])
+        #expect(right.askedAlgorithms == [.sha256, .md5])
     }
 
     /// The retry must not loop: two sides that still disagree under MD5 stay
@@ -424,6 +446,91 @@ import Testing
         await #expect(throws: CancellationError.self) { try await task.value }
         #expect(left.checksumCalls == 2)
         #expect(rows.map(\.relativePath) == ["f0"])
+    }
+
+    // MARK: - Which pairs are descended into, and in what order
+
+    /// A directory against a FILE is a `.typeMismatch` row and nothing more.
+    /// Descending would list the directory's side against the file's path and
+    /// turn into an `.unreadable` row, a row that says something false about
+    /// the tree. Neither side may be listed below the root.
+    @Test(arguments: [true, false])
+    func aDirectoryAgainstAFileIsOneRowAndIsNotDescendedInto(directoryOnTheLeft: Bool) async throws {
+        let left = FakeFS(listings: directoryOnTheLeft
+            ? ["/l": [dir("x")], "/l/x": [file("y", 1)]] : ["/l": [file("x", 1)]])
+        let right = FakeFS(listings: directoryOnTheLeft
+            ? ["/r": [file("x", 1)]] : ["/r": [dir("x")], "/r/x": [file("y", 1)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows == [ComparisonRow(relativePath: "x", state: .typeMismatch)])
+        #expect(left.listedPaths == ["/l"])
+        #expect(right.listedPaths == ["/r"])
+    }
+
+    /// A symlink is `.undetermined(.unsupportedKind)` and is not followed,
+    /// whether the other side holds a symlink or a directory.
+    @Test func aSymlinkPairIsOneRowAndIsNotDescendedInto() async throws {
+        let link = { (name: String) in RemoteFileItem(name: name, path: name, kind: .symlink) }
+        let left = FakeFS(listings: [
+            "/l": [link("both"), link("mixed")], "/l/both": [file("y", 1)], "/l/mixed": [file("y", 1)],
+        ])
+        let right = FakeFS(listings: [
+            "/r": [link("both"), dir("mixed")], "/r/both": [file("y", 1)], "/r/mixed": [file("y", 1)],
+        ])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows == [
+            ComparisonRow(relativePath: "both", state: .undetermined(.unsupportedKind)),
+            ComparisonRow(relativePath: "mixed", state: .undetermined(.unsupportedKind)),
+        ])
+        #expect(left.listedPaths == ["/l"])
+        #expect(right.listedPaths == ["/r"])
+    }
+
+    /// Breadth-first: a level is finished before the next is started, and
+    /// within a level the directories are taken in the order they were found.
+    /// A stack would list "b" before "a"; the unreadable-subdirectory test
+    /// above relies on "good" coming after "bad" for its positive control, so
+    /// this is what that control stands on.
+    @Test func directoriesAreVisitedBreadthFirstInTheOrderTheyWereFound() async throws {
+        let left = FakeFS(listings: [
+            "/l": [dir("a"), dir("b")], "/l/a": [dir("deep"), file("x", 1)],
+            "/l/a/deep": [file("z", 1)], "/l/b": [file("y", 1)],
+        ])
+        let right = FakeFS(listings: [
+            "/r": [dir("a"), dir("b")], "/r/a": [dir("deep"), file("x", 2)],
+            "/r/a/deep": [file("z", 2)], "/r/b": [file("y", 2)],
+        ])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(left.listedPaths == ["/l", "/l/a", "/l/b", "/l/a/deep"])
+        #expect(rows.map(\.relativePath) == ["a/x", "b/y", "a/deep/z"])
+    }
+
+    // MARK: - The accounting of an unreadable directory
+
+    /// A directory that failed to list counts as visited, and its row counts
+    /// in `rowsProduced`, and it is reported like any other level. Pinned
+    /// here because Tasks 10 and 11 build their progress display on it.
+    @Test func anUnreadableDirectoryCountsAsVisitedAndItsRowAsProduced() async throws {
+        let left = FakeFS(
+            listings: ["/l": [dir("bad"), file("x", 1)]],
+            listFailures: ["/l/bad": RemoteFSError.permissionDenied(path: "bad")])
+        let right = FakeFS(listings: ["/r": [dir("bad"), file("x", 2)], "/r/bad": []])
+        var reports: [ComparisonProgress] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { _ in }, onProgress: { reports.append($0) })
+        #expect(reports == [
+            ComparisonProgress(directoriesVisited: 1, rowsProduced: 1),  // the root: x differs
+            ComparisonProgress(directoriesVisited: 2, rowsProduced: 2),  // bad: unreadable
+        ])
     }
 }
 
