@@ -322,6 +322,39 @@ struct FileActionsPresentationTests {
         }
     }
 
+    // MARK: - Where the previewed plan goes
+
+    /// The caption is read off the plan's own case, never off the action's
+    /// `runsOn`: an action that declares both panes has two plans, and the
+    /// surface shows one of them. `.shellLines` is typed into the
+    /// connection's shell; `.invocations` is spawned directly with no shell
+    /// at all, and saying "shell" there would tell the user the wrong place.
+    @Test func theDestinationIsDerivedFromThePlanAndNotFromTheSidesTheActionDeclares() throws {
+        let both = FileAction(
+            name: "n", command: "wc -l {{PATH}}", runsOn: [.local, .remote])
+        let selection = fileActionPreviewSelection(for: .oncePerFile)
+        var captions: [BrowserPaneSide: String] = [:]
+        for side in BrowserPaneSide.allCases {
+            let result = FileActionPlanner.plan(action: both, selection: selection, side: side)
+            captions[side] = fileActionDestinationText(for: try result.get())
+        }
+        let remote = try #require(captions[.remote])
+        let local = try #require(captions[.local])
+        #expect(remote != local, "one action, two panes, one caption")
+        #expect(remote.localizedCaseInsensitiveContains("shell"))
+        #expect(remote.localizedCaseInsensitiveContains("no shell") == false)
+        #expect(local.localizedCaseInsensitiveContains("no shell"))
+    }
+
+    @Test func eachPlanShapeHasItsOwnCaption() {
+        let shell = fileActionDestinationText(for: .shellLines(["ls"]))
+        let direct = fileActionDestinationText(
+            for: .invocations([FileActionInvocation(executable: "ls", arguments: [])]))
+        #expect(shell.isEmpty == false)
+        #expect(direct.isEmpty == false)
+        #expect(shell != direct)
+    }
+
     @Test func aDeclaredVariablePreviewsAsItsDefaultThenItsFirstOptionThenASample() {
         func variable(_ kind: SnippetVariable.Kind, _ defaultValue: String) -> SnippetVariable {
             SnippetVariable(

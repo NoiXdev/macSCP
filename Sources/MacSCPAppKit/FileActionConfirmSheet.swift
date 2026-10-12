@@ -41,6 +41,13 @@ struct FileActionConfirmSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                // Where it goes, from the plan's own case: a typed line and a
+                // direct run are different places, and this sheet is the
+                // user's check of which.
+                Text(fileActionDestinationText(for: plan))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 commandList(FileActionPlanDisplay.lines(for: plan))
             case .failure(let refusal):
                 Text(FileActionPlanDisplay.refusalSentence(for: refusal))

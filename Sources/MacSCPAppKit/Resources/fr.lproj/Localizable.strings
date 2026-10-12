@@ -1591,3 +1591,5 @@
 "fileAction.import.error" = "Ce fichier n’a pas pu être lu comme des actions sur fichiers macSCP. Il s’agit peut-être d’un autre type d’export, ou le fichier est endommagé.";
 "fileAction.sheet.notOffered" = "Non proposée dans le menu : %@";
 "menu.fileActions.manage" = "Gérer les actions sur fichiers…";
+"fileAction.plan.shell" = "Saisi dans le shell de cette connexion.";
+"fileAction.plan.direct" = "Exécuté directement sur ce Mac, sans shell.";
