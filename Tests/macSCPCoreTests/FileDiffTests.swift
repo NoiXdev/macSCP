@@ -360,11 +360,14 @@ import Testing
 
     /// With a narrow context, every hunk still points at its own lines: the
     /// slice of each side starting at the hunk's start is what the hunk says
-    /// it was, and the hunks are in order and do not overlap.
+    /// it was, and the hunks are in order and do not overlap. And nothing is
+    /// lost between them: `expectEveryChangeIsShownOnce` checks, against the
+    /// whole-file script, that no change falls outside the hunks.
     @Test(.timeLimit(.minutes(1)))
     func everyHunkPointsAtItsOwnLinesOnBothSides() {
         var rng = Lcg(state: 20_261_014)
         var multiHunk = 0
+        var coverage = Coverage()
         for _ in 0..<2000 {
             var left: [String] = []
             for _ in 0..<(rng.next(30)) { left.append(String(rng.next(4))) }
@@ -394,9 +397,146 @@ import Testing
                 leftEnd = hunk.leftStart + fromLeft.count
                 rightEnd = hunk.rightStart + fromRight.count
             }
+            expectEveryChangeIsShownOnce(
+                left: left, right: right, context: context, hunks: hunks,
+                coverage: &coverage)
         }
         // Positive control: the separation between hunks was exercised.
         #expect(multiHunk > 100)
+        // Positive controls for the coverage checks, each of which would
+        // otherwise pass vacuously on inputs that never reach its branch.
+        #expect(coverage.changes > 1000)
+        #expect(coverage.gaps > 100)
+        #expect(coverage.mergedRuns > 100)
+        #expect(coverage.truncatedHunks > 100)
+        #expect(coverage.mixedBlocks > 100)
+    }
+
+    /// What `expectEveryChangeIsShownOnce` reached, so the test can assert
+    /// that each of its checks ran on real inputs.
+    private struct Coverage {
+        var changes = 0
+        /// Pairs of neighbouring hunks whose separation was checked.
+        var gaps = 0
+        /// Pairs of neighbouring changes inside one hunk whose distance was checked.
+        var mergedRuns = 0
+        /// Hunks whose context was shortened by the start or end of the file.
+        var truncatedHunks = 0
+        /// Blocks of changes holding both removals and additions.
+        var mixedBlocks = 0
+    }
+
+    /// The properties that make the hunks a complete account of the diff,
+    /// stated against the whole-file script (the single hunk a context
+    /// wider than the file produces) rather than against the grouper's own
+    /// output:
+    ///
+    /// 1. Every changed line of the script lies inside exactly one hunk, and
+    ///    each hunk is a contiguous slice of the script. A grouper that
+    ///    dropped a hunk would still pass every other check in this suite
+    ///    that looks only at the hunks it returned.
+    /// 2. A change has `context` lines of context on each side, shortened
+    ///    only by the start or end of the file; a hunk has no more than that.
+    /// 3. Two neighbouring changes are more than `2 * context` unchanged
+    ///    lines apart exactly when they are in different hunks.
+    ///
+    /// And the claim `FileDiff.hunks` documents: within a block of changes,
+    /// every removal comes before every addition.
+    private func expectEveryChangeIsShownOnce(
+        left: [String], right: [String], context: Int, hunks: [DiffHunk],
+        coverage: inout Coverage
+    ) {
+        let note = "left \(left) right \(right) context \(context)"
+        let whole = FileDiff.hunks(left: left, right: right, context: left.count + right.count + 1)
+        let script = whole.first?.lines ?? []
+        let count = script.count
+
+        // Where each script line came from on each side. The pair is unique
+        // per position, since every step consumes at least one side.
+        var origin: [(left: Int, right: Int)] = []
+        var consumedLeft = 0
+        var consumedRight = 0
+        for line in script {
+            origin.append((consumedLeft, consumedRight))
+            if line.kind != .added { consumedLeft += 1 }
+            if line.kind != .removed { consumedRight += 1 }
+        }
+
+        // The ordering claim, on the script.
+        var sawAddition = false
+        var blockHasRemoval = false
+        for line in script + [DiffLine(kind: .context, text: "")] {
+            switch line.kind {
+            case .context:
+                if sawAddition && blockHasRemoval { coverage.mixedBlocks += 1 }
+                sawAddition = false
+                blockHasRemoval = false
+            case .removed:
+                #expect(!sawAddition, "an addition precedes a removal: \(note)")
+                blockHasRemoval = true
+            case .added:
+                sawAddition = true
+            }
+        }
+
+        // Which script positions each hunk covers.
+        var shown = [Int](repeating: 0, count: count)
+        var spans: [Range<Int>] = []
+        for hunk in hunks {
+            guard let start = origin.firstIndex(where: {
+                $0.left == hunk.leftStart && $0.right == hunk.rightStart
+            }), start + hunk.lines.count <= count else {
+                Issue.record("a hunk starts nowhere in the script: \(note)")
+                continue
+            }
+            let span = start..<(start + hunk.lines.count)
+            #expect(Array(script[span]) == hunk.lines, "\(note)")
+            for position in span { shown[position] += 1 }
+            spans.append(span)
+        }
+
+        let changed = script.indices.filter { script[$0].kind != .context }
+        coverage.changes += changed.count
+
+        // 1. Every change is in exactly one hunk.
+        for position in changed {
+            #expect(shown[position] == 1, "change \(position) shown \(shown[position]) times: \(note)")
+        }
+        #expect(shown.allSatisfy { $0 <= 1 }, "hunks overlap: \(note)")
+
+        // 2. The context around each change, and nothing beyond it.
+        for position in changed {
+            for near in max(0, position - context)...min(count - 1, position + context) {
+                #expect(shown[near] == 1, "line \(near) beside change \(position) hidden: \(note)")
+            }
+        }
+        for span in spans {
+            let inside = span.filter { script[$0].kind != .context }
+            guard let first = inside.first, let last = inside.last else {
+                Issue.record("a hunk with no change in it: \(note)")
+                continue
+            }
+            #expect(first - span.lowerBound == min(context, first), "leading context: \(note)")
+            #expect(span.upperBound - 1 - last == min(context, count - 1 - last), "trailing context: \(note)")
+            if first - span.lowerBound < context || span.upperBound - 1 - last < context {
+                coverage.truncatedHunks += 1
+            }
+
+            // 3, inside a hunk: neighbouring changes are close.
+            for (a, b) in zip(inside, inside.dropFirst()) {
+                #expect(b - a - 1 <= 2 * context, "split too eagerly: \(note)")
+                coverage.mergedRuns += 1
+            }
+        }
+        // 3, between hunks: the unchanged run is longer than twice the context.
+        for (before, after) in zip(spans, spans.dropFirst()) {
+            let lastBefore = before.last { script[$0].kind != .context }
+            let firstAfter = after.first { script[$0].kind != .context }
+            if let lastBefore, let firstAfter {
+                #expect(firstAfter - lastBefore - 1 > 2 * context, "split too early: \(note)")
+                coverage.gaps += 1
+            }
+        }
     }
 
     /// Swapping the sides swaps the kinds: what one direction removes the
