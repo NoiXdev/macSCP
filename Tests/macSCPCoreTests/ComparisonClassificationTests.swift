@@ -151,6 +151,20 @@ import Testing
         #expect(state == .undetermined(.algorithmUnavailable(.sha1)))
     }
 
+    /// `.same` means two files whose contents were compared and matched, and
+    /// nothing else. A folder pair has no content to measure here, so it is
+    /// its own state; reporting it as `.same` would show a match nobody made.
+    @Test func aFolderPairIsBothDirectoriesAndNeverSame() async throws {
+        let asked = Asked()
+        let state = try await ComparisonClassification.state(
+            for: pair(leftSize: nil, rightSize: nil, leftKind: .directory, rightKind: .directory),
+            leftChecksum: { await asked.record(); return .unavailableOnThisConnection },
+            rightChecksum: { await asked.record(); return .unavailableOnThisConnection })
+        #expect(state == .bothDirectories)
+        #expect(state != .same)
+        #expect(await asked.count == 0)
+    }
+
     @Test func aPairPresentOnOneSideOnly() async throws {
         let onlyLeft = ComparisonPair(
             name: "f",
