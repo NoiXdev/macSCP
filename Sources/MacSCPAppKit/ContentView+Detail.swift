@@ -467,6 +467,7 @@ extension ContentView {
                                         }
                                     },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                    userFileActions: { fileActionsForMenu() },
                                     // Where this pane's "Transfer ▸ To the
                                     // other pane" would send (review C-1): the
                                     // REMOTE pane, which cannot receive while
@@ -583,6 +584,7 @@ extension ContentView {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
                                             .fileActions
                                     },
+                                    userFileActions: { fileActionsForMenu() },
                                     // The mirror of the local pane's line
                                     // above. `LocalFileSystem` takes the
                                     // protocol default (`rootIsContainerList

@@ -64,6 +64,13 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// shows a backend action, since the local file system never contributes
     /// any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// The actions the USER wrote (file-actions plan), as a closure for the
+    /// reason `crossSessionTargets` and `fileActions` are: read at each
+    /// `menuNeedsUpdate`, so an action saved a moment ago is in the very next
+    /// menu without this view being rebuilt. `nil` yields none. Forwarded to
+    /// `BrowserContextMenu.entries(userFileActions:)`, which keeps only the
+    /// ones that declare this pane's side and that the gate accepts.
+    var userFileActions: (() -> [FileAction])? = nil
     /// Whether this pane's backend can answer the checksum question — read
     /// from the capability on the remote side and from the local file
     /// system's own conformance on the local one (see
@@ -144,6 +151,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
+        coordinator.userFileActions = userFileActions
         coordinator.supportsChecksum = supportsChecksum
         coordinator.supportsArchiving = supportsArchiving
         coordinator.supportsPermissions = supportsPermissions
@@ -451,6 +459,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
+        context.coordinator.userFileActions = userFileActions
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.supportsArchiving = supportsArchiving
         context.coordinator.supportsPermissions = supportsPermissions
@@ -702,6 +711,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
+        var userFileActions: (() -> [FileAction])?
         var supportsChecksum = false
         var supportsArchiving = false
         var supportsPermissions = false
@@ -1073,6 +1083,7 @@ struct RemoteFileTableView: NSViewRepresentable {
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
                 fileActions: fileActions?() ?? [],
+                userFileActions: userFileActions?() ?? [],
                 supportsChecksum: supportsChecksum, supportsArchiving: supportsArchiving,
                 scope: scope, destination: currentDestinationScope)
             // `.transferToOtherPane` is immediately followed (per the Core
@@ -1271,8 +1282,14 @@ struct RemoteFileTableView: NSViewRepresentable {
                     title: L10n.string(action.titleKey, action.titleDefault), entry: entry, selection: selection)
             case .userFileAction(let action):
                 // The title is the user's own text, so it is not looked up in
-                // a catalogue: there is no key for a name somebody typed.
-                return actionItem(title: action.name, entry: entry, selection: selection)
+                // a catalogue: there is no key for a name somebody typed. It
+                // is not entirely the user's own: an action can be imported
+                // from a file, and a bidirectional override or a line break in
+                // its name would mislabel the item, so the title is spelled
+                // through the same renderer the confirmation sheet uses.
+                return actionItem(
+                    title: FileActionPlanDisplay.visible(action.name), entry: entry,
+                    selection: selection)
             }
         }
 

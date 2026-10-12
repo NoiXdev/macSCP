@@ -27,7 +27,8 @@ struct FileActionConfirmSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("fileAction.confirm.title", "Run action")).font(.headline)
-            Text(request.action.name)
+            Text(FileActionPlanDisplay.attributed(
+                FileActionPlanDisplay.runs(of: request.action.name)))
                 .font(.system(.body, design: .default).weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)

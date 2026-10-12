@@ -35,6 +35,11 @@ struct BrowserPane: View {
     /// `nil` for the local pane's call site (`ContentView`), since the local
     /// file system never contributes any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// The actions the user wrote (file-actions plan, Task 11) —
+    /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
+    /// Handed to BOTH panes: which of them an action appears on is the
+    /// action's own `runsOn`, decided by the menu model.
+    var userFileActions: (() -> [FileAction])? = nil
     /// The OTHER pane of this window — where this pane's "Transfer ▸ To the
     /// other pane" and its Space key would send (review C-1). Forwarded
     /// verbatim to `RemoteFileTableView`; see that property's doc comment for
@@ -349,6 +354,7 @@ struct BrowserPane: View {
                     focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets,
                     fileActions: fileActions,
+                    userFileActions: userFileActions,
                     supportsChecksum: supportsChecksum,
                     supportsArchiving: supportsArchiving,
                     supportsPermissions: supportsPermissions,
