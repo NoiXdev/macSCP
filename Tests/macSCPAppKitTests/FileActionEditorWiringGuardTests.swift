@@ -89,6 +89,22 @@ struct FileActionEditorWiringGuardTests {
 
     /// The command field is the snippet editor's, with its highlighting and
     /// its caret-aware insert.
+    /// Both surfaces that show a plan say where it goes, from the plan.
+    @Test func thePreviewAndTheConfirmationSheetSayWhereThePlanGoes() throws {
+        let editor = try Self.code(Self.editorFile)
+        let sheet = try Self.code("FileActionConfirmSheet.swift")
+        #expect(editor.contains("fileActionDestinationText(for: plan)"))
+        #expect(sheet.contains("fileActionDestinationText(for: plan)"))
+        let presentation = try Self.code(Self.presentationFile)
+        let start = try #require(presentation.range(of: "func fileActionDestinationText("))
+        let body = String(presentation[start.lowerBound...])
+        // Read off the plan's case: the function takes a plan and no action,
+        // and has no catch-all.
+        #expect(body.contains("switch plan {"))
+        #expect(body.prefix(400).contains("runsOn") == false)
+        #expect(body.prefix(400).contains("default:") == false)
+    }
+
     @Test func theCommandIsEditedInTheSnippetCommandEditor() throws {
         let editor = try Self.code(Self.editorFile)
         #expect(editor.contains("SnippetCommandEditor("))
@@ -212,12 +228,13 @@ struct FileActionEditorWiringGuardTests {
 
     /// Counted on 2026-10-12, on the three files as committed, with
     /// `/usr/bin/grep -o -h -E '"fileAction\.[A-Za-z.]+"' Sources/MacSCPAppKit/FileActionsSheet.swift Sources/MacSCPAppKit/FileActionEditor.swift Sources/MacSCPAppKit/FileActionsPresentation.swift | sort -u | wc -l`
-    /// which printed 39 (43 before `sort -u`: four keys are used at more than
+    /// which printed 41 (45 before `sort -u`: four keys are used at more than
     /// one call site). `-o` and a unique sort, because a key and its call
     /// sometimes sit on different lines and one line can hold two keys. The
     /// task also added one key outside the prefix, `menu.fileActions.manage`,
-    /// so its catalogues grew by 40 lines each.
-    private static let ownKeyCount = 39
+    /// so its catalogues grew by 42 lines each (40 first, 2 for the two
+    /// "where does this plan go" captions in fix round 1).
+    private static let ownKeyCount = 41
 
     @Test func theScanReachesTheKeysAndTheirCountIsTheCountedOne() throws {
         let own = try Self.ownKeys()

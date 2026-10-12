@@ -1588,3 +1588,5 @@
 "fileAction.import.error" = "Diese Datei konnte nicht als macSCP-Dateiaktionen gelesen werden. Es könnte sich um einen anderen Exporttyp handeln, oder die Datei ist beschädigt.";
 "fileAction.sheet.notOffered" = "Nicht im Menü angeboten: %@";
 "menu.fileActions.manage" = "Dateiaktionen verwalten…";
+"fileAction.plan.shell" = "In die Shell dieser Verbindung getippt.";
+"fileAction.plan.direct" = "Direkt auf diesem Mac ausgeführt, ohne Shell.";

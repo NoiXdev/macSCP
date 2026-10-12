@@ -363,6 +363,9 @@ struct FileActionEditor: View {
                         side: side, promptedValues: samples)
                     {
                     case .success(let plan):
+                        Text(fileActionDestinationText(for: plan))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         let lines = FileActionPlanDisplay.lines(for: plan)
                         ForEach(lines.indices, id: \.self) { index in
                             Text(FileActionPlanDisplay.attributed(lines[index]))

@@ -1590,3 +1590,5 @@
 "fileAction.import.error" = "Nie udało się odczytać tego pliku jako akcji na plikach macSCP. Może to być inny rodzaj eksportu albo plik jest uszkodzony.";
 "fileAction.sheet.notOffered" = "Niedostępna w menu: %@";
 "menu.fileActions.manage" = "Zarządzaj akcjami na plikach…";
+"fileAction.plan.shell" = "Wpisywane w powłoce tego połączenia.";
+"fileAction.plan.direct" = "Uruchamiane bezpośrednio na tym Macu, bez powłoki.";

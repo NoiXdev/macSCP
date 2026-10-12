@@ -295,3 +295,24 @@ func fileActionPromptSnippet(for action: FileAction) -> Snippet {
 func fileActionPromptValues(for action: FileAction) -> [String: String] {
     snippetVariablePromptValues(for: fileActionPromptSnippet(for: action)) { _ in nil }
 }
+
+// MARK: - Where a plan goes
+
+/// The sentence that says where a plan goes, read off the plan's own case.
+///
+/// **Not off the action's `runsOn`.** An action that declares both panes has
+/// two plans, and a surface shows one of them: `.shellLines` is typed into the
+/// connection's shell, `.invocations` is spawned directly with no shell at
+/// all. A caption chosen by the action would be wrong for one of its two
+/// plans, and the confirmation sheet is the user's only check of where a
+/// command goes. No `default:`, so a third plan shape must be worded here.
+func fileActionDestinationText(for plan: FileActionPlan) -> String {
+    switch plan {
+    case .shellLines:
+        return L10n.string(
+            "fileAction.plan.shell", "Typed into the shell of this connection.")
+    case .invocations:
+        return L10n.string(
+            "fileAction.plan.direct", "Run directly on this Mac, with no shell.")
+    }
+}
