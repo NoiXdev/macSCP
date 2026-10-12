@@ -165,7 +165,7 @@ classifies each pair:
 | `onlyLeft` / `onlyRight` | the relative path exists on one side only |
 | `differs` | the sizes differ, or the sizes match and the checksums differ |
 | `same` | the sizes match and the checksums match |
-| `undetermined(reason)` | the sizes match and the two checksums cannot be compared — see the four reasons below |
+| `undetermined(reason)` | the two sides cannot be compared — see the reasons below |
 | `typeMismatch` | the relative path is a folder on one side and a file on the other |
 
 **Corrected 2026-10-12, during the plan's pre-flight scan**, which found that
@@ -184,7 +184,17 @@ for two IDENTICAL files on every S3 connection holding a multipart object —
 a comparison that lies, which is the one outcome this design exists to
 prevent.
 
-So `undetermined` has four reasons, not one: the connection cannot hash at
+**Corrected 2026-10-13**, on Task 3's report, which added a fifth reason —
+`unreadable`, for a path whose listing or classification threw, described
+under Error handling. Two withdrawals, both quoted. The sentence below read
+"So `undetermined` has four reasons, not one". And the table's
+`undetermined(reason)` cell read "the sizes match and the two checksums
+cannot be compared — see the four reasons below", which the fifth reason
+falsifies twice over: `unreadable` says nothing about the sizes matching, and
+it is not a statement about checksums at all. The count is five as of this
+correction. The four the original sentence named are unchanged and follow.
+
+So `undetermined` has these reasons, not one: the connection cannot hash at
 all (an SSH far side with no tool, every WebDAV connection, a backend that is
 not a `RemoteChecksumProvider`); the connection cannot hash with the chosen
 algorithm; the two sides answered with different algorithms; and one side's
@@ -258,6 +268,19 @@ plus a menu item.
 - `undetermined` is never rendered as `same`, in any view. The state is in
   the model, not in a footnote above the table.
 - A failed fetch fails that one pair, not the comparison.
+- **The same rule governs a listing and a classification, added 2026-10-13**
+  on Task 3's report. A directory below the root whose listing throws, and a
+  pair whose classification throws, each become one `undetermined(unreadable)`
+  row naming the path; the walk does not descend into it and carries on with
+  the rest of the tree. A comparison that threw away an hour's work over one
+  permission-denied subdirectory would not be used twice, and the row names
+  what could not be read, so nothing is hidden by finishing.
+  **Two boundaries on that, and both are load bearing.** The ROOT still
+  throws: the user chose those two folders, and if neither can be listed
+  there is no comparison to report. And `CancellationError` is re-thrown
+  rather than caught — a blanket catch would turn a user's cancel into a tree
+  full of "unreadable" rows and run the walk to completion, which is the
+  cancellation failure arriving through the error path.
 - A comparison whose owning tab closed shows that, and offers nothing it can
   no longer do.
 
