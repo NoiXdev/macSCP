@@ -251,6 +251,180 @@ import Testing
         // x differs; a/y is only on the left.
         #expect(last == ComparisonProgress(directoriesVisited: 2, rowsProduced: 2))
     }
+
+    // MARK: - A subtree that cannot be read is a row, not the end
+
+    /// Either side failing to list a subdirectory gives that directory ONE
+    /// `.unreadable` row and is not descended into. The sibling processed
+    /// AFTER it still reports its rows: that is the positive control, without
+    /// which this would pass on a walk that simply stopped early.
+    @Test(arguments: [true, false])
+    func anUnreadableSubdirectoryIsOneRowAndTheWalkContinues(onTheLeft: Bool) async throws {
+        let denied: [String: any Error] = [
+            (onTheLeft ? "/l/bad" : "/r/bad"): RemoteFSError.permissionDenied(path: "bad")
+        ]
+        let left = FakeFS(
+            listings: [
+                "/l": [dir("bad"), dir("good")],
+                "/l/bad": [dir("inner")], "/l/bad/inner": [file("deep", 1)],
+                "/l/good": [file("x", 1)],
+            ],
+            listFailures: onTheLeft ? denied : [:])
+        let right = FakeFS(
+            listings: [
+                "/r": [dir("bad"), dir("good")],
+                "/r/bad": [dir("inner")], "/r/bad/inner": [file("deep", 2)],
+                "/r/good": [file("x", 2)],
+            ],
+            listFailures: onTheLeft ? [:] : denied)
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.filter { $0.relativePath == "bad" }
+            == [ComparisonRow(relativePath: "bad", state: .undetermined(.unreadable))])
+        #expect(!rows.contains { $0.relativePath.hasPrefix("bad/") })
+        #expect(!left.listedPaths.contains("/l/bad/inner"))
+        // Positive control: "good" comes after "bad" in the queue.
+        #expect(rows.contains { $0.relativePath == "good/x" && $0.state == .differs })
+    }
+
+    /// One pair whose classification throws is that pair's row; its siblings
+    /// in the same directory are still classified.
+    @Test func aPairWhoseClassificationThrowsIsOneRowAndItsSiblingsAreStillClassified() async throws {
+        let hex = String(repeating: "d", count: 64)
+        let items = ["a", "b", "c"].map { file($0, 5) }
+        let left = FakeFS(
+            listings: ["/l": items],
+            checksums: ["/l/a": [.sha256: hex], "/l/b": [.sha256: hex], "/l/c": [.sha256: hex]],
+            checksumFailures: ["/l/b": RemoteFSError.protocolError(reason: "unreadable")])
+        let right = FakeFS(
+            listings: ["/r": items],
+            checksums: ["/r/a": [.sha256: hex], "/r/b": [.sha256: hex], "/r/c": [.sha256: hex]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows == [
+            ComparisonRow(relativePath: "a", state: .same),
+            ComparisonRow(relativePath: "b", state: .undetermined(.unreadable)),
+            ComparisonRow(relativePath: "c", state: .same),
+        ])
+    }
+
+    /// The root is the exception: the user chose those two folders, and with
+    /// one unreadable there is nothing to compare.
+    @Test(arguments: [true, false])
+    func aFailureListingTheRootStillThrows(onTheLeft: Bool) async throws {
+        let denied: [String: any Error] = [
+            (onTheLeft ? "/l" : "/r"): RemoteFSError.permissionDenied(path: "root")
+        ]
+        let left = FakeFS(listings: ["/l": [file("a", 1)]], listFailures: onTheLeft ? denied : [:])
+        let right = FakeFS(listings: ["/r": [file("a", 1)]], listFailures: onTheLeft ? [:] : denied)
+        var rows: [ComparisonRow] = []
+        await #expect(throws: RemoteFSError.self) {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        #expect(rows.isEmpty)
+        // Positive control: the failing listing was reached.
+        #expect(left.listCalls == 1)
+    }
+
+    /// A cancel that arrives as a thrown `CancellationError` from a LISTING
+    /// (what a cancelled network call does) must propagate, not become an
+    /// `.unreadable` row. The task is not cancelled here: the error alone has
+    /// to be enough.
+    @Test func aCancellationErrorFromAListingPropagates() async throws {
+        let left = FakeFS(
+            listings: deepTree(prefix: "/l", depth: 40),
+            listFailures: ["/l/d/d": CancellationError()])
+        let right = FakeFS(listings: deepTree(prefix: "/r", depth: 40))
+        var rows: [ComparisonRow] = []
+        await #expect(throws: CancellationError.self) {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        #expect(left.listCalls == 3)  // positive control: it got that far, and no further
+        #expect(rows.isEmpty)
+    }
+
+    /// The same through the task: a backend that fails with an error of its
+    /// own because the task was cancelled (here `URLError.cancelled`, not a
+    /// `CancellationError`) is still a cancel, and must not be an
+    /// `.unreadable` row either.
+    @Test func aCancelledTaskIsNotMistakenForAnUnreadableDirectory() async throws {
+        let left = FakeFS(
+            listings: deepTree(prefix: "/l", depth: 40),
+            listFailures: ["/l/d/d": URLError(.cancelled)])
+        let right = FakeFS(listings: deepTree(prefix: "/r", depth: 40))
+        left.onList = { count in
+            if count == 3 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        var rows: [ComparisonRow] = []
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.listCalls == 3)
+        #expect(rows.isEmpty)
+    }
+
+    /// The classification site, same two cases: a `CancellationError` thrown
+    /// by a checksum stops the walk at that pair.
+    @Test func aCancellationErrorFromAChecksumPropagates() async throws {
+        let hex = String(repeating: "e", count: 64)
+        let items = (0..<5).map { file("f\($0)", 5) }
+        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        for item in items {
+            leftSums["/l/" + item.name] = [.sha256: hex]
+            rightSums["/r/" + item.name] = [.sha256: hex]
+        }
+        let left = FakeFS(
+            listings: ["/l": items], checksums: leftSums,
+            checksumFailures: ["/l/f1": CancellationError()])
+        let right = FakeFS(listings: ["/r": items], checksums: rightSums)
+        var rows: [ComparisonRow] = []
+        await #expect(throws: CancellationError.self) {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        #expect(left.checksumCalls == 2)  // f0, then the one that was cancelled
+        #expect(rows.map(\.relativePath) == ["f0"])
+    }
+
+    @Test func aCancelledTaskWhoseChecksumFailsWithItsOwnErrorIsStillACancel() async throws {
+        let hex = String(repeating: "f", count: 64)
+        let items = (0..<5).map { file("f\($0)", 5) }
+        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        for item in items {
+            leftSums["/l/" + item.name] = [.sha256: hex]
+            rightSums["/r/" + item.name] = [.sha256: hex]
+        }
+        let left = FakeFS(
+            listings: ["/l": items], checksums: leftSums,
+            checksumFailures: ["/l/f1": URLError(.cancelled)])
+        let right = FakeFS(listings: ["/r": items], checksums: rightSums)
+        left.onChecksum = { count in
+            if count == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+        var rows: [ComparisonRow] = []
+        let task = Task {
+            try await FolderComparison.walk(
+                left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+                algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        }
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(left.checksumCalls == 2)
+        #expect(rows.map(\.relativePath) == ["f0"])
+    }
 }
 
 // MARK: - Helpers
@@ -282,9 +456,10 @@ private func deepTree(prefix: String, depth: Int) -> [String: [RemoteFileItem]] 
 ///
 /// `list` rewrites each item's `path` to `directory + name`, as a real
 /// backend does, so the checksum table can be keyed by the path a file really
-/// has. A directory that is not in `listings` throws `notFound`: a walk that
-/// asks for a path it should not have built fails loudly instead of reading
-/// as an empty folder.
+/// has. A directory that is not in `listings` throws `notFound`, so a walk
+/// that asks for a path it should not have built is not read as an empty
+/// folder: below the root that surfaces as an `.unreadable` row a test can
+/// see, at the root as a thrown error.
 ///
 /// A checksum request is answered with the requested algorithm when the table
 /// has it, and otherwise with whatever the table does hold for that path,
@@ -300,14 +475,24 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
 
     private let listings: [String: [RemoteFileItem]]
     private let checksums: [String: [ChecksumAlgorithm: String]]
+    private let listFailures: [String: any Error]
+    private let checksumFailures: [String: any Error]
     private let state = Mutex(State())
 
+    /// `listFailures` and `checksumFailures` throw the given error for that
+    /// path AFTER the call has been counted and its hook fired, so a test can
+    /// cancel the task and fail the call in the same breath, as a cancelled
+    /// network call does.
     init(
         listings: [String: [RemoteFileItem]],
-        checksums: [String: [ChecksumAlgorithm: String]] = [:]
+        checksums: [String: [ChecksumAlgorithm: String]] = [:],
+        listFailures: [String: any Error] = [:],
+        checksumFailures: [String: any Error] = [:]
     ) {
         self.listings = listings
         self.checksums = checksums
+        self.listFailures = listFailures
+        self.checksumFailures = checksumFailures
     }
 
     // Read after a walk ends, never during one.
@@ -332,6 +517,7 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
             return (s.listedPaths.count, s.onList)
         }
         hook?(count)
+        if let failure = listFailures[path] { throw failure }
         guard let items = listings[path] else { throw RemoteFSError.notFound(path: path) }
         return items.map {
             RemoteFileItem(
@@ -347,6 +533,7 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
             return (s.asked.count, s.onChecksum)
         }
         hook?(count)
+        if let failure = checksumFailures[path] { throw failure }
         guard let table = checksums[path] else { return .unavailableOnThisConnection }
         let answered = table[algorithm].map { (algorithm, $0) }
             ?? table.first.map { ($0.key, $0.value) }
