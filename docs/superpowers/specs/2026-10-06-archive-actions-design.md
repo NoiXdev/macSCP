@@ -22,6 +22,33 @@ fields must refuse. The builder needs its own security design, and it can sit
 on the seam this design builds. **Maintainer's ruling, 2026-10-06:** split,
 archive actions first.
 
+**Correction, 2026-10-12.** The clause above, "it can sit on the seam this
+design builds", is WITHDRAWN. The builder shipped on 2026-10-12 (branch
+`file-actions-builder`, design
+`docs/superpowers/specs/2026-10-12-file-actions-builder-design.md`, closed out
+in the `docs/BACKLOG.md` row "Custom actions in the file context menu"), and it
+did NOT sit on this design's seam. It sits on the **snippet** subsystem's
+machinery — `SnippetVariableSubstitution`, `SnippetCommandSurvey`,
+`SnippetSendPlanner`, `SnippetCommandEditor` and `SnippetVariablePromptSheet` —
+because a remote user-defined action is TYPED into the user's own shell the way
+a snippet is, rather than executed over an exec channel the way an archive
+command is. Measured at `0670b8e7`, from the repository root:
+
+```
+/usr/bin/grep -rl -e ArchiveCommandChannel Sources/macSCPCore/FileActions Sources/MacSCPAppKit/BrowserPane+FileActions.swift Sources/MacSCPAppKit/FileActionEditor.swift Sources/MacSCPAppKit/FileActionsSheet.swift Sources/MacSCPAppKit/FileActionConfirmSheet.swift Sources/MacSCPAppKit/FileActionsPresentation.swift Sources/MacSCPAppKit/FileActionActivityRow.swift
+```
+
+prints nothing and exits 1. The same command with
+`-e SnippetVariableSubstitution -e SnippetCommandSurvey -e SnippetSendPlanner
+-e SnippetCommandEditor -e SnippetVariablePromptSheet` in place of that one
+pattern prints six files: `FileAction.swift`, `FileActionTemplate.swift` and
+`FileActionPlan.swift` in Core, and `BrowserPane+FileActions.swift`,
+`FileActionEditor.swift` and `FileActionsPresentation.swift` in the App.
+
+The rest of the withdrawn sentence stands: the builder did need its own
+security design, and it got one. Only the pointer is withdrawn, so that a
+reader following it is not sent to the wrong subsystem.
+
 ## What was measured before designing
 
 Every figure below was produced on 2026-10-06 at `973311f6` by the command
