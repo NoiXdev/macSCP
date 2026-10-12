@@ -102,9 +102,11 @@ struct FileActionConfirmSheet: View {
 /// shorter command than the one that runs, and that defeats the one check
 /// the sheet exists for. `FileActionPlanner` refuses a C0 control character
 /// or DEL in a selection-derived value on the remote path (the line editor
-/// would act on it), but a prompted value or the author's own template can
-/// still carry one, and a server value can carry other format characters
-/// listed below, so such a scalar can reach a line shown here. These markers
+/// would act on it), and `FileActionTemplate` refuses one in the command
+/// itself, on every side; but a PROMPTED value can still carry one — it is
+/// the user's own text and nothing refuses it — and a server value can carry
+/// other format characters listed below, so such a scalar can reach a line
+/// shown here. These markers
 /// are defence in depth and not the control: a user recognising `<U+0015>`
 /// is not a security property. Each such scalar is drawn as
 /// `<U+XXXX>` in its own run, which the sheet colours: a name that merely

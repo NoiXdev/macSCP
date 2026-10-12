@@ -40,8 +40,10 @@ struct FileActionAuthoringTests {
     }
 
     /// Only the ends. A command that spans lines on purpose keeps the break
-    /// in the middle, so the gate still sees (and for a local-capable action
-    /// refuses) the second command.
+    /// in the middle, so the gate still sees it — and refuses it on every
+    /// side since 2026-10-12, as a C0 control character in the command, with
+    /// a local-capable action keeping the more specific "not one simple
+    /// command" sentence because that check runs first.
     @Test func aLineBreakInTheMiddleOfTheCommandStays() {
         #expect(FileActionAuthoring.normalizedCommand("ls\ntouch y\n") == "ls\ntouch y")
     }

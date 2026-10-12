@@ -1593,3 +1593,4 @@
 "fileAction.plan.shell" = "Wpisywane w powłoce tego połączenia.";
 "fileAction.plan.direct" = "Uruchamiane bezpośrednio na tym Macu, bez powłoki.";
 "fileAction.problem.noCommand" = "Wpisz polecenie, które ta akcja uruchamia: na razie nie ma czego uruchomić.";
+"fileAction.problem.commandControlCharacter" = "Polecenie zawiera niewidoczny znak sterujący „%@”. Powłoka wykonuje taki znak, zamiast czytać go jako tekst, więc akcja nie może go zawierać. Usuń go albo wpisz ponownie fragment polecenia, w którym się znajduje.";

@@ -42,6 +42,31 @@ public enum FileActionTemplate {
         /// is one simple command, so an action that would type a bare newline
         /// into a shell, or spawn nothing, would otherwise pass.
         case emptyCommand
+        /// The command itself holds a C0 control character (U+0000 to
+        /// U+001F) or DEL (U+007F).
+        ///
+        /// **The template's author need not be the user.** An action can be
+        /// IMPORTED, so the command is text out of somebody else's file, and
+        /// a remote action's command is TYPED into the user's own shell —
+        /// where the line discipline and the line editor act on such a byte
+        /// before any parser reads a quote, exactly as
+        /// `FileActionPlanner.Refusal.valueHoldsAControlCharacter` describes
+        /// for a selection-derived value. Nothing else in the gate looks:
+        /// `FileActionAuthoring.normalizedCommand` trims only the ends,
+        /// `hasText` asks the Unicode `White_Space` property (U+0015 is not
+        /// white space), an action with no variables never reaches
+        /// `firstDeclarationProblem`'s placement check, and
+        /// `isOneSimpleCommand` is asked of local-capable actions only — so
+        /// a remote-only imported command could carry one all the way into
+        /// the shell.
+        ///
+        /// Refused in the GATE and not at run time, so the editor refuses it
+        /// on save and the import review refuses it per entry.
+        ///
+        /// Scalars above U+007F are not covered, for the same unmeasured
+        /// reason given in `FileActionPlanner`; this is the boundary as it
+        /// stands and nothing more.
+        case commandHoldsAControlCharacter(scalar: Unicode.Scalar)
     }
 
     /// Every name the selection supplies. A declared variable may not take
@@ -122,6 +147,13 @@ public enum FileActionTemplate {
             }
         }
 
+        // After the local block, so a local-capable action whose second line
+        // makes it more than one simple command keeps the sentence that names
+        // the pipeline and the redirection; every path still refuses.
+        if let scalar = firstLineEditorControl(in: action.command) {
+            return .commandHoldsAControlCharacter(scalar: scalar)
+        }
+
         // The author's declarations AND the synthesized ones. The third
         // parameter of `firstDeclarationProblem` is `skipsPlacementCheck`,
         // it defaults to `false`, and it is deliberately not passed.
@@ -137,6 +169,25 @@ public enum FileActionTemplate {
         // fix, so quoting is what is left to say once that is clean.
         if action.runsOn.contains(.local), holdsQuoting(action.command) {
             return .quotingIsNotRunnableLocally
+        }
+        return nil
+    }
+
+    /// The first scalar of `command` in U+0000 to U+001F, or U+007F, asked
+    /// scalar by scalar as the rest of this file asks its questions.
+    ///
+    /// The same range as `FileActionPlanner`'s `holdsLineEditorControl`, and
+    /// for the same reason — see
+    /// `Problem.commandHoldsAControlCharacter`. Two functions rather than one
+    /// shared one because they answer about different text at different
+    /// times: this one about a TEMPLATE, in the gate, where the scalar is
+    /// reported so the sentence can name it; that one about a
+    /// selection-derived VALUE, when the action runs, where no template
+    /// change can help. Scalars above U+007F are covered by neither, for the
+    /// unmeasured reason stated there.
+    private static func firstLineEditorControl(in command: String) -> Unicode.Scalar? {
+        for scalar in command.unicodeScalars where scalar.value <= 0x1F || scalar.value == 0x7F {
+            return scalar
         }
         return nil
     }

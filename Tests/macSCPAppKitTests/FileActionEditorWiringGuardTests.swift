@@ -286,14 +286,28 @@ struct FileActionEditorWiringGuardTests {
 
     /// Counted on 2026-10-12, on the three files as committed, with
     /// `/usr/bin/grep -o -h -E '"fileAction\.[A-Za-z.]+"' Sources/MacSCPAppKit/FileActionsSheet.swift Sources/MacSCPAppKit/FileActionEditor.swift Sources/MacSCPAppKit/FileActionsPresentation.swift | sort -u | wc -l`
-    /// which printed 42 (46 before `sort -u`: four keys are used at more than
+    /// which printed 43 (47 before `sort -u`: four keys are used at more than
     /// one call site). `-o` and a unique sort, because a key and its call
     /// sometimes sit on different lines and one line can hold two keys. The
     /// task also added one key outside the prefix, `menu.fileActions.manage`,
-    /// so each catalogue grew by 43 lines in this task: 40 first (39 plus the
-    /// menu key), 2 for the two "where does this plan go" captions in fix
-    /// round 1, and 1 for the empty command's sentence in fix round 2.
-    private static let ownKeyCount = 42
+    /// which this command does not see.
+    ///
+    /// Both figures were re-measured on 2026-10-12, by running the command
+    /// above after this sentence was written; the change since the last
+    /// measurement is one key, `fileAction.problem.commandControlCharacter`.
+    /// Withdrawn, quoted: this comment read "which printed 42 (46 before
+    /// `sort -u`", and `ownKeyCount` was 42.
+    ///
+    /// Withdrawn too, and not merely incremented: the comment went on "so
+    /// each catalogue grew by 43 lines in this task: 40 first (39 plus the
+    /// menu key), 2 for the two [...] captions in fix round 1, and 1 for the
+    /// empty command's sentence in fix round 2." (the elided words are the
+    /// caption label, quoted there with inner double quotes). That figure is
+    /// about how much each CATALOGUE grew across one task, which nothing
+    /// here derives and no command beside it measured, so incrementing it
+    /// would have carried an uncheckable number forward. What is checkable
+    /// is the command above and the count it prints.
+    private static let ownKeyCount = 43
 
     @Test func theScanReachesTheKeysAndTheirCountIsTheCountedOne() throws {
         let own = try Self.ownKeys()

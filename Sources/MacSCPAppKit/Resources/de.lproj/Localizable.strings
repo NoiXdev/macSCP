@@ -1591,3 +1591,4 @@
 "fileAction.plan.shell" = "In die Shell dieser Verbindung getippt.";
 "fileAction.plan.direct" = "Direkt auf diesem Mac ausgeführt, ohne Shell.";
 "fileAction.problem.noCommand" = "Gib das Kommando ein, das diese Aktion ausführen soll – ohne Kommando kannst du sie nicht speichern.";
+"fileAction.problem.commandControlCharacter" = "Das Kommando enthält das unsichtbare Steuerzeichen „%@“. Eine Shell führt so ein Zeichen aus, statt es als Text zu lesen, deshalb darf eine Aktion keines enthalten. Lösche es, oder tippe den Teil des Kommandos neu, in dem du es vermutest.";

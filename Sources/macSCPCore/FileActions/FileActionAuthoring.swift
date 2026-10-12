@@ -12,14 +12,18 @@ public enum FileActionAuthoring {
     /// `command` without leading or trailing blanks and line breaks.
     ///
     /// A command pasted into a text field commonly ends in a newline, and
-    /// for a local-capable action the gate refuses a line feed (it separates
-    /// commands, so `wc -l x\n` is not one simple command). Trimming on save
-    /// is the decision: the line feed there is an accident of copying and
-    /// never what the author meant, so refusing it with a sentence about
-    /// pipes and redirections would blame a command that has neither.
+    /// the gate refuses a line feed anywhere in a command (for a
+    /// local-capable action because it separates commands, so `wc -l x\n` is
+    /// not one simple command; on every side because a line feed is a C0
+    /// control character —
+    /// `FileActionTemplate.Problem.commandHoldsAControlCharacter`). Trimming
+    /// on save is the decision: the line feed there is an accident of
+    /// copying and never what the author meant, so refusing it would blame a
+    /// command that is otherwise fine.
     ///
-    /// Only the ends. A line break in the middle is the author's and stays,
-    /// so the gate still sees the second command.
+    /// Only the ends. A line break in the middle stays, so the gate sees it
+    /// and refuses the action rather than this function deciding what the
+    /// author meant by it.
     public static func normalizedCommand(_ command: String) -> String {
         command.trimmingCharacters(in: .whitespacesAndNewlines)
     }

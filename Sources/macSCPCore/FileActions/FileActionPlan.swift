@@ -85,12 +85,17 @@ public enum FileActionPlanner {
         /// this layer.
         ///
         /// Only a SELECTION-derived value that the template places is
-        /// refused (`PATH`, `PATHS`, `DIR`, `NAME`). An author's own
-        /// template is the author's, and a prompted value is the user's own
-        /// text; neither is server data. The confirmation sheet still draws
-        /// these scalars as markers, as defence in depth and not as the
-        /// control: a user recognising `<U+0015>` is not a security
-        /// property.
+        /// refused HERE (`PATH`, `PATHS`, `DIR`, `NAME`), because this is
+        /// the refusal that can only be made once a selection exists. The
+        /// template's own command is refused one layer earlier, in the gate
+        /// — `FileActionTemplate.Problem.commandHoldsAControlCharacter` —
+        /// and that refusal is NOT about the author trusting themselves: an
+        /// action can be imported, so a command is text out of somebody
+        /// else's file. A prompted value is the user's own text, typed into
+        /// the prompt sheet in this session, and is not refused anywhere.
+        /// The confirmation sheet still draws these scalars as markers, as
+        /// defence in depth and not as the control: a user recognising
+        /// `<U+0015>` is not a security property.
         ///
         /// Scalars above U+007F are not covered, and whether they need to be
         /// has not been measured; see `holdsLineEditorControl`.

@@ -25,6 +25,7 @@ struct FileActionsPresentationTests {
             .reservedNameDoesNotFitTheForm(name: "PATHS", form: .oncePerFile),
             .quotingIsNotRunnableLocally,
             .emptyCommand,
+            .commandHoldsAControlCharacter(scalar: "\u{15}"),
         ]
     }
 
