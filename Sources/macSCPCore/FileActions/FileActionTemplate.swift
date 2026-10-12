@@ -30,6 +30,12 @@ public enum FileActionTemplate {
         /// strictly to the entries already loaded — no recursion into
         /// subdirectories".
         case reservedNameDoesNotFitTheForm(name: String, form: FileActionPerSelection)
+        /// A local-capable action's command holds quoting. The argv is cut
+        /// along the survey's word spans, and a quoted span is not one: it
+        /// would have to be unquoted, and nothing on the local path
+        /// interprets quoting. Part of the gate rather than found when the
+        /// action is run, so that the editor can refuse it at save time.
+        case quotingIsNotRunnableLocally
     }
 
     /// Every name the selection supplies. A declared variable may not take
@@ -118,7 +124,26 @@ public enum FileActionTemplate {
         {
             return .declaration(problem)
         }
+
+        // After the declaration check on purpose: a placeholder sitting
+        // inside quotes is already `.declaration`, which names the better
+        // fix, so quoting is what is left to say once that is clean.
+        if action.runsOn.contains(.local), holdsQuoting(action.command) {
+            return .quotingIsNotRunnableLocally
+        }
         return nil
+    }
+
+    /// Whether the survey reads any span of `command` as quoted. A command
+    /// the survey refuses to read holds none that it can name, so it answers
+    /// `false`: that case is `.declaration`'s, through
+    /// `firstDeclarationProblem`.
+    public static func holdsQuoting(_ command: String) -> Bool {
+        guard case .surveyed(let spans) = SnippetCommandSurvey.survey(command) else {
+            return false
+        }
+        for span in spans where span.placement == .quoted { return true }
+        return false
     }
 
     /// Whether `command` is one simple command — no operator that begins a

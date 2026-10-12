@@ -71,6 +71,38 @@ struct FileActionTemplateTests {
         #expect(FileActionTemplate.firstProblem(in: remoteAction(command)) == nil)
     }
 
+    /// Quoting cannot be run locally: the argv is cut along word spans and a
+    /// quoted span would have to be unquoted, which nothing on that path
+    /// does. It used to be met only when the action was RUN; the gate now
+    /// says so, so the editor can refuse it at save time and an import cannot
+    /// store it.
+    @Test func quotingIsRefusedForALocalCapableActionAndAcceptedForARemoteOne() {
+        let command = "echo 'a b' {{NAME}}"
+        #expect(
+            FileActionTemplate.firstProblem(in: localAction(command))
+                == .quotingIsNotRunnableLocally)
+        #expect(FileActionTemplate.firstProblem(in: remoteAction(command)) == nil)
+        let both = FileAction(name: "n", command: command, runsOn: [.local, .remote])
+        #expect(FileActionTemplate.firstProblem(in: both) == .quotingIsNotRunnableLocally)
+    }
+
+    /// The positive control beside the refusal above: the same action
+    /// without the quotes passes, so the refusal is about the quotes and not
+    /// about the rest of the command.
+    @Test func theSameLocalActionWithoutQuotingHasNoProblem() {
+        #expect(FileActionTemplate.firstProblem(in: localAction("echo ab {{NAME}}")) == nil)
+    }
+
+    /// A double-quoted word is quoting too, and so is a quote inside a word.
+    @Test func everyQuotingFormIsRefusedLocally() {
+        for command in ["echo \"a b\" {{NAME}}", "echo --msg='a b' {{NAME}}"] {
+            #expect(
+                FileActionTemplate.firstProblem(in: localAction(command))
+                    == .quotingIsNotRunnableLocally,
+                "\(command) was not refused")
+        }
+    }
+
     @Test func aRedirectionIsRefusedForALocalCapableAction() {
         #expect(
             FileActionTemplate.firstProblem(in: localAction("wc -l {{PATH}} > out.txt"))

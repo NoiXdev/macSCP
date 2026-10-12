@@ -315,7 +315,7 @@ struct FileActionPlannerTests {
             FileActionPlanner.plan(
                 action: action("echo 'a b' {{NAME}}", runsOn: [.local]),
                 selection: [item("/a/x", "x")], side: .local)
-                == .failure(.quotingIsNotRunnableLocally))
+                == .failure(.template(.quotingIsNotRunnableLocally)))
     }
 
     /// `{{PATHS}}` becomes several arguments, which only makes sense as a
