@@ -1596,3 +1596,4 @@
 "menu.fileActions.manage" = "Manage File Actions…";
 "fileAction.plan.shell" = "Typed into the shell of this connection.";
 "fileAction.plan.direct" = "Run directly on this Mac, with no shell.";
+"fileAction.problem.noCommand" = "Type the command this action runs: there is nothing to run yet.";

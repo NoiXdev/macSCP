@@ -45,13 +45,16 @@ struct FileActionEditor: View {
 
     /// The id the draft is saved under: `existing`'s, or one made once when
     /// this editor opened, so every read of `draftAction` is the same action.
-    private let draftID: UUID
+    /// `@State`, because a `View` struct is re-created whenever the presenting
+    /// body is re-evaluated, and a plain `let` would mint a new identity then
+    /// while the other fields kept their state.
+    @State private var draftID: UUID
 
     init(existing: FileAction?, store: FileActionStore, onSaved: @escaping () -> Void) {
         self.existing = existing
         self.store = store
         self.onSaved = onSaved
-        self.draftID = existing?.id ?? UUID()
+        _draftID = State(initialValue: existing?.id ?? UUID())
         _name = State(initialValue: existing?.name ?? "")
         _command = State(initialValue: existing?.command ?? "")
         _perSelection = State(initialValue: existing?.perSelection ?? .oncePerFile)
@@ -392,8 +395,14 @@ struct FileActionEditor: View {
     // MARK: - Save
 
     private func save() {
+        // The refusal is structural: Save is also disabled while any of these
+        // holds, but a write must not rest on one modifier being in place.
+        let action = draftAction
+        guard problem == nil, !action.name.isEmpty, !action.command.isEmpty,
+            !hasDuplicateVariableName
+        else { return }
         do {
-            try store.save(draftAction)
+            try store.save(action)
             onSaved()
             dismiss()
         } catch {

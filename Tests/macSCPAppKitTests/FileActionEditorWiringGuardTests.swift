@@ -76,10 +76,12 @@ struct FileActionEditorWiringGuardTests {
     }
 
     /// The preview shows what the CONFIRMATION sheet will show, from the one
-    /// planner, on each side the action runs on. It does not go through
-    /// `SnippetDryRun.describing`: that describes one resolved command on its
-    /// way into a shell ("Would go to the shell"), which is false of a
-    /// local-only action, whose plan is an argv with no shell at all.
+    /// planner, on each side the action runs on. It does not reuse
+    /// `SnippetDryRunSheet`, which captions its command with
+    /// "snippets.dryRun.command" ("Would go to the shell", `SnippetDryRunSheet
+    /// .swift`) and is fed by `SnippetDryRun.describing`: one resolved command
+    /// on its way into a shell, which is false of a local-only action, whose
+    /// plan is an argv with no shell at all.
     @Test func thePreviewIsThePlannersOwnOutputAndNotASnippetShapedDescription() throws {
         let editor = try Self.code(Self.editorFile)
         #expect(editor.contains("FileActionPlanner.plan("))
@@ -87,8 +89,6 @@ struct FileActionEditorWiringGuardTests {
         #expect(editor.contains("SnippetDryRun.describing(") == false)
     }
 
-    /// The command field is the snippet editor's, with its highlighting and
-    /// its caret-aware insert.
     /// Both surfaces that show a plan say where it goes, from the plan.
     @Test func thePreviewAndTheConfirmationSheetSayWhereThePlanGoes() throws {
         let editor = try Self.code(Self.editorFile)
@@ -105,6 +105,8 @@ struct FileActionEditorWiringGuardTests {
         #expect(body.prefix(400).contains("default:") == false)
     }
 
+    /// The command field is the snippet editor's, with its highlighting and
+    /// its caret-aware insert.
     @Test func theCommandIsEditedInTheSnippetCommandEditor() throws {
         let editor = try Self.code(Self.editorFile)
         #expect(editor.contains("SnippetCommandEditor("))
@@ -187,13 +189,69 @@ struct FileActionEditorWiringGuardTests {
         #expect(sheets.contains("func presentFileActions()"))
         let lifecycle = try Self.code("ContentView+Lifecycle.swift")
         #expect(lifecycle.contains("tabCommands.showFileActions = presentFileActions"))
-        // Writing an action needs no server: the item sits next to the one
-        // for snippets and is not tied to a connection.
-        let manage = try #require(commands.range(of: "tabCommands?.showFileActions?()"))
-        let before = String(commands[..<manage.lowerBound])
-        let button = try #require(before.range(of: "Button(", options: .backwards))
-        let enablement = String(before[button.upperBound...])
-        #expect(enablement.contains("isActiveTabConnected") == false)
+    }
+
+    /// Writing an action needs no server: the item sits next to the one for
+    /// snippets and is not tied to a connection.
+    ///
+    /// **Scanned FORWARDS from the call.** A SwiftUI disablement attaches
+    /// AFTER the trailing closure, so the span that can hold one runs from the
+    /// call to the end of the builder that contains the button, and then over
+    /// the use of that builder, where `snippetMenuItems.disabled(...)` could
+    /// also be written. (The `CommandMenu` itself has no `disabled` member:
+    /// a plant there does not compile, so there is nothing to scan for.) A
+    /// span read backwards from the call holds only the label argument and
+    /// can never match. The positive half of each span is that it was found
+    /// and reaches what it should; the plants for this check (a
+    /// `.disabled(...)` on the button, and one on the builder's use) are
+    /// recorded in the commit that fixed it.
+    @Test func theMenuItemIsNotDisabledByAConnectionAnywhereAfterTheButton() throws {
+        let commands = try Self.code("MacSCPCommands.swift")
+        let call = try #require(commands.range(of: "tabCommands?.showFileActions?()"))
+        let afterCall = String(commands[call.upperBound...])
+
+        // The button's own modifiers and everything after it up to the end of
+        // the `@ViewBuilder` body that holds it (the closing brace at four
+        // spaces of indent).
+        let builderEnd = try #require(afterCall.range(of: "\n    }\n"))
+        let toEndOfBuilder = String(afterCall[..<builderEnd.lowerBound])
+        #expect(toEndOfBuilder.contains("}"), "the span did not reach the button's closing brace")
+        #expect(toEndOfBuilder.contains(".disabled(") == false)
+        #expect(toEndOfBuilder.contains("isActiveTabConnected") == false)
+
+        // The use of the builder in the Terminal menu: the line it stands on
+        // and the line after it, where a modifier would be written.
+        let use = try #require(commands.range(of: "            snippetMenuItems\n"))
+        let afterUse = String(commands[use.upperBound...])
+        let nextLine = afterUse.split(separator: "\n", omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+        #expect(nextLine.contains("}"), "the line after the use is not the menu's end: \(nextLine)")
+        #expect(nextLine.contains(".disabled(") == false)
+    }
+
+    /// The span reads what it should: planted on a copy of the real source, a
+    /// `.disabled` on the button or on the builder's use is found by the same
+    /// scan.
+    @Test func theScanFindsADisablementPlantedOnTheButtonOrTheBuildersUse() throws {
+        let commands = try Self.code("MacSCPCommands.swift")
+        let call = "tabCommands?.showFileActions?()"
+        let onButton = commands.replacingOccurrences(
+            of: call + "\n        }\n", with: call + "\n        }\n        .disabled(!connected)\n")
+        #expect(onButton != commands, "the button plant did not apply")
+        let spanAfterButton = try #require(
+            onButton.range(of: call).map { String(onButton[$0.upperBound...]) })
+        let builderEnd = try #require(spanAfterButton.range(of: "\n    }\n"))
+        #expect(String(spanAfterButton[..<builderEnd.lowerBound]).contains(".disabled("))
+
+        let onUse = commands.replacingOccurrences(
+            of: "            snippetMenuItems\n",
+            with: "            snippetMenuItems\n            .disabled(!connected)\n")
+        #expect(onUse != commands, "the use plant did not apply")
+        let use = try #require(onUse.range(of: "            snippetMenuItems\n"))
+        let afterUse = String(onUse[use.upperBound...])
+        let line = afterUse.split(separator: "\n", omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+        #expect(line.contains(".disabled("))
     }
 
     // MARK: - The catalogues
@@ -228,13 +286,14 @@ struct FileActionEditorWiringGuardTests {
 
     /// Counted on 2026-10-12, on the three files as committed, with
     /// `/usr/bin/grep -o -h -E '"fileAction\.[A-Za-z.]+"' Sources/MacSCPAppKit/FileActionsSheet.swift Sources/MacSCPAppKit/FileActionEditor.swift Sources/MacSCPAppKit/FileActionsPresentation.swift | sort -u | wc -l`
-    /// which printed 41 (45 before `sort -u`: four keys are used at more than
+    /// which printed 42 (46 before `sort -u`: four keys are used at more than
     /// one call site). `-o` and a unique sort, because a key and its call
     /// sometimes sit on different lines and one line can hold two keys. The
     /// task also added one key outside the prefix, `menu.fileActions.manage`,
-    /// so its catalogues grew by 42 lines each (40 first, 2 for the two
-    /// "where does this plan go" captions in fix round 1).
-    private static let ownKeyCount = 41
+    /// so each catalogue grew by 43 lines in this task: 40 first (39 plus the
+    /// menu key), 2 for the two "where does this plan go" captions in fix
+    /// round 1, and 1 for the empty command's sentence in fix round 2.
+    private static let ownKeyCount = 42
 
     @Test func theScanReachesTheKeysAndTheirCountIsTheCountedOne() throws {
         let own = try Self.ownKeys()
@@ -285,15 +344,26 @@ struct FileActionEditorWiringGuardTests {
     @Test func theFormatSentencesKeepTheirPlaceholdersInEveryLanguage() throws {
         let formats = try Self.allKeysWithDefaults().filter { $0.fallback.contains("%") }
         #expect(formats.isEmpty == false)
-        let specifier = try NSRegularExpression(pattern: "%(?:\\d+\\$)?(?:lld|@)")
-        func count(_ text: String) -> Int {
-            specifier.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
+        // Counted PER KIND: `%lld` takes an Int and `%@` an object, so a
+        // translation that swaps one for the other keeps the total equal and
+        // still makes `String(format:)` read an Int as a pointer.
+        let integer = try NSRegularExpression(pattern: "%(?:\\d+\\$)?lld")
+        let object = try NSRegularExpression(pattern: "%(?:\\d+\\$)?@")
+        func count(_ regex: NSRegularExpression, _ text: String) -> Int {
+            regex.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
         }
+        #expect(formats.contains { count(integer, $0.fallback) > 0 }, "no %lld sentence was scanned")
+        #expect(formats.contains { count(object, $0.fallback) > 0 }, "no %@ sentence was scanned")
         for locale in Self.locales {
             let entries = try Self.catalog(locale)
             for use in formats {
                 let value = entries[use.key] ?? ""
-                #expect(count(value) == count(use.fallback), "\(locale) \(use.key) lost a specifier")
+                #expect(
+                    count(integer, value) == count(integer, use.fallback),
+                    "\(locale) \(use.key) changed its %lld count")
+                #expect(
+                    count(object, value) == count(object, use.fallback),
+                    "\(locale) \(use.key) changed its %@ count")
             }
         }
     }
@@ -316,5 +386,13 @@ struct FileActionEditorWiringGuardTests {
         for key in try Self.ownKeys() {
             #expect((french[key] ?? "").contains("'") == false, "fr \(key) has a straight apostrophe")
         }
+        // The positive beside the negative: sentences without any apostrophe
+        // would pass the loop above as "typographic". These two carry one by
+        // construction ("d’environnement", "n’y"), and so does at least one
+        // key overall.
+        #expect((french["fileAction.problem.environmentLocal"] ?? "").contains("\u{2019}"))
+        #expect((french["fileAction.problem.noCommand"] ?? "").contains("\u{2019}"))
+        let carrying = try Self.ownKeys().filter { (french[$0] ?? "").contains("\u{2019}") }
+        #expect(carrying.count > 10, "only \(carrying.count) fr entries carry a typographic apostrophe")
     }
 }

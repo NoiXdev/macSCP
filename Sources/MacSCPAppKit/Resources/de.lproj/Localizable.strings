@@ -1590,3 +1590,4 @@
 "menu.fileActions.manage" = "Dateiaktionen verwalten…";
 "fileAction.plan.shell" = "In die Shell dieser Verbindung getippt.";
 "fileAction.plan.direct" = "Direkt auf diesem Mac ausgeführt, ohne Shell.";
+"fileAction.problem.noCommand" = "Gib das Kommando ein, das diese Aktion ausführen soll – ohne Kommando kannst du sie nicht speichern.";

@@ -98,6 +98,17 @@ struct FileActionAuthoringTests {
                 == [.template(.reservedNameDoesNotFitTheForm(name: "PATHS", form: .oncePerFile))])
     }
 
+    /// The case that stored an action the editor itself refuses: a command of
+    /// blanks normalises to "", and the review accepted it. The gate says no
+    /// now, so the review does, with the same reason the editor shows.
+    @Test func aCommandOfOnlyBlanksIsRefusedAndNotAccepted() {
+        for sides: Set<BrowserPaneSide> in [[.remote], [.local]] {
+            let result = review([exported(command: "   ", runsOn: sides)])
+            #expect(result.accepted.isEmpty, "\(sides)")
+            #expect(result.refused.map(\.reason) == [.template(.emptyCommand)], "\(sides)")
+        }
+    }
+
     @Test func aNameOfOnlyBlanksIsRefused() {
         let result = review([exported(name: "  \t")])
         #expect(result.accepted.isEmpty)

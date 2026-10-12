@@ -1593,3 +1593,4 @@
 "menu.fileActions.manage" = "Gérer les actions sur fichiers…";
 "fileAction.plan.shell" = "Saisi dans le shell de cette connexion.";
 "fileAction.plan.direct" = "Exécuté directement sur ce Mac, sans shell.";
+"fileAction.problem.noCommand" = "Saisissez la commande que cette action exécute : il n’y a encore rien à exécuter.";
