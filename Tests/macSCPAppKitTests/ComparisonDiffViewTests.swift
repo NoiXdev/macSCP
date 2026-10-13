@@ -640,10 +640,16 @@ struct ComparisonDiffViewTests {
         // Each header is its own hunk's, directly before that hunk's lines.
         var index = 1
         for hunk in hunks {
+            guard listing.rows.indices.contains(index) else {
+                Issue.record("the listing ends before hunk \(Presentation.header(for: hunk))")
+                return
+            }
             #expect(listing.rows[index].kind == .header(Presentation.header(for: hunk)))
             index += 1
             for line in hunk.lines {
-                guard case .line(let entry) = listing.rows[index].kind else {
+                guard listing.rows.indices.contains(index),
+                    case .line(let entry) = listing.rows[index].kind
+                else {
                     Issue.record("row \(index) is not a line")
                     return
                 }
@@ -1382,6 +1388,25 @@ struct ComparisonDiffViewTests {
         )
     }
 
+    /// Every `name.member` in `code` for one of `names`, as written, with the
+    /// whole member chain that follows (`listing.rows.reversed` is one read).
+    private static func memberReads(of names: [String], in code: String) -> Set<String> {
+        let pattern = "\\b(?:\(names.joined(separator: "|")))(?:\\.[A-Za-z_][A-Za-z0-9_]*)+"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(code.startIndex..., in: code)
+        return Set(
+            regex.matches(in: code, range: range).compactMap { match in
+                Range(match.range, in: code).map { String(code[$0]) }
+            })
+    }
+
+    @Test func theMemberReadScanSeesChainsAndOnlyTheNamesAsked() {
+        let code = "a.b a.b.c xa.b a.d(x) b.e a . f"
+        #expect(Self.memberReads(of: ["a"], in: code) == ["a.b", "a.b.c", "a.d"])
+        #expect(Self.memberReads(of: ["a", "b"], in: code) == ["a.b", "a.b.c", "a.d", "b.e"])
+        #expect(Self.memberReads(of: ["zz"], in: code).isEmpty)
+    }
+
     /// What is wrong with `tokens` in `code`: each must occur exactly once,
     /// and in the order given. Empty means nothing is. The presence is
     /// checked first and is the point: an ordering over a token that was
@@ -1439,7 +1464,15 @@ struct ComparisonDiffViewTests {
         // which the presentation's own tests see.
         #expect(Self.occurrences(of: "ForEach(listing.rows)", in: view) == 1)
         #expect(Self.occurrences(of: "ForEach(", in: view) == 1)
-        #expect(Self.occurrences(of: "switch row.kind", in: view) == 1)
+        #expect(Self.occurrences(of: "switch row.kind {", in: view) == 1)
+        // What the view hands on is exactly what the presentation returned:
+        // the screen goes from `screen(...)` to `content(...)` to the switch,
+        // and nothing is applied to it on the way.
+        #expect(
+            Self.occurrences(
+                of: "content(ComparisonDiffPresentation.screen(target: target, loaded: model.loaded))",
+                in: view) == 1)
+        #expect(Self.occurrences(of: "switch screen {", in: view) == 1)
         #expect(Self.occurrences(of: "case .legend(let text)", in: view) == 1)
         #expect(Self.occurrences(of: "case .header(let text)", in: view) == 1)
         #expect(Self.occurrences(of: "case .line(let entry)", in: view) == 1)
@@ -1450,6 +1483,16 @@ struct ComparisonDiffViewTests {
                 of: "ComparisonDiffLineView(entry: entry, digits: listing.numberDigits)", in: view)
                 == 1)
         #expect(!view.contains("hunks"))
+        // The only members the view reads off the values it was handed. Any
+        // other (a `.flipped()` applied to the screen, a `.rows.something`)
+        // is a function standing between what the presentation returned and
+        // what is drawn, and no test of the presentation sees it.
+        let allowed: Set<String> = ["listing.rows", "listing.numberDigits", "row.kind"]
+        let read = Self.memberReads(of: ["screen", "listing", "row"], in: view)
+        #expect(read.subtracting(allowed).isEmpty, Comment(rawValue: "\(read.subtracting(allowed))"))
+        // Positive: each allowed read is actually there, so the set above is
+        // not empty because the scan found nothing.
+        #expect(read == allowed)
         #expect(Self.occurrences(of: "ComparisonDiffNoticeView(notice: notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .notice(let notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .listing(let listing)", in: view) == 1)
