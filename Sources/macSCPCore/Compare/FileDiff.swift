@@ -35,9 +35,13 @@ public struct DiffHunk: Equatable, Sendable {
 public enum FileDiff {
     /// A line diff over two already-local files, as line arrays.
     ///
-    /// Lines are compared as exact strings: a line that keeps a trailing
-    /// carriage return differs from the same line without one. How a file is
-    /// cut into lines is the caller's decision.
+    /// Lines are compared as exact BYTES (their UTF-8 views), not with `==`,
+    /// which would call a precomposed and a decomposed spelling of the same
+    /// text equal: a line that keeps a trailing carriage return differs from
+    /// the same line without one, and so does `\u{00E4}` from `a\u{0308}`.
+    /// This sentence read "compared as exact strings" until 2026-10-13, which
+    /// was true of the type and not of the bytes. How a file is cut into lines
+    /// is the caller's decision.
     ///
     /// Within a block of changes the removals come before the additions.
     /// A `context` below zero is treated as zero.
@@ -62,6 +66,34 @@ public enum FileDiff {
         let line: DiffLine
         let leftIndex: Int
         let rightIndex: Int
+    }
+
+    /// Whether two lines are the same BYTES. Not `==`: Swift's `String`
+    /// equality is canonical equivalence, so `"\u{00E4}"` equals
+    /// `"a\u{0308}"` and a diff built on it would show no change between two
+    /// lines whose bytes differ, on a pair the folder view has just called
+    /// `.differs` because a checksum over bytes saw the difference. The two
+    /// halves of this feature have to agree about the same pair. (Pairing
+    /// NAMES wants the opposite, and `ComparisonPairing` does the opposite on
+    /// purpose: the same file must not appear twice.)
+    ///
+    /// **Cost, measured 2026-10-13 with `scripts/measure-diff-cost`**, one run
+    /// with `==` and two with this comparison, all release, same machine. The
+    /// "before" is a single run, so differences under about 10% are noise.
+    /// Lines of 40 and 80 bytes are within it: the median ratio over the 24
+    /// cases that took 0.1 s or more is 1.026 in both runs, and
+    /// `ladder/5792/every0`, the budget corner, went from 0.2539 s to 0.2668 s
+    /// and 0.2646 s. Lines of 1 to 8 bytes are slower, about 1.3 to 1.7 times:
+    /// `fixedLines/4096/1B` 0.0857 s to 0.1237 s and 0.1244 s,
+    /// `corner/thin/2097152x16` 0.2699 s to 0.3438 s and 0.3567 s. The
+    /// slowest case of that shape inside `maxLineProduct` is the thin one (in
+    /// absolute time; by ratio the 1B to 8B fixed-line cases are worse); the
+    /// 1.6-fold `pathological/32KiB` (1.3834 s to 2.2843 s and 2.1953 s) lies
+    /// above the bound, so the app never runs it. Why short lines pay more was not
+    /// measured. Accepted: a diff that agrees with the checksum is worth it.
+    @inline(__always)
+    private static func sameBytes(_ a: String, _ b: String) -> Bool {
+        a.utf8.elementsEqual(b.utf8)
     }
 
     private static func editScript(left: [String], right: [String]) -> [Step] {
@@ -108,7 +140,7 @@ public enum FileDiff {
                 let row = i * width
                 let rowBelow = row + width
                 for j in stride(from: right.count - 1, through: 0, by: -1) {
-                    table[row + j] = left[i] == right[j]
+                    table[row + j] = sameBytes(left[i], right[j])
                         ? table[rowBelow + j + 1] + 1
                         : max(table[rowBelow + j], table[row + j + 1])
                 }
@@ -118,7 +150,7 @@ public enum FileDiff {
         var steps: [Step] = []
         var i = 0, j = 0
         while i < left.count && j < right.count {
-            if left[i] == right[j] {
+            if sameBytes(left[i], right[j]) {
                 steps.append(Step(
                     line: DiffLine(kind: .context, text: left[i]),
                     leftIndex: i, rightIndex: j))

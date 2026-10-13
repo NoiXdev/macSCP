@@ -297,6 +297,35 @@ struct ComparisonFetchTests {
         #expect(rig.right.reads == ["/R/b"])
     }
 
+    /// The two halves of the feature agree about a pair. These two files hold
+    /// the same text spelled differently (precomposed and decomposed "a" with
+    /// a diaeresis, in opposite order), with the same number of bytes: Swift
+    /// calls the lines equal, a checksum over the bytes does not. The folder
+    /// view cannot hash here, so the row is undetermined; settling it by
+    /// bytes says `.differs`, and the diff of that row must then show a
+    /// change and not nothing.
+    @Test func aPairTheClassificationCallsDifferentHasANonEmptyDiff() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let composed = "\u{00E4}"
+        let decomposed = "a\u{0308}"
+        let left = composed + decomposed
+        let right = decomposed + composed
+        // Positive controls: equal as Strings, equal in size, different bytes.
+        #expect(left == right)
+        #expect(left.utf8.count == right.utf8.count)
+        #expect(Array(left.utf8) != Array(right.utf8))
+        let rig = await makeFolderRig(
+            left: ["t": data(left)], right: ["t": data(right)], temporaryRoot: root)
+        #expect(rig.comparison.rows.map(\.state) == [.undetermined(.checksumUnavailable)])
+
+        #expect(try await rig.comparison.settleUndetermined(rowAt: 0) == .differs)
+        let shown = try #require(hunks(try await rig.comparison.diff(forRowAt: 0)))
+
+        #expect(shown.count == 1)
+        #expect(render(shown[0]) == ["-" + left, "+" + right])
+    }
+
     @Test func aRowIsDiffedByItsOwnIndex() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
