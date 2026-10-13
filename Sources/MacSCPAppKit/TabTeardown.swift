@@ -105,6 +105,11 @@ enum TabTeardown {
     /// watchdog cancels the chain BETWEEN tabs and windows, never inside
     /// one; see `QuitWatchdog.bound`.
     static func run(_ tab: SessionTab, reason: CancelReason) async {
+        // From the first line to the last: `SessionTab.startComparison`
+        // refuses while this is non-zero, because the tab's session stays
+        // attached through every suspension point below.
+        tab.tearDownsInFlight += 1
+        defer { tab.tearDownsInFlight -= 1 }
         tab.editErrorMessage = nil
         if let session = tab.session {
             // MUST run before `cancelAll(reason:)`: an open conflict sheet would

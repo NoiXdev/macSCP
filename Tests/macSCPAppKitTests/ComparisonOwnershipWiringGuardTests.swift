@@ -26,9 +26,17 @@ struct ComparisonOwnershipWiringGuardTests {
 
     /// A call to the `Comparison` initialiser: the type name not preceded by
     /// another identifier character (`FolderComparison(`, `ComparisonRow(`
-    /// are other types), followed by `(`.
+    /// are other types), followed by `(` or by `.init(`.
+    ///
+    /// This is a pattern and not a structural boundary on purpose: a
+    /// `fileprivate` initialiser would have to live in `SessionTab.swift`,
+    /// which Swift allows for a class only as a convenience initialiser
+    /// delegating to an accessible designated one — and it would also close
+    /// the door on the tests, which build a `Comparison` over a scripted file
+    /// system without a connected tab. So the pattern covers both spellings
+    /// of the call.
     private static let construction = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_])Comparison\("#)
+        pattern: #"(?<![A-Za-z0-9_])Comparison(\.init)?\("#)
 
     private static func constructions(in code: String) -> Int {
         construction.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
@@ -60,6 +68,8 @@ struct ComparisonOwnershipWiringGuardTests {
         #expect(Self.constructions(in: "let c = Comparison(left: a)") == 1)
         #expect(Self.constructions(in: "ComparisonRow(relativePath: p)") == 0)
         #expect(Self.constructions(in: "FolderComparison(x)") == 0)
+        #expect(Self.constructions(in: "let c = Comparison.init(left: a)") == 1)
+        #expect(Self.constructions(in: "ComparisonRow.init(relativePath: p)") == 0)
     }
 
     @Test func theTabIsTheOnlyWriterOfItsComparisons() throws {
@@ -92,6 +102,32 @@ struct ComparisonOwnershipWiringGuardTests {
         let cancel = try #require(body.range(of: "comparison.cancel()"))
         let release = try #require(body.range(of: "comparison.releaseFileSystems()"))
         #expect(cancel.upperBound <= release.lowerBound)
+    }
+
+    /// The refusal during a teardown is stated once, where the comparison is
+    /// created, and the counter it reads is written by the teardown alone.
+    @Test func aComparisonIsRefusedWhileTheTabIsBeingTornDown() throws {
+        let tab = try Self.code("SessionTab.swift")
+        let start = try #require(tab.range(of: "func startComparison("))
+        let body = String(tab[start.upperBound...].prefix(400))
+        #expect(body.contains("guard let session, !isTearingDown else { return nil }"))
+
+        let teardown = try Self.code("TabTeardown.swift")
+        #expect(Self.occurrences(of: "tab.tearDownsInFlight += 1", in: teardown) == 1)
+        #expect(Self.occurrences(of: "tab.tearDownsInFlight -= 1", in: teardown) == 1)
+        // Raised before the first suspension point and lowered by `defer`.
+        let raise = try #require(teardown.range(of: "tab.tearDownsInFlight += 1"))
+        let sweep = try #require(teardown.range(of: "await tab.transferQueue.cancelAll("))
+        #expect(raise.upperBound <= sweep.lowerBound)
+        #expect(teardown.contains("defer { tab.tearDownsInFlight -= 1 }"))
+
+        var writers: [String] = []
+        for url in try Self.swiftFiles() {
+            if try SourceCorpus.code(of: url).contains("tearDownsInFlight") {
+                writers.append(url.lastPathComponent)
+            }
+        }
+        #expect(writers.sorted() == ["SessionTab.swift", "TabTeardown.swift"])
     }
 
     /// Quit adds no sweep of its own: it runs each window's close sequence
