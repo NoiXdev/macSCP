@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 import macSCPCore
 
@@ -223,10 +224,30 @@ enum ComparisonOverviewPresentation {
         key: "compare.failure.interrupted",
         english: "The comparison was interrupted although nobody stopped it.")
 
+    static let settlePending = Wording(
+        key: "compare.settle.pending",
+        english: "Fetching both files to compare their contents…")
+    static let settleSessionClosed = Wording(
+        key: "compare.settle.sessionClosed",
+        english: "The session was closed, so these files can no longer be fetched. Nothing was compared.")
+    static let settleNotPossible = Wording(
+        key: "compare.settle.notPossible",
+        english: "These entries cannot be compared by their contents.")
+    static let settleRowMoved = Wording(
+        key: "compare.settle.rowMoved",
+        english: "This row is no longer in the list as it was, so nothing was compared.")
+    static let settleStopped = Wording(
+        key: "compare.settle.stopped",
+        english: "Fetching the files was stopped, so nothing was compared.")
+    static let settleFailed = Wording(
+        key: "compare.settle.failed %@",
+        english: "The contents could not be compared. %@")
+
     /// The wordings above that are not a state and not a reason.
     static let otherWordings: [Wording] = [
         compareAnyway, progress, cancel, empty, failureNotFound, failureReported,
-        failureNoDetail, failureInterrupted,
+        failureNoDetail, failureInterrupted, settlePending, settleSessionClosed,
+        settleNotPossible, settleRowMoved, settleStopped, settleFailed,
     ]
 
     static var otherKeys: [String] { otherWordings.map(\.key) }
@@ -309,23 +330,104 @@ enum ComparisonOverviewPresentation {
         /// Whether the row is a match, which the view sets in a quieter
         /// colour. A property of the row's state, not of its label.
         let isMatch: Bool
+        /// The row's position in the comparison's rows: what
+        /// `Comparison.settleUndetermined(rowAt:)` is given.
+        let index: Int
+        /// "Compare contents anyway", or `nil` for a row that does not offer
+        /// it. See `rowEntries`.
+        let settleButton: SettleButton?
+        /// What the row says about a settling: that one is under way, or why
+        /// the last one did not happen. `nil` when there is nothing to say.
+        let settleNote: String?
+    }
+
+    struct SettleButton: Equatable, Sendable {
+        let title: String
+        /// `false` while that row's bytes are being fetched.
+        let isEnabled: Bool
+    }
+
+    /// What is under way and what failed, per row path. A value, so the
+    /// transitions are decidable without a view; the model below holds one.
+    struct SettleTracker: Equatable, Sendable {
+        private(set) var pending: Set<String> = []
+        private(set) var failures: [String: String] = [:]
+
+        func isPending(_ path: String) -> Bool { pending.contains(path) }
+
+        mutating func begin(_ path: String) {
+            pending.insert(path)
+            failures[path] = nil
+        }
+
+        mutating func succeed(_ path: String) {
+            pending.remove(path)
+            failures[path] = nil
+        }
+
+        mutating func fail(_ path: String, text: String) {
+            pending.remove(path)
+            failures[path] = text
+        }
+    }
+
+    /// Whether anything that needs the connection can still be done. A
+    /// released comparison has no file systems and no queue, and an action
+    /// that would only fail is not offered; the window already says why.
+    @MainActor
+    static func canFetch(_ comparison: Comparison) -> Bool {
+        comparison.fileSystems != nil && comparison.transferQueue != nil
+    }
+
+    /// What a settling that did not happen says. Exhaustive over
+    /// `ComparisonFetchError`; a cancellation is its own sentence and any
+    /// other error goes through `failureCause(for:)`, so a credential is
+    /// filtered and a foreign error is its sentence. **The row is as it was**
+    /// in every one of these cases, and each text says nothing was compared.
+    @MainActor
+    static func settleFailureText(for error: any Error) -> String {
+        if let fetch = error as? ComparisonFetchError {
+            switch fetch {
+            case .sessionClosed: return settleSessionClosed.text
+            case .wrongKind, .noContentToCompare: return settleNotPossible.text
+            case .rowOutOfRange: return settleRowMoved.text
+            }
+        }
+        if error is CancellationError { return settleStopped.text }
+        return String(format: settleFailed.text, failureCause(for: error))
     }
 
     /// The list, in the order the walk produced it, one entry per row. **The
     /// view draws exactly this list**: it holds no row to rebind and no
     /// collection to slice, so "every row shows its own state, none is
     /// hidden" is a property of THIS function and is tested here.
-    static func rowEntries(_ rows: [ComparisonRow]) -> [RowEntry] {
-        rows.map { row in
+    ///
+    /// **Which rows offer "compare anyway":** an undetermined row whose
+    /// reason `canBeSettledByBytes` says bytes can settle — the line is that
+    /// property's, not re-decided here — and only while `canFetch` holds. A
+    /// row that cannot be settled shows its reason and no button.
+    static func rowEntries(
+        _ rows: [ComparisonRow], settle: SettleTracker, canFetch: Bool
+    ) -> [RowEntry] {
+        rows.enumerated().map { index, row in
             let reason: String?
+            var button: SettleButton?
+            var note: String?
             switch row.state {
-            case .undetermined(let why): reason = text(for: why)
+            case .undetermined(let why):
+                reason = text(for: why)
+                let pending = settle.isPending(row.relativePath)
+                if why.canBeSettledByBytes && canFetch {
+                    button = SettleButton(title: compareAnyway.text, isEnabled: !pending)
+                }
+                note = pending ? settlePending.text : settle.failures[row.relativePath]
             case .onlyLeft, .onlyRight, .same, .differs, .typeMismatch, .bothDirectories:
                 reason = nil
             }
             return RowEntry(
                 path: row.relativePath, label: label(forRow: row), reason: reason,
-                isMatch: row.state == .same)
+                isMatch: row.state == .same, index: index, settleButton: button,
+                settleNote: note)
         }
     }
 
@@ -395,6 +497,42 @@ enum ComparisonOverviewPresentation {
     }
 }
 
+// MARK: - Settling a row
+
+/// Carries "compare anyway" from a row's button to
+/// `Comparison.settleUndetermined(rowAt:)` and back: the pending state while
+/// the bytes are fetched, and the failure when it did not happen. It holds
+/// no comparison — the comparison is an argument of each call — so it keeps
+/// nothing alive, and the views hold no logic of their own.
+@MainActor
+@Observable
+final class ComparisonSettleModel {
+    private(set) var tracker = ComparisonOverviewPresentation.SettleTracker()
+
+    /// Settles the row `entry` stands for, and never throws: the row takes
+    /// the state that comes back, or stays as it was with the reason beside
+    /// it. The row is checked BEFORE anything is fetched, by index and by
+    /// path, because settling another row's index would write an answer
+    /// onto a file nobody asked about.
+    func settle(_ entry: ComparisonOverviewPresentation.RowEntry, on comparison: Comparison) async {
+        guard !tracker.isPending(entry.path) else { return }
+        tracker.begin(entry.path)
+        guard comparison.rows.indices.contains(entry.index),
+            comparison.rows[entry.index].relativePath == entry.path
+        else {
+            tracker.fail(entry.path, text: ComparisonOverviewPresentation.settleRowMoved.text)
+            return
+        }
+        do {
+            _ = try await comparison.settleUndetermined(rowAt: entry.index)
+            tracker.succeed(entry.path)
+        } catch {
+            tracker.fail(
+                entry.path, text: ComparisonOverviewPresentation.settleFailureText(for: error))
+        }
+    }
+}
+
 // MARK: - The view
 
 /// The upper half of the comparison window: a count per state, then one row
@@ -409,12 +547,15 @@ enum ComparisonOverviewPresentation {
 /// it runs they are partial, and the line above them says so.
 struct ComparisonOverviewView: View {
     let comparison: Comparison
+    @State private var settler = ComparisonSettleModel()
 
     var body: some View {
         let rows = comparison.rows
         let counts = ComparisonOverviewPresentation.counts(of: rows)
         let figures = ComparisonOverviewPresentation.summaryFigures(counts)
-        let entries = ComparisonOverviewPresentation.rowEntries(rows)
+        let entries = ComparisonOverviewPresentation.rowEntries(
+            rows, settle: settler.tracker,
+            canFetch: ComparisonOverviewPresentation.canFetch(comparison))
         VStack(alignment: .leading, spacing: 0) {
             summary(figures)
             Divider()
@@ -423,7 +564,9 @@ struct ComparisonOverviewView: View {
             } else {
                 List {
                     ForEach(entries, id: \.path) { entry in
-                        ComparisonOverviewRow(entry: entry)
+                        ComparisonOverviewRow(entry: entry) {
+                            Task { await settler.settle(entry, on: comparison) }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -490,6 +633,7 @@ private struct ComparisonOverviewFigure: View {
 /// rebind to a different state.
 private struct ComparisonOverviewRow: View {
     let entry: ComparisonOverviewPresentation.RowEntry
+    let onSettle: () -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -501,8 +645,17 @@ private struct ComparisonOverviewRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if let note = entry.settleNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 8)
+            if let button = entry.settleButton {
+                Button(button.title) { onSettle() }
+                    .disabled(!button.isEnabled)
+            }
             Text(entry.label)
                 .foregroundStyle(entry.isMatch ? .secondary : .primary)
         }

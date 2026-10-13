@@ -867,7 +867,7 @@ private final class ComparisonHolder {
 
 /// An in-memory file system that records what it was asked. `list` answers
 /// the direct children of a directory from the keys of `files`.
-private final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
+final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     private struct State {
         var files: [String: Data]
         var reads: [String] = []
