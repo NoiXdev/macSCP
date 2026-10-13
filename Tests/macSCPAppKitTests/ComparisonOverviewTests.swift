@@ -228,18 +228,70 @@ struct ComparisonOverviewTests {
         }
     }
 
+    /// `.other` is also what a listing answers when a type was NOT REPORTED,
+    /// so an ordinary file can carry `unsupportedKind`. The text may not say
+    /// the entry IS a link or a special entry, and keeps the third branch.
+    @Test func unsupportedKindDoesNotClaimTheEntryIsALinkAndKeepsTheUnreportedBranch() throws {
+        let english = try Self.catalogue("en")
+        let text = try #require(english[Presentation.key(for: .unsupportedKind)])
+        #expect(text.contains("could not tell"))
+        #expect(text.contains("its type was not reported"))
+        #expect(text.contains("a link"))
+        #expect(!text.contains("this is a link"))
+    }
+
+    /// Both sides of an S3-to-S3 pair can be multipart.
+    @Test func theEtagReasonSaysAtLeastOneSide() throws {
+        let english = try Self.catalogue("en")
+        let text = try #require(english[Presentation.key(for: .etagIsNotAFileHash)])
+        #expect(text.contains("at least one side"))
+        let checksum = try #require(english[Presentation.key(for: .checksumUnavailable)])
+        #expect(checksum.contains("at least one side"))
+    }
+
     @Test func theReasonListNamesEveryCaseTheEnumDeclares() throws {
         let code = try SourceCorpus.code(
             of: Self.core.appendingPathComponent("Compare/ComparisonState.swift"))
         let start = try #require(code.range(of: "enum UndeterminedReason"))
         let end = try #require(code.range(of: "enum ComparisonState"))
         let body = String(code[start.upperBound..<end.lowerBound])
-        let declared = body.split(separator: "\n").filter {
-            $0.trimmingCharacters(in: .whitespaces).hasPrefix("case ")
-        }
+        let declared = Self.caseNames(inEnumBody: body)
         // Positive half first: the scan found the enum at all.
         #expect(!declared.isEmpty)
         #expect(declared.count == Self.allReasons.count, "\(declared)")
+    }
+
+    /// The reader counts CASES, not lines: `case a, b` is two, and a comma
+    /// inside an associated value's parentheses separates nothing.
+    @Test func theCaseReaderCountsCasesNotLines() {
+        #expect(Self.caseNames(inEnumBody: "case a\ncase b(X)\n").count == 2)
+        #expect(Self.caseNames(inEnumBody: "case a, b\ncase c\n").count == 3)
+        #expect(Self.caseNames(inEnumBody: "case a(X, Y), b\n").count == 2)
+        #expect(Self.caseNames(inEnumBody: "var x: Int { 1 }\n").isEmpty)
+    }
+
+    private static func caseNames(inEnumBody body: String) -> [String] {
+        var names: [String] = []
+        for line in body.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("case ") else { continue }
+            var depth = 0
+            var current = ""
+            for character in trimmed.dropFirst("case ".count) {
+                switch character {
+                case "(": depth += 1; current.append(character)
+                case ")": depth -= 1; current.append(character)
+                case "," where depth == 0:
+                    names.append(current.trimmingCharacters(in: .whitespaces))
+                    current = ""
+                default: current.append(character)
+                }
+            }
+            if !current.trimmingCharacters(in: .whitespaces).isEmpty {
+                names.append(current.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        return names
     }
 
     // MARK: - Counts
@@ -317,11 +369,50 @@ struct ComparisonOverviewTests {
     // MARK: - Progress
 
     @Test func progressNamesTheNumberItWasGiven() {
-        let text = Presentation.progressText(
-            ComparisonProgress(directoriesVisited: 3, rowsProduced: 4_127))
+        let text = Presentation.progressText(entriesFound: 4_127)
         #expect(!text.isEmpty)
         #expect(text.contains("4127") || text.contains("4,127") || text.contains("4.127"))
         #expect(!text.contains("%"))
+    }
+
+    // MARK: - What is drawn at all
+
+    @Test func aFolderComparisonShowsTheOverviewAndAFilePairDoesNot() {
+        #expect(Presentation.showsOverview(for: .folders))
+        #expect(!Presentation.showsOverview(for: .filePair))
+    }
+
+    /// The most dangerous sentence on this surface is "found no files and no
+    /// differences": it is a RESULT. It may appear for a walk that ended
+    /// normally with no row and for nothing else — each other outcome gets a
+    /// negative check, and the positive one is beside them.
+    @Test func theEmptyNoticeIsShownOnlyForACompletedWalkWithNoRows() {
+        let failure = Comparison.Outcome.failed(CancellationError())
+        // Positive: the one case that shows it.
+        #expect(Presentation.showsEmptyNotice(rowCount: 0, outcome: .completed))
+        // Still running (no outcome yet), stopped, failed: the list is empty
+        // because it is incomplete.
+        #expect(!Presentation.showsEmptyNotice(rowCount: 0, outcome: nil))
+        #expect(!Presentation.showsEmptyNotice(rowCount: 0, outcome: .cancelled))
+        #expect(!Presentation.showsEmptyNotice(rowCount: 0, outcome: failure))
+        // A completed walk that produced rows has something to show instead.
+        #expect(!Presentation.showsEmptyNotice(rowCount: 1, outcome: .completed))
+    }
+
+    /// A row is labelled with ITS OWN state, for every state a row can carry.
+    @Test func aRowIsLabelledWithItsOwnStateAndNoOtherRowSharesItsLabel() {
+        var labels: [String] = []
+        for state in Self.rowStates {
+            let row = ComparisonRow(relativePath: "p", state: state)
+            #expect(Presentation.label(forRow: row) == Presentation.label(for: state))
+            if case .undetermined = state { continue }
+            labels.append(Presentation.label(forRow: row))
+        }
+        #expect(labels.count == 5)
+        #expect(Set(labels).count == labels.count)
+        let sameRow = ComparisonRow(relativePath: "p", state: .same)
+        let undeterminedRow = ComparisonRow(relativePath: "p", state: .undetermined(.unreadable))
+        #expect(Presentation.label(forRow: undeterminedRow) != Presentation.label(forRow: sameRow))
     }
 
     // MARK: - The catalogues
@@ -475,9 +566,67 @@ struct ComparisonOverviewTests {
         #expect(code.contains("ComparisonOverviewPresentation.counts(of:"))
     }
 
+    private static func occurrences(of needle: String, in text: String) -> Int {
+        text.components(separatedBy: needle).count - 1
+    }
+
+    /// The part of the overview file that is the view, from its first struct
+    /// on; everything above it is the presentation.
+    private static func viewCode() throws -> (view: String, row: String) {
+        let source = try Self.code("ComparisonOverview.swift")
+        let viewStart = try #require(source.range(of: "struct ComparisonOverviewView"))
+        let rowStart = try #require(source.range(of: "struct ComparisonOverviewRow"))
+        #expect(viewStart.lowerBound < rowStart.lowerBound)
+        return (
+            String(source[viewStart.lowerBound..<rowStart.lowerBound]),
+            String(source[rowStart.lowerBound...])
+        )
+    }
+
+    /// A row's label has ONE spelling in the view: `label(forRow: row)`, with
+    /// the row it draws as the argument. Calling `label(for:)` anywhere in the
+    /// row is the defect (a one-token edit to `label(for: .same)` makes every
+    /// row read "Same contents"), so the negative checks sit beside the
+    /// positive one, and the figure above the list keeps its own: the state
+    /// it was handed, for the number of THAT state.
+    @Test func eachRowIsLabelledFromItsOwnRowAndNothingInTheViewNamesAStateLiterally() throws {
+        let (view, row) = try Self.viewCode()
+
+        // Positive: the row draws its label from its own row, exactly once,
+        // and its reason from the state it holds.
+        #expect(Self.occurrences(of: "label(forRow: row)", in: row) == 1)
+        #expect(row.contains("if case .undetermined(let reason) = row.state"))
+        #expect(Self.occurrences(of: "text(for: reason)", in: row) == 1)
+        // Negative: no `label(for:` of any argument in the row, and none with
+        // a literal state anywhere in the view.
+        #expect(!row.contains("label(for:"))
+        #expect(!view.contains("label(for: ."))
+        #expect(!row.contains("text(for: ."))
+
+        // The figure: the label and the count come from the SAME parameter.
+        #expect(Self.occurrences(of: "label(for: state)", in: view) == 1)
+        #expect(Self.occurrences(of: "= counts.count(for: state)", in: view) == 1)
+        #expect(!view.contains("counts.count(for: ."))
+        #expect(Self.occurrences(of: "label(for:", in: view) == 1)
+    }
+
+    /// The decisions about what to show are the presentation's, and the view
+    /// asks: it does not spell the condition itself.
+    @Test func theViewAsksThePresentationWhatToShowAndWhatToCount() throws {
+        let (view, _) = try Self.viewCode()
+        #expect(view.contains("ComparisonOverviewPresentation.showsEmptyNotice("))
+        #expect(!view.contains(".completed"))
+        // The progress line counts the rows held, like the figures do.
+        #expect(view.contains("progressText(entriesFound: comparison.rows.count)"))
+        #expect(!view.contains("comparison.progress"))
+        #expect(!view.contains("rowsProduced"))
+    }
+
     @Test func theWindowShowsTheOverviewAndTheFailureCause() throws {
         let window = try Self.code("ComparisonWindow.swift")
         #expect(window.contains("ComparisonOverviewView("))
+        // Only a folder comparison has rows to overview.
+        #expect(window.contains("ComparisonOverviewPresentation.showsOverview(for: comparison.kind)"))
         #expect(window.contains("ComparisonOverviewPresentation.failureCause(for:"))
         // The generic notice used to be the whole message; a raw rendering of
         // the error is not what replaces it.

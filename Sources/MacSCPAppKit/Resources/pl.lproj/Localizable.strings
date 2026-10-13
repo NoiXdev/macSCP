@@ -1612,8 +1612,8 @@
 "compare.reason.checksumUnavailable" = "Nie porównano: co najmniej jedna strona nie mogła podać sumy kontrolnej tego pliku.";
 "compare.reason.algorithmUnavailable %@" = "Nie porównano: jedna ze stron nie mogła obliczyć sumy kontrolnej %@. Inny algorytm sumy kontrolnej można wybrać w Ustawieniach.";
 "compare.reason.algorithmsDiffer" = "Nie porównano: obie strony odpowiedziały sumami kontrolnymi z różnych algorytmów, które nic o sobie nie mówią.";
-"compare.reason.etagIsNotAFileHash" = "Nie porównano: jedna strona podała tylko ETag przesyłania wieloczęściowego, który nie jest sumą kontrolną zawartości pliku.";
-"compare.reason.unsupportedKind" = "Nie porównano: to dowiązanie lub wpis specjalny, a macSCP takich wpisów nie porównuje.";
+"compare.reason.etagIsNotAFileHash" = "Nie porównano: co najmniej jedna strona podała tylko ETag przesyłania wieloczęściowego, który nie jest sumą kontrolną zawartości pliku.";
+"compare.reason.unsupportedKind" = "Nie porównano: macSCP nie mógł ustalić, że to zwykły plik. To dowiązanie lub wpis specjalny albo jego typ nie został zgłoszony.";
 "compare.reason.unreadable" = "macSCP nie mógł odczytać tej ścieżki, więc nic tu nie porównano.";
 "compare.action.compareAnyway" = "Porównaj zawartość mimo to";
 "compare.progress %lld" = "Dotychczas znalezione wpisy: %lld";
