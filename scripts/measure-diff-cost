@@ -8,11 +8,23 @@
 # that suite sampled the footprint anyway, and on `ladder/5792` it reported a
 # DELTA of 409,600 bytes while allocating a 268,470,792-byte table, because an
 # earlier case had left the allocator holding about 440 MB of mapped pages
-# that `phys_footprint` still counts. This script's figure for the same case
-# is 284,606,704 bytes. The two agree on TIME within 7.5% (`ladder/16384`,
-# one line differing: 2.297442875 s in the suite, 2.468680542 s here), which is what
-# makes the division safe; the memory figures in `DiffEligibility`'s doc
-# comments and in the design spec's "Too large" bullet come from here.
+# that `phys_footprint` still counts. The memory figures in
+# `DiffEligibility`'s doc comments and in the design spec's "Too large"
+# bullet all come from here.
+#
+# Each case prints BOTH `peakFootprintDelta` (the rise above this process's
+# own baseline) and `peakFootprint` (the absolute figure). They are not
+# interchangeable: on `asymmetric/500000x20` they were 149,504,144 and
+# 199,770,760 on 2026-10-13, 34% apart, because building the fixture costs
+# something before the diff starts. Quote the ABSOLUTE for any claim about
+# what the machine was asked for.
+#
+# Run it twice before trusting a small figure. Two runs the same day, 2026-10-13, with
+# nothing changed between them, differed by up to 10.1% on one case
+# (`asymmetric/100000x20`, 0.019921083 s against 0.021927041 s); the worst
+# case at or above 0.1 s moved 9.0%, median 1.7% over 25 such cases. The
+# footprint is sampled every 2 ms, so a case under about 20 ms is measured
+# from fewer than ten samples.
 #
 # Run from the repository root:
 #
@@ -135,11 +147,35 @@ print(
         + "hunks=\(hunks.count) changedLines=\(changed)")
 PROBE
 
-echo "building macSCPCore in release..." >&2
-swift build -c release --target macSCPCore >/dev/null
+# `--product`, not `--target`, and the gate below is why. Measured
+# 2026-10-13: `swift build -c release --target macSCPCore` refreshes
+# `macSCPCore.o` and `macSCPCore.swiftmodule` and does NOT relink
+# `libmacSCPCore.a`, which is produced only when the library PRODUCT is built.
+# This script linked `-lmacSCPCore`, so for one run it measured a
+# three-hour-old build of FileDiff and reported figures identical to the
+# version the change was supposed to improve. Nothing failed; the numbers
+# were simply of the wrong code.
+echo "building the macSCPCore product in release..." >&2
+swift build -c release --product macSCPCore >/dev/null
 
 REL="$ROOT/.build/out/Products/Release"
 if [ ! -d "$REL" ]; then REL="$ROOT/.build/release"; fi
+
+# The gate: refuse to measure an artifact older than the sources it is
+# supposed to represent. A harness that silently measures stale code is worse
+# than no harness, because its output looks exactly like a result.
+ARCHIVE="$REL/libmacSCPCore.a"
+if [ ! -f "$ARCHIVE" ]; then
+    echo "measure-diff-cost: $ARCHIVE does not exist after the build" >&2
+    exit 2
+fi
+STALE=$(find "$ROOT/Sources/macSCPCore" -name '*.swift' -newer "$ARCHIVE" -print 2>/dev/null)
+if [ -n "$STALE" ]; then
+    echo "measure-diff-cost: $ARCHIVE is older than these sources, so the" >&2
+    echo "figures would be of the wrong code. Refusing to measure." >&2
+    echo "$STALE" >&2
+    exit 2
+fi
 
 FLAGS=""
 for map in "$ROOT"/.build/out/Intermediates.noindex/GeneratedModuleMaps/*.modulemap; do

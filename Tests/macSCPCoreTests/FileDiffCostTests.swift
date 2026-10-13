@@ -9,9 +9,22 @@ import Testing
 /// produces reaches the log through `report(_:)`, and nothing compares one to
 /// a threshold, because a figure asserted on one machine is a test that fails
 /// on another (CLAUDE.md, "A wall-clock ceiling in a test measures the
-/// runner"). The only expectations are positive controls — that the diff
-/// really ran and really found the differences the fixture planted — so a
-/// case that silently did no work cannot be reported as a cheap one.
+/// runner"). There are six expectations in all, counted 2026-10-13 with
+/// `grep -c '^ *#expect' Tests/macSCPCoreTests/FileDiffCostTests.swift`,
+/// which prints 6 — the anchor is what keeps it from counting the mentions
+/// of the macro in this very comment, a sentence that would otherwise
+/// falsify itself by existing — and none of the six is a figure:
+///
+/// - **two are positive controls**, one per case — that the diff really ran
+///   and really found the differences the fixture planted, so a case that
+///   silently did no work cannot be reported as a cheap one;
+/// - **four are facts about the bound** in `theCornersOfTheChosenBound`,
+///   arithmetic over `maxLineProduct` and `ceilingBytes` that holds on any
+///   machine.
+///
+/// An earlier version of this paragraph said "The only expectations are
+/// positive controls", which the four below contradict; the claim that
+/// nothing here asserts a measured figure is the one that survives.
 ///
 /// **GATED behind `MACSCP_DIFF_COST=1` and skipped by default.** The largest
 /// case it runs allocates a table of about 2.4 GB; a suite that did that on
@@ -43,19 +56,25 @@ import Testing
 /// earlier draft of this suite sampled the footprint anyway and the figures
 /// said so — in its release run of 2026-10-13, `ladder/5792` reported a delta
 /// of 409,600 bytes while allocating a 268,470,792-byte table, because the
-/// grid case before it had left the allocator holding about 440 MB; the
-/// script's figure for that same case is 284,606,704 bytes. The sampler is
-/// gone rather than annotated: a column nobody may quote is a column that
-/// will be quoted.
+/// grid case before it had left the allocator holding about 440 MB. The
+/// sampler is gone rather than annotated: a column nobody may quote is a
+/// column that will be quoted.
 ///
-/// The TIME figures agree between the two within about 10%
-/// (`ladder/16384`, one line differing: 2.297442875 s here against
-/// 2.468680542 s in the script — 7.5% apart), which is what makes the
-/// division safe.
+/// **How closely the two agree on time is not known to better than this
+/// machine's own run-to-run spread**, and that spread is the larger number.
+/// Re-running `scripts/measure-diff-cost` twice on 2026-10-13, with nothing
+/// changed between the runs, moved individual cases by up to **10.1%**
+/// (`asymmetric/100000x20`: 0.019921083 s against 0.021927041 s; worst at or
+/// above 0.1 s, 9.0%; median 1.7% over 25 such cases). So "the suite and the
+/// script agree within a few per cent" is a claim the spread swallows, and an
+/// earlier version of this paragraph stated 7.5% as though it were a
+/// property of the two harnesses. What can be said is that neither harness
+/// disagrees with the other by more than this machine disagrees with itself.
 ///
-/// The figures both produced on 2026-10-13 are in `DiffEligibility`'s own doc
-/// comments, beside the constants they settled, and in the design spec's
-/// "Too large" bullet.
+/// The figures are in `DiffEligibility`'s own doc comments, beside the
+/// constants they settled, and in full in the design spec's "Too large"
+/// bullet. All of them were re-taken after `FileDiff`'s table was flattened;
+/// none of the morning's nested-table figures survives in either place.
 @Suite(
     "The line diff's cost", .serialized, .timeLimit(.minutes(10)),
     .enabled(
@@ -81,14 +100,18 @@ struct FileDiffCostTests {
     static let tableBudgetBytes = 2_500_000_000
 
     /// What `FileDiff.editScript` allocates for a pair of line counts:
-    /// `(L + 1)` rows of `(R + 1)` `Int`s, eight bytes each.
+    /// one flat `[Int]` of `(L + 1) * (R + 1)` entries, eight bytes each.
     ///
     /// Arithmetic, not a measurement, and it is reported for every case so
-    /// that the budget decision below can be read rather than trusted. It is
-    /// not the peak either: `scripts/measure-diff-cost` measured the peak at
-    /// between 1.03 and 2.13 times this figure on 2026-10-13, the high end on
-    /// a tall, thin table whose per-row heap allocations outweigh its
-    /// entries.
+    /// that the budget decision below can be read rather than trusted. Since
+    /// the table was flattened on 2026-10-13 it is also very nearly the peak:
+    /// `scripts/measure-diff-cost` measured the peak delta at between
+    /// **1.0005 and 1.0058** times this figure across every square and
+    /// pathological case that day, where the nested `[[Int]]` version ran
+    /// from 1.03 to 2.13. A long thin pair is the exception and still runs to
+    /// 1.949, because of the edit script and the hunks rather than the table
+    /// — a term in L + R, which `DiffEligibility.maxLineProduct`'s own doc
+    /// comment measures and which `ceilingBytes` is what bounds.
     static func tableBytes(_ left: Int, _ right: Int) -> Int {
         (left + 1) * (right + 1) * 8
     }
@@ -206,10 +229,11 @@ struct FileDiffCostTests {
     ///   exactly the bound, where 2,097,152 is the largest line count
     ///   `ceilingBytes` can hold.
     ///
-    /// The four expectations are the only assertions in this suite that are
-    /// not positive controls, and none of them is a figure: each is a fact
-    /// about `maxLineProduct` and `ceilingBytes` that holds on any machine.
-    /// The two timings are reported and nothing is asserted about them —
+    /// The four expectations below are the suite's only assertions that are
+    /// not positive controls — see the suite's own doc comment, which counts
+    /// all six — and none of them is a figure: each is arithmetic over
+    /// `maxLineProduct` and `ceilingBytes` that holds on any machine. The
+    /// timings are reported and nothing is asserted about them, and
     /// `scripts/measure-diff-cost` is what the constant's doc comment quotes
     /// for the memory at these corners.
     @Test func theCornersOfTheChosenBound() {
