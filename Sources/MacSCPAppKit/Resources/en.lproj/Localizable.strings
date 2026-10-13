@@ -1633,3 +1633,25 @@
 "compare.settle.rowMoved" = "This row is no longer in the list as it was, so nothing was compared.";
 "compare.settle.stopped" = "Fetching the files was stopped, so nothing was compared.";
 "compare.settle.failed %@" = "The contents could not be compared. %@";
+
+/* Content diff (diff view plan, Task 11) */
+"compare.refusal.binary" = "No line comparison was made: at least one of the two files contains binary data, so it cannot be shown as lines of text.";
+"compare.refusal.notUTF8" = "No line comparison was made: at least one of the two files is not valid UTF-8, so it cannot be read as lines. It may be text in another encoding, such as Latin-1 or Windows-1252.";
+"compare.refusal.tooLarge %@ %@" = "No line comparison was made: one of the two files is %@ bytes, and the largest file that can be compared line by line is %@ bytes.";
+"compare.refusal.tooManyLines %@ %@" = "No line comparison was made: the left file has %@ lines and the right file has %@ lines, which is too many to compare together.";
+"compare.diff.failure.onlyLeft" = "This entry exists only on the left, so there is nothing to compare it with.";
+"compare.diff.failure.onlyRight" = "This entry exists only on the right, so there is nothing to compare it with.";
+"compare.diff.failure.typeMismatch" = "The two sides are different kinds of entry, so their contents cannot be compared.";
+"compare.diff.failure.notKnownFiles" = "macSCP could not tell that both sides are ordinary files, so their contents were not compared.";
+"compare.diff.failure.sessionClosed" = "The session was closed, so these files can no longer be fetched. Nothing was compared.";
+"compare.diff.failure.notPossible" = "These entries cannot be compared by their contents.";
+"compare.diff.failure.rowMoved" = "This row is no longer in the list as it was, so nothing was compared.";
+"compare.diff.failure.stopped" = "Fetching the files was stopped, so nothing was compared.";
+"compare.diff.failure.failed %@" = "The files could not be compared. %@";
+"compare.diff.pickRow" = "Select a file in the list to compare its contents line by line.";
+"compare.diff.pending" = "Fetching both files and comparing them line by line…";
+"compare.diff.identical" = "The two files have the same contents: no line differs.";
+"compare.diff.legend" = "A line marked “-” is only in the left file, a line marked “+” only in the right file. Lines without a mark are the same in both.";
+"compare.diff.line.removed" = "Only in the left file";
+"compare.diff.line.added" = "Only in the right file";
+"compare.diff.line.unchanged" = "The same in both files";
