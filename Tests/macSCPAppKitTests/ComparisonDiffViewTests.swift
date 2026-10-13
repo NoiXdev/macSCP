@@ -1314,6 +1314,44 @@ struct ComparisonDiffViewTests {
         )
     }
 
+    /// What is wrong with `tokens` in `code`: each must occur exactly once,
+    /// and in the order given. Empty means nothing is. The presence is
+    /// checked first and is the point: an ordering over a token that was
+    /// renamed away compares two missing positions and reads like a check that
+    /// is satisfied.
+    private static func orderProblems(_ tokens: [String], in code: String) -> [String] {
+        var problems: [String] = []
+        var positions: [String.Index] = []
+        for token in tokens {
+            let count = occurrences(of: token, in: code)
+            if count != 1 { problems.append("\(token) occurs \(count) times, not once") }
+            if let range = code.range(of: token) { positions.append(range.lowerBound) }
+        }
+        if problems.isEmpty, positions != positions.sorted() {
+            problems.append("out of order: \(tokens)")
+        }
+        return problems
+    }
+
+    private static func expectOrder(
+        _ tokens: [String], in code: String, sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let problems = orderProblems(tokens, in: code)
+        #expect(problems.isEmpty, Comment(rawValue: problems.joined(separator: "; ")),
+                sourceLocation: sourceLocation)
+    }
+
+    /// The instrument itself: it reports a token that is missing, one that
+    /// occurs twice, and a wrong order, and reports nothing for the right one.
+    @Test func theOrderCheckReportsAMissingTokenARepeatedOneAndAWrongOrder() {
+        #expect(Self.orderProblems(["a(", "b("], in: "a( b(").isEmpty)
+        #expect(Self.orderProblems(["a(", "b("], in: "b( a(") == ["out of order: [\"a(\", \"b(\"]"])
+        #expect(Self.orderProblems(["a(", "renamed("], in: "a( b(").count == 1)
+        #expect(Self.orderProblems(["a(", "b("], in: "a( b( b(").count == 1)
+        // A missing token is reported even when the rest is in order.
+        #expect(Self.orderProblems(["renamed(", "other("], in: "a( b(").count == 2)
+    }
+
     /// The residual scan: the views iterate each function's output, once, and
     /// hold nothing to rebind or slice. Every negative check has the positive
     /// one beside it.
@@ -1330,6 +1368,8 @@ struct ComparisonDiffViewTests {
         #expect(Self.occurrences(of: "ForEach(listing.hunks, id: \\.id)", in: view) == 1)
         #expect(Self.occurrences(of: "ComparisonDiffHunkView(hunk: hunk, digits: listing.numberDigits)", in: view) == 1)
         #expect(Self.occurrences(of: "Text(listing.legend)", in: view) == 1)
+        // The legend comes before the hunks it explains.
+        Self.expectOrder(["Text(listing.legend)", "ForEach(listing.hunks, id: \\.id)"], in: view)
         #expect(Self.occurrences(of: "ComparisonDiffNoticeView(notice: notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .notice(let notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .listing(let listing)", in: view) == 1)
@@ -1345,6 +1385,9 @@ struct ComparisonDiffViewTests {
         // The hunk draws its header and its lines, nothing else.
         #expect(Self.occurrences(of: "Text(hunk.header)", in: hunk) == 1)
         #expect(Self.occurrences(of: "ForEach(hunk.lines, id: \\.id)", in: hunk) == 1)
+        // The header comes before the lines it describes: a header drawn
+        // below its lines would head each hunk with the next one's numbers.
+        Self.expectOrder(["Text(hunk.header)", "ForEach(hunk.lines, id: \\.id)"], in: hunk)
         #expect(Self.occurrences(of: "ComparisonDiffLineView(entry: entry, digits: digits)", in: hunk) == 1)
         // The line draws the values of its entry: both numbers, the sign, the
         // runs (through the one attribution function), the tint.
