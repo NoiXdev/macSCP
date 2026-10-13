@@ -67,7 +67,16 @@
   `MACSCP_KEYCHAIN=1` (writes to the real keychain), `MACSCP_PIPE_TIMING=1` (one gated case that counts pipe chunks from the CLI's line-buffered stdout — it measures the reader's scheduling as much as the binary, so it runs on request), and `MACSCP_SATURATION=1`
   (one test that parks the whole GCD global queue to prove the subprocess
   runner's readers need no thread — it cannot share a parallel run, measured
-  on CI run 33705649537; run it alone).
+  on CI run 33705649537; run it alone), and `MACSCP_DIFF_COST=1` (the line
+  diff's cost measurement, added 2026-10-13 — five cases that build synthetic
+  file pairs and report elapsed time, asserting no figure, since a figure
+  asserted on one machine is a test that fails on another; run it with
+  `-c release` or the numbers mean nothing). The MEMORY half of that
+  measurement is not in the suite and cannot be: a single process cannot
+  report a peak the allocator has not handed back between cases, and a first
+  draft that sampled it anyway reported a 409,600-byte delta while allocating
+  a 268,470,792-byte table. `scripts/measure-diff-cost` runs each case in its
+  own process and is the memory record; the suite is the time record.
 - **No build-system flag.** `swift build` and `swift test` run on the
   default build system (Swift Build, since Swift 6.4 / Xcode 27);
   `--build-system native` is deprecated, and passing it prints a warning
