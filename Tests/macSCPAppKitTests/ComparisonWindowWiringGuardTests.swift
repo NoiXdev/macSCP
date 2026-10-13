@@ -215,6 +215,7 @@ struct ComparisonWindowWiringGuardTests {
         if let colon = rest.firstIndex(of: ":"), equalsIndex == nil || colon < equalsIndex! {
             var type = String(rest[rest.index(after: colon)...])
             if let equals = type.firstIndex(of: "=") { type = String(type[..<equals]) }
+            if let brace = type.firstIndex(of: "{") { type = String(type[..<brace]) }
             return type.trimmingCharacters(in: .whitespaces)
         }
         guard let equals = equalsIndex else { return nil }
@@ -227,13 +228,31 @@ struct ComparisonWindowWiringGuardTests {
     }
 
     /// Top-level `let`/`var` declarations of a type body that are STORED, as
-    /// whole lines. Attributes and modifiers before the keyword are allowed.
-    /// A line is computed when its first `{` comes before any `=`.
+    /// whole lines.
+    ///
+    /// **A line is a declaration if `let` or `var` appears on it as a word,
+    /// with no list of what may stand before it.** An earlier version
+    /// accepted only `@attributes` and a handful of modifiers before the
+    /// keyword and SKIPPED any other line, which is the failure the allowed
+    /// shapes exist to escape, one level down: `internal`, `public`,
+    /// `unowned`, `fileprivate(set)`, `nonisolated(unsafe)` and an attribute
+    /// with a space in its arguments (`@State(initialValue: x) var r`) all
+    /// made a stored property vanish before the shape check could see it. An
+    /// unknown modifier now changes nothing about whether a line is read;
+    /// the only lines left out are functions and initialisers, which declare
+    /// no stored property of the type.
+    ///
+    /// **Stored or computed.** A property is computed when a `{` comes before
+    /// any `=` — unless what follows the brace is `willSet` or `didSet`, an
+    /// observer, which belongs to a STORED property (`var r: T? { didSet {} }`
+    /// is legal with no initial value). The observer may open on the next
+    /// line when the brace ends this one.
     private static func storedProperties(in body: String) -> [String] {
         var depth = 0
         var found: [String] = []
-        for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
+        let lines = body.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        for (index, line) in lines.enumerated() {
             defer {
                 for character in line {
                     if character == "{" { depth += 1 }
@@ -241,17 +260,20 @@ struct ComparisonWindowWiringGuardTests {
                 }
             }
             guard depth == 0 else { continue }
-            let tokens = line.split(separator: " ")
-            guard let keyword = tokens.firstIndex(where: { $0 == "let" || $0 == "var" }),
-                tokens[..<keyword].allSatisfy({ token in
-                    token.hasPrefix("@") || ["private", "fileprivate", "static", "nonisolated",
-                                             "final", "weak", "lazy"].contains(String(token))
-                        || token.hasPrefix("private(")
-                })
-            else { continue }
+            let tokens = line.split(separator: " ").map(String.init)
+            guard tokens.contains(where: { $0 == "let" || $0 == "var" }) else { continue }
+            if tokens.contains(where: { $0 == "func" || $0.hasPrefix("init(") || $0 == "init" }) {
+                continue
+            }
             let equals = line.firstIndex(of: "=")
-            let brace = line.firstIndex(of: "{")
-            if let brace, equals == nil || brace < equals! { continue }
+            if let brace = line.firstIndex(of: "{"), equals == nil || brace < equals! {
+                var after = line[line.index(after: brace)...].trimmingCharacters(in: .whitespaces)
+                if after.isEmpty {
+                    after = lines[(index + 1)...].first { !$0.isEmpty } ?? ""
+                }
+                let observer = after.hasPrefix("willSet") || after.hasPrefix("didSet")
+                if !observer { continue }
+            }
             found.append(line)
         }
         return found
@@ -365,6 +387,7 @@ struct ComparisonWindowWiringGuardTests {
             }
             var computed: Int { 3 }
             func f() { var local: BrowserSession? }
+            init(seed: ComparisonSeed) { var scratch = 1 }
             """
         let found = Self.storedProperties(in: body)
         #expect(found.count == 3)
@@ -372,6 +395,55 @@ struct ComparisonWindowWiringGuardTests {
         #expect(found.contains { $0.contains("make") })
         #expect(!found.contains { $0.contains("computed") })
         #expect(!found.contains { $0.contains("inner") })
+        #expect(!found.contains { $0.contains("scratch") })
+        #expect(!found.contains { $0.contains("local") })
+    }
+
+    /// The reader must READ every spelling of a stored property, whatever
+    /// stands before `var` — and then the allowed shapes must refuse what it
+    /// reads. Each of these once got past the reader (or would have): the
+    /// first five by a modifier it did not know, the sixth and seventh by a
+    /// brace read as "computed" when it opened an observer, the last by an
+    /// attribute whose arguments contain a space.
+    @Test func theReaderReadsEveryModifierAndEveryStoredSpellingAndTheShapesRefuseThem() {
+        let spellings = [
+            "internal var registry: TabRegistry = .shared",
+            "public var registry: TabRegistry = .shared",
+            "open var registry: TabRegistry = .shared",
+            "fileprivate(set) var registry: TabRegistry = .shared",
+            "nonisolated(unsafe) var registry: TabRegistry = .shared",
+            "unowned var tab: SessionTab? = nil",
+            "var registry: TabRegistry? { didSet {} }",
+            "var registry: TabRegistry? { willSet { print(newValue) } }",
+            "@State(initialValue: x) var r",
+            "@State(initialValue: x) var r: Foo = x",
+        ]
+        for spelling in spellings {
+            let found = Self.storedProperties(in: spelling)
+            #expect(found == [spelling], "the reader skipped: \(spelling)")
+            // Refused by default: either no shape could be read (which the
+            // real scan reports as a failure) or the shape is not allowed.
+            let shape = Self.shape(of: spelling)
+            #expect(
+                shape.map { Self.allowedShapes.contains($0) } != true,
+                "\(spelling) was allowed")
+        }
+        // The observer whose brace ends the line, opening on the next.
+        let multiline = """
+            var registry: TabRegistry? {
+                didSet {}
+            }
+            var after = 1
+            """
+        let found = Self.storedProperties(in: multiline)
+        #expect(found.count == 2)
+        #expect(found.first == "var registry: TabRegistry? {")
+        #expect(found.last == "var after = 1")
+        // Negative beside it: a plain getter on the next line is computed.
+        #expect(Self.storedProperties(in: "var computed: Int {\n    get { 3 }\n}") == [])
+        // And the shape reader gives up (nil) on a declaration that has neither
+        // a type nor a value, rather than returning an empty string.
+        #expect(Self.shape(of: "@State(initialValue: x) var r") == nil)
     }
 
     // MARK: The seed
