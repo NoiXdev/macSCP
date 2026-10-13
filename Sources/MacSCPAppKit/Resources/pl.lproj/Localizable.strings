@@ -1623,3 +1623,9 @@
 "compare.failure.reported %@" = "Zgłoszona przyczyna: %@";
 "compare.failure.noDetail" = "Nie zgłoszono przyczyny.";
 "compare.failure.interrupted" = "Porównanie zostało przerwane, choć nikt go nie zatrzymał.";
+"compare.settle.pending" = "Pobieranie obu plików w celu porównania ich zawartości…";
+"compare.settle.sessionClosed" = "Sesja została zamknięta, więc tych plików nie można już pobrać. Niczego nie porównano.";
+"compare.settle.notPossible" = "Tych wpisów nie można porównać na podstawie zawartości.";
+"compare.settle.rowMoved" = "Ten wiersz nie znajduje się już na liście w takiej postaci, więc niczego nie porównano.";
+"compare.settle.stopped" = "Pobieranie plików zostało zatrzymane, więc niczego nie porównano.";
+"compare.settle.failed %@" = "Nie udało się porównać zawartości. %@";

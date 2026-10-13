@@ -606,6 +606,14 @@ struct ComparisonOverviewTests {
 
     // MARK: - What the view maps over
 
+    /// The list as the view gets it with nothing under way and a live session.
+    private static func entries(
+        _ rows: [ComparisonRow], settle: Presentation.SettleTracker = .init(),
+        canFetch: Bool = true
+    ) -> [Presentation.RowEntry] {
+        Presentation.rowEntries(rows, settle: settle, canFetch: canFetch)
+    }
+
     private static let mixedRows: [ComparisonRow] = rows([
         .onlyLeft, .onlyRight, .same, .same, .differs, .typeMismatch,
         .undetermined(.checksumUnavailable), .undetermined(.unreadable),
@@ -654,7 +662,7 @@ struct ComparisonOverviewTests {
     }
 
     @Test func theListHoldsEveryRowInOrderEachWithItsOwnLabel() throws {
-        let entries = Presentation.rowEntries(Self.mixedRows)
+        let entries = Self.entries(Self.mixedRows)
 
         // Same rows, same order: none hidden, none added.
         #expect(entries.count == Self.mixedRows.count)
@@ -675,7 +683,7 @@ struct ComparisonOverviewTests {
     /// measured: a row that is not `same` never carries the `same` label, and
     /// an undetermined one always carries a reason beside its own label.
     @Test func noRowButASameRowReadsAsSameAndEveryUndeterminedRowSaysWhy() throws {
-        let entries = Presentation.rowEntries(Self.mixedRows)
+        let entries = Self.entries(Self.mixedRows)
         let sameLabel = Presentation.label(for: .same)
         #expect(entries.filter { $0.label == sameLabel }.count == 3)
         #expect(entries.filter { $0.isMatch }.count == 3)
@@ -686,6 +694,218 @@ struct ComparisonOverviewTests {
         #expect(undetermined.count == 3)
         #expect(undetermined.allSatisfy { $0.label == Presentation.label(for: .undetermined(.unreadable)) })
         #expect(Set(undetermined.compactMap(\.reason)).count == 3)
+    }
+
+    // MARK: - Compare anyway: who is offered it
+
+    /// Every reason there is, read from the enum: `allReasons` is held to the
+    /// enum's declared cases by `theReasonListNamesEveryCaseTheEnumDeclares`.
+    /// The line is `canBeSettledByBytes`, which is not re-decided here; the
+    /// positive and the negative examples sit beside the loop so that a loop
+    /// over a list that matched nothing could not pass.
+    @Test func aSettleableReasonOffersTheActionAndAnUnsettleableOneDoesNot() throws {
+        var offered: [UndeterminedReason] = []
+        var withheld: [UndeterminedReason] = []
+        for reason in Self.allReasons {
+            let entry = Self.entries([ComparisonRow(relativePath: "p", state: .undetermined(reason))])[0]
+            #expect((entry.settleButton != nil) == reason.canBeSettledByBytes, "\(reason)")
+            if entry.settleButton != nil { offered.append(reason) } else { withheld.append(reason) }
+            // A row that cannot be settled still says why.
+            #expect(entry.reason == Presentation.text(for: reason))
+        }
+        #expect(offered.count == 4)
+        #expect(withheld == [.unsupportedKind, .unreadable])
+    }
+
+    @Test func theButtonCarriesTheActionsOwnTitleAndIsEnabledUnlessThatRowIsPending() throws {
+        let rows = [
+            ComparisonRow(relativePath: "a", state: .undetermined(.checksumUnavailable)),
+            ComparisonRow(relativePath: "b", state: .undetermined(.checksumUnavailable)),
+        ]
+        var tracker = Presentation.SettleTracker()
+        tracker.begin("b")
+        let entries = Self.entries(rows, settle: tracker)
+
+        #expect(entries[0].settleButton == .init(title: Presentation.compareAnyway.text, isEnabled: true))
+        #expect(entries[1].settleButton == .init(title: Presentation.compareAnyway.text, isEnabled: false))
+        #expect(!Presentation.compareAnyway.text.isEmpty)
+        // Pending is said on the pending row only.
+        #expect(entries[0].settleNote == nil)
+        #expect(entries[1].settleNote == Presentation.settlePending.text)
+    }
+
+    @Test func noOtherStateOffersTheActionOrCarriesANoteAndNoSessionMeansNoButton() throws {
+        let others: [ComparisonState] = [.onlyLeft, .onlyRight, .same, .differs, .typeMismatch]
+        var tracker = Presentation.SettleTracker()
+        tracker.begin("p")
+        tracker.fail("p", text: "stale failure")
+        for state in others {
+            let entry = Self.entries([ComparisonRow(relativePath: "p", state: state)], settle: tracker)[0]
+            #expect(entry.settleButton == nil, "\(state)")
+            #expect(entry.settleNote == nil, "\(state)")
+        }
+        // Positive: the same tracker DOES put its note on an undetermined row.
+        let undetermined = ComparisonRow(relativePath: "p", state: .undetermined(.checksumUnavailable))
+        #expect(Self.entries([undetermined], settle: tracker)[0].settleNote == "stale failure")
+        // A released session offers nothing to fetch with.
+        #expect(Self.entries([undetermined], canFetch: false)[0].settleButton == nil)
+        #expect(Self.entries([undetermined], canFetch: true)[0].settleButton != nil)
+    }
+
+    @Test func theIndexIsTheRowsPositionInTheComparison() {
+        let entries = Self.entries(Self.mixedRows)
+        #expect(entries.map(\.index) == Array(Self.mixedRows.indices))
+    }
+
+    // MARK: - Compare anyway: doing it
+
+    @MainActor private struct SettleRig {
+        let comparison: Comparison
+        let left: MemoryFS
+        let model: ComparisonSettleModel
+        let root: URL
+
+        func entries() -> [Presentation.RowEntry] {
+            Presentation.rowEntries(
+                comparison.rows, settle: model.tracker,
+                canFetch: Presentation.canFetch(comparison))
+        }
+    }
+
+    /// Two files per side, equal sizes and a connection that cannot hash, so
+    /// the walk leaves two `undetermined(checksumUnavailable)` rows: `a`
+    /// differs by one byte, `b` is identical.
+    private func makeSettleRig() async throws -> SettleRig {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ComparisonOverviewTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let left = MemoryFS(files: ["/L/a": Data("aaa".utf8), "/L/b": Data("bbb".utf8)])
+        let right = MemoryFS(files: ["/R/a": Data("aax".utf8), "/R/b": Data("bbb".utf8)])
+        let comparison = Comparison(
+            left: left, leftRoot: "/L", right: right, rightRoot: "/R", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel(), temporaryRoot: root)
+        comparison.start()
+        await comparison.waitForWalk()
+        return SettleRig(comparison: comparison, left: left, model: ComparisonSettleModel(), root: root)
+    }
+
+    @Test func settlingOneRowChangesThatRowAndNoOther() async throws {
+        let rig = try await makeSettleRig()
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        let undetermined = ComparisonState.undetermined(.checksumUnavailable)
+        // Positive: both rows start undetermined and both offer the action.
+        #expect(rig.comparison.rows.map(\.state) == [undetermined, undetermined])
+        #expect(rig.entries().allSatisfy { $0.settleButton != nil })
+        let before = rig.comparison.rows
+        let second = rig.entries()[1]
+        #expect(second.path == "b")
+
+        await rig.model.settle(second, on: rig.comparison)
+
+        #expect(rig.comparison.rows[0] == before[0])
+        #expect(rig.comparison.rows[1] == ComparisonRow(relativePath: "b", state: .same))
+        // What the row now shows: its new state, no button, no note.
+        let after = rig.entries()
+        #expect(after[1].label == Presentation.label(for: .same))
+        #expect(after[1].settleButton == nil)
+        #expect(after[1].settleNote == nil)
+        #expect(after[0].settleButton != nil)
+        #expect(after[0].label == Presentation.label(for: undetermined))
+        #expect(rig.model.tracker == Presentation.SettleTracker())
+        // Positive: the second row's files were read, and not the first's.
+        #expect(rig.left.reads == ["/L/b"])
+    }
+
+    @Test func aSettlingThatFindsADifferenceSaysDifferent() async throws {
+        let rig = try await makeSettleRig()
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+
+        await rig.model.settle(rig.entries()[0], on: rig.comparison)
+
+        #expect(rig.comparison.rows[0].state == .differs)
+        #expect(rig.entries()[0].label == Presentation.label(for: .differs))
+        #expect(rig.comparison.rows[1].state == .undetermined(.checksumUnavailable))
+    }
+
+    /// A throw leaves the row as it was and says why in the row's own words;
+    /// here the session was released after the entry was made.
+    @Test func aSettlingThatThrowsLeavesTheRowAndSaysWhy() async throws {
+        let rig = try await makeSettleRig()
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        let entry = rig.entries()[0]
+        let before = rig.comparison.rows
+        // Positive: before the release the action IS offered.
+        #expect(entry.settleButton != nil)
+        rig.comparison.releaseFileSystems()
+
+        await rig.model.settle(entry, on: rig.comparison)
+
+        #expect(rig.comparison.rows == before)
+        let note = try #require(rig.model.tracker.failures[entry.path])
+        #expect(note == Presentation.settleSessionClosed.text)
+        #expect(!note.isEmpty)
+        #expect(!rig.model.tracker.isPending(entry.path))
+        // The list shows it: the row is unchanged, carries the note, and
+        // offers no button because there is nothing to fetch with.
+        let shown = rig.entries()[0]
+        #expect(shown.label == entry.label)
+        #expect(shown.settleNote == note)
+        #expect(shown.settleButton == nil)
+    }
+
+    /// An entry that no longer stands for the row at its index settles
+    /// nothing, and fetches nothing.
+    @Test func aStaleEntryIsRefusedBeforeAnythingIsFetched() async throws {
+        let rig = try await makeSettleRig()
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        let entries = rig.entries()
+        let stale = Presentation.RowEntry(
+            path: entries[0].path, label: entries[0].label, reason: entries[0].reason,
+            isMatch: false, index: 1, settleButton: entries[0].settleButton, settleNote: nil)
+        let before = rig.comparison.rows
+
+        await rig.model.settle(stale, on: rig.comparison)
+
+        #expect(rig.comparison.rows == before)
+        #expect(rig.model.tracker.failures["a"] == Presentation.settleRowMoved.text)
+        #expect(rig.left.reads.isEmpty)
+    }
+
+    @Test func everyKindOfFailedSettlingHasItsOwnReadableText() throws {
+        let failures: [any Error] = [
+            ComparisonFetchError.sessionClosed, ComparisonFetchError.wrongKind,
+            ComparisonFetchError.rowOutOfRange(3),
+            ComparisonFetchError.noContentToCompare(.same), CancellationError(),
+        ]
+        let texts = failures.map { Presentation.settleFailureText(for: $0) }
+        #expect(texts.allSatisfy { !$0.isEmpty && !$0.contains("%@") })
+        #expect(texts[0] == Presentation.settleSessionClosed.text)
+        #expect(texts[1] == Presentation.settleNotPossible.text)
+        #expect(texts[2] == Presentation.settleRowMoved.text)
+        #expect(texts[3] == Presentation.settleNotPossible.text)
+        #expect(texts[4] == Presentation.settleStopped.text)
+        #expect(Set([texts[0], texts[1], texts[2], texts[4]]).count == 4)
+
+        // Any other error: the comparison's own frame around the cause, with
+        // a credential filtered out.
+        let foreign = Presentation.settleFailureText(
+            for: RemoteFSError.connectionFailed(reason: "no route to https://K:HUNTER2@host.example/"))
+        #expect(foreign.contains("host.example"))
+        #expect(!foreign.contains("HUNTER2"))
+        #expect(foreign.contains(Presentation.settleFailed.text.replacingOccurrences(of: "%@", with: "").trimmingCharacters(in: .whitespaces)))
+    }
+
+    @Test func theTrackerMovesThroughBeginSucceedAndFail() {
+        var tracker = Presentation.SettleTracker()
+        tracker.begin("x")
+        #expect(tracker.isPending("x"))
+        tracker.fail("x", text: "no")
+        #expect(!tracker.isPending("x"))
+        #expect(tracker.failures["x"] == "no")
+        tracker.begin("x")
+        #expect(tracker.failures["x"] == nil)
+        tracker.succeed("x")
+        #expect(tracker == Presentation.SettleTracker())
     }
 
     // MARK: - The view draws what the functions return
@@ -703,11 +923,16 @@ struct ComparisonOverviewTests {
 
         // Positive: one call of each function, one iteration of each output.
         #expect(Self.occurrences(of: "ComparisonOverviewPresentation.summaryFigures(counts)", in: view) == 1)
-        #expect(Self.occurrences(of: "ComparisonOverviewPresentation.rowEntries(rows)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewPresentation.rowEntries(", in: view) == 1)
+        #expect(Self.occurrences(of: "rows, settle: settler.tracker,", in: view) == 1)
+        #expect(
+            Self.occurrences(
+                of: "canFetch: ComparisonOverviewPresentation.canFetch(comparison))", in: view) == 1)
+        #expect(Self.occurrences(of: "Task { await settler.settle(entry, on: comparison) }", in: view) == 1)
         #expect(Self.occurrences(of: "ForEach(figures, id: \\.id)", in: view) == 1)
         #expect(Self.occurrences(of: "ForEach(entries, id: \\.path)", in: view) == 1)
         #expect(Self.occurrences(of: "ComparisonOverviewFigure(figure: figure)", in: view) == 1)
-        #expect(Self.occurrences(of: "ComparisonOverviewRow(entry: entry)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewRow(entry: entry) {", in: view) == 1)
         #expect(Self.occurrences(of: "summary(figures)", in: view) == 1)
         #expect(Self.occurrences(of: "ComparisonOverviewPresentation.counts(of: rows)", in: view) == 1)
         // Negative: nothing is sliced, reordered or relabelled in the view.
@@ -725,6 +950,18 @@ struct ComparisonOverviewTests {
         #expect(Self.occurrences(of: "Text(entry.path)", in: row) == 1)
         #expect(Self.occurrences(of: "Text(entry.label)", in: row) == 1)
         #expect(Self.occurrences(of: "if let reason = entry.reason", in: row) == 1)
+        // The button: drawn from the entry's, and its action is the one closure
+        // the view handed in. The row holds no comparison and starts no task.
+        #expect(Self.occurrences(of: "if let button = entry.settleButton", in: row) == 1)
+        #expect(Self.occurrences(of: "Button(button.title) { onSettle() }", in: row) == 1)
+        #expect(Self.occurrences(of: ".disabled(!button.isEnabled)", in: row) == 1)
+        #expect(Self.occurrences(of: "if let note = entry.settleNote", in: row) == 1)
+        #expect(Self.occurrences(of: "Text(note)", in: row) == 1)
+        for part in [figure, row] {
+            #expect(!part.contains("Task"))
+            #expect(!part.contains("settleUndetermined"))
+            #expect(!part.contains("comparison"))
+        }
         for part in [figure, row] {
             #expect(!part.contains("ComparisonRow"))
             #expect(!part.contains("ComparisonState"))
@@ -735,6 +972,17 @@ struct ComparisonOverviewTests {
             #expect(!part.contains(".same"))
             #expect(!part.contains("label("))
         }
+    }
+
+    /// The one call that settles a row is the model's, with the index the
+    /// entry carries; the line of which reasons bytes can settle is read from
+    /// `canBeSettledByBytes`, once, in `rowEntries`, and is not spelled twice.
+    @Test func theSettleCallAndTheSettleableLineAreEachSpelledOnce() throws {
+        let code = try Self.code("ComparisonOverview.swift")
+        #expect(Self.occurrences(of: "settleUndetermined(rowAt: entry.index)", in: code) == 1)
+        #expect(Self.occurrences(of: "settleUndetermined(", in: code) == 1)
+        #expect(Self.occurrences(of: "canBeSettledByBytes", in: code) == 1)
+        #expect(code.contains("why.canBeSettledByBytes && canFetch"))
     }
 
     /// The decisions about what to show are the presentation's, and the view

@@ -1627,3 +1627,9 @@
 "compare.failure.reported %@" = "Reported cause: %@";
 "compare.failure.noDetail" = "No cause was reported.";
 "compare.failure.interrupted" = "The comparison was interrupted although nobody stopped it.";
+"compare.settle.pending" = "Fetching both files to compare their contents…";
+"compare.settle.sessionClosed" = "The session was closed, so these files can no longer be fetched. Nothing was compared.";
+"compare.settle.notPossible" = "These entries cannot be compared by their contents.";
+"compare.settle.rowMoved" = "This row is no longer in the list as it was, so nothing was compared.";
+"compare.settle.stopped" = "Fetching the files was stopped, so nothing was compared.";
+"compare.settle.failed %@" = "The contents could not be compared. %@";

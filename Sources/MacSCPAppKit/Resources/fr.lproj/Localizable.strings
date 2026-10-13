@@ -1624,3 +1624,9 @@
 "compare.failure.reported %@" = "Cause signalée : %@";
 "compare.failure.noDetail" = "Aucune cause n’a été signalée.";
 "compare.failure.interrupted" = "La comparaison a été interrompue alors que personne ne l’avait arrêtée.";
+"compare.settle.pending" = "Récupération des deux fichiers pour comparer leur contenu…";
+"compare.settle.sessionClosed" = "La session a été fermée : ces fichiers ne peuvent plus être récupérés. Rien n’a été comparé.";
+"compare.settle.notPossible" = "Ces éléments ne peuvent pas être comparés par leur contenu.";
+"compare.settle.rowMoved" = "Cette ligne n’est plus dans la liste telle qu’elle était : rien n’a été comparé.";
+"compare.settle.stopped" = "La récupération des fichiers a été arrêtée : rien n’a été comparé.";
+"compare.settle.failed %@" = "Le contenu n’a pas pu être comparé. %@";
