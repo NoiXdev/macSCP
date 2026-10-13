@@ -167,6 +167,26 @@ import Testing
                     ceiling: DiffEligibility.ceilingBytes))
     }
 
+    /// The size check on its own, for a caller that knows a length before it
+    /// has any bytes (diff-view Task 8 asks `stat` first). It draws the
+    /// boundary in the same place as `refusal(forBytes:)` and returns the same
+    /// value, and the pair is checked at both edges so a drift in either
+    /// direction is red.
+    @Test func theByteCountCheckDrawsTheBoundaryWhereTheBytesCheckDoes() {
+        let ceiling = DiffEligibility.ceilingBytes
+        #expect(DiffEligibility.refusal(forByteCount: 0) == nil)
+        #expect(DiffEligibility.refusal(forByteCount: ceiling) == nil)
+        #expect(
+            DiffEligibility.refusal(forByteCount: ceiling + 1)
+                == .tooLarge(bytes: ceiling + 1, ceiling: ceiling))
+        #expect(
+            DiffEligibility.refusal(forByteCount: ceiling + 1)
+                == DiffEligibility.refusal(forBytes: ascii(ceiling + 1)))
+        #expect(
+            DiffEligibility.refusal(forByteCount: ceiling)
+                == DiffEligibility.refusal(forBytes: ascii(ceiling)))
+    }
+
     /// The window tests above build buffers of up to 8002 bytes. If the
     /// ceiling ever fell below that they would go red as `.tooLarge`, each
     /// for an unrelated-looking reason; this names that regression once.

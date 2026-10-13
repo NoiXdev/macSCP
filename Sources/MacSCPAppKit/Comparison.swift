@@ -44,10 +44,38 @@ import macSCPCore
 /// cancellation check and returns normally cannot turn the state into
 /// `.completed`.
 ///
+/// **Fetching content, and what the session being gone means.** The content
+/// diff and "compare anyway" need the bytes of both files, and get them one
+/// way only: `TransferQueueViewModel.enqueueAndWait`, as the edit session
+/// does, into this comparison's own temporary directory, so every byte a
+/// comparison moves is visible in the transfer bar. The queue is the tab's;
+/// like the two file systems it is held in a property that
+/// `releaseFileSystems()` clears, and every entry point that fetches reads
+/// both through one `guard` and ends in `ComparisonFetchError.sessionClosed`
+/// when either is gone. A closed session is an explicit answer, never a
+/// crash and never an empty result.
+///
+/// **Two shapes of comparison, and they do not share a path.** A `.folders`
+/// comparison walks two roots and classifies pairs; its content diff and its
+/// byte settling are per ROW (`diff(forRowAt:)`, `settleUndetermined(rowAt:)`).
+/// A `.filePair` comparison is two files the user picked, has no walk and no
+/// rows, and is diffed straight away by `diffFilePair()`: size and checksum
+/// exist to avoid a fetch, not to stand in front of one somebody asked for.
+/// Neither diff entry point ever asks a file system for a checksum — a folder
+/// row's classification already did, once, during the walk.
+///
 /// No `deinit` cleanup, as everywhere in this tree: the owner ends it.
 @MainActor
 @Observable
 final class Comparison: Identifiable {
+    /// What the comparison is of.
+    enum Kind {
+        /// Two folders, walked and classified.
+        case folders
+        /// Two files the user chose. No walk, no rows.
+        case filePair
+    }
+
     /// How a comparison ended. `.cancelled` and `.failed` leave `rows`
     /// incomplete; only `.completed` means every pair was classified.
     enum Outcome {
@@ -80,9 +108,23 @@ final class Comparison: Identifiable {
     /// Borrowed from the owning tab's session; see the type's doc comment.
     /// `nil` after `releaseFileSystems()`, and then for good.
     private(set) var fileSystems: FileSystems?
+    /// The tab's transfer queue, through which every fetch goes. A SIBLING of
+    /// `fileSystems`, not a member: `ComparisonOwnershipTests` counts exactly
+    /// two file systems in this object's graph and exactly one queue. Cleared
+    /// by `releaseFileSystems()` together with them, so a comparison that
+    /// outlives its tab does not keep the tab's queue (and whatever interrupted
+    /// jobs it retains, each of which holds file systems) alive.
+    private(set) var transferQueue: TransferQueueViewModel?
+    let kind: Kind
     let leftRoot: String
     let rightRoot: String
     let algorithm: ChecksumAlgorithm
+
+    /// Where this comparison's fetched files live: `nil` until the first
+    /// fetch creates it, and `nil` again once `cancel()` or
+    /// `releaseFileSystems()` has removed it.
+    @ObservationIgnored private(set) var temporaryDirectory: URL?
+    @ObservationIgnored private let temporaryRoot: URL
 
     private(set) var rows: [ComparisonRow] = []
     private(set) var progress = ComparisonProgress(directoriesVisited: 0, rowsProduced: 0)
@@ -92,15 +134,25 @@ final class Comparison: Identifiable {
     /// wait for it; never read to decide what the state is.
     private var walk: Task<Void, Never>?
 
+    /// `temporaryRoot` is where the per-comparison directory is created; the
+    /// default is the process's temporary directory, and a test passes its own
+    /// so it can see what is left behind.
     init(
         left: any RemoteFileSystem, leftRoot: String,
         right: any RemoteFileSystem, rightRoot: String,
-        algorithm: ChecksumAlgorithm
+        algorithm: ChecksumAlgorithm,
+        transferQueue: TransferQueueViewModel,
+        kind: Kind = .folders,
+        temporaryRoot: URL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macscp-compare", isDirectory: true)
     ) {
         self.fileSystems = FileSystems(left: left, right: right)
+        self.transferQueue = transferQueue
+        self.kind = kind
         self.leftRoot = leftRoot
         self.rightRoot = rightRoot
         self.algorithm = algorithm
+        self.temporaryRoot = temporaryRoot
     }
 
     /// Whether the walk is over, however it ended. Not "everything was
@@ -124,6 +176,12 @@ final class Comparison: Identifiable {
     /// comparison runs once, and a cancelled one stays cancelled.
     func start() {
         guard case .idle = state, let sides = fileSystems else { return }
+        // A file pair has nothing to walk: it is over before it began, and
+        // `.completed` says only that no pair is waiting to be classified.
+        if kind == .filePair {
+            state = .finished(.completed)
+            return
+        }
         state = .running
         // Read here, not inside the task: the task's first turn may come after
         // a release, and a walk that was already started owns the references
@@ -170,6 +228,7 @@ final class Comparison: Identifiable {
     func cancel() {
         finish(.cancelled)
         walk?.cancel()
+        removeTemporaryDirectory()
     }
 
     /// Lets go of the two file systems. The rows, the progress and the
@@ -182,6 +241,8 @@ final class Comparison: Identifiable {
     /// to one exists anywhere".
     func releaseFileSystems() {
         fileSystems = nil
+        transferQueue = nil
+        removeTemporaryDirectory()
     }
 
     /// Suspends until the walk's task has unwound, which after `cancel()` is
@@ -197,5 +258,359 @@ final class Comparison: Identifiable {
     private func finish(_ outcome: Outcome) {
         if case .finished = state { return }
         state = .finished(outcome)
+    }
+}
+
+// MARK: - Fetching content
+
+/// Why a fetch, a content diff or a byte settling could not be attempted.
+/// Distinct from `DiffRefusal`, which is a REASON a pair cannot be shown as a
+/// diff and travels in the `Result`; these are the cases where there was no
+/// attempt to describe. They carry no display text: the window maps them to
+/// localized messages.
+enum ComparisonFetchError: Error, Equatable {
+    /// The comparison no longer holds the two file systems and the queue:
+    /// the tab that owned the connection has been torn down. What was
+    /// measured is still readable; nothing that needs the connection is.
+    case sessionClosed
+    /// The entry point belongs to the other `Comparison.Kind`.
+    case wrongKind
+    case rowOutOfRange(Int)
+    /// The row is not a pair of files whose content could be compared
+    /// (one side missing, a directory, a type mismatch, a link, or a path
+    /// that could not be read in the first place).
+    case noContentToCompare(ComparisonState)
+}
+
+extension UndeterminedReason {
+    /// Whether fetching both files and comparing their bytes can settle a row
+    /// carrying this reason. The first four say "the connection could not
+    /// give a usable checksum" about two ordinary files; bytes answer that.
+    /// `.unsupportedKind` is a link or a special entry, for which no content
+    /// comparison is meaningful, and `.unreadable` may be a DIRECTORY the walk
+    /// could not list as well as a file it could not classify, so neither is
+    /// offered. Exhaustive on purpose: a new reason has to be decided here.
+    nonisolated var canBeSettledByBytes: Bool {
+        switch self {
+        case .checksumUnavailable, .algorithmUnavailable, .algorithmsDiffer, .etagIsNotAFileHash:
+            true
+        case .unsupportedKind, .unreadable:
+            false
+        }
+    }
+}
+
+extension Comparison {
+    /// Lines of context around a change in the diff `diff(forRowAt:)` and
+    /// `diffFilePair()` produce.
+    nonisolated static let diffContextLines = 3
+
+    /// Both sides of `row`, downloaded into this comparison's temporary
+    /// directory through the transfer queue. The files stay there until
+    /// `cancel()` or `releaseFileSystems()` removes the directory.
+    ///
+    /// - Throws: `ComparisonFetchError.sessionClosed` when the session is
+    ///   gone, `.wrongKind` on a file-pair comparison, `.noContentToCompare`
+    ///   for a row that is not a pair of files; and whatever the queue throws
+    ///   for a failed transfer, which fails this pair and not the comparison.
+    func fetchPair(_ row: ComparisonRow) async throws -> (left: URL, right: URL) {
+        guard kind == .folders else { throw ComparisonFetchError.wrongKind }
+        guard Self.hasFilesOnBothSides(row.state) else {
+            throw ComparisonFetchError.noContentToCompare(row.state)
+        }
+        let fetched = try await fetch(
+            leftPath: Self.join(leftRoot, row.relativePath),
+            rightPath: Self.join(rightRoot, row.relativePath))
+        return (fetched.left, fetched.right)
+    }
+
+    /// The line diff of the row at `index`, or the reason there is none.
+    ///
+    /// **No checksum is asked for, here or on the way.** The row's state came
+    /// from the walk, which asked once; this fetches and diffs.
+    func diff(forRowAt index: Int) async throws -> Result<[DiffHunk], DiffRefusal> {
+        guard kind == .folders else { throw ComparisonFetchError.wrongKind }
+        guard rows.indices.contains(index) else { throw ComparisonFetchError.rowOutOfRange(index) }
+        let row = rows[index]
+        guard Self.hasFilesOnBothSides(row.state) else {
+            throw ComparisonFetchError.noContentToCompare(row.state)
+        }
+        return try await diff(
+            leftPath: Self.join(leftRoot, row.relativePath),
+            rightPath: Self.join(rightRoot, row.relativePath))
+    }
+
+    /// The line diff of the two files a `.filePair` comparison was made for.
+    /// **Skips the classification entirely**: no size comparison to settle
+    /// the pair, no checksum. The user asked to see the content.
+    func diffFilePair() async throws -> Result<[DiffHunk], DiffRefusal> {
+        guard kind == .filePair else { throw ComparisonFetchError.wrongKind }
+        return try await diff(leftPath: leftRoot, rightPath: rightRoot)
+    }
+
+    /// "Compare anyway": fetches both sides of the undetermined row at
+    /// `index`, compares their bytes, and replaces THAT row's state with
+    /// `.same` or `.differs`. No other row is touched, and no checksum is
+    /// asked for — the connection already said it cannot give one.
+    ///
+    /// The comparison is on bytes and is not bounded by the diff's size
+    /// ceiling: a ceiling exists to keep a line diff affordable, and a byte
+    /// comparison streams. Returns the new state.
+    @discardableResult
+    func settleUndetermined(rowAt index: Int) async throws -> ComparisonState {
+        guard kind == .folders else { throw ComparisonFetchError.wrongKind }
+        guard rows.indices.contains(index) else { throw ComparisonFetchError.rowOutOfRange(index) }
+        let row = rows[index]
+        guard case .undetermined(let reason) = row.state, reason.canBeSettledByBytes else {
+            throw ComparisonFetchError.noContentToCompare(row.state)
+        }
+        let fetched = try await fetch(
+            leftPath: Self.join(leftRoot, row.relativePath),
+            rightPath: Self.join(rightRoot, row.relativePath))
+        defer { try? FileManager.default.removeItem(at: fetched.directory) }
+
+        let equal = try await Self.contentsAreEqual(fetched.left, fetched.right)
+        let settled: ComparisonState = equal ? .same : .differs
+        // The same row, still: rows are only ever appended to while a walk
+        // runs, so the index holds; the path is checked because writing the
+        // answer onto another file's row would be the one wrong thing this
+        // method could do.
+        guard rows.indices.contains(index), rows[index].relativePath == row.relativePath else {
+            throw ComparisonFetchError.rowOutOfRange(index)
+        }
+        rows[index] = ComparisonRow(relativePath: row.relativePath, state: settled)
+        return settled
+    }
+
+    // MARK: Shared steps
+
+    /// The diff of two paths on the two sides. The size ceiling is checked
+    /// from `stat` BEFORE any byte is fetched; the byte checks run on what
+    /// arrived, because a size a server reports can be absent or stale.
+    private func diff(
+        leftPath: String, rightPath: String
+    ) async throws -> Result<[DiffHunk], DiffRefusal> {
+        guard let sides = fileSystems, transferQueue != nil else {
+            throw ComparisonFetchError.sessionClosed
+        }
+        for (system, path) in [(sides.left, leftPath), (sides.right, rightPath)] {
+            if let size = try await system.stat(path: path).size,
+                let refusal = DiffEligibility.refusal(forByteCount: Int(clamping: size))
+            {
+                return .failure(refusal)
+            }
+        }
+
+        let fetched = try await fetch(leftPath: leftPath, rightPath: rightPath)
+        defer { try? FileManager.default.removeItem(at: fetched.directory) }
+
+        var contents: [[UInt8]] = []
+        for url in [fetched.left, fetched.right] {
+            // The length on disk first: a side whose `stat` carried no size
+            // has already been moved, but is not also loaded into memory.
+            if let length = try FileManager.default.attributesOfItem(
+                atPath: url.path(percentEncoded: false))[.size] as? NSNumber,
+                let refusal = DiffEligibility.refusal(forByteCount: length.intValue)
+            {
+                return .failure(refusal)
+            }
+            let bytes = [UInt8](try Data(contentsOf: url))
+            if let refusal = DiffEligibility.refusal(forBytes: bytes) { return .failure(refusal) }
+            contents.append(bytes)
+        }
+
+        let left = Self.lines(of: contents[0])
+        let right = Self.lines(of: contents[1])
+        if let refusal = DiffEligibility.refusal(leftLines: left.count, rightLines: right.count) {
+            return .failure(refusal)
+        }
+        let hunks = try await Self.computeHunks(left: left, right: right)
+        return .success(hunks)
+    }
+
+    private struct Fetched {
+        /// The per-fetch directory holding `left/` and `right/`.
+        let directory: URL
+        let left: URL
+        let right: URL
+    }
+
+    /// Downloads the two paths through the queue into a directory of their
+    /// own. A fresh directory per fetch, because the queue asks its conflict
+    /// decider when a destination exists, and a second fetch of the same row
+    /// must not put a dialog in front of the user.
+    private func fetch(leftPath: String, rightPath: String) async throws -> Fetched {
+        guard let sides = fileSystems, let queue = transferQueue else {
+            throw ComparisonFetchError.sessionClosed
+        }
+        let directory = try makeFetchDirectory()
+        let leftDirectory = directory.appendingPathComponent("left", isDirectory: true)
+        let rightDirectory = directory.appendingPathComponent("right", isDirectory: true)
+        let leftName = Self.fileName(of: leftPath)
+        let rightName = Self.fileName(of: rightPath)
+        do {
+            try FileManager.default.createDirectory(
+                at: leftDirectory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: rightDirectory, withIntermediateDirectories: true)
+            // The destination is a fresh `LocalFileSystem()`, a stateless
+            // value, rather than a stored one: a third file system in this
+            // object's graph is exactly what the ownership guard forbids.
+            try await queue.enqueueAndWait(
+                fileName: leftName, direction: .download,
+                source: sides.left, sourcePath: leftPath,
+                destination: LocalFileSystem(),
+                destinationDirectory: leftDirectory.path(percentEncoded: false))
+            // Between the two transfers too: a release during the first must
+            // not be followed by a second download over the released system.
+            guard fileSystems != nil else { throw ComparisonFetchError.sessionClosed }
+            try await queue.enqueueAndWait(
+                fileName: rightName, direction: .download,
+                source: sides.right, sourcePath: rightPath,
+                destination: LocalFileSystem(),
+                destinationDirectory: rightDirectory.path(percentEncoded: false))
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            // A transfer cancelled because the tab was torn down is not a
+            // failed pair; the session being gone is the true answer.
+            if fileSystems == nil {
+                removeTemporaryDirectory()
+                throw ComparisonFetchError.sessionClosed
+            }
+            throw error
+        }
+        // The teardown may have run while the transfers were in flight. What
+        // arrived is then of a session nobody can use any more.
+        guard fileSystems != nil else {
+            try? FileManager.default.removeItem(at: directory)
+            removeTemporaryDirectory()
+            throw ComparisonFetchError.sessionClosed
+        }
+        return Fetched(
+            directory: directory,
+            left: leftDirectory.appendingPathComponent(leftName, isDirectory: false),
+            right: rightDirectory.appendingPathComponent(rightName, isDirectory: false))
+    }
+
+    /// This comparison's own directory under `temporaryRoot`, whether or not
+    /// it exists.
+    private var comparisonDirectory: URL {
+        temporaryRoot.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    private func makeFetchDirectory() throws -> URL {
+        let root = comparisonDirectory
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        temporaryDirectory = root
+        return directory
+    }
+
+    /// Removes the comparison's directory whether or not `temporaryDirectory`
+    /// says it exists. A removal that lands while a transfer is still writing
+    /// into the tree can fail on the file the writer is creating at that
+    /// moment and leave the directory behind, with `temporaryDirectory`
+    /// already `nil`; found by `ComparisonFetchTests` as an empty directory
+    /// left under the temporary root, in about half the runs of the two
+    /// release-during-transfer cases. The fetch that notices the session is
+    /// gone calls this again once its own transfer has ended.
+    func removeTemporaryDirectory() {
+        temporaryDirectory = nil
+        try? FileManager.default.removeItem(at: comparisonDirectory)
+    }
+
+    private static func hasFilesOnBothSides(_ state: ComparisonState) -> Bool {
+        switch state {
+        case .same, .differs: true
+        case .undetermined(let reason): reason.canBeSettledByBytes
+        case .onlyLeft, .onlyRight, .bothDirectories, .typeMismatch: false
+        }
+    }
+
+    /// `RemotePath.join`, with an empty relative part meaning the root itself.
+    private static func join(_ root: String, _ relative: String) -> String {
+        relative.isEmpty ? root : RemotePath.join(root, relative)
+    }
+
+    private static func fileName(of path: String) -> String {
+        path.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? "file"
+    }
+
+    // MARK: Pure steps
+
+    /// Cuts bytes into lines on LF, and **losslessly**: joining the result
+    /// with "\n" gives the text back. Three consequences, each deliberate and
+    /// each pinned by `ComparisonFetchTests`:
+    ///
+    /// - **CRLF is split.** The cut is on the byte 0x0A, not on a Swift
+    ///   `Character`: `split(separator: "\n")` on a `String` never sees a LF
+    ///   inside a CRLF, because the pair is ONE `Character`, and would hand
+    ///   back a Windows file as a single line. Each line keeps its trailing
+    ///   CR, so a CRLF file has as many lines as its LF twin and differs from
+    ///   it on every one of them, which is true: the bytes differ.
+    /// - **A final newline ends in an empty last line.** "a\nb\n" is
+    ///   ["a", "b", ""] and "a\nb" is ["a", "b"], so a file and its twin
+    ///   without the final newline show that difference, as `FileDiff`
+    ///   already pins for the shapes it is given. The other choice would show
+    ///   an empty diff for two files the folder view just called different.
+    /// - **A UTF-8 byte order mark stays, as U+FEFF at the start of line 1.**
+    ///   Same reason: stripping it would make a pair that differs by exactly
+    ///   those three bytes show no difference, and a BOM in front of a `#!`
+    ///   line is a difference somebody comparing two copies of a script wants
+    ///   to see. The cost is a changed first line whose two sides LOOK
+    ///   identical; making U+FEFF visible is for the view.
+    ///
+    /// The bytes must be valid UTF-8, which `DiffEligibility` has already
+    /// established on the way here.
+    nonisolated static func lines(of bytes: [UInt8]) -> [String] {
+        bytes.split(separator: 0x0A, omittingEmptySubsequences: false).map {
+            String(decoding: $0, as: UTF8.self)
+        }
+    }
+
+    /// Runs the diff off the main actor: bounded by `DiffEligibility`, but a
+    /// bounded diff is still hundreds of milliseconds at the top of the range.
+    private nonisolated static func computeHunks(
+        left: [String], right: [String]
+    ) async throws -> [DiffHunk] {
+        let task = Task.detached(priority: .userInitiated) {
+            FileDiff.hunks(left: left, right: right, context: Self.diffContextLines)
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// Whether two files hold the same bytes: sizes first, then a chunked
+    /// read that stops at the first difference. Off the main actor.
+    private nonisolated static func contentsAreEqual(_ a: URL, _ b: URL) async throws -> Bool {
+        let task = Task.detached(priority: .userInitiated) { () throws -> Bool in
+            let sizeA = try FileManager.default.attributesOfItem(
+                atPath: a.path(percentEncoded: false))[.size] as? NSNumber
+            let sizeB = try FileManager.default.attributesOfItem(
+                atPath: b.path(percentEncoded: false))[.size] as? NSNumber
+            guard sizeA == sizeB else { return false }
+            let handleA = try FileHandle(forReadingFrom: a)
+            let handleB = try FileHandle(forReadingFrom: b)
+            defer {
+                try? handleA.close()
+                try? handleB.close()
+            }
+            let chunk = 1 << 20
+            while true {
+                try Task.checkCancellation()
+                let blockA = try handleA.read(upToCount: chunk) ?? Data()
+                let blockB = try handleB.read(upToCount: chunk) ?? Data()
+                if blockA != blockB { return false }
+                if blockA.isEmpty { return true }
+            }
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 }

@@ -282,7 +282,8 @@ struct ComparisonOwnershipTests {
             left.value = leftFS
             right.value = rightFS
             let comparison = Comparison(
-                left: leftFS, leftRoot: "/a", right: rightFS, rightRoot: "/b", algorithm: .sha256)
+                left: leftFS, leftRoot: "/a", right: rightFS, rightRoot: "/b", algorithm: .sha256,
+                transferQueue: TransferQueueViewModel())
             comparison.start()
             return comparison
         }
@@ -338,7 +339,8 @@ struct ComparisonOwnershipTests {
     @Test func aStrayCancellationErrorIsAFailureAndNotAUserStop() async {
         let fs = ScriptedFS(listings: [:], listFailure: CancellationError())
         let comparison = Comparison(
-            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel())
 
         comparison.start()
         await comparison.waitForWalk()
@@ -354,7 +356,8 @@ struct ComparisonOwnershipTests {
     @Test func aCancelledComparisonStaysCancelledAndCannotBeStartedAgain() async {
         let fs = ScriptedFS(listings: ["/l": [], "/r": []])
         let comparison = Comparison(
-            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel())
 
         comparison.cancel()
         comparison.start()
@@ -381,7 +384,8 @@ struct ComparisonOwnershipTests {
             checksums: ["/l/a.txt": Self.digest, "/r/a.txt": Self.digest],
             beforeAnsweringChecksum: { await holder.cancel() })
         let comparison = Comparison(
-            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel())
         holder.comparison = comparison
 
         comparison.start()
@@ -407,7 +411,8 @@ struct ComparisonOwnershipTests {
             listings: ["/l": [item], "/r": [item]],
             checksums: ["/l/a.txt": Self.digest, "/r/a.txt": Self.digest])
         let comparison = Comparison(
-            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel())
 
         comparison.start()
         await comparison.waitForWalk()
@@ -423,7 +428,8 @@ struct ComparisonOwnershipTests {
     @Test func aRootThatCannotBeListedFailsTheComparisonWithTheError() async {
         let fs = ScriptedFS(listings: [:])
         let comparison = Comparison(
-            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256,
+            transferQueue: TransferQueueViewModel())
 
         comparison.start()
         await comparison.waitForWalk()
@@ -452,6 +458,14 @@ struct ComparisonOwnershipTests {
         // negative checks below would hold for an empty mirror.
         let systems = children.compactMap { $0.value as? any RemoteFileSystem }
         #expect(systems.count == 2)
+        // And the transfer queue, which Task 8 added beside them: exactly
+        // ONE, and the very object the tab owns. A queue is a leaf for this
+        // scan (below) because its own graph holds closures and, while a job
+        // is retained, file systems; what is pinned is that this object
+        // reaches the tab's queue and no other, not what the queue holds.
+        let queues = children.compactMap { $0.value as? TransferQueueViewModel }
+        #expect(queues.count == 1)
+        #expect(queues.first === tab.transferQueue)
         // The local side is a stateless value type, so it has no identity to
         // compare; the remote side is the object the session holds.
         #expect(systems.contains { $0 is LocalFileSystem })
@@ -463,6 +477,7 @@ struct ComparisonOwnershipTests {
             let label = child.label
             let typeName = String(describing: type(of: child.value))
             if child.value is any RemoteFileSystem { continue }
+            if child.value is TransferQueueViewModel { continue }
             for forbidden in Self.forbiddenTypeNames {
                 #expect(!typeName.contains(forbidden), "\(label) is a \(typeName)")
             }
@@ -489,9 +504,9 @@ struct ComparisonOwnershipTests {
     /// systems sit inside `Comparison.FileSystems` inside an optional, so the
     /// walk descends through optionals and structs — and through every other
     /// shape a stored reference can hide in: classes, arrays, sets,
-    /// dictionaries, tuples and enum payloads. It stops at a file system,
-    /// which is a leaf here whatever it holds, and never enters one class
-    /// instance twice, so a cycle cannot hang it.
+    /// dictionaries, tuples and enum payloads. It stops at a file system and
+    /// at a transfer queue, each a leaf here whatever it holds, and never
+    /// enters one class instance twice, so a cycle cannot hang it.
     ///
     /// This is the SECOND guard against a stored connection. The first, and
     /// the one that does not depend on shape, is the weak-reference test
@@ -515,6 +530,10 @@ struct ComparisonOwnershipTests {
                 let label = path + "." + (child.label ?? "?")
                 found.append((label, child.value))
                 if child.value is any RemoteFileSystem { continue }
+                // A leaf too, like a file system: the tab's queue is not part
+                // of this object, and walking into it would count whatever
+                // jobs it happens to retain as the comparison's own.
+                if child.value is TransferQueueViewModel { continue }
                 switch Mirror(reflecting: child.value).displayStyle {
                 case .struct, .optional, .class, .collection, .set, .dictionary, .tuple, .enum:
                     found += storedValues(of: child.value, path: label, visited: &visited)
@@ -556,6 +575,19 @@ struct ComparisonOwnershipTests {
         for (name, holder, expected) in cases {
             #expect(Self.fileSystems(in: Self.storedValues(of: holder, path: "h")) == expected, "\(name)")
         }
+    }
+
+    /// The queue is a leaf, found once and not entered: a holder with one
+    /// yields exactly one value, so the scan reports the queue and none of the
+    /// closures and jobs behind it. Without this the exemption in the guard
+    /// above could be a scan that never reaches a queue at all.
+    @Test func theReflectionFindsATransferQueueAndStopsThere() {
+        let queue = TransferQueueViewModel()
+        let values = Self.storedValues(of: QueueHolder(queue: queue), path: "h")
+        #expect(values.count == 1)
+        #expect(values.first?.value is TransferQueueViewModel)
+        #expect(values.allSatisfy { !$0.label.hasPrefix("h.queue.") })
+        #expect(Self.fileSystems(in: values) == 0)
     }
 
     /// Fragments of the type names that would mean a comparison carries a
@@ -611,6 +643,7 @@ private final class TeardownAttempt {
 
 // Fixtures for the reflection's positive controls: one file system hidden in
 // each shape a stored reference can take.
+private struct QueueHolder { var queue: TransferQueueViewModel }
 private struct ArrayHolder { var systems: [any RemoteFileSystem] }
 private struct DictionaryHolder { var byName: [String: any RemoteFileSystem] }
 private struct TupleHolder { var pair: (Int, any RemoteFileSystem) }
