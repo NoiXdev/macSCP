@@ -1601,3 +1601,25 @@
 "compare.window.unavailable" = "To porównanie nie jest już dostępne: jego sesja została zamknięta, zanim to okno mogło je pokazać.";
 "compare.window.cancelled" = "To porównanie zostało zatrzymane przed zakończeniem. Lista jest niekompletna.";
 "compare.window.failed" = "Nie udało się dokończyć tego porównania. Lista jest niekompletna.";
+
+/* Folder overview (diff view plan, Task 10) */
+"compare.state.onlyLeft" = "Tylko po lewej";
+"compare.state.onlyRight" = "Tylko po prawej";
+"compare.state.same" = "Taka sama zawartość";
+"compare.state.differs" = "Różne";
+"compare.state.typeMismatch" = "Różne typy";
+"compare.state.undetermined" = "Nieustalone";
+"compare.reason.checksumUnavailable" = "Nie porównano: co najmniej jedna strona nie mogła podać sumy kontrolnej tego pliku.";
+"compare.reason.algorithmUnavailable %@" = "Nie porównano: jedna ze stron nie mogła obliczyć sumy kontrolnej %@. Inny algorytm sumy kontrolnej można wybrać w Ustawieniach.";
+"compare.reason.algorithmsDiffer" = "Nie porównano: obie strony odpowiedziały sumami kontrolnymi z różnych algorytmów, które nic o sobie nie mówią.";
+"compare.reason.etagIsNotAFileHash" = "Nie porównano: jedna strona podała tylko ETag przesyłania wieloczęściowego, który nie jest sumą kontrolną zawartości pliku.";
+"compare.reason.unsupportedKind" = "Nie porównano: to dowiązanie lub wpis specjalny, a macSCP takich wpisów nie porównuje.";
+"compare.reason.unreadable" = "macSCP nie mógł odczytać tej ścieżki, więc nic tu nie porównano.";
+"compare.action.compareAnyway" = "Porównaj zawartość mimo to";
+"compare.progress %lld" = "Dotychczas znalezione wpisy: %lld";
+"compare.cancel" = "Zatrzymaj";
+"compare.overview.empty" = "Porównanie nie znalazło ani plików, ani różnic.";
+"compare.failure.notFound %@" = "Nie znaleziono folderu: %@";
+"compare.failure.reported %@" = "Zgłoszona przyczyna: %@";
+"compare.failure.noDetail" = "Nie zgłoszono przyczyny.";
+"compare.failure.interrupted" = "Porównanie zostało przerwane, choć nikt go nie zatrzymał.";
