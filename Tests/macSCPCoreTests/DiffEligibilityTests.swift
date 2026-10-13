@@ -206,4 +206,88 @@ import Testing
         notUTF8[notUTF8.count - 1] = 0xFF
         #expect(DiffEligibility.refusal(forBytes: notUTF8) == .notUTF8)
     }
+
+    // MARK: - The line-count bound
+
+    /// The pair check is the one `refusal(forBytes:)` cannot make, so the
+    /// first thing to pin is that the byte check really does let the shape
+    /// through — otherwise the cases below would be testing nothing.
+    ///
+    /// 2,097,152 one-byte lines each side is exactly what `ceilingBytes`
+    /// admits, and it is the pair whose table is 4,398,050,705,409 entries.
+    @Test func theByteCheckAdmitsThePairTheLineCheckRefuses() {
+        let side = [UInt8](repeating: 0x41, count: DiffEligibility.ceilingBytes)
+        #expect(DiffEligibility.refusal(forBytes: side) == nil)
+
+        let lines = DiffEligibility.ceilingBytes / 2
+        #expect(
+            DiffEligibility.refusal(leftLines: lines, rightLines: lines)
+                == .tooManyLines(
+                    leftLines: lines, rightLines: lines,
+                    ceilingProduct: DiffEligibility.maxLineProduct))
+    }
+
+    /// The two corners of the admissible set, and the first pair past each.
+    ///
+    /// A bound wants a pair on each side of it, or it is a check that could
+    /// be satisfied by refusing everything.
+    @Test func theLargestAdmittedSquareAndTheFirstRefusedOne() {
+        #expect(DiffEligibility.refusal(leftLines: 5792, rightLines: 5792) == nil)
+        #expect(DiffEligibility.refusal(leftLines: 5793, rightLines: 5793) != nil)
+    }
+
+    /// The asymmetric corner, which is the whole reason this is a product
+    /// and not a count per side.
+    ///
+    /// 500,000 against 20 is admitted — any per-side bound low enough to
+    /// make the square corner above safe would refuse it — and 2,097,152
+    /// against 16 is the last pair admitted on the asymmetric edge.
+    @Test func aLongThinPairIsJudgedByItsProductAndNotByItsLongerSide() {
+        #expect(DiffEligibility.refusal(leftLines: 500_000, rightLines: 20) == nil)
+        #expect(DiffEligibility.refusal(leftLines: 2_097_152, rightLines: 16) == nil)
+        #expect(DiffEligibility.refusal(leftLines: 2_097_152, rightLines: 17) != nil)
+        // Positive control for the pair above: the longer side alone is not
+        // what decided it, because the same 2,097,152 lines were admitted.
+        #expect(DiffEligibility.refusal(leftLines: 20, rightLines: 500_000) == nil)
+    }
+
+    /// An empty side costs no table at all, whichever side it is.
+    @Test func anEmptySideIsEligibleWhateverTheOtherSideHolds() {
+        #expect(DiffEligibility.refusal(leftLines: 0, rightLines: 2_097_152) == nil)
+        #expect(DiffEligibility.refusal(leftLines: 2_097_152, rightLines: 0) == nil)
+        #expect(DiffEligibility.refusal(leftLines: 0, rightLines: 0) == nil)
+    }
+
+    /// A product that overflows `Int` is a refusal and not a trap.
+    ///
+    /// `Int` multiplication traps in Swift, so a naive
+    /// `leftLines * rightLines > ceiling` would crash here — and a crash is
+    /// the loudest possible way of telling the user nothing, which is the one
+    /// thing this subsystem exists not to do. Not reachable from
+    /// `ceilingBytes`-bounded counts; reachable through this public function,
+    /// which is why it is pinned.
+    @Test func aProductThatOverflowsIsRefusedRatherThanTrapping() {
+        let refusal = DiffEligibility.refusal(
+            leftLines: Int.max, rightLines: Int.max)
+        #expect(
+            refusal
+                == .tooManyLines(
+                    leftLines: Int.max, rightLines: Int.max,
+                    ceilingProduct: DiffEligibility.maxLineProduct))
+    }
+
+    /// The refusal carries both counts, because neither side alone explains
+    /// it — and this is the fact the catalogue text depends on.
+    @Test func theRefusalNamesBothSidesAndTheCeiling() {
+        guard
+            case .tooManyLines(let left, let right, let ceiling) =
+                DiffEligibility.refusal(leftLines: 40_000, rightLines: 2_000)
+        else {
+            Issue.record("expected .tooManyLines for 40,000 against 2,000")
+            return
+        }
+        #expect(left == 40_000)
+        #expect(right == 2_000)
+        #expect(ceiling == DiffEligibility.maxLineProduct)
+    }
 }
