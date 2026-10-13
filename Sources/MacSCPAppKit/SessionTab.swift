@@ -86,6 +86,18 @@ final class SessionTab: Identifiable {
     ///
     /// Only `startComparison(...)` appends to it.
     private(set) var comparisons: [Comparison] = []
+
+    /// How many `TabTeardown.run` calls on this tab have not reached their
+    /// end. A counter and not a flag, because two routes into a teardown
+    /// (a window close and the quit) can overlap, and the first to finish
+    /// must not reopen the tab to comparisons while the other is still
+    /// taking the connection down. Written only by `TabTeardown.run`.
+    var tearDownsInFlight = 0
+
+    /// Whether a teardown of this tab is running. `tab.session` stays
+    /// non-nil until that teardown's last assignment, with several
+    /// suspension points before it, so "no session" does not say it.
+    var isTearingDown: Bool { tearDownsInFlight > 0 }
     /// Drives the certificate-trust prompt for this tab's WebDAV/S3 connect
     /// attempts (M21/T10) — see `CertificatePromptBridge`'s own doc comment
     /// for why it is constructed OUTSIDE this initializer and simply handed
@@ -487,13 +499,20 @@ final class SessionTab: Identifiable {
     /// `comparisons` and starts its walk. `nil` when the tab has no session:
     /// with nothing connected there is nothing to walk, and `TabTeardown`
     /// ends comparisons together with the session they ran over.
+    ///
+    /// Also `nil` while a teardown of this tab is running. `endComparisons()`
+    /// runs early in that teardown and the connection is closed several
+    /// suspension points later, so a comparison started in between would
+    /// walk a connection being closed and sit in `comparisons` with nobody
+    /// left to end it. The refusal states the rule once, where a second
+    /// `endComparisons()` at the end would be a cleanup that happens to work.
     @discardableResult
     func startComparison(
         left: ComparisonSide, leftRoot: String,
         right: ComparisonSide, rightRoot: String,
         algorithm: ChecksumAlgorithm
     ) -> Comparison? {
-        guard let session else { return nil }
+        guard let session, !isTearingDown else { return nil }
         func system(_ side: ComparisonSide) -> any RemoteFileSystem {
             switch side {
             case .local: session.localFS

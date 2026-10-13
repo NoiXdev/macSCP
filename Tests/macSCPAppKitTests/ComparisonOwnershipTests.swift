@@ -61,6 +61,17 @@ struct ComparisonOwnershipTests {
             homePath: "/")
     }
 
+    /// The file system is created HERE and tracked weakly, so this function's
+    /// return leaves no strong reference in the caller.
+    private func connectedTabWithParkedComparison(
+        tracking box: WeakBox<ParkedFS>
+    ) -> (SessionTab, Comparison) {
+        let remote = ParkedFS()
+        box.value = remote
+        let tab = connectedTab(remote: remote)
+        return (tab, startOverTemporaryDirectory(on: tab))
+    }
+
     private func connectedTab(remote: any RemoteFileSystem) -> SessionTab {
         let tab = makeTab()
         attachSession(to: tab, remoteFS: remote)
@@ -201,6 +212,79 @@ struct ComparisonOwnershipTests {
         #expect(comparison.rightRoot == "/remote")
     }
 
+    /// Shape-independent. A dedicated CLASS file system is created inside a
+    /// helper and tracked with a weak reference; the tab is torn down, the
+    /// walk unwinds, and the test then asks only whether anything still holds
+    /// the object — wherever and however it is held. The comparison and the
+    /// tab stay alive, which is the point: the window keeps the comparison.
+    /// What this cannot see is a capture inside a walk that never unwinds,
+    /// which `Comparison` documents as deliberate.
+    @Test func aTornDownComparisonRetainsNoFileSystemInAnyShape() async throws {
+        let box = WeakBox<ParkedFS>()
+        let (tab, comparison) = connectedTabWithParkedComparison(tracking: box)
+
+        // Positive control: the object is alive and in use while attached.
+        try await box.value?.waitUntilParked(count: 1)
+        #expect(box.value != nil)
+
+        await TabTeardown.run(tab, reason: .userRequested)
+        try await box.value?.waitUntilCancelled(count: 1)
+        await comparison.waitForWalk()
+
+        #expect(box.value == nil, "something still holds the file system after teardown")
+        // Kept alive to here, deliberately.
+        #expect(comparison.isFinished)
+        #expect(tab.comparisons.isEmpty)
+    }
+
+    /// `tab.session` stays attached through every suspension point of the
+    /// teardown, so "no session" cannot be what refuses a comparison started
+    /// from one. The attempt is made from inside `disconnect()`, which the
+    /// teardown awaits last but one.
+    @Test func aComparisonCannotBeStartedWhileTheTabIsBeingTornDown() async {
+        let attempt = TeardownAttempt()
+        let tab = makeTab()
+        attempt.tab = tab
+        attachSession(to: tab, remoteFS: ParkedFS(onDisconnect: { await attempt.tryStart() }))
+
+        // Positive control: outside a teardown the very same call is accepted.
+        let accepted = startOverTemporaryDirectory(on: tab)
+        #expect(tab.comparisons.count == 1)
+        accepted.cancel()
+        tab.endComparisons()
+
+        await TabTeardown.run(tab, reason: .userRequested)
+
+        // The attempt really ran at the suspension point, with the session
+        // still attached and the teardown in flight.
+        #expect(attempt.ran)
+        #expect(attempt.sessionWasAttached)
+        #expect(attempt.sawTearingDown)
+        #expect(attempt.started == nil)
+        #expect(tab.comparisons.isEmpty)
+        // And the counter is back to zero: a teardown that finished does not
+        // leave the tab refusing for ever.
+        #expect(!tab.isTearingDown)
+    }
+
+    /// `.cancelled` means somebody called `cancel()`. A `CancellationError`
+    /// nobody asked for — a backend throws one too — is a failure.
+    @Test func aStrayCancellationErrorIsAFailureAndNotAUserStop() async {
+        let fs = ScriptedFS(listings: [:], listFailure: CancellationError())
+        let comparison = Comparison(
+            left: fs, leftRoot: "/l", right: fs, rightRoot: "/r", algorithm: .sha256)
+
+        comparison.start()
+        await comparison.waitForWalk()
+
+        #expect(fs.listedPaths.count >= 1)
+        guard case .failed(let error)? = comparison.outcome else {
+            Issue.record("expected .failed, got \(String(describing: comparison.outcome))")
+            return
+        }
+        #expect(error is CancellationError)
+    }
+
     @Test func aCancelledComparisonStaysCancelledAndCannotBeStartedAgain() async {
         let fs = ScriptedFS(listings: ["/l": [], "/r": []])
         let comparison = Comparison(
@@ -337,20 +421,75 @@ struct ComparisonOwnershipTests {
 
     /// Every stored value reachable from `value`, labelled by path. The file
     /// systems sit inside `Comparison.FileSystems` inside an optional, so the
-    /// walk descends through optionals and structs — and stops at a file
-    /// system, which is a leaf here whatever it holds.
+    /// walk descends through optionals and structs — and through every other
+    /// shape a stored reference can hide in: classes, arrays, sets,
+    /// dictionaries, tuples and enum payloads. It stops at a file system,
+    /// which is a leaf here whatever it holds, and never enters one class
+    /// instance twice, so a cycle cannot hang it.
+    ///
+    /// This is the SECOND guard against a stored connection. The first, and
+    /// the one that does not depend on shape, is the weak-reference test
+    /// below; this one names WHERE a stray reference sits.
     private static func storedValues(of value: Any, path: String) -> [(label: String, value: Any)] {
+        var visited = Set<ObjectIdentifier>()
+        return storedValues(of: value, path: path, visited: &visited)
+    }
+
+    private static func storedValues(
+        of value: Any, path: String, visited: inout Set<ObjectIdentifier>
+    ) -> [(label: String, value: Any)] {
         var found: [(label: String, value: Any)] = []
-        for child in Mirror(reflecting: value).children {
-            let label = path + "." + (child.label ?? "?")
-            found.append((label, child.value))
-            if child.value is any RemoteFileSystem { continue }
-            let style = Mirror(reflecting: child.value).displayStyle
-            if style == .struct || style == .optional {
-                found += storedValues(of: child.value, path: label)
+        let root = Mirror(reflecting: value)
+        if root.displayStyle == .class {
+            guard visited.insert(ObjectIdentifier(value as AnyObject)).inserted else { return [] }
+        }
+        var level: Mirror? = root
+        while let mirror = level {
+            for child in mirror.children {
+                let label = path + "." + (child.label ?? "?")
+                found.append((label, child.value))
+                if child.value is any RemoteFileSystem { continue }
+                switch Mirror(reflecting: child.value).displayStyle {
+                case .struct, .optional, .class, .collection, .set, .dictionary, .tuple, .enum:
+                    found += storedValues(of: child.value, path: label, visited: &visited)
+                default:
+                    break
+                }
             }
+            level = mirror.superclassMirror
         }
         return found
+    }
+
+    private static func fileSystems(in values: [(label: String, value: Any)]) -> Int {
+        values.filter { $0.value is any RemoteFileSystem }.count
+    }
+
+    /// Positive controls for `storedValues`: a file system hidden in each
+    /// shape is found, exactly once, and a holder with none finds none. Each
+    /// fixture is a shape that a planted spare reference once escaped (or
+    /// could have). Without these the guard above could pass over a shape it
+    /// cannot see, which is how it went blind to arrays and classes.
+    @Test func theReflectionFindsAFileSystemInEveryShapeItCanHideIn() {
+        let leaf = LocalFileSystem()
+        let cyclic = Box(inner: leaf)
+        cyclic.loop = cyclic
+
+        let cases: [(String, Any, Int)] = [
+            ("array", ArrayHolder(systems: [leaf]), 1),
+            ("empty array", ArrayHolder(systems: []), 0),
+            ("dictionary", DictionaryHolder(byName: ["a": leaf]), 1),
+            ("tuple", TupleHolder(pair: (1, leaf)), 1),
+            ("enum payload", EnumHolder(payload: .holds(leaf)), 1),
+            ("empty enum case", EnumHolder(payload: .empty), 0),
+            ("class", ClassHolder(box: Box(inner: leaf)), 1),
+            ("class behind an optional struct", OptionalHolder(inner: ClassHolder(box: Box(inner: leaf))), 1),
+            ("self-referencing class", ClassHolder(box: cyclic), 1),
+            ("subclass", Derived(inner: leaf), 1),
+        ]
+        for (name, holder, expected) in cases {
+            #expect(Self.fileSystems(in: Self.storedValues(of: holder, path: "h")) == expected, "\(name)")
+        }
     }
 
     /// Fragments of the type names that would mean a comparison carries a
@@ -379,6 +518,50 @@ struct ComparisonOwnershipTests {
 
 // MARK: - Doubles
 
+@MainActor
+private final class WeakBox<T: AnyObject> {
+    weak var value: T?
+}
+
+/// Starts a comparison from inside a teardown-time suspension point, and
+/// records what the tab looked like when it did.
+@MainActor
+private final class TeardownAttempt {
+    var tab: SessionTab?
+    private(set) var ran = false
+    private(set) var sessionWasAttached = false
+    private(set) var sawTearingDown = false
+    private(set) var started: Comparison?
+
+    func tryStart() {
+        ran = true
+        sessionWasAttached = tab?.session != nil
+        sawTearingDown = tab?.isTearingDown ?? false
+        started = tab?.startComparison(
+            left: .local, leftRoot: NSTemporaryDirectory(),
+            right: .remote, rightRoot: "/remote", algorithm: .sha256)
+    }
+}
+
+// Fixtures for the reflection's positive controls: one file system hidden in
+// each shape a stored reference can take.
+private struct ArrayHolder { var systems: [any RemoteFileSystem] }
+private struct DictionaryHolder { var byName: [String: any RemoteFileSystem] }
+private struct TupleHolder { var pair: (Int, any RemoteFileSystem) }
+private enum Payload {
+    case holds(any RemoteFileSystem)
+    case empty
+}
+private struct EnumHolder { var payload: Payload }
+private class Box {
+    var inner: (any RemoteFileSystem)?
+    var loop: Box?
+    init(inner: (any RemoteFileSystem)?) { self.inner = inner }
+}
+private final class Derived: Box {}
+private struct ClassHolder { var box: Box }
+private struct OptionalHolder { var inner: ClassHolder? }
+
 /// Lets a test cancel the comparison from inside a file system call, which
 /// is built before the comparison exists.
 @MainActor
@@ -396,6 +579,14 @@ private final class ParkedFS: RemoteFileSystem, Sendable {
         var waiter: (satisfied: @Sendable (State) -> Bool, continuation: CheckedContinuation<Void, Never>)?
     }
     private let state = Mutex(State())
+    private let onDisconnect: @Sendable () async -> Void
+
+    /// `onDisconnect` runs inside `disconnect()`, which `TabTeardown` awaits
+    /// late in its sequence: a suspension point at which the tab's session is
+    /// still attached.
+    init(onDisconnect: @escaping @Sendable () async -> Void = {}) {
+        self.onDisconnect = onDisconnect
+    }
 
     var cancelledCalls: Int { state.withLock { $0.cancelled } }
 
@@ -463,7 +654,7 @@ private final class ParkedFS: RemoteFileSystem, Sendable {
     func setPermissions(path: String, permissions: UInt32) async throws {}
     func deleteTree(at path: String) async throws {}
     func homeDirectoryPath() async throws -> String { "/" }
-    func disconnect() async {}
+    func disconnect() async { await onDisconnect() }
 }
 
 /// Answers `list` and checksums from tables and counts both. A directory that
@@ -476,15 +667,19 @@ private final class ScriptedFS: RemoteFileSystem, RemoteChecksumProvider, Sendab
     private let listings: [String: [RemoteFileItem]]
     private let checksums: [String: String]
     private let beforeAnsweringChecksum: @Sendable () async -> Void
+    private let listFailure: (any Error)?
     private let state = Mutex(State())
 
+    /// `listFailure` is thrown by every `list`, after the call is counted.
     init(
         listings: [String: [RemoteFileItem]],
         checksums: [String: String] = [:],
+        listFailure: (any Error)? = nil,
         beforeAnsweringChecksum: @escaping @Sendable () async -> Void = {}
     ) {
         self.listings = listings
         self.checksums = checksums
+        self.listFailure = listFailure
         self.beforeAnsweringChecksum = beforeAnsweringChecksum
     }
 
@@ -493,6 +688,7 @@ private final class ScriptedFS: RemoteFileSystem, RemoteChecksumProvider, Sendab
 
     func list(path: String) async throws -> [RemoteFileItem] {
         state.withLock { $0.listed.append(path) }
+        if let listFailure { throw listFailure }
         guard let items = listings[path] else { throw RemoteFSError.notFound(path: path) }
         return items.map {
             RemoteFileItem(

@@ -52,9 +52,11 @@ final class Comparison: Identifiable {
     /// incomplete; only `.completed` means every pair was classified.
     enum Outcome {
         case completed
+        /// Someone called `cancel()`; nothing else produces this.
         case cancelled
-        /// The walk threw something that was not a cancel: in practice the
-        /// root of either side could not be listed. Rows below the root that
+        /// The walk threw and nobody had cancelled: in practice the root of
+        /// either side could not be listed (a stray `CancellationError` from
+        /// a backend lands here too). Rows below the root that
         /// could not be read are `.undetermined(.unreadable)` rows, not this.
         case failed(any Error)
     }
@@ -145,7 +147,17 @@ final class Comparison: Identifiable {
                     })
                 finish(.completed)
             } catch {
-                finish(error is CancellationError ? .cancelled : .failed(error))
+                // `.failed` whatever was thrown, a `CancellationError`
+                // included. `.cancelled` is written by `cancel()` alone, which
+                // settles the state BEFORE it cancels the task, and `finish`
+                // is a no-op from then on — so by the time a cancel can reach
+                // this catch the state is already `.cancelled`. A
+                // `CancellationError` arriving while the state is still
+                // `.running` is one nobody asked for (a backend throws it
+                // too, and Core rethrows it), and telling the user they
+                // stopped something they did not stop would be a false
+                // statement about what happened.
+                finish(.failed(error))
             }
         }
     }
