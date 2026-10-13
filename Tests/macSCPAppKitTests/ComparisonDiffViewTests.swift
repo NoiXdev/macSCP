@@ -1394,8 +1394,8 @@ struct ComparisonDiffViewTests {
 
     /// Every member read in `code`, off whatever value it is read: a root
     /// spelled with a lowercase letter or an underscore, followed by one or
-    /// more member components, as written — the whole chain is one read, so a
-    /// slice applied to a sequence is a read of its own name and not of the
+    /// more member components — the whole chain is one read, so a slice
+    /// applied to a sequence is a read of its own name and not of the
     /// sequence's. A root spelled with a capital is a type rather than a
     /// value, so neither it nor the components hanging off it are read here:
     /// a colour constant is not something the view knows.
@@ -1405,13 +1405,29 @@ struct ComparisonDiffViewTests {
     /// says nothing about any other value in scope — and the scanned region
     /// has values in scope that the views are handed for one purpose and
     /// could read for another.
+    ///
+    /// Whitespace may stand on either side of a dot, because Swift lets a
+    /// chain break across lines and a scan that needed the dot against its
+    /// root bought one spelling of a read while leaving the next line's
+    /// spelling of the same read unseen. Each match is reported with its
+    /// whitespace removed, so a read is one name however it is wrapped. The
+    /// cost of that tolerance is a keyword standing in front of a leading
+    /// dot: the roots named below are language keywords, which cannot be an
+    /// identifier here, and skipping them leaves a set that is reads and
+    /// nothing else. The list being short is safe rather than lucky — the
+    /// caller asserts set EQUALITY, so a keyword nobody skipped arrives as a
+    /// loud extra entry and not as a hole.
     private static func allMemberReads(in code: String) -> Set<String> {
-        let pattern = "(?<![A-Za-z0-9_.$])[a-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+"
+        let keywords = "(?!(?:case|return|try|await|throw|is|as|in)\\b)"
+        let pattern = "(?<![A-Za-z0-9_.$])\(keywords)[a-z_][A-Za-z0-9_]*"
+            + "(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)+"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(code.startIndex..., in: code)
         return Set(
             regex.matches(in: code, range: range).compactMap { match in
-                Range(match.range, in: code).map { String(code[$0]) }
+                Range(match.range, in: code).map {
+                    String(code[$0]).components(separatedBy: .whitespacesAndNewlines).joined()
+                }
             })
     }
 
@@ -1467,12 +1483,16 @@ struct ComparisonDiffViewTests {
 
     /// Every member read the views make, off any value in scope. Built by
     /// running the scan over the views and reading what is there: what each
-    /// one is handed and nothing beside it.
+    /// one is handed and nothing beside it. The one entry that is not a read
+    /// of a handed value is the modifier chained under the local that holds
+    /// the diff in the container, which the scan sees because the chain
+    /// breaks across lines — it is a name of ours, so it is listed here
+    /// rather than skipped in the scan.
     private static let allowedMemberReads: Set<String> = [
-        "comparison.kind", "entry.kindLabel", "entry.leftNumber", "entry.rightNumber",
-        "entry.runs", "entry.sign", "entry.tint", "listing.numberDigits", "listing.rows",
-        "model.load", "model.loaded", "notice.emphasis", "notice.showsProgress", "notice.text",
-        "row.kind",
+        "comparison.kind", "diff.frame", "entry.kindLabel", "entry.leftNumber",
+        "entry.rightNumber", "entry.runs", "entry.sign", "entry.tint", "listing.numberDigits",
+        "listing.rows", "model.load", "model.loaded", "notice.emphasis", "notice.showsProgress",
+        "notice.text", "row.kind",
     ]
 
     @Test func theCallScanReadsLeadingDotsAndNothingElse() {
@@ -1483,8 +1503,19 @@ struct ComparisonDiffViewTests {
 
     @Test func theMemberReadScanSeesEveryChainAndNoTypeName() {
         let code = "a.b a.b.c xa.b a.d(x) b.e a . f Color.white Color.red.opacity"
-        #expect(Self.allMemberReads(in: code) == ["a.b", "a.b.c", "xa.b", "a.d", "b.e"])
+        #expect(Self.allMemberReads(in: code) == ["a.b", "a.b.c", "xa.b", "a.d", "b.e", "a.f"])
         #expect(Self.allMemberReads(in: "no reads here").isEmpty)
+    }
+
+    /// The same scan on the spellings whitespace tolerance buys and costs: a
+    /// chain broken across lines is the read it would be on one line, a
+    /// keyword in front of a leading dot is not a read at all, and an
+    /// identifier that merely begins with a keyword's letters is.
+    @Test func theMemberReadScanFollowsAChainAcrossLinesAndSkipsAKeywordRoot() {
+        let wrapped = "comparison\n    .rows.isEmpty"
+        #expect(Self.allMemberReads(in: wrapped) == ["comparison.rows.isEmpty"])
+        #expect(Self.allMemberReads(in: "case .legend(x) return .foo(y) try .z(w)").isEmpty)
+        #expect(Self.allMemberReads(in: "caseLabel.kind") == ["caseLabel.kind"])
     }
 
     /// What is wrong with `tokens` in `code`: each must occur exactly once,
