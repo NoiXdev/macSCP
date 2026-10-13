@@ -522,7 +522,8 @@ final class SessionTab: Identifiable {
         let comparison = Comparison(
             left: system(left), leftRoot: leftRoot,
             right: system(right), rightRoot: rightRoot,
-            algorithm: algorithm)
+            algorithm: algorithm,
+            transferQueue: transferQueue)
         comparisons.append(comparison)
         comparison.start()
         return comparison

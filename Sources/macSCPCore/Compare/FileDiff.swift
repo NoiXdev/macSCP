@@ -94,12 +94,13 @@ public enum FileDiff {
         //
         // The product `(left.count + 1) * width` is what
         // `DiffEligibility.refusal(leftLines:rightLines:)` exists to bound,
-        // with the two counts bounded in turn by `ceilingBytes` — but
-        // **nothing calls that check yet**: Task 8 of the diff-view plan
-        // wires it where the files are split. Said in the future tense
-        // deliberately. This function is pure and enforces neither bound; a
-        // caller that skips both asks the allocator for the answer, exactly
-        // as the nested version did.
+        // with the two counts bounded in turn by `ceilingBytes`. The one
+        // caller, `Comparison.diff(leftPath:rightPath:)`, makes both checks
+        // where the files are split; this comment said "**nothing calls that
+        // check yet**: Task 8 of the diff-view plan wires it where the files
+        // are split" until Task 8 did. This function is pure and enforces
+        // neither bound; a caller that skips both asks the allocator for the
+        // answer, exactly as the nested version did.
         let width = right.count + 1
         var table = [Int](repeating: 0, count: (left.count + 1) * width)
         if !left.isEmpty && !right.isEmpty {

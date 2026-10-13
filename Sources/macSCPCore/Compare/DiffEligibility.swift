@@ -11,7 +11,7 @@
 /// for the bytes of one file, and `refusal(forBytes:)` returns them. The
 /// fourth is about the PAIR, and `refusal(leftLines:rightLines:)` returns it,
 /// because what it refuses is a cost neither side carries alone.
-public enum DiffRefusal: Equatable, Sendable {
+public enum DiffRefusal: Error, Equatable, Sendable {
     /// The first `DiffEligibility.nulWindowBytes` bytes contain a NUL. This
     /// case carries that one cause and nothing else: content that is merely
     /// not valid UTF-8 is `.notUTF8`, because a Latin-1 or Windows-1252 text
@@ -281,12 +281,20 @@ public enum DiffEligibility {
     ///
     /// An empty buffer is eligible.
     public static func refusal(forBytes bytes: [UInt8]) -> DiffRefusal? {
-        if bytes.count > ceilingBytes {
-            return .tooLarge(bytes: bytes.count, ceiling: ceilingBytes)
-        }
+        if let tooLarge = refusal(forByteCount: bytes.count) { return tooLarge }
         if bytes.prefix(nulWindowBytes).contains(0x00) { return .binary }
         if String(validating: bytes, as: UTF8.self) == nil { return .notUTF8 }
         return nil
+    }
+
+    /// The size check of `refusal(forBytes:)` on its own, for a caller that
+    /// knows a file's length before it has fetched a single byte of it: a
+    /// listing or a `stat` says how large a file is, and fetching a gigabyte
+    /// to refuse it afterwards would spend exactly what the ceiling exists to
+    /// save. `refusal(forBytes:)` calls this, so the two cannot disagree about
+    /// where the boundary is: `ceilingBytes` is admitted, one more is not.
+    public static func refusal(forByteCount count: Int) -> DiffRefusal? {
+        count > ceilingBytes ? .tooLarge(bytes: count, ceiling: ceilingBytes) : nil
     }
 
     /// Why this PAIR cannot be shown as a line diff, or `nil` when it can.
@@ -296,15 +304,14 @@ public enum DiffEligibility {
     /// the line counts are first known, which is after both sides have been
     /// split.
     ///
-    /// **Nothing calls it yet.** The split happens in
-    /// `Comparison.diff(forRowAt:)`, which Task 8 of the diff-view plan
-    /// writes; the intended order is `refusal(forBytes:)` on each side first
-    /// and this second, showing whichever reason comes back. Until that task
-    /// lands, the only callers are `DiffEligibilityTests`. This paragraph
-    /// replaces one that described the caller in the present tense — "The
-    /// caller runs `refusal(forBytes:)` on each side first and this second,
-    /// and shows whichever reason comes back" — which read as a statement
-    /// about code in the tree when it was a statement about code to come.
+    /// **One caller, and the order it keeps.** `Comparison.diff(leftPath:
+    /// rightPath:)` in the App target splits both sides into lines and then
+    /// calls this, after `refusal(forByteCount:)` on each side's `stat` and
+    /// `refusal(forBytes:)` on each side's fetched bytes; the first reason to
+    /// come back is the one shown. `diff(forRowAt:)` and `diffFilePair()` both
+    /// go through it. This paragraph replaces one that opened "**Nothing
+    /// calls it yet.**" and described the caller as the code Task 8 of the
+    /// diff-view plan was to write, which Task 8 did.
     ///
     /// The multiplication is checked for overflow rather than performed and
     /// trusted. `Int` multiplication traps in Swift, and a trap is the
