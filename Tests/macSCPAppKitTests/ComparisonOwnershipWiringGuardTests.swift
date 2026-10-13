@@ -84,9 +84,14 @@ struct ComparisonOwnershipWiringGuardTests {
     @Test func endingComparisonsCancelsEachAndForgetsThem() throws {
         let tab = try Self.code("SessionTab.swift")
         let start = try #require(tab.range(of: "func endComparisons() {"))
-        let body = String(tab[start.upperBound...].prefix(120))
+        let body = String(tab[start.upperBound...].prefix(220))
         #expect(body.contains("comparison.cancel()"))
+        #expect(body.contains("comparison.releaseFileSystems()"))
         #expect(body.contains("comparisons.removeAll()"))
+        // The cancel comes first: the release is in addition to it.
+        let cancel = try #require(body.range(of: "comparison.cancel()"))
+        let release = try #require(body.range(of: "comparison.releaseFileSystems()"))
+        #expect(cancel.upperBound <= release.lowerBound)
     }
 
     /// Quit adds no sweep of its own: it runs each window's close sequence

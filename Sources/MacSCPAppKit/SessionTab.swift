@@ -514,10 +514,17 @@ final class SessionTab: Identifiable {
         comparisons.first { $0.id == id }
     }
 
-    /// Cancels every comparison and forgets them. Called by `TabTeardown`
-    /// and by nothing else; see the call there.
+    /// Cancels every comparison, releases its file systems and forgets it.
+    /// Called by `TabTeardown` and by nothing else; see the call there.
+    ///
+    /// What is forgotten is the tab's reference. A window that already holds
+    /// a comparison keeps its rows, progress and outcome; it no longer has a
+    /// connection to fetch with (`Comparison.releaseFileSystems()`).
     func endComparisons() {
-        for comparison in comparisons { comparison.cancel() }
+        for comparison in comparisons {
+            comparison.cancel()
+            comparison.releaseFileSystems()
+        }
         comparisons.removeAll()
     }
 

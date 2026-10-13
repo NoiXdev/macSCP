@@ -21,6 +21,18 @@ import macSCPCore
 /// credentials. `ComparisonOwnershipTests` reads the stored properties to say
 /// so, rather than trusting this paragraph.
 ///
+/// **The result outlives the connection; the connection does not outlive the
+/// tab's teardown.** The rows, the progress and the outcome are local data and
+/// stay readable for as long as anything holds this object — a window that
+/// has resolved it keeps showing what was measured after its session closed.
+/// The two file systems are held in `fileSystems`, which is `nil` once
+/// `releaseFileSystems()` has run (`SessionTab.endComparisons()` calls it,
+/// after the cancel). Anything that needs a connection reads `fileSystems`
+/// and has nothing to read afterwards: using a closed session is not
+/// forbidden by a convention, it cannot be written. The roots and the
+/// algorithm are plain data and stay, because a window that says WHAT was
+/// compared needs them.
+///
 /// **Teardown is synchronous and never waits.** `cancel()` flips the state to
 /// `.finished(.cancelled)` BEFORE it returns and only then asks the task to
 /// stop. `TabTeardown` calls it from a function that is deliberately not
@@ -55,10 +67,18 @@ final class Comparison: Identifiable {
 
     let id = UUID()
 
+    /// The two sides' file systems as one value, so they are released
+    /// together or not at all: two separate optionals could be left
+    /// half-released, and no caller can use half a comparison.
+    struct FileSystems {
+        let left: any RemoteFileSystem
+        let right: any RemoteFileSystem
+    }
+
     /// Borrowed from the owning tab's session; see the type's doc comment.
-    let left: any RemoteFileSystem
+    /// `nil` after `releaseFileSystems()`, and then for good.
+    private(set) var fileSystems: FileSystems?
     let leftRoot: String
-    let right: any RemoteFileSystem
     let rightRoot: String
     let algorithm: ChecksumAlgorithm
 
@@ -75,9 +95,8 @@ final class Comparison: Identifiable {
         right: any RemoteFileSystem, rightRoot: String,
         algorithm: ChecksumAlgorithm
     ) {
-        self.left = left
+        self.fileSystems = FileSystems(left: left, right: right)
         self.leftRoot = leftRoot
-        self.right = right
         self.rightRoot = rightRoot
         self.algorithm = algorithm
     }
@@ -102,13 +121,16 @@ final class Comparison: Identifiable {
     /// Starts the walk. Does nothing unless the comparison is idle: a
     /// comparison runs once, and a cancelled one stays cancelled.
     func start() {
-        guard case .idle = state else { return }
+        guard case .idle = state, let sides = fileSystems else { return }
         state = .running
+        // Read here, not inside the task: the task's first turn may come after
+        // a release, and a walk that was already started owns the references
+        // it was started with until it unwinds.
         walk = Task { [self] in
             do {
                 try await FolderComparison.walk(
-                    left: left, leftRoot: leftRoot,
-                    right: right, rightRoot: rightRoot,
+                    left: sides.left, leftRoot: leftRoot,
+                    right: sides.right, rightRoot: rightRoot,
                     algorithm: algorithm,
                     onRow: { row in
                         // Dropped once finished: a cancel that lands while the
@@ -136,6 +158,18 @@ final class Comparison: Identifiable {
     func cancel() {
         finish(.cancelled)
         walk?.cancel()
+    }
+
+    /// Lets go of the two file systems. The rows, the progress and the
+    /// outcome are untouched. Irreversible and idempotent.
+    ///
+    /// It does NOT stop a walk: `cancel()` does that, and `SessionTab.
+    /// endComparisons()` calls the two in that order. A walk that is still
+    /// unwinding keeps the references it was started with until it does, so
+    /// this is "this object no longer offers a connection", not "no reference
+    /// to one exists anywhere".
+    func releaseFileSystems() {
+        fileSystems = nil
     }
 
     /// Suspends until the walk's task has unwound, which after `cancel()` is
