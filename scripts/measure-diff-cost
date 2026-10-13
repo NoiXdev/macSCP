@@ -1,0 +1,214 @@
+#!/bin/sh
+# Measure one line diff's cost — ONE PROCESS PER CASE.
+#
+# Why this exists beside Tests/macSCPCoreTests/FileDiffCostTests.swift, which
+# measures the same grid: a single-process test suite cannot report peak
+# memory, so that suite reports only time and this script is the memory
+# record. Measured 2026-10-13, release, Apple M1 Max — an earlier draft of
+# that suite sampled the footprint anyway, and on `ladder/5792` it reported a
+# DELTA of 409,600 bytes while allocating a 268,470,792-byte table, because an
+# earlier case had left the allocator holding about 440 MB of mapped pages
+# that `phys_footprint` still counts. This script's figure for the same case
+# is 284,606,704 bytes. The two agree on TIME within 7.5% (`ladder/16384`,
+# one line differing: 2.297442875 s in the suite, 2.468680542 s here), which is what
+# makes the division safe; the memory figures in `DiffEligibility`'s doc
+# comments and in the design spec's "Too large" bullet come from here.
+#
+# Run from the repository root:
+#
+#   scripts/measure-diff-cost
+#
+# It needs a release build of macSCPCore, which it performs, and it compiles
+# the probe below against that build's own module maps rather than a
+# hand-written list of them, so a new C-shim dependency does not break it.
+#
+# Each line of output is one case: the two line counts, the line length, the
+# difference density, the table arithmetic, the elapsed time and the peak
+# phys_footprint. Nothing here asserts a figure.
+set -e
+
+cd "$(dirname "$0")/.."
+ROOT=$(pwd)
+
+PROBE_DIR=${TMPDIR:-/tmp}/macscp-diff-cost-probe.$$
+mkdir -p "$PROBE_DIR"
+trap 'rm -rf "$PROBE_DIR"' EXIT
+
+cat > "$PROBE_DIR/main.swift" <<'PROBE'
+import Foundation
+import macSCPCore
+
+/// A line of `bytes` ASCII characters, distinct from its neighbours as far as
+/// `bytes` allows. The same fixture as `FileDiffCostTests.line(at:bytes:)`.
+func line(at index: Int, bytes: Int) -> String {
+    let stem = String(index, radix: 36)
+    if stem.count >= bytes { return String(stem.suffix(bytes)) }
+    return stem + String(repeating: "x", count: bytes - stem.count)
+}
+
+/// The process's current phys_footprint: what Activity Monitor calls "Memory".
+func physFootprintBytes() -> UInt64 {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(
+        MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let outcome = withUnsafeMutablePointer(to: &info) { pointer in
+        pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), rebound, &count)
+        }
+    }
+    return outcome == KERN_SUCCESS ? info.phys_footprint : 0
+}
+
+/// A high-water mark for the footprint, sampled on a thread of its own.
+final class Peak: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+    private var running = true
+
+    func start() {
+        Thread.detachNewThread { [self] in
+            while true {
+                lock.lock()
+                let keepGoing = running
+                lock.unlock()
+                if !keepGoing { break }
+                let now = physFootprintBytes()
+                lock.lock()
+                if now > value { value = now }
+                lock.unlock()
+                usleep(2000)
+            }
+        }
+    }
+
+    func stop() -> UInt64 {
+        lock.lock()
+        running = false
+        let observed = value
+        lock.unlock()
+        return observed
+    }
+}
+
+// name L R lineBytes every   (every == 0 means "one line differs")
+let argv = CommandLine.arguments
+let name = argv[1]
+let L = Int(argv[2])!, R = Int(argv[3])!, lineBytes = Int(argv[4])!
+let every = Int(argv[5])!
+
+let left = (0..<L).map { line(at: $0, bytes: lineBytes) }
+var right = (0..<R).map { line(at: $0, bytes: lineBytes) }
+var planted = 0
+if every == 0 {
+    if R > 0 {
+        right[R / 2] = "~" + right[R / 2]
+        planted = 1
+    }
+} else {
+    for index in stride(from: 0, to: R, by: every) {
+        right[index] = "~" + right[index]
+        planted += 1
+    }
+}
+
+let baseline = physFootprintBytes()
+let peak = Peak()
+peak.start()
+let started = ContinuousClock.now
+let hunks = FileDiff.hunks(left: left, right: right, context: 3)
+let elapsed = ContinuousClock.now - started
+let observed = peak.stop()
+
+let changed = hunks.reduce(0) { $0 + $1.lines.filter { $0.kind != .context }.count }
+let table = (L + 1) * (R + 1) * 8
+// A positive control, so a case that did no work cannot look like a cheap one.
+if hunks.isEmpty || changed < planted {
+    print("PROBE FAILED \(name): hunks=\(hunks.count) changed=\(changed) planted=\(planted)")
+    exit(1)
+}
+print(
+    "diffcost: MEASURED \(name) L=\(L) R=\(R) lineBytes=\(lineBytes) every=\(every) "
+        + "leftBytes=\(L * (lineBytes + 1)) rightBytes=\(R * (lineBytes + 1)) "
+        + "product=\(L * R) tableEntries=\((L + 1) * (R + 1)) tableBytes=\(table) "
+        + "elapsed=\(elapsed) peakFootprintDelta=\(Int64(observed) - Int64(baseline)) "
+        + "baselineFootprint=\(baseline) peakFootprint=\(observed) "
+        + "hunks=\(hunks.count) changedLines=\(changed)")
+PROBE
+
+echo "building macSCPCore in release..." >&2
+swift build -c release --target macSCPCore >/dev/null
+
+REL="$ROOT/.build/out/Products/Release"
+if [ ! -d "$REL" ]; then REL="$ROOT/.build/release"; fi
+
+FLAGS=""
+for map in "$ROOT"/.build/out/Intermediates.noindex/GeneratedModuleMaps/*.modulemap; do
+    [ -f "$map" ] && FLAGS="$FLAGS -Xcc -fmodule-map-file=$map"
+done
+for map in "$ROOT"/.build/checkouts/*/Sources/*/include/module.modulemap; do
+    [ -f "$map" ] && FLAGS="$FLAGS -Xcc -fmodule-map-file=$map"
+done
+
+echo "compiling the probe..." >&2
+# shellcheck disable=SC2086
+swiftc -O -swift-version 6 -target arm64-apple-macos15.0 \
+    -I "$REL" -L "$REL" -lmacSCPCore $FLAGS \
+    "$PROBE_DIR/main.swift" -o "$PROBE_DIR/probe"
+
+run() { "$PROBE_DIR/probe" "$@"; }
+
+# The grid the byte ceiling admits: three sizes, three line shapes, two
+# densities. A cell whose table is over the budget is not run; its arithmetic
+# is printed instead, because where a ladder stopped is a result.
+BUDGET=2500000000
+grid_cell() {
+    name=$1 lines=$2 bytes=$3 every=$4
+    table=$(( (lines + 1) * (lines + 1) * 8 ))
+    if [ "$table" -gt "$BUDGET" ]; then
+        echo "diffcost: ABANDONED $name L=$lines R=$lines lineBytes=$bytes every=$every tableBytes=$table over the ${BUDGET}-byte budget, not run"
+    else
+        run "$name" "$lines" "$lines" "$bytes" "$every"
+    fi
+}
+
+for size in 262144:256KiB 1048576:1MiB 4194304:4MiB; do
+    bytes_total=${size%%:*}
+    label=${size##*:}
+    for shape in 80 8 1; do
+        lines=$(( bytes_total / (shape + 1) ))
+        for every in 0 10; do
+            grid_cell "grid/$label/${shape}B/every$every" "$lines" "$shape" "$every"
+        done
+    done
+done
+
+# Bytes are not the axis: one line count, five line lengths.
+for shape in 1 2 8 40 80; do
+    run "fixedLines/4096/${shape}B" 4096 4096 "$shape" 10
+done
+
+# Long thin tables, which a per-side line bound would refuse.
+run "asymmetric/100000x20" 100000 20 40 0
+run "asymmetric/500000x20" 500000 20 40 0
+run "asymmetric/2097152x20" 2097152 20 2 0
+
+# The ladder the bound is read off, and the pathological shape below the
+# byte ceiling.
+for lines in 1024 2048 4096 5792 8192 10000 11585 16384; do
+    for every in 0 10; do
+        grid_cell "ladder/$lines/every$every" "$lines" 40 "$every"
+    done
+done
+for kib in 8 16 32 64; do
+    lines=$(( kib * 1024 / 2 ))
+    for every in 0 10; do
+        grid_cell "pathological/${kib}KiB/every$every" "$lines" 1 "$every"
+    done
+done
+
+# Both corners of DiffEligibility.maxLineProduct, which are exact integers:
+# the largest square it admits, and the most asymmetric pair it and
+# ceilingBytes admit together.
+run "corner/square/5792x5792" 5792 5792 40 0
+run "corner/square/5792x5792" 5792 5792 40 10
+run "corner/thin/2097152x16" 2097152 16 1 0
