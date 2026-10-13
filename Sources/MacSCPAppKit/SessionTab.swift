@@ -534,6 +534,20 @@ final class SessionTab: Identifiable {
         comparisons.first { $0.id == id }
     }
 
+    /// Stops listing one comparison, and does nothing else to it: no cancel,
+    /// no release. The caller is the window that showed it, closing, and it
+    /// has already done both (`ComparisonWindowModel.windowClosed()`);
+    /// `endComparisons()` is the call that ends comparisons.
+    ///
+    /// Why the tab forgets at all: a comparison the user closed is finished
+    /// business. Left in `comparisons`, cancelled and released, it would let
+    /// a window opened later from the same seed find it and say "session
+    /// closed" about a session that is open. Forgotten, such a seed resolves
+    /// to nothing, which is true: that comparison was closed.
+    func forgetComparison(id: UUID) {
+        comparisons.removeAll { $0.id == id }
+    }
+
     /// Cancels every comparison, releases its file systems and forgets it.
     /// Called by `TabTeardown` and by nothing else; see the call there.
     ///

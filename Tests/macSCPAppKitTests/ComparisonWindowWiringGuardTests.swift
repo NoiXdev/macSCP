@@ -130,10 +130,13 @@ struct ComparisonWindowWiringGuardTests {
         let model = try Self.body("final class ComparisonWindowModel", in: Self.windowFile)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let start = try #require(model.range(of: "func windowClosed() {"))
-        let body = String(model[start.upperBound...].prefix(260))
+        let body = String(model[start.upperBound...].prefix(300))
         let cancel = try #require(body.range(of: "comparison.cancel()"))
         let release = try #require(body.range(of: "comparison.releaseFileSystems()"))
+        let forget = try #require(body.range(of: "forgetFromTab?()"))
         #expect(cancel.upperBound <= release.lowerBound)
+        // The tab forgets last: the comparison is ended before it is dropped.
+        #expect(release.upperBound <= forget.lowerBound)
 
         let code = try Self.code(Self.windowFile)
         #expect(Self.occurrences(of: "releaseFileSystems()", in: code) == 1)
@@ -144,6 +147,25 @@ struct ComparisonWindowWiringGuardTests {
         #expect(view.contains("closing === window"))
         #expect(view.contains("model.windowClosed()"))
         #expect(Self.occurrences(of: "model.windowClosed()", in: view) == 1)
+    }
+
+    /// The tab's removal of a comparison is spelled where it is declared and
+    /// in the one window that closes, and nowhere else; and the model reaches
+    /// the tab through a WEAK capture, never a stored reference.
+    @Test func onlyTheClosingWindowMakesATabForgetAComparison() throws {
+        var files: [String] = []
+        for url in try SourceCorpus.files(under: Self.sources) where url.pathExtension == "swift" {
+            if try SourceCorpus.code(of: url).contains("forgetComparison") {
+                files.append(url.lastPathComponent)
+            }
+        }
+        #expect(files.sorted() == ["ComparisonWindow.swift", "SessionTab.swift"])
+
+        let tab = try Self.code("SessionTab.swift")
+        #expect(tab.contains("func forgetComparison(id: UUID) { comparisons.removeAll { $0.id == id } }"))
+        let window = try Self.code(Self.windowFile)
+        #expect(window.contains("[weak tab] in tab?.forgetComparison(id: id)"))
+        #expect(Self.occurrences(of: "forgetComparison", in: window) == 1)
     }
 
     // MARK: Ownership
@@ -228,6 +250,7 @@ struct ComparisonWindowWiringGuardTests {
             in: try Self.body("final class ComparisonWindowModel", in: Self.windowFile))
         #expect(model.contains { $0.contains("comparison: Comparison?") })
         #expect(model.contains { $0.contains("hasResolved") })
+        #expect(model.contains { $0.contains("forgetFromTab") })
     }
 
     /// The pattern itself: it matches the spellings it forbids and none of

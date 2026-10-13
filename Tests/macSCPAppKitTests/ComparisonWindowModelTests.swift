@@ -318,4 +318,92 @@ struct ComparisonWindowModelTests {
         #expect(comparison.fileSystems == nil)
         #expect(model.comparison === comparison)
     }
+
+    // MARK: - A closed window makes the tab forget the comparison
+
+    /// A comparison the user closed is gone for good. Without this the tab
+    /// kept it, cancelled and released, and a window opened later from the
+    /// same seed said "session closed" about a session that was open.
+    @Test func closingTheWindowMakesTheLiveTabForgetTheComparison() async throws {
+        let tab = makeTab()
+        let registry = register(tab)
+        let comparison = try startComparison(on: tab)
+        await comparison.waitForWalk()
+        let wanted = seed(tab, comparison)
+        let model = ComparisonWindowModel()
+        model.resolve(seed: wanted, registry: registry)
+        // Positive control: the tab holds it, and the tab is alive.
+        #expect(tab.comparison(id: comparison.id) === comparison)
+        #expect(tab.session != nil)
+
+        model.windowClosed()
+
+        #expect(tab.comparison(id: comparison.id) == nil)
+        #expect(tab.comparisons.isEmpty)
+        #expect(tab.session != nil)
+        // The window's own reference is untouched while it finishes closing:
+        // the rows are still readable through it.
+        #expect(model.comparison === comparison)
+        #expect(comparison.rows == [ComparisonRow(relativePath: "only.txt", state: .onlyLeft)])
+
+        // A window opened later from the same, now stale, seed finds
+        // nothing, and says so: it is not a closed SESSION.
+        let reopened = ComparisonWindowModel()
+        reopened.resolve(seed: wanted, registry: registry)
+        #expect(reopened.isUnavailable)
+        #expect(!reopened.isSessionClosed)
+        #expect(reopened.comparison == nil)
+    }
+
+    @Test func closingOneWindowMakesTheTabForgetOnlyItsOwnComparison() async throws {
+        let tab = makeTab()
+        let registry = register(tab)
+        let mine = try startComparison(on: tab)
+        let other = try startComparison(on: tab)
+        await mine.waitForWalk()
+        await other.waitForWalk()
+        let model = ComparisonWindowModel()
+        model.resolve(seed: seed(tab, mine), registry: registry)
+
+        model.windowClosed()
+
+        #expect(tab.comparison(id: mine.id) == nil)
+        #expect(tab.comparison(id: other.id) === other)
+        #expect(tab.comparisons.count == 1)
+        other.cancel()
+    }
+
+    @Test func closingTwiceAfterTheTabForgotItIsHarmless() async throws {
+        let tab = makeTab()
+        let registry = register(tab)
+        let comparison = try startComparison(on: tab)
+        await comparison.waitForWalk()
+        let model = ComparisonWindowModel()
+        model.resolve(seed: seed(tab, comparison), registry: registry)
+
+        model.windowClosed()
+        model.windowClosed()
+
+        #expect(tab.comparisons.isEmpty)
+        #expect(model.comparison === comparison)
+    }
+
+    /// The window holds no reference to its tab, so a tab that is gone by the
+    /// time the window closes leaves nothing to forget and nothing to crash.
+    @Test func aWindowClosingAfterItsTabHasBeenTornDownKeepsWhatItHolds() async throws {
+        let tab = makeTab()
+        let registry = register(tab)
+        let comparison = try startComparison(on: tab)
+        await comparison.waitForWalk()
+        let model = ComparisonWindowModel()
+        model.resolve(seed: seed(tab, comparison), registry: registry)
+        // The tab's own teardown ends first; the window closes after.
+        await TabTeardown.run(tab, reason: .userRequested)
+
+        model.windowClosed()
+
+        #expect(model.comparison === comparison)
+        #expect(model.isSessionClosed)
+        #expect(comparison.rows.count == 1)
+    }
 }
