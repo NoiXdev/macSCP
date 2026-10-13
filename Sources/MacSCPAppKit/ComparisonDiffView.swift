@@ -374,8 +374,6 @@ enum ComparisonDiffPresentation {
     /// and its background. Everything the view draws for a line comes from
     /// this value; it holds no `DiffLine`.
     struct LineEntry: Hashable {
-        /// The position in its hunk.
-        let id: Int
         let tone: Tone
         /// `-`, `+` or a space.
         let sign: String
@@ -388,18 +386,30 @@ enum ComparisonDiffPresentation {
         let tint: Color
     }
 
-    struct HunkEntry: Hashable {
-        /// The position in the listing.
+    /// One thing the listing draws, with its place in it. The listing is ONE
+    /// ordered sequence of these, so the order a view draws them in is the
+    /// order they are in: there is no header-and-lines container whose parts
+    /// a view could place the wrong way round, and no second collection to
+    /// walk. (Source scans of the view bought one spelling of such a swap
+    /// after another, six times in this plan; this is the structural answer.)
+    struct Row: Hashable, Identifiable {
+        /// The position in the listing, from 0 and without a gap.
         let id: Int
-        let header: String
-        let lines: [LineEntry]
+        let kind: Kind
+
+        enum Kind: Hashable {
+            /// What `-`, `+` and an unmarked line mean. Always the first row.
+            case legend(String)
+            /// A hunk's `@@ -a,b +c,d @@`, directly before that hunk's lines.
+            case header(String)
+            case line(LineEntry)
+        }
     }
 
     struct Listing: Hashable {
-        let legend: String
         /// The width of the widest line number shown, in digits.
         let numberDigits: Int
-        let hunks: [HunkEntry]
+        let rows: [Row]
     }
 
     /// The header of a hunk: `@@ -a,b +c,d @@`, both counts always spelled
@@ -415,17 +425,18 @@ enum ComparisonDiffPresentation {
         return "@@ -\(leftFirst),\(leftCount) +\(rightFirst),\(rightCount) @@"
     }
 
-    /// The hunks as the view draws them, in order, none dropped. The numbers
-    /// are counted from each hunk's starts: a context line advances both
-    /// sides, a removal the left one and an addition the right one.
+    /// The hunks as the view draws them, in one pass and in order, none
+    /// dropped: the legend, then for each hunk its header and its lines. The
+    /// numbers are counted from each hunk's starts: a context line advances
+    /// both sides, a removal the left one and an addition the right one.
     static func listing(for hunks: [DiffHunk]) -> Listing {
         var largest = 0
-        var entries: [HunkEntry] = []
-        for (hunkIndex, hunk) in hunks.enumerated() {
+        var kinds: [Row.Kind] = [.legend(legend.text)]
+        for hunk in hunks {
             var left = hunk.leftStart
             var right = hunk.rightStart
-            var lines: [LineEntry] = []
-            for (lineIndex, line) in hunk.lines.enumerated() {
+            kinds.append(.header(header(for: hunk)))
+            for line in hunk.lines {
                 var leftNumber = ""
                 var rightNumber = ""
                 switch line.kind {
@@ -443,17 +454,17 @@ enum ComparisonDiffPresentation {
                 }
                 largest = max(largest, left, right)
                 let tone = tone(of: line.kind)
-                lines.append(
-                    LineEntry(
-                        id: lineIndex, tone: tone, sign: sign(of: line.kind),
-                        kindLabel: kindLabel(of: line.kind), leftNumber: leftNumber,
-                        rightNumber: rightNumber, runs: runs(of: line.text, kind: line.kind),
-                        tint: tone.tint))
+                kinds.append(
+                    .line(
+                        LineEntry(
+                            tone: tone, sign: sign(of: line.kind),
+                            kindLabel: kindLabel(of: line.kind), leftNumber: leftNumber,
+                            rightNumber: rightNumber, runs: runs(of: line.text, kind: line.kind),
+                            tint: tone.tint)))
             }
-            entries.append(HunkEntry(id: hunkIndex, header: header(for: hunk), lines: lines))
         }
-        return Listing(
-            legend: legend.text, numberDigits: String(largest).count, hunks: entries)
+        let rows = kinds.enumerated().map { Row(id: $0.offset, kind: $0.element) }
+        return Listing(numberDigits: String(largest).count, rows: rows)
     }
 
     private static func tone(of kind: DiffLine.Kind) -> Tone {
@@ -637,13 +648,19 @@ struct ComparisonDiffView: View {
         case .listing(let listing):
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    Text(listing.legend)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                    ForEach(listing.hunks, id: \.id) { hunk in
-                        ComparisonDiffHunkView(hunk: hunk, digits: listing.numberDigits)
+                    ForEach(listing.rows) { row in
+                        switch row.kind {
+                        case .legend(let text):
+                            Text(text)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                        case .header(let text):
+                            ComparisonDiffHeaderView(text: text)
+                        case .line(let entry):
+                            ComparisonDiffLineView(entry: entry, digits: listing.numberDigits)
+                        }
                     }
                 }
             }
@@ -651,23 +668,19 @@ struct ComparisonDiffView: View {
     }
 }
 
-/// One hunk: its header, then its lines.
-struct ComparisonDiffHunkView: View {
-    let hunk: ComparisonDiffPresentation.HunkEntry
-    let digits: Int
+/// A hunk's header. It holds the text and nothing else: where it stands is
+/// the listing's order. The space before it is what separates one hunk from
+/// the one above.
+struct ComparisonDiffHeaderView: View {
+    let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(hunk.header)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-            ForEach(hunk.lines, id: \.id) { entry in
-                ComparisonDiffLineView(entry: entry, digits: digits)
-            }
-        }
-        .padding(.bottom, 8)
+        Text(text)
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .padding(.top, 8)
     }
 }
 
