@@ -268,6 +268,67 @@ enum ComparisonOverviewPresentation {
         }
     }
 
+    // MARK: - What the view maps over
+
+    /// One figure above the list: a state, how many rows are in it, and its
+    /// label. Everything the view draws for a figure comes from this value.
+    struct Figure: Equatable, Sendable {
+        /// A representative of the bucket: for `undetermined` the bucket and
+        /// the label are the state's, not any one reason's.
+        let state: ComparisonState
+        let number: Int
+        let label: String
+
+        /// Stable across redraws: the catalogue key, or the marker for the
+        /// state that has none.
+        var id: String { ComparisonOverviewPresentation.key(for: state) ?? "unexpected" }
+    }
+
+    /// The figures, in the order they are drawn. One per state a row can
+    /// carry, `unexpected` only when something is in it. **The view draws
+    /// exactly this list and nothing else**, so "the figures account for every
+    /// row" is a property of THIS function (`figures.map(\.number)` sums to
+    /// `counts.total`), stated once and tested once, and not a property of a
+    /// sequence of calls written out in a view.
+    static func summaryFigures(_ counts: Counts) -> [Figure] {
+        var states: [ComparisonState] = [
+            .onlyLeft, .onlyRight, .differs, .typeMismatch, .undetermined(.unreadable), .same,
+        ]
+        if counts.unexpected > 0 { states.append(.bothDirectories) }
+        return states.map { state in
+            Figure(state: state, number: counts.count(for: state), label: label(for: state))
+        }
+    }
+
+    /// One row of the list as the view draws it: the path, the label of the
+    /// row's OWN state, and — only for an undetermined row — why.
+    struct RowEntry: Equatable, Sendable {
+        let path: String
+        let label: String
+        let reason: String?
+        /// Whether the row is a match, which the view sets in a quieter
+        /// colour. A property of the row's state, not of its label.
+        let isMatch: Bool
+    }
+
+    /// The list, in the order the walk produced it, one entry per row. **The
+    /// view draws exactly this list**: it holds no row to rebind and no
+    /// collection to slice, so "every row shows its own state, none is
+    /// hidden" is a property of THIS function and is tested here.
+    static func rowEntries(_ rows: [ComparisonRow]) -> [RowEntry] {
+        rows.map { row in
+            let reason: String?
+            switch row.state {
+            case .undetermined(let why): reason = text(for: why)
+            case .onlyLeft, .onlyRight, .same, .differs, .typeMismatch, .bothDirectories:
+                reason = nil
+            }
+            return RowEntry(
+                path: row.relativePath, label: label(forRow: row), reason: reason,
+                isMatch: row.state == .same)
+        }
+    }
+
     /// The label of one row: its OWN state's. One function taking the row,
     /// so the view has no state argument to get wrong and a source scan can
     /// pin the single call (`ComparisonOverviewTests`).
@@ -352,15 +413,17 @@ struct ComparisonOverviewView: View {
     var body: some View {
         let rows = comparison.rows
         let counts = ComparisonOverviewPresentation.counts(of: rows)
+        let figures = ComparisonOverviewPresentation.summaryFigures(counts)
+        let entries = ComparisonOverviewPresentation.rowEntries(rows)
         VStack(alignment: .leading, spacing: 0) {
-            summary(counts)
+            summary(figures)
             Divider()
-            if rows.isEmpty {
+            if entries.isEmpty {
                 placeholder(rowCount: rows.count)
             } else {
                 List {
-                    ForEach(rows, id: \.relativePath) { row in
-                        ComparisonOverviewRow(row: row)
+                    ForEach(entries, id: \.path) { entry in
+                        ComparisonOverviewRow(entry: entry)
                     }
                 }
                 .listStyle(.plain)
@@ -368,7 +431,7 @@ struct ComparisonOverviewView: View {
         }
     }
 
-    private func summary(_ counts: ComparisonOverviewPresentation.Counts) -> some View {
+    private func summary(_ figures: [ComparisonOverviewPresentation.Figure]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if comparison.isRunning {
                 HStack(spacing: 8) {
@@ -379,37 +442,14 @@ struct ComparisonOverviewView: View {
                 }
             }
             HStack(alignment: .top, spacing: 16) {
-                countFigure(.onlyLeft, counts)
-                countFigure(.onlyRight, counts)
-                countFigure(.differs, counts)
-                countFigure(.typeMismatch, counts)
-                countFigure(.undetermined(.unreadable), counts)
-                countFigure(.same, counts)
-                if counts.unexpected > 0 {
-                    countFigure(.bothDirectories, counts)
+                ForEach(figures, id: \.id) { figure in
+                    ComparisonOverviewFigure(figure: figure)
                 }
                 Spacer(minLength: 0)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-    }
-
-    /// One figure: the number and the state's own label under it. The
-    /// `undetermined` argument is a representative: the bucket and the label
-    /// are the state's, not the reason's.
-    private func countFigure(
-        _ state: ComparisonState, _ counts: ComparisonOverviewPresentation.Counts
-    ) -> some View {
-        let number = counts.count(for: state)
-        return VStack(alignment: .leading, spacing: 2) {
-            Text("\(number)")
-                .font(.title3.monospacedDigit())
-            Text(ComparisonOverviewPresentation.label(for: state))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
     }
 
     /// A walk still running has found nothing yet; a walk that finished and
@@ -429,23 +469,42 @@ struct ComparisonOverviewView: View {
     }
 }
 
+/// One figure, drawn from the value the presentation made.
+private struct ComparisonOverviewFigure: View {
+    let figure: ComparisonOverviewPresentation.Figure
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(String(figure.number))
+                .font(.title3.monospacedDigit())
+            Text(figure.label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One row, drawn from the value the presentation made. It holds no
+/// `ComparisonRow` and calls no label function: there is nothing here to
+/// rebind to a different state.
 private struct ComparisonOverviewRow: View {
-    let row: ComparisonRow
+    let entry: ComparisonOverviewPresentation.RowEntry
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.relativePath)
+                Text(entry.path)
                     .lineLimit(1).truncationMode(.middle)
-                if case .undetermined(let reason) = row.state {
-                    Text(ComparisonOverviewPresentation.text(for: reason))
+                if let reason = entry.reason {
+                    Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 8)
-            Text(ComparisonOverviewPresentation.label(forRow: row))
-                .foregroundStyle(row.state == .same ? .secondary : .primary)
+            Text(entry.label)
+                .foregroundStyle(entry.isMatch ? .secondary : .primary)
         }
         .textSelection(.enabled)
     }

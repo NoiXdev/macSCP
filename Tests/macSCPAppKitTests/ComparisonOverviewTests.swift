@@ -240,6 +240,32 @@ struct ComparisonOverviewTests {
         #expect(!text.contains("this is a link"))
     }
 
+    /// The third branch of `unsupportedKind` ("or its type was not reported"),
+    /// and the "at least one side" of the two reasons that say it, in EACH
+    /// catalogue's own words. A branch deleted from one translation must not
+    /// hide behind the English one being intact.
+    private static let ownWords: [String: (unreported: String, atLeastOne: String)] = [
+        "en": ("its type was not reported", "at least one side"),
+        "de": ("sein Typ wurde nicht gemeldet", "Mindestens eine Seite"),
+        "fr": ("son type n’a pas été signalé", "au moins un côté"),
+        "pl": ("jego typ nie został zgłoszony", "co najmniej jedna strona"),
+    ]
+
+    @Test func everyCatalogueCarriesTheUnreportedTypeBranchAndTheAtLeastOneSide() throws {
+        #expect(Set(Self.ownWords.keys) == Set(Self.locales))
+        for locale in Self.locales {
+            let words = try #require(Self.ownWords[locale])
+            let catalogue = try Self.catalogue(locale)
+            let unsupported = try #require(catalogue[Presentation.key(for: .unsupportedKind)])
+            let etag = try #require(catalogue[Presentation.key(for: .etagIsNotAFileHash)])
+            let checksum = try #require(catalogue[Presentation.key(for: .checksumUnavailable)])
+            #expect(unsupported.contains(words.unreported), "\(locale): \(unsupported)")
+            #expect(etag.localizedCaseInsensitiveContains(words.atLeastOne), "\(locale): \(etag)")
+            #expect(
+                checksum.localizedCaseInsensitiveContains(words.atLeastOne), "\(locale): \(checksum)")
+        }
+    }
+
     /// Both sides of an S3-to-S3 pair can be multipart.
     @Test func theEtagReasonSaysAtLeastOneSide() throws {
         let english = try Self.catalogue("en")
@@ -558,62 +584,163 @@ struct ComparisonOverviewTests {
         #expect(!code.contains("default:"))
     }
 
-    @Test func theViewReadsItsWordsAndCountsFromThePresentation() throws {
-        let code = try Self.code("ComparisonOverview.swift")
-        #expect(code.contains("struct ComparisonOverviewView"))
-        #expect(code.contains("ComparisonOverviewPresentation.label(for:"))
-        #expect(code.contains("ComparisonOverviewPresentation.text(for:"))
-        #expect(code.contains("ComparisonOverviewPresentation.counts(of:"))
-    }
-
     private static func occurrences(of needle: String, in text: String) -> Int {
         text.components(separatedBy: needle).count - 1
     }
 
-    /// The part of the overview file that is the view, from its first struct
-    /// on; everything above it is the presentation.
-    private static func viewCode() throws -> (view: String, row: String) {
+    /// The overview file split at its three views: the list-and-summary view,
+    /// the figure and the row. Everything above them is the presentation.
+    private static func viewCode() throws -> (view: String, figure: String, row: String) {
         let source = try Self.code("ComparisonOverview.swift")
         let viewStart = try #require(source.range(of: "struct ComparisonOverviewView"))
+        let figureStart = try #require(source.range(of: "struct ComparisonOverviewFigure"))
         let rowStart = try #require(source.range(of: "struct ComparisonOverviewRow"))
-        #expect(viewStart.lowerBound < rowStart.lowerBound)
+        #expect(viewStart.lowerBound < figureStart.lowerBound)
+        #expect(figureStart.lowerBound < rowStart.lowerBound)
         return (
-            String(source[viewStart.lowerBound..<rowStart.lowerBound]),
+            String(source[viewStart.lowerBound..<figureStart.lowerBound]),
+            String(source[figureStart.lowerBound..<rowStart.lowerBound]),
             String(source[rowStart.lowerBound...])
         )
     }
 
-    /// A row's label has ONE spelling in the view: `label(forRow: row)`, with
-    /// the row it draws as the argument. Calling `label(for:)` anywhere in the
-    /// row is the defect (a one-token edit to `label(for: .same)` makes every
-    /// row read "Same contents"), so the negative checks sit beside the
-    /// positive one, and the figure above the list keeps its own: the state
-    /// it was handed, for the number of THAT state.
-    @Test func eachRowIsLabelledFromItsOwnRowAndNothingInTheViewNamesAStateLiterally() throws {
-        let (view, row) = try Self.viewCode()
+    // MARK: - What the view maps over
 
-        // Positive: the row draws its label from its own row, exactly once,
-        // and its reason from the state it holds.
-        #expect(Self.occurrences(of: "label(forRow: row)", in: row) == 1)
-        #expect(row.contains("if case .undetermined(let reason) = row.state"))
-        #expect(Self.occurrences(of: "text(for: reason)", in: row) == 1)
-        // Negative: no `label(for:` of any argument in the row, and none with
-        // a literal state anywhere in the view.
-        #expect(!row.contains("label(for:"))
-        #expect(!view.contains("label(for: ."))
-        #expect(!row.contains("text(for: ."))
+    private static let mixedRows: [ComparisonRow] = rows([
+        .onlyLeft, .onlyRight, .same, .same, .differs, .typeMismatch,
+        .undetermined(.checksumUnavailable), .undetermined(.unreadable),
+        .undetermined(.algorithmUnavailable(.md5)), .same, .onlyLeft,
+    ])
 
-        // The figure: the label and the count come from the SAME parameter.
-        #expect(Self.occurrences(of: "label(for: state)", in: view) == 1)
-        #expect(Self.occurrences(of: "= counts.count(for: state)", in: view) == 1)
-        #expect(!view.contains("counts.count(for: ."))
-        #expect(Self.occurrences(of: "label(for:", in: view) == 1)
+    /// The property "the figures account for every row", stated once: what the
+    /// view draws is this list, so it holds here and nowhere else.
+    @Test func theFiguresAccountForEveryRow() throws {
+        for fixture in [Self.mixedRows, [], Self.rows([.undetermined(.unreadable)])] {
+            let counts = Presentation.counts(of: fixture)
+            let figures = Presentation.summaryFigures(counts)
+
+            #expect(figures.map(\.number).reduce(0, +) == counts.total)
+            #expect(counts.total == fixture.count)
+            // Each figure's number is its own bucket and its label its own
+            // state's.
+            for figure in figures {
+                #expect(figure.number == counts.count(for: figure.state))
+                #expect(figure.label == Presentation.label(for: figure.state))
+            }
+        }
+    }
+
+    @Test func everyStateAppearsOnceAndTheUnexpectedFigureOnlyWhenSomethingIsInIt() throws {
+        let expectedKeys = Set(
+            try [ComparisonState.onlyLeft, .onlyRight, .same, .differs, .typeMismatch,
+                 .undetermined(.unreadable)]
+            .map { try #require(Presentation.key(for: $0)) })
+        #expect(expectedKeys.count == 6)
+
+        let figures = Presentation.summaryFigures(Presentation.counts(of: Self.mixedRows))
+        #expect(figures.count == 6)
+        #expect(Set(figures.map(\.id)) == expectedKeys)
+        #expect(Set(figures.map(\.label)).count == 6)
+        #expect(!figures.contains { $0.state == .bothDirectories })
+
+        // With a surprising row: a seventh figure, last, counting it.
+        let surprising = Presentation.summaryFigures(
+            Presentation.counts(of: Self.mixedRows + Self.rows([.bothDirectories, .bothDirectories])))
+        #expect(surprising.count == 7)
+        #expect(surprising.last?.state == .bothDirectories)
+        #expect(surprising.last?.number == 2)
+        #expect(Set(surprising.map(\.id)).count == 7)
+        #expect(surprising.map(\.number).reduce(0, +) == Self.mixedRows.count + 2)
+    }
+
+    @Test func theListHoldsEveryRowInOrderEachWithItsOwnLabel() throws {
+        let entries = Presentation.rowEntries(Self.mixedRows)
+
+        // Same rows, same order: none hidden, none added.
+        #expect(entries.count == Self.mixedRows.count)
+        #expect(entries.map(\.path) == Self.mixedRows.map(\.relativePath))
+
+        for (row, entry) in zip(Self.mixedRows, entries) {
+            #expect(entry.label == Presentation.label(for: row.state))
+            #expect(entry.isMatch == (row.state == .same))
+            if case .undetermined(let reason) = row.state {
+                #expect(entry.reason == Presentation.text(for: reason))
+            } else {
+                #expect(entry.reason == nil)
+            }
+        }
+    }
+
+    /// The sentence the whole subsystem exists to keep off rows nothing
+    /// measured: a row that is not `same` never carries the `same` label, and
+    /// an undetermined one always carries a reason beside its own label.
+    @Test func noRowButASameRowReadsAsSameAndEveryUndeterminedRowSaysWhy() throws {
+        let entries = Presentation.rowEntries(Self.mixedRows)
+        let sameLabel = Presentation.label(for: .same)
+        #expect(entries.filter { $0.label == sameLabel }.count == 3)
+        #expect(entries.filter { $0.isMatch }.count == 3)
+        for (row, entry) in zip(Self.mixedRows, entries) where row.state != .same {
+            #expect(entry.label != sameLabel, "\(row.relativePath)")
+        }
+        let undetermined = entries.filter { $0.reason != nil }
+        #expect(undetermined.count == 3)
+        #expect(undetermined.allSatisfy { $0.label == Presentation.label(for: .undetermined(.unreadable)) })
+        #expect(Set(undetermined.compactMap(\.reason)).count == 3)
+    }
+
+    // MARK: - The view draws what the functions return
+
+    private static let slicing = [
+        "dropFirst", "dropLast", ".prefix(", ".suffix(", ".filter", "reversed", "sorted",
+        "shuffled", "removeFirst", ".first", ".last",
+    ]
+
+    /// The residual scan: the views iterate each function's output, once, and
+    /// hold nothing to rebind or slice. Every negative check has the positive
+    /// one beside it.
+    @Test func theViewsDrawOnlyWhatTheFunctionsReturn() throws {
+        let (view, figure, row) = try Self.viewCode()
+
+        // Positive: one call of each function, one iteration of each output.
+        #expect(Self.occurrences(of: "ComparisonOverviewPresentation.summaryFigures(counts)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewPresentation.rowEntries(rows)", in: view) == 1)
+        #expect(Self.occurrences(of: "ForEach(figures, id: \\.id)", in: view) == 1)
+        #expect(Self.occurrences(of: "ForEach(entries, id: \\.path)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewFigure(figure: figure)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewRow(entry: entry)", in: view) == 1)
+        #expect(Self.occurrences(of: "summary(figures)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonOverviewPresentation.counts(of: rows)", in: view) == 1)
+        // Negative: nothing is sliced, reordered or relabelled in the view.
+        for token in Self.slicing {
+            #expect(!view.contains(token), "the view uses \(token)")
+        }
+        #expect(!view.contains("label("))
+        #expect(!view.contains("text(for"))
+        #expect(!view.contains(".same"))
+
+        // The figure and the row draw their one value, and hold no state, no
+        // row and no presentation call to bind anything else to.
+        #expect(figure.contains("Text(figure.label)"))
+        #expect(Self.occurrences(of: "Text(String(figure.number))", in: figure) == 1)
+        #expect(Self.occurrences(of: "Text(entry.path)", in: row) == 1)
+        #expect(Self.occurrences(of: "Text(entry.label)", in: row) == 1)
+        #expect(Self.occurrences(of: "if let reason = entry.reason", in: row) == 1)
+        for part in [figure, row] {
+            #expect(!part.contains("ComparisonRow"))
+            #expect(!part.contains("ComparisonState"))
+            #expect(!part.contains("RowEntry("))
+            #expect(!part.contains("Figure("))
+            // The type annotation names the presentation once; no call does.
+            #expect(Self.occurrences(of: "Presentation", in: part) == 1)
+            #expect(!part.contains(".same"))
+            #expect(!part.contains("label("))
+        }
     }
 
     /// The decisions about what to show are the presentation's, and the view
     /// asks: it does not spell the condition itself.
     @Test func theViewAsksThePresentationWhatToShowAndWhatToCount() throws {
-        let (view, _) = try Self.viewCode()
+        let (view, _, _) = try Self.viewCode()
         #expect(view.contains("ComparisonOverviewPresentation.showsEmptyNotice("))
         #expect(!view.contains(".completed"))
         // The progress line counts the rows held, like the figures do.
