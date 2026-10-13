@@ -63,11 +63,39 @@ import Testing
 
     /// Beside the three window tests above: the window limits only the NUL
     /// rule. Bytes that are not valid UTF-8 refuse the content wherever they
-    /// sit, so a binary file whose first NUL is late is still caught.
-    @Test func invalidUTF8PastTheWindowIsStillBinary() {
+    /// sit, so a file whose first NUL is late is still refused, as not UTF-8.
+    @Test func invalidUTF8PastTheWindowIsStillRefusedAsNotUTF8() {
         var bytes = ascii(9000)
         bytes[8500] = 0xFF
+        #expect(DiffEligibility.refusal(forBytes: bytes) == .notUTF8)
+    }
+
+    // MARK: - The two causes are kept apart
+
+    /// Text in a single-byte encoding is the common case behind a UTF-8
+    /// failure, and it is text: it must not be reported as binary.
+    @Test(arguments: [
+        ("Latin-1 'caf\u{E9}'", [0x63, 0x61, 0x66, 0xE9, 0x0A]),
+        ("Windows-1252 curly quotes", [0x93, 0x68, 0x69, 0x94, 0x0A]),
+    ] as [(String, [UInt8])])
+    func textInASingleByteEncodingIsNotUTF8AndNotBinary(_ label: String, _ bytes: [UInt8]) {
+        #expect(DiffEligibility.refusal(forBytes: bytes) == .notUTF8, "\(label)")
+        #expect(DiffEligibility.refusal(forBytes: bytes) != .binary, "\(label)")
+    }
+
+    /// Beside it: a NUL in valid UTF-8 is the binary cause, and it is not
+    /// reported as an encoding problem.
+    @Test func aNulInOtherwiseValidUTF8IsBinaryAndNotNotUTF8() {
+        let bytes = Array("caf\u{E9}".utf8) + [0x00] + Array("\n".utf8)
         #expect(DiffEligibility.refusal(forBytes: bytes) == .binary)
+        #expect(DiffEligibility.refusal(forBytes: bytes) != .notUTF8)
+    }
+
+    /// Content with both a NUL in the window and invalid bytes is reported by
+    /// the earlier check, which is the NUL rule.
+    @Test func aNulInTheWindowWinsOverInvalidBytes() {
+        #expect(DiffEligibility.refusal(forBytes: [0xE9, 0x00]) == .binary)
+        #expect(DiffEligibility.refusal(forBytes: [0x00, 0xE9]) == .binary)
     }
 
     // MARK: - UTF-8 validity
@@ -92,8 +120,8 @@ import Testing
         ("a lead byte that can never occur", [0xF5, 0x80, 0x80, 0x80]),
         ("the byte 0xFF", [0xFF]),
     ] as [(String, [UInt8])])
-    func invalidUTF8IsBinary(_ label: String, _ bytes: [UInt8]) {
-        #expect(DiffEligibility.refusal(forBytes: bytes) == .binary, "\(label)")
+    func invalidUTF8IsNotUTF8(_ label: String, _ bytes: [UInt8]) {
+        #expect(DiffEligibility.refusal(forBytes: bytes) == .notUTF8, "\(label)")
     }
 
     /// Beside the invalid table: the complete sequences at the edges that
@@ -116,12 +144,12 @@ import Testing
 
     /// The truncation that matters most in practice: a download or a read cut
     /// off in the middle of a character, at the very end of a large buffer.
-    @Test func aMultiByteSequenceCutOffAtTheEndOfALargeBufferIsBinary() {
+    @Test func aMultiByteSequenceCutOffAtTheEndOfALargeBufferIsNotUTF8() {
         let whole = ascii(100_000) + [0xE2, 0x82, 0xAC]
         #expect(DiffEligibility.refusal(forBytes: whole) == nil)
 
         let cut = ascii(100_000) + [0xE2, 0x82]
-        #expect(DiffEligibility.refusal(forBytes: cut) == .binary)
+        #expect(DiffEligibility.refusal(forBytes: cut) == .notUTF8)
     }
 
     // MARK: - The ceiling
@@ -139,8 +167,9 @@ import Testing
                     ceiling: DiffEligibility.ceilingBytes))
     }
 
-    /// The window tests above only mean something if the window fits inside
-    /// the ceiling; this is the positive check that they are not vacuous.
+    /// The window tests above build buffers of up to 8002 bytes. If the
+    /// ceiling ever fell below that they would go red as `.tooLarge`, each
+    /// for an unrelated-looking reason; this names that regression once.
     @Test func theCeilingIsLargerThanTheNulWindow() {
         #expect(DiffEligibility.ceilingBytes > 8002)
     }
@@ -149,7 +178,7 @@ import Testing
 
     /// Size is checked first: it is the cheaper fact (no byte is read) and
     /// the one the user can act on, and an oversized file is never scanned.
-    @Test func anOversizedBinaryIsReportedAsTooLargeNotBinary() {
+    @Test func anOversizedFileIsReportedAsTooLargeNotItsOtherCause() {
         let nulFirst = ascii(DiffEligibility.ceilingBytes + 1, nulAt: 0)
         #expect(
             DiffEligibility.refusal(forBytes: nulFirst)
@@ -167,14 +196,14 @@ import Testing
     }
 
     /// Beside the order test: at the ceiling itself the same content is
-    /// binary, so the test above is about the order and not about the
-    /// content having been accepted.
-    @Test func theSameBinaryContentAtTheCeilingIsReportedAsBinary() {
+    /// refused for its own cause, so the test above is about the order and
+    /// not about the content having been accepted.
+    @Test func theSameContentAtTheCeilingIsRefusedForItsOwnCause() {
         let nulFirst = ascii(DiffEligibility.ceilingBytes, nulAt: 0)
         #expect(DiffEligibility.refusal(forBytes: nulFirst) == .binary)
 
         var notUTF8 = ascii(DiffEligibility.ceilingBytes)
         notUTF8[notUTF8.count - 1] = 0xFF
-        #expect(DiffEligibility.refusal(forBytes: notUTF8) == .binary)
+        #expect(DiffEligibility.refusal(forBytes: notUTF8) == .notUTF8)
     }
 }
