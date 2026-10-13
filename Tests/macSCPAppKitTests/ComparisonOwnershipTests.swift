@@ -237,6 +237,72 @@ struct ComparisonOwnershipTests {
         #expect(tab.comparisons.isEmpty)
     }
 
+    /// The same, for a remote-to-remote comparison ("two files of one
+    /// session"), where BOTH sides are remote and the left is no longer a
+    /// value type a weak box cannot track. One session has one remote file
+    /// system, so both sides are the same object here; the case where the two
+    /// sides are different objects is the next test.
+    @Test func aTornDownRemoteToRemoteComparisonRetainsNoFileSystemInAnyShape() async throws {
+        let box = WeakBox<ParkedFS>()
+        let remote = { () -> (SessionTab, Comparison) in
+            let fs = ParkedFS()
+            box.value = fs
+            let tab = self.connectedTab(remote: fs)
+            let comparison = tab.startComparison(
+                left: .remote, leftRoot: "/a", right: .remote, rightRoot: "/b",
+                algorithm: .sha256)!
+            return (tab, comparison)
+        }
+        let (tab, comparison) = remote()
+
+        try await box.value?.waitUntilParked(count: 1)
+        #expect(box.value != nil)
+
+        await TabTeardown.run(tab, reason: .userRequested)
+        try await box.value?.waitUntilCancelled(count: 1)
+        await comparison.waitForWalk()
+
+        #expect(box.value == nil, "something still holds the file system after teardown")
+        #expect(comparison.isFinished)
+        #expect(tab.comparisons.isEmpty)
+    }
+
+    /// Two DISTINCT class file systems, weakly tracked on both sides. A
+    /// session has one remote object, so this cannot go through a tab; it
+    /// performs the two calls `SessionTab.endComparisons()` makes, in its
+    /// order, on a `Comparison` built over two objects. What it adds is the
+    /// LEFT side: a file system held on the left only (a spare, a wrapper, a
+    /// global) is invisible to every test whose left is the local value type.
+    @Test func aReleasedComparisonRetainsNeitherOfTwoDistinctFileSystems() async throws {
+        let left = WeakBox<ParkedFS>()
+        let right = WeakBox<ParkedFS>()
+        let build = { () -> Comparison in
+            let leftFS = ParkedFS()
+            let rightFS = ParkedFS()
+            left.value = leftFS
+            right.value = rightFS
+            let comparison = Comparison(
+                left: leftFS, leftRoot: "/a", right: rightFS, rightRoot: "/b", algorithm: .sha256)
+            comparison.start()
+            return comparison
+        }
+        let comparison = build()
+
+        // The walk lists the left side first and parks there.
+        try await left.value?.waitUntilParked(count: 1)
+        #expect(left.value != nil)
+        #expect(right.value != nil)
+
+        comparison.cancel()
+        comparison.releaseFileSystems()
+        try await left.value?.waitUntilCancelled(count: 1)
+        await comparison.waitForWalk()
+
+        #expect(left.value == nil, "something still holds the LEFT file system")
+        #expect(right.value == nil, "something still holds the RIGHT file system")
+        #expect(comparison.isFinished)
+    }
+
     /// `tab.session` stays attached through every suspension point of the
     /// teardown, so "no session" cannot be what refuses a comparison started
     /// from one. The attempt is made from inside `disconnect()`, which the
