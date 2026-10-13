@@ -1602,3 +1602,25 @@
 "compare.window.unavailable" = "Cette comparaison n’est plus disponible : sa session a été fermée avant que cette fenêtre puisse l’afficher.";
 "compare.window.cancelled" = "Cette comparaison a été arrêtée avant la fin. La liste est incomplète.";
 "compare.window.failed" = "Cette comparaison n’a pas pu aller à son terme. La liste est incomplète.";
+
+/* Folder overview (diff view plan, Task 10) */
+"compare.state.onlyLeft" = "Seulement à gauche";
+"compare.state.onlyRight" = "Seulement à droite";
+"compare.state.same" = "Contenu identique";
+"compare.state.differs" = "Différent";
+"compare.state.typeMismatch" = "Types différents";
+"compare.state.undetermined" = "Indéterminé";
+"compare.reason.checksumUnavailable" = "Non comparé : au moins un côté n’a pas pu fournir de somme de contrôle pour ce fichier.";
+"compare.reason.algorithmUnavailable %@" = "Non comparé : un côté n’a pas pu calculer de somme de contrôle %@. Un autre algorithme de somme de contrôle peut être choisi dans les Réglages.";
+"compare.reason.algorithmsDiffer" = "Non comparé : les deux côtés ont répondu avec des algorithmes de somme de contrôle différents, qui ne disent rien l’un de l’autre.";
+"compare.reason.etagIsNotAFileHash" = "Non comparé : un côté n’a fourni que l’ETag d’un envoi en plusieurs parties, qui n’est pas une somme de contrôle du contenu du fichier.";
+"compare.reason.unsupportedKind" = "Non comparé : il s’agit d’un lien ou d’une entrée spéciale, et macSCP ne compare pas ces éléments.";
+"compare.reason.unreadable" = "macSCP n’a pas pu lire ce chemin ; rien n’y a donc été comparé.";
+"compare.action.compareAnyway" = "Comparer quand même les contenus";
+"compare.progress %lld" = "Entrées trouvées jusqu’ici : %lld";
+"compare.cancel" = "Arrêter";
+"compare.overview.empty" = "La comparaison n’a trouvé ni fichiers ni différences.";
+"compare.failure.notFound %@" = "Dossier introuvable : %@";
+"compare.failure.reported %@" = "Cause signalée : %@";
+"compare.failure.noDetail" = "Aucune cause n’a été signalée.";
+"compare.failure.interrupted" = "La comparaison a été interrompue alors que personne ne l’avait arrêtée.";

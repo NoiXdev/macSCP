@@ -187,11 +187,13 @@ struct ComparisonWindow: View {
             roots(of: comparison)
             Divider()
             notices(for: comparison)
-            // The folder overview (Task 10) and the content diff (Task 11)
-            // are drawn here, from `comparison`. Anything in them that needs
-            // a connection reads `comparison.fileSystems`, which is `nil`
-            // once the session has closed.
-            Spacer(minLength: 0)
+            // The folder overview (Task 10) fills the upper half, from
+            // `comparison`; the content diff (Task 11) is drawn below it.
+            // Anything in either that needs a connection reads
+            // `comparison.fileSystems`, which is `nil` once the session has
+            // closed.
+            ComparisonOverviewView(comparison: comparison)
+                .frame(maxHeight: .infinity)
         }
     }
 
@@ -226,7 +228,7 @@ struct ComparisonWindow: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
                 }
-            case .failed?:
+            case .failed(let error)?:
                 Label {
                     L10n.text(
                         "compare.window.failed",
@@ -234,6 +236,10 @@ struct ComparisonWindow: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
                 }
+                // What failed, in the app's language: the generic line above
+                // alone is the message this view used to stop at.
+                Text(ComparisonOverviewPresentation.failureCause(for: error))
+                    .textSelection(.enabled)
             case .completed?, nil:
                 EmptyView()
             }

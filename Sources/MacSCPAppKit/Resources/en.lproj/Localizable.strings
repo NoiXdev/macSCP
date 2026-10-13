@@ -1605,3 +1605,25 @@
 "compare.window.unavailable" = "This comparison is no longer available: its session was closed before this window could show it.";
 "compare.window.cancelled" = "This comparison was stopped before it finished. The list is incomplete.";
 "compare.window.failed" = "This comparison could not be completed. The list is incomplete.";
+
+/* Folder overview (diff view plan, Task 10) */
+"compare.state.onlyLeft" = "Only on the left";
+"compare.state.onlyRight" = "Only on the right";
+"compare.state.same" = "Same contents";
+"compare.state.differs" = "Different";
+"compare.state.typeMismatch" = "Different types";
+"compare.state.undetermined" = "Not determined";
+"compare.reason.checksumUnavailable" = "Not compared: at least one side could not provide a checksum for this file.";
+"compare.reason.algorithmUnavailable %@" = "Not compared: a side could not compute a %@ checksum. A different checksum algorithm can be chosen in Settings.";
+"compare.reason.algorithmsDiffer" = "Not compared: the two sides answered with different checksum algorithms, which say nothing about each other.";
+"compare.reason.etagIsNotAFileHash" = "Not compared: one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents.";
+"compare.reason.unsupportedKind" = "Not compared: this is a link or a special entry, and macSCP does not compare those.";
+"compare.reason.unreadable" = "macSCP could not read this path, so nothing here was compared.";
+"compare.action.compareAnyway" = "Compare contents anyway";
+"compare.progress %lld" = "Entries found so far: %lld";
+"compare.cancel" = "Stop";
+"compare.overview.empty" = "The comparison found no files and no differences.";
+"compare.failure.notFound %@" = "Folder not found: %@";
+"compare.failure.reported %@" = "Reported cause: %@";
+"compare.failure.noDetail" = "No cause was reported.";
+"compare.failure.interrupted" = "The comparison was interrupted although nobody stopped it.";
