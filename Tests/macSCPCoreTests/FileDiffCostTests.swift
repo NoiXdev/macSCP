@@ -71,6 +71,19 @@ import Testing
 /// property of the two harnesses. What can be said is that neither harness
 /// disagrees with the other by more than this machine disagrees with itself.
 ///
+/// **Both halves of that comparison are now from the SAME binary**, which
+/// they were not when the sentence above was first written: the suite had
+/// not been re-run after `FileDiff`'s table was flattened, so a suite figure
+/// from the nested build was standing against a script figure from the flat
+/// one — which compares two builds, not two harnesses. Re-run on the
+/// flattened tree, 2026-10-13, same machine, `MACSCP_DIFF_COST=1 swift test
+/// -c release --filter FileDiffCostTests`: 5 cases passed in 18.235 s, and
+/// `ladder/16384/1line` came back at **2.027736875 s** against the script's
+/// **2.14717925 s** for the same case — **5.9% apart, inside the 10.1%
+/// this machine moves between two runs of one harness.** The claim survives
+/// the correction; what did not survive was the right to make it from two
+/// different builds.
+///
 /// The figures are in `DiffEligibility`'s own doc comments, beside the
 /// constants they settled, and in full in the design spec's "Too large"
 /// bullet. All of them were re-taken after `FileDiff`'s table was flattened;
