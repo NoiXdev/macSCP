@@ -263,14 +263,49 @@ struct ComparisonDiffViewTests {
         let mismatch = Presentation.failureText(
             for: ComparisonFetchError.noContentToCompare(.typeMismatch))
         #expect(Set([onlyLeft, onlyRight, mismatch]).count == 3)
-        // The six reasons share one sentence (the row above already says
-        // which), and it is not one of the three.
+        // The six reasons read as two sentences (which of the two is held to
+        // `canBeSettledByBytes` below), and neither is one of the three.
         let undetermined = Set(
             Self.allStates.filter {
                 if case .undetermined = $0 { return true } else { return false }
             }.map { Presentation.failureText(for: ComparisonFetchError.noContentToCompare($0)) })
-        #expect(undetermined.count == 1)
+        #expect(undetermined.count == 2)
         #expect(undetermined.isDisjoint(with: [onlyLeft, onlyRight, mismatch]))
+    }
+
+    /// "macSCP could not tell that both sides are ordinary files" is true of
+    /// the reasons bytes cannot settle and false of the four they can, where
+    /// the classification has already established two ordinary files. The
+    /// split is held to `canBeSettledByBytes`, which is also what lets a row
+    /// be diffed at all, so a change there cannot make this wording lie.
+    @Test func theNotKnownToBeFilesSentenceIsOnlyForTheReasonsThatCanReachIt() {
+        let notKnown = Presentation.Wording(
+            key: "compare.diff.failure.notKnownFiles", english: "x")
+        var withheld = 0
+        var general = 0
+        for state in Self.allStates {
+            guard case .undetermined(let reason) = state else { continue }
+            let wording = Presentation.wording(forNoContentIn: state)
+            if reason.canBeSettledByBytes {
+                #expect(wording == Presentation.notPossible, Comment(rawValue: "\(reason)"))
+                general += 1
+            } else {
+                #expect(wording.key == notKnown.key, Comment(rawValue: "\(reason)"))
+                withheld += 1
+            }
+        }
+        #expect(general == 4 && withheld == 2)
+    }
+
+    /// The other half, with a real comparison: a row the four settleable
+    /// reasons describe IS diffed, so it never reaches the no-contents text.
+    @Test func aRowWhoseChecksumCouldNotBeHadIsDiffedAndNotRefused() async throws {
+        let rig = try await folderRig(left: ["a": data("1")], right: ["a": data("2")])
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        #expect(rig.comparison.rows.map(\.state) == [.undetermined(.checksumUnavailable)])
+        let model = ComparisonDiffModel()
+        await model.load(.row(path: "a"), on: rig.comparison)
+        #expect(shown(Presentation.screen(target: .row(path: "a"), loaded: model.loaded)) == ["-1", "+2"])
     }
 
     @Test func aForeignErrorIsShownAsItsCauseUnderTheDiffsOwnFrame() {
@@ -557,6 +592,37 @@ struct ComparisonDiffViewTests {
         #expect(listing.legend == Presentation.legend.text)
     }
 
+    /// The seam the listing test above does not cross: what `screen` builds
+    /// from the hunks it was given. Two hunks (and three) in, the same
+    /// hunks out, in order; a screen that kept the first, or turned them
+    /// round, would read as a complete diff of a file whose last change it
+    /// never shows.
+    @Test func theScreenListsEveryHunkTheDiffReturnedInOrder() throws {
+        let target = Presentation.Target.row(path: "p")
+        var checked = 0
+        for fixture in [Self.fixtures[6], Self.fixtures[7]]
+        + [Fixture(name: "three", left: Self.numbered(60), right: Self.numbered(60, changing: [2, 30, 58]))] {
+            let hunks = FileDiff.hunks(left: fixture.left, right: fixture.right, context: 1)
+            #expect(hunks.count >= 1, Comment(rawValue: fixture.name))
+            let screen = Presentation.screen(
+                target: target, loaded: .init(target: target, outcome: .hunks(hunks)))
+            guard case .listing(let listing) = screen else {
+                Issue.record("\(fixture.name): not a listing")
+                continue
+            }
+            #expect(listing.hunks.map(\.header) == hunks.map(Presentation.header(for:)))
+            #expect(listing.hunks.map(\.lines.count) == hunks.map(\.lines.count))
+            let shownTexts = listing.hunks.flatMap(\.lines).map { Self.visible($0.runs) }
+            #expect(shownTexts == hunks.flatMap(\.lines).map(\.text))
+            checked += hunks.count
+        }
+        // Positive: more than one hunk was actually exercised, three at most.
+        #expect(checked >= 2 + 1 + 3)
+        let multi = FileDiff.hunks(left: Self.fixtures[6].left, right: Self.fixtures[6].right, context: 3)
+        #expect(multi.count == 2)
+        #expect(Set(multi.map(Presentation.header(for:))).count == 2)
+    }
+
     @Test func theGutterIsAsWideAsTheLargestNumberItShows() {
         func digits(_ left: [String], _ right: [String]) -> Int {
             Presentation.listing(for: FileDiff.hunks(left: left, right: right, context: 3)).numberDigits
@@ -755,10 +821,9 @@ struct ComparisonDiffViewTests {
     /// What the invisible-scalar policy leaves alone, pinned so that nobody
     /// reads its absence as an oversight in either direction: the zero-width
     /// joiner and the variation selectors compose emoji and are let through
-    /// by the file-actions sheet for the same reason, and a line that differs
-    /// from another only in Unicode normalisation form is drawn as the text
-    /// it is. (The diff itself compares bytes, so such a pair IS shown as a
-    /// change.)
+    /// by the file-actions sheet for the same reason. The other half, two
+    /// lines that differ only in Unicode normalisation form, is
+    /// `twoLinesDifferingOnlyInNormalisationFormAreAChangeWhoseSidesLookAlike`.
     @Test func theScalarsAnEmojiIsBuiltFromPassThroughAsTheFileActionsSheetDoes() {
         let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
         #expect(Self.visible(Presentation.runs(of: family, kind: .added)) == family)
@@ -766,6 +831,36 @@ struct ComparisonDiffViewTests {
         let heart = "\u{2764}\u{FE0F}"
         #expect(Self.visible(Presentation.runs(of: heart, kind: .removed)) == heart)
         #expect(FileActionPlanDisplay.visible(heart) == heart)
+    }
+
+    /// The known residual, pinned: a precomposed and a decomposed spelling of
+    /// the same text. The diff compares BYTES, so the pair is reported as a
+    /// change (the folder overview called the row different for the same
+    /// reason), and it is drawn as one removal and one addition. Neither side
+    /// carries a marker, because every scalar in them is an ordinary letter
+    /// or a combining mark, and the two read the same. That is the trade;
+    /// this test is where it is written down rather than only said.
+    @Test func twoLinesDifferingOnlyInNormalisationFormAreAChangeWhoseSidesLookAlike() throws {
+        let composed = "caf\u{00E9}"
+        let decomposed = "cafe\u{0301}"
+        // Swift's own equality calls them equal, which is why the diff does
+        // not use it; the bytes differ.
+        #expect(composed == decomposed)
+        #expect(Array(composed.utf8) != Array(decomposed.utf8))
+
+        let hunks = FileDiff.hunks(left: [composed], right: [decomposed], context: 0)
+        #expect(hunks.count == 1)
+        let lines = Presentation.listing(for: hunks).hunks[0].lines
+        // Positive: the change IS shown, as two lines.
+        #expect(lines.map(\.tone) == [.removed, .added])
+        let removed = try #require(lines.first { $0.tone == .removed })
+        let added = try #require(lines.first { $0.tone == .added })
+        #expect(Array(Self.visible(removed.runs).utf8) == Array(composed.utf8))
+        #expect(Array(Self.visible(added.runs).utf8) == Array(decomposed.utf8))
+        // The residual: no marker on either side, and they look alike.
+        #expect(removed.runs.allSatisfy { !$0.isEscape })
+        #expect(added.runs.allSatisfy { !$0.isEscape })
+        #expect(Self.appearance(removed.runs) == Self.appearance(added.runs))
     }
 
     // MARK: - Catalogues
@@ -912,6 +1007,26 @@ struct ComparisonDiffViewTests {
         let model = ComparisonDiffModel()
         await model.load(.filePair, on: rig.comparison)
         #expect(shown(Presentation.screen(target: .filePair, loaded: model.loaded)) == [" one", "-two", "+2"])
+    }
+
+    /// The last change of a file is on screen, not only the first: lines 3
+    /// and 37 of forty both reach the listing through the model.
+    @Test func aFileWithTwoSeparatedChangesShowsBothThroughTheModel() async throws {
+        let rig = pairRig(
+            left: data(Self.numbered(40).joined(separator: "\n")),
+            right: data(Self.numbered(40, changing: [3, 37]).joined(separator: "\n")))
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        let model = ComparisonDiffModel()
+        await model.load(.filePair, on: rig.comparison)
+        guard case .listing(let listing) = Presentation.screen(target: .filePair, loaded: model.loaded)
+        else {
+            Issue.record("expected a listing")
+            return
+        }
+        #expect(listing.hunks.map(\.header) == ["@@ -1,6 +1,6 @@", "@@ -34,7 +34,7 @@"])
+        let texts = shown(.listing(listing)) ?? []
+        #expect(texts.contains("-line 3") && texts.contains("+changed 3"))
+        #expect(texts.contains("-line 37") && texts.contains("+changed 37"))
     }
 
     @Test func twoIdenticalFilesSayNoLineDiffersAndNothingElse() async throws {
@@ -1081,6 +1196,41 @@ struct ComparisonDiffViewTests {
         #expect(shown(Presentation.screen(target: b, loaded: model.loaded)) == ["-2", "+22"])
     }
 
+    /// Two loads that are NOT cancelled and overlap: the first one's answer
+    /// arrives while the second is still on its way. Each stamps what it
+    /// writes with its own target, so the second's result is the second's.
+    /// (In the window the first would have been cancelled by
+    /// `.task(id:)`; the model must not depend on that for its stamp.)
+    @Test func twoLoadsThatOverlapEachWriteTheirOwnTarget() async throws {
+        let gateA = Gate(path: "/L/a")
+        let gateB = Gate(path: "/L/b")
+        let rig = try await folderRig(
+            left: ["a": data("1"), "b": data("2")], right: ["a": data("11"), "b": data("22")],
+            onLeftRead: { path in
+                await gateA.hook(path)
+                await gateB.hook(path)
+            })
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+        let model = ComparisonDiffModel()
+        let a = Presentation.Target.row(path: "a")
+        let b = Presentation.Target.row(path: "b")
+
+        let first = Task { await model.load(a, on: rig.comparison) }
+        await gateA.waitUntilEntered()
+        let second = Task { await model.load(b, on: rig.comparison) }
+        gateA.open()
+        await first.value
+        // Positive: the first answer did land, while the second is unfinished.
+        #expect(model.loaded?.target == a)
+        #expect(shown(Presentation.screen(target: a, loaded: model.loaded)) == ["-1", "+11"])
+
+        await gateB.waitUntilEntered()
+        gateB.open()
+        await second.value
+        #expect(model.loaded?.target == b)
+        #expect(shown(Presentation.screen(target: b, loaded: model.loaded)) == ["-2", "+22"])
+    }
+
     /// A cancel that lands while the bytes are being fetched: the answer
     /// that comes back afterwards is dropped.
     @Test func aLoadCancelledMidFlightWritesNothingWhenItsAnswerArrives() async throws {
@@ -1200,6 +1350,11 @@ struct ComparisonDiffViewTests {
         // runs (through the one attribution function), the tint.
         #expect(Self.occurrences(of: "Text(entry.leftNumber)", in: line) == 1)
         #expect(Self.occurrences(of: "Text(entry.rightNumber)", in: line) == 1)
+        // In that order: the left gutter shows the left file's numbers.
+        let columns = ["Text(entry.leftNumber)", "Text(entry.rightNumber)", "Text(entry.sign)",
+                       "FileActionPlanDisplay.attributed(entry.runs)"]
+        let positions = try columns.map { try #require(line.range(of: $0)?.lowerBound) }
+        #expect(positions == positions.sorted())
         #expect(Self.occurrences(of: "Text(entry.sign)", in: line) == 1)
         #expect(Self.occurrences(of: "FileActionPlanDisplay.attributed(entry.runs)", in: line) == 1)
         #expect(Self.occurrences(of: ".background(entry.tint)", in: line) == 1)
