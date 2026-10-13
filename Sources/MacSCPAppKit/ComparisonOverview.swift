@@ -82,6 +82,18 @@ enum ComparisonOverviewPresentation {
 
     // MARK: - Reasons
 
+    /// The wording of an undetermined row's reason.
+    ///
+    /// **Known, and left as it is:** `algorithmUnavailable`'s advice to choose
+    /// a different algorithm in Settings is unhelpful in one combination that
+    /// exists. With SHA-256 chosen, S3 on one side and an SSH host without
+    /// `md5sum` on the other, the pair is first `algorithmsDiffer`, and the
+    /// retry with MD5 can then end in `algorithmUnavailable(.md5)` — where no
+    /// choice in Settings changes the answer.
+    ///
+    /// `unsupportedKind` is worded for what the listing could tell, not for
+    /// what the entry is: `.other` is also what a listing answers when a type
+    /// was not reported at all, so an ordinary file can land here.
     static func wording(for reason: UndeterminedReason) -> Wording {
         switch reason {
         case .checksumUnavailable:
@@ -104,13 +116,13 @@ enum ComparisonOverviewPresentation {
             Wording(
                 key: "compare.reason.etagIsNotAFileHash",
                 english:
-                    "Not compared: one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents."
+                    "Not compared: at least one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents."
             )
         case .unsupportedKind:
             Wording(
                 key: "compare.reason.unsupportedKind",
                 english:
-                    "Not compared: this is a link or a special entry, and macSCP does not compare those."
+                    "Not compared: macSCP could not tell that this is an ordinary file. It is a link or a special entry, or its type was not reported."
             )
         // The one reason that is not about comparing. It says what could not
         // be read; "nothing here was compared" is its consequence, and for a
@@ -219,11 +231,48 @@ enum ComparisonOverviewPresentation {
 
     static var otherKeys: [String] { otherWordings.map(\.key) }
 
-    /// The count of entries found so far, shown while the walk runs. The
-    /// number is the rows produced — entries the walk has reported, whatever
-    /// state they ended in — and claims nothing about how many remain.
-    static func progressText(_ progress: ComparisonProgress) -> String {
-        String(format: Self.progress.text, progress.rowsProduced)
+    /// The count of entries found so far, shown while the walk runs.
+    ///
+    /// The number is the ROWS HELD, the same ones the counts above it are
+    /// made from — never `ComparisonProgress.rowsProduced`. The walk reports
+    /// progress once per directory, after its whole pair loop, while rows
+    /// arrive one by one, so a line fed from progress reads 0 above counts
+    /// that already total hundreds. It claims nothing about how many remain.
+    static func progressText(entriesFound: Int) -> String {
+        String(format: Self.progress.text, entriesFound)
+    }
+
+    // MARK: - What is drawn at all
+
+    /// Whether the window draws the overview for a comparison of this kind.
+    /// A file pair has no walk and no rows (`Comparison.start()` finishes it
+    /// at once with none), so an overview of it would report zero of
+    /// everything and, on a completed outcome, "no files and no differences"
+    /// about two files somebody chose. Its diff is Task 11's.
+    static func showsOverview(for kind: Comparison.Kind) -> Bool {
+        switch kind {
+        case .folders: true
+        case .filePair: false
+        }
+    }
+
+    /// Whether the "found no files and no differences" sentence may be shown.
+    /// Only for a walk that ENDED NORMALLY with no row: while it runs, after
+    /// a stop, or after a failure the list is empty because it is
+    /// incomplete, and that sentence would then be a false result.
+    static func showsEmptyNotice(rowCount: Int, outcome: Comparison.Outcome?) -> Bool {
+        guard rowCount == 0 else { return false }
+        switch outcome {
+        case .completed?: return true
+        case .cancelled?, .failed?, nil: return false
+        }
+    }
+
+    /// The label of one row: its OWN state's. One function taking the row,
+    /// so the view has no state argument to get wrong and a source scan can
+    /// pin the single call (`ComparisonOverviewTests`).
+    static func label(forRow row: ComparisonRow) -> String {
+        label(for: row.state)
     }
 
     // MARK: - A failed comparison says what failed
@@ -307,7 +356,7 @@ struct ComparisonOverviewView: View {
             summary(counts)
             Divider()
             if rows.isEmpty {
-                placeholder
+                placeholder(rowCount: rows.count)
             } else {
                 List {
                     ForEach(rows, id: \.relativePath) { row in
@@ -323,7 +372,7 @@ struct ComparisonOverviewView: View {
         VStack(alignment: .leading, spacing: 8) {
             if comparison.isRunning {
                 HStack(spacing: 8) {
-                    Text(ComparisonOverviewPresentation.progressText(comparison.progress))
+                    Text(ComparisonOverviewPresentation.progressText(entriesFound: comparison.rows.count))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     Button(ComparisonOverviewPresentation.cancel.text) { comparison.cancel() }
@@ -352,8 +401,9 @@ struct ComparisonOverviewView: View {
     private func countFigure(
         _ state: ComparisonState, _ counts: ComparisonOverviewPresentation.Counts
     ) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(counts.count(for: state))")
+        let number = counts.count(for: state)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("\(number)")
                 .font(.title3.monospacedDigit())
             Text(ComparisonOverviewPresentation.label(for: state))
                 .font(.caption)
@@ -366,8 +416,10 @@ struct ComparisonOverviewView: View {
     /// produced no row found no files. Neither is worded as a result about
     /// the folders' contents when the walk did not complete.
     @ViewBuilder
-    private var placeholder: some View {
-        if case .completed? = comparison.outcome {
+    private func placeholder(rowCount: Int) -> some View {
+        if ComparisonOverviewPresentation.showsEmptyNotice(
+            rowCount: rowCount, outcome: comparison.outcome)
+        {
             Text(ComparisonOverviewPresentation.empty.text)
                 .foregroundStyle(.secondary)
                 .padding(12)
@@ -392,7 +444,7 @@ private struct ComparisonOverviewRow: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(ComparisonOverviewPresentation.label(for: row.state))
+            Text(ComparisonOverviewPresentation.label(forRow: row))
                 .foregroundStyle(row.state == .same ? .secondary : .primary)
         }
         .textSelection(.enabled)

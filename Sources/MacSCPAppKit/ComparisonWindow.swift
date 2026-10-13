@@ -192,8 +192,14 @@ struct ComparisonWindow: View {
             // Anything in either that needs a connection reads
             // `comparison.fileSystems`, which is `nil` once the session has
             // closed.
-            ComparisonOverviewView(comparison: comparison)
-                .frame(maxHeight: .infinity)
+            if ComparisonOverviewPresentation.showsOverview(for: comparison.kind) {
+                ComparisonOverviewView(comparison: comparison)
+                    .frame(maxHeight: .infinity)
+            } else {
+                // A file pair has no rows to overview; its diff is drawn
+                // below by Task 11.
+                Spacer(minLength: 0)
+            }
         }
     }
 

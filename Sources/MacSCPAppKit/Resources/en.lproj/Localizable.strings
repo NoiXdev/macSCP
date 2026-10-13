@@ -1616,8 +1616,8 @@
 "compare.reason.checksumUnavailable" = "Not compared: at least one side could not provide a checksum for this file.";
 "compare.reason.algorithmUnavailable %@" = "Not compared: a side could not compute a %@ checksum. A different checksum algorithm can be chosen in Settings.";
 "compare.reason.algorithmsDiffer" = "Not compared: the two sides answered with different checksum algorithms, which say nothing about each other.";
-"compare.reason.etagIsNotAFileHash" = "Not compared: one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents.";
-"compare.reason.unsupportedKind" = "Not compared: this is a link or a special entry, and macSCP does not compare those.";
+"compare.reason.etagIsNotAFileHash" = "Not compared: at least one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents.";
+"compare.reason.unsupportedKind" = "Not compared: macSCP could not tell that this is an ordinary file. It is a link or a special entry, or its type was not reported.";
 "compare.reason.unreadable" = "macSCP could not read this path, so nothing here was compared.";
 "compare.action.compareAnyway" = "Compare contents anyway";
 "compare.progress %lld" = "Entries found so far: %lld";

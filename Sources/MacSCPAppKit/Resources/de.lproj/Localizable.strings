@@ -1610,8 +1610,8 @@
 "compare.reason.checksumUnavailable" = "Nicht verglichen: Mindestens eine Seite konnte keine Prüfsumme für diese Datei liefern.";
 "compare.reason.algorithmUnavailable %@" = "Nicht verglichen: Eine Seite konnte keine %@-Prüfsumme berechnen. In den Einstellungen kannst du einen anderen Prüfsummen-Algorithmus wählen.";
 "compare.reason.algorithmsDiffer" = "Nicht verglichen: Die beiden Seiten haben mit unterschiedlichen Prüfsummen-Algorithmen geantwortet, die nichts übereinander aussagen.";
-"compare.reason.etagIsNotAFileHash" = "Nicht verglichen: Eine Seite lieferte nur den ETag eines mehrteiligen Uploads, und der ist keine Prüfsumme des Dateiinhalts.";
-"compare.reason.unsupportedKind" = "Nicht verglichen: Das ist ein Link oder ein Sondereintrag, und macSCP vergleicht solche Einträge nicht.";
+"compare.reason.etagIsNotAFileHash" = "Nicht verglichen: Mindestens eine Seite lieferte nur den ETag eines mehrteiligen Uploads, und der ist keine Prüfsumme des Dateiinhalts.";
+"compare.reason.unsupportedKind" = "Nicht verglichen: macSCP konnte nicht feststellen, dass dies eine gewöhnliche Datei ist. Es ist ein Link oder ein Sondereintrag, oder sein Typ wurde nicht gemeldet.";
 "compare.reason.unreadable" = "macSCP konnte diesen Pfad nicht lesen, deshalb wurde hier nichts verglichen.";
 "compare.action.compareAnyway" = "Inhalte trotzdem vergleichen";
 "compare.progress %lld" = "Bisher gefundene Einträge: %lld";
