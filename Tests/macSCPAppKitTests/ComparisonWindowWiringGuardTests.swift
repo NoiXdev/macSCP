@@ -110,14 +110,10 @@ struct ComparisonWindowWiringGuardTests {
     }
 
     @Test func sessionClosedIsKeyedOnTheReleasedFileSystemsNotOnTheResolution() throws {
-        let model = try Self.body("final class ComparisonWindowModel", in: Self.windowFile)
+        // The predicate's own body, by brace matching.
+        let predicate = try Self.body("var isSessionClosed: Bool", in: Self.windowFile)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        // Positive: the predicate exists and reads the comparison's own state.
-        let start = try #require(model.range(of: "var isSessionClosed: Bool {"))
-        // The predicate's own body: up to its second closing brace (the first
-        // closes the `guard`).
-        let predicate = model[start.upperBound...].components(separatedBy: "}").prefix(2)
-            .joined(separator: "}")
+        // Positive: it exists and reads the comparison's own state.
         #expect(predicate.contains("comparison.fileSystems == nil"))
         // Negative: it is not derived from the resolution outcome.
         #expect(!predicate.contains("isUnavailable"))
@@ -127,10 +123,10 @@ struct ComparisonWindowWiringGuardTests {
     // MARK: Closing
 
     @Test func closingTheWindowCancelsThenReleasesAndIsDrivenByTheWindowsOwnClose() throws {
-        let model = try Self.body("final class ComparisonWindowModel", in: Self.windowFile)
+        // The function's own body, by brace matching: a comment or another
+        // statement added to it cannot push a call out of range.
+        let body = try Self.body("func windowClosed()", in: Self.windowFile)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let start = try #require(model.range(of: "func windowClosed() {"))
-        let body = String(model[start.upperBound...].prefix(300))
         let cancel = try #require(body.range(of: "comparison.cancel()"))
         let release = try #require(body.range(of: "comparison.releaseFileSystems()"))
         let forget = try #require(body.range(of: "forgetFromTab?()"))
@@ -145,6 +141,14 @@ struct ComparisonWindowWiringGuardTests {
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         #expect(view.contains("NSWindow.willCloseNotification"))
         #expect(view.contains("closing === window"))
+        // Positive beside the comparison above. `closing === window` is only
+        // as good as `window` having a value: with no accessor attached to
+        // the view it stays nil for ever, the comparison is never true and the
+        // close path never runs, with every other check here still green.
+        // So the accessor is attached, and its callback assigns `window`.
+        let attached = view.replacingOccurrences(of: "( ", with: "(")
+        #expect(attached.contains(".background(WindowAccessor {"))
+        #expect(attached.contains("window = resolved"))
         #expect(view.contains("model.windowClosed()"))
         #expect(Self.occurrences(of: "model.windowClosed()", in: view) == 1)
     }
@@ -172,9 +176,50 @@ struct ComparisonWindowWiringGuardTests {
 
     /// A stored property whose type is, or contains, a file system, a session,
     /// a connection or a queue: any identifier with one of those words in it
-    /// (`ConnectionViewModel`, `SessionTab`, `Comparison.FileSystems`).
+    /// (`ConnectionViewModel`, `SessionTab`, `Comparison.FileSystems`) — or the
+    /// registry, a window id or a bare tab, each of which is a way to reach
+    /// every tab and so every session in the process.
+    ///
+    /// This is a list of names somebody thought of, and it is the SECOND line
+    /// of defence: `allowedShapes` below is the first, and it is a list of
+    /// what is permitted, so a type nobody thought of fails by default.
     private static let connectionType = try! NSRegularExpression(
-        pattern: #"[A-Za-z0-9_]*(FileSystem|Session|Connection|Connector|TransferQueue)[A-Za-z0-9_]*"#)
+        pattern: #"[A-Za-z0-9_]*(FileSystem|Session|Connection|Connector|TransferQueue|TabRegistry|WindowID)[A-Za-z0-9_]*|(?<![A-Za-z0-9_])Tab(?![A-Za-z0-9_])"#)
+
+    /// Everything the window, its model and its seed may store, as the TYPE
+    /// (or, where a property is declared without one, its initial value).
+    /// Anything else — a registry, a tab, a file system, a type nobody has
+    /// thought of — fails until somebody decides here that it is fine.
+    private static let allowedShapes: Set<String> = [
+        // The seed.
+        "UUID",
+        // The view.
+        "ComparisonSeed", "ComparisonWindowModel()", "NSWindow?",
+        // The model: the comparison it holds, its latch, and the weak
+        // closure through which it asks the tab to forget it.
+        "Comparison?", "false", "(@MainActor () -> Void)?",
+    ]
+
+    /// The part of a stored-property line after its name: the declared type,
+    /// or, with none, the initial value.
+    private static func shape(of line: String) -> String? {
+        var tokens = line.split(separator: " ").map(String.init)
+        guard let keyword = tokens.firstIndex(where: { $0 == "let" || $0 == "var" }) else {
+            return nil
+        }
+        tokens.removeFirst(keyword + 1)
+        let rest = tokens.joined(separator: " ")
+        // A declared type comes before any `=`; without one, a `:` further on
+        // belongs to the initial value (`[String: Data]()`).
+        let equalsIndex = rest.firstIndex(of: "=")
+        if let colon = rest.firstIndex(of: ":"), equalsIndex == nil || colon < equalsIndex! {
+            var type = String(rest[rest.index(after: colon)...])
+            if let equals = type.firstIndex(of: "=") { type = String(type[..<equals]) }
+            return type.trimmingCharacters(in: .whitespaces)
+        }
+        guard let equals = equalsIndex else { return nil }
+        return String(rest[rest.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+    }
 
     private static func mentionsAConnection(_ declaration: String) -> Bool {
         connectionType.firstMatch(
@@ -231,6 +276,24 @@ struct ComparisonWindowWiringGuardTests {
         }
     }
 
+    /// The strong form: not "nothing on a list of bad names" but "only what is
+    /// on a list of good ones". The model storing `TabRegistry` was a hole in
+    /// the first form that no name on its list covered.
+    @Test func everythingTheWindowStoresIsOfAShapeTheOwnershipRuleAllows() throws {
+        for declaration in Self.typeDeclarations {
+            let properties = Self.storedProperties(
+                in: try Self.body(declaration, in: Self.windowFile))
+            #expect(!properties.isEmpty, "\(declaration) read as having no stored properties")
+            for property in properties {
+                let shape = Self.shape(of: property)
+                #expect(shape != nil, "\(declaration): no type or value read from: \(property)")
+                #expect(
+                    shape.map { Self.allowedShapes.contains($0) } == true,
+                    "\(declaration) stores a shape the ownership rule has not allowed: \(property)")
+            }
+        }
+    }
+
     /// Positive beside the scan above: what the window DOES hold is found by
     /// the same reader.
     @Test func theReaderFindsWhatTheWindowActuallyHolds() throws {
@@ -261,6 +324,8 @@ struct ComparisonWindowWiringGuardTests {
             "let local: LocalFileSystem", "var session: BrowserSession?",
             "var tab: SessionTab?", "var connection: ConnectionViewModel",
             "var queue: TransferQueueViewModel?",
+            "private var registry: TabRegistry = .shared", "var registry: TabRegistry?",
+            "let home: WindowID", "var tab: Tab?",
         ] {
             #expect(Self.mentionsAConnection(forbidden), "\(forbidden) was not matched")
         }
@@ -268,8 +333,26 @@ struct ComparisonWindowWiringGuardTests {
             "let tabID: UUID", "private(set) var comparison: Comparison?",
             "let seed: ComparisonSeed", "@State private var window: NSWindow?",
             "@State private var model = ComparisonWindowModel()",
+            "var tabID: UUID", "let tabs: [Int]", "var table: Int",
         ] {
             #expect(!Self.mentionsAConnection(allowed), "\(allowed) was matched")
+        }
+
+        // The shape reader, and the allowed list it feeds: a type nobody
+        // listed is refused by default, a type somebody did is not.
+        #expect(Self.shape(of: "let tabID: UUID") == "UUID")
+        #expect(Self.shape(of: "@State private var model = ComparisonWindowModel()")
+            == "ComparisonWindowModel()")
+        #expect(Self.shape(of: "private(set) var hasResolved = false") == "false")
+        #expect(Self.shape(of: "private var registry: TabRegistry = .shared") == "TabRegistry")
+        #expect(Self.allowedShapes.contains("UUID"))
+        for refused in [
+            "private var registry: TabRegistry = .shared", "var tab: Tab?",
+            "var clock: ContinuousClock", "var cache = [String: Data]()",
+        ] {
+            let shape = Self.shape(of: refused)
+            #expect(shape != nil)
+            #expect(shape.map { Self.allowedShapes.contains($0) } == false, "\(refused) was allowed")
         }
 
         let body = """
