@@ -30,9 +30,10 @@ import macSCPCore
 @MainActor
 enum TabTeardown {
     /// Tab-local teardown, in the invariant order: bridge dismiss → both
-    /// panes' archive operations cancelled (not a stage: a synchronous
-    /// signal, see the call) → `cancelAll` → `editManager.stopAll` →
-    /// `terminal.shutdown` → `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
+    /// panes' archive operations cancelled, then the tab's folder
+    /// comparisons ended (neither is a stage: synchronous signals, see the
+    /// calls) → `cancelAll` → `editManager.stopAll` → `terminal.shutdown` →
+    /// `remote.disconnect`. Touches ONLY this tab; other tabs' sessions,
     /// queues and forms are untouched.
     ///
     /// `reason` (connection-liveness plan, Task 8; required — see
@@ -125,6 +126,17 @@ enum TabTeardown {
             // the two panes alike.
             session.local.fileActionActivity.cancel()
             session.remote.fileActionActivity.cancel()
+            // A folder comparison is the third thing of that kind: it walks
+            // THIS session's file systems, is not a transfer and is not in
+            // the queue, so `cancelAll` below does not reach it, and it would
+            // otherwise keep listing and hashing on a connection whose
+            // owner is gone. It belongs to the tab (`SessionTab.comparisons`)
+            // and this is where the tab's work is ended. Not a stage: the
+            // cancel is synchronous and waits for nothing, so a walk parked
+            // on a peer that stopped answering cannot hold this function up.
+            // Not a sweep in the app's quit either: quit runs each window's
+            // close sequence and each of those ends here.
+            tab.endComparisons()
             // Called directly, NOT through `TeardownStage.runBounded` (see
             // this function's doc comment): a bound would put a suspension
             // point in front of the sweep, and the queue sweep running in

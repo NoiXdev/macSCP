@@ -77,6 +77,15 @@ final class SessionTab: Identifiable {
     var session: BrowserSession?
     let transferQueue = TransferQueueViewModel()
     let conflictBridge = ConflictPromptBridge()
+    /// The folder comparisons running or finished on this tab's connection
+    /// (diff view, Task 7). The tab owns them, not a window: each one walks
+    /// the session's own file systems, so it belongs where the connection
+    /// does, and `TabTeardown.run(_:reason:)` ends every one of them with
+    /// the rest of the tab's work. A comparison window is a view onto one
+    /// of these, resolved through the tab; see `Comparison`.
+    ///
+    /// Only `startComparison(...)` appends to it.
+    private(set) var comparisons: [Comparison] = []
     /// Drives the certificate-trust prompt for this tab's WebDAV/S3 connect
     /// attempts (M21/T10) — see `CertificatePromptBridge`'s own doc comment
     /// for why it is constructed OUTSIDE this initializer and simply handed
@@ -463,6 +472,53 @@ final class SessionTab: Identifiable {
         transferQueue.maxConcurrent = maxConcurrent
         let bridge = conflictBridge
         transferQueue.conflictDecider = { conflict in await bridge.ask(conflict) }
+    }
+
+    /// Which of the session's two file systems a comparison side reads.
+    /// The caller names a side of THIS tab's session and never hands in a
+    /// file system, so a comparison cannot be pointed at a connection the
+    /// tab does not own.
+    enum ComparisonSide {
+        case local
+        case remote
+    }
+
+    /// Creates a comparison over two sides of this tab's session, keeps it in
+    /// `comparisons` and starts its walk. `nil` when the tab has no session:
+    /// with nothing connected there is nothing to walk, and `TabTeardown`
+    /// ends comparisons together with the session they ran over.
+    @discardableResult
+    func startComparison(
+        left: ComparisonSide, leftRoot: String,
+        right: ComparisonSide, rightRoot: String,
+        algorithm: ChecksumAlgorithm
+    ) -> Comparison? {
+        guard let session else { return nil }
+        func system(_ side: ComparisonSide) -> any RemoteFileSystem {
+            switch side {
+            case .local: session.localFS
+            case .remote: session.remoteFS
+            }
+        }
+        let comparison = Comparison(
+            left: system(left), leftRoot: leftRoot,
+            right: system(right), rightRoot: rightRoot,
+            algorithm: algorithm)
+        comparisons.append(comparison)
+        comparison.start()
+        return comparison
+    }
+
+    /// How a window finds the comparison its seed names.
+    func comparison(id: UUID) -> Comparison? {
+        comparisons.first { $0.id == id }
+    }
+
+    /// Cancels every comparison and forgets them. Called by `TabTeardown`
+    /// and by nothing else; see the call there.
+    func endComparisons() {
+        for comparison in comparisons { comparison.cancel() }
+        comparisons.removeAll()
     }
 
     /// Decider side of the plaintext-transport confirmation (M21/T10):
