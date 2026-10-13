@@ -60,6 +60,10 @@ struct ComparisonSeed: Codable, Hashable, Sendable {
 final class ComparisonWindowModel {
     private(set) var comparison: Comparison?
     private(set) var hasResolved = false
+    /// How this window tells the tab to forget its comparison when it closes.
+    /// Captures the tab WEAKLY and the comparison's id, so the model holds no
+    /// reference to the tab and cannot keep its session alive.
+    private var forgetFromTab: (@MainActor () -> Void)?
 
     var isUnavailable: Bool {
         hasResolved && comparison == nil
@@ -77,7 +81,12 @@ final class ComparisonWindowModel {
     func resolve(seed: ComparisonSeed, registry: TabRegistry) {
         guard !hasResolved else { return }
         hasResolved = true
-        comparison = registry.tab(for: seed.tabID)?.comparison(id: seed.comparisonID)
+        let tab = registry.tab(for: seed.tabID)
+        comparison = tab?.comparison(id: seed.comparisonID)
+        if let held = comparison {
+            let id = held.id
+            forgetFromTab = { [weak tab] in tab?.forgetComparison(id: id) }
+        }
     }
 
     /// The window is closing, and the user is done with this comparison.
@@ -91,12 +100,22 @@ final class ComparisonWindowModel {
     /// walk nobody can see any more from going on using the connection; it is
     /// a no-op on a comparison that already finished, and the outcome stays.
     ///
+    /// Then the tab forgets it (`SessionTab.forgetComparison(id:)`): this
+    /// comparison is closed, and a window opened later from the same seed
+    /// must find nothing ("no longer available") rather than a released
+    /// comparison that says "session closed" about a session that is open.
+    /// The window's own reference is untouched, so what it shows while it
+    /// finishes closing is unchanged.
+    ///
     /// Idempotent, and a no-op for a window that held nothing. When the tab
-    /// itself is closed first, teardown has already done both.
+    /// itself is closed first, teardown has already done the first two and
+    /// the tab is gone, so there is nothing to forget.
     func windowClosed() {
         guard let comparison else { return }
         comparison.cancel()
         comparison.releaseFileSystems()
+        forgetFromTab?()
+        forgetFromTab = nil
     }
 }
 
