@@ -106,6 +106,36 @@ import Testing
         #expect(render(hunks[0]) == [" a", "-b\r", "+b", " c"])
     }
 
+    // MARK: - Bytes, not canonical equivalence
+
+    /// Swift's `String` equality is canonical equivalence, so a precomposed
+    /// and a decomposed spelling of the same text are `==` while their bytes
+    /// differ. The folder view reaches `.differs` through a checksum over
+    /// bytes, so the content diff has to see the difference too; the
+    /// alternative is a row that says "these differ" over a diff that shows
+    /// nothing. Lines are compared by their UTF-8 views.
+    @Test func twoSpellingsOfOneTextAreDifferentLines() {
+        let composed = "\u{00E4}"
+        let decomposed = "a\u{0308}"
+        // Positive control: they ARE equal as Strings and DO differ as bytes,
+        // so the case below cannot pass because the fixture was not what it
+        // looks like (two identical literals, or two that already differ).
+        #expect(composed == decomposed)
+        #expect(Array(composed.utf8) != Array(decomposed.utf8))
+
+        let hunks = FileDiff.hunks(left: [composed], right: [decomposed], context: 3)
+
+        #expect(hunks.count == 1)
+        #expect(render(hunks[0]) == ["-" + composed, "+" + decomposed])
+        // And in the middle of a file, between lines that agree.
+        let inContext = FileDiff.hunks(
+            left: ["a", composed, "c"], right: ["a", decomposed, "c"], context: 1)
+        #expect(inContext.count == 1)
+        #expect(render(inContext[0]) == [" a", "-" + composed, "+" + decomposed, " c"])
+        // The same spelling on both sides is still no difference at all.
+        #expect(FileDiff.hunks(left: [decomposed], right: [decomposed], context: 3).isEmpty)
+    }
+
     // MARK: - Edges of the file and of the grouping
 
     @Test func aChangeAtTheFirstLine() {
