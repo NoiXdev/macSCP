@@ -120,7 +120,7 @@ struct FileActionConfirmSheet: View {
 /// (see `needsMarker`). Asked scalar by scalar, as `FileActionPlanner` asks
 /// its questions of server-chosen values.
 enum FileActionPlanDisplay {
-    struct Run: Equatable {
+    struct Run: Equatable, Hashable {
         let text: String
         /// Whether `text` stands for a scalar that was not drawn.
         let isEscape: Bool
@@ -129,10 +129,22 @@ enum FileActionPlanDisplay {
     /// `text` with every scalar that would not be drawn faithfully replaced
     /// by its marker, as consecutive runs.
     static func runs(of text: String) -> [Run] {
+        runs(of: text) { scalar, _ in needsMarker(scalar) }
+    }
+
+    /// The same runs, with the decision of WHICH scalars are marked handed in
+    /// by the caller, who is also told each scalar's position in the text.
+    /// The marker's spelling and the run-building are this function's alone,
+    /// so a surface that marks more than `needsMarker` does (the comparison
+    /// window's diff, `ComparisonDiffPresentation.runs(of:kind:)`) draws the
+    /// same `<U+XXXX>` as every other.
+    static func runs(
+        of text: String, marking isMarked: (_ scalar: Unicode.Scalar, _ offset: Int) -> Bool
+    ) -> [Run] {
         var result: [Run] = []
         var plain = String.UnicodeScalarView()
-        for scalar in text.unicodeScalars {
-            if needsMarker(scalar) {
+        for (offset, scalar) in text.unicodeScalars.enumerated() {
+            if isMarked(scalar, offset) {
                 if !plain.isEmpty {
                     result.append(Run(text: String(plain), isEscape: false))
                     plain = String.UnicodeScalarView()
@@ -209,7 +221,7 @@ enum FileActionPlanDisplay {
     /// U+2069), which reorders what the user reads, and the zero-width space
     /// and non-joiner (U+200B, U+200C), which hide a difference between two
     /// names instead of composing one glyph.
-    private static func needsMarker(_ scalar: Unicode.Scalar) -> Bool {
+    static func needsMarker(_ scalar: Unicode.Scalar) -> Bool {
         if scalar == "\u{200D}" { return false }
         switch scalar.properties.generalCategory {
         case .control, .format, .lineSeparator, .paragraphSeparator: return true

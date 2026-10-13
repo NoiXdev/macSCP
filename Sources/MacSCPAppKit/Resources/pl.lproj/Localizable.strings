@@ -1629,3 +1629,25 @@
 "compare.settle.rowMoved" = "Ten wiersz nie znajduje się już na liście w takiej postaci, więc niczego nie porównano.";
 "compare.settle.stopped" = "Pobieranie plików zostało zatrzymane, więc niczego nie porównano.";
 "compare.settle.failed %@" = "Nie udało się porównać zawartości. %@";
+
+/* Content diff (diff view plan, Task 11) */
+"compare.refusal.binary" = "Nie wykonano porównania wiersz po wierszu: co najmniej jeden z dwóch plików zawiera dane binarne, więc nie można go wyświetlić jako wierszy tekstu.";
+"compare.refusal.notUTF8" = "Nie wykonano porównania wiersz po wierszu: co najmniej jeden z dwóch plików nie jest poprawnym UTF-8, więc nie można go odczytać jako wierszy. Może to być tekst w innym kodowaniu, na przykład Latin-1 lub Windows-1252.";
+"compare.refusal.tooLarge %@ %@" = "Nie wykonano porównania wiersz po wierszu: jeden z dwóch plików ma %@ bajtów, a największy plik, który można porównać wiersz po wierszu, ma %@ bajtów.";
+"compare.refusal.tooManyLines %@ %@" = "Nie wykonano porównania wiersz po wierszu: lewy plik ma %@ wierszy, a prawy plik ma %@ wierszy, czyli za dużo, by porównać je razem.";
+"compare.diff.failure.onlyLeft" = "Ten wpis istnieje tylko po lewej stronie, więc nie ma z czym go porównać.";
+"compare.diff.failure.onlyRight" = "Ten wpis istnieje tylko po prawej stronie, więc nie ma z czym go porównać.";
+"compare.diff.failure.typeMismatch" = "Obie strony to wpisy różnego rodzaju, więc ich zawartości nie można porównać.";
+"compare.diff.failure.notKnownFiles" = "macSCP nie mógł stwierdzić, że obie strony są zwykłymi plikami, więc ich zawartości nie porównano.";
+"compare.diff.failure.sessionClosed" = "Sesja została zamknięta, więc tych plików nie można już pobrać. Niczego nie porównano.";
+"compare.diff.failure.notPossible" = "Tych wpisów nie można porównać na podstawie zawartości.";
+"compare.diff.failure.rowMoved" = "Ten wiersz nie znajduje się już na liście w takiej postaci, więc niczego nie porównano.";
+"compare.diff.failure.stopped" = "Pobieranie plików zostało zatrzymane, więc niczego nie porównano.";
+"compare.diff.failure.failed %@" = "Nie udało się porównać plików. %@";
+"compare.diff.pickRow" = "Wybierz plik na liście, aby porównać jego zawartość wiersz po wierszu.";
+"compare.diff.pending" = "Pobieranie obu plików i porównywanie ich wiersz po wierszu…";
+"compare.diff.identical" = "Oba pliki mają taką samą zawartość: żaden wiersz się nie różni.";
+"compare.diff.legend" = "Wiersz oznaczony „-” jest tylko w lewym pliku, wiersz oznaczony „+” tylko w prawym. Wiersze bez oznaczenia są takie same w obu.";
+"compare.diff.line.removed" = "Tylko w lewym pliku";
+"compare.diff.line.added" = "Tylko w prawym pliku";
+"compare.diff.line.unchanged" = "Taki sam w obu plikach";

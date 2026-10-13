@@ -547,6 +547,9 @@ final class ComparisonSettleModel {
 /// it runs they are partial, and the line above them says so.
 struct ComparisonOverviewView: View {
     let comparison: Comparison
+    /// The path of the selected row, or `nil`. The window below draws the
+    /// content diff of it; this view only reports which row was chosen.
+    @Binding var selection: String?
     @State private var settler = ComparisonSettleModel()
 
     var body: some View {
@@ -562,7 +565,7 @@ struct ComparisonOverviewView: View {
             if entries.isEmpty {
                 placeholder(rowCount: rows.count)
             } else {
-                List {
+                List(selection: $selection) {
                     ForEach(entries, id: \.path) { entry in
                         ComparisonOverviewRow(entry: entry) {
                             Task { await settler.settle(entry, on: comparison) }

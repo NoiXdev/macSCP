@@ -999,9 +999,13 @@ struct ComparisonOverviewTests {
 
     @Test func theWindowShowsTheOverviewAndTheFailureCause() throws {
         let window = try Self.code("ComparisonWindow.swift")
-        #expect(window.contains("ComparisonOverviewView("))
+        // The overview is drawn by the result view (Task 11), which also holds
+        // the selection; the window hands it the comparison.
+        #expect(window.contains("ComparisonResultView(comparison: comparison)"))
+        let result = try Self.code("ComparisonDiffView.swift")
+        #expect(result.contains("ComparisonOverviewView("))
         // Only a folder comparison has rows to overview.
-        #expect(window.contains("ComparisonOverviewPresentation.showsOverview(for: comparison.kind)"))
+        #expect(result.contains("ComparisonOverviewPresentation.showsOverview(for: comparison.kind)"))
         #expect(window.contains("ComparisonOverviewPresentation.failureCause(for:"))
         // The generic notice used to be the whole message; a raw rendering of
         // the error is not what replaces it.

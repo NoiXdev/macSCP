@@ -1627,3 +1627,25 @@
 "compare.settle.rowMoved" = "Diese Zeile steht nicht mehr so in der Liste, deshalb wurde nichts verglichen.";
 "compare.settle.stopped" = "Das Abrufen der Dateien wurde gestoppt, deshalb wurde nichts verglichen.";
 "compare.settle.failed %@" = "Die Inhalte konnten nicht verglichen werden. %@";
+
+/* Content diff (diff view plan, Task 11) */
+"compare.refusal.binary" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Mindestens eine der beiden Dateien enthält Binärdaten und lässt sich deshalb nicht als Textzeilen anzeigen.";
+"compare.refusal.notUTF8" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Mindestens eine der beiden Dateien ist kein gültiges UTF-8 und lässt sich deshalb nicht als Zeilen lesen. Möglicherweise ist es Text in einer anderen Kodierung, etwa Latin-1 oder Windows-1252.";
+"compare.refusal.tooLarge %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Eine der beiden Dateien ist %@ Bytes groß, und die größte Datei, die zeilenweise verglichen werden kann, hat %@ Bytes.";
+"compare.refusal.tooManyLines %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Die linke Datei hat %@ Zeilen und die rechte Datei hat %@ Zeilen – das sind zu viele, um sie gemeinsam zu vergleichen.";
+"compare.diff.failure.onlyLeft" = "Dieser Eintrag existiert nur links, deshalb gibt es nichts, womit er verglichen werden könnte.";
+"compare.diff.failure.onlyRight" = "Dieser Eintrag existiert nur rechts, deshalb gibt es nichts, womit er verglichen werden könnte.";
+"compare.diff.failure.typeMismatch" = "Die beiden Seiten sind verschiedene Arten von Einträgen, deshalb lassen sich ihre Inhalte nicht vergleichen.";
+"compare.diff.failure.notKnownFiles" = "macSCP konnte nicht feststellen, dass beide Seiten gewöhnliche Dateien sind, deshalb wurden ihre Inhalte nicht verglichen.";
+"compare.diff.failure.sessionClosed" = "Die Sitzung wurde geschlossen, deshalb lassen sich diese Dateien nicht mehr abrufen. Es wurde nichts verglichen.";
+"compare.diff.failure.notPossible" = "Diese Einträge lassen sich nicht über ihren Inhalt vergleichen.";
+"compare.diff.failure.rowMoved" = "Diese Zeile steht nicht mehr so in der Liste, deshalb wurde nichts verglichen.";
+"compare.diff.failure.stopped" = "Das Abrufen der Dateien wurde gestoppt, deshalb wurde nichts verglichen.";
+"compare.diff.failure.failed %@" = "Die Dateien konnten nicht verglichen werden. %@";
+"compare.diff.pickRow" = "Wähle in der Liste eine Datei aus, um ihren Inhalt Zeile für Zeile zu vergleichen.";
+"compare.diff.pending" = "Beide Dateien werden abgerufen und Zeile für Zeile verglichen …";
+"compare.diff.identical" = "Die beiden Dateien haben denselben Inhalt: Keine Zeile unterscheidet sich.";
+"compare.diff.legend" = "Eine mit „-“ markierte Zeile steht nur in der linken Datei, eine mit „+“ markierte nur in der rechten. Zeilen ohne Markierung sind in beiden gleich.";
+"compare.diff.line.removed" = "Nur in der linken Datei";
+"compare.diff.line.added" = "Nur in der rechten Datei";
+"compare.diff.line.unchanged" = "In beiden Dateien gleich";

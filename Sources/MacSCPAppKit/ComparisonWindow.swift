@@ -187,19 +187,13 @@ struct ComparisonWindow: View {
             roots(of: comparison)
             Divider()
             notices(for: comparison)
-            // The folder overview (Task 10) fills the upper half, from
-            // `comparison`; the content diff (Task 11) is drawn below it.
-            // Anything in either that needs a connection reads
-            // `comparison.fileSystems`, which is `nil` once the session has
-            // closed.
-            if ComparisonOverviewPresentation.showsOverview(for: comparison.kind) {
-                ComparisonOverviewView(comparison: comparison)
-                    .frame(maxHeight: .infinity)
-            } else {
-                // A file pair has no rows to overview; its diff is drawn
-                // below by Task 11.
-                Spacer(minLength: 0)
-            }
+            // The folder overview (Task 10) and the content diff (Task 11)
+            // are drawn by `ComparisonResultView`, which holds the selection
+            // that joins them. Anything in either that needs a connection
+            // reads `comparison.fileSystems`, which is `nil` once the
+            // session has closed.
+            ComparisonResultView(comparison: comparison)
+                .frame(maxHeight: .infinity)
         }
     }
 

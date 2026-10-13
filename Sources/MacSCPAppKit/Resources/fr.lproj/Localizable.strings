@@ -1630,3 +1630,25 @@
 "compare.settle.rowMoved" = "Cette ligne n’est plus dans la liste telle qu’elle était : rien n’a été comparé.";
 "compare.settle.stopped" = "La récupération des fichiers a été arrêtée : rien n’a été comparé.";
 "compare.settle.failed %@" = "Le contenu n’a pas pu être comparé. %@";
+
+/* Content diff (diff view plan, Task 11) */
+"compare.refusal.binary" = "Aucune comparaison ligne par ligne n’a été effectuée : au moins un des deux fichiers contient des données binaires et ne peut donc pas être affiché sous forme de lignes de texte.";
+"compare.refusal.notUTF8" = "Aucune comparaison ligne par ligne n’a été effectuée : au moins un des deux fichiers n’est pas de l’UTF-8 valide et ne peut donc pas être lu comme des lignes. Il peut s’agir de texte dans un autre encodage, comme Latin-1 ou Windows-1252.";
+"compare.refusal.tooLarge %@ %@" = "Aucune comparaison ligne par ligne n’a été effectuée : l’un des deux fichiers fait %@ octets, et le plus grand fichier pouvant être comparé ligne par ligne fait %@ octets.";
+"compare.refusal.tooManyLines %@ %@" = "Aucune comparaison ligne par ligne n’a été effectuée : le fichier de gauche compte %@ lignes et celui de droite %@ lignes, ce qui est trop pour les comparer ensemble.";
+"compare.diff.failure.onlyLeft" = "Cet élément n’existe qu’à gauche ; il n’y a donc rien à comparer avec lui.";
+"compare.diff.failure.onlyRight" = "Cet élément n’existe qu’à droite ; il n’y a donc rien à comparer avec lui.";
+"compare.diff.failure.typeMismatch" = "Les deux côtés sont des éléments de nature différente ; leurs contenus ne peuvent donc pas être comparés.";
+"compare.diff.failure.notKnownFiles" = "macSCP n’a pas pu établir que les deux côtés sont des fichiers ordinaires ; leurs contenus n’ont donc pas été comparés.";
+"compare.diff.failure.sessionClosed" = "La session a été fermée : ces fichiers ne peuvent plus être récupérés. Rien n’a été comparé.";
+"compare.diff.failure.notPossible" = "Ces éléments ne peuvent pas être comparés par leur contenu.";
+"compare.diff.failure.rowMoved" = "Cette ligne n’est plus dans la liste telle qu’elle était : rien n’a été comparé.";
+"compare.diff.failure.stopped" = "La récupération des fichiers a été arrêtée : rien n’a été comparé.";
+"compare.diff.failure.failed %@" = "Les fichiers n’ont pas pu être comparés. %@";
+"compare.diff.pickRow" = "Sélectionnez un fichier dans la liste pour comparer son contenu ligne par ligne.";
+"compare.diff.pending" = "Récupération des deux fichiers et comparaison ligne par ligne…";
+"compare.diff.identical" = "Les deux fichiers ont le même contenu : aucune ligne ne diffère.";
+"compare.diff.legend" = "Une ligne marquée « - » n’est que dans le fichier de gauche, une ligne marquée « + » que dans celui de droite. Les lignes sans marque sont identiques dans les deux.";
+"compare.diff.line.removed" = "Uniquement dans le fichier de gauche";
+"compare.diff.line.added" = "Uniquement dans le fichier de droite";
+"compare.diff.line.unchanged" = "Identique dans les deux fichiers";
