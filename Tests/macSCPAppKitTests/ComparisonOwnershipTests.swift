@@ -117,6 +117,8 @@ struct ComparisonOwnershipTests {
         try await remote.waitUntilParked(count: 2)
         #expect(first.isRunning)
         #expect(second.isRunning)
+        #expect(first.fileSystems != nil)
+        #expect(second.fileSystems != nil)
         #expect(tab.comparisons.count == 2)
 
         await TabTeardown.run(tab, reason: .userRequested)
@@ -125,6 +127,7 @@ struct ComparisonOwnershipTests {
         for comparison in [first, second] {
             #expect(comparison.isFinished)
             #expect(!comparison.isRunning)
+            #expect(comparison.fileSystems == nil)
             guard case .cancelled? = comparison.outcome else {
                 Issue.record("expected .cancelled, got \(String(describing: comparison.outcome))")
                 continue
@@ -150,6 +153,52 @@ struct ComparisonOwnershipTests {
         #expect(comparison.isFinished)
         #expect(tab.comparisons.isEmpty)
         Self.settle(comparison)
+    }
+
+    /// The result outlives the connection. A comparison that finished before
+    /// its tab was torn down keeps its rows, its progress and its outcome —
+    /// they are local data, and a window that resolved the object goes on
+    /// showing them — and holds no file system afterwards, so nothing that
+    /// needs the connection can be attempted on it.
+    @Test func aTornDownComparisonKeepsWhatWasMeasuredAndHoldsNoFileSystem() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ComparisonOwnership-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // A file only the remote side has: `.onlyRight`, which needs neither a
+        // size nor a checksum.
+        let remoteItem = RemoteFileItem(name: "a.txt", path: "/remote/a.txt", kind: .file, size: 3)
+        let tab = connectedTab(remote: ScriptedFS(listings: ["/remote": [remoteItem]]))
+        let comparison = tab.startComparison(
+            left: .local, leftRoot: directory.path,
+            right: .remote, rightRoot: "/remote", algorithm: .sha256)!
+        await comparison.waitForWalk()
+
+        // Positive control: there IS a result to keep, and a connection to lose.
+        let expectedRows = [ComparisonRow(relativePath: "a.txt", state: .onlyRight)]
+        let expectedProgress = ComparisonProgress(directoriesVisited: 1, rowsProduced: 1)
+        #expect(comparison.rows == expectedRows)
+        #expect(comparison.progress == expectedProgress)
+        guard case .completed? = comparison.outcome else {
+            Issue.record("expected .completed, got \(String(describing: comparison.outcome))")
+            return
+        }
+        #expect(comparison.fileSystems != nil)
+
+        await TabTeardown.run(tab, reason: .userRequested)
+
+        #expect(tab.comparisons.isEmpty)
+        #expect(comparison.rows == expectedRows)
+        #expect(comparison.progress == expectedProgress)
+        guard case .completed? = comparison.outcome else {
+            Issue.record("teardown changed the outcome to \(String(describing: comparison.outcome))")
+            return
+        }
+        #expect(comparison.fileSystems == nil)
+        // What was compared stays readable: a window says so.
+        #expect(comparison.leftRoot == directory.path)
+        #expect(comparison.rightRoot == "/remote")
     }
 
     @Test func aCancelledComparisonStaysCancelledAndCannotBeStartedAgain() async {
@@ -247,7 +296,7 @@ struct ComparisonOwnershipTests {
         let remote = ParkedFS()
         let tab = connectedTab(remote: remote)
         let comparison = startOverTemporaryDirectory(on: tab)
-        let children = Array(Mirror(reflecting: comparison).children)
+        let children = Self.storedValues(of: comparison, path: "comparison")
 
         // Positive: reflection sees the file systems at all. Without this the
         // negative checks below would hold for an empty mirror.
@@ -261,7 +310,7 @@ struct ComparisonOwnershipTests {
         // Types, not values: a back-reference to the tab declared as
         // `SessionTab?` is `nil` here, and a nil is not a `SessionTab`.
         for child in children {
-            let label = child.label ?? "?"
+            let label = child.label
             let typeName = String(describing: type(of: child.value))
             if child.value is any RemoteFileSystem { continue }
             for forbidden in Self.forbiddenTypeNames {
@@ -284,6 +333,24 @@ struct ComparisonOwnershipTests {
         #expect(!scan(comparison.rows))
 
         Self.settle(comparison)
+    }
+
+    /// Every stored value reachable from `value`, labelled by path. The file
+    /// systems sit inside `Comparison.FileSystems` inside an optional, so the
+    /// walk descends through optionals and structs — and stops at a file
+    /// system, which is a leaf here whatever it holds.
+    private static func storedValues(of value: Any, path: String) -> [(label: String, value: Any)] {
+        var found: [(label: String, value: Any)] = []
+        for child in Mirror(reflecting: value).children {
+            let label = path + "." + (child.label ?? "?")
+            found.append((label, child.value))
+            if child.value is any RemoteFileSystem { continue }
+            let style = Mirror(reflecting: child.value).displayStyle
+            if style == .struct || style == .optional {
+                found += storedValues(of: child.value, path: label)
+            }
+        }
+        return found
     }
 
     /// Fragments of the type names that would mean a comparison carries a
