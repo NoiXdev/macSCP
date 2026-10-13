@@ -1059,6 +1059,25 @@ struct MacSCPApp: App {
         .restorationBehavior(.disabled)
         .commands { MacSCPCommands(settingsStore: settingsStore, updateModel: updateModel) }
 
+        // The comparison window (diff view plan, Task 9): a third scene,
+        // value-keyed on the ids of the tab and the comparison it shows.
+        // It holds no connection of its own — the window resolves its tab
+        // through `TabRegistry` and the comparison through the tab — and it
+        // is additive: the registry, the menu-bar model, the close warning
+        // and the quit sequence know nothing of it. Equal seeds raise the
+        // open window instead of opening a second one. System restoration is
+        // off for the same reason as above: a persisted seed names ids that
+        // mean nothing in the next process.
+        WindowGroup(L10n.string("compare.window.title", "Compare"), for: ComparisonSeed.self) {
+            $seed in
+            if let seed {
+                ComparisonWindow(seed: seed)
+                    .tint(DesignTokens.remoteBlue)
+            }
+        }
+        .defaultSize(width: 900, height: 640)
+        .restorationBehavior(.disabled)
+
         // Opened via Cmd-, or the app menu's "Settings…" item (M5c/T3).
         // `updateModel` passed through (M11h/T2) so the General tab's "Check
         // Now" button can drive the SAME `UpdateCheckModel` instance as the

@@ -1592,3 +1592,10 @@
 "fileAction.plan.direct" = "Direkt auf diesem Mac ausgeführt, ohne Shell.";
 "fileAction.problem.noCommand" = "Gib das Kommando ein, das diese Aktion ausführen soll – ohne Kommando kannst du sie nicht speichern.";
 "fileAction.problem.commandControlCharacter" = "Das Kommando enthält das unsichtbare Steuerzeichen „%@“. Eine Shell führt so ein Zeichen aus, statt es als Text zu lesen, deshalb darf eine Aktion keines enthalten. Lösche es, oder tippe den Teil des Kommandos neu, in dem du es vermutest.";
+
+/* Comparison window (diff view plan, Task 9) */
+"compare.window.title" = "Vergleich";
+"compare.window.sessionClosed" = "Die Sitzung, über die dieser Vergleich lief, wurde geschlossen. Das Ergebnis bleibt lesbar, Dateiinhalte kannst du aber nicht mehr abrufen.";
+"compare.window.unavailable" = "Dieser Vergleich ist nicht mehr verfügbar: Seine Sitzung wurde geschlossen, bevor dieses Fenster ihn anzeigen konnte.";
+"compare.window.cancelled" = "Dieser Vergleich wurde beendet, bevor er fertig war. Die Liste ist unvollständig.";
+"compare.window.failed" = "Dieser Vergleich konnte nicht abgeschlossen werden. Die Liste ist unvollständig.";

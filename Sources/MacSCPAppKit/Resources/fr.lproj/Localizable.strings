@@ -1595,3 +1595,10 @@
 "fileAction.plan.direct" = "Exécuté directement sur ce Mac, sans shell.";
 "fileAction.problem.noCommand" = "Saisissez la commande que cette action exécute : il n’y a encore rien à exécuter.";
 "fileAction.problem.commandControlCharacter" = "La commande contient le caractère de contrôle invisible « %@ ». Un shell agit sur un tel caractère au lieu de le lire comme du texte ; une action ne peut donc pas en contenir. Supprimez-le, ou ressaisissez la partie de la commande où il se trouve.";
+
+/* Comparison window (diff view plan, Task 9) */
+"compare.window.title" = "Comparer";
+"compare.window.sessionClosed" = "La session sur laquelle cette comparaison s’exécutait a été fermée. Le résultat reste lisible, mais le contenu des fichiers ne peut plus être récupéré.";
+"compare.window.unavailable" = "Cette comparaison n’est plus disponible : sa session a été fermée avant que cette fenêtre puisse l’afficher.";
+"compare.window.cancelled" = "Cette comparaison a été arrêtée avant la fin. La liste est incomplète.";
+"compare.window.failed" = "Cette comparaison n’a pas pu aller à son terme. La liste est incomplète.";

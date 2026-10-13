@@ -1594,3 +1594,10 @@
 "fileAction.plan.direct" = "Uruchamiane bezpośrednio na tym Macu, bez powłoki.";
 "fileAction.problem.noCommand" = "Wpisz polecenie, które ta akcja uruchamia: na razie nie ma czego uruchomić.";
 "fileAction.problem.commandControlCharacter" = "Polecenie zawiera niewidoczny znak sterujący „%@”. Powłoka wykonuje taki znak, zamiast czytać go jako tekst, więc akcja nie może go zawierać. Usuń go albo wpisz ponownie fragment polecenia, w którym się znajduje.";
+
+/* Comparison window (diff view plan, Task 9) */
+"compare.window.title" = "Porównanie";
+"compare.window.sessionClosed" = "Sesja, w której działało to porównanie, została zamknięta. Wynik pozostaje czytelny, ale zawartości plików nie da się już pobrać.";
+"compare.window.unavailable" = "To porównanie nie jest już dostępne: jego sesja została zamknięta, zanim to okno mogło je pokazać.";
+"compare.window.cancelled" = "To porównanie zostało zatrzymane przed zakończeniem. Lista jest niekompletna.";
+"compare.window.failed" = "Nie udało się dokończyć tego porównania. Lista jest niekompletna.";
