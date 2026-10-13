@@ -591,6 +591,10 @@ struct ComparisonDiffViewTests {
                 DiffLine(kind: .added, text: "new"),
             ])
         let lines = Self.lines(Presentation.listing(for: [hunk]))
+        guard lines.count == 3 else {
+            Issue.record("expected three lines, found \(lines.count)")
+            return
+        }
         #expect(lines.map(\.sign) == [" ", "-", "+"])
         #expect(lines.map(\.tone) == [.context, .removed, .added])
         #expect(lines.map { Self.visible($0.runs) } == ["same", "gone", "new"])
@@ -1400,6 +1404,35 @@ struct ComparisonDiffViewTests {
             })
     }
 
+    /// Every `.name(` in `code`: a method call or a modifier written with a
+    /// leading dot.
+    private static func dottedCalls(in code: String) -> Set<String> {
+        guard let regex = try? NSRegularExpression(pattern: "\\.[a-z][A-Za-z0-9]*\\(") else {
+            return []
+        }
+        let range = NSRange(code.startIndex..., in: code)
+        return Set(
+            regex.matches(in: code, range: range).compactMap { match in
+                Range(match.range, in: code).map { String(code[$0].dropLast().dropFirst()) }
+            })
+    }
+
+    /// The dotted calls the views make: the presentation and model functions
+    /// they hand work to, the enum cases they match, and the modifiers that
+    /// style a row without placing it anywhere but where it stands.
+    private static let allowedCalls: Set<String> = [
+        "accessibilityElement", "accessibilityLabel", "attributed", "background", "controlSize",
+        "fixedSize", "font", "foregroundStyle", "frame", "header", "legend", "line", "listing",
+        "load", "notice", "padding", "screen", "showsOverview", "system", "target", "task",
+        "textSelection",
+    ]
+
+    @Test func theCallScanReadsLeadingDotsAndNothingElse() {
+        let code = "a.b(c) d.e f(g).h(i) .j( x.k (y) Color.red.opacity(0.1)"
+        #expect(Self.dottedCalls(in: code) == ["b", "h", "j", "opacity"])
+        #expect(Self.dottedCalls(in: "no calls here").isEmpty)
+    }
+
     @Test func theMemberReadScanSeesChainsAndOnlyTheNamesAsked() {
         let code = "a.b a.b.c xa.b a.d(x) b.e a . f"
         #expect(Self.memberReads(of: ["a"], in: code) == ["a.b", "a.b.c", "a.d"])
@@ -1488,6 +1521,20 @@ struct ComparisonDiffViewTests {
         // is a function standing between what the presentation returned and
         // what is drawn, and no test of the presentation sees it.
         let allowed: Set<String> = ["listing.rows", "listing.numberDigits", "row.kind"]
+        // And the only calls and modifiers anywhere in the views. Reading the
+        // rows in the right order says nothing about how they are laid out:
+        // `.scaleEffect(y: -1)` on the list and on each row draws them upright
+        // in the opposite order with every token above untouched (measured).
+        // So a layout modifier nobody listed is not silently fine, and adding
+        // one is a decision made here.
+        let everything = [container, view, header, line, notice].joined(separator: "\n")
+        let calls = Self.dottedCalls(in: everything)
+        #expect(
+            calls.subtracting(Self.allowedCalls).isEmpty,
+            Comment(rawValue: "\(calls.subtracting(Self.allowedCalls).sorted())"))
+        // Positive: the scan reads the views at all, and every listed call is
+        // used, so the list is not a set of names nothing uses.
+        #expect(calls == Self.allowedCalls)
         let read = Self.memberReads(of: ["screen", "listing", "row"], in: view)
         #expect(read.subtracting(allowed).isEmpty, Comment(rawValue: "\(read.subtracting(allowed))"))
         // Positive: each allowed read is actually there, so the set above is
