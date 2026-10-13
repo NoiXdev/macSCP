@@ -75,6 +75,36 @@ struct ComparisonDiffViewTests {
         .undetermined(.unsupportedKind), .undetermined(.unreadable),
     ]
 
+    /// A listing read back as what it holds, for the tests that ask about a
+    /// hunk's own lines: the rows regrouped at each header, in order. Reading
+    /// only; the structure itself is pinned by `theListingIsTheLegendThenEach…`.
+    private struct Section: Equatable {
+        let header: String
+        let lines: [Presentation.LineEntry]
+    }
+
+    private static func sections(_ listing: Presentation.Listing) -> [Section] {
+        var found: [Section] = []
+        for row in listing.rows {
+            switch row.kind {
+            case .legend: break
+            case .header(let text): found.append(Section(header: text, lines: []))
+            case .line(let entry):
+                if !found.isEmpty { found[found.count - 1] = Section(
+                    header: found[found.count - 1].header,
+                    lines: found[found.count - 1].lines + [entry]) }
+            }
+        }
+        return found
+    }
+
+    /// Every line of a listing, in the order it is drawn.
+    private static func lines(_ listing: Presentation.Listing) -> [Presentation.LineEntry] {
+        listing.rows.compactMap { row in
+            if case .line(let entry) = row.kind { entry } else { nil }
+        }
+    }
+
     private static func lines(_ text: String) -> [String] {
         text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
@@ -512,8 +542,9 @@ struct ComparisonDiffViewTests {
             for context in [0, 1, 3] {
                 let hunks = FileDiff.hunks(left: fixture.left, right: fixture.right, context: context)
                 let listing = Presentation.listing(for: hunks)
-                #expect(listing.hunks.count == hunks.count, Comment(rawValue: fixture.name))
-                for (hunk, entry) in zip(hunks, listing.hunks) {
+                let sections = Self.sections(listing)
+                #expect(sections.count == hunks.count, Comment(rawValue: fixture.name))
+                for (hunk, entry) in zip(hunks, sections) {
                     #expect(entry.lines.count == hunk.lines.count, Comment(rawValue: fixture.name))
                     for (line, shown) in zip(hunk.lines, entry.lines) {
                         let label = "\(fixture.name) c\(context): \(line.text)"
@@ -559,7 +590,7 @@ struct ComparisonDiffViewTests {
                 DiffLine(kind: .context, text: "same"), DiffLine(kind: .removed, text: "gone"),
                 DiffLine(kind: .added, text: "new"),
             ])
-        let lines = Presentation.listing(for: [hunk]).hunks[0].lines
+        let lines = Self.lines(Presentation.listing(for: [hunk]))
         #expect(lines.map(\.sign) == [" ", "-", "+"])
         #expect(lines.map(\.tone) == [.context, .removed, .added])
         #expect(lines.map { Self.visible($0.runs) } == ["same", "gone", "new"])
@@ -579,17 +610,50 @@ struct ComparisonDiffViewTests {
         #expect(Presentation.Tone.added.tint == Color.green.opacity(0.16))
     }
 
-    @Test func theListingKeepsEveryHunkAndEveryLineInOrderAndSumsToTheInput() {
+    /// What a row is, as one character: the legend, a header, a line.
+    private static func shape(_ listing: Presentation.Listing) -> String {
+        listing.rows.map { row -> String in
+            switch row.kind {
+            case .legend: "L"
+            case .header: "H"
+            case .line: "."
+            }
+        }.joined()
+    }
+
+    /// The listing is ONE sequence: the legend, then for each hunk its header
+    /// and its lines, and nothing else; the ids run 0, 1, 2 … without a gap.
+    /// Draw order is data order, which is why the view holds no header-and-
+    /// lines pair to place the wrong way round.
+    @Test func theListingIsTheLegendThenEachHeaderWithItsLinesAndNothingElse() throws {
         let fixture = Self.fixtures[6]
         let hunks = FileDiff.hunks(left: fixture.left, right: fixture.right, context: 3)
         #expect(hunks.count == 2)
         let listing = Presentation.listing(for: hunks)
-        #expect(listing.hunks.map(\.header) == hunks.map(Presentation.header(for:)))
-        #expect(listing.hunks.map(\.lines.count) == hunks.map(\.lines.count))
-        // Distinct ids across the hunks and inside each.
-        #expect(Set(listing.hunks.map(\.id)).count == hunks.count)
-        for hunk in listing.hunks { #expect(Set(hunk.lines.map(\.id)).count == hunk.lines.count) }
-        #expect(listing.legend == Presentation.legend.text)
+
+        let expectedShape =
+            "L" + hunks.map { "H" + String(repeating: ".", count: $0.lines.count) }.joined()
+        #expect(Self.shape(listing) == expectedShape)
+        #expect(listing.rows.map(\.id) == Array(0..<listing.rows.count))
+        #expect(listing.rows.first?.kind == .legend(Presentation.legend.text))
+
+        // Each header is its own hunk's, directly before that hunk's lines.
+        var index = 1
+        for hunk in hunks {
+            #expect(listing.rows[index].kind == .header(Presentation.header(for: hunk)))
+            index += 1
+            for line in hunk.lines {
+                guard case .line(let entry) = listing.rows[index].kind else {
+                    Issue.record("row \(index) is not a line")
+                    return
+                }
+                #expect(Self.visible(entry.runs) == line.text)
+                index += 1
+            }
+        }
+        #expect(index == listing.rows.count)
+        // Positive: the headers are two different ones.
+        #expect(Set(Self.sections(listing).map(\.header)).count == 2)
     }
 
     /// The seam the listing test above does not cross: what `screen` builds
@@ -610,10 +674,14 @@ struct ComparisonDiffViewTests {
                 Issue.record("\(fixture.name): not a listing")
                 continue
             }
-            #expect(listing.hunks.map(\.header) == hunks.map(Presentation.header(for:)))
-            #expect(listing.hunks.map(\.lines.count) == hunks.map(\.lines.count))
-            let shownTexts = listing.hunks.flatMap(\.lines).map { Self.visible($0.runs) }
+            let sections = Self.sections(listing)
+            #expect(sections.map(\.header) == hunks.map(Presentation.header(for:)))
+            #expect(sections.map(\.lines.count) == hunks.map(\.lines.count))
+            let shownTexts = Self.lines(listing).map { Self.visible($0.runs) }
             #expect(shownTexts == hunks.flatMap(\.lines).map(\.text))
+            #expect(
+                Self.shape(listing)
+                    == "L" + hunks.map { "H" + String(repeating: ".", count: $0.lines.count) }.joined())
             checked += hunks.count
         }
         // Positive: more than one hunk was actually exercised, three at most.
@@ -647,7 +715,7 @@ struct ComparisonDiffViewTests {
     @Test func aByteOrderMarkIsVisibleSoTheTwoSidesLookDifferent() throws {
         let hunks = FileDiff.hunks(left: ["\u{FEFF}#!/bin/sh", "echo"], right: ["#!/bin/sh", "echo"], context: 3)
         #expect(hunks.count == 1)
-        let lines = Presentation.listing(for: hunks).hunks[0].lines
+        let lines = Self.lines(Presentation.listing(for: hunks))
         let removed = try #require(lines.first { $0.tone == .removed })
         let added = try #require(lines.first { $0.tone == .added })
         #expect(Self.visible(removed.runs) != Self.visible(added.runs))
@@ -753,7 +821,7 @@ struct ComparisonDiffViewTests {
     @Test func aPairOfFilesDifferingInOneInvisibleScalarShowsItInTheListing() throws {
         for pair in Self.lookalikes {
             let hunks = FileDiff.hunks(left: ["head", pair.left, "tail"], right: ["head", pair.right, "tail"], context: 1)
-            let lines = Presentation.listing(for: hunks).hunks[0].lines
+            let lines = Self.lines(Presentation.listing(for: hunks))
             let removed = try #require(lines.first { $0.tone == .removed }, Comment(rawValue: pair.what))
             let added = try #require(lines.first { $0.tone == .added }, Comment(rawValue: pair.what))
             #expect(
@@ -850,7 +918,7 @@ struct ComparisonDiffViewTests {
 
         let hunks = FileDiff.hunks(left: [composed], right: [decomposed], context: 0)
         #expect(hunks.count == 1)
-        let lines = Presentation.listing(for: hunks).hunks[0].lines
+        let lines = Self.lines(Presentation.listing(for: hunks))
         // Positive: the change IS shown, as two lines.
         #expect(lines.map(\.tone) == [.removed, .added])
         let removed = try #require(lines.first { $0.tone == .removed })
@@ -973,7 +1041,7 @@ struct ComparisonDiffViewTests {
     /// The text of every line of a listing screen, with its sign.
     private func shown(_ screen: Presentation.Screen) -> [String]? {
         guard case .listing(let listing) = screen else { return nil }
-        return listing.hunks.flatMap(\.lines).map { $0.sign + Self.visible($0.runs) }
+        return Self.lines(listing).map { $0.sign + Self.visible($0.runs) }
     }
 
     @Test func aRowShowsItsOwnContentsAndSelectingAnotherReplacesThem() async throws {
@@ -1023,7 +1091,7 @@ struct ComparisonDiffViewTests {
             Issue.record("expected a listing")
             return
         }
-        #expect(listing.hunks.map(\.header) == ["@@ -1,6 +1,6 @@", "@@ -34,7 +34,7 @@"])
+        #expect(Self.sections(listing).map(\.header) == ["@@ -1,6 +1,6 @@", "@@ -34,7 +34,7 @@"])
         let texts = shown(.listing(listing)) ?? []
         #expect(texts.contains("-line 3") && texts.contains("+changed 3"))
         #expect(texts.contains("-line 37") && texts.contains("+changed 37"))
@@ -1275,8 +1343,8 @@ struct ComparisonDiffViewTests {
     }
 
     /// The core diff types, spelled the ways a stored property, a call or an
-    /// annotation would name them. Not the bare names: `ComparisonDiffHunkView`
-    /// contains `DiffHunk`.
+    /// annotation would name them. Not the bare names: `ComparisonDiffLineView`
+    /// contains `DiffLine`.
     private static let coreSpellings = [
         "DiffHunk(", "[DiffHunk]", ": DiffHunk", "DiffLine(", "[DiffLine]", ": DiffLine",
         "DiffLine.Kind", "DiffRefusal",
@@ -1290,7 +1358,7 @@ struct ComparisonDiffViewTests {
     /// The diff file split at its views. Everything above `ComparisonDiffView`
     /// is the presentation and the model.
     private static func viewCode() throws -> (
-        container: String, view: String, hunk: String, line: String, notice: String
+        container: String, view: String, header: String, line: String, notice: String
     ) {
         let source = try Self.code("ComparisonDiffView.swift")
         func start(_ name: String) throws -> Range<String.Index> {
@@ -1298,17 +1366,17 @@ struct ComparisonDiffViewTests {
         }
         let container = try start("ComparisonResultView")
         let view = try start("ComparisonDiffView")
-        let hunk = try start("ComparisonDiffHunkView")
+        let header = try start("ComparisonDiffHeaderView")
         let line = try start("ComparisonDiffLineView")
         let notice = try start("ComparisonDiffNoticeView")
         #expect(container.lowerBound < view.lowerBound)
-        #expect(view.lowerBound < hunk.lowerBound)
-        #expect(hunk.lowerBound < line.lowerBound)
+        #expect(view.lowerBound < header.lowerBound)
+        #expect(header.lowerBound < line.lowerBound)
         #expect(line.lowerBound < notice.lowerBound)
         return (
             String(source[container.lowerBound..<view.lowerBound]),
-            String(source[view.lowerBound..<hunk.lowerBound]),
-            String(source[hunk.lowerBound..<line.lowerBound]),
+            String(source[view.lowerBound..<header.lowerBound]),
+            String(source[header.lowerBound..<line.lowerBound]),
             String(source[line.lowerBound..<notice.lowerBound]),
             String(source[notice.lowerBound...])
         )
@@ -1356,7 +1424,7 @@ struct ComparisonDiffViewTests {
     /// hold nothing to rebind or slice. Every negative check has the positive
     /// one beside it.
     @Test func theViewsDrawOnlyWhatTheFunctionsReturn() throws {
-        let (container, view, hunk, line, notice) = try Self.viewCode()
+        let (container, view, header, line, notice) = try Self.viewCode()
 
         // Positive: one call of each function, one iteration of each output.
         #expect(
@@ -1365,11 +1433,23 @@ struct ComparisonDiffViewTests {
                 == 1)
         #expect(Self.occurrences(of: "await model.load(target, on: comparison)", in: view) == 1)
         #expect(Self.occurrences(of: ".task(id: target)", in: view) == 1)
-        #expect(Self.occurrences(of: "ForEach(listing.hunks, id: \\.id)", in: view) == 1)
-        #expect(Self.occurrences(of: "ComparisonDiffHunkView(hunk: hunk, digits: listing.numberDigits)", in: view) == 1)
-        #expect(Self.occurrences(of: "Text(listing.legend)", in: view) == 1)
-        // The legend comes before the hunks it explains.
-        Self.expectOrder(["Text(listing.legend)", "ForEach(listing.hunks, id: \\.id)"], in: view)
+        // ONE iteration over ONE sequence of rows, and no other: with no
+        // second collection and no pair of subviews, the order drawn is the
+        // order the rows are in. A reordering is a reordering of that array,
+        // which the presentation's own tests see.
+        #expect(Self.occurrences(of: "ForEach(listing.rows)", in: view) == 1)
+        #expect(Self.occurrences(of: "ForEach(", in: view) == 1)
+        #expect(Self.occurrences(of: "switch row.kind", in: view) == 1)
+        #expect(Self.occurrences(of: "case .legend(let text)", in: view) == 1)
+        #expect(Self.occurrences(of: "case .header(let text)", in: view) == 1)
+        #expect(Self.occurrences(of: "case .line(let entry)", in: view) == 1)
+        #expect(Self.occurrences(of: "Text(text)", in: view) == 1)
+        #expect(Self.occurrences(of: "ComparisonDiffHeaderView(text: text)", in: view) == 1)
+        #expect(
+            Self.occurrences(
+                of: "ComparisonDiffLineView(entry: entry, digits: listing.numberDigits)", in: view)
+                == 1)
+        #expect(!view.contains("hunks"))
         #expect(Self.occurrences(of: "ComparisonDiffNoticeView(notice: notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .notice(let notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .listing(let listing)", in: view) == 1)
@@ -1382,22 +1462,21 @@ struct ComparisonDiffViewTests {
         #expect(!view.contains(".failure"))
         #expect(!view.contains("default:"))
 
-        // The hunk draws its header and its lines, nothing else.
-        #expect(Self.occurrences(of: "Text(hunk.header)", in: hunk) == 1)
-        #expect(Self.occurrences(of: "ForEach(hunk.lines, id: \\.id)", in: hunk) == 1)
-        // The header comes before the lines it describes: a header drawn
-        // below its lines would head each hunk with the next one's numbers.
-        Self.expectOrder(["Text(hunk.header)", "ForEach(hunk.lines, id: \\.id)"], in: hunk)
-        #expect(Self.occurrences(of: "ComparisonDiffLineView(entry: entry, digits: digits)", in: hunk) == 1)
+        // The header draws its text, and holds no collection and no line.
+        #expect(Self.occurrences(of: "Text(text)", in: header) == 1)
+        #expect(Self.occurrences(of: "ForEach", in: header) == 0)
+        #expect(Self.occurrences(of: "ForEach", in: line) == 0)
+        #expect(Self.occurrences(of: "ForEach", in: notice) == 0)
+        #expect(!header.contains("LineView"))
         // The line draws the values of its entry: both numbers, the sign, the
         // runs (through the one attribution function), the tint.
         #expect(Self.occurrences(of: "Text(entry.leftNumber)", in: line) == 1)
         #expect(Self.occurrences(of: "Text(entry.rightNumber)", in: line) == 1)
-        // In that order: the left gutter shows the left file's numbers.
-        let columns = ["Text(entry.leftNumber)", "Text(entry.rightNumber)", "Text(entry.sign)",
-                       "FileActionPlanDisplay.attributed(entry.runs)"]
-        let positions = try columns.map { try #require(line.range(of: $0)?.lowerBound) }
-        #expect(positions == positions.sorted())
+        // In that order: the left gutter shows the left file's numbers. These
+        // four ARE siblings of one row, so their order is a source order.
+        Self.expectOrder(
+            ["Text(entry.leftNumber)", "Text(entry.rightNumber)", "Text(entry.sign)",
+             "FileActionPlanDisplay.attributed(entry.runs)"], in: line)
         #expect(Self.occurrences(of: "Text(entry.sign)", in: line) == 1)
         #expect(Self.occurrences(of: "FileActionPlanDisplay.attributed(entry.runs)", in: line) == 1)
         #expect(Self.occurrences(of: ".background(entry.tint)", in: line) == 1)
@@ -1408,7 +1487,7 @@ struct ComparisonDiffViewTests {
         #expect(Self.occurrences(of: "notice.showsProgress", in: notice) == 1)
         #expect(Self.occurrences(of: "notice.emphasis", in: notice) == 1)
 
-        for part in [hunk, line, notice] {
+        for part in [header, line, notice] {
             #expect(!part.contains("comparison"))
             for core in Self.coreSpellings { #expect(!part.contains(core), Comment(rawValue: core)) }
             #expect(!part.contains("ComparisonRow"))
@@ -1421,8 +1500,10 @@ struct ComparisonDiffViewTests {
             #expect(!part.contains(".context"))
             #expect(!part.contains(".failure"))
             #expect(!part.contains(".refusal"))
-            // The type annotation names the presentation once; no call does.
-            #expect(Self.occurrences(of: "Presentation", in: part) == 1)
+            // The type annotation names the presentation once (the header
+            // holds a plain string and names it not at all); no call does.
+            #expect(
+                Self.occurrences(of: "Presentation", in: part) == (part == header ? 0 : 1))
             for token in Self.slicing {
                 #expect(!part.contains(token), "a part uses \(token)")
             }
