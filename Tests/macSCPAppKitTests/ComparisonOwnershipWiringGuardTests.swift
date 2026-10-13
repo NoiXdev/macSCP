@@ -24,9 +24,12 @@ struct ComparisonOwnershipWiringGuardTests {
             .replacingOccurrences(of: " )", with: ")")
     }
 
-    /// A call to the `Comparison` initialiser: the type name not preceded by
-    /// another identifier character (`FolderComparison(`, `ComparisonRow(`
-    /// are other types), followed by `(` or by `.init(`.
+    /// A way to reach the `Comparison` initialiser: the type name not
+    /// preceded by another identifier character (`FolderComparison(`,
+    /// `ComparisonRow(` are other types), followed by `(`, by `.init` — with
+    /// or without the call, since `let make = Comparison.init` is a
+    /// construction waiting for its arguments — or by `.self`, the other way
+    /// to get a value that constructs one.
     ///
     /// This is a pattern and not a structural boundary on purpose: a
     /// `fileprivate` initialiser would have to live in `SessionTab.swift`,
@@ -36,7 +39,7 @@ struct ComparisonOwnershipWiringGuardTests {
     /// system without a connected tab. So the pattern covers both spellings
     /// of the call.
     private static let construction = try! NSRegularExpression(
-        pattern: #"(?<![A-Za-z0-9_])Comparison(\.init)?\("#)
+        pattern: #"(?<![A-Za-z0-9_])Comparison(\.init\b|\.self\b|\()"#)
 
     private static func constructions(in code: String) -> Int {
         construction.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
@@ -70,6 +73,13 @@ struct ComparisonOwnershipWiringGuardTests {
         #expect(Self.constructions(in: "FolderComparison(x)") == 0)
         #expect(Self.constructions(in: "let c = Comparison.init(left: a)") == 1)
         #expect(Self.constructions(in: "ComparisonRow.init(relativePath: p)") == 0)
+        // The function-value spellings: no `(` follows.
+        #expect(Self.constructions(in: "let make = Comparison.init") == 1)
+        #expect(Self.constructions(in: "let type = Comparison.self") == 1)
+        #expect(Self.constructions(in: "let make = ComparisonRow.init") == 0)
+        #expect(Self.constructions(in: "let make = FolderComparison.init") == 0)
+        // And an ordinary mention of the type is not a construction.
+        #expect(Self.constructions(in: "var comparisons: [Comparison] = []") == 0)
     }
 
     @Test func theTabIsTheOnlyWriterOfItsComparisons() throws {
