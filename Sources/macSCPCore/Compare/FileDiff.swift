@@ -91,6 +91,22 @@ public enum FileDiff {
     /// 1.6-fold `pathological/32KiB` (1.3834 s to 2.2843 s and 2.1953 s) lies
     /// above the bound, so the app never runs it. Why short lines pay more was not
     /// measured. Accepted: a diff that agrees with the checksum is worth it.
+    ///
+    /// **The faster-looking form, measured and not taken.** `a == b &&
+    /// a.utf8.elementsEqual(b.utf8)` is exactly byte equality (equal bytes
+    /// imply equal `String`s, so a false `==` already proves the bytes
+    /// differ), and a microbenchmark of short lines said it recovers most of
+    /// the cost above. On the real harness, two more runs, it recovers the
+    /// short-line cases (`pathological/32KiB/every0` 2.2843 s and 2.1953 s
+    /// down to 1.4474 s and 1.4196 s, `corner/thin/2097152x16` 0.3438 s and
+    /// 0.3567 s to 0.2969 s and 0.3000 s) and pays for it on long lines that
+    /// match, where the two comparisons both run: `grid/1MiB/80B/every0` 1.2906
+    /// s and 1.3345 s up to 1.6916 s and 1.5263 s, and the median ratio over
+    /// the 24 cases of 0.1 s or more rises from 1.026 to 1.092 and 1.112.
+    /// Lines of 40 to 80 bytes are what source files are made of, so the
+    /// simple form stays. Every figure above is the `elapsed=` of the case
+    /// named, in one run of `scripts/measure-diff-cost` started from the
+    /// repository root with no arguments.
     @inline(__always)
     private static func sameBytes(_ a: String, _ b: String) -> Bool {
         a.utf8.elementsEqual(b.utf8)
@@ -127,7 +143,7 @@ public enum FileDiff {
         // The product `(left.count + 1) * width` is what
         // `DiffEligibility.refusal(leftLines:rightLines:)` exists to bound,
         // with the two counts bounded in turn by `ceilingBytes`. The one
-        // caller, `Comparison.diff(leftPath:rightPath:)`, makes both checks
+        // caller, `Comparison.diffUnmapped(leftPath:rightPath:)`, makes both checks
         // where the files are split; this comment said "**nothing calls that
         // check yet**: Task 8 of the diff-view plan wires it where the files
         // are split" until Task 8 did. This function is pure and enforces

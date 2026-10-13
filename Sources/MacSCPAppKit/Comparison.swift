@@ -121,8 +121,8 @@ final class Comparison: Identifiable {
     let algorithm: ChecksumAlgorithm
 
     /// Where this comparison's fetched files live: `nil` until the first
-    /// fetch creates it, and `nil` again once `cancel()` or
-    /// `releaseFileSystems()` has removed it.
+    /// fetch creates it, and `nil` again once `releaseFileSystems()` has
+    /// removed it. `cancel()` leaves it alone.
     @ObservationIgnored private(set) var temporaryDirectory: URL?
     @ObservationIgnored private let temporaryRoot: URL
 
@@ -225,10 +225,20 @@ final class Comparison: Identifiable {
     ///
     /// The state changes first and the task is cancelled second; see the
     /// type's doc comment for why neither waits on the walk.
+    ///
+    /// **It does not touch the fetched files.** `cancel()` stops the WALK; a
+    /// diff the user opened for a row that had already arrived is a different
+    /// operation, may be fetching or being read at this very moment, and
+    /// deleting its files under it would answer a question nobody asked. The
+    /// directory is removed by `releaseFileSystems()`, which teardown always
+    /// calls after this; the cost is that a cancelled comparison keeps its
+    /// fetched files until the tab closes. An earlier version also removed
+    /// them here (the plan's brief asked for it), and a Cancel pressed during
+    /// a diff then killed that diff with a raw file error and still left an
+    /// empty directory behind.
     func cancel() {
         finish(.cancelled)
         walk?.cancel()
-        removeTemporaryDirectory()
     }
 
     /// Lets go of the two file systems. The rows, the progress and the
@@ -307,7 +317,7 @@ extension Comparison {
 
     /// Both sides of `row`, downloaded into this comparison's temporary
     /// directory through the transfer queue. The files stay there until
-    /// `cancel()` or `releaseFileSystems()` removes the directory.
+    /// `releaseFileSystems()` removes the directory.
     ///
     /// - Throws: `ComparisonFetchError.sessionClosed` when the session is
     ///   gone, `.wrongKind` on a file-pair comparison, `.noContentToCompare`
@@ -369,7 +379,9 @@ extension Comparison {
             rightPath: Self.join(rightRoot, row.relativePath))
         defer { try? FileManager.default.removeItem(at: fetched.directory) }
 
-        let equal = try await Self.contentsAreEqual(fetched.left, fetched.right)
+        let equal = try await mappingReleaseToSessionClosed {
+            try await Self.contentsAreEqual(fetched.left, fetched.right)
+        }
         let settled: ComparisonState = equal ? .same : .differs
         // The same row, still: rows are only ever appended to while a walk
         // runs, so the index holds; the path is checked because writing the
@@ -388,6 +400,30 @@ extension Comparison {
     /// from `stat` BEFORE any byte is fetched; the byte checks run on what
     /// arrived, because a size a server reports can be absent or stale.
     private func diff(
+        leftPath: String, rightPath: String
+    ) async throws -> Result<[DiffHunk], DiffRefusal> {
+        try await mappingReleaseToSessionClosed {
+            try await diffUnmapped(leftPath: leftPath, rightPath: rightPath)
+        }
+    }
+
+    /// Runs `body`, and when it throws after the session was let go says so.
+    /// A connection closed under a `stat`, or a fetch directory swept under a
+    /// read, throws whatever the backend or the file system throws, and
+    /// "the session is closed" is the true account of every one of them.
+    /// `fetch` does the same for its own window.
+    private func mappingReleaseToSessionClosed<T>(
+        _ body: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await body()
+        } catch {
+            if fileSystems == nil { throw ComparisonFetchError.sessionClosed }
+            throw error
+        }
+    }
+
+    private func diffUnmapped(
         leftPath: String, rightPath: String
     ) async throws -> Result<[DiffHunk], DiffRefusal> {
         guard let sides = fileSystems, transferQueue != nil else {

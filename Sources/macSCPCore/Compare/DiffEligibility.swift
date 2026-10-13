@@ -304,11 +304,12 @@ public enum DiffEligibility {
     /// the line counts are first known, which is after both sides have been
     /// split.
     ///
-    /// **One caller, and the order it keeps.** `Comparison.diff(leftPath:
-    /// rightPath:)` in the App target splits both sides into lines and then
-    /// calls this, after `refusal(forByteCount:)` on each side's `stat` and
-    /// `refusal(forBytes:)` on each side's fetched bytes; the first reason to
-    /// come back is the one shown. `diff(forRowAt:)` and `diffFilePair()` both
+    /// **One caller, and the order it keeps.** `Comparison.diffUnmapped(
+    /// leftPath:rightPath:)` in the App target splits both sides into lines
+    /// and then calls this. Before that it asks `refusal(forByteCount:)` about
+    /// each side's `stat` and again about the length of each fetched file, and
+    /// `refusal(forBytes:)` about each side's fetched bytes; the first reason
+    /// to come back is the one shown. `diff(forRowAt:)` and `diffFilePair()` both
     /// go through it. This paragraph replaces one that opened "**Nothing
     /// calls it yet.**" and described the caller as the code Task 8 of the
     /// diff-view plan was to write, which Task 8 did.
