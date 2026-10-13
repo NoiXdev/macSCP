@@ -133,6 +133,18 @@ struct IconTooltipLintTests {
         DecorativeIcon(
             file: "ContentView+Detail.swift", symbol: "bolt.horizontal.circle.fill",
             reason: "Heads the failed-connect surface, directly above its own headline (\"No connection possible\") and a sentence saying what happened, exactly as the lost-connection icon above it does; it takes no click, and the technical detail a tooltip could add lives behind that surface's own Details control instead."),
+        // The comparison window (diff view plan, Task 9). Three icons, none a
+        // hit target: each sits in a `Label` beside its own sentence, or
+        // between two paths.
+        DecorativeIcon(
+            file: "ComparisonWindow.swift", symbol: "bolt.horizontal.circle",
+            reason: "Heads the sentence saying the comparison's session was closed (and, alone above it, the one saying the comparison is no longer available); it takes no click and a tooltip could only repeat that sentence."),
+        DecorativeIcon(
+            file: "ComparisonWindow.swift", symbol: "arrow.left.arrow.right",
+            reason: "Between the two root paths a comparison is of; it takes no click, and the paths either side of it say what is being compared."),
+        DecorativeIcon(
+            file: "ComparisonWindow.swift", symbol: "exclamationmark.triangle",
+            reason: "Heads the sentence saying the comparison was stopped or could not be completed; it takes no click and a tooltip could only repeat that sentence."),
     ]
 
     /// How far below an icon a hover hint still counts as belonging to it.
