@@ -1392,10 +1392,21 @@ struct ComparisonDiffViewTests {
         )
     }
 
-    /// Every `name.member` in `code` for one of `names`, as written, with the
-    /// whole member chain that follows (`listing.rows.reversed` is one read).
-    private static func memberReads(of names: [String], in code: String) -> Set<String> {
-        let pattern = "\\b(?:\(names.joined(separator: "|")))(?:\\.[A-Za-z_][A-Za-z0-9_]*)+"
+    /// Every member read in `code`, off whatever value it is read: a root
+    /// spelled with a lowercase letter or an underscore, followed by one or
+    /// more member components, as written — the whole chain is one read, so a
+    /// slice applied to a sequence is a read of its own name and not of the
+    /// sequence's. A root spelled with a capital is a type rather than a
+    /// value, so neither it nor the components hanging off it are read here:
+    /// a colour constant is not something the view knows.
+    ///
+    /// It asks for no list of roots, and that is the point of it. A scan that
+    /// is told which names to look at bounds how those names are spelled and
+    /// says nothing about any other value in scope — and the scanned region
+    /// has values in scope that the views are handed for one purpose and
+    /// could read for another.
+    private static func allMemberReads(in code: String) -> Set<String> {
+        let pattern = "(?<![A-Za-z0-9_.$])[a-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(code.startIndex..., in: code)
         return Set(
@@ -1404,40 +1415,76 @@ struct ComparisonDiffViewTests {
             })
     }
 
-    /// Every `.name(` in `code`: a method call or a modifier written with a
-    /// leading dot.
+    /// Every dotted name in `code` that is handed something: a method call or
+    /// a modifier written with a leading dot, taking an argument list or a
+    /// trailing closure. The closure form is here because a modifier needs no
+    /// parentheses at all — one written with a brace alone was invisible to a
+    /// scan that required an open paren, and so could not be rejected by any
+    /// list of names. Whitespace may stand between the name and either
+    /// delimiter, and the delimiter itself is not part of the name reported.
     private static func dottedCalls(in code: String) -> Set<String> {
-        guard let regex = try? NSRegularExpression(pattern: "\\.[a-z][A-Za-z0-9]*\\(") else {
+        guard let regex = try? NSRegularExpression(pattern: "\\.[a-z][A-Za-z0-9]*\\s*[({]") else {
             return []
         }
         let range = NSRange(code.startIndex..., in: code)
         return Set(
             regex.matches(in: code, range: range).compactMap { match in
-                Range(match.range, in: code).map { String(code[$0].dropLast().dropFirst()) }
+                Range(match.range, in: code).map {
+                    String(code[$0].dropFirst().dropLast())
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
             })
     }
 
-    /// The dotted calls the views make: the presentation and model functions
-    /// they hand work to, the enum cases they match, and the modifiers that
-    /// style a row without placing it anywhere but where it stands.
+    /// The dotted names the views hand something to: the presentation and
+    /// model functions they give work to, the enum cases they match, and the
+    /// modifiers that style a row without placing it anywhere but where it
+    /// stands. Two of them are neither a call nor a modifier — a condition
+    /// and a subject written over a member read open a brace, and the scan
+    /// cannot tell that brace from a modifier's trailing closure. Both are
+    /// member reads that the read list below names as well, so they are
+    /// listed here rather than carved out of the scan: a carve-out for a
+    /// name read off an identifier would have let a paren-free modifier
+    /// written the same way straight through, which is the hole this list
+    /// was just widened to close.
+    ///
+    /// What this list cannot bound is what any listed modifier is GIVEN. A
+    /// name appearing here says a decision was made about the modifier, not
+    /// about its arguments, and the arguments are where a value that hides
+    /// content lives: a width or a padding set small enough collapses what
+    /// it measures, and the name on it is still the same listed name. The
+    /// sign column was measured collapsing that way with every token in this
+    /// file untouched — which leaves the tint as the only thing telling a
+    /// changed line apart, the distinction the sign exists to carry without
+    /// colour. Extending a list of names is no defence against it; a test
+    /// that reads the value is.
     private static let allowedCalls: Set<String> = [
         "accessibilityElement", "accessibilityLabel", "attributed", "background", "controlSize",
-        "fixedSize", "font", "foregroundStyle", "frame", "header", "legend", "line", "listing",
-        "load", "notice", "padding", "screen", "showsOverview", "system", "target", "task",
-        "textSelection",
+        "fixedSize", "font", "foregroundStyle", "frame", "header", "kind", "legend", "line",
+        "listing", "load", "notice", "padding", "screen", "showsOverview", "showsProgress",
+        "system", "target", "task", "textSelection",
+    ]
+
+    /// Every member read the views make, off any value in scope. Built by
+    /// running the scan over the views and reading what is there: what each
+    /// one is handed and nothing beside it.
+    private static let allowedMemberReads: Set<String> = [
+        "comparison.kind", "entry.kindLabel", "entry.leftNumber", "entry.rightNumber",
+        "entry.runs", "entry.sign", "entry.tint", "listing.numberDigits", "listing.rows",
+        "model.load", "model.loaded", "notice.emphasis", "notice.showsProgress", "notice.text",
+        "row.kind",
     ]
 
     @Test func theCallScanReadsLeadingDotsAndNothingElse() {
-        let code = "a.b(c) d.e f(g).h(i) .j( x.k (y) Color.red.opacity(0.1)"
-        #expect(Self.dottedCalls(in: code) == ["b", "h", "j", "opacity"])
+        let code = "a.b(c) d.e f(g).h(i) .j( x.k (y) Color.red.opacity(0.1) p.q { r } .s {"
+        #expect(Self.dottedCalls(in: code) == ["b", "h", "j", "k", "opacity", "q", "s"])
         #expect(Self.dottedCalls(in: "no calls here").isEmpty)
     }
 
-    @Test func theMemberReadScanSeesChainsAndOnlyTheNamesAsked() {
-        let code = "a.b a.b.c xa.b a.d(x) b.e a . f"
-        #expect(Self.memberReads(of: ["a"], in: code) == ["a.b", "a.b.c", "a.d"])
-        #expect(Self.memberReads(of: ["a", "b"], in: code) == ["a.b", "a.b.c", "a.d", "b.e"])
-        #expect(Self.memberReads(of: ["zz"], in: code).isEmpty)
+    @Test func theMemberReadScanSeesEveryChainAndNoTypeName() {
+        let code = "a.b a.b.c xa.b a.d(x) b.e a . f Color.white Color.red.opacity"
+        #expect(Self.allMemberReads(in: code) == ["a.b", "a.b.c", "xa.b", "a.d", "b.e"])
+        #expect(Self.allMemberReads(in: "no reads here").isEmpty)
     }
 
     /// What is wrong with `tokens` in `code`: each must occur exactly once,
@@ -1516,11 +1563,6 @@ struct ComparisonDiffViewTests {
                 of: "ComparisonDiffLineView(entry: entry, digits: listing.numberDigits)", in: view)
                 == 1)
         #expect(!view.contains("hunks"))
-        // The only members the view reads off the values it was handed. Any
-        // other (a `.flipped()` applied to the screen, a `.rows.something`)
-        // is a function standing between what the presentation returned and
-        // what is drawn, and no test of the presentation sees it.
-        let allowed: Set<String> = ["listing.rows", "listing.numberDigits", "row.kind"]
         // And the only calls and modifiers anywhere in the views. Reading the
         // rows in the right order says nothing about how they are laid out:
         // `.scaleEffect(y: -1)` on the list and on each row draws them upright
@@ -1535,11 +1577,19 @@ struct ComparisonDiffViewTests {
         // Positive: the scan reads the views at all, and every listed call is
         // used, so the list is not a set of names nothing uses.
         #expect(calls == Self.allowedCalls)
-        let read = Self.memberReads(of: ["screen", "listing", "row"], in: view)
-        #expect(read.subtracting(allowed).isEmpty, Comment(rawValue: "\(read.subtracting(allowed))"))
-        // Positive: each allowed read is actually there, so the set above is
+        // Every member read anywhere in the views, off any value in scope and
+        // not only off the three the rows arrive in. A read nobody listed is
+        // a function standing between what the presentation returned and what
+        // is drawn, and no test of the presentation sees it — a leaf gated on
+        // some other collection in scope draws a listing with every header
+        // and not one line, and every token above it stays true.
+        let read = Self.allMemberReads(in: everything)
+        #expect(
+            read.subtracting(Self.allowedMemberReads).isEmpty,
+            Comment(rawValue: "\(read.subtracting(Self.allowedMemberReads).sorted())"))
+        // Positive: each listed read is actually there, so the set above is
         // not empty because the scan found nothing.
-        #expect(read == allowed)
+        #expect(read == Self.allowedMemberReads)
         #expect(Self.occurrences(of: "ComparisonDiffNoticeView(notice: notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .notice(let notice)", in: view) == 1)
         #expect(Self.occurrences(of: "case .listing(let listing)", in: view) == 1)
