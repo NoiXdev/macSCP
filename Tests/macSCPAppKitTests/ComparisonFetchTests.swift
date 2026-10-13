@@ -20,8 +20,9 @@ import Testing
 ///    mark) is a decision of this task and is pinned either way;
 /// 6. a released comparison answers `sessionClosed` from every entry point,
 ///    and one released mid-fetch does not carry on;
-/// 7. the temporary directory exists after the first fetch and not after
-///    `cancel()` or `releaseFileSystems()`.
+/// 7. the temporary directory exists after the first fetch, survives
+///    `cancel()` (which stops the walk and nothing else), and is gone after
+///    `releaseFileSystems()`.
 ///
 /// No test here asserts how long anything took; the suite's hang bound is
 /// `.timeLimit`.
@@ -52,11 +53,12 @@ struct ComparisonFetchTests {
     /// "compare anyway" exists for.
     private func makeFolderRig(
         left: [String: Data], right: [String: Data],
-        reportsSizes: Bool = true, temporaryRoot: URL
+        reportsSizes: Bool = true, temporaryRoot: URL,
+        onLeftRead: @escaping @Sendable (String) async -> Void = { _ in }
     ) async -> Rig {
         let leftFS = MemoryFS(
             files: Dictionary(uniqueKeysWithValues: left.map { ("/L/" + $0.key, $0.value) }),
-            reportsSizes: reportsSizes)
+            reportsSizes: reportsSizes, onRead: onLeftRead)
         let rightFS = MemoryFS(
             files: Dictionary(uniqueKeysWithValues: right.map { ("/R/" + $0.key, $0.value) }),
             reportsSizes: reportsSizes)
@@ -76,10 +78,12 @@ struct ComparisonFetchTests {
     private func makeFilePairRig(
         left: Data, right: Data, reportsSizes: Bool = true, temporaryRoot: URL,
         onLeftRead: @escaping @Sendable (String) async -> Void = { _ in },
-        onRightRead: @escaping @Sendable (String) async -> Void = { _ in }
+        onRightRead: @escaping @Sendable (String) async -> Void = { _ in },
+        onLeftStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) -> Rig {
         let leftFS = MemoryFS(
-            files: ["/L/f": left], reportsSizes: reportsSizes, onRead: onLeftRead)
+            files: ["/L/f": left], reportsSizes: reportsSizes, onRead: onLeftRead,
+            onStat: onLeftStat)
         let rightFS = MemoryFS(
             files: ["/R/f": right], reportsSizes: reportsSizes, onRead: onRightRead)
         let queue = TransferQueueViewModel()
@@ -409,6 +413,28 @@ struct ComparisonFetchTests {
         #expect(rig.queue.items.isEmpty)
     }
 
+    /// The same refusal when only the RIGHT side is oversized. Every other
+    /// oversized fixture here is left-only; a check that looked at one side
+    /// would pass them all and download the other whole before refusing it.
+    @Test func anOversizedRightSideIsRefusedBeforeAnyByteIsFetched() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let big = Data(repeating: 0x61, count: DiffEligibility.ceilingBytes + 1)
+        let rig = makeFilePairRig(left: data("small"), right: big, temporaryRoot: root)
+
+        let result = try await rig.comparison.diffFilePair()
+
+        #expect(result == .failure(
+            .tooLarge(bytes: DiffEligibility.ceilingBytes + 1, ceiling: DiffEligibility.ceilingBytes)))
+        #expect(rig.left.reads.isEmpty)
+        #expect(rig.right.reads.isEmpty)
+        #expect(rig.queue.items.isEmpty)
+        // Positive: the right side WAS asked about, which is how it was
+        // refused; the left one was too, because it comes first.
+        #expect(rig.right.statCalls == 1)
+        #expect(rig.left.statCalls == 1)
+    }
+
     @Test func aPairExactlyAtTheCeilingIsFetchedAndDiffed() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -652,9 +678,69 @@ struct ComparisonFetchTests {
         #expect(leftovers.isEmpty, "temporary files outlived the release: \(leftovers)")
     }
 
+    /// The real teardown path: release, then the queue's `cancelAll`, whose
+    /// waiter throws `CancellationError`. The fetch has to translate that,
+    /// because "cancelled" is not what happened to the user's pair; the
+    /// session was closed. Asked through `fetchPair` and not through a diff,
+    /// because the diff entry points wrap the whole operation in a second
+    /// translation, which would answer `sessionClosed` here even with the
+    /// fetch's own removed (found by planting exactly that). The two explicit
+    /// checks in the fetch are not what this reaches: the left transfer is
+    /// cancelled, so it never completes.
+    @Test func aTransferCancelledByTheTeardownIsReportedAsSessionClosed() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let holder = ComparisonHolder()
+        let rig = await makeFolderRig(
+            left: ["a": data("x")], right: ["a": data("y")], temporaryRoot: root,
+            onLeftRead: { _ in await holder.releaseAndCancelTheQueue() })
+        holder.comparison = rig.comparison
+        holder.queue = rig.queue
+        let row = try #require(rig.comparison.rows.first)
+
+        await #expect(throws: ComparisonFetchError.sessionClosed) {
+            try await rig.comparison.fetchPair(row)
+        }
+
+        // Positive: the transfer was CANCELLED, not completed, so the error
+        // the fetch saw was the queue's and the translation ran.
+        #expect(rig.queue.items.count == 1)
+        #expect(rig.queue.items.first?.status == .cancelled)
+        #expect(rig.right.reads.isEmpty)
+        #expect(rig.comparison.temporaryDirectory == nil)
+    }
+
+    /// A connection closed under the `stat` before any fetch: the backend
+    /// throws its own error, and the comparison says the session is closed.
+    @Test func aReleaseDuringTheStatReportsSessionClosedAndNotTheBackendsError() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let holder = ComparisonHolder()
+        let rig = makeFilePairRig(
+            left: data("x"), right: data("y"), temporaryRoot: root,
+            onLeftStat: { path in
+                await MainActor.run {
+                    holder.comparison?.cancel()
+                    holder.comparison?.releaseFileSystems()
+                }
+                throw RemoteFSError.notFound(path: path)
+            })
+        holder.comparison = rig.comparison
+
+        await #expect(throws: ComparisonFetchError.sessionClosed) {
+            try await rig.comparison.diffFilePair()
+        }
+
+        // Positive: the stat was reached, and nothing was fetched after it.
+        #expect(rig.left.reads.isEmpty)
+        #expect(rig.queue.items.isEmpty)
+    }
+
     // MARK: - 7. The temporary directory
 
-    @Test func theTemporaryDirectoryExistsAfterTheFirstFetchAndNotAfterACancel() async throws {
+    /// `cancel()` stops the walk and nothing else: the files of a diff the
+    /// user is reading stay. `releaseFileSystems()` is what removes them.
+    @Test func theTemporaryDirectoryExistsAfterTheFirstFetchAndSurvivesACancel() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let rig = await makeFolderRig(
@@ -673,9 +759,39 @@ struct ComparisonFetchTests {
 
         rig.comparison.cancel()
 
+        #expect(rig.comparison.temporaryDirectory == directory)
+        #expect(FileManager.default.fileExists(atPath: urls.left.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: urls.right.path(percentEncoded: false)))
+
+        rig.comparison.releaseFileSystems()
+
         #expect(rig.comparison.temporaryDirectory == nil)
         #expect(!FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: urls.left.path(percentEncoded: false)))
+    }
+
+    /// The sequence that made the brief's `cancel()`-removes-the-directory
+    /// wrong: a diff is being fetched, the user presses Cancel on the walk's
+    /// progress line. The walk's cancel must not reach the diff.
+    @Test func aCancelOfTheWalkDuringADiffDoesNotKillTheDiff() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let holder = ComparisonHolder()
+        let rig = makeFilePairRig(
+            left: data("x\n"), right: data("y\n"), temporaryRoot: root,
+            onLeftRead: { _ in await MainActor.run { holder.comparison?.cancel() } })
+        holder.comparison = rig.comparison
+
+        let result = try await rig.comparison.diffFilePair()
+
+        // Positive: the cancel DID land during the fetch (the left side was
+        // being read, and the comparison reports itself cancelled).
+        #expect(rig.left.reads == ["/L/f"])
+        guard case .cancelled? = rig.comparison.outcome else {
+            Issue.record("expected .cancelled, got \(String(describing: rig.comparison.outcome))")
+            return
+        }
+        #expect(hunks(result)?.count == 1)
     }
 
     @Test func theTemporaryDirectoryIsRemovedOnReleaseToo() async throws {
@@ -717,6 +833,17 @@ struct ComparisonFetchTests {
 @MainActor
 private final class ComparisonHolder {
     var comparison: Comparison?
+    var queue: TransferQueueViewModel?
+
+    /// What `TabTeardown` does to a comparison, in its order: end the
+    /// comparison, let go of its connection, and cancel the queue's
+    /// transfers. A transfer in flight then ends in the queue's
+    /// `CancellationError`, which is what a fetch sees in a real teardown.
+    func releaseAndCancelTheQueue() async {
+        comparison?.cancel()
+        comparison?.releaseFileSystems()
+        await queue?.cancelAll(reason: .userRequested)
+    }
 
     /// Tears the comparison down the way `TabTeardown` does, then puts a file
     /// back where the comparison's directory was: what a transfer that was
@@ -751,14 +878,17 @@ private final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable
     private let state: Mutex<State>
     private let reportsSizes: Bool
     private let onRead: @Sendable (String) async -> Void
+    private let onStat: @Sendable (String) async throws -> Void
 
     init(
         files: [String: Data], reportsSizes: Bool = true,
-        onRead: @escaping @Sendable (String) async -> Void = { _ in }
+        onRead: @escaping @Sendable (String) async -> Void = { _ in },
+        onStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) {
         self.state = Mutex(State(files: files))
         self.reportsSizes = reportsSizes
         self.onRead = onRead
+        self.onStat = onStat
     }
 
     var reads: [String] { state.withLock { $0.reads } }
@@ -783,6 +913,7 @@ private final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable
     }
 
     func stat(path: String) async throws -> RemoteFileItem {
+        try await onStat(path)
         let data = state.withLock { state -> Data? in
             state.statCalls += 1
             return state.files[path]
