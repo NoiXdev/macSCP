@@ -168,8 +168,20 @@ enum ComparisonDiffPresentation {
     /// row's own label already says what it is, and this says what that means
     /// for a diff.
     ///
-    /// The three states that cannot reach it are answered with the general
+    /// The states that cannot reach it are answered with the general
     /// sentence anyway, so that none is blank.
+    ///
+    /// **An undetermined row reaches it for two reasons only.**
+    /// `Comparison.diff(forRowAt:)` refuses a row unless its state says both
+    /// sides are files, and for an undetermined one that is
+    /// `UndeterminedReason.canBeSettledByBytes`. So `.unsupportedKind` and
+    /// `.unreadable` arrive here, and the sentence written for them
+    /// ("macSCP could not tell that both sides are ordinary files") is true
+    /// of exactly those two. The four reasons bytes CAN settle describe two
+    /// ordinary files whose checksums could not be had, and that sentence
+    /// would be false of them; they never arrive, and take the general one
+    /// so that, if one ever did, nothing false is said.
+    /// `ComparisonDiffViewTests` holds this split to `canBeSettledByBytes`.
     static func wording(forNoContentIn state: ComparisonState) -> Wording {
         switch state {
         case .onlyLeft:
@@ -184,12 +196,18 @@ enum ComparisonDiffPresentation {
             Wording(
                 key: "compare.diff.failure.typeMismatch",
                 english: "The two sides are different kinds of entry, so their contents cannot be compared.")
-        case .undetermined:
-            Wording(
-                key: "compare.diff.failure.notKnownFiles",
-                english:
-                    "macSCP could not tell that both sides are ordinary files, so their contents were not compared."
-            )
+        case .undetermined(let reason):
+            switch reason {
+            case .unsupportedKind, .unreadable:
+                Wording(
+                    key: "compare.diff.failure.notKnownFiles",
+                    english:
+                        "macSCP could not tell that both sides are ordinary files, so their contents were not compared."
+                )
+            case .checksumUnavailable, .algorithmUnavailable, .algorithmsDiffer,
+                .etagIsNotAFileHash:
+                notPossible
+            }
         // `.same` and `.differs` cannot reach a refusal (both are pairs of
         // files). `.bothDirectories` cannot reach a row at all, and, as in
         // the overview, is given no wording of its own: the day the walk
@@ -490,7 +508,9 @@ enum ComparisonDiffPresentation {
     /// variation selectors, which emoji are built from; and two lines that
     /// differ only in Unicode normalisation form, which are drawn as the text
     /// they are. The diff compares bytes, so such a pair is shown as a change
-    /// whose two sides can look alike.
+    /// whose two sides can look alike. Both are pinned by tests
+    /// (`theScalarsAnEmojiIsBuiltFromPassThroughAsTheFileActionsSheetDoes`,
+    /// `twoLinesDifferingOnlyInNormalisationFormAreAChangeWhoseSidesLookAlike`).
     static func runs(of text: String, kind: DiffLine.Kind) -> [Run] {
         let changed = kind != .context
         let scalars = Array(text.unicodeScalars)
@@ -523,10 +543,19 @@ final class ComparisonDiffModel {
     private(set) var loaded: ComparisonDiffPresentation.Loaded?
 
     /// Fetches and diffs `target`, and never throws: what comes back, a
-    /// refusal and a failure included, is the result. The previous result is
-    /// dropped first, so while the new one is on its way nothing of the old
-    /// one can be shown. **A load that was cancelled writes nothing**: the
-    /// selection has moved on, and a late answer must not land on it.
+    /// refusal and a failure included, is the result.
+    ///
+    /// **What keeps a late answer off the screen is the cancel guard below,
+    /// together with the view's `.task(id: target)`, which cancels the
+    /// previous load when the target changes.** A load that was cancelled
+    /// writes nothing: the selection has moved on. The `await` is a
+    /// suspension point, and another load can complete across it, so this is
+    /// the guard that matters; do not move it believing the write of `nil`
+    /// protects what follows. That write drops the previous result at the
+    /// start, so a result of the old target is not held while the new one is
+    /// on its way, and `screen(target:loaded:)` checks the target again
+    /// before showing anything. Each load stamps its result with ITS OWN
+    /// target (`ComparisonDiffViewTests.twoLoadsThatOverlapEachWriteTheirOwnTarget`).
     func load(_ target: ComparisonDiffPresentation.Target?, on comparison: Comparison) async {
         loaded = nil
         guard let target else { return }
