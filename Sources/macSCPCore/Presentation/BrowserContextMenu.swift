@@ -43,6 +43,18 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     case computeChecksum       // any selection holding at least one FILE, and only where the backend can answer
     case compressTo(ArchiveFormat)             // one per offered format; the App folds the run into one submenu
     case extractArchive(ArchiveExtractFormat)  // single row whose name names a format
+    /// The diff view's two doors (diff view plan, Task 12). Which SHAPE of
+    /// comparison each one makes is read from the rows by the App, not
+    /// decided a second time here.
+    ///
+    /// `compareWithOtherPane` takes ONE row and measures it against the entry
+    /// of the same name in the other pane's current directory: a directory
+    /// row as a folder comparison, anything else as a file pair.
+    /// `compareTwoSelected` takes exactly two selected FILES of this pane and
+    /// compares those two with each other, so both sides of it are this
+    /// pane's side and the other pane is not consulted at all.
+    case compareWithOtherPane
+    case compareTwoSelected
     case delete                // any non-empty selection
     case backendFileAction(FileActionContribution)   // protocol-contributed file action (M14)
     /// An action the USER wrote (file-actions plan, 2026-10-12). Its own
@@ -83,10 +95,11 @@ public enum BrowserContextMenu {
     /// exactly the menu it had.
     ///
     /// `scope` is THIS pane — the rows being acted on, and the source of any
-    /// transfer. `destination` is the OTHER pane of the same window, the one
-    /// `.transferToOtherPane` would send to. Both default to `.ordinary`,
-    /// which is what every SSH, WebDAV and single-bucket S3 pane is, and
-    /// what every LOCAL pane always is.
+    /// transfer. `destination` is the OTHER pane of the same window: the one
+    /// `.transferToOtherPane` would send to, and the one
+    /// `.compareWithOtherPane` would measure a row against. Both default to
+    /// `.ordinary`, which is what every SSH, WebDAV and single-bucket S3 pane
+    /// is, and what every LOCAL pane always is.
     ///
     /// **Two directions, one function, four consumers** — counted in the
     /// tree on 2026-09-02, and listed so the next door added is added HERE
@@ -207,6 +220,24 @@ public enum BrowserContextMenu {
                let format = ArchiveExtractFormat.detected(inName: selection[0].name) {
                 entries.append(.extractArchive(format))
             }
+        }
+        // The diff view's two doors (Task 12), among the other read-only
+        // inspections and BEFORE `delete`, so the divider the App draws above
+        // `delete` still stands between them and the destructive entry.
+        //
+        // One row is measured against its counterpart in the other pane, and
+        // there is a counterpart only where that pane is showing a directory:
+        // at a bucket list the same name would be a BUCKET, a container that
+        // `S3FileSystem` refuses to read at that level. So the entry is
+        // withheld there rather than offered and refused — the
+        // `computeChecksum` judgement above. The TWO-row offer asks nothing of
+        // the other pane, both of its sides being this one, so that gate does
+        // not touch it.
+        if selection.count == 1, !destination.isContainerListRoot {
+            entries.append(.compareWithOtherPane)
+        }
+        if selection.count == 2, selection.allSatisfy({ $0.kind == .file }) {
+            entries.append(.compareTwoSelected)
         }
         entries.append(.delete)
         // Offered LAST, after `delete`: adding an action must never move an

@@ -1269,6 +1269,15 @@ struct RemoteFileTableView: NSViewRepresentable {
                 return actionItem(
                     title: L10n.string("menu.checksum", "Compute Checksum…"),
                     entry: entry, selection: selection)
+            case .compareWithOtherPane:
+                return actionItem(
+                    title: L10n.string("menu.compare.otherPane", "Compare with Other Pane"),
+                    entry: entry, selection: selection)
+            case .compareTwoSelected:
+                return actionItem(
+                    title: L10n.string(
+                        "menu.compare.twoSelected", "Compare the Two Selected Files"),
+                    entry: entry, selection: selection)
             case .delete:
                 let item = actionItem(title: L10n.string("menu.delete", "Delete…"), entry: entry, selection: selection)
                 return item

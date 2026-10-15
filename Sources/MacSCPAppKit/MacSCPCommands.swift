@@ -158,6 +158,22 @@ struct MacSCPCommands: Commands {
             }
             .keyboardShortcut("y", modifiers: [.command, .shift])
             .disabled(tabCommands?.isActiveTabConnected != true)
+
+            // "Compare Both Panes" (diff view plan, Task 12): the menu
+            // bar's door into the diff view. It sits beside the two
+            // entries above because, like them, its subject is what the
+            // window is SHOWING rather than a row somebody selected —
+            // there is no selection in a menu bar. The per-row and
+            // per-pair doors are the two context-menu entries.
+            //
+            // No keyboard shortcut: the two above hold ⌘⇧. and ⌘⇧Y, and a
+            // third letter would be one more thing to collide with
+            // something a user already knows. Same focused bridge and the
+            // same mirrored enabled state as "Show/Hide Transfers".
+            Button(L10n.string("menu.compare.panes", "Compare Both Panes")) {
+                tabCommands?.compareBothPanes?()
+            }
+            .disabled(tabCommands?.isActiveTabConnected != true)
         }
         // "Sessions" menu (M10a/T2, mockup section 4): bundles the
         // management sheets and the sidebar's existing export/import

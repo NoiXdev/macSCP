@@ -455,6 +455,15 @@ extension ContentView {
                                             copyPaths(of: selection)
                                         case .openInEditor:
                                             break   // never emitted for the local pane (menu model)
+                                        // The two diff-view doors (Task 12). Both
+                                        // are forwarded by `BrowserPane`, which
+                                        // handles neither itself; the handlers are
+                                        // in `ContentView+Comparison.swift`.
+                                        case .compareWithOtherPane:
+                                            compareWithOtherPane(selection, from: .local,
+                                                in: tab, session: session)
+                                        case .compareTwoSelected:
+                                            compareTwoSelected(selection, on: .local, in: tab)
                                         case .rename, .infoAndPermissions, .newFolder, .newFile,
                                             .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
@@ -551,6 +560,13 @@ extension ContentView {
                                         case .rename, .infoAndPermissions, .newFolder, .newFile,
                                             .delete, .computeChecksum:
                                             break   // handled inside BrowserPane, never forwarded
+                                        // The two diff-view doors (Task 12), the
+                                        // mirror of the local pane's pair above.
+                                        case .compareWithOtherPane:
+                                            compareWithOtherPane(selection, from: .remote,
+                                                in: tab, session: session)
+                                        case .compareTwoSelected:
+                                            compareTwoSelected(selection, on: .remote, in: tab)
                                         case .compressTo, .extractArchive:
                                             break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
                                         case .userFileAction:

@@ -18,7 +18,7 @@ struct BrowserContextMenuTests {
     @Test func singleRemoteFileShowsEverything() {
         #expect(BrowserContextMenu.entries(for: [file("a")], side: .remote) == [
             .transferToOtherPane, .openInEditor, .rename, .infoAndPermissions,
-            .newFolder, .newFile, .copyPath, .delete,
+            .newFolder, .newFile, .copyPath, .compareWithOtherPane, .delete,
         ])
     }
 
@@ -29,13 +29,18 @@ struct BrowserContextMenuTests {
 
     @Test func symlinkGetsNoTransferNoEditorNoPermissions() {
         let entries = BrowserContextMenu.entries(for: [symlink("l")], side: .remote)
-        #expect(entries == [.rename, .newFolder, .newFile, .copyPath, .delete])
+        #expect(entries == [
+            .rename, .newFolder, .newFile, .copyPath, .compareWithOtherPane, .delete,
+        ])
     }
 
     @Test func multiSelectionDropsSingleOnlyEntries() {
         let entries = BrowserContextMenu.entries(
             for: [file("a"), file("b")], side: .remote)
-        #expect(entries == [.transferToOtherPane, .newFolder, .newFile, .copyPath, .delete])
+        #expect(entries == [
+            .transferToOtherPane, .newFolder, .newFile, .copyPath,
+            .compareTwoSelected, .delete,
+        ])
     }
 
     @Test func symlinkOnlyMultiSelectionHasNoTransfer() {
@@ -122,7 +127,8 @@ struct BrowserContextMenuTests {
         #expect(BrowserContextMenu.entries(
             for: [file("a")], side: .remote, supportsChecksum: true) == [
             .transferToOtherPane, .openInEditor, .rename, .infoAndPermissions,
-            .newFolder, .newFile, .copyPath, .computeChecksum, .delete,
+            .newFolder, .newFile, .copyPath, .computeChecksum,
+            .compareWithOtherPane, .delete,
         ])
     }
 
@@ -132,7 +138,7 @@ struct BrowserContextMenuTests {
         #expect(BrowserContextMenu.entries(
             for: [file("a"), file("b")], side: .remote, supportsChecksum: true) == [
             .transferToOtherPane, .newFolder, .newFile, .copyPath,
-            .computeChecksum, .delete,
+            .computeChecksum, .compareTwoSelected, .delete,
         ])
     }
 
@@ -411,5 +417,126 @@ struct BrowserContextMenuTests {
         let withEmpty = BrowserContextMenu.entries(
             for: [file("a")], side: .remote, userFileActions: [])
         #expect(withEmpty == without)
+    }
+
+    // MARK: - The two comparison entries (diff view plan, Task 12)
+
+    private func folder(_ name: String) -> RemoteFileItem {
+        RemoteFileItem(name: name, path: "/\(name)", kind: .directory)
+    }
+
+    /// One row, measured against its counterpart in the other pane. The row
+    /// may be a file or a folder: which of the two a comparison is of is the
+    /// App's reading of `kind`, not a second gate here.
+    @Test func oneRowIsOfferedTheComparisonWithTheOtherPane() {
+        #expect(BrowserContextMenu.entries(for: [file("a")], side: .remote)
+            .contains(.compareWithOtherPane))
+        #expect(BrowserContextMenu.entries(for: [folder("d")], side: .local)
+            .contains(.compareWithOtherPane))
+    }
+
+    /// Exactly two selected FILES of one side, compared with each other.
+    @Test func exactlyTwoSelectedFilesAreOfferedTheirOwnComparison() {
+        let entries = BrowserContextMenu.entries(for: [file("a"), file("b")], side: .remote)
+        #expect(entries.contains(.compareTwoSelected))
+        // And that offer is the two-row one, not the one-row one.
+        #expect(entries.contains(.compareWithOtherPane) == false)
+    }
+
+    /// Each negative carries the positive beside it — the entry list is not
+    /// empty — so a filter that matched nothing could not pass for a filter
+    /// that excluded correctly.
+    @Test func oneFileIsNotTwo() {
+        let entries = BrowserContextMenu.entries(for: [file("a")], side: .remote)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareTwoSelected) == false)
+    }
+
+    @Test func threeFilesAreNotTwo() {
+        let entries = BrowserContextMenu.entries(
+            for: [file("a"), file("b"), file("c")], side: .remote)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareTwoSelected) == false)
+        #expect(entries.contains(.compareWithOtherPane) == false)
+    }
+
+    /// Two rows, and neither is a file: there is no pair of files to compare.
+    /// The folder pair's own comparison is the ONE-row entry, over the other
+    /// pane.
+    @Test func aFolderPairIsNotAFilePair() {
+        let entries = BrowserContextMenu.entries(
+            for: [folder("d1"), folder("d2")], side: .remote)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareTwoSelected) == false)
+    }
+
+    /// One file and one folder is not two files either — the mixed case the
+    /// three above leave out.
+    @Test func aFileAndAFolderAreNotTwoFiles() {
+        let entries = BrowserContextMenu.entries(
+            for: [file("a"), folder("d")], side: .remote)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareTwoSelected) == false)
+    }
+
+    /// The background click. Its list is the two "new" entries, which is the
+    /// positive beside the negative: a non-empty menu that holds neither
+    /// comparison.
+    @Test func anEmptySelectionIsOfferedNoComparison() {
+        let entries = BrowserContextMenu.entries(for: [], side: .remote)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareTwoSelected) == false)
+        #expect(entries.contains(.compareWithOtherPane) == false)
+    }
+
+    /// A bucket row answers `copyPath` and nothing else, the rule at the top
+    /// of `entries(for:…)`. Comparison does not reach around it.
+    @Test func aBucketRowIsOfferedNoComparison() {
+        let entries = BrowserContextMenu.entries(
+            for: [bucket("macscp-seed")], side: .remote, scope: listRoot)
+        #expect(entries == [.copyPath])
+    }
+
+    /// The OTHER pane has to be showing a directory for a counterpart to
+    /// exist: at a bucket list the same name would be a BUCKET, which is a
+    /// container and not an entry to compare. Withheld rather than offered
+    /// and refused — the `computeChecksum` judgement.
+    @Test func theOneRowComparisonIsWithheldWhileTheOtherPaneSitsAtABucketList() {
+        let refused = BrowserContextMenu.entries(
+            for: [file("a")], side: .local, destination: listRoot)
+        #expect(refused.isEmpty == false)
+        #expect(refused.contains(.compareWithOtherPane) == false)
+        // The positive: one level in, the same call offers it.
+        let accepted = BrowserContextMenu.entries(
+            for: [file("a")], side: .local, destination: insideABucket)
+        #expect(accepted.contains(.compareWithOtherPane))
+    }
+
+    /// The two-row comparison asks nothing of the other pane — both sides of
+    /// it are this pane's — so the gate above does not touch it.
+    @Test func theTwoRowComparisonSurvivesTheOtherPaneSittingAtABucketList() {
+        let entries = BrowserContextMenu.entries(
+            for: [file("a"), file("b")], side: .local, destination: listRoot)
+        #expect(entries.contains(.compareTwoSelected))
+    }
+
+    /// Before `delete`, so the separator the App draws above `delete` still
+    /// divides the inspections from the destructive entry, and before the
+    /// user's own actions, which stay the last run.
+    @Test func theComparisonEntriesComeBeforeDeleteAndBeforeTheUsersOwnActions() throws {
+        let action = FileAction(name: "Count", command: "wc -l {{PATH}}", runsOn: [.remote])
+        let one = BrowserContextMenu.entries(
+            for: [file("a")], side: .remote, userFileActions: [action])
+        let compare = try #require(one.firstIndex(of: .compareWithOtherPane))
+        let delete = try #require(one.firstIndex(of: .delete))
+        let user = try #require(one.firstIndex(of: .userFileAction(action)))
+        #expect(compare < delete)
+        #expect(delete < user)
+
+        let two = BrowserContextMenu.entries(
+            for: [file("a"), file("b")], side: .remote, userFileActions: [action])
+        let pair = try #require(two.firstIndex(of: .compareTwoSelected))
+        let pairDelete = try #require(two.firstIndex(of: .delete))
+        #expect(pair < pairDelete)
     }
 }

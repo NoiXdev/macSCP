@@ -389,6 +389,12 @@
 /* Browser context menu (M7b/T2) */
 "menu.transfer" = "Transfer";
 "menu.transfer.otherPane" = "To the other pane";
+
+/* The three doors into the diff view (diff view plan, Task 12): the two
+   context-menu entries and the menu bar's whole-pane one. */
+"menu.compare.otherPane" = "Compare with Other Pane";
+"menu.compare.twoSelected" = "Compare the Two Selected Files";
+"menu.compare.panes" = "Compare Both Panes";
 "menu.compress" = "Compress";
 "menu.extract" = "Extract…";
 "archive.format.zip" = "ZIP Archive";
