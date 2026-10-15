@@ -90,24 +90,47 @@ import Testing
         let state = try await ComparisonClassification.state(
             for: pair(leftSize: 7, rightSize: 7, leftKind: .symlink),
             leftChecksum: hash("aa"), rightChecksum: hash("aa"))
-        #expect(state == .undetermined(.unsupportedKind))
+        #expect(state == .undetermined(.linkOnASide))
 
         // The right side, and against a kind that differs: a link may point
         // at exactly what the other side holds, so this is not a mismatch.
         let rightLink = try await ComparisonClassification.state(
             for: pair(leftSize: 7, rightSize: 7, rightKind: .symlink),
             leftChecksum: hash("aa"), rightChecksum: hash("aa"))
-        #expect(rightLink == .undetermined(.unsupportedKind))
+        #expect(rightLink == .undetermined(.linkOnASide))
 
         let linkAgainstFolder = try await ComparisonClassification.state(
             for: pair(leftSize: nil, rightSize: nil, leftKind: .directory, rightKind: .symlink),
             leftChecksum: unavailable, rightChecksum: unavailable)
-        #expect(linkAgainstFolder == .undetermined(.unsupportedKind))
+        #expect(linkAgainstFolder == .undetermined(.linkOnASide))
+    }
 
-        let other = try await ComparisonClassification.state(
+    /// `.other` is also what a listing answers when a type was not reported
+    /// at all, so it is its own reason, on either side, and not the link's.
+    @Test func anOtherEntryOnEitherSideIsKindNotReportedAndNotALink() async throws {
+        let right = try await ComparisonClassification.state(
             for: pair(leftSize: 7, rightSize: 7, rightKind: .other),
             leftChecksum: hash("aa"), rightChecksum: hash("aa"))
-        #expect(other == .undetermined(.unsupportedKind))
+        #expect(right == .undetermined(.kindNotReported))
+
+        let left = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7, leftKind: .other),
+            leftChecksum: hash("aa"), rightChecksum: hash("aa"))
+        #expect(left == .undetermined(.kindNotReported))
+    }
+
+    /// A link is the stronger claim, and the one this classification refuses
+    /// to answer with bytes, whichever side carries it.
+    @Test func aLinkOnOneSideBeatsAnUnreportedKindOnTheOther() async throws {
+        let linkLeft = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7, leftKind: .symlink, rightKind: .other),
+            leftChecksum: hash("aa"), rightChecksum: hash("aa"))
+        #expect(linkLeft == .undetermined(.linkOnASide))
+
+        let linkRight = try await ComparisonClassification.state(
+            for: pair(leftSize: 7, rightSize: 7, leftKind: .other, rightKind: .symlink),
+            leftChecksum: hash("aa"), rightChecksum: hash("aa"))
+        #expect(linkRight == .undetermined(.linkOnASide))
     }
 
     @Test func aFolderAgainstAFileIsATypeMismatch() async throws {

@@ -294,17 +294,29 @@ enum ComparisonFetchError: Error, Equatable {
 
 extension UndeterminedReason {
     /// Whether fetching both files and comparing their bytes can settle a row
-    /// carrying this reason. The first four say "the connection could not
-    /// give a usable checksum" about two ordinary files; bytes answer that.
-    /// `.unsupportedKind` is a link or a special entry, for which no content
-    /// comparison is meaningful, and `.unreadable` may be a DIRECTORY the walk
-    /// could not list as well as a file it could not classify, so neither is
-    /// offered. Exhaustive on purpose: a new reason has to be decided here.
+    /// carrying this reason.
+    ///
+    /// The checksum reasons say "the connection could not give a usable
+    /// checksum" about two ordinary files; bytes answer that. So does
+    /// `.kindNotReported`, which says a listing did not report what kind of
+    /// entry this is: a fetch is the one thing that can answer it. `.linkOnASide`
+    /// is refused because a link's content is its target path, so bytes would
+    /// answer a different question from the one the row asks, and
+    /// `.unreadable` because it may be a DIRECTORY the walk could not list as
+    /// well as a file it could not classify.
+    ///
+    /// This comment used to say "`.unsupportedKind` is a link or a special
+    /// entry, for which no content comparison is meaningful". That is true of
+    /// a link and false of an unreported type, and is replaced by the reason
+    /// each case decides. Exhaustive on purpose: a new reason has to be
+    /// decided here. What the decision DOES is pinned by what a settle does,
+    /// in `ComparisonFetchTests`, and not by a list written against this.
     nonisolated var canBeSettledByBytes: Bool {
         switch self {
-        case .checksumUnavailable, .algorithmUnavailable, .algorithmsDiffer, .etagIsNotAFileHash:
+        case .checksumUnavailable, .algorithmUnavailable, .algorithmsDiffer, .etagIsNotAFileHash,
+            .kindNotReported:
             true
-        case .unsupportedKind, .unreadable:
+        case .linkOnASide, .unreadable:
             false
         }
     }

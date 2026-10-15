@@ -539,9 +539,21 @@ A third scene beside `WindowGroup` and `Settings`.
 
 - **Top: the folder overview.** One row per relative path with its state, and
   a count per state, so "how different are these" is answerable without
-  reading the list. The `undetermined` rows carry their reason, and each
+  reading the list. The `undetermined` rows carry their reason, and a row
   offers "compare anyway", which fetches both sides and settles that one pair
-  by bytes.
+  by bytes, where fetching the bytes answers the question the row asks, and
+  not where it would answer a different one. **Corrected 2026-10-13
+  (Task 13).** This sentence read "The `undetermined` rows carry their
+  reason, and each offers 'compare anyway', which fetches both sides and
+  settles that one pair by bytes." The word "each" was never implemented and
+  is withdrawn: a link (`linkOnASide`) does not offer it, because a link's
+  content is its target path and the bytes would compare what the links point
+  at, and neither does an unreadable path (`unreadable`), which may be a
+  directory. The four checksum reasons and `kindNotReported` do — the last
+  being an entry whose type the listing did not report, so an ordinary file
+  can carry it, and a fetch is the one thing that can answer it. It was
+  refused until Task 13, when a single `unsupportedKind` stood for both a
+  link and an unreported type.
 - **Bottom: the content diff** of the row selected above, or its refusal
   reason.
 - **A progress line while the walk runs**, with a cancel. A recursive

@@ -54,14 +54,26 @@ struct ComparisonFetchTests {
     private func makeFolderRig(
         left: [String: Data], right: [String: Data],
         reportsSizes: Bool = true, temporaryRoot: URL,
+        leftKinds: [String: RemoteFileKind] = [:], rightKinds: [String: RemoteFileKind] = [:],
+        leftChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
+        rightChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
+        unlistable: Set<String> = [],
         onLeftRead: @escaping @Sendable (String) async -> Void = { _ in }
     ) async -> Rig {
+        // `leftKinds`, `rightKinds` and `unlistable` are named by the path
+        // relative to the root, as `left` and `right` are.
         let leftFS = MemoryFS(
             files: Dictionary(uniqueKeysWithValues: left.map { ("/L/" + $0.key, $0.value) }),
-            reportsSizes: reportsSizes, onRead: onLeftRead)
+            reportsSizes: reportsSizes,
+            kinds: Dictionary(uniqueKeysWithValues: leftKinds.map { ("/L/" + $0.key, $0.value) }),
+            checksum: leftChecksum,
+            unlistable: Set(unlistable.map { "/L/" + $0 }), onRead: onLeftRead)
         let rightFS = MemoryFS(
             files: Dictionary(uniqueKeysWithValues: right.map { ("/R/" + $0.key, $0.value) }),
-            reportsSizes: reportsSizes)
+            reportsSizes: reportsSizes,
+            kinds: Dictionary(uniqueKeysWithValues: rightKinds.map { ("/R/" + $0.key, $0.value) }),
+            checksum: rightChecksum,
+            unlistable: Set(unlistable.map { "/R/" + $0 }))
         let queue = TransferQueueViewModel()
         let comparison = Comparison(
             left: leftFS, leftRoot: "/L", right: rightFS, rightRoot: "/R",
@@ -385,16 +397,146 @@ struct ComparisonFetchTests {
         #expect(rig.queue.items.isEmpty)
     }
 
-    /// Every reason is decided, in both directions: a negative check beside
-    /// its positive.
-    @Test func onlyAChecksumShortfallCanBeSettledByBytes() {
-        let settleable: [UndeterminedReason] = [
-            .checksumUnavailable, .algorithmUnavailable(.sha256), .algorithmsDiffer,
-            .etagIsNotAFileHash,
-        ]
-        let notSettleable: [UndeterminedReason] = [.unsupportedKind, .unreadable]
-        #expect(settleable.allSatisfy { $0.canBeSettledByBytes })
-        #expect(notSettleable.allSatisfy { !$0.canBeSettledByBytes })
+    /// A pair that REALLY produces `reason`, walked to completion, and what
+    /// settling its one row is expected to do. This replaces a test that
+    /// held two literal arrays of reasons against `canBeSettledByBytes`
+    /// (`onlyAChecksumShortfallCanBeSettledByBytes`): it transcribed the split
+    /// against itself, so it froze whichever one was in the tree and could not
+    /// tell a right split from a wrong one — green for twelve days while an
+    /// unreported type was refused. What is pinned here is what the FETCH DOES.
+    ///
+    /// Exhaustive with no `default:`, so a reason added in Core does not
+    /// compile until somebody has built the pair that produces it and decided
+    /// whether bytes answer it. `ComparisonOverviewTests.allReasons`, which the
+    /// overview suite holds to the cases the enum declares, is the list this
+    /// is walked over.
+    private func settleScenario(
+        for reason: UndeterminedReason, temporaryRoot root: URL
+    ) async -> (rig: Rig, bytesSettleIt: Bool) {
+        let same = data("same bytes")
+        func sha256(_ digit: String) -> RemoteChecksumOutcome {
+            let hex = String(repeating: digit, count: ChecksumAlgorithm.sha256.hexDigitCount)
+            return .checksum(FileChecksum.computedOnRemote(.sha256, hex: hex)!)
+        }
+        func md5(_ digit: String) -> RemoteChecksumOutcome {
+            let hex = String(repeating: digit, count: ChecksumAlgorithm.md5.hexDigitCount)
+            return .checksum(FileChecksum.computedOnRemote(.md5, hex: hex)!)
+        }
+        switch reason {
+        case .checksumUnavailable:
+            return (
+                await makeFolderRig(left: ["a": same], right: ["a": same], temporaryRoot: root), true
+            )
+        case .algorithmUnavailable:
+            return (
+                await makeFolderRig(
+                    left: ["a": same], right: ["a": same], temporaryRoot: root,
+                    leftChecksum: .algorithmUnavailable(.sha256), rightChecksum: sha256("b")),
+                true
+            )
+        case .algorithmsDiffer:
+            return (
+                await makeFolderRig(
+                    left: ["a": same], right: ["a": same], temporaryRoot: root,
+                    leftChecksum: sha256("a"), rightChecksum: md5("b")),
+                true
+            )
+        case .etagIsNotAFileHash:
+            let multipart = FileChecksum.objectStorageETag(
+                "\"" + String(repeating: "a", count: 32) + "-3\"")!
+            return (
+                await makeFolderRig(
+                    left: ["a": same], right: ["a": same], temporaryRoot: root,
+                    leftChecksum: .checksum(multipart), rightChecksum: md5("b")),
+                true
+            )
+        case .kindNotReported:
+            return (
+                await makeFolderRig(
+                    left: ["a": same], right: ["a": same], temporaryRoot: root,
+                    leftKinds: ["a": .other]),
+                true
+            )
+        case .linkOnASide:
+            return (
+                await makeFolderRig(
+                    left: ["a": same], right: ["a": same], temporaryRoot: root,
+                    leftKinds: ["a": .symlink]),
+                false
+            )
+        case .unreadable:
+            return (
+                await makeFolderRig(
+                    left: ["d": Data()], right: ["d": Data()], temporaryRoot: root,
+                    leftKinds: ["d": .directory], rightKinds: ["d": .directory],
+                    unlistable: ["d"]),
+                false
+            )
+        }
+    }
+
+    /// Every reason is decided by what happens, in both directions: the row
+    /// is first shown to carry the reason (so the pair was real), and then
+    /// settled. A row bytes can answer ends `same` or `differs` and the files
+    /// were read; one they cannot is refused, rewritten to nothing, and no
+    /// byte was moved. The refusal carries its positive half in the same
+    /// pass: the row was there, carrying that reason, before it was asked.
+    @Test func settlingARowDoesWhatItsReasonSaysBytesCanAnswer() async throws {
+        for reason in ComparisonOverviewTests.allReasons {
+            let root = try makeTemporaryRoot()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let (rig, bytesSettleIt) = await settleScenario(for: reason, temporaryRoot: root)
+            let before = rig.comparison.rows
+            // Positive: the pair produced exactly this reason, as one row.
+            #expect(before.map(\.state) == [.undetermined(reason)], "\(reason)")
+
+            if bytesSettleIt {
+                let settled = try await rig.comparison.settleUndetermined(rowAt: 0)
+                #expect(settled == .same || settled == .differs, "\(reason)")
+                #expect(rig.comparison.rows[0].state == settled, "\(reason)")
+                #expect(rig.left.reads.count == 1 && rig.right.reads.count == 1, "\(reason)")
+            } else {
+                await #expect(throws: ComparisonFetchError.noContentToCompare(before[0].state)) {
+                    try await rig.comparison.settleUndetermined(rowAt: 0)
+                }
+                #expect(rig.comparison.rows == before, "\(reason)")
+                #expect(rig.left.reads.isEmpty && rig.right.reads.isEmpty, "\(reason)")
+                #expect(rig.queue.items.isEmpty, "\(reason)")
+            }
+        }
+    }
+
+    /// The decisive case, named. Two ORDINARY files whose kind the listing did
+    /// not report: against a server whose listing attributes carry no
+    /// permission bits every entry is `.other`, and before the split every
+    /// such pair was refused "compare anyway". Both sides, and both answers.
+    @Test func twoOrdinaryFilesWhoseKindWasNotReportedAreSettledByTheirBytes() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rig = await makeFolderRig(
+            left: ["a": data("aaa"), "b": data("bbb")],
+            right: ["a": data("aaa"), "b": data("bbx")],
+            temporaryRoot: root,
+            leftKinds: ["a": .other, "b": .other], rightKinds: ["a": .other, "b": .other])
+        let unreported = ComparisonState.undetermined(.kindNotReported)
+        #expect(rig.comparison.rows.map(\.state) == [unreported, unreported])
+
+        #expect(try await rig.comparison.settleUndetermined(rowAt: 0) == .same)
+        #expect(try await rig.comparison.settleUndetermined(rowAt: 1) == .differs)
+        #expect(rig.comparison.rows.map(\.state) == [.same, .differs])
+    }
+
+    /// One side only, either one: a far side that reports nothing is as common
+    /// as a near side that does.
+    @Test func anUnreportedKindOnOnlyTheRightSideIsSettledByBytesToo() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            rightKinds: ["a": .other])
+        #expect(rig.comparison.rows.map(\.state) == [.undetermined(.kindNotReported)])
+
+        #expect(try await rig.comparison.settleUndetermined(rowAt: 0) == .differs)
     }
 
     // MARK: - 4. Refusals
@@ -951,16 +1093,26 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     /// named here is an ordinary file, which is what every fixture that
     /// predates the kind check wants.
     private let kinds: [String: RemoteFileKind]
+    /// What `remoteChecksum` answers. Unavailable by default, which is what
+    /// every fixture that predates the reason split wants.
+    private let checksum: RemoteChecksumOutcome
+    /// Directories whose listing throws, which is how a walk ends up with an
+    /// `.undetermined(.unreadable)` row.
+    private let unlistable: Set<String>
 
     init(
         files: [String: Data], reportsSizes: Bool = true,
         kinds: [String: RemoteFileKind] = [:],
+        checksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
+        unlistable: Set<String> = [],
         onRead: @escaping @Sendable (String) async -> Void = { _ in },
         onStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) {
         self.state = Mutex(State(files: files))
         self.reportsSizes = reportsSizes
         self.kinds = kinds
+        self.checksum = checksum
+        self.unlistable = unlistable
         self.onRead = onRead
         self.onStat = onStat
     }
@@ -978,6 +1130,7 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     }
 
     func list(path: String) async throws -> [RemoteFileItem] {
+        if unlistable.contains(path) { throw RemoteFSError.notFound(path: path) }
         let files = state.withLock { state -> [String: Data] in
             state.listCalls += 1
             return state.files
@@ -1021,7 +1174,7 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
         forFileAt path: String, algorithm: ChecksumAlgorithm
     ) async throws -> RemoteChecksumOutcome {
         state.withLock { $0.checksumCalls += 1 }
-        return .unavailableOnThisConnection
+        return checksum
     }
 
     func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}

@@ -191,13 +191,16 @@ enum ComparisonDiffPresentation {
     /// **An undetermined row reaches it for two reasons only.**
     /// `Comparison.diff(forRowAt:)` refuses a row unless its state says both
     /// sides are files, and for an undetermined one that is
-    /// `UndeterminedReason.canBeSettledByBytes`. So `.unsupportedKind` and
+    /// `UndeterminedReason.canBeSettledByBytes`. So `.linkOnASide` and
     /// `.unreadable` arrive here, and the sentence written for them
     /// ("macSCP could not tell that both sides are ordinary files") is true
-    /// of exactly those two. The four reasons bytes CAN settle describe two
-    /// ordinary files whose checksums could not be had, and that sentence
-    /// would be false of them; they never arrive, and take the general one
+    /// of exactly those two. The reasons bytes CAN settle are the four that
+    /// describe two ordinary files whose checksums could not be had, which
+    /// that sentence would be false of, and `.kindNotReported`, an entry a
+    /// fetch will settle; they never arrive, and take the general sentence
     /// so that, if one ever did, nothing false is said.
+    /// (This paragraph used to read "So `.unsupportedKind` and `.unreadable`
+    /// arrive here" and "The four reasons bytes CAN settle".)
     /// `ComparisonDiffViewTests` holds this split to `canBeSettledByBytes`.
     static func wording(forNoContentIn state: ComparisonState) -> Wording {
         switch state {
@@ -215,14 +218,14 @@ enum ComparisonDiffPresentation {
                 english: "The two sides are different kinds of entry, so their contents cannot be compared.")
         case .undetermined(let reason):
             switch reason {
-            case .unsupportedKind, .unreadable:
+            case .linkOnASide, .unreadable:
                 Wording(
                     key: "compare.diff.failure.notKnownFiles",
                     english:
                         "macSCP could not tell that both sides are ordinary files, so their contents were not compared."
                 )
             case .checksumUnavailable, .algorithmUnavailable, .algorithmsDiffer,
-                .etagIsNotAFileHash:
+                .etagIsNotAFileHash, .kindNotReported:
                 notPossible
             }
         // `.same` and `.differs` cannot reach a refusal (both are pairs of
