@@ -647,21 +647,56 @@ public final class TransferQueueViewModel {
 
     /// Like `enqueue`, but returns only once EXACTLY this item is done.
     /// Throws on failed/cancelled (Promise path: the Finder integration needs the file).
+    ///
+    /// - Parameter cancelsWithTask: `false` (the default, and what every
+    ///   caller but the comparison passes) keeps the wait as it always was: a
+    ///   bare continuation, which ignores the awaiting task being cancelled
+    ///   and leaves the transfer running until the queue's own cancel, a
+    ///   teardown or the transfer's end. `true` makes cancelling the awaiting
+    ///   task cancel THIS item, exactly as `cancel(itemID:)` does — a queued
+    ///   item never starts, a running one is cancelled cooperatively — and the
+    ///   call then throws `CancellationError`. A task that is already
+    ///   cancelled when it gets here enqueues the item and cancels it at once.
+    ///   Opt-in because the other callers' tasks have lifetimes of their own
+    ///   (a shared in-flight download, a Finder promise), and changing what
+    ///   cancelling THEM does is a decision for its own piece of work.
     public func enqueueAndWait(
         fileName: String, direction: TransferDirection,
         source: any RemoteFileSystem, sourcePath: String,
-        destination: any RemoteFileSystem, destinationDirectory: String
+        destination: any RemoteFileSystem, destinationDirectory: String,
+        cancelsWithTask: Bool = false
     ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            // Synchronous on the MainActor: enqueue first, then register the
-            // waiter, before the worker can even start running — so no result
-            // can miss the waiter.
-            let id = enqueue(
-                fileName: fileName, direction: direction,
-                source: source, sourcePath: sourcePath,
-                destination: destination, destinationDirectory: destinationDirectory,
-                onCompleted: nil)
-            waiters[id] = continuation
+        guard cancelsWithTask else {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                // Synchronous on the MainActor: enqueue first, then register the
+                // waiter, before the worker can even start running — so no result
+                // can miss the waiter.
+                let id = enqueue(
+                    fileName: fileName, direction: direction,
+                    source: source, sourcePath: sourcePath,
+                    destination: destination, destinationDirectory: destinationDirectory,
+                    onCompleted: nil)
+                waiters[id] = continuation
+            }
+            return
+        }
+        let relay = TaskCancelRelay()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let id = enqueue(
+                    fileName: fileName, direction: direction,
+                    source: source, sourcePath: sourcePath,
+                    destination: destination, destinationDirectory: destinationDirectory,
+                    onCompleted: nil)
+                // The waiter first, then the id: `cancel(itemID:)` resumes the
+                // waiter, so it has to be there when the cancel lands.
+                waiters[id] = continuation
+                if relay.learn(id) { cancel(itemID: id) }
+            }
+        } onCancel: {
+            if let id = relay.cancelled() {
+                Task { @MainActor [self] in cancel(itemID: id) }
+            }
         }
     }
 
@@ -1747,4 +1782,34 @@ final class FIFOGate {
     /// (M6b) so gate-interleaving tests can wait deterministically for a
     /// sibling to be parked instead of yield-spinning.
     var waiterCount: Int { waiters.count }
+}
+
+/// Hands a task's cancellation to the queue item it is waiting on. The cancel
+/// handler runs on whatever thread cancels the task, possibly before the item
+/// exists, so the two orders are both covered: a cancel that finds the id acts
+/// on it, and one that finds none is remembered for `learn(_:)`.
+private final class TaskCancelRelay: Sendable {
+    private struct State {
+        var id: UUID?
+        var isCancelled = false
+    }
+    private let state = Mutex(State())
+
+    /// Records that the task was cancelled. Returns the item to cancel if it is
+    /// already known; otherwise the item will be cancelled by `learn(_:)`.
+    func cancelled() -> UUID? {
+        state.withLock { state in
+            state.isCancelled = true
+            return state.id
+        }
+    }
+
+    /// Records the item. Returns whether the task was cancelled before it was
+    /// known, in which case the caller cancels the item itself.
+    func learn(_ id: UUID) -> Bool {
+        state.withLock { state in
+            state.id = id
+            return state.isCancelled
+        }
+    }
 }

@@ -539,6 +539,152 @@ struct ComparisonFetchTests {
         #expect(try await rig.comparison.settleUndetermined(rowAt: 0) == .differs)
     }
 
+    // MARK: - 3b. An abandoned fetch is cancelled
+
+    /// A read held open: the test is told when it began, and it ends when
+    /// the test says. Not a clock.
+    private final class ParkedRead: Sendable {
+        private let entered: AsyncStream<Void>
+        private let release: AsyncStream<Void>
+        private let enteredIn: AsyncStream<Void>.Continuation
+        private let releaseIn: AsyncStream<Void>.Continuation
+
+        init() {
+            let (entered, enteredIn) = AsyncStream<Void>.makeStream()
+            let (release, releaseIn) = AsyncStream<Void>.makeStream()
+            self.entered = entered
+            self.release = release
+            self.enteredIn = enteredIn
+            self.releaseIn = releaseIn
+        }
+
+        var hook: @Sendable (String) async -> Void {
+            { [self] _ in
+                enteredIn.yield()
+                for await _ in release { break }
+            }
+        }
+
+        func waitUntilEntered() async { for await _ in entered { return } }
+        func open() { releaseIn.yield() }
+
+        /// The result of `task`, cancelled by the caller. The wait is itself
+        /// cancellable, and when THIS test is cancelled (by its `.timeLimit`,
+        /// which is the hang bound here) it lets the parked read go, so a
+        /// build whose cancel never reaches the transfer ends as a failed
+        /// test and not as a process that never exits.
+        func result<T: Sendable>(of task: Task<T, any Error>) async -> Result<T, any Error> {
+            await withTaskCancellationHandler {
+                await task.result
+            } onCancel: {
+                task.cancel()
+                open()
+            }
+        }
+    }
+
+    /// Selecting a row starts its diff (`.task(id: target)`), and moving the
+    /// selection cancels the awaiting task. That cancel has to reach the
+    /// transfer: `enqueueAndWait` used to wait on a bare continuation, so the
+    /// download carried on behind a view that had gone to another row — and
+    /// for a row whose type was not reported, that is a download started by
+    /// an arrow key. Built from a real queue and a real cancel; every
+    /// postcondition is read BEFORE the parked read is let go, because the
+    /// read ending would make the queue look tidy whatever the cancel did.
+    @Test(.timeLimit(.minutes(1)))
+    func aDiffWhoseTaskIsCancelledMidFetchLeavesNoTransferRunning() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parked = ParkedRead()
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            leftKinds: ["a": .other], onLeftRead: parked.hook)
+        #expect(rig.comparison.rows.map(\.state) == [.undetermined(.kindNotReported)])
+
+        let task = Task { try await rig.comparison.diff(forRowAt: 0) }
+        await parked.waitUntilEntered()
+        // Positive: the transfer IS running, so what is read below is what
+        // the cancel did to something that was alive.
+        #expect(rig.queue.items.count == 1)
+        guard case .running? = rig.queue.items.first?.status else {
+            Issue.record("expected a running transfer, got \(String(describing: rig.queue.items.first?.status))")
+            parked.open()
+            return
+        }
+
+        task.cancel()
+        let outcome = await parked.result(of: task)
+
+        // Read before the thaw.
+        let stillRunning = rig.queue.items.filter { !$0.status.isTerminal }
+        let statuses = rig.queue.items.map(\.status)
+        let rightReads = rig.right.reads
+        parked.open()
+
+        if case .success = outcome { Issue.record("the cancelled diff produced a result") }
+        #expect(stillRunning.isEmpty, "\(statuses)")
+        #expect(statuses == [.cancelled])
+        // The right side was never started: nothing is left to download.
+        #expect(rightReads.isEmpty)
+    }
+
+    /// The same cancel, landing before the task has begun: the transfer is
+    /// enqueued by a task that is already cancelled, and must not be left
+    /// to run. Deterministic: a `Task` made on the main actor does not start
+    /// until this test yields.
+    @Test func aDiffWhoseTaskWasCancelledBeforeItBeganRunsNoTransfer() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            leftKinds: ["a": .other])
+
+        let task = Task { try await rig.comparison.diff(forRowAt: 0) }
+        task.cancel()
+        _ = await task.result
+
+        #expect(rig.queue.items.allSatisfy { $0.status.isTerminal })
+        #expect(rig.queue.items.allSatisfy { $0.status == .cancelled })
+        #expect(rig.left.reads.isEmpty)
+        #expect(rig.right.reads.isEmpty)
+        // Positive: the same call, not cancelled, does fetch.
+        let ok = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            leftKinds: ["a": .other])
+        #expect(hunks(try await ok.comparison.diff(forRowAt: 0)) != nil)
+        #expect(ok.left.reads == ["/L/a"])
+    }
+
+    /// The click route to the same fetch.
+    @Test(.timeLimit(.minutes(1)))
+    func aSettleWhoseTaskIsCancelledMidFetchLeavesNoTransferRunning() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parked = ParkedRead()
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            leftKinds: ["a": .other], onLeftRead: parked.hook)
+
+        let task = Task { try await rig.comparison.settleUndetermined(rowAt: 0) }
+        await parked.waitUntilEntered()
+        guard case .running? = rig.queue.items.first?.status else {
+            Issue.record("expected a running transfer")
+            parked.open()
+            return
+        }
+
+        task.cancel()
+        let outcome = await parked.result(of: task)
+        let statuses = rig.queue.items.map(\.status)
+        let row = rig.comparison.rows.first?.state
+        parked.open()
+
+        if case .success = outcome { Issue.record("the cancelled settle produced a result") }
+        #expect(statuses == [.cancelled])
+        // The row was not rewritten by an answer nobody got.
+        #expect(row == .undetermined(.kindNotReported))
+    }
+
     // MARK: - 4. Refusals
 
     @Test func anOversizedPairRefusesRatherThanDiffing() async throws {

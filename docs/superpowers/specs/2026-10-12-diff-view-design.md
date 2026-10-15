@@ -554,7 +554,11 @@ A third scene beside `WindowGroup` and `Settings`.
   at, and neither does an unreadable path (`unreadable`), which may be a
   directory. The four checksum reasons and `kindNotReported` do — the last
   being an entry whose type the listing did not report, so an ordinary file
-  can carry it, and a fetch is the one thing that can answer it. It was
+  can carry it, and a fetch is what answers it for an ordinary file. (This
+  clause read "and a fetch is the one thing that can answer it", which
+  over-reaches for a FIFO or a device node: a type that WAS reported and is
+  not a regular file also becomes `.other`, and what a fetch does with one
+  was read, not measured, and may not end.) It was
   refused until Task 13, when a single `unsupportedKind` stood for both a
   link and an unreported type.
 - **Bottom: the content diff** of the row selected above, or its refusal

@@ -229,11 +229,15 @@ struct ComparisonOverviewTests {
         }
     }
 
-    /// `.other` has TWO producers in `SFTPAttributeMapper.kind(fromPermissions:)`:
-    /// a listing that carried no permission bits at all (the type was NOT
-    /// REPORTED), and one whose bits arrived and named a FIFO, a socket or a
-    /// device (the type WAS reported, and is not one whose contents can be
-    /// compared). `kindNotReported` therefore may not say the type was not
+    /// `.other` has THREE producers, counted 2026-10-15 with
+    /// `/usr/bin/grep -rn -e "return \.other" -e "kind = \.other"
+    /// Sources/macSCPCore/RemoteFS Sources/macSCPCore/SSH`, which prints 3
+    /// lines: two in `SFTPAttributeMapper.kind(fromPermissions:)` and one in
+    /// `LocalFileSystem.listByReaddir`. Between them: a listing that carried
+    /// no permission bits at all, or `DT_UNKNOWN` (the type was NOT REPORTED),
+    /// and bits or a `d_type` that named a FIFO, a socket or a device (the
+    /// type WAS reported, and is not one whose contents can be compared).
+    /// This comment said TWO producers, in `SFTPAttributeMapper` alone. `kindNotReported` therefore may not say the type was not
     /// reported as a fact, may not say the entry IS a link or a special entry,
     /// and may not promise that comparing settles anything: it names the
     /// attempt as an attempt. The link's text says what it is and why bytes
@@ -770,7 +774,8 @@ struct ComparisonOverviewTests {
     }
 
     /// The two reasons the split exists for, named. An unreported type is an
-    /// ordinary file nobody could classify, and a fetch answers it; a link's
+    /// ordinary file nobody could classify, and a fetch is worth trying (this
+    /// read "and a fetch answers it"); a link's
     /// content is its target path, and a fetch would answer another question.
     /// The refusal carries its positive half beside it: the link row IS
     /// present and renders its reason, so a lookup that found nothing cannot
