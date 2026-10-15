@@ -434,6 +434,118 @@ struct ComparisonEntryWiringGuardTests {
         #expect(kind.upperBound <= fetch.lowerBound)
     }
 
+    // MARK: Who opts in to cancelling the transfer
+
+    /// One occurrence of `enqueueAndWait(` in code: where it is, whether it
+    /// is the declaration, and whether its argument list names
+    /// `cancelsWithTask: true`.
+    private struct QueueWaitCall: Equatable {
+        let file: String
+        let isDeclaration: Bool
+        let optsIn: Bool
+    }
+
+    /// Every `enqueueAndWait(` in `code` (comments and string literals already
+    /// blanked). The needle does not match `enqueueEditUploadAndWait(`, which
+    /// does not contain it, and a name that merely ends in it is skipped by
+    /// requiring a non-identifier character before.
+    private static func queueWaitCalls(in code: String, file: String) -> [QueueWaitCall] {
+        let needle = "enqueueAndWait("
+        var found: [QueueWaitCall] = []
+        var cursor = code.startIndex
+        while let hit = code.range(of: needle, range: cursor..<code.endIndex) {
+            cursor = hit.upperBound
+            if hit.lowerBound > code.startIndex {
+                let before = code[code.index(before: hit.lowerBound)]
+                if before.isLetter || before.isNumber || before == "_" { continue }
+            }
+            var depth = 1
+            var end = hit.upperBound
+            while end < code.endIndex, depth > 0 {
+                if code[end] == "(" { depth += 1 } else if code[end] == ")" { depth -= 1 }
+                end = code.index(after: end)
+            }
+            let arguments = collapsed(String(code[hit.upperBound..<end]))
+            let head = code[..<hit.lowerBound].split(whereSeparator: \.isWhitespace).last
+            found.append(QueueWaitCall(
+                file: file, isDeclaration: head == "func",
+                optsIn: arguments.contains("cancelsWithTask: true")))
+        }
+        return found
+    }
+
+    /// The scanner above, on literal fixture input and not on the tree: a
+    /// declaration, a call that opts in, a call that does not (wrapped over
+    /// lines, with a nested call in its arguments), the edit-upload sibling,
+    /// and a name that only ends in the needle.
+    @Test func theQueueWaitScannerReadsCallsDeclarationsAndOptInFromAFixture() {
+        let fixture = """
+            public func enqueueAndWait(
+                fileName: String, cancelsWithTask: Bool = false
+            ) async throws {}
+            try await queue.enqueueAndWait(
+                fileName: a, destinationDirectory: dir.path(percentEncoded: false),
+                cancelsWithTask: true)
+            try await queue.enqueueAndWait(
+                fileName: b, destinationDirectory: dir.path(percentEncoded: false))
+            try? await queue.enqueueEditUploadAndWait(fileName: c)
+            try await queue.reenqueueAndWait(fileName: d)
+            """
+        let calls = Self.queueWaitCalls(in: fixture, file: "Fixture.swift")
+        #expect(calls == [
+            QueueWaitCall(file: "Fixture.swift", isDeclaration: true, optsIn: false),
+            QueueWaitCall(file: "Fixture.swift", isDeclaration: false, optsIn: true),
+            QueueWaitCall(file: "Fixture.swift", isDeclaration: false, optsIn: false),
+        ])
+    }
+
+    /// `TransferQueueViewModel.enqueueAndWait` keeps its default (the weaker
+    /// behaviour: the awaiting task's cancel does not reach the item), so a
+    /// new caller would take that default without anyone deciding it. This
+    /// names the callers, tree-wide, and says which opt in:
+    ///
+    /// - `Comparison.swift`, both fetches: opt in. Selecting a row starts its
+    ///   diff and moving the selection cancels the task.
+    /// - `ContentView+Transfers.swift` (the Finder promise provider): does
+    ///   not. Its `Task` is started and no handle is kept, and the delegate
+    ///   implements no cancel callback, so nothing can cancel it today — a
+    ///   latent gap, and the one caller where a future cancel source should
+    ///   opt in.
+    /// - `EditSessionManager.swift` (`downloadAndRegister`): does not, and
+    ///   should not. It runs inside the shared `inFlightDownloads[remotePath]`
+    ///   task that every concurrent opener awaits through `task.value`, which
+    ///   does not propagate cancellation; a per-caller cancel that killed a
+    ///   shared download would be wrong for the other openers.
+    ///
+    /// Counted by name and not by number, over code only (comments and
+    /// literals blanked, so the prose mention in `RemoteFilePromise.swift`
+    /// cannot count), with the raw total beside it.
+    @Test func theCallersOfEnqueueAndWaitThatOptInToCancellationAreNamed() throws {
+        var calls: [QueueWaitCall] = []
+        var withTheParameter: Set<String> = []
+        var raw = 0
+        for url in try Self.swiftFiles() {
+            let code = try SourceCorpus.code(of: url)
+            raw += code.components(separatedBy: "enqueueAndWait(").count - 1
+            calls += Self.queueWaitCalls(in: code, file: url.lastPathComponent)
+            if code.contains("cancelsWithTask") { withTheParameter.insert(url.lastPathComponent) }
+        }
+        // Raw total: five occurrences in code under `Sources`, one of them
+        // the declaration. The prose mention in a comment is not among them,
+        // because the blanked view drops it.
+        #expect(raw == 5)
+        let declarations = calls.filter(\.isDeclaration).map(\.file)
+        #expect(declarations == ["TransferQueueViewModel.swift"])
+        let callers = calls.filter { !$0.isDeclaration }
+        #expect(callers.map(\.file).sorted() == [
+            "Comparison.swift", "Comparison.swift", "ContentView+Transfers.swift",
+            "EditSessionManager.swift",
+        ])
+        #expect(callers.filter(\.optsIn).map(\.file) == ["Comparison.swift", "Comparison.swift"])
+        // The parameter exists only where it is declared and where it is used.
+        #expect(withTheParameter == ["TransferQueueViewModel.swift", "Comparison.swift"])
+    }
+
     /// The menu-bar item exists, is wired by the window that owns the tabs,
     /// and is disabled on the capability — the same bridge shape as every
     /// other `tabCommands` entry.

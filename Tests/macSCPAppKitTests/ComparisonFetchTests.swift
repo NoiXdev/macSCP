@@ -58,7 +58,8 @@ struct ComparisonFetchTests {
         leftChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
         rightChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
         unlistable: Set<String> = [],
-        onLeftRead: @escaping @Sendable (String) async -> Void = { _ in }
+        onLeftRead: @escaping @Sendable (String) async -> Void = { _ in },
+        onRightRead: @escaping @Sendable (String) async -> Void = { _ in }
     ) async -> Rig {
         // `leftKinds`, `rightKinds` and `unlistable` are named by the path
         // relative to the root, as `left` and `right` are.
@@ -73,7 +74,7 @@ struct ComparisonFetchTests {
             reportsSizes: reportsSizes,
             kinds: Dictionary(uniqueKeysWithValues: rightKinds.map { ("/R/" + $0.key, $0.value) }),
             checksum: rightChecksum,
-            unlistable: Set(unlistable.map { "/R/" + $0 }))
+            unlistable: Set(unlistable.map { "/R/" + $0 }), onRead: onRightRead)
         let queue = TransferQueueViewModel()
         let comparison = Comparison(
             left: leftFS, leftRoot: "/L", right: rightFS, rightRoot: "/R",
@@ -653,6 +654,49 @@ struct ComparisonFetchTests {
             leftKinds: ["a": .other])
         #expect(hunks(try await ok.comparison.diff(forRowAt: 0)) != nil)
         #expect(ok.left.reads == ["/L/a"])
+    }
+
+    /// The SECOND transfer, pinned on its own. The tests above cancel during
+    /// the left download or before the first call, so a build in which only
+    /// the right-hand download opts in to the cancel (or only the left) would
+    /// pass them: each half of `fetch` has to be held by something that
+    /// cannot be satisfied by the other. Here the left file arrives and
+    /// finishes, the right read is parked, and the task is cancelled — which
+    /// is what selecting a row, waiting a moment and arrowing on does.
+    @Test(.timeLimit(.minutes(1)))
+    func aDiffWhoseTaskIsCancelledDuringTheRightDownloadLeavesNoTransferRunning() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parked = ParkedRead()
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            leftKinds: ["a": .other], onRightRead: parked.hook)
+
+        let task = Task { try await rig.comparison.diff(forRowAt: 0) }
+        await parked.waitUntilEntered()
+        // Positive: the left transfer is done and the right one is running,
+        // so what is read below is what the cancel did to the SECOND item.
+        let before = rig.queue.items.map(\.status)
+        guard before.count == 2, before[0] == .finished, case .running = before[1] else {
+            Issue.record("expected [finished, running], got \(before)")
+            parked.open()
+            return
+        }
+        #expect(rig.left.reads == ["/L/a"])
+
+        task.cancel()
+        let outcome = await parked.result(of: task)
+
+        // Read before the thaw.
+        let statuses = rig.queue.items.map(\.status)
+        parked.open()
+
+        if case .success = outcome { Issue.record("the cancelled diff produced a result") }
+        #expect(statuses == [.finished, .cancelled], "\(statuses)")
+        // Nothing was left in the comparison's directory by the abandoned fetch.
+        #expect(rig.comparison.temporaryDirectory.map {
+            Self.leftovers(under: $0).isEmpty
+        } ?? true)
     }
 
     /// The click route to the same fetch.
