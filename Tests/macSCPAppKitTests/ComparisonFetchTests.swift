@@ -658,10 +658,12 @@ struct ComparisonFetchTests {
     /// `.other` is what a listing or a `stat` answers when the type was NOT
     /// REPORTED (no permission bits arrived), so it is not evidence that the
     /// entry is unsuitable. The diff refuses what it knows is a folder or a
-    /// link and lets `.other` through to the fetch, which is the one thing
-    /// that can tell an ordinary file from a device node — and says so by name
-    /// if it is not one. Either side; the positive half is that the bytes were
-    /// read and a real diff came back.
+    /// link and lets `.other` through to the fetch. Either side; the positive
+    /// half is that the bytes were read and a real diff came back. (This
+    /// comment continued "which is the one thing that can tell an ordinary
+    /// file from a device node — and says so by name if it is not one." That
+    /// was never measured and is withdrawn; nothing here asserts what the
+    /// fetch does with a device node.)
     ///
     /// This replaces the fourth case of
     /// `asideThatIsNotAnOrdinaryFileIsRefusedBeforeAnyByteIsFetched`, which

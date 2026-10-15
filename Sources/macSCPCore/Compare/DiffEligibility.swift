@@ -62,8 +62,12 @@ public enum DiffRefusal: Error, Equatable, Sendable {
     /// entry whose type the backend did not report", and the sentence ended
     /// "a folder, a link or a special entry". Both are withdrawn: `.other`
     /// is what a backend answers when a type was not reported, so it is not
-    /// evidence of anything, and it now goes on to the fetch (a device node
-    /// fails there, by name). The only producer is the `switch` over the
+    /// evidence of anything, and it now goes on to the fetch. (This comment
+    /// continued "(a device node fails there, by name)", written from
+    /// intent and not from a measurement, and withdrawn: the transfer path
+    /// was READ, not run, and has no kind check and no size ceiling, so what
+    /// a device node does there is a download that may not end, not a named
+    /// failure.) The only producer is the `switch` over the
     /// kind in `Comparison.diffUnmapped`, whose refusing arm is
     /// `.directory, .symlink`.
     ///

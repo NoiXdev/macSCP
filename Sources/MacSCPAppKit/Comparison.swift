@@ -475,8 +475,20 @@ extension Comparison {
             // one thing that can answer it — the diff of the settled row was
             // refused as "not an ordinary file": the overview and the diff
             // telling the user two things about the same two files. An
-            // unreported type goes on to the fetch, which fails by name if it
-            // is a device node and reads the bytes if it is not.
+            // unreported type goes on to the fetch.
+            //
+            // This sentence ended "which fails by name if it is a device node
+            // and reads the bytes if it is not." That was written from
+            // intent, not from a measurement, and is withdrawn. What was READ
+            // (not run): `TransferEngine.copyFile` makes one `stat` for a
+            // progress total and then opens the stream, with no kind check
+            // and no size ceiling (the size is only the progress total), and
+            // `settleUndetermined` adds neither. Nothing in that reading
+            // says a device node or a FIFO fails by name; what it leaves
+            // open is a download that does not end, visible in the transfer
+            // bar and cancellable. Not run against a device. The ordinary
+            // single-item download takes the same path (see
+            // `ContentView.transferSelection`).
             // `UndeterminedReason.canBeSettledByBytes` decides the same
             // question for the settle, and
             // `aRowBytesCanSettleIsNotThenRefusedByTheDiffAndAnUnsettleableOneIsBoth`
