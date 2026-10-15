@@ -469,7 +469,7 @@ import Testing
         #expect(right.listedPaths == ["/r"])
     }
 
-    /// A symlink is `.undetermined(.unsupportedKind)` and is not followed,
+    /// A symlink is `.undetermined(.linkOnASide)` and is not followed,
     /// whether the other side holds a symlink or a directory.
     @Test func aSymlinkPairIsOneRowAndIsNotDescendedInto() async throws {
         let link = { (name: String) in RemoteFileItem(name: name, path: name, kind: .symlink) }
@@ -484,8 +484,8 @@ import Testing
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
         #expect(rows == [
-            ComparisonRow(relativePath: "both", state: .undetermined(.unsupportedKind)),
-            ComparisonRow(relativePath: "mixed", state: .undetermined(.unsupportedKind)),
+            ComparisonRow(relativePath: "both", state: .undetermined(.linkOnASide)),
+            ComparisonRow(relativePath: "mixed", state: .undetermined(.linkOnASide)),
         ])
         #expect(left.listedPaths == ["/l"])
         #expect(right.listedPaths == ["/r"])

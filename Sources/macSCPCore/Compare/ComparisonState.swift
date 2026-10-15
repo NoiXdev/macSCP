@@ -19,8 +19,22 @@ public enum UndeterminedReason: Equatable, Sendable {
     /// MD5 over the parts' MD5s and not a hash of the file's bytes at all.
     /// Comparing it to anything would be meaningless.
     case etagIsNotAFileHash
-    /// A symlink or an `other` entry: no content comparison is meaningful.
-    case unsupportedKind
+    /// A symlink on either side. A link's content is its target path, so
+    /// comparing the bytes of what a fetch returns would answer a different
+    /// question from the one the row asks, and the row is not settled by it.
+    ///
+    /// This case and the next one used to be one, `unsupportedKind`, whose
+    /// comment read "A symlink or an `other` entry: no content comparison is
+    /// meaningful." That is true of a link and false of an entry whose type
+    /// was not reported, which is what `.other` is when a listing carries no
+    /// type at all.
+    case linkOnASide
+    /// An `other` entry on a side and no symlink on either. `.other` is what a
+    /// listing answers for a special file, and ALSO for an entry whose type it
+    /// did not report (a server whose listing carries no permission bits, a
+    /// network file system that does not populate `d_type`), so an ordinary
+    /// file can land here. Unlike a link, a fetch can answer it.
+    case kindNotReported
     /// Listing a directory, or classifying a pair, threw. The walk reports the
     /// path with this reason and carries on, because one unreadable directory
     /// must not discard the rest of the comparison; the row names the path, so
@@ -64,9 +78,19 @@ public enum ComparisonClassification {
         // A symlink or an `other` entry on EITHER side is settled before the
         // kinds are compared. A link may point at exactly the kind of thing
         // the other side holds, so "the types differ" would be a claim this
-        // listing cannot back; no content comparison is meaningful either.
-        if isUnsupported(left.kind) || isUnsupported(right.kind) {
-            return .undetermined(.unsupportedKind)
+        // listing cannot back.
+        //
+        // The comment here used to end "no content comparison is meaningful
+        // either". That is true of a link, whose content is its target path,
+        // and false of `.other`, which is also what a listing answers when a
+        // type was not reported at all: for that one a fetch can answer, and
+        // the two reasons say which is which. A link is the stronger claim, so
+        // it is checked first and wins when the other side is `.other`.
+        if left.kind == .symlink || right.kind == .symlink {
+            return .undetermined(.linkOnASide)
+        }
+        if left.kind == .other || right.kind == .other {
+            return .undetermined(.kindNotReported)
         }
         if left.kind != right.kind { return .typeMismatch }
         if left.kind == .directory { return .bothDirectories }
@@ -110,9 +134,5 @@ public enum ComparisonClassification {
         }
 
         return a.hex == b.hex ? .same : .differs
-    }
-
-    private static func isUnsupported(_ kind: RemoteFileKind) -> Bool {
-        kind == .symlink || kind == .other
     }
 }

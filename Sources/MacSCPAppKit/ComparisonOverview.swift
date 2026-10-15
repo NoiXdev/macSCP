@@ -92,9 +92,12 @@ enum ComparisonOverviewPresentation {
     /// retry with MD5 can then end in `algorithmUnavailable(.md5)` — where no
     /// choice in Settings changes the answer.
     ///
-    /// `unsupportedKind` is worded for what the listing could tell, not for
+    /// `kindNotReported` is worded for what the listing could tell, not for
     /// what the entry is: `.other` is also what a listing answers when a type
-    /// was not reported at all, so an ordinary file can land here.
+    /// was not reported at all, so an ordinary file can land here. It once
+    /// shared one sentence with the link, which read "It is a link or a
+    /// special entry, or its type was not reported."; the two are now told
+    /// apart, because only one of them can be settled by a fetch.
     static func wording(for reason: UndeterminedReason) -> Wording {
         switch reason {
         case .checksumUnavailable:
@@ -119,11 +122,17 @@ enum ComparisonOverviewPresentation {
                 english:
                     "Not compared: at least one side offered only the ETag of a multipart upload, which is not a checksum of the file's contents."
             )
-        case .unsupportedKind:
+        case .linkOnASide:
             Wording(
-                key: "compare.reason.unsupportedKind",
+                key: "compare.reason.linkOnASide",
                 english:
-                    "Not compared: macSCP could not tell that this is an ordinary file. It is a link or a special entry, or its type was not reported."
+                    "Not compared: one side is a link. Comparing the contents would compare what the links point at, which is not what this row claims."
+            )
+        case .kindNotReported:
+            Wording(
+                key: "compare.reason.kindNotReported",
+                english:
+                    "Not compared: macSCP was not told what kind of entry this is. Compare the contents to settle it."
             )
         // The one reason that is not about comparing. It says what could not
         // be read; "nothing here was compared" is its consequence, and for a
@@ -146,8 +155,8 @@ enum ComparisonOverviewPresentation {
         switch reason {
         case .algorithmUnavailable(let algorithm):
             return String(format: text, algorithm.displayName)
-        case .checksumUnavailable, .algorithmsDiffer, .etagIsNotAFileHash, .unsupportedKind,
-            .unreadable:
+        case .checksumUnavailable, .algorithmsDiffer, .etagIsNotAFileHash, .linkOnASide,
+            .kindNotReported, .unreadable:
             return text
         }
     }
@@ -166,7 +175,7 @@ enum ComparisonOverviewPresentation {
         var same = 0
         var differs = 0
         var typeMismatch = 0
-        /// All six reasons together. A row that could not be settled is not a
+        /// Every reason together. A row that could not be settled is not a
         /// `same` row however it is counted.
         var undetermined = 0
         var unexpected = 0

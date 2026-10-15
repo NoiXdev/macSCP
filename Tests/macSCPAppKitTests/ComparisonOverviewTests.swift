@@ -56,9 +56,9 @@ struct ComparisonOverviewTests {
     /// compile here until someone has decided what it is called;
     /// `theReasonListNamesEveryCaseTheEnumDeclares` then holds this list to
     /// the enum as it is on disk.
-    private static let allReasons: [UndeterminedReason] = [
+    static let allReasons: [UndeterminedReason] = [
         .checksumUnavailable, .algorithmUnavailable(.sha256), .algorithmsDiffer,
-        .etagIsNotAFileHash, .unsupportedKind, .unreadable,
+        .etagIsNotAFileHash, .linkOnASide, .kindNotReported, .unreadable,
     ]
 
     /// The states a row can carry. NOT `.bothDirectories`; see its own tests.
@@ -86,7 +86,8 @@ struct ComparisonOverviewTests {
         case .algorithmUnavailable: "compare.reason.algorithmUnavailable %@"
         case .algorithmsDiffer: "compare.reason.algorithmsDiffer"
         case .etagIsNotAFileHash: "compare.reason.etagIsNotAFileHash"
-        case .unsupportedKind: "compare.reason.unsupportedKind"
+        case .linkOnASide: "compare.reason.linkOnASide"
+        case .kindNotReported: "compare.reason.kindNotReported"
         case .unreadable: "compare.reason.unreadable"
         }
     }
@@ -117,7 +118,7 @@ struct ComparisonOverviewTests {
     }
 
     @Test func noTwoStateKindsShareAKeyOrAText() throws {
-        // One representative per kind: the six `undetermined` rows share a
+        // One representative per kind: the `undetermined` rows share a
         // state, and tell their reasons apart elsewhere.
         let kinds: [ComparisonState] =
             [.onlyLeft, .onlyRight, .same, .differs, .typeMismatch, .undetermined(.unreadable)]
@@ -177,7 +178,7 @@ struct ComparisonOverviewTests {
     // MARK: - Reasons
 
     @Test func everyReasonHasItsOwnKeyAndTextAndNoReasonSharesOne() throws {
-        #expect(Self.allReasons.count == 6)
+        #expect(Self.allReasons.count == 7)
         var keys: [String] = []
         var texts: [String] = []
         for reason in Self.allReasons {
@@ -220,7 +221,7 @@ struct ComparisonOverviewTests {
 
         let comparing: [UndeterminedReason] = [
             .checksumUnavailable, .algorithmUnavailable(.sha256), .algorithmsDiffer,
-            .etagIsNotAFileHash, .unsupportedKind,
+            .etagIsNotAFileHash, .linkOnASide, .kindNotReported,
         ]
         for reason in comparing {
             let text = try #require(english[Presentation.key(for: reason)])
@@ -229,37 +230,50 @@ struct ComparisonOverviewTests {
     }
 
     /// `.other` is also what a listing answers when a type was NOT REPORTED,
-    /// so an ordinary file can carry `unsupportedKind`. The text may not say
-    /// the entry IS a link or a special entry, and keeps the third branch.
-    @Test func unsupportedKindDoesNotClaimTheEntryIsALinkAndKeepsTheUnreportedBranch() throws {
+    /// so an ordinary file can carry `kindNotReported`. Its text may not say
+    /// the entry IS a link or a special entry, and says what settles it; the
+    /// link's text says what it is and why bytes would answer another question.
+    @Test func kindNotReportedDoesNotClaimALinkAndLinkOnASideDoes() throws {
         let english = try Self.catalogue("en")
-        let text = try #require(english[Presentation.key(for: .unsupportedKind)])
-        #expect(text.contains("could not tell"))
-        #expect(text.contains("its type was not reported"))
-        #expect(text.contains("a link"))
-        #expect(!text.contains("this is a link"))
+        let unreported = try #require(english[Presentation.key(for: .kindNotReported)])
+        #expect(unreported.contains("was not told"))
+        #expect(unreported.contains("Compare the contents"))
+        #expect(!unreported.localizedCaseInsensitiveContains("link"))
+        #expect(!unreported.localizedCaseInsensitiveContains("special"))
+
+        let link = try #require(english[Presentation.key(for: .linkOnASide)])
+        #expect(link.contains("one side is a link"))
+        #expect(link.contains("what the links point at"))
+        #expect(unreported != link)
     }
 
-    /// The third branch of `unsupportedKind` ("or its type was not reported"),
-    /// and the "at least one side" of the two reasons that say it, in EACH
-    /// catalogue's own words. A branch deleted from one translation must not
-    /// hide behind the English one being intact.
-    private static let ownWords: [String: (unreported: String, atLeastOne: String)] = [
-        "en": ("its type was not reported", "at least one side"),
-        "de": ("sein Typ wurde nicht gemeldet", "Mindestens eine Seite"),
-        "fr": ("son type n’a pas été signalé", "au moins un côté"),
-        "pl": ("jego typ nie został zgłoszony", "co najmniej jedna strona"),
-    ]
+    /// The unreported-type reason and the link reason, and the "at least one
+    /// side" of the two reasons that say it, in EACH catalogue's own words. A
+    /// branch deleted from one translation must not hide behind the English
+    /// one being intact. `linkWord` is held on the link's text and held ABSENT
+    /// from the unreported-type text, so the one cannot drift into the other.
+    private static let ownWords:
+        [String: (unreported: String, linkWord: String, atLeastOne: String)] = [
+            "en": ("was not told", "link", "at least one side"),
+            "de": ("nicht mitgeteilt", "Link", "Mindestens eine Seite"),
+            "fr": ("n’a pas reçu", "lien", "au moins un côté"),
+            "pl": ("nie otrzymał", "dowiąz", "co najmniej jedna strona"),
+        ]
 
-    @Test func everyCatalogueCarriesTheUnreportedTypeBranchAndTheAtLeastOneSide() throws {
+    @Test func everyCatalogueCarriesTheUnreportedTypeReasonTheLinkReasonAndTheAtLeastOneSide() throws {
         #expect(Set(Self.ownWords.keys) == Set(Self.locales))
         for locale in Self.locales {
             let words = try #require(Self.ownWords[locale])
             let catalogue = try Self.catalogue(locale)
-            let unsupported = try #require(catalogue[Presentation.key(for: .unsupportedKind)])
+            let unreported = try #require(catalogue[Presentation.key(for: .kindNotReported)])
+            let link = try #require(catalogue[Presentation.key(for: .linkOnASide)])
             let etag = try #require(catalogue[Presentation.key(for: .etagIsNotAFileHash)])
             let checksum = try #require(catalogue[Presentation.key(for: .checksumUnavailable)])
-            #expect(unsupported.contains(words.unreported), "\(locale): \(unsupported)")
+            #expect(unreported.contains(words.unreported), "\(locale): \(unreported)")
+            #expect(link.localizedCaseInsensitiveContains(words.linkWord), "\(locale): \(link)")
+            #expect(
+                !unreported.localizedCaseInsensitiveContains(words.linkWord),
+                "\(locale): \(unreported)")
             #expect(etag.localizedCaseInsensitiveContains(words.atLeastOne), "\(locale): \(etag)")
             #expect(
                 checksum.localizedCaseInsensitiveContains(words.atLeastOne), "\(locale): \(checksum)")
@@ -713,8 +727,31 @@ struct ComparisonOverviewTests {
             // A row that cannot be settled still says why.
             #expect(entry.reason == Presentation.text(for: reason))
         }
-        #expect(offered.count == 4)
-        #expect(withheld == [.unsupportedKind, .unreadable])
+        #expect(offered.count == 5)
+        #expect(withheld == [.linkOnASide, .unreadable])
+    }
+
+    /// The two reasons the split exists for, named. An unreported type is an
+    /// ordinary file nobody could classify, and a fetch answers it; a link's
+    /// content is its target path, and a fetch would answer another question.
+    /// The refusal carries its positive half beside it: the link row IS
+    /// present and renders its reason, so a lookup that found nothing cannot
+    /// pass as a correct refusal.
+    @Test func anUnreportedTypeIsOfferedCompareAnywayAndALinkIsNot() throws {
+        let rows = [
+            ComparisonRow(relativePath: "unreported", state: .undetermined(.kindNotReported)),
+            ComparisonRow(relativePath: "link", state: .undetermined(.linkOnASide)),
+        ]
+        let entries = Self.entries(rows)
+        #expect(entries.map(\.path) == ["unreported", "link"])
+        let unreported = try #require(entries.first { $0.path == "unreported" })
+        let link = try #require(entries.first { $0.path == "link" })
+
+        #expect(unreported.settleButton != nil)
+        #expect(unreported.reason == Presentation.text(for: .kindNotReported))
+        #expect(link.settleButton == nil)
+        #expect(link.reason == Presentation.text(for: .linkOnASide))
+        #expect(!(link.reason ?? "").isEmpty)
     }
 
     @Test func theButtonCarriesTheActionsOwnTitleAndIsEnabledUnlessThatRowIsPending() throws {

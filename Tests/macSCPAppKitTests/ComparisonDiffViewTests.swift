@@ -73,7 +73,7 @@ struct ComparisonDiffViewTests {
         .onlyLeft, .onlyRight, .same, .differs, .bothDirectories, .typeMismatch,
         .undetermined(.checksumUnavailable), .undetermined(.algorithmUnavailable(.md5)),
         .undetermined(.algorithmsDiffer), .undetermined(.etagIsNotAFileHash),
-        .undetermined(.unsupportedKind), .undetermined(.unreadable),
+        .undetermined(.linkOnASide), .undetermined(.kindNotReported), .undetermined(.unreadable),
     ]
 
     /// A listing read back as what it holds, for the tests that ask about a
@@ -392,7 +392,7 @@ struct ComparisonDiffViewTests {
         let mismatch = Presentation.failureText(
             for: ComparisonFetchError.noContentToCompare(.typeMismatch))
         #expect(Set([onlyLeft, onlyRight, mismatch]).count == 3)
-        // The six reasons read as two sentences (which of the two is held to
+        // The reasons read as two sentences (which of the two is held to
         // `canBeSettledByBytes` below), and neither is one of the three.
         let undetermined = Set(
             Self.allStates.filter {
@@ -403,8 +403,10 @@ struct ComparisonDiffViewTests {
     }
 
     /// "macSCP could not tell that both sides are ordinary files" is true of
-    /// the reasons bytes cannot settle and false of the four they can, where
-    /// the classification has already established two ordinary files. The
+    /// the reasons bytes cannot settle, and is not the wording of the five they
+    /// can: four of those describe two ordinary files whose checksums could
+    /// not be had, and `.kindNotReported` is an entry a fetch will settle, so
+    /// a row that is about to be diffed is not told that nobody could tell. The
     /// split is held to `canBeSettledByBytes`, which is also what lets a row
     /// be diffed at all, so a change there cannot make this wording lie.
     @Test func theNotKnownToBeFilesSentenceIsOnlyForTheReasonsThatCanReachIt() {
@@ -423,10 +425,10 @@ struct ComparisonDiffViewTests {
                 withheld += 1
             }
         }
-        #expect(general == 4 && withheld == 2)
+        #expect(general == 5 && withheld == 2)
     }
 
-    /// The other half, with a real comparison: a row the four settleable
+    /// The other half, with a real comparison: a row the settleable
     /// reasons describe IS diffed, so it never reaches the no-contents text.
     @Test func aRowWhoseChecksumCouldNotBeHadIsDiffedAndNotRefused() async throws {
         let rig = try await folderRig(left: ["a": data("1")], right: ["a": data("2")])
