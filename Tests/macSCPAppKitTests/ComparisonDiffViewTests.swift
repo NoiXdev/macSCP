@@ -127,36 +127,92 @@ struct ComparisonDiffViewTests {
     /// which makes the exposure "untested", not "unwritten".
     ///
     /// `DiffRefusal` has associated values, so it cannot be `CaseIterable`.
-    /// The list is therefore tied to the number of `case` declarations in the
-    /// enum's own body, read from source: the technique this suite already
-    /// uses for the view code below.
+    /// The list is therefore tied to the number of cases the enum DECLARES,
+    /// read from source: the technique this suite already uses for the view
+    /// code below.
+    ///
+    /// **It counts case NAMES, not `case` keywords** (fix round 4, item 2).
+    /// Fix round 3 counted lines beginning `case `, and one `case` keyword
+    /// can declare any number of names: `case binary, probePlantedCase`
+    /// declares two, the reader read one, the tie passed, and the sixth case
+    /// went untested — which is the whole thing this test exists to prevent.
+    /// It is CLAUDE.md's "`grep -c` counts matching LINES" one level up, and
+    /// it arrived inside the fix written for the same mistake.
     @Test func theRefusalListHoldsEveryCaseTheEnumDeclares() throws {
         let core = Self.repoRoot.appendingPathComponent("Sources/macSCPCore")
         let source = try SourceCorpus.code(
             of: core.appendingPathComponent("Compare/DiffEligibility.swift"))
         let body = try TransferQueueBarCancelGuardTests.declarationBody(
             of: "public enum DiffRefusal: Error, Equatable, Sendable", in: source)
-        // Top-level `case` declarations of the enum's own body — not the
+        // Top-level case declarations of the enum's own body — not the
         // nested `Side`'s, whose cases sit one brace deeper.
         var depth = 0
         var declared = 0
+        var caseLines: [String] = []
         for line in body.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             // `declarationBody` hands back the body WITHOUT its outer
             // braces, so the enum's own cases sit at depth 0 and the nested
             // `Side`'s at depth 1.
-            if depth == 0, trimmed.hasPrefix("case ") { declared += 1 }
+            if depth == 0, trimmed.hasPrefix("case ") {
+                declared += Self.namesDeclared(onCaseLine: trimmed)
+                caseLines.append(trimmed)
+            }
             for character in line {
                 if character == "{" { depth += 1 }
                 if character == "}" { depth -= 1 }
             }
         }
         #expect(declared == Self.refusals.count, "\(declared) cases, \(Self.refusals.count) listed")
-        // Positive for the reader itself: it found cases at all, and it did
-        // NOT count the nested enum's two.
+        // Positives for the reader itself: it found cases at all, it did NOT
+        // count the nested enum's two, and — since the counter above is the
+        // part that can be wrong — this enum really is written one case per
+        // line, so `declared` and `caseLines.count` agree here and would
+        // diverge the moment somebody wrote two on one.
         #expect(declared == 5)
+        #expect(caseLines.count == 5)
         #expect(body.contains("case left"))
         #expect(body.contains("case right"))
+    }
+
+    /// How many case names one `case` line declares: one, plus one per comma
+    /// that is NOT inside an associated-value list. The parenthesis depth is
+    /// what makes it right — `case tooLarge(bytes: Int, ceiling: Int)` holds
+    /// a comma and declares ONE name, and a flat "does this line contain a
+    /// comma" check would call three of this enum's five cases a violation.
+    private static func namesDeclared(onCaseLine line: String) -> Int {
+        var depth = 0
+        var names = 1
+        for character in line {
+            switch character {
+            case "(", "[", "<": depth += 1
+            case ")", "]", ">": depth -= 1
+            case "," where depth == 0: names += 1
+            default: break
+            }
+        }
+        return names
+    }
+
+    /// The counter against a FIXTURE rather than against the real source,
+    /// which is the lesson of this round's near miss: a self-test planted
+    /// against real source is satisfied by the same loosening that satisfies
+    /// the live scan, so it has to carry its own inputs.
+    @Test func theCaseNameCounterCountsNamesAndNotCommas() {
+        #expect(Self.namesDeclared(onCaseLine: "case binary") == 1)
+        #expect(Self.namesDeclared(onCaseLine: "case binary, probePlantedCase") == 2)
+        #expect(Self.namesDeclared(onCaseLine: "case a, b, c") == 3)
+        // Commas inside an associated-value list declare nothing.
+        #expect(Self.namesDeclared(onCaseLine: "case tooLarge(bytes: Int, ceiling: Int)") == 1)
+        #expect(Self.namesDeclared(
+            onCaseLine: "case tooManyLines(leftLines: Int, rightLines: Int, ceilingProduct: Int)")
+            == 1)
+        #expect(Self.namesDeclared(onCaseLine: "case notAnOrdinaryFile(side: Side, path: String)") == 1)
+        // A second name beside an associated-value case is still a second
+        // name, which is the shape the probe plants.
+        #expect(Self.namesDeclared(onCaseLine: "case tooLarge(bytes: Int, ceiling: Int), planted") == 2)
+        // Generic and collection brackets do not open a case list either.
+        #expect(Self.namesDeclared(onCaseLine: "case rows([String: Int], Array<Int, Int>)") == 1)
     }
 
     @Test func eachRefusalHasItsOwnKeyAndItsOwnText() {

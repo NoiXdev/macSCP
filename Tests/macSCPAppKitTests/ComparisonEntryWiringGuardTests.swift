@@ -78,7 +78,10 @@ struct ComparisonEntryWiringGuardTests {
     /// silently, from one copy-paste between two mirrored blocks.
     ///
     /// The fix is structural and goes one step further than a per-region
-    /// scan: there is now ONE switch, in `ContentView+Transfers.swift`, and
+    /// scan: there is now ONE switch, in `ContentView+MenuActions.swift`
+    /// (this sentence named `ContentView+Transfers.swift` until fix round 4 —
+    /// the one file the router could NOT live in, for the reason
+    /// `routerFile` above and that file's own doc comment give), and
     /// the side is not an argument either call site writes — `BrowserPane`
     /// hands it to `onMenuAction`, off the `side` it was already constructed
     /// with and already uses for the menu model and the key commands. So the
@@ -121,6 +124,32 @@ struct ComparisonEntryWiringGuardTests {
         for literal in ["from: .local", "from: .remote", "on: .local", "on: .remote"] {
             #expect(!router.contains(literal), "the router spells \(literal)")
         }
+
+        // The two arms that are about ONE pane carry a `side ==` gate, and
+        // what is pinned is its POLARITY, not its presence (fix round 4,
+        // item 1). Inverting either one is a real break of an existing
+        // feature — the remote pane's "Open", or its presigned URL — and
+        // before the router it was pinned by nothing at all: the behaviour
+        // was encoded by which of the two closures the arm sat in, which is
+        // exactly what the swap above proved unpinned. Protection was zero
+        // and is now two anchors; what the refactor bought is that there is
+        // one spelling to anchor instead of two closures to bracket.
+        //
+        // Read with literals kept, because the second anchor is a claim
+        // ABOUT a literal (`action.id`'s value), which the code-only view
+        // blanks.
+        let withLiterals = try Self.withLiterals(Self.routerFile)
+        for gate in [
+            "case .openInEditor: if side == .remote, let item = selection.first {",
+            "if side == .remote, action.id == \"s3.presignedURL\",",
+        ] {
+            #expect(Self.occurrences(of: gate, in: withLiterals) == 1, "\(gate)")
+        }
+        // The inverted spellings, which is the whole point of anchoring the
+        // polarity: neither may appear.
+        for inverted in ["if side == .local,", "if side != .remote,"] {
+            #expect(!withLiterals.contains(inverted), "the router gates on \(inverted)")
+        }
     }
 
     /// The side reaches the router from `BrowserPane`, which is the only
@@ -134,8 +163,17 @@ struct ComparisonEntryWiringGuardTests {
         // the forward above is not reading something a caller passed twice.
         #expect(pane.contains("let side: BrowserPaneSide"))
 
-        // Each pane writes its side exactly once, in its own construction,
-        // and that is the spelling every other guard already brackets.
+        // Each pane writes its side exactly once, in its own construction.
+        // Two guards for two unrelated features already split this file by
+        // that exact spelling and would both go red if the two were swapped,
+        // named here rather than left as an implicit "every other guard"
+        // (fix round 4, item 4):
+        // `BucketListTransferGuardTests.bothPanesHandTheirTableTheOtherPanesScope`
+        // and `FileActionPaneWiringGuardTests.onlyTheRemotePaneIsHandedTheShell`.
+        // Measured 2026-10-15 by planting the swap against the whole AppKit
+        // target; both are in the catcher list, and this suite's own two
+        // `side`-reading cases are not — they read the spelling, not which
+        // pane carries it.
         let detail = try Self.code("ContentView+Detail.swift")
         #expect(Self.occurrences(of: "side: .local,", in: detail) == 1)
         #expect(Self.occurrences(of: "side: .remote,", in: detail) == 1)
