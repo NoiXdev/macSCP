@@ -803,7 +803,7 @@ struct ComparisonOverviewTests {
             fixtureRow("b", .undetermined(.checksumUnavailable)),
         ]
         var tracker = Presentation.SettleTracker()
-        tracker.begin("b")
+        tracker.begin(1)
         let entries = Self.entries(rows, settle: tracker)
 
         #expect(entries[0].settleButton == .init(title: Presentation.compareAnyway.text, isEnabled: true))
@@ -817,8 +817,8 @@ struct ComparisonOverviewTests {
     @Test func noOtherStateOffersTheActionOrCarriesANoteAndNoSessionMeansNoButton() throws {
         let others: [ComparisonState] = [.onlyLeft, .onlyRight, .same, .differs, .typeMismatch]
         var tracker = Presentation.SettleTracker()
-        tracker.begin("p")
-        tracker.fail("p", text: "stale failure")
+        tracker.begin(0)
+        tracker.fail(0, text: "stale failure")
         for state in others {
             let entry = Self.entries([fixtureRow("p", state)], settle: tracker)[0]
             #expect(entry.settleButton == nil, "\(state)")
@@ -832,9 +832,43 @@ struct ComparisonOverviewTests {
         #expect(Self.entries([undetermined], canFetch: true)[0].settleButton != nil)
     }
 
-    @Test func theIndexIsTheRowsPositionInTheComparison() {
+    /// The entry's `id` IS its position in the comparison's rows, and it is
+    /// the whole of its identity — what the list keys on, what the tracker
+    /// keys on, and what `settleUndetermined(rowAt:)` is given.
+    @Test func theIdIsTheRowsPositionInTheComparison() {
         let entries = Self.entries(Self.mixedRows)
-        #expect(entries.map(\.index) == Array(Self.mixedRows.indices))
+        #expect(entries.map(\.id) == Array(Self.mixedRows.indices))
+    }
+
+    /// Two rows whose paths are canonically equivalent and byte-different are
+    /// two rows: distinct identities, and a settling of one is not a settling
+    /// of the other. `String` equality folded them, which is what
+    /// `ComparisonPairing.pairs` guards bytes to prevent one layer down.
+    @Test func twoRowsSpelledDifferentlyAndEqualUnderStringAreTwoRows() {
+        let nfc = "\u{00E4}"
+        let nfd = "a\u{0308}"
+        // The premise: Swift calls these one string, and they are two files.
+        #expect(nfc == nfd)
+        #expect(Array(nfc.utf8) != Array(nfd.utf8))
+        let rows = [fixtureRow(nfc, .same), fixtureRow(nfd, .undetermined(.checksumUnavailable))]
+
+        let entries = Self.entries(rows)
+        #expect(entries.map(\.id) == [0, 1])
+        #expect(Set(entries.map(\.id)).count == 2)
+        // Positive: the two rows ARE told apart by state, so the pair is the
+        // one this case is about and not two copies of one row.
+        #expect(entries[0].settleButton == nil)
+        #expect(entries[1].settleButton != nil)
+
+        var tracker = Presentation.SettleTracker()
+        tracker.begin(1)
+        let secondIsPending = tracker.isPending(1)
+        let firstIsPending = tracker.isPending(0)
+        #expect(secondIsPending == true)
+        #expect(firstIsPending == false)
+        let marked = Self.entries(rows, settle: tracker)
+        #expect(marked[0].settleNote == nil)
+        #expect(marked[1].settleNote == Presentation.settlePending.text)
     }
 
     // MARK: - Compare anyway: doing it
@@ -921,10 +955,10 @@ struct ComparisonOverviewTests {
         await rig.model.settle(entry, on: rig.comparison)
 
         #expect(rig.comparison.rows == before)
-        let note = try #require(rig.model.tracker.failures[entry.path])
+        let note = try #require(rig.model.tracker.failures[entry.id])
         #expect(note == Presentation.settleSessionClosed.text)
         #expect(!note.isEmpty)
-        #expect(!rig.model.tracker.isPending(entry.path))
+        #expect(!rig.model.tracker.isPending(entry.id))
         // The list shows it: the row is unchanged, carries the note, and
         // offers no button because there is nothing to fetch with.
         let shown = rig.entries()[0]
@@ -940,14 +974,14 @@ struct ComparisonOverviewTests {
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let entries = rig.entries()
         let stale = Presentation.RowEntry(
-            path: entries[0].path, label: entries[0].label, reason: entries[0].reason,
-            isMatch: false, index: 1, settleButton: entries[0].settleButton, settleNote: nil)
+            id: 1, path: entries[0].path, label: entries[0].label, reason: entries[0].reason,
+            isMatch: false, settleButton: entries[0].settleButton, settleNote: nil)
         let before = rig.comparison.rows
 
         await rig.model.settle(stale, on: rig.comparison)
 
         #expect(rig.comparison.rows == before)
-        #expect(rig.model.tracker.failures["a"] == Presentation.settleRowMoved.text)
+        #expect(rig.model.tracker.failures[1] == Presentation.settleRowMoved.text)
         #expect(rig.left.reads.isEmpty)
     }
 
@@ -977,14 +1011,14 @@ struct ComparisonOverviewTests {
 
     @Test func theTrackerMovesThroughBeginSucceedAndFail() {
         var tracker = Presentation.SettleTracker()
-        tracker.begin("x")
-        #expect(tracker.isPending("x"))
-        tracker.fail("x", text: "no")
-        #expect(!tracker.isPending("x"))
-        #expect(tracker.failures["x"] == "no")
-        tracker.begin("x")
-        #expect(tracker.failures["x"] == nil)
-        tracker.succeed("x")
+        tracker.begin(7)
+        #expect(tracker.isPending(7))
+        tracker.fail(7, text: "no")
+        #expect(!tracker.isPending(7))
+        #expect(tracker.failures[7] == "no")
+        tracker.begin(7)
+        #expect(tracker.failures[7] == nil)
+        tracker.succeed(7)
         #expect(tracker == Presentation.SettleTracker())
     }
 
@@ -1008,9 +1042,16 @@ struct ComparisonOverviewTests {
         #expect(
             Self.occurrences(
                 of: "canFetch: ComparisonOverviewPresentation.canFetch(comparison))", in: view) == 1)
-        #expect(Self.occurrences(of: "Task { await settler.settle(entry, on: comparison) }", in: view) == 1)
+        // The settle goes through the comparison, which owns what it starts
+        // so that `cancel()` reaches it; the view keeps no task of its own.
+        // `ComparisonOwnershipWiringGuardTests` holds the negative half.
+        let settleCall = "comparison.startTrackedWork { await settler.settle(entry, on: comparison) }"
+        #expect(Self.occurrences(of: settleCall, in: view) == 1)
         #expect(Self.occurrences(of: "ForEach(figures, id: \\.id)", in: view) == 1)
-        #expect(Self.occurrences(of: "ForEach(entries, id: \\.path)", in: view) == 1)
+        #expect(Self.occurrences(of: "ForEach(entries, id: \\.id)", in: view) == 1)
+        // And not by the path, which is not an identity: two canonically
+        // equivalent paths are two rows and would share a SwiftUI id.
+        #expect(!view.contains("ForEach(entries, id: \\.path)"))
         #expect(Self.occurrences(of: "ComparisonOverviewFigure(figure: figure)", in: view) == 1)
         #expect(Self.occurrences(of: "ComparisonOverviewRow(entry: entry) {", in: view) == 1)
         #expect(Self.occurrences(of: "summary(figures)", in: view) == 1)
@@ -1059,7 +1100,7 @@ struct ComparisonOverviewTests {
     /// `canBeSettledByBytes`, once, in `rowEntries`, and is not spelled twice.
     @Test func theSettleCallAndTheSettleableLineAreEachSpelledOnce() throws {
         let code = try Self.code("ComparisonOverview.swift")
-        #expect(Self.occurrences(of: "settleUndetermined(rowAt: entry.index)", in: code) == 1)
+        #expect(Self.occurrences(of: "settleUndetermined(rowAt: entry.id)", in: code) == 1)
         #expect(Self.occurrences(of: "settleUndetermined(", in: code) == 1)
         #expect(Self.occurrences(of: "canBeSettledByBytes", in: code) == 1)
         #expect(code.contains("why.canBeSettledByBytes && canFetch"))

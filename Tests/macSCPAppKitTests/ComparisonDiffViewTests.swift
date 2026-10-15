@@ -364,7 +364,7 @@ struct ComparisonDiffViewTests {
     }
 
     @Test func aFailureIsStyledAsAFailureAndARefusalAsARefusal() {
-        let target = Presentation.Target.row(path: "a")
+        let target = Presentation.Target.row(index: 0)
         let failed = Presentation.screen(
             target: target,
             loaded: .init(target: target, outcome: .threw(ComparisonFetchError.sessionClosed)))
@@ -435,8 +435,8 @@ struct ComparisonDiffViewTests {
         defer { try? FileManager.default.removeItem(at: rig.root) }
         #expect(rig.comparison.rows.map(\.state) == [.undetermined(.checksumUnavailable)])
         let model = ComparisonDiffModel()
-        await model.load(.row(path: "a"), on: rig.comparison)
-        #expect(shown(Presentation.screen(target: .row(path: "a"), loaded: model.loaded)) == ["-1", "+2"])
+        await model.load(.row(index: 0), on: rig.comparison)
+        #expect(shown(Presentation.screen(target: .row(index: 0), loaded: model.loaded)) == ["-1", "+2"])
     }
 
     @Test func aForeignErrorIsShownAsItsCauseUnderTheDiffsOwnFrame() {
@@ -463,8 +463,8 @@ struct ComparisonDiffViewTests {
     // MARK: - Which screen
 
     @Test func theScreenFollowsTheTargetAndNeverShowsAnotherRowsResult() throws {
-        let a = Presentation.Target.row(path: "a")
-        let b = Presentation.Target.row(path: "b")
+        let a = Presentation.Target.row(index: 0)
+        let b = Presentation.Target.row(index: 1)
         let hunksOfA = FileDiff.hunks(left: ["one"], right: ["two"], context: 0)
         let loadedA = Presentation.Loaded(target: a, outcome: .hunks(hunksOfA))
 
@@ -500,34 +500,44 @@ struct ComparisonDiffViewTests {
 
     @Test func theTargetIsTheSelectedRowForFoldersAndTheFilePairForAPair() {
         #expect(Presentation.target(kind: .folders, selection: nil) == nil)
-        #expect(Presentation.target(kind: .folders, selection: "x/y") == .row(path: "x/y"))
+        #expect(Presentation.target(kind: .folders, selection: 4) == .row(index: 4))
         // A pair has no rows, so a stray selection does not matter.
         #expect(Presentation.target(kind: .filePair, selection: nil) == .filePair)
-        #expect(Presentation.target(kind: .filePair, selection: "x") == .filePair)
+        #expect(Presentation.target(kind: .filePair, selection: 0) == .filePair)
     }
 
-    @Test func aRowIsFoundByItsPathAndNotByAnotherRowsPosition() {
+    /// A row's identity is its POSITION, so this is a bounds check: there is
+    /// no second spelling of a row to search for, and no first-versus-last to
+    /// get it wrong. It used to be `rows.firstIndex { $0.relativePath == path }`,
+    /// and `String` equality is Unicode canonical equivalence — two rows whose
+    /// paths differ only by normalization are two files, and the search
+    /// answered the EARLIER one for both.
+    @Test func aRowIsFoundByItsPositionAndAPositionTheListLacksIsNotFound() {
         let rows = [
             fixtureRow("a", .differs),
             fixtureRow("b", .same),
             fixtureRow("c", .differs),
         ]
-        #expect(Presentation.index(of: "a", in: rows) == 0)
-        #expect(Presentation.index(of: "b", in: rows) == 1)
-        #expect(Presentation.index(of: "c", in: rows) == 2)
-        #expect(Presentation.index(of: "d", in: rows) == nil)
-        #expect(Presentation.index(of: "a", in: []) == nil)
-        // A path that is the beginning of an EARLIER row's path is not that
-        // row, and a path that is the whole of a later one is found.
-        let nested = [
-            fixtureRow("dir/file", .differs),
-            fixtureRow("dir", .differs),
-            fixtureRow("dir/file.bak", .differs),
-        ]
-        #expect(Presentation.index(of: "dir", in: nested) == 1)
-        #expect(Presentation.index(of: "dir/file", in: nested) == 0)
-        #expect(Presentation.index(of: "dir/fil", in: nested) == nil)
-        #expect(Presentation.index(of: "DIR", in: nested) == nil)
+        #expect(Presentation.index(of: 0, in: rows) == 0)
+        #expect(Presentation.index(of: 1, in: rows) == 1)
+        #expect(Presentation.index(of: 2, in: rows) == 2)
+        #expect(Presentation.index(of: 3, in: rows) == nil)
+        #expect(Presentation.index(of: -1, in: rows) == nil)
+        #expect(Presentation.index(of: 0, in: []) == nil)
+        // The case that matters, and the one no path lookup could answer: two
+        // rows whose paths are `==` as `String`s and different as bytes keep
+        // their own positions, and the diff of each is its own.
+        let nfc = "\u{00E4}"
+        let nfd = "a\u{0308}"
+        #expect(nfc == nfd)
+        #expect(Array(nfc.utf8) != Array(nfd.utf8))
+        let folded = [fixtureRow(nfc, .same), fixtureRow(nfd, .differs)]
+        #expect(Presentation.index(of: 0, in: folded) == 0)
+        #expect(Presentation.index(of: 1, in: folded) == 1)
+        #expect(folded[0].state == .same)
+        #expect(folded[1].state == .differs)
+        // And the two targets are two targets.
+        #expect(Presentation.Target.row(index: 0) != Presentation.Target.row(index: 1))
     }
 
     @Test func onlyAFailureIsSetApartInColour() {
@@ -773,7 +783,7 @@ struct ComparisonDiffViewTests {
     /// round, would read as a complete diff of a file whose last change it
     /// never shows.
     @Test func theScreenListsEveryHunkTheDiffReturnedInOrder() throws {
-        let target = Presentation.Target.row(path: "p")
+        let target = Presentation.Target.row(index: 0)
         var checked = 0
         for fixture in [Self.fixtures[6], Self.fixtures[7]]
         + [Fixture(name: "three", left: Self.numbered(60), right: Self.numbered(60, changing: [2, 30, 58]))] {
@@ -1192,8 +1202,8 @@ struct ComparisonDiffViewTests {
             right: ["a": data("ALPHA\nsame"), "b": data("BETA!\nsame")])
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
-        let a = Presentation.Target.row(path: "a")
-        let b = Presentation.Target.row(path: "b")
+        let a = Presentation.Target.row(index: 0)
+        let b = Presentation.Target.row(index: 1)
 
         await model.load(a, on: rig.comparison)
         #expect(model.loaded?.target == a)
@@ -1279,8 +1289,10 @@ struct ComparisonDiffViewTests {
         let rig = try await folderRig(
             left: ["only": data("x"), "both": data("1")], right: ["both": data("22")])
         defer { try? FileManager.default.removeItem(at: rig.root) }
-        let row = Presentation.Target.row(path: "only")
-        let both = Presentation.Target.row(path: "both")
+        // Rows come back in the pairing's order: "both" then "only".
+        #expect(rig.comparison.rows.map(\.relativePath) == ["both", "only"])
+        let row = Presentation.Target.row(index: 1)
+        let both = Presentation.Target.row(index: 0)
         let model = ComparisonDiffModel()
 
         await model.load(row, on: rig.comparison)
@@ -1310,7 +1322,7 @@ struct ComparisonDiffViewTests {
         let rig = try await folderRig(left: ["a": data("1")], right: ["a": data("2")])
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
-        let gone = Presentation.Target.row(path: "not-there")
+        let gone = Presentation.Target.row(index: 7)
         await model.load(gone, on: rig.comparison)
         guard case .notice(let notice) = Presentation.screen(target: gone, loaded: model.loaded) else {
             Issue.record("expected a notice")
@@ -1326,13 +1338,13 @@ struct ComparisonDiffViewTests {
         let rig = try await folderRig(left: ["a": data("1")], right: ["a": data("2")])
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
-        let task = Task { await model.load(.row(path: "a"), on: rig.comparison) }
+        let task = Task { await model.load(.row(index: 0), on: rig.comparison) }
         task.cancel()
         await task.value
         #expect(model.loaded == nil)
         // Positive: the same load, not cancelled, does write.
-        await model.load(.row(path: "a"), on: rig.comparison)
-        #expect(model.loaded?.target == .row(path: "a"))
+        await model.load(.row(index: 0), on: rig.comparison)
+        #expect(model.loaded?.target == .row(index: 0))
     }
 
     /// A fetch held open at the moment its bytes are read: the test is told
@@ -1382,8 +1394,8 @@ struct ComparisonDiffViewTests {
             onLeftRead: gate.hook)
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
-        let a = Presentation.Target.row(path: "a")
-        let b = Presentation.Target.row(path: "b")
+        let a = Presentation.Target.row(index: 0)
+        let b = Presentation.Target.row(index: 1)
 
         await model.load(a, on: rig.comparison)
         // Positive: a's result is there, so its absence below is the load's.
@@ -1422,8 +1434,8 @@ struct ComparisonDiffViewTests {
             })
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
-        let a = Presentation.Target.row(path: "a")
-        let b = Presentation.Target.row(path: "b")
+        let a = Presentation.Target.row(index: 0)
+        let b = Presentation.Target.row(index: 1)
 
         let first = Task { await model.load(a, on: rig.comparison) }
         await gateA.waitUntilEntered()
@@ -1451,17 +1463,69 @@ struct ComparisonDiffViewTests {
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let model = ComparisonDiffModel()
 
-        let task = Task { await model.load(.row(path: "b"), on: rig.comparison) }
+        let task = Task { await model.load(.row(index: 1), on: rig.comparison) }
         await gate.waitUntilEntered()
         task.cancel()
         gate.open()
         await task.value
         #expect(model.loaded == nil)
         // Positive: the same load, left alone, does write.
-        let again = Task { await model.load(.row(path: "b"), on: rig.comparison) }
+        let again = Task { await model.load(.row(index: 1), on: rig.comparison) }
         // (The gate is open for good now, so this read is not held.)
         await again.value
-        #expect(model.loaded?.target == .row(path: "b"))
+        #expect(model.loaded?.target == .row(index: 1))
+    }
+
+    /// **Two genuinely distinct files whose names are `==` as `String`s.**
+    /// One is spelled U+00E4 and one `a` + U+0308; `ComparisonPairing.pairs`
+    /// keeps them apart (pass 1 keys on the UTF-8 bytes, pass 2 refuses a key
+    /// two items share), so the walk produces two correctly classified rows.
+    /// Selecting the second has to show the SECOND file's diff.
+    ///
+    /// Measured 2026-10-15, before the row's identity became its position:
+    /// `index(of: path, in: rows)` answered 0 for both rows, so the lower half
+    /// showed the first row's diff under the second row's selection — and the
+    /// two rows shared one SwiftUI id.
+    @Test func twoRowsWhoseNamesAreEqualAsStringsEachShowTheirOwnDiff() async throws {
+        let nfc = "\u{00E4}"
+        let nfd = "a\u{0308}"
+        // The premise, in one line: one string to Swift, two files on disk.
+        #expect(nfc == nfd)
+        #expect(Array(nfc.utf8) != Array(nfd.utf8))
+        let rig = try await folderRig(
+            left: [BytePath(nfd): data("one"), BytePath(nfc): data("alpha")],
+            right: [BytePath(nfd): data("twelve"), BytePath(nfc): data("alpha")])
+        defer { try? FileManager.default.removeItem(at: rig.root) }
+
+        // The order is the pairing's: same NFC form, so the UTF-8 bytes
+        // decide, and `a` (0x61) precedes `ä` (0xC3 0xA4).
+        #expect(
+            rig.comparison.rows.map { Array($0.relativePath.utf8) }
+                == [Array(nfd.utf8), Array(nfc.utf8)])
+        // Positive: the two rows are classified differently, so a diff shown
+        // for the wrong one is visible rather than coincidentally right.
+        #expect(
+            rig.comparison.rows.map(\.state)
+                == [.differs, .undetermined(.checksumUnavailable)])
+
+        let model = ComparisonDiffModel()
+        await model.load(.row(index: 1), on: rig.comparison)
+        #expect(model.loaded?.target == .row(index: 1))
+        // The SECOND row's two files hold the same text, so its diff is empty
+        // — and an empty diff is its own screen, never a listing.
+        guard case .notice(let identical) = Presentation.screen(
+            target: .row(index: 1), loaded: model.loaded)
+        else {
+            Issue.record("the second row's empty diff is a notice")
+            return
+        }
+        #expect(identical.text == Presentation.identical.text)
+
+        await model.load(.row(index: 0), on: rig.comparison)
+        #expect(model.loaded?.target == .row(index: 0))
+        #expect(
+            shown(Presentation.screen(target: .row(index: 0), loaded: model.loaded))
+                == ["-one", "+twelve"])
     }
 
     @Test func selectingNothingForgetsTheLastResult() async throws {
@@ -1823,13 +1887,17 @@ struct ComparisonDiffViewTests {
     }
 
     /// The diff is fetched in one place, by the entry points the model
-    /// offers for its kind, and the row is found by path in one function.
-    @Test func theModelCallsTheTwoEntryPointsOnceEachAndFindsTheRowByPath() throws {
+    /// offers for its kind, and the row is resolved from its POSITION in one
+    /// function. It used to be found by path, which is not an identity.
+    @Test func theModelCallsTheTwoEntryPointsOnceEachAndFindsTheRowByPosition() throws {
         let code = try Self.code("ComparisonDiffView.swift")
         #expect(Self.occurrences(of: "diffFilePair()", in: code) == 1)
         #expect(Self.occurrences(of: "diff(forRowAt: index)", in: code) == 1)
         #expect(Self.occurrences(of: "diff(forRowAt:", in: code) == 1)
-        #expect(Self.occurrences(of: "ComparisonDiffPresentation.index(of: path, in: comparison.rows)", in: code) == 1)
+        let lookup = "ComparisonDiffPresentation.index(of: position, in: comparison.rows)"
+        #expect(Self.occurrences(of: lookup, in: code) == 1)
+        // Negative beside it: nothing here matches a row on its path.
+        #expect(!code.contains("relativePath"))
         #expect(Self.occurrences(of: "guard !Task.isCancelled", in: code) == 1)
         // The presentation spells no `default:` arm over the Core types it
         // switches on. Positive: it does switch over all of them.
