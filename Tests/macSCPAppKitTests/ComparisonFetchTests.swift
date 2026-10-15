@@ -267,6 +267,8 @@ struct ComparisonFetchTests {
 
         #expect(settled == .differs)
         #expect(rig.comparison.rows.count == before.count)
+        try #require(rig.comparison.rows.count == 2)
+        try #require(before.count == 2)
         #expect(rig.comparison.rows[0] == fixtureRow("a", .differs))
         #expect(rig.comparison.rows[1] == before[1])
         #expect(rig.comparison.rows[1].state == undetermined)
@@ -307,6 +309,7 @@ struct ComparisonFetchTests {
         let settled = try await rig.comparison.settleUndetermined(rowAt: 1)
 
         #expect(settled == .same)
+        try #require(rig.comparison.rows.count == 2)
         #expect(rig.comparison.rows[0] == fixtureRow("a", undetermined))
         #expect(rig.comparison.rows[1] == fixtureRow("b", .same))
         // Positive: it read the second row's files and not the first's.
