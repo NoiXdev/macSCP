@@ -382,6 +382,13 @@
 /* Browser-Kontextmenü (M7b/T2) */
 "menu.transfer" = "Übertragen";
 "menu.transfer.otherPane" = "Zum anderen Fenster";
+
+/* Die drei Wege in den Vergleich (diff view plan, Task 12): die zwei
+   Kontextmenü-Einträge und der Eintrag für beide Bereiche in der
+   Menüleiste. */
+"menu.compare.otherPane" = "Mit anderem Bereich vergleichen";
+"menu.compare.twoSelected" = "Die zwei ausgewählten Dateien vergleichen";
+"menu.compare.panes" = "Beide Bereiche vergleichen";
 "menu.compress" = "Komprimieren";
 "menu.extract" = "Entpacken…";
 "archive.format.zip" = "ZIP-Archiv";

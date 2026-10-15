@@ -162,12 +162,15 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// Every `ContentView` file, so one added later is scanned without
-    /// anyone remembering to add it here. Recounted 2026-09-27, when the
-    /// walk was widened to the whole target: eight files match, the same
-    /// eight as before — all of them sit directly in
+    /// anyone remembering to add it here. Recounted 2026-10-15, when
+    /// `ContentView+Comparison.swift` was added by the diff view's Task 12:
+    /// NINE files match, where the recount of 2026-09-27 (quoted here
+    /// because its figure is the one this replaces) read "eight files match,
+    /// the same eight as before". All of them still sit directly in
     /// `Sources/MacSCPAppKit`, and no file under `Presentation/` begins with
-    /// `ContentView`. Three contain a tab-admitting call site today
-    /// (`ContentView.swift`, `+Lifecycle`, `+Detail`).
+    /// `ContentView` — `find Sources/MacSCPAppKit -name 'ContentView*.swift' | wc -l`,
+    /// run from the repository root, prints 9. Three contain a tab-admitting
+    /// call site today (`ContentView.swift`, `+Lifecycle`, `+Detail`).
     ///
     /// The prefix is matched on the file NAME while the source is read
     /// through the file's own URL, so a nested `ContentView+…` is both found
@@ -202,17 +205,22 @@ struct TabRegistrationWiringGuardTests {
     /// empty would satisfy the negative below perfectly.
     @Test func theWindowsFilesAreTheOnesBeingScanned() throws {
         let files = try Self.contentViewFiles()
-        #expect(files.count == 8, "expected 8 ContentView*.swift files, found \(files.count)")
+        #expect(files.count == 9, "expected 9 ContentView*.swift files, found \(files.count)")
         #expect(files.contains { $0.name == "ContentView.swift" })
         #expect(files.contains { $0.name == "ContentView+Lifecycle.swift" })
         #expect(files.contains { $0.name == "ContentView+Detail.swift" })
         // Every one of them really is an extension on the window's view —
         // a directory listing that had drifted onto some other family of
         // files would satisfy the negative below without reading a line of
-        // `ContentView`. Not `tabsModel`: four of the eight never mention
-        // it (recounted 2026-09-18 — `+Diagnostics`, `+ExportImport`,
-        // `+Sheets` and `+TabTitle` have none; `+Transfers` has one), which
-        // says nothing about whether they could add a tab.
+        // `ContentView`. Not `tabsModel`: FIVE of the nine never mention it
+        // — recounted 2026-10-15, where the 2026-09-18 recount this
+        // replaces read "four of the eight never mention it ...
+        // `+Diagnostics`, `+ExportImport`, `+Sheets` and `+TabTitle` have
+        // none; `+Transfers` has one". The fifth is `+Comparison`, added
+        // that day; `+Transfers` still has one. Counted per file with
+        // `grep -o tabsModel <file> | wc -l` over the nine the `find` above
+        // lists. Which says nothing about whether any of them could add a
+        // tab.
         #expect(files.allSatisfy {
             $0.source.contains("extension ContentView") || $0.source.contains("struct ContentView")
         })

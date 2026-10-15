@@ -385,6 +385,13 @@
 /* Menu contextuel du navigateur (M7b/T2) */
 "menu.transfer" = "Transférer";
 "menu.transfer.otherPane" = "Vers l'autre volet";
+
+/* Les trois accès au comparateur (diff view plan, Task 12) : les deux
+   entrées du menu contextuel et celle de la barre des menus pour les
+   deux volets. */
+"menu.compare.otherPane" = "Comparer avec l'autre volet";
+"menu.compare.twoSelected" = "Comparer les deux fichiers sélectionnés";
+"menu.compare.panes" = "Comparer les deux volets";
 "menu.compress" = "Compresser";
 "menu.extract" = "Extraire…";
 "archive.format.zip" = "Archive ZIP";

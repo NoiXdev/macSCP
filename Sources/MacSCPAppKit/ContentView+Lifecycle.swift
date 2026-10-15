@@ -719,6 +719,16 @@ extension ContentView {
         tabCommands.newTab = {
             addTabRegistering(makeTab())
         }
+        // "Compare Both Panes" (diff view plan, Task 12) — the menu bar's
+        // door into the diff view, over THIS window's active tab. The
+        // disconnected case is held twice over and deliberately: the menu
+        // item is disabled on the mirrored `isActiveTabConnected`, this
+        // closure has no session to hand on, and `startComparison` declines
+        // one last time. None of the three is the other two's excuse.
+        tabCommands.compareBothPanes = {
+            guard let session = tabsModel.activeTab.session else { return }
+            compareBothPanes(in: tabsModel.activeTab, session: session)
+        }
         tabCommands.selectTab = { index in
             selectTab(atIndex: index)
         }

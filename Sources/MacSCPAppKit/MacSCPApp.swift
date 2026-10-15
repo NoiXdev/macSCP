@@ -88,6 +88,14 @@ final class TabCommands {
     /// anywhere on this bridge any more. Enabled state mirrors
     /// `isActiveTabConnected` (same as the Terminal entries).
     var toggleTransfers: (() -> Void)?
+    /// "Compare Both Panes" (diff view plan, Task 12) — the menu bar's door
+    /// into the diff view, and the only one of the three that has no
+    /// selection to read, so it compares the two panes' current directories.
+    /// Same bridge shape as `toggleTransfers` above, and the same mirrored
+    /// enabled state (`isActiveTabConnected`): with nothing connected there
+    /// are no two file systems to walk, and `SessionTab.startComparison`
+    /// would decline anyway.
+    var compareBothPanes: (() -> Void)?
     /// Mirrors `ContentView`'s active tab connection state (M11d/T2): this
     /// `TabCommands` instance is the only thing `MacSCPApp`'s `.commands`
     /// closure observes, and that closure builds a separate Scene that does

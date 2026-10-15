@@ -384,6 +384,12 @@
 /* Menu kontekstowe przeglądarki (M7b/T2) */
 "menu.transfer" = "Transferuj";
 "menu.transfer.otherPane" = "Do drugiego panelu";
+
+/* Trzy drogi do porównania (diff view plan, Task 12): dwa wpisy menu
+   kontekstowego i wpis dla obu paneli na pasku menu. */
+"menu.compare.otherPane" = "Porównaj z drugim panelem";
+"menu.compare.twoSelected" = "Porównaj dwa wybrane pliki";
+"menu.compare.panes" = "Porównaj oba panele";
 "menu.compress" = "Kompresuj";
 "menu.extract" = "Wypakuj…";
 "archive.format.zip" = "Archiwum ZIP";

@@ -506,11 +506,18 @@ final class SessionTab: Identifiable {
     /// walk a connection being closed and sit in `comparisons` with nobody
     /// left to end it. The refusal states the rule once, where a second
     /// `endComparisons()` at the end would be a cleanup that happens to work.
+    ///
+    /// `kind` is handed straight to `Comparison.init` and decides nothing
+    /// here: two folders to walk, or two files the user picked. It is
+    /// defaulted to `.folders`, which is what every caller that predates the
+    /// file pair asked for — and without it no `.filePair` could ever be
+    /// created, since this is the App's only construction of a `Comparison`.
     @discardableResult
     func startComparison(
         left: ComparisonSide, leftRoot: String,
         right: ComparisonSide, rightRoot: String,
-        algorithm: ChecksumAlgorithm
+        algorithm: ChecksumAlgorithm,
+        kind: Comparison.Kind = .folders
     ) -> Comparison? {
         guard let session, !isTearingDown else { return nil }
         func system(_ side: ComparisonSide) -> any RemoteFileSystem {
@@ -523,7 +530,8 @@ final class SessionTab: Identifiable {
             left: system(left), leftRoot: leftRoot,
             right: system(right), rightRoot: rightRoot,
             algorithm: algorithm,
-            transferQueue: transferQueue)
+            transferQueue: transferQueue,
+            kind: kind)
         comparisons.append(comparison)
         comparison.start()
         return comparison

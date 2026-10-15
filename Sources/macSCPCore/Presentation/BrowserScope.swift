@@ -41,9 +41,15 @@ public struct BrowserScope: Equatable, Sendable {
     /// This listing IS the container list: its rows are buckets, and there
     /// is nothing here to create, upload into or drop onto.
     ///
-    /// The pane-level half of the question, for the callers that have no row
-    /// to point at — the background context menu, and `acceptsIncomingFiles`
-    /// below.
+    /// The pane-level half of the question, for the callers whose subject is
+    /// a LISTING rather than a row: the background context menu, which has no
+    /// row to point at; `.compareWithOtherPane`, which asks it of the OTHER
+    /// pane, where the counterpart it would measure against has to be an
+    /// entry of a directory and not a bucket; and `acceptsIncomingFiles`
+    /// below. Three readers in `Sources`, counted 2026-10-15 with
+    /// `grep -rno isContainerListRoot Sources/ | wc -l`, which prints 5:
+    /// those three, this declaration, and the pattern of that command, which
+    /// is written in this comment and so finds itself.
     public var isContainerListRoot: Bool {
         rootIsContainerList && RemotePath.normalizedAbsolute(currentPath) == "/"
     }
