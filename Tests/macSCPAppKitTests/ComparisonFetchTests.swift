@@ -615,6 +615,17 @@ struct ComparisonFetchTests {
                 open()
             }
         }
+
+        /// The same wait for a task that cannot throw —
+        /// `Comparison.startTrackedWork`'s is `Task<Void, Never>`.
+        func value(of task: Task<Void, Never>) async {
+            await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
+                open()
+            }
+        }
     }
 
     /// Selecting a row starts its diff (`.task(id: target)`), and moving the
@@ -687,6 +698,108 @@ struct ComparisonFetchTests {
             leftKinds: ["a": .other])
         #expect(hunks(try await ok.comparison.diff(forRowAt: 0)) != nil)
         #expect(ok.left.reads == ["/L/a"])
+    }
+
+    // MARK: - 3c. An abandoned SETTLE is cancelled
+
+    /// The row for "compare contents anyway", as the view builds it.
+    private func settleEntry(
+        of comparison: Comparison, tracker: ComparisonOverviewPresentation.SettleTracker
+    ) throws -> ComparisonOverviewPresentation.RowEntry {
+        let entries = ComparisonOverviewPresentation.rowEntries(
+            comparison.rows, settle: tracker,
+            canFetch: ComparisonOverviewPresentation.canFetch(comparison))
+        return try #require(entries.first)
+    }
+
+    /// **The settle path had the `cancelsWithTask` opt-in and no cancel
+    /// source.** The diff path is owned by the view's `.task(id: target)`;
+    /// pressing "compare contents anyway" started a bare `Task` nobody kept,
+    /// so `Comparison.cancel()` — which a window's close and a tab's teardown
+    /// both run — reached the walk and nothing else. Over WebDAV, on an
+    /// equal-size pair, closing the window left both downloads running to
+    /// completion into a directory the close had just deleted.
+    ///
+    /// Every postcondition is read BEFORE the parked read is let go: the read
+    /// ending would make the queue tidy whatever the cancel did.
+    @Test(.timeLimit(.minutes(1)))
+    func aSettleInFlightIsCancelledByTheComparisonsOwnCancel() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parked = ParkedRead()
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root,
+            onLeftRead: parked.hook)
+        let undetermined = ComparisonState.undetermined(.checksumUnavailable)
+        #expect(rig.comparison.rows.map(\.state) == [undetermined])
+        let settler = ComparisonSettleModel()
+        let entry = try settleEntry(of: rig.comparison, tracker: settler.tracker)
+        // Positive: this row DOES offer the action, so what follows is a
+        // cancel of something the user could really have started.
+        #expect(entry.settleButton != nil)
+
+        // Started the way the view starts it.
+        let task = rig.comparison.startTrackedWork {
+            await settler.settle(entry, on: rig.comparison)
+        }
+        await parked.waitUntilEntered()
+        // Positive: the left transfer IS running.
+        #expect(rig.queue.items.count == 1)
+        guard case .running? = rig.queue.items.first?.status else {
+            Issue.record(
+                "expected a running transfer, got \(String(describing: rig.queue.items.first?.status))"
+            )
+            parked.open()
+            return
+        }
+
+        // What a closing window does. Only the cancel: no release, so the
+        // session is still open and nothing else could have stopped this.
+        rig.comparison.cancel()
+        await parked.value(of: task)
+
+        // Read before the thaw.
+        let stillRunning = rig.queue.items.filter { !$0.status.isTerminal }
+        let statuses = rig.queue.items.map(\.status)
+        let rightReads = rig.right.reads
+        let states = rig.comparison.rows.map(\.state)
+        let note = settler.tracker.failures[entry.path]
+        let pending = settler.tracker.isPending(entry.path)
+        parked.open()
+
+        #expect(stillRunning.isEmpty, "\(statuses)")
+        #expect(statuses == [.cancelled])
+        // The right side was never started: nothing is left to download.
+        #expect(rightReads.isEmpty)
+        // The row is as it was, and it says a settling did not happen.
+        #expect(states == [undetermined])
+        #expect(!pending)
+        #expect(note == ComparisonOverviewPresentation.settleStopped.text)
+    }
+
+    /// The positive control for the case above: the same rig, the same entry,
+    /// started the same way and NOT cancelled, settles the row and reads both
+    /// sides. Without this, a `startTrackedWork` that cancelled every task it
+    /// was handed would pass the test above.
+    @Test(.timeLimit(.minutes(1)))
+    func aSettleNobodyCancelsSettlesTheRowAndReadsBothSides() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rig = await makeFolderRig(
+            left: ["a": data("one")], right: ["a": data("two")], temporaryRoot: root)
+        let settler = ComparisonSettleModel()
+        let entry = try settleEntry(of: rig.comparison, tracker: settler.tracker)
+
+        await rig.comparison.startTrackedWork {
+            await settler.settle(entry, on: rig.comparison)
+        }.value
+
+        #expect(rig.comparison.rows.map(\.state) == [.differs])
+        #expect(rig.left.reads == ["/L/a"])
+        #expect(rig.right.reads == ["/R/a"])
+        #expect(settler.tracker.failures[entry.path] == nil)
+        // And the comparison keeps nothing: the task cleared its own entry.
+        await rig.comparison.waitForTrackedWork()
     }
 
     /// The SECOND transfer, pinned on its own. The tests above cancel during

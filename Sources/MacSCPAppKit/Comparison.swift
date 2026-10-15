@@ -140,6 +140,23 @@ final class Comparison: Identifiable {
     /// wait for it; never read to decide what the state is.
     private var walk: Task<Void, Never>?
 
+    /// Everything this comparison has running that is NOT the walk, so
+    /// `cancel()` can reach it. Keyed so a task removes its own entry as it
+    /// ends and a long session does not accumulate finished tasks.
+    ///
+    /// **Why this exists.** The content diff is started by the view's
+    /// `.task(id: target)`, which cancels its own load when the selection
+    /// moves, so nothing has to be held for it. The byte settling ("compare
+    /// contents anyway") has no such owner: it is started by a button, it
+    /// opts in to `cancelsWithTask` on both of its downloads, and before
+    /// 2026-10-15 nothing anywhere held the task that would deliver that
+    /// cancel. Over WebDAV, on an equal-size pair of 2 GB, closing the window
+    /// moved 4 GB afterwards into a directory the close had just deleted:
+    /// self-healing, and not what the user asked to stop paying for. Tab
+    /// teardown was covered — the queue's `cancelAll` reaches every
+    /// transfer — and closing a window with the tab still open was the gap.
+    @ObservationIgnored private var trackedWork: [UUID: Task<Void, Never>] = [:]
+
     /// `temporaryRoot` is where the per-comparison directory is created; the
     /// default is the process's temporary directory, and a test passes its own
     /// so it can see what is left behind.
@@ -226,11 +243,44 @@ final class Comparison: Identifiable {
         }
     }
 
+    /// Starts `operation` in a task this comparison OWNS, so `cancel()`
+    /// reaches it, and hands the task back for a caller that wants to await
+    /// it. The task removes its own entry when it ends.
+    ///
+    /// **Not gated on the state.** A comparison that was cancelled or that
+    /// completed still holds its rows and, until the release, its two file
+    /// systems, so settling a row of it is a thing a user may legitimately
+    /// ask for; what this guarantees is that the next `cancel()` reaches
+    /// whatever is in flight at that moment.
+    @discardableResult
+    func startTrackedWork(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+        let key = UUID()
+        let task = Task { [weak self] in
+            await operation()
+            self?.trackedWork[key] = nil
+        }
+        trackedWork[key] = task
+        return task
+    }
+
+    /// Suspends until every tracked task has unwound. For a caller that
+    /// needs that; `cancel()` does not, for the same reason it does not wait
+    /// on the walk.
+    func waitForTrackedWork() async {
+        for task in trackedWork.values { await task.value }
+    }
+
     /// Ends the comparison now. Idempotent, and also valid before `start()`:
     /// a comparison that never ran is then finished and cannot be started.
     ///
-    /// The state changes first and the task is cancelled second; see the
+    /// The state changes first and the tasks are cancelled second; see the
     /// type's doc comment for why neither waits on the walk.
+    ///
+    /// **It cancels the walk AND everything else this comparison started**
+    /// (`startTrackedWork`, today the byte settling of a row). The window's
+    /// close and the tab's teardown both reach it through here, in that one
+    /// call: `ComparisonWindowModel.windowClosed()` and
+    /// `SessionTab.endComparisons()` each call this before the release.
     ///
     /// **It does not touch the fetched files.** `cancel()` stops the WALK; a
     /// diff the user opened for a row that had already arrived is a different
@@ -245,6 +295,12 @@ final class Comparison: Identifiable {
     func cancel() {
         finish(.cancelled)
         walk?.cancel()
+        // Taken out of the dictionary first: each task clears its own entry
+        // as it unwinds, and mutating a collection being iterated is not a
+        // thing to leave to luck.
+        let tracked = trackedWork
+        trackedWork.removeAll()
+        for task in tracked.values { task.cancel() }
     }
 
     /// Lets go of the two file systems. The rows, the progress and the

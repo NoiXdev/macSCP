@@ -579,7 +579,14 @@ struct ComparisonOverviewView: View {
                 List(selection: $selection) {
                     ForEach(entries, id: \.path) { entry in
                         ComparisonOverviewRow(entry: entry) {
-                            Task { await settler.settle(entry, on: comparison) }
+                            // Through the comparison, never a bare `Task`:
+                            // the comparison owns what it started, and
+                            // `cancel()` — the window's close and the tab's
+                            // teardown both — is what has to reach this
+                            // settle's two downloads.
+                            comparison.startTrackedWork {
+                                await settler.settle(entry, on: comparison)
+                            }
                         }
                     }
                 }
