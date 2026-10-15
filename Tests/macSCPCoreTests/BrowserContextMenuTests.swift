@@ -561,6 +561,88 @@ struct BrowserContextMenuTests {
             .contains(.compareWithOtherPane))
     }
 
+    /// Fix round 2. The FAR side's kind is read from the other pane's loaded
+    /// rows, which came from a listing — and a listing reports a symlink as a
+    /// symlink on every backend. `stat` cannot: over SFTP it is
+    /// `SSH_FXP_STAT`, which follows the link and answers for its target, so
+    /// a link to a regular file reached the diff and the target's bytes were
+    /// shown under the link's path. This is the one layer that can see it.
+    @Test func aFarSideListedAsASymlinkIsOfferedNoComparison() {
+        let rows = [symlink("a"), file("b")]
+        let withheld = BrowserContextMenu.entries(
+            for: [file("a")], side: .local, destinationRows: rows)
+        #expect(withheld.isEmpty == false)
+        #expect(withheld.contains(.compareWithOtherPane) == false)
+
+        // The positive beside it: the OTHER name in the very same listing is
+        // an ordinary file, and that row is offered. So the negative above is
+        // about the counterpart's kind and not about the listing existing.
+        let offered = BrowserContextMenu.entries(
+            for: [file("b")], side: .local, destinationRows: rows)
+        #expect(offered.contains(.compareWithOtherPane))
+    }
+
+    /// Only a symlink is withheld this way. A far DIRECTORY, a far `.other`
+    /// and a far name that is not there at all keep the entry: each of those
+    /// `stat` CAN see, so the comparison opens and refuses with a reason the
+    /// user can read, which is better than an entry that is simply absent.
+    @Test func aFarSideOfAnyOtherKindKeepsTheEntryAndItsReadableRefusal() {
+        let cases: [[RemoteFileItem]] = [
+            [RemoteFileItem(name: "a", path: "/a", kind: .directory)],
+            [RemoteFileItem(name: "a", path: "/a", kind: .other, size: nil)],
+            [file("a")],
+            [],                       // never listed, or loading, or errored
+            [file("other")],          // listed, but not this name
+        ]
+        for rows in cases {
+            let entries = BrowserContextMenu.entries(
+                for: [file("a")], side: .local, destinationRows: rows)
+            #expect(entries.contains(.compareWithOtherPane), "\(rows)")
+        }
+    }
+
+    /// Byte-exact on the name, deliberately: a name that only matches under
+    /// normalisation falls through to the fallback, which is correct. This
+    /// model does not reinvent the two-pass pairing `ComparisonPairing` does.
+    @Test func theFarRowIsMatchedByItsNameExactly() {
+        let almost = [
+            RemoteFileItem(name: "A", path: "/A", kind: .symlink, size: nil),
+            RemoteFileItem(name: "a ", path: "/a ", kind: .symlink, size: nil),
+            RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .symlink, size: nil),
+        ]
+        let entries = BrowserContextMenu.entries(
+            for: [file("a")], side: .local, destinationRows: almost)
+        #expect(entries.contains(.compareWithOtherPane))
+        // Positive: the exact name, in the same shape of listing, IS matched.
+        let exact = almost + [symlink("a")]
+        #expect(BrowserContextMenu.entries(
+            for: [file("a")], side: .local, destinationRows: exact)
+            .contains(.compareWithOtherPane) == false)
+    }
+
+    /// The TWO-row entry asks nothing of the other pane — both of its rows
+    /// come from this selection and carry their own listed kinds, which the
+    /// `allSatisfy` on `.file` already holds to account. So the far rows
+    /// change nothing about it, in either direction.
+    @Test func theTwoRowEntryIsUntouchedByTheFarSide() {
+        let pair = [file("a"), file("b")]
+        let withFar = BrowserContextMenu.entries(
+            for: pair, side: .local, destinationRows: [symlink("a"), symlink("b")])
+        #expect(withFar.contains(.compareTwoSelected))
+        let withoutFar = BrowserContextMenu.entries(for: pair, side: .local)
+        #expect(withFar == withoutFar)
+    }
+
+    /// No far rows at all leaves every menu byte-identical to the one the
+    /// defaulted call produces — the floor this gate falls back to.
+    @Test func noFarRowsLeavesTheMenuExactlyAsItWas() {
+        for selection in [[file("a")], [file("a"), file("b")], [folder("d")], []] {
+            #expect(
+                BrowserContextMenu.entries(for: selection, side: .local, destinationRows: [])
+                == BrowserContextMenu.entries(for: selection, side: .local))
+        }
+    }
+
     /// Before `delete`, so the separator the App draws above `delete` still
     /// divides the inspections from the destructive entry, and before the
     /// user's own actions, which stay the last run.

@@ -77,6 +77,18 @@ public enum DiffRefusal: Error, Equatable, Sendable {
     /// links to report. Closing the remote half needs an `lstat`-shaped
     /// requirement on `RemoteFileSystem`, which is a design change and not
     /// this case.
+    ///
+    /// **Which path that gap is on, since fix round 2.** The paragraph above
+    /// is a statement about `stat`, and it stays exactly as true of `stat` as
+    /// it was. What changed is how often anything reaches it: the menu model
+    /// now reads the far side's kind from the OTHER PANE'S LOADED ROWS, which
+    /// came from a listing, and a listing reports a link as a link on every
+    /// backend — so a one-row comparison against a far symlink is no longer
+    /// offered at all. The gap above is therefore the FALLBACK path only: a
+    /// pane that has not listed, is loading, errored, or whose listing no
+    /// longer holds the name (the user navigated between the menu opening and
+    /// the click). On that path, and only there, a remote symlink to a
+    /// regular file still reaches the diff.
     case notAnOrdinaryFile(side: Side, path: String)
 }
 

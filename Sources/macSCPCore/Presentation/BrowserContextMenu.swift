@@ -101,6 +101,13 @@ public enum BrowserContextMenu {
     /// `.ordinary`, which is what every SSH, WebDAV and single-bucket S3 pane
     /// is, and what every LOCAL pane always is.
     ///
+    /// `destinationRows` are that other pane's ALREADY-LOADED rows, read for
+    /// one question only: what kind is the entry `.compareWithOtherPane`
+    /// would measure a row against? A listing knows a symlink is a symlink
+    /// where `stat` does not (fix round 2; see the gate's own comment).
+    /// Empty — the default, and what a pane that has not listed hands over —
+    /// yields exactly the menu this function produced before it existed.
+    ///
     /// **Two directions, one function, four consumers** — counted in the
     /// tree on 2026-09-02, and listed so the next door added is added HERE
     /// rather than beside it:
@@ -135,7 +142,8 @@ public enum BrowserContextMenu {
         supportsChecksum: Bool = false,
         supportsArchiving: Bool = false,
         scope: BrowserScope = .ordinary,
-        destination: BrowserScope = .ordinary
+        destination: BrowserScope = .ordinary,
+        destinationRows: [RemoteFileItem] = []
     ) -> [BrowserMenuEntry] {
         // A bucket is a container, not a folder. The design offers exactly
         // one action on a bucket row — OPEN it — and open is not an entry
@@ -238,14 +246,33 @@ public enum BrowserContextMenu {
         // out of a transfer, out of the permission editor and out of a
         // checksum. The reason here is its own: every `stat` this app can make
         // follows a link, so a comparison OF a link is a comparison of
-        // whatever it points at, carried out under the link's name. That is
-        // the cheap half of the fix (fix round 1, F1); the half that closes it
-        // is `Comparison.diffFilePair()`, which refuses a side that is not an
-        // ordinary file — and which is also the only place the FAR side of a
-        // one-row comparison is ever looked at, this model never having seen
-        // it.
+        // whatever it points at, carried out under the link's name.
+        //
+        // That holds of the FAR side too, and `destinationRows` is how this
+        // model sees it (fix round 2). A LISTING reports a link as a link on
+        // every backend — SFTP's `readdir` included — where `stat` cannot,
+        // and those rows are the other pane's already-loaded ones, so reading
+        // them costs no request. A far row listed as a symlink therefore
+        // withholds the entry, which is the same answer a near symlink gets:
+        // symmetry, and ABSENT rather than offered-and-refused, the judgement
+        // `computeChecksum` and the archive entries already stand on.
+        //
+        // Only a symlink. A far DIRECTORY, a far `.other` and a far name that
+        // is not there at all keep the entry, because `stat` CAN see each of
+        // those: the comparison opens and
+        // `Comparison.diffUnmapped(leftPath:rightPath:)` refuses with
+        // `DiffRefusal.notAnOrdinaryFile`, a sentence the user can read.
+        // Withholding those would replace a reason with an absence.
+        //
+        // No far rows — never listed, loading, errored, or a name that is not
+        // among them — falls through to exactly the behaviour that predates
+        // this gate, which is the floor and not a regression. The match is
+        // byte-exact on the name: a name that agrees only under normalisation
+        // falls through to that floor, and the two-pass pairing that does
+        // know better is `ComparisonPairing`'s, not this model's.
         if selection.count == 1, let only = selection.first, only.kind != .symlink,
-            !destination.isContainerListRoot
+            !destination.isContainerListRoot,
+            destinationRows.first(where: { $0.name == only.name })?.kind != .symlink
         {
             entries.append(.compareWithOtherPane)
         }

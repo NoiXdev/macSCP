@@ -489,6 +489,16 @@ extension ContentView {
                                             rootIsContainerList: session.remoteFS.rootIsContainerList,
                                             currentPath: session.remote.currentPath)
                                     },
+                                    // The REMOTE pane's loaded rows, for the
+                                    // one question the menu model asks of
+                                    // them (fix round 2): is the entry
+                                    // `.compareWithOtherPane` would measure
+                                    // this row against a symlink? A listing
+                                    // knows; `stat` follows the link and
+                                    // does not. A closure, read at
+                                    // menu-build time, exactly like the
+                                    // scope above.
+                                    destinationRows: { session.remote.items },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,
                                     // The ledger belongs to the SESSION, not
@@ -615,6 +625,10 @@ extension ContentView {
                                             rootIsContainerList: session.localFS.rootIsContainerList,
                                             currentPath: session.local.currentPath)
                                     },
+                                    // The mirror of the local pane's line
+                                    // above: this pane's counterpart is the
+                                    // LOCAL one, so these are its rows.
+                                    destinationRows: { session.local.items },
                                     visibleColumns: settingsStore.visibleColumns,
                                     checksumAlgorithm: settingsStore.checksumAlgorithm,
                                     // The remote side's own ledger — see the
