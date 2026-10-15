@@ -1650,7 +1650,7 @@
 "compare.refusal.notUTF8" = "Aucune comparaison ligne par ligne n’a été effectuée : au moins un des deux fichiers n’est pas de l’UTF-8 valide et ne peut donc pas être lu comme des lignes. Il peut s’agir de texte dans un autre encodage, comme Latin-1 ou Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "Aucune comparaison ligne par ligne n’a été effectuée : l’un des deux fichiers fait %@ octets, et le plus grand fichier pouvant être comparé ligne par ligne fait %@ octets.";
 "compare.refusal.tooManyLines %@ %@" = "Aucune comparaison ligne par ligne n’a été effectuée : le fichier de gauche compte %@ lignes et celui de droite %@ lignes, ce qui est trop pour les comparer ensemble.";
-"compare.refusal.notAnOrdinaryFile %@" = "Aucune comparaison ligne par ligne n’a été effectuée : « %@ » n’est pas un fichier ordinaire, il n’y a donc aucun contenu à comparer. C’est un dossier, un lien ou une entrée spéciale.";
+"compare.refusal.notAnOrdinaryFile %@" = "Aucune comparaison ligne par ligne n’a été effectuée : « %@ » n’est pas un fichier ordinaire, il n’y a donc aucun contenu à comparer. C’est un dossier ou un lien.";
 "compare.diff.failure.onlyLeft" = "Cet élément n’existe qu’à gauche ; il n’y a donc rien à comparer avec lui.";
 "compare.diff.failure.onlyRight" = "Cet élément n’existe qu’à droite ; il n’y a donc rien à comparer avec lui.";
 "compare.diff.failure.typeMismatch" = "Les deux côtés sont des éléments de nature différente ; leurs contenus ne peuvent donc pas être comparés.";

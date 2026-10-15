@@ -1647,7 +1647,7 @@
 "compare.refusal.notUTF8" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Mindestens eine der beiden Dateien ist kein gültiges UTF-8 und lässt sich deshalb nicht als Zeilen lesen. Möglicherweise ist es Text in einer anderen Kodierung, etwa Latin-1 oder Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Eine der beiden Dateien ist %@ Bytes groß, und die größte Datei, die zeilenweise verglichen werden kann, hat %@ Bytes.";
 "compare.refusal.tooManyLines %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Die linke Datei hat %@ Zeilen und die rechte Datei hat %@ Zeilen – das sind zu viele, um sie gemeinsam zu vergleichen.";
-"compare.refusal.notAnOrdinaryFile %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: „%@“ ist keine gewöhnliche Datei, deshalb gibt es keinen Inhalt zu vergleichen. Es ist ein Ordner, ein Link oder ein Sondereintrag.";
+"compare.refusal.notAnOrdinaryFile %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: „%@“ ist keine gewöhnliche Datei, deshalb gibt es keinen Inhalt zu vergleichen. Es ist ein Ordner oder ein Link.";
 "compare.diff.failure.onlyLeft" = "Dieser Eintrag existiert nur links, deshalb gibt es nichts, womit er verglichen werden könnte.";
 "compare.diff.failure.onlyRight" = "Dieser Eintrag existiert nur rechts, deshalb gibt es nichts, womit er verglichen werden könnte.";
 "compare.diff.failure.typeMismatch" = "Die beiden Seiten sind verschiedene Arten von Einträgen, deshalb lassen sich ihre Inhalte nicht vergleichen.";
