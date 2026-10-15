@@ -45,6 +45,16 @@ struct ComparisonOwnershipWiringGuardTests {
         construction.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code))
     }
 
+    /// One declaration's brace-balanced body, over the comment- and
+    /// string-blanked view, so a statement added to the function cannot push
+    /// a call out of a fixed-length prefix.
+    private static func declarationBody(_ declaration: String, in file: String) throws -> String {
+        let source = try SourceCorpus.code(of: appKit.appendingPathComponent(file))
+        return try TransferQueueBarCancelGuardTests
+            .declarationBody(of: declaration, in: source)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
     private static func swiftFiles() throws -> [URL] {
         try SourceCorpus.files(under: sources).filter { $0.pathExtension == "swift" }
     }
@@ -164,6 +174,68 @@ struct ComparisonOwnershipWiringGuardTests {
             }
         }
         #expect(files.sorted() == ["SessionTab.swift", "TabTeardown.swift"])
+    }
+
+    // MARK: A settle the cancel can reach
+
+    /// The settle path's cancel SOURCE. `cancelsWithTask: true` on both of a
+    /// settle's downloads is worth something only if somebody holds the task
+    /// that delivers the cancel, and until 2026-10-15 nobody did: the
+    /// overview view started a bare `Task` and kept no handle to it, so
+    /// `Comparison.cancel()` reached the walk and nothing else.
+    @Test func theOverviewStartsASettleThroughTheComparisonAndNotATaskOfItsOwn() throws {
+        let overview = try Self.code("ComparisonOverview.swift")
+        // Positive: the settle IS started, exactly once, through the
+        // comparison. Without these the negative checks below would be
+        // satisfied by a file that starts no settle at all.
+        #expect(Self.occurrences(of: "comparison.startTrackedWork {", in: overview) == 1)
+        #expect(
+            Self.occurrences(of: "await settler.settle(entry, on: comparison)", in: overview) == 1)
+        // Negative: no task of this file's own, in any of the three spellings.
+        #expect(!overview.contains("Task {"), "the overview starts a task of its own")
+        #expect(!overview.contains("Task<"), "the overview holds a task of its own")
+        #expect(!overview.contains("Task.detached"), "the overview detaches a task")
+    }
+
+    /// `cancel()` reaches the walk AND everything else the comparison
+    /// started, and `startTrackedWork` is the one place a task is put where
+    /// it can reach it.
+    @Test func cancellingAComparisonCancelsTheWalkAndEverythingElseItStarted() throws {
+        let body = try Self.declarationBody("func cancel()", in: "Comparison.swift")
+        #expect(body.contains("walk?.cancel()"))
+        #expect(body.contains("trackedWork.removeAll()"))
+        #expect(body.contains("for task in tracked.values { task.cancel() }"))
+
+        let code = try Self.code("Comparison.swift")
+        // Positive: there is exactly one store, and it is the one
+        // `startTrackedWork` writes.
+        #expect(Self.occurrences(of: "trackedWork[key] = task", in: code) == 1)
+        let start = try Self.declarationBody(
+            "func startTrackedWork(_ operation: @escaping @MainActor () async -> Void)",
+            in: "Comparison.swift")
+        #expect(start.contains("trackedWork[key] = task"))
+    }
+
+    /// Nothing outside the comparison keeps a task of the comparison's.
+    /// `trackedWork` is private, so this is about the SPELLING reaching no
+    /// other file — the counterpart of `onlyTheTeardownEndsComparisons`
+    /// above.
+    @Test func onlyTheComparisonHoldsTheWorkItStarted() throws {
+        var files: [String] = []
+        for url in try Self.swiftFiles() {
+            if try SourceCorpus.code(of: url).contains("trackedWork") {
+                files.append(url.lastPathComponent)
+            }
+        }
+        #expect(files == ["Comparison.swift"])
+        // Positive: and the callers reach it by the function, not the store.
+        var callers: [String] = []
+        for url in try Self.swiftFiles() {
+            if try SourceCorpus.code(of: url).contains("startTrackedWork") {
+                callers.append(url.lastPathComponent)
+            }
+        }
+        #expect(callers.sorted() == ["Comparison.swift", "ComparisonOverview.swift"])
     }
 
     private static func occurrences(of needle: String, in code: String) -> Int {
