@@ -26,12 +26,19 @@ import macSCPCore
 /// pane, so both of its sides are that pane's.
 ///
 /// **It decides nothing about ELIGIBILITY.** Whether an entry is offered at
-/// all is `BrowserContextMenu.entries(for:side:…)`'s — including the symlink
-/// exclusion and the other pane's bucket list — and whether a file pair can
-/// actually be diffed is `Comparison.diffFilePair()`'s, which is the only
-/// place the far side of a one-row comparison is ever looked at. What the
-/// factories below refuse is a selection they could not name a request for:
-/// `nil` rather than a request built out of a row that is not there.
+/// all is `BrowserContextMenu.entries(for:side:…)`'s — including both symlink
+/// exclusions, near and far, and the other pane's bucket list — and whether a
+/// pair can actually be diffed is
+/// `Comparison.diffUnmapped(leftPath:rightPath:)`'s, which both diff entry
+/// points pass through. What the factories below refuse is a selection they
+/// could not name a request for: `nil` rather than a request built out of a
+/// row that is not there.
+///
+/// This paragraph said of `Comparison.diffFilePair()` that it is "the only
+/// place the far side of a one-row comparison is ever looked at". False
+/// twice since fix round 2: the MENU MODEL looks, from the other pane's
+/// listing (`destinationRows`), and the check is in `diffUnmapped` rather
+/// than in `diffFilePair()`, which delegates to it.
 struct ComparisonRequest: Equatable {
     let left: SessionTab.ComparisonSide
     let leftRoot: String
@@ -43,32 +50,29 @@ struct ComparisonRequest: Equatable {
     /// entry of the same NAME in the other pane's current directory. A
     /// directory row makes a folder comparison, anything else a file pair.
     ///
-    /// The counterpart is a path this SPELLS and nothing here looks at what
-    /// is on the end of it: the other pane may not hold that name at all.
-    /// What DOES look, since fix round 2, is the menu model — it is handed
-    /// the other pane's loaded rows (`BrowserContextMenu.entries(…
-    /// destinationRows:)`) and withholds the entry when the far row is listed
-    /// as a symlink, which is the one kind `stat` cannot report. This factory
-    /// is deliberately not given a second copy of that rule: the offer is the
-    /// menu's decision, and a request built for a selection the entry was
-    /// offered for is an honest request. For
-    /// a `.folders` request the comparison itself answers that; see the
-    /// paragraph below for the `.filePair` branch, which the first round's
-    /// doc comment described wrongly.
-    /// (`.onlyLeft` / `.onlyRight`, or a root it cannot list); for a
-    /// `.filePair` — which is the branch a FILE row takes, and the branch the
-    /// first round's doc comment wrongly described as answered the same way —
-    /// there are no rows and no classification, so the answer comes from
-    /// `Comparison.diffFilePair()`: a refusal naming the side that is not an
-    /// ordinary file, or the fetch's own error for a path that is not there.
+    /// The counterpart is a path this SPELLS, and nothing in this factory
+    /// looks at what is on the end of it. What DOES look is the MENU MODEL,
+    /// since fix round 2: it is handed the other pane's loaded rows
+    /// (`BrowserContextMenu.entries(… destinationRows:)`) and withholds the
+    /// entry when the far row is listed as a symlink, the one kind `stat`
+    /// cannot report. This factory is deliberately not given a second copy of
+    /// that rule — the offer is the menu's decision, so a request built for a
+    /// selection the entry was offered for is an honest request.
     ///
-    /// What the first round wrote here, and what is wrong with it: "the other
-    /// pane may not have that name at all, and that is an answer the
-    /// comparison itself gives (`.onlyLeft` / `.onlyRight`, or a root that
-    /// cannot be listed) rather than a reason to withhold the action". True
-    /// of `.folders`; false of `.filePair`, which is the branch a FILE row
-    /// takes and which produces no state at all — `ComparisonState` comes
-    /// from `FolderComparison.walk` and a file pair never runs it.
+    /// A counterpart that is simply NOT THERE is answered differently by the
+    /// two shapes, and that is the one claim this comment has had to correct.
+    /// For `.folders` the comparison itself says so, as `.onlyLeft` /
+    /// `.onlyRight` or as a root it cannot list. For `.filePair` — the branch
+    /// a FILE row takes — there are no rows and no classification at all, so
+    /// the answer comes from the diff: a refusal naming the side that is not
+    /// an ordinary file, or the fetch's own error for a path that is not
+    /// there. Fix round 1 wrote here that a missing counterpart "is an answer
+    /// the comparison itself gives (`.onlyLeft` / `.onlyRight`, or a root
+    /// that cannot be listed) rather than a reason to withhold the action",
+    /// without qualification; that is true of `.folders` and false of
+    /// `.filePair`, which produces no `ComparisonState` because
+    /// `ComparisonState` comes from `FolderComparison.walk` and a file pair
+    /// never runs it.
     static func forRow(
         _ selection: [RemoteFileItem], on side: BrowserPaneSide,
         localDirectory: String, remoteDirectory: String

@@ -162,14 +162,15 @@ struct TabRegistrationWiringGuardTests {
     }
 
     /// Every `ContentView` file, so one added later is scanned without
-    /// anyone remembering to add it here. Recounted 2026-10-15, when
-    /// `ContentView+Comparison.swift` was added by the diff view's Task 12:
-    /// NINE files match, where the recount of 2026-09-27 (quoted here
-    /// because its figure is the one this replaces) read "eight files match,
-    /// the same eight as before". All of them still sit directly in
-    /// `Sources/MacSCPAppKit`, and no file under `Presentation/` begins with
-    /// `ContentView` — `find Sources/MacSCPAppKit -name 'ContentView*.swift' | wc -l`,
-    /// run from the repository root, prints 9. Three contain a tab-admitting
+    /// anyone remembering to add it here. Recounted 2026-10-15 a second time,
+    /// when the diff view's fix round 3 added
+    /// `ContentView+MenuActions.swift`: TEN files match, where this comment
+    /// read "NINE files match" earlier the same day (which in turn replaced
+    /// the 2026-09-27 recount's "eight files match, the same eight as
+    /// before"). All of them still sit directly in `Sources/MacSCPAppKit`,
+    /// and no file under `Presentation/` begins with `ContentView` —
+    /// `find Sources/MacSCPAppKit -name 'ContentView*.swift' | wc -l`,
+    /// run from the repository root, prints 10. Three contain a tab-admitting
     /// call site today (`ContentView.swift`, `+Lifecycle`, `+Detail`).
     ///
     /// The prefix is matched on the file NAME while the source is read
@@ -205,22 +206,27 @@ struct TabRegistrationWiringGuardTests {
     /// empty would satisfy the negative below perfectly.
     @Test func theWindowsFilesAreTheOnesBeingScanned() throws {
         let files = try Self.contentViewFiles()
-        #expect(files.count == 9, "expected 9 ContentView*.swift files, found \(files.count)")
+        #expect(files.count == 10, "expected 10 ContentView*.swift files, found \(files.count)")
         #expect(files.contains { $0.name == "ContentView.swift" })
         #expect(files.contains { $0.name == "ContentView+Lifecycle.swift" })
         #expect(files.contains { $0.name == "ContentView+Detail.swift" })
         // Every one of them really is an extension on the window's view —
         // a directory listing that had drifted onto some other family of
         // files would satisfy the negative below without reading a line of
-        // `ContentView`. Not `tabsModel`: FIVE of the nine never mention it
-        // — recounted 2026-10-15, where the 2026-09-18 recount this
-        // replaces read "four of the eight never mention it ...
-        // `+Diagnostics`, `+ExportImport`, `+Sheets` and `+TabTitle` have
-        // none; `+Transfers` has one". The fifth is `+Comparison`, added
-        // that day; `+Transfers` still has one. Counted per file with
-        // `grep -o tabsModel <file> | wc -l` over the nine the `find` above
-        // lists. Which says nothing about whether any of them could add a
-        // tab.
+        // `ContentView`. Not `tabsModel`: FIVE of the TEN never mention it —
+        // recounted 2026-10-15 after `+MenuActions` joined them, where this
+        // comment had read "FIVE of the nine never mention it ... The fifth
+        // is `+Comparison`, added that day; `+Transfers` still has one"
+        // earlier the same day, and the 2026-09-18 recount before that read
+        // "four of the eight never mention it ... `+Diagnostics`,
+        // `+ExportImport`, `+Sheets` and `+TabTitle` have none; `+Transfers`
+        // has one". The five with none are now `+Diagnostics`,
+        // `+ExportImport`, `+MenuActions`, `+Sheets` and `+TabTitle`;
+        // `+Comparison` and `+Transfers` have one each, and `+Comparison`'s
+        // is a COMMENT naming the type rather than a read of it. Counted per
+        // file with `grep -o tabsModel <file> | wc -l` over the ten the
+        // `find` above lists. Which says nothing about whether any of them
+        // could add a tab.
         #expect(files.allSatisfy {
             $0.source.contains("extension ContentView") || $0.source.contains("struct ContentView")
         })
