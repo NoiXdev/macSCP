@@ -1603,6 +1603,12 @@
 
 /* Comparison window (diff view plan, Task 9) */
 "compare.window.title" = "Porównanie";
+
+/* Tytuł okna według rodzaju (poprawka 1, punkt 6): tytuł WindowGroup jest
+   stały dla całej grupy, więc ustawia go widok. Nazwy stoją po dwukropku,
+   dzięki czemu żadnej nie trzeba odmieniać. */
+"compare.window.title.folders %@ %@" = "Porównanie folderów: %@ ↔ %@";
+"compare.window.title.filePair %@ %@" = "Porównanie plików: %@ ↔ %@";
 "compare.window.sessionClosed" = "Sesja, w której działało to porównanie, została zamknięta. Wynik pozostaje czytelny, ale zawartości plików nie da się już pobrać.";
 "compare.window.unavailable" = "To porównanie nie jest już dostępne: jego sesja została zamknięta, zanim to okno mogło je pokazać.";
 "compare.window.cancelled" = "To porównanie zostało zatrzymane przed zakończeniem. Lista jest niekompletna.";
@@ -1641,6 +1647,7 @@
 "compare.refusal.notUTF8" = "Nie wykonano porównania wiersz po wierszu: co najmniej jeden z dwóch plików nie jest poprawnym UTF-8, więc nie można go odczytać jako wierszy. Może to być tekst w innym kodowaniu, na przykład Latin-1 lub Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "Nie wykonano porównania wiersz po wierszu: jeden z dwóch plików ma %@ bajtów, a największy plik, który można porównać wiersz po wierszu, ma %@ bajtów.";
 "compare.refusal.tooManyLines %@ %@" = "Nie wykonano porównania wiersz po wierszu: lewy plik ma %@ wierszy, a prawy plik ma %@ wierszy, czyli za dużo, by porównać je razem.";
+"compare.refusal.notAnOrdinaryFile %@" = "Nie wykonano porównania wiersz po wierszu: „%@” nie jest zwykłym plikiem, więc nie ma zawartości do porównania. To folder, dowiązanie lub wpis specjalny.";
 "compare.diff.failure.onlyLeft" = "Ten wpis istnieje tylko po lewej stronie, więc nie ma z czym go porównać.";
 "compare.diff.failure.onlyRight" = "Ten wpis istnieje tylko po prawej stronie, więc nie ma z czym go porównać.";
 "compare.diff.failure.typeMismatch" = "Obie strony to wpisy różnego rodzaju, więc ich zawartości nie można porównać.";

@@ -29,9 +29,7 @@ struct BrowserContextMenuTests {
 
     @Test func symlinkGetsNoTransferNoEditorNoPermissions() {
         let entries = BrowserContextMenu.entries(for: [symlink("l")], side: .remote)
-        #expect(entries == [
-            .rename, .newFolder, .newFile, .copyPath, .compareWithOtherPane, .delete,
-        ])
+        #expect(entries == [.rename, .newFolder, .newFile, .copyPath, .delete])
     }
 
     @Test func multiSelectionDropsSingleOnlyEntries() {
@@ -518,6 +516,49 @@ struct BrowserContextMenuTests {
         let entries = BrowserContextMenu.entries(
             for: [file("a"), file("b")], side: .local, destination: listRoot)
         #expect(entries.contains(.compareTwoSelected))
+    }
+
+    /// A symlink row is offered NEITHER comparison, which is the exclusion
+    /// `transferToOtherPane`, `infoAndPermissions` and `computeChecksum`
+    /// already make. The reason here is its own: `stat` FOLLOWS a link on
+    /// every backend this app speaks, so a comparison of a link is a
+    /// comparison of whatever it points at, shown under the link's name.
+    @Test func aSymlinkRowIsOfferedNeitherComparison() {
+        let one = BrowserContextMenu.entries(for: [symlink("l")], side: .remote)
+        #expect(one.isEmpty == false)
+        #expect(one.contains(.compareWithOtherPane) == false)
+
+        let two = BrowserContextMenu.entries(
+            for: [symlink("l1"), symlink("l2")], side: .remote)
+        #expect(two.isEmpty == false)
+        #expect(two.contains(.compareTwoSelected) == false)
+
+        // The positives beside both: the same two shapes of selection DO get
+        // their entry when the rows are ordinary files, so neither negative
+        // above can be a filter that matches nothing.
+        #expect(BrowserContextMenu.entries(for: [file("a")], side: .remote)
+            .contains(.compareWithOtherPane))
+        #expect(BrowserContextMenu.entries(for: [file("a"), file("b")], side: .remote)
+            .contains(.compareTwoSelected))
+    }
+
+    /// One file and one symlink is not two files — the mixed case the pair
+    /// above leaves out, and the one a `kind != .symlink` test on the FIRST
+    /// row only would let through.
+    @Test func aFileAndASymlinkAreNotTwoFiles() {
+        for selection in [[file("a"), symlink("l")], [symlink("l"), file("a")]] {
+            let entries = BrowserContextMenu.entries(for: selection, side: .remote)
+            #expect(entries.isEmpty == false)
+            #expect(entries.contains(.compareTwoSelected) == false)
+        }
+    }
+
+    /// A single DIRECTORY row keeps its one-row comparison: the symlink
+    /// exclusion above is about links, not about everything that is not a
+    /// file.
+    @Test func aDirectoryRowKeepsItsOneRowComparison() {
+        #expect(BrowserContextMenu.entries(for: [folder("d")], side: .local)
+            .contains(.compareWithOtherPane))
     }
 
     /// Before `delete`, so the separator the App draws above `delete` still

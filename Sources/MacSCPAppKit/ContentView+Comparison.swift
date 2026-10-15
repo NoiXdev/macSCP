@@ -8,33 +8,21 @@ import macSCPCore
 /// **Three doors, one function.** Either pane's context menu offers
 /// `.compareWithOtherPane` for a single row and `.compareTwoSelected` for
 /// exactly two selected files, and the menu bar compares the two panes'
-/// current directories. All three end in `openComparison(on:…)`, which is
+/// current directories. All three end in `openComparison(_:on:)`, which is
 /// also the App's only call to `SessionTab.startComparison(…)`: a comparison
 /// that ran with no window to show it would walk the connection for nobody.
 ///
+/// **The routing itself is not here.** What each door decides — the two
+/// sides, the two roots, the shape — is a `ComparisonRequest`, a value with
+/// its own tests, for the reason that type's doc comment gives (fix round 1,
+/// F3). The functions below read this window's pane state, ask for a request
+/// and hand it on; there is no third place where a side meets a root.
+///
 /// **The window opens for the comparison that was just started.** Never for
 /// a seed that was lying around — see `openComparison`'s own comment.
-///
-/// **Local is the left side, remote the right**, whichever pane the menu was
-/// opened in. The window's two columns then stand where the window's two
-/// panes do, and the same two folders read the same way whether the user
-/// asked from the left or from the right. The two-row door is the exception
-/// that proves the rule: both of ITS sides are one pane's, because the rows
-/// it compares both came from there.
 extension ContentView {
-    /// Which of a tab's two file systems a `BrowserPaneSide` names. The two
-    /// enumerations are deliberately separate types — `BrowserPaneSide` is
-    /// Core's word for a pane, `SessionTab.ComparisonSide` is the App's word
-    /// for a side of a comparison — so the crossing is spelled once, here.
-    private func comparisonSide(of side: BrowserPaneSide) -> SessionTab.ComparisonSide {
-        switch side {
-        case .local: .local
-        case .remote: .remote
-        }
-    }
-
-    /// Starts a comparison on `tab` and opens the window that shows THAT
-    /// comparison.
+    /// Starts the comparison `request` names on `tab` and opens the window
+    /// that shows THAT comparison.
     ///
     /// The seed is built from the `Comparison` this call just got back. A
     /// window resolves its seed exactly once
@@ -47,80 +35,67 @@ extension ContentView {
     /// teardown is running. Then NOTHING opens: there is no comparison to
     /// show, and an empty window saying so would be this file inventing a
     /// failure the tab already declined to produce.
-    func openComparison(
-        on tab: SessionTab,
-        left: SessionTab.ComparisonSide, leftRoot: String,
-        right: SessionTab.ComparisonSide, rightRoot: String,
-        kind: Comparison.Kind
-    ) {
+    func openComparison(_ request: ComparisonRequest, on tab: SessionTab) {
         guard let comparison = tab.startComparison(
-            left: left, leftRoot: leftRoot,
-            right: right, rightRoot: rightRoot,
+            left: request.left, leftRoot: request.leftRoot,
+            right: request.right, rightRoot: request.rightRoot,
             algorithm: settingsStore.checksumAlgorithm,
-            kind: kind)
+            kind: request.kind)
         else { return }
         openWindow(value: ComparisonSeed(tabID: tab.id, comparisonID: comparison.id))
     }
 
-    /// "Compare with Other Pane", offered for ONE selected row: that row
-    /// against the entry of the same NAME in the other pane's current
-    /// directory. A directory row makes a folder comparison, anything else a
-    /// file pair.
-    ///
-    /// The counterpart is a path this builds, not a row it looked up: the
-    /// other pane may not have that name at all, and that is an answer the
-    /// comparison itself gives (`.onlyLeft` / `.onlyRight`, or a root that
-    /// cannot be listed) rather than a reason to withhold the action. The one
-    /// case that IS withheld is decided in the menu model, where the other
-    /// pane sits at a bucket list — `BrowserContextMenu.entries(…
-    /// destination:)`.
+    /// "Compare with Other Pane", for ONE selected row — see
+    /// `ComparisonRequest.forRow(_:on:localDirectory:remoteDirectory:)` for
+    /// what it compares. Both pane directories are read HERE, at click time,
+    /// rather than captured when the menu was built.
     func compareWithOtherPane(
         _ selection: [RemoteFileItem], from side: BrowserPaneSide,
         in tab: SessionTab, session: BrowserSession
     ) {
-        guard selection.count == 1, let row = selection.first else { return }
-        let otherDirectory = side == .local
-            ? session.remote.currentPath
-            : session.local.currentPath
-        let counterpart = RemotePath.join(otherDirectory, row.name)
-        let kind: Comparison.Kind = row.kind == .directory ? .folders : .filePair
-        switch side {
-        case .local:
-            openComparison(
-                on: tab, left: .local, leftRoot: row.path,
-                right: .remote, rightRoot: counterpart, kind: kind)
-        case .remote:
-            openComparison(
-                on: tab, left: .local, leftRoot: counterpart,
-                right: .remote, rightRoot: row.path, kind: kind)
-        }
+        guard let request = ComparisonRequest.forRow(
+            selection, on: side,
+            localDirectory: session.local.currentPath,
+            remoteDirectory: session.remote.currentPath)
+        else { return }
+        openComparison(request, on: tab)
     }
 
-    /// "Compare the Two Selected Files", offered for exactly two selected
-    /// FILES of one pane: those two against each other, in selection order.
-    /// Both sides are that pane's side — the other pane has nothing to do
-    /// with this one.
+    /// "Compare the Two Selected Files", for exactly two selected files of
+    /// one pane. Needs no pane directory: both rows carry their own path.
     func compareTwoSelected(
         _ selection: [RemoteFileItem], on side: BrowserPaneSide, in tab: SessionTab
     ) {
-        guard selection.count == 2 else { return }
-        let comparisonSide = comparisonSide(of: side)
-        openComparison(
-            on: tab,
-            left: comparisonSide, leftRoot: selection[0].path,
-            right: comparisonSide, rightRoot: selection[1].path,
-            kind: .filePair)
+        guard let request = ComparisonRequest.forTwoSelected(selection, on: side) else { return }
+        openComparison(request, on: tab)
     }
 
-    /// The menu bar's "Compare Both Panes": the two panes' CURRENT
-    /// DIRECTORIES, as folders. The menu bar has no selection to read, which
-    /// is exactly why this door exists — it is the whole-folder comparison
-    /// that needs nothing clicked first.
+    /// The menu bar's "Compare Both Panes". Whether the entry is offered at
+    /// all is `ComparisonRequest.panesAreComparable(local:remote:)`, mirrored
+    /// onto `TabCommands` and read by the item's `.disabled` — not re-decided
+    /// here, which would be a menu entry that is enabled and does nothing.
     func compareBothPanes(in tab: SessionTab, session: BrowserSession) {
         openComparison(
-            on: tab,
-            left: .local, leftRoot: session.local.currentPath,
-            right: .remote, rightRoot: session.remote.currentPath,
-            kind: .folders)
+            ComparisonRequest.forBothPanes(
+                localDirectory: session.local.currentPath,
+                remoteDirectory: session.remote.currentPath),
+            on: tab)
+    }
+
+    /// Mirrored into `tabCommands.activeTabPanesAreComparable` via
+    /// `.onChange` in `ContentView.body` (fix round 1, F2), the same
+    /// rationale and mechanism as `activeTabSupportsShell` and
+    /// `activeTabTerminalToggleIsUnlocked`: `MacSCPApp`'s menu lives in a
+    /// separate Scene that cannot see `tabsModel`.
+    ///
+    /// `true` while nothing is connected — there are no panes to ask about,
+    /// and `isActiveTabConnected` already disables the entry. Reads the same
+    /// two scopes the panes themselves are built from
+    /// (`localScope(_:)`/`remoteScope(_:)`), so the menu and the panes cannot
+    /// disagree about where either one is looking.
+    var activeTabPanesAreComparable: Bool {
+        guard let session = activeTab.session else { return true }
+        return ComparisonRequest.panesAreComparable(
+            local: localScope(session), remote: remoteScope(session))
     }
 }

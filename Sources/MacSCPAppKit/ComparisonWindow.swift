@@ -119,6 +119,48 @@ final class ComparisonWindowModel {
     }
 }
 
+/// What a comparison window is CALLED (fix round 1, item 6).
+///
+/// A `WindowGroup`'s own title is static per group, so every comparison
+/// window was called "Compare" and a two-file window could not be told from a
+/// folder one — a question that only became visible once Task 12 gave a user
+/// a way to make a file pair at all. The title is therefore set in the VIEW,
+/// with `.navigationTitle(_:)`, from the comparison the window resolved.
+///
+/// Two keys and not one with a substituted noun: an inflected language puts
+/// "folder" and "file" in different cases, and the basenames come after a
+/// colon so that neither key has to agree with anything.
+enum ComparisonWindowTitle {
+    /// The scene's own title, which the window keeps until it has resolved
+    /// something to name. Also what the scene is declared with in
+    /// `MacSCPApp`, so an unresolved window does not flicker between two
+    /// strings.
+    static var unresolved: String {
+        L10n.string("compare.window.title", "Compare")
+    }
+
+    static func text(kind: Comparison.Kind, leftRoot: String, rightRoot: String) -> String {
+        let wording: (key: String, english: String) =
+            switch kind {
+            case .folders:
+                ("compare.window.title.folders %@ %@", "Compare Folders: %@ ↔ %@")
+            case .filePair:
+                ("compare.window.title.filePair %@ %@", "Compare Files: %@ ↔ %@")
+            }
+        return String(
+            format: L10n.string(wording.key, wording.english),
+            basename(of: leftRoot), basename(of: rightRoot))
+    }
+
+    /// The last path component, with the root naming itself. `RemotePath`
+    /// normalizes first, so a trailing slash does not make a path nameless.
+    private static func basename(of path: String) -> String {
+        let normalized = RemotePath.normalizedAbsolute(path)
+        guard normalized != "/" else { return "/" }
+        return normalized.split(separator: "/").last.map(String.init) ?? "/"
+    }
+}
+
 /// The window that shows one `Comparison` (diff view, Task 9): its shell, its
 /// resolution and its states. The folder overview and the content diff are
 /// drawn inside it by later tasks.
@@ -135,8 +177,19 @@ struct ComparisonWindow: View {
     @State private var model = ComparisonWindowModel()
     @State private var window: NSWindow?
 
+    /// What this window is called: the kind and the two basenames once the
+    /// comparison is resolved, the scene's own title until then. See
+    /// `ComparisonWindowTitle`.
+    private var title: String {
+        guard let comparison = model.comparison else { return ComparisonWindowTitle.unresolved }
+        return ComparisonWindowTitle.text(
+            kind: comparison.kind, leftRoot: comparison.leftRoot,
+            rightRoot: comparison.rightRoot)
+    }
+
     var body: some View {
         content
+            .navigationTitle(title)
             .frame(minWidth: 640, minHeight: 420)
             .background(
                 WindowAccessor { resolved in

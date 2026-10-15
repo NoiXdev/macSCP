@@ -1607,6 +1607,12 @@
 
 /* Comparison window (diff view plan, Task 9) */
 "compare.window.title" = "Compare";
+
+/* The window’s own title, by kind (fix round 1, item 6): a WindowGroup’s
+   title is static per group, so the view sets this one. The basenames come
+   after the colon, so no name has to be inflected. */
+"compare.window.title.folders %@ %@" = "Compare Folders: %@ ↔ %@";
+"compare.window.title.filePair %@ %@" = "Compare Files: %@ ↔ %@";
 "compare.window.sessionClosed" = "The session this comparison ran over has been closed. The result stays readable, but the contents of files can no longer be fetched.";
 "compare.window.unavailable" = "This comparison is no longer available: its session was closed before this window could show it.";
 "compare.window.cancelled" = "This comparison was stopped before it finished. The list is incomplete.";
@@ -1645,6 +1651,7 @@
 "compare.refusal.notUTF8" = "No line comparison was made: at least one of the two files is not valid UTF-8, so it cannot be read as lines. It may be text in another encoding, such as Latin-1 or Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "No line comparison was made: one of the two files is %@ bytes, and the largest file that can be compared line by line is %@ bytes.";
 "compare.refusal.tooManyLines %@ %@" = "No line comparison was made: the left file has %@ lines and the right file has %@ lines, which is too many to compare together.";
+"compare.refusal.notAnOrdinaryFile %@" = "No line comparison was made: “%@” is not an ordinary file, so there is no content to compare. It is a folder, a link or a special entry.";
 "compare.diff.failure.onlyLeft" = "This entry exists only on the left, so there is nothing to compare it with.";
 "compare.diff.failure.onlyRight" = "This entry exists only on the right, so there is nothing to compare it with.";
 "compare.diff.failure.typeMismatch" = "The two sides are different kinds of entry, so their contents cannot be compared.";

@@ -29,6 +29,9 @@ struct TabTitleWiringGuardTests {
     private static let stripPath = "Sources/MacSCPAppKit/TabStripView.swift"
     private static let detailPath = "Sources/MacSCPAppKit/ContentView+Detail.swift"
     private static let resolverPath = "Sources/MacSCPAppKit/ContentView+TabTitle.swift"
+    /// The one other scene in the app that names its own window: the
+    /// comparison window (diff view fix round 1, item 6).
+    private static let comparisonWindowPath = "Sources/MacSCPAppKit/ComparisonWindow.swift"
 
     /// No trailing `{` — `declarationBodyRange` opens at the first brace
     /// after the declaration text.
@@ -113,21 +116,44 @@ struct TabTitleWiringGuardTests {
 
     // MARK: - The window title draws the same answer
 
-    /// Positive by construction, and exclusive: the one `.navigationTitle(`
-    /// in the app is the resolver's answer for the active tab.
+    /// Positive by construction, and exclusive: the MAIN window's
+    /// `.navigationTitle(` is the resolver's answer for the active tab, and
+    /// no file but the two named below sets a title at all.
+    ///
+    /// **Two files, not one** (diff view fix round 1, item 6). This test read
+    /// `titles == 1` with the message "a second one is a window title with a
+    /// rule of its own", and the comparison window is exactly that and
+    /// legitimately: a different scene, showing a different thing, named
+    /// after the comparison it resolved rather than after a tab — a
+    /// `WindowGroup`'s own title is static per group, so a view is the only
+    /// place it can be set. What the rule protects is that the MAIN window's
+    /// title has no second source, so the count is now per file: one in the
+    /// detail pane, one in the comparison window, zero everywhere else. A
+    /// stray third still fails, and so does a second one in either of those
+    /// two files.
     @Test func theWindowTitleDrawsThePlansTitle() throws {
         let detail = Self.compact(try Self.code(Self.detailPath))
         #expect(Self.occurrences(of: Self.windowTitle, in: detail) == 1, """
             \(Self.detailPath) must set `\(Self.windowTitle)` exactly once — the window title \
             and the active tab's label are the same answer.
             """)
-        var titles = 0
-        for file in try Self.appSources() {
-            titles += Self.occurrences(of: ".navigationTitle(", in: Self.compact(try Self.code(file)))
+        for (file, expected) in [(Self.detailPath, 1), (Self.comparisonWindowPath, 1)] {
+            let count = Self.occurrences(
+                of: ".navigationTitle(", in: Self.compact(try Self.code(file)))
+            #expect(count == expected, "\(file) sets \(count) titles, expected \(expected)")
         }
-        #expect(titles == 1, """
-            the app sets \(titles) `.navigationTitle(`s, expected exactly one — a second one is \
-            a window title with a rule of its own.
+        var elsewhere: [String] = []
+        for file in try Self.appSources()
+        where file != Self.detailPath && file != Self.comparisonWindowPath {
+            if Self.occurrences(
+                of: ".navigationTitle(", in: Self.compact(try Self.code(file))) > 0
+            {
+                elsewhere.append(file)
+            }
+        }
+        #expect(elsewhere.isEmpty, """
+            \(elsewhere) set a `.navigationTitle(` — a window title with a rule of its own, and \
+            only the comparison window has one of those.
             """)
     }
 

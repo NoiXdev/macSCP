@@ -10,8 +10,21 @@
 /// **Not every case is about one side.** The first three are: each answers
 /// for the bytes of one file, and `refusal(forBytes:)` returns them. The
 /// fourth is about the PAIR, and `refusal(leftLines:rightLines:)` returns it,
-/// because what it refuses is a cost neither side carries alone.
+/// because what it refuses is a cost neither side carries alone. The fifth,
+/// `.notAnOrdinaryFile`, is about one side again and names it — and it is the
+/// one case `DiffEligibility` does not produce, because the kind of an entry
+/// is not a property of its bytes: `Comparison.diffUnmapped(leftPath:
+/// rightPath:)` returns it from what each side's `stat` reported.
 public enum DiffRefusal: Error, Equatable, Sendable {
+    /// Which side of a pair a refusal is about, for the cases that are about
+    /// one side and can say which. `.binary` and `.notUTF8` could carry this
+    /// too and deliberately do not: their sentences say "at least one of the
+    /// two files", and widening them is a wording decision nobody has made.
+    public enum Side: String, Equatable, Sendable {
+        case left
+        case right
+    }
+
     /// The first `DiffEligibility.nulWindowBytes` bytes contain a NUL. This
     /// case carries that one cause and nothing else: content that is merely
     /// not valid UTF-8 is `.notUTF8`, because a Latin-1 or Windows-1252 text
@@ -40,6 +53,31 @@ public enum DiffRefusal: Error, Equatable, Sendable {
     /// product: the product is this implementation's cost and not something
     /// anybody can act on.
     case tooManyLines(leftLines: Int, rightLines: Int, ceilingProduct: Int)
+    /// One side is not an ordinary file: a directory, a link, a device node,
+    /// or an entry whose type the backend did not report. Carries the side
+    /// and its PATH, and the sentence prints the path — which says which side
+    /// precisely, and in words no catalogue has to inflect.
+    ///
+    /// **What this case cannot see, stated here because a refusal that
+    /// silently misses the case it names is worse than one that says so.**
+    /// The kind it is given comes from `RemoteFileSystem.stat`, and over SFTP
+    /// that is `SSH_FXP_STAT`, which FOLLOWS a symbolic link: Citadel's
+    /// `getAttributes(at:)` sends `.stat`, and the type bits
+    /// `SFTPAttributeMapper.kind(fromPermissions:)` reads are therefore the
+    /// TARGET's. Measured 2026-10-15 by reading
+    /// `.build/checkouts/Citadel/Sources/Citadel/SFTP/Client/SFTPClient.swift`
+    /// — `SFTPMessage.LStat` and `SSH_FXP_LSTAT` exist in that package's
+    /// message layer and its SERVER handler, and its client exposes no method
+    /// that sends one. So on a remote pane this case catches a link to a
+    /// DIRECTORY (the target's bits say directory) and does NOT catch a link
+    /// to a regular file: that one is compared, and what is compared is the
+    /// target's bytes under the link's path. The LOCAL side has no such gap —
+    /// `LocalFileSystem.stat` checks `isSymbolicLinkKey` first and reports
+    /// `.symlink` even for a dangling link — and neither S3 nor WebDAV has
+    /// links to report. Closing the remote half needs an `lstat`-shaped
+    /// requirement on `RemoteFileSystem`, which is a design change and not
+    /// this case.
+    case notAnOrdinaryFile(side: Side, path: String)
 }
 
 public enum DiffEligibility {

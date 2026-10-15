@@ -381,13 +381,13 @@
 
 /* Browser-Kontextmenü (M7b/T2) */
 "menu.transfer" = "Übertragen";
-"menu.transfer.otherPane" = "Zum anderen Fenster";
+"menu.transfer.otherPane" = "Zum anderen Bereich";
 
 /* Die drei Wege in den Vergleich (diff view plan, Task 12): die zwei
    Kontextmenü-Einträge und der Eintrag für beide Bereiche in der
    Menüleiste. */
-"menu.compare.otherPane" = "Mit anderem Bereich vergleichen";
-"menu.compare.twoSelected" = "Die zwei ausgewählten Dateien vergleichen";
+"menu.compare.otherPane" = "Mit dem anderen Bereich vergleichen";
+"menu.compare.twoSelected" = "Die beiden ausgewählten Dateien vergleichen";
 "menu.compare.panes" = "Beide Bereiche vergleichen";
 "menu.compress" = "Komprimieren";
 "menu.extract" = "Entpacken…";
@@ -1602,6 +1602,12 @@
 
 /* Comparison window (diff view plan, Task 9) */
 "compare.window.title" = "Vergleich";
+
+/* Der Fenstertitel nach Art des Vergleichs (Fix-Runde 1, Punkt 6): Der Titel
+   einer WindowGroup ist pro Gruppe fest, deshalb setzt ihn die View. Die
+   Namen stehen nach dem Doppelpunkt, damit keiner gebeugt werden muss. */
+"compare.window.title.folders %@ %@" = "Ordner vergleichen: %@ ↔ %@";
+"compare.window.title.filePair %@ %@" = "Dateien vergleichen: %@ ↔ %@";
 "compare.window.sessionClosed" = "Die Sitzung, über die dieser Vergleich lief, wurde geschlossen. Das Ergebnis bleibt lesbar, Dateiinhalte kannst du aber nicht mehr abrufen.";
 "compare.window.unavailable" = "Dieser Vergleich ist nicht mehr verfügbar: Seine Sitzung wurde geschlossen, bevor dieses Fenster ihn anzeigen konnte.";
 "compare.window.cancelled" = "Dieser Vergleich wurde beendet, bevor er fertig war. Die Liste ist unvollständig.";
@@ -1640,6 +1646,7 @@
 "compare.refusal.notUTF8" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Mindestens eine der beiden Dateien ist kein gültiges UTF-8 und lässt sich deshalb nicht als Zeilen lesen. Möglicherweise ist es Text in einer anderen Kodierung, etwa Latin-1 oder Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Eine der beiden Dateien ist %@ Bytes groß, und die größte Datei, die zeilenweise verglichen werden kann, hat %@ Bytes.";
 "compare.refusal.tooManyLines %@ %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: Die linke Datei hat %@ Zeilen und die rechte Datei hat %@ Zeilen – das sind zu viele, um sie gemeinsam zu vergleichen.";
+"compare.refusal.notAnOrdinaryFile %@" = "Es wurde kein zeilenweiser Vergleich durchgeführt: „%@“ ist keine gewöhnliche Datei, deshalb gibt es keinen Inhalt zu vergleichen. Es ist ein Ordner, ein Link oder ein Sondereintrag.";
 "compare.diff.failure.onlyLeft" = "Dieser Eintrag existiert nur links, deshalb gibt es nichts, womit er verglichen werden könnte.";
 "compare.diff.failure.onlyRight" = "Dieser Eintrag existiert nur rechts, deshalb gibt es nichts, womit er verglichen werden könnte.";
 "compare.diff.failure.typeMismatch" = "Die beiden Seiten sind verschiedene Arten von Einträgen, deshalb lassen sich ihre Inhalte nicht vergleichen.";

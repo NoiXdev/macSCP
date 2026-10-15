@@ -233,7 +233,20 @@ public enum BrowserContextMenu {
         // `computeChecksum` judgement above. The TWO-row offer asks nothing of
         // the other pane, both of its sides being this one, so that gate does
         // not touch it.
-        if selection.count == 1, !destination.isContainerListRoot {
+        //
+        // A SYMLINK is offered neither, the same exclusion that keeps a link
+        // out of a transfer, out of the permission editor and out of a
+        // checksum. The reason here is its own: every `stat` this app can make
+        // follows a link, so a comparison OF a link is a comparison of
+        // whatever it points at, carried out under the link's name. That is
+        // the cheap half of the fix (fix round 1, F1); the half that closes it
+        // is `Comparison.diffFilePair()`, which refuses a side that is not an
+        // ordinary file — and which is also the only place the FAR side of a
+        // one-row comparison is ever looked at, this model never having seen
+        // it.
+        if selection.count == 1, let only = selection.first, only.kind != .symlink,
+            !destination.isContainerListRoot
+        {
             entries.append(.compareWithOtherPane)
         }
         if selection.count == 2, selection.allSatisfy({ $0.kind == .file }) {

@@ -429,8 +429,30 @@ extension Comparison {
         guard let sides = fileSystems, transferQueue != nil else {
             throw ComparisonFetchError.sessionClosed
         }
-        for (system, path) in [(sides.left, leftPath), (sides.right, rightPath)] {
-            if let size = try await system.stat(path: path).size,
+        for (side, system, path) in [
+            (DiffRefusal.Side.left, sides.left, leftPath),
+            (DiffRefusal.Side.right, sides.right, rightPath),
+        ] {
+            let item = try await system.stat(path: path)
+            // The KIND before the size (fix round 1, F1). A `.filePair`
+            // comparison skips the classification by design — the user asked
+            // for the content — so this is the only place either side's kind
+            // is looked at, and for a one-row comparison the FAR side is a
+            // path `BrowserContextMenu` never saw: it is spelled by
+            // `ContentView.compareWithOtherPane(…)` out of a name and a
+            // directory, and nothing before this asks what is there. Without
+            // this, a directory on the far side was handed to the transfer
+            // queue as a download and the user got a raw transfer failure.
+            //
+            // Before the size, not after: both orders answer truthfully, and
+            // only this one answers with the fact the user can act on. See
+            // `DiffRefusal.notAnOrdinaryFile` for the one shape this cannot
+            // see — a remote symlink to a regular file, because SFTP's `stat`
+            // follows links.
+            guard item.kind == .file else {
+                return .failure(.notAnOrdinaryFile(side: side, path: path))
+            }
+            if let size = item.size,
                 let refusal = DiffEligibility.refusal(forByteCount: Int(clamping: size))
             {
                 return .failure(refusal)

@@ -1082,6 +1082,15 @@ struct ContentView: View {
             .onChange(of: activeTabTerminalToggleIsUnlocked, initial: true) { _, newValue in
                 tabCommands.activeTabTerminalToggleIsUnlocked = newValue
             }
+            // Keeps `tabCommands.activeTabPanesAreComparable` in sync (fix
+            // round 1 of the diff view's Task 12, F2) — see that property's
+            // doc comment and `ContentView.activeTabPanesAreComparable`'s.
+            // Same mirror shape as the three above; without it the flag would
+            // sit on its `true` default forever and one click on "Compare
+            // Both Panes" could walk a whole S3 bucket.
+            .onChange(of: activeTabPanesAreComparable, initial: true) { _, newValue in
+                tabCommands.activeTabPanesAreComparable = newValue
+            }
             // Keeps `tabCommands.keepOnTop` in sync (Detachable Tabs plan,
             // Task 4) — same mirror shape as the three above, and applies
             // `WindowLevelPlan`'s decision to THIS window's `NSWindow` in
