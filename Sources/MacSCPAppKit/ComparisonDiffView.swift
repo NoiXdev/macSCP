@@ -73,12 +73,22 @@ enum ComparisonDiffPresentation {
     /// asking for a diff by position without checking would diff whatever
     /// sits there now.
     ///
-    /// **A bounds check and no search.** This read
-    /// `rows.firstIndex { $0.relativePath == path }`, which folded two
-    /// canonically equivalent paths together and answered with the earlier
-    /// row — see `Target.row(index:)`. There is nothing to search for any
-    /// more: a row's identity IS its position, so there is no second
-    /// spelling of it to match, and no first-versus-last to get wrong.
+    /// **A bounds check and no search.** This used to take a path and return
+    /// the first position whose row compared equal to it — a comparison of
+    /// two `String`s, so it folded two canonically equivalent paths together
+    /// and answered with the earlier row; see `Target.row(index:)`. There is
+    /// nothing to search for any more: a row's identity IS its position, so
+    /// there is no second spelling of it to match, and no first-versus-last
+    /// to get wrong.
+    ///
+    /// The sentence above describes that old line in PROSE and does not quote
+    /// it, deliberately. The first draft of this comment did quote it, and a
+    /// mutation plant aimed at the old search found the quotation instead of
+    /// any code: it edited this comment, the suite stayed green, and the
+    /// verdict said the guard was insensitive when nothing had been planted.
+    /// `CLAUDE.md`'s "Source-scanning guards read comments too" is about a
+    /// guard reading a comment; this is the same collision with the PROBE on
+    /// the other end, and the same answer — prose near a scanner.
     static func index(of position: Int, in rows: [ComparisonRow]) -> Int? {
         rows.indices.contains(position) ? position : nil
     }
