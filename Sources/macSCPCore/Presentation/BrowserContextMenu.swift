@@ -259,10 +259,19 @@ public enum BrowserContextMenu {
         //
         // Only a symlink. A far DIRECTORY, a far `.other` and a far name that
         // is not there at all keep the entry, because `stat` CAN see each of
-        // those: the comparison opens and
+        // those. For a directory the comparison opens and
         // `Comparison.diffUnmapped(leftPath:rightPath:)` refuses with
-        // `DiffRefusal.notAnOrdinaryFile`, a sentence the user can read.
-        // Withholding those would replace a reason with an absence.
+        // `DiffRefusal.notAnOrdinaryFile`, a sentence the user can read;
+        // withholding it would replace a reason with an absence. A far
+        // `.other` is no longer refused there: it is what a listing answers
+        // when the type was not reported, so the comparison goes on to the
+        // fetch. This sentence used to read "A far DIRECTORY, a far `.other`
+        // and a far name that is not there at all keep the entry, because
+        // `stat` CAN see each of those: the comparison opens and
+        // `Comparison.diffUnmapped(leftPath:rightPath:)` refuses with
+        // `DiffRefusal.notAnOrdinaryFile`", which stopped being true of
+        // `.other` when `diffUnmapped` stopped treating an unreported type as
+        // unsuitable.
         //
         // No far rows — never listed, loading, errored, or a name that is not
         // among them — falls through to exactly the behaviour that predates

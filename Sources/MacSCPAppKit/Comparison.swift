@@ -465,8 +465,27 @@ extension Comparison {
             // `DiffRefusal.notAnOrdinaryFile` for the one shape this cannot
             // see — a remote symlink to a regular file, because SFTP's `stat`
             // follows links.
-            guard item.kind == .file else {
+            //
+            // **What is refused is what is KNOWN to be unsuitable, and
+            // nothing else.** This guard read `item.kind == .file`, which
+            // treated `.other` as unsuitable. `.other` is also what `stat`
+            // answers when the type was not reported (no permission bits
+            // arrived), so on the very server that gives a row the reason
+            // `.kindNotReported` — settled by bytes, because a fetch is the
+            // one thing that can answer it — the diff of the settled row was
+            // refused as "not an ordinary file": the overview and the diff
+            // telling the user two things about the same two files. An
+            // unreported type goes on to the fetch, which fails by name if it
+            // is a device node and reads the bytes if it is not.
+            // `UndeterminedReason.canBeSettledByBytes` decides the same
+            // question for the settle, and
+            // `aRowBytesCanSettleIsNotThenRefusedByTheDiffAndAnUnsettleableOneIsBoth`
+            // holds the two to each other.
+            switch item.kind {
+            case .directory, .symlink:
                 return .failure(.notAnOrdinaryFile(side: side, path: path))
+            case .file, .other:
+                break
             }
             if let size = item.size,
                 let refusal = DiffEligibility.refusal(forByteCount: Int(clamping: size))

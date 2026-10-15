@@ -420,10 +420,14 @@ struct ComparisonEntryWiringGuardTests {
         let comparison = try Self.code(Self.comparisonFile)
         #expect(Self.occurrences(of: "notAnOrdinaryFile", in: comparison) == 1)
         let body = try Self.body("private func diffUnmapped(", in: Self.comparisonFile)
-        #expect(body.contains("guard item.kind == .file else"))
+        #expect(body.contains("switch item.kind {"))
+        // What it refuses is what is KNOWN to be unsuitable; `.other` (a type
+        // nobody reported) is not in that arm, and the behaviour is pinned in
+        // `ComparisonFetchTests`.
+        #expect(body.contains("case .directory, .symlink:"))
         // Before the size question and before the fetch: a directory is
         // refused as one rather than as an oversized file, and no byte moves.
-        let kind = try #require(body.range(of: "guard item.kind == .file else"))
+        let kind = try #require(body.range(of: "switch item.kind {"))
         let size = try #require(body.range(of: "DiffEligibility.refusal(forByteCount:"))
         let fetch = try #require(body.range(of: "try await fetch(leftPath: leftPath"))
         #expect(kind.upperBound <= size.lowerBound)
