@@ -232,6 +232,42 @@ struct ComparisonEntryWiringGuardTests {
         #expect(Self.occurrences(of: "remoteDirectory:", in: door) == 2)
     }
 
+    /// Fix round 2. The far side's kind is read from the OTHER pane's loaded
+    /// rows, and each pane has to be handed the other one's. A value test
+    /// cannot see this: swapping these two closures hands each pane its own
+    /// rows, whereupon a row is checked against ITSELF — plant B's shape,
+    /// one layer out — and every symlink row would be withheld while every
+    /// far symlink was offered.
+    @Test func eachPaneIsHandedTheOtherPanesRows() throws {
+        let detail = try Self.code("ContentView+Detail.swift")
+        #expect(Self.occurrences(of: "destinationRows: { session.remote.items }", in: detail) == 1)
+        #expect(Self.occurrences(of: "destinationRows: { session.local.items }", in: detail) == 1)
+        #expect(Self.occurrences(of: "destinationRows:", in: detail) == 2)
+        // Each one sits with the scope closure that names the SAME pane, so
+        // the two reads of "the other pane" cannot disagree.
+        for pane in ["remote", "local"] {
+            let rows = try #require(
+                detail.range(of: "destinationRows: { session.\(pane).items }"))
+            let before = String(detail[..<rows.lowerBound].suffix(260))
+            #expect(
+                before.contains("currentPath: session.\(pane).currentPath)"),
+                "the \(pane) rows do not sit with the \(pane) scope")
+        }
+
+        // Plumbed, not merely declared: a closure the pane never forwards is
+        // a gate that reads an empty listing for ever.
+        let pane = try Self.code("BrowserPane.swift")
+        #expect(pane.contains("var destinationRows: (() -> [RemoteFileItem])? = nil"))
+        #expect(pane.contains("destinationRows: destinationRows"))
+        let table = try Self.code("RemoteFileTableView.swift")
+        #expect(table.contains("var destinationRows: (() -> [RemoteFileItem])? = nil"))
+        #expect(Self.occurrences(of: "coordinator.destinationRows = destinationRows", in: table) == 2)
+        #expect(table.contains("var currentDestinationRows: [RemoteFileItem] { destinationRows?() ?? [] }"))
+        // And the menu model is asked with them, beside the scope it was
+        // already asked with.
+        #expect(table.contains("destination: currentDestinationScope, destinationRows: currentDestinationRows)"))
+    }
+
     /// Fix round 1, F1. A file pair has no classification, so the kind check
     /// in the shared diff step is the only thing between the FAR side of a
     /// one-row comparison — a path the menu model never saw — and the

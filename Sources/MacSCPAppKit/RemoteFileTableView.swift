@@ -140,6 +140,14 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// re-created. `nil` yields `.ordinary`, which is what every pane whose
     /// counterpart is a local pane or a non-bucket-list remote one is.
     var destinationScope: (() -> BrowserScope)? = nil
+    /// That same other pane's ALREADY-LOADED rows, for the one question the
+    /// menu model asks of them: what kind is the entry
+    /// `.compareWithOtherPane` would measure a row against (diff view fix
+    /// round 2)? A closure for the same reason `destinationScope` above is
+    /// one — read fresh at each `menuNeedsUpdate`, since the other pane
+    /// navigates without this view being re-created. `nil` yields none, and
+    /// the menu model's own gate falls through to what it did before.
+    var destinationRows: (() -> [RemoteFileItem])? = nil
 
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
@@ -160,6 +168,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onSortChange = onSortChange
         coordinator.scope = scope
         coordinator.destinationScope = destinationScope
+        coordinator.destinationRows = destinationRows
         return coordinator
     }
 
@@ -485,6 +494,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onSortChange = onSortChange
         context.coordinator.scope = scope
         context.coordinator.destinationScope = destinationScope
+        context.coordinator.destinationRows = destinationRows
         guard let table = nsView.documentView as? NSTableView else { return }
         // Column rebuild (M11m/T2): diffed against the last SET the
         // COORDINATOR itself recorded (`lastVisibleColumns`) — the same
@@ -722,10 +732,14 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// the next key they press.
         var scope: BrowserScope = .ordinary
         var destinationScope: (() -> BrowserScope)?
+        var destinationRows: (() -> [RemoteFileItem])?
         /// The other pane's scope right now — `.ordinary` when no closure was
         /// supplied, which is the answer for every pane whose counterpart
         /// cannot be a bucket list.
         var currentDestinationScope: BrowserScope { destinationScope?() ?? .ordinary }
+        /// The other pane's rows right now — none when no closure was
+        /// supplied, or when that pane has not listed anything yet.
+        var currentDestinationRows: [RemoteFileItem] { destinationRows?() ?? [] }
         let side: BrowserPaneSide
         weak var table: NSTableView?
         var suppressSelectionCallback = false
@@ -1085,7 +1099,8 @@ struct RemoteFileTableView: NSViewRepresentable {
                 fileActions: fileActions?() ?? [],
                 userFileActions: userFileActions?() ?? [],
                 supportsChecksum: supportsChecksum, supportsArchiving: supportsArchiving,
-                scope: scope, destination: currentDestinationScope)
+                scope: scope, destination: currentDestinationScope,
+                destinationRows: currentDestinationRows)
             // `.transferToOtherPane` is immediately followed (per the Core
             // model, `BrowserContextMenu.entries`) by zero or more
             // `.transferToSession` entries — those join the SAME "Transfer"

@@ -45,6 +45,10 @@ struct BrowserPane: View {
     /// verbatim to `RemoteFileTableView`; see that property's doc comment for
     /// why it is a closure. `nil` yields `.ordinary`.
     var destinationScope: (() -> BrowserScope)? = nil
+    /// That same other pane's already-loaded rows (diff view fix round 2) —
+    /// forwarded verbatim to `RemoteFileTableView`, which hands them to the
+    /// menu model. See that property's doc comment. `nil` yields none.
+    var destinationRows: (() -> [RemoteFileItem])? = nil
     /// Which columns the file list shows (M11m/T2) — mirrors
     /// `SettingsStore.visibleColumns`, app-global like the other display
     /// settings (`showHiddenFiles` etc.), so both panes always show the
@@ -371,7 +375,8 @@ struct BrowserPane: View {
                         viewModel.sortAscending = ascending
                     },
                     scope: scope,
-                    destinationScope: destinationScope
+                    destinationScope: destinationScope,
+                    destinationRows: destinationRows
                 )
                 .allowsHitTesting(viewModel.state == .loaded)
 

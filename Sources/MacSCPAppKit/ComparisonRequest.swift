@@ -44,7 +44,14 @@ struct ComparisonRequest: Equatable {
     /// directory row makes a folder comparison, anything else a file pair.
     ///
     /// The counterpart is a path this SPELLS and nothing here looks at what
-    /// is on the end of it: the other pane may not hold that name at all. For
+    /// is on the end of it: the other pane may not hold that name at all.
+    /// What DOES look, since fix round 2, is the menu model — it is handed
+    /// the other pane's loaded rows (`BrowserContextMenu.entries(…
+    /// destinationRows:)`) and withholds the entry when the far row is listed
+    /// as a symlink, which is the one kind `stat` cannot report. This factory
+    /// is deliberately not given a second copy of that rule: the offer is the
+    /// menu's decision, and a request built for a selection the entry was
+    /// offered for is an honest request. For
     /// a `.folders` request the comparison itself answers that; see the
     /// paragraph below for the `.filePair` branch, which the first round's
     /// doc comment described wrongly.
