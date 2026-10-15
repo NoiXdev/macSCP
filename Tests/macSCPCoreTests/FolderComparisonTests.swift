@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 
@@ -91,11 +92,11 @@ import Testing
     /// without that check all ten children would still be listed.
     @Test func aCancelAcrossEmptyDirectoriesIsStoppedByTheCheckBeforeEachListing() async throws {
         let names = (0..<10).map { "e\($0)" }
-        var listings: [String: [RemoteFileItem]] = ["/l": names.map { dir($0) }]
-        var rightListings: [String: [RemoteFileItem]] = ["/r": names.map { dir($0) }]
+        var listings: [BytePath: [RemoteFileItem]] = ["/l": names.map { dir($0) }]
+        var rightListings: [BytePath: [RemoteFileItem]] = ["/r": names.map { dir($0) }]
         for name in names {
-            listings["/l/" + name] = []
-            rightListings["/r/" + name] = []
+            listings[BytePath("/l/" + name)] = []
+            rightListings[BytePath("/r/" + name)] = []
         }
         let left = FakeFS(listings: listings)
         let right = FakeFS(listings: rightListings)
@@ -140,11 +141,11 @@ import Testing
     @Test func aCancelDuringAPairStopsBeforeTheNextPair() async throws {
         let hex = String(repeating: "c", count: 64)
         let items = (0..<10).map { file("f\($0)", 5) }
-        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
-        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var leftSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
         for item in items {
-            leftSums["/l/" + item.name] = [.sha256: hex]
-            rightSums["/r/" + item.name] = [.sha256: hex]
+            leftSums[BytePath("/l/" + item.name)] = [.sha256: hex]
+            rightSums[BytePath("/r/" + item.name)] = [.sha256: hex]
         }
         let left = FakeFS(listings: ["/l": items], checksums: leftSums)
         let right = FakeFS(listings: ["/r": items], checksums: rightSums)
@@ -282,7 +283,7 @@ import Testing
     /// which this would pass on a walk that simply stopped early.
     @Test(arguments: [true, false])
     func anUnreadableSubdirectoryIsOneRowAndTheWalkContinues(onTheLeft: Bool) async throws {
-        let denied: [String: any Error] = [
+        let denied: [BytePath: any Error] = [
             (onTheLeft ? "/l/bad" : "/r/bad"): RemoteFSError.permissionDenied(path: "bad")
         ]
         let left = FakeFS(
@@ -338,7 +339,7 @@ import Testing
     /// one unreadable there is nothing to compare.
     @Test(arguments: [true, false])
     func aFailureListingTheRootStillThrows(onTheLeft: Bool) async throws {
-        let denied: [String: any Error] = [
+        let denied: [BytePath: any Error] = [
             (onTheLeft ? "/l" : "/r"): RemoteFSError.permissionDenied(path: "root")
         ]
         let left = FakeFS(listings: ["/l": [file("a", 1)]], listFailures: onTheLeft ? denied : [:])
@@ -401,11 +402,11 @@ import Testing
     @Test func aCancellationErrorFromAChecksumPropagates() async throws {
         let hex = String(repeating: "e", count: 64)
         let items = (0..<5).map { file("f\($0)", 5) }
-        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
-        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var leftSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
         for item in items {
-            leftSums["/l/" + item.name] = [.sha256: hex]
-            rightSums["/r/" + item.name] = [.sha256: hex]
+            leftSums[BytePath("/l/" + item.name)] = [.sha256: hex]
+            rightSums[BytePath("/r/" + item.name)] = [.sha256: hex]
         }
         let left = FakeFS(
             listings: ["/l": items], checksums: leftSums,
@@ -424,11 +425,11 @@ import Testing
     @Test func aCancelledTaskWhoseChecksumFailsWithItsOwnErrorIsStillACancel() async throws {
         let hex = String(repeating: "f", count: 64)
         let items = (0..<5).map { file("f\($0)", 5) }
-        var leftSums: [String: [ChecksumAlgorithm: String]] = [:]
-        var rightSums: [String: [ChecksumAlgorithm: String]] = [:]
+        var leftSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
+        var rightSums: [BytePath: [ChecksumAlgorithm: String]] = [:]
         for item in items {
-            leftSums["/l/" + item.name] = [.sha256: hex]
-            rightSums["/r/" + item.name] = [.sha256: hex]
+            leftSums[BytePath("/l/" + item.name)] = [.sha256: hex]
+            rightSums[BytePath("/r/" + item.name)] = [.sha256: hex]
         }
         let left = FakeFS(
             listings: ["/l": items], checksums: leftSums,
@@ -546,20 +547,28 @@ private func file(_ name: String, _ size: UInt64) -> RemoteFileItem {
 
 /// `prefix` lists one directory "d", which lists one directory "d", and so on
 /// `depth` levels down; the last one is empty.
-private func deepTree(prefix: String, depth: Int) -> [String: [RemoteFileItem]] {
-    var listings: [String: [RemoteFileItem]] = [:]
+private func deepTree(prefix: String, depth: Int) -> [BytePath: [RemoteFileItem]] {
+    var listings: [BytePath: [RemoteFileItem]] = [:]
     var path = prefix
     for _ in 0..<depth {
-        listings[path] = [dir("d")]
+        listings[BytePath(path)] = [dir("d")]
         path = RemotePath.join(path, "d")
     }
-    listings[path] = []
+    listings[BytePath(path)] = []
     return listings
 }
 
 /// A file system that answers `list` from a dictionary and checksums from
 /// another, and COUNTS both, so a test can assert that a walk stopped rather
 /// than merely stopped reporting.
+///
+/// **Every table is keyed by `BytePath`, never by `String`.** A `String` key
+/// folds canonically equivalent spellings together, so a fake keyed that way
+/// answers an NFD lookup from its NFC entry and no test on it can see a path
+/// built out of the wrong side's spelling. `BytePath`'s own doc comment holds
+/// the measurement. A dictionary literal is unchanged — the keys convert
+/// through `ExpressibleByStringLiteral` — and a lookup from a path the code
+/// under test built says `BytePath(path)`.
 ///
 /// `list` rewrites each item's `path` to `directory + name`, as a real
 /// backend does, so the checksum table can be keyed by the path a file really
@@ -580,10 +589,10 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
         var onChecksum: (@Sendable (Int) -> Void)?
     }
 
-    private let listings: [String: [RemoteFileItem]]
-    private let checksums: [String: [ChecksumAlgorithm: String]]
-    private let listFailures: [String: any Error]
-    private let checksumFailures: [String: any Error]
+    private let listings: [BytePath: [RemoteFileItem]]
+    private let checksums: [BytePath: [ChecksumAlgorithm: String]]
+    private let listFailures: [BytePath: any Error]
+    private let checksumFailures: [BytePath: any Error]
     private let state = Mutex(State())
 
     /// `listFailures` and `checksumFailures` throw the given error for that
@@ -591,10 +600,10 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     /// cancel the task and fail the call in the same breath, as a cancelled
     /// network call does.
     init(
-        listings: [String: [RemoteFileItem]],
-        checksums: [String: [ChecksumAlgorithm: String]] = [:],
-        listFailures: [String: any Error] = [:],
-        checksumFailures: [String: any Error] = [:]
+        listings: [BytePath: [RemoteFileItem]],
+        checksums: [BytePath: [ChecksumAlgorithm: String]] = [:],
+        listFailures: [BytePath: any Error] = [:],
+        checksumFailures: [BytePath: any Error] = [:]
     ) {
         self.listings = listings
         self.checksums = checksums
@@ -624,8 +633,10 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
             return (s.listedPaths.count, s.onList)
         }
         hook?(count)
-        if let failure = listFailures[path] { throw failure }
-        guard let items = listings[path] else { throw RemoteFSError.notFound(path: path) }
+        if let failure = listFailures[BytePath(path)] { throw failure }
+        guard let items = listings[BytePath(path)] else {
+            throw RemoteFSError.notFound(path: path)
+        }
         return items.map {
             RemoteFileItem(
                 name: $0.name, path: RemotePath.join(path, $0.name), kind: $0.kind, size: $0.size)
@@ -640,8 +651,8 @@ private final class FakeFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
             return (s.asked.count, s.onChecksum)
         }
         hook?(count)
-        if let failure = checksumFailures[path] { throw failure }
-        guard let table = checksums[path] else { return .unavailableOnThisConnection }
+        if let failure = checksumFailures[BytePath(path)] { throw failure }
+        guard let table = checksums[BytePath(path)] else { return .unavailableOnThisConnection }
         let answered = table[algorithm].map { (algorithm, $0) }
             ?? table.first.map { ($0.key, $0.value) }
         guard let (answeredAlgorithm, hex) = answered,
