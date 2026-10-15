@@ -531,7 +531,21 @@ session does, so that **every fetch a comparison causes is visible in the
 transfer bar**. A comparison that silently moved bytes would be the one thing
 this app does not do elsewhere.
 
-The temp directory is per comparison and is removed when the comparison ends.
+The temp directory is per comparison and is removed when the comparison is
+RELEASED — `Comparison.releaseFileSystems()`, which the owning tab's teardown
+calls and which a closing comparison window calls after the cancel.
+
+**Corrected 2026-10-16 by the final fix wave. This sentence read: "The temp
+directory is per comparison and is removed when the comparison ends."** The
+code is the better account and says why in `Comparison.cancel()`'s own doc
+comment: `cancel()` stops the WALK, and a diff the user opened for a row that
+had already arrived is a different operation which may be fetching or being
+read at that moment, so deleting its files under it would answer a question
+nobody asked. An earlier version did remove them there — this spec is what
+asked for it — and a Cancel pressed during a diff then killed that diff with a
+raw file error and still left an empty directory behind. The cost of the
+corrected behaviour is stated where it is paid: a cancelled comparison keeps
+its fetched files until the tab closes or its window does.
 
 ## The surface
 

@@ -45,11 +45,37 @@ public struct BrowserScope: Equatable, Sendable {
     /// a LISTING rather than a row: the background context menu, which has no
     /// row to point at; `.compareWithOtherPane`, which asks it of the OTHER
     /// pane, where the counterpart it would measure against has to be an
-    /// entry of a directory and not a bucket; and `acceptsIncomingFiles`
-    /// below. Three readers in `Sources`, counted 2026-10-15 with
-    /// `grep -rno isContainerListRoot Sources/ | wc -l`, which prints 5:
-    /// those three, this declaration, and the pattern of that command, which
-    /// is written in this comment and so finds itself.
+    /// entry of a directory and not a bucket; `acceptsIncomingFiles` below;
+    /// and `ComparisonRequest.panesAreComparable(local:remote:)`, which asks
+    /// it of BOTH panes before the menu bar's "Compare Both Panes" is
+    /// enabled, and therefore spells it twice on one line. FOUR readers,
+    /// five reads.
+    ///
+    /// **Corrected 2026-10-16, and this is what it replaces, verbatim:** "and
+    /// `acceptsIncomingFiles` below. Three readers in `Sources`, counted
+    /// 2026-10-15 with `grep -rno isContainerListRoot Sources/ | wc -l`,
+    /// which prints 5: those three, this declaration, and the pattern of that
+    /// command, which is written in this comment and so finds itself." Both
+    /// halves were false by then. `panesAreComparable` is a fourth reader and
+    /// landed in `3ba42629`; this comment landed in `528accf4`, which
+    /// `git merge-base --is-ancestor 528accf4 3ba42629` confirms came first,
+    /// and both are in this plan's own range of work. The figure went with
+    /// it: `git grep -no isContainerListRoot 528accf4 -- Sources | wc -l`
+    /// prints 5, and the same command at `693db7c0` — the plan's last commit
+    /// before this fix wave — prints 7. A comment that was true when written
+    /// and false two tasks later, in a number and in an enumeration of call
+    /// sites, which is what `CLAUDE.md`'s rule about them is for.
+    ///
+    /// **The figure is now counted by a command this comment cannot change.**
+    /// A total over `Sources/` counts the pattern wherever this file spells
+    /// it, including inside the quotation above, so the number moved whenever
+    /// the prose did. Excluding the declaring file leaves only reads, and
+    /// `git grep -no isContainerListRoot -- Sources ':!*BrowserScope.swift' | wc -l`
+    /// prints 4 — `BrowserContextMenu.swift` twice (the background menu and
+    /// `.compareWithOtherPane`) and `ComparisonRequest.swift` twice on its one
+    /// line. The fifth read is `acceptsIncomingFiles`, in this file, below.
+    /// Re-run after this paragraph was written, on 2026-10-16, and unchanged
+    /// by it, which is the property the exclusion buys.
     public var isContainerListRoot: Bool {
         rootIsContainerList && RemotePath.normalizedAbsolute(currentPath) == "/"
     }

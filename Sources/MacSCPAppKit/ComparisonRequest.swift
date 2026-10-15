@@ -95,8 +95,26 @@ struct ComparisonRequest: Equatable {
     }
 
     /// "Compare the Two Selected Files", for exactly two selected files of
-    /// one pane: those two against each other, in selection order, both sides
-    /// that pane's.
+    /// one pane: those two against each other, both sides that pane's, and
+    /// the left-hand one is whichever stands HIGHER IN THE TABLE.
+    ///
+    /// **Corrected 2026-10-16. This read "those two against each other, in
+    /// selection order, both sides that pane's."** It is not selection order
+    /// and never was. The selection reaches here from
+    /// `RemoteFileTableView`'s `currentSelection()` and `menuNeedsUpdate`,
+    /// both of which read `table.selectedRowIndexes` — an `IndexSet`, which
+    /// iterates in ascending row index — and map it through `items`. So the
+    /// order is the table's, which is the SORT order: clicking a column
+    /// header swaps which of the two files is the left-hand side of the diff.
+    /// The order the user clicked the two rows in is not recorded anywhere.
+    ///
+    /// The behaviour is deliberately unchanged here, and whether it should
+    /// change is `docs/BACKLOG.md`, row "Which of two selected files is the
+    /// LEFT side of a diff is decided by the sort". The argument for leaving
+    /// it: the table order is the one order both the user and the window can
+    /// see, and a comparison is symmetric apart from which column a line
+    /// lands in. The argument against: re-sorting the pane silently reverses
+    /// every `-`/`+` in a diff that is already open.
     static func forTwoSelected(
         _ selection: [RemoteFileItem], on side: BrowserPaneSide
     ) -> ComparisonRequest? {
