@@ -176,6 +176,64 @@ struct ComparisonOwnershipWiringGuardTests {
         #expect(files.sorted() == ["SessionTab.swift", "TabTeardown.swift"])
     }
 
+    // MARK: One relative path is never joined to two roots
+
+    /// **The invariant F1 and F4 were two symptoms of.** A pair the second
+    /// pairing pass made is spelled differently on each side, so there is no
+    /// such thing as "the path of a row": joining either spelling to the
+    /// other side's root names a path that is not there. The structural half
+    /// is that `ComparisonRow` has no single path to ask for — it carries
+    /// `leftPath` and `rightPath` — and this is the residual half, because
+    /// joining a root to `relativePath` is still something a caller could
+    /// write.
+    ///
+    /// Every negative check has a positive one beside it: a file that fetched
+    /// nothing at all would satisfy the negatives on its own.
+    @Test func nothingJoinsOneRelativePathToTwoRoots() throws {
+        let comparison = try Self.code("Comparison.swift")
+        // Positive: the three per-row entry points each fetch from the row's
+        // own two paths — `fetchPair`, `settleUndetermined` and the diff.
+        #expect(
+            Self.occurrences(
+                of: "fetch(leftPath: row.leftPath, rightPath: row.rightPath)",
+                in: comparison) == 2)
+        #expect(
+            Self.occurrences(
+                of: "diff(leftPath: row.leftPath, rightPath: row.rightPath)",
+                in: comparison) == 1)
+        // Negative: neither root is joined to anything here, and the helper
+        // that used to do it is gone.
+        for spelling in ["join(leftRoot", "join(rightRoot", "Self.join("] {
+            #expect(!comparison.contains(spelling), "Comparison.swift spells \(spelling)")
+        }
+
+        // Core's walk carries both paths per level instead of one relative
+        // path it joins twice.
+        // `commentFree`, not `code`: the blanked view deletes string
+        // literals, and the root entry below is keyed by the EMPTY relative
+        // path, which is one.
+        let walk = try SourceCorpus.commentFree(
+            of: Self.sources
+                .appendingPathComponent("macSCPCore")
+                .appendingPathComponent("Compare")
+                .appendingPathComponent("FolderComparison.swift"))
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            .replacingOccurrences(of: "( ", with: "(")
+            .replacingOccurrences(of: " )", with: ")")
+        // Positive: the queue is a triple, seeded with the two roots, and
+        // each child takes the path its OWN side's listing reported.
+        #expect(walk.contains("var queue: [(relative: String, leftPath: String, rightPath: String)]"))
+        #expect(walk.contains("(relative: \"\", leftPath: leftRoot, rightPath: rightRoot)"))
+        #expect(walk.contains("let childLeft = pair.left?.path ?? RemotePath.join(leftPath, pair.name)"))
+        #expect(walk.contains("let childRight = pair.right?.path ?? RemotePath.join(rightPath, pair.name)"))
+        // Negative: neither ROOT is joined to a relative path anywhere in the
+        // walk. `leftPath`/`rightPath` above are the level's own paths, not
+        // the roots, which is the whole distinction.
+        for spelling in ["join(leftRoot", "join(rightRoot"] {
+            #expect(!walk.contains(spelling), "FolderComparison.swift spells \(spelling)")
+        }
+    }
+
     // MARK: A settle the cancel can reach
 
     /// The settle path's cancel SOURCE. `cancelsWithTask: true` on both of a
