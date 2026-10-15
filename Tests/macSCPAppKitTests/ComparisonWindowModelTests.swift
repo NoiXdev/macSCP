@@ -406,4 +406,40 @@ struct ComparisonWindowModelTests {
         #expect(model.isSessionClosed)
         #expect(comparison.rows.count == 1)
     }
+
+    // MARK: - The window's own title (fix round 1, item 6)
+
+    /// A `WindowGroup`'s title is static per group, so every comparison
+    /// window was called "Compare" and a file-pair window could not be told
+    /// from a folder one. The kind names itself and the two basenames say
+    /// what is being compared.
+    @Test func theTitleNamesTheKindAndTheTwoBasenames() {
+        #expect(
+            ComparisonWindowTitle.text(
+                kind: .folders, leftRoot: "/Users/me/notes", rightRoot: "/srv/notes")
+            == "Compare Folders: notes \u{2194} notes")
+        #expect(
+            ComparisonWindowTitle.text(
+                kind: .filePair, leftRoot: "/Users/me/notes/a.txt", rightRoot: "/srv/n/b.txt")
+            == "Compare Files: a.txt \u{2194} b.txt")
+    }
+
+    /// A root that IS the root has "/" for a basename rather than an empty
+    /// one, and a trailing slash does not make a path nameless.
+    @Test func aRootPathStillHasAName() {
+        #expect(
+            ComparisonWindowTitle.text(kind: .folders, leftRoot: "/", rightRoot: "/srv/")
+            == "Compare Folders: / \u{2194} srv")
+    }
+
+    /// The unresolved window keeps the scene's own title: there is nothing to
+    /// name yet, and "Compare" is what the scene is called.
+    @Test func anUnresolvedWindowKeepsTheSceneTitle() {
+        #expect(ComparisonWindowTitle.unresolved == "Compare")
+        // Positive beside it: a resolved title is a different string, so the
+        // fallback is not simply what every window shows.
+        #expect(
+            ComparisonWindowTitle.text(kind: .folders, leftRoot: "/a", rightRoot: "/b")
+            != ComparisonWindowTitle.unresolved)
+    }
 }

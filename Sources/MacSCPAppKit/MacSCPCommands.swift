@@ -173,7 +173,7 @@ struct MacSCPCommands: Commands {
             Button(L10n.string("menu.compare.panes", "Compare Both Panes")) {
                 tabCommands?.compareBothPanes?()
             }
-            .disabled(tabCommands?.isActiveTabConnected != true)
+            .disabled(tabCommands?.canCompareBothPanes != true)
         }
         // "Sessions" menu (M10a/T2, mockup section 4): bundles the
         // management sheets and the sidebar's existing export/import

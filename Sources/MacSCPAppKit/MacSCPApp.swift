@@ -91,11 +91,35 @@ final class TabCommands {
     /// "Compare Both Panes" (diff view plan, Task 12) — the menu bar's door
     /// into the diff view, and the only one of the three that has no
     /// selection to read, so it compares the two panes' current directories.
-    /// Same bridge shape as `toggleTransfers` above, and the same mirrored
-    /// enabled state (`isActiveTabConnected`): with nothing connected there
-    /// are no two file systems to walk, and `SessionTab.startComparison`
-    /// would decline anyway.
+    /// Same bridge shape as `toggleTransfers` above, and `canCompareBothPanes`
+    /// below is the enabled state.
     var compareBothPanes: (() -> Void)?
+    /// Capability gate for the entry above (fix round 1, F2): `false` while
+    /// either pane sits at a BUCKET LIST, where a folder comparison walks
+    /// every bucket whose name matches a local subdirectory, one checksum per
+    /// object, from one click. `ContentView` mirrors
+    /// `ComparisonRequest.panesAreComparable(local:remote:)` here the same way
+    /// it mirrors `activeTabSupportsShell` above, and for the same reason
+    /// (this Scene cannot see `tabsModel`).
+    ///
+    /// A third mirror rather than a `guard … else { return }` in the closure,
+    /// because `activeTabTerminalToggleIsUnlocked`'s doc comment below already
+    /// settled that: a menu entry that is enabled and does nothing is what
+    /// `PaneToggleState` rules out, and the cheap fix would have been exactly
+    /// that entry.
+    ///
+    /// Defaults `true` for the same reason the two flags below do: the menu
+    /// must behave exactly as before until the mirror has run once. The
+    /// disconnected case is not this flag's business — `isActiveTabConnected`
+    /// covers it.
+    var activeTabPanesAreComparable = true
+    /// Whether "Compare Both Panes" can do anything at all: a connected tab
+    /// whose two panes are both showing a directory. The menu's `.disabled`
+    /// reads THIS rather than re-spelling the two conditions, exactly as
+    /// `canToggleTerminal` below does for its three.
+    var canCompareBothPanes: Bool {
+        isActiveTabConnected && activeTabPanesAreComparable
+    }
     /// Mirrors `ContentView`'s active tab connection state (M11d/T2): this
     /// `TabCommands` instance is the only thing `MacSCPApp`'s `.commands`
     /// closure observes, and that closure builds a separate Scene that does

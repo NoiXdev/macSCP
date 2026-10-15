@@ -58,6 +58,7 @@ struct ComparisonDiffViewTests {
         .binary, .notUTF8,
         .tooLarge(bytes: 4_194_305, ceiling: 4_194_304),
         .tooManyLines(leftLines: 20, rightLines: 2_097_152, ceilingProduct: 33_554_432),
+        .notAnOrdinaryFile(side: .right, path: "/srv/notes.txt"),
     ]
 
     private static let fetchErrors: [ComparisonFetchError] = [
@@ -114,19 +115,19 @@ struct ComparisonDiffViewTests {
         runs.map(\.text).joined()
     }
 
-    // MARK: - Four refusals, four texts
+    // MARK: - Five refusals, five texts
 
     @Test func eachRefusalHasItsOwnKeyAndItsOwnText() {
         let wordings = Self.refusals.map { Presentation.wording(for: $0) }
-        #expect(wordings.count == 4)
-        #expect(Set(wordings.map(\.key)).count == 4)
-        #expect(Set(wordings.map(\.english)).count == 4)
+        #expect(wordings.count == 5)
+        #expect(Set(wordings.map(\.key)).count == 5)
+        #expect(Set(wordings.map(\.english)).count == 5)
         let texts = Self.refusals.map { Presentation.refusalText($0, locale: Self.english) }
         for (refusal, text) in zip(Self.refusals, texts) {
             #expect(!text.isEmpty, "\(refusal)")
             #expect(!text.contains("%"), "\(refusal): \(text)")
         }
-        #expect(Set(texts).count == 4)
+        #expect(Set(texts).count == 5)
     }
 
     /// `.binary` is a statement about the FILE (a NUL byte: it is not text);
@@ -204,7 +205,7 @@ struct ComparisonDiffViewTests {
         for refusal in Self.refusals {
             let wording = Presentation.wording(for: refusal)
             #expect(wording.english != identical)
-            // None of the four says the files are the same, equal or
+            // None of the five says the files are the same, equal or
             // identical, or that nothing was found.
             for claim in ["same", "equal", "identical", "no difference", "nothing differs", "match"] {
                 #expect(
@@ -239,7 +240,7 @@ struct ComparisonDiffViewTests {
             #expect(notice.style == .refusal)
             #expect(notice.text != identicalNotice.text)
         }
-        #expect(Set(refused).count == 4)
+        #expect(Set(refused).count == 5)
     }
 
     // MARK: - A failure is not a refusal
@@ -259,7 +260,7 @@ struct ComparisonDiffViewTests {
         #expect(distinct.count == texts.count, "two failures read alike: \(texts)")
 
         let refusalTexts = Set(Self.refusals.map { Presentation.refusalText($0) })
-        #expect(refusalTexts.count == 4)
+        #expect(refusalTexts.count == 5)
         #expect(distinct.isDisjoint(with: refusalTexts))
         #expect(!distinct.contains(Presentation.identical.text))
     }

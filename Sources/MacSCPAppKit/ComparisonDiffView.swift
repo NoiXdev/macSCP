@@ -104,6 +104,13 @@ enum ComparisonDiffPresentation {
     /// - `.tooManyLines` carries both line counts and the sentence shows both;
     ///   the product the case also carries is this implementation's cost and
     ///   nothing a user can act on, so it is never printed.
+    /// - `.notAnOrdinaryFile` is about one side and names it by PATH, which
+    ///   is how the sentence says which side without any catalogue having to
+    ///   inflect a word for "left". It does not name the KIND it saw: over
+    ///   SFTP a link is reported as its target, so a sentence that said
+    ///   "this is a folder" would sometimes be telling the user something
+    ///   false about their own file — the mistake `.binary` and `.notUTF8`
+    ///   exist to avoid.
     static func wording(for refusal: DiffRefusal) -> Wording {
         switch refusal {
         case .binary:
@@ -130,6 +137,12 @@ enum ComparisonDiffPresentation {
                 english:
                     "No line comparison was made: the left file has %@ lines and the right file has %@ lines, which is too many to compare together."
             )
+        case .notAnOrdinaryFile:
+            Wording(
+                key: "compare.refusal.notAnOrdinaryFile %@",
+                english:
+                    "No line comparison was made: “%@” is not an ordinary file, so there is no content to compare. It is a folder, a link or a special entry."
+            )
         }
     }
 
@@ -149,6 +162,10 @@ enum ComparisonDiffPresentation {
             return String(
                 format: text, locale: locale, grouped(leftLines, locale: locale),
                 grouped(rightLines, locale: locale))
+        case .notAnOrdinaryFile(_, let path):
+            // The path, not the side's name and not the kind: a path is data
+            // and travels through every catalogue unchanged.
+            return String(format: text, locale: locale, path)
         }
     }
 

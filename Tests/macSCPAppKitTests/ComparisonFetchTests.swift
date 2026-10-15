@@ -77,15 +77,17 @@ struct ComparisonFetchTests {
     /// walk, and `start()` is covered separately.
     private func makeFilePairRig(
         left: Data, right: Data, reportsSizes: Bool = true, temporaryRoot: URL,
+        leftKind: RemoteFileKind = .file, rightKind: RemoteFileKind = .file,
         onLeftRead: @escaping @Sendable (String) async -> Void = { _ in },
         onRightRead: @escaping @Sendable (String) async -> Void = { _ in },
         onLeftStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) -> Rig {
         let leftFS = MemoryFS(
-            files: ["/L/f": left], reportsSizes: reportsSizes, onRead: onLeftRead,
-            onStat: onLeftStat)
+            files: ["/L/f": left], reportsSizes: reportsSizes, kinds: ["/L/f": leftKind],
+            onRead: onLeftRead, onStat: onLeftStat)
         let rightFS = MemoryFS(
-            files: ["/R/f": right], reportsSizes: reportsSizes, onRead: onRightRead)
+            files: ["/R/f": right], reportsSizes: reportsSizes, kinds: ["/R/f": rightKind],
+            onRead: onRightRead)
         let queue = TransferQueueViewModel()
         let comparison = Comparison(
             left: leftFS, leftRoot: "/L/f", right: rightFS, rightRoot: "/R/f",
@@ -463,6 +465,67 @@ struct ComparisonFetchTests {
             .tooLarge(bytes: DiffEligibility.ceilingBytes + 1, ceiling: DiffEligibility.ceilingBytes)))
         // Positive: this time it WAS fetched, which is what the case is about.
         #expect(rig.left.reads == ["/L/f"])
+    }
+
+    /// Fix round 1, F1. A file pair skips the classification — that is what
+    /// it is for — so `diffFilePair()` is the ONLY place either side's kind
+    /// is ever looked at, and the FAR side of a one-row comparison is a path
+    /// the menu model never saw at all. A side that is not an ordinary file
+    /// is refused with a reason, before a byte moves.
+    @Test func asideThatIsNotAnOrdinaryFileIsRefusedBeforeAnyByteIsFetched() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let text = data("plain\n")
+
+        for (leftKind, rightKind, offending) in [
+            (RemoteFileKind.directory, RemoteFileKind.file, DiffRefusal.Side.left),
+            (RemoteFileKind.file, RemoteFileKind.directory, DiffRefusal.Side.right),
+            (RemoteFileKind.symlink, RemoteFileKind.file, DiffRefusal.Side.left),
+            (RemoteFileKind.file, RemoteFileKind.other, DiffRefusal.Side.right),
+        ] {
+            let rig = makeFilePairRig(
+                left: text, right: text, temporaryRoot: root,
+                leftKind: leftKind, rightKind: rightKind)
+
+            let result = try await rig.comparison.diffFilePair()
+
+            #expect(result == .failure(.notAnOrdinaryFile(
+                side: offending, path: offending == .left ? "/L/f" : "/R/f")))
+            // Not one byte was moved to learn it, and nothing was enqueued.
+            #expect(rig.left.reads.isEmpty)
+            #expect(rig.right.reads.isEmpty)
+            #expect(rig.queue.items.isEmpty)
+            // Positive: the side was asked about, which is how it was refused.
+            #expect(rig.left.statCalls == 1)
+        }
+
+        // The positive control the four negatives above rest on: the same
+        // fixtures with an ordinary file on both sides are fetched and
+        // diffed. Without it, a check that refused everything would satisfy
+        // all four.
+        let ok = makeFilePairRig(left: text, right: data("other\n"), temporaryRoot: root)
+        #expect(hunks(try await ok.comparison.diffFilePair()) != nil)
+        #expect(ok.left.reads == ["/L/f"])
+    }
+
+    /// The kind is read BEFORE the size, so a directory is refused as what it
+    /// is rather than as an oversized file. Both orders of that question give
+    /// a true answer; only one of them gives the useful one.
+    @Test func aDirectoryIsRefusedAsOneRatherThanAsAnOversizedFile() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let big = Data(repeating: 0x61, count: DiffEligibility.ceilingBytes + 1)
+        let rig = makeFilePairRig(
+            left: big, right: data("small"), temporaryRoot: root, leftKind: .directory)
+
+        let result = try await rig.comparison.diffFilePair()
+
+        #expect(result == .failure(.notAnOrdinaryFile(side: .left, path: "/L/f")))
+        // Positive beside it: the SAME oversized fixture, as an ordinary
+        // file, still refuses for its size.
+        let asAFile = makeFilePairRig(left: big, right: data("small"), temporaryRoot: root)
+        #expect(try await asAFile.comparison.diffFilePair() == .failure(
+            .tooLarge(bytes: DiffEligibility.ceilingBytes + 1, ceiling: DiffEligibility.ceilingBytes)))
     }
 
     @Test func binaryAndNonUTF8SidesEachRefuseWithTheirOwnReason() async throws {
@@ -879,14 +942,20 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     private let reportsSizes: Bool
     private let onRead: @Sendable (String) async -> Void
     private let onStat: @Sendable (String) async throws -> Void
+    /// What `stat` and `list` report as the KIND of a path. Anything not
+    /// named here is an ordinary file, which is what every fixture that
+    /// predates the kind check wants.
+    private let kinds: [String: RemoteFileKind]
 
     init(
         files: [String: Data], reportsSizes: Bool = true,
+        kinds: [String: RemoteFileKind] = [:],
         onRead: @escaping @Sendable (String) async -> Void = { _ in },
         onStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) {
         self.state = Mutex(State(files: files))
         self.reportsSizes = reportsSizes
+        self.kinds = kinds
         self.onRead = onRead
         self.onStat = onStat
     }
@@ -898,7 +967,8 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
 
     private func item(_ path: String, _ data: Data) -> RemoteFileItem {
         RemoteFileItem(
-            name: path.split(separator: "/").last.map(String.init) ?? path, path: path, kind: .file,
+            name: path.split(separator: "/").last.map(String.init) ?? path, path: path,
+            kind: kinds[path] ?? .file,
             size: reportsSizes ? UInt64(data.count) : nil)
     }
 
