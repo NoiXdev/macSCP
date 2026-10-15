@@ -628,7 +628,7 @@ struct ComparisonFetchTests {
             (RemoteFileKind.directory, RemoteFileKind.file, DiffRefusal.Side.left),
             (RemoteFileKind.file, RemoteFileKind.directory, DiffRefusal.Side.right),
             (RemoteFileKind.symlink, RemoteFileKind.file, DiffRefusal.Side.left),
-            (RemoteFileKind.file, RemoteFileKind.other, DiffRefusal.Side.right),
+            (RemoteFileKind.file, RemoteFileKind.symlink, DiffRefusal.Side.right),
         ] {
             let rig = makeFilePairRig(
                 left: text, right: text, temporaryRoot: root,
@@ -653,6 +653,78 @@ struct ComparisonFetchTests {
         let ok = makeFilePairRig(left: text, right: data("other\n"), temporaryRoot: root)
         #expect(hunks(try await ok.comparison.diffFilePair()) != nil)
         #expect(ok.left.reads == ["/L/f"])
+    }
+
+    /// `.other` is what a listing or a `stat` answers when the type was NOT
+    /// REPORTED (no permission bits arrived), so it is not evidence that the
+    /// entry is unsuitable. The diff refuses what it knows is a folder or a
+    /// link and lets `.other` through to the fetch, which is the one thing
+    /// that can tell an ordinary file from a device node — and says so by name
+    /// if it is not one. Either side; the positive half is that the bytes were
+    /// read and a real diff came back.
+    ///
+    /// This replaces the fourth case of
+    /// `asideThatIsNotAnOrdinaryFileIsRefusedBeforeAnyByteIsFetched`, which
+    /// expected `(.file, .other)` to be refused as `.notAnOrdinaryFile` — the
+    /// same treatment of "unknown" as "unsuitable" that `unsupportedKind` was.
+    @Test func aSideWhoseKindWasNotReportedIsDiffedAndNotRefused() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (leftKind, rightKind) in [
+            (RemoteFileKind.other, RemoteFileKind.file),
+            (RemoteFileKind.file, RemoteFileKind.other),
+            (RemoteFileKind.other, RemoteFileKind.other),
+        ] {
+            let rig = makeFilePairRig(
+                left: data("a\nb\n"), right: data("a\nc\n"), temporaryRoot: root,
+                leftKind: leftKind, rightKind: rightKind)
+
+            let result = try await rig.comparison.diffFilePair()
+
+            let shown = try #require(hunks(result), "\(leftKind) / \(rightKind): \(result)")
+            #expect(shown.count == 1)
+            #expect(rig.left.reads == ["/L/f"])
+            #expect(rig.right.reads == ["/R/f"])
+        }
+    }
+
+    /// The two places that decide "can bytes answer this?" — the settle,
+    /// gated by the reason, and the diff, gated by the kind `stat` reports —
+    /// agree for every reason the walk can produce. Built from real pairs and
+    /// real outcomes: each reason's pair is walked twice on fresh rigs, once
+    /// settled and once diffed, and neither `canBeSettledByBytes` nor the
+    /// diff's kind check is asked what it thinks. A row bytes settle that the
+    /// diff then refuses is the contradiction this exists for: the overview
+    /// and the diff telling the user two things about the same two files.
+    @Test func aRowBytesCanSettleIsNotThenRefusedByTheDiffAndAnUnsettleableOneIsBoth() async throws {
+        var agreeingYes: [UndeterminedReason] = []
+        var agreeingNo: [UndeterminedReason] = []
+        for reason in ComparisonOverviewTests.allReasons {
+            let settleRoot = try makeTemporaryRoot()
+            let diffRoot = try makeTemporaryRoot()
+            defer {
+                try? FileManager.default.removeItem(at: settleRoot)
+                try? FileManager.default.removeItem(at: diffRoot)
+            }
+            let (forSettle, _) = await settleScenario(for: reason, temporaryRoot: settleRoot)
+            let (forDiff, _) = await settleScenario(for: reason, temporaryRoot: diffRoot)
+            // Positive: both walks produced this reason, so the two outcomes
+            // below are about the same pair.
+            #expect(forSettle.comparison.rows.map(\.state) == [.undetermined(reason)], "\(reason)")
+            #expect(forDiff.comparison.rows.map(\.state) == [.undetermined(reason)], "\(reason)")
+
+            let settled = (try? await forSettle.comparison.settleUndetermined(rowAt: 0))
+                .map { $0 == .same || $0 == .differs } ?? false
+            var diffed = false
+            if let result = try? await forDiff.comparison.diff(forRowAt: 0), case .success = result {
+                diffed = true
+            }
+            #expect(settled == diffed, "\(reason): settled \(settled), diffed \(diffed)")
+            if settled { agreeingYes.append(reason) } else { agreeingNo.append(reason) }
+        }
+        // Positive counts, so a loop that agreed about nothing cannot pass.
+        #expect(agreeingYes.count == 5, "\(agreeingYes)")
+        #expect(agreeingNo == [.linkOnASide, .unreadable])
     }
 
     /// The kind is read BEFORE the size, so a directory is refused as what it
