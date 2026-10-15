@@ -1628,7 +1628,7 @@
 "compare.reason.algorithmsDiffer" = "Non comparé : les deux côtés ont répondu avec des algorithmes de somme de contrôle différents, qui ne disent rien l’un de l’autre.";
 "compare.reason.etagIsNotAFileHash" = "Non comparé : au moins un côté n’a fourni que l’ETag d’un envoi en plusieurs parties, qui n’est pas une somme de contrôle du contenu du fichier.";
 "compare.reason.linkOnASide" = "Non comparé : un côté est un lien. Comparer les contenus comparerait les cibles des liens, et ce n’est pas ce que cette ligne affirme.";
-"compare.reason.kindNotReported" = "Non comparé : macSCP n’a pas reçu le type de cette entrée. Comparez les contenus pour le déterminer.";
+"compare.reason.kindNotReported" = "Non comparé : macSCP n’a pas pu établir qu’il s’agit d’un fichier ordinaire. Son type n’a pas été signalé, ou ce n’est pas un type d’entrée dont le contenu peut être comparé. Vous pouvez essayer de comparer les contenus.";
 "compare.reason.unreadable" = "macSCP n’a pas pu lire ce chemin ; rien n’y a donc été comparé.";
 "compare.action.compareAnyway" = "Comparer quand même les contenus";
 "compare.progress %lld" = "Entrées trouvées jusqu’ici : %lld";

@@ -132,7 +132,7 @@ enum ComparisonOverviewPresentation {
             Wording(
                 key: "compare.reason.kindNotReported",
                 english:
-                    "Not compared: macSCP was not told what kind of entry this is. Compare the contents to settle it."
+                    "Not compared: macSCP could not establish that this is an ordinary file. Its type was not reported, or it is not a kind whose contents can be compared. You can try comparing the contents."
             )
         // The one reason that is not about comparing. It says what could not
         // be read; "nothing here was compared" is its consequence, and for a

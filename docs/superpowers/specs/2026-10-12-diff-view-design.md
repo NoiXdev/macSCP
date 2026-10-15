@@ -542,8 +542,11 @@ A third scene beside `WindowGroup` and `Settings`.
   reading the list. The `undetermined` rows carry their reason, and a row
   offers "compare anyway", which fetches both sides and settles that one pair
   by bytes, where fetching the bytes answers the question the row asks, and
-  not where it would answer a different one. **Corrected 2026-10-13
-  (Task 13).** This sentence read "The `undetermined` rows carry their
+  not where it would answer a different one. **Corrected 2026-10-15
+  (Task 13), for a defect measured 2026-10-13.** The stamp on this correction
+  first read "Corrected 2026-10-13 (Task 13)"; 2026-10-13 is the day the
+  defect was measured, and the sentence was corrected on 2026-10-15. This
+  sentence read "The `undetermined` rows carry their
   reason, and each offers 'compare anyway', which fetches both sides and
   settles that one pair by bytes." The word "each" was never implemented and
   is withdrawn: a link (`linkOnASide`) does not offer it, because a link's

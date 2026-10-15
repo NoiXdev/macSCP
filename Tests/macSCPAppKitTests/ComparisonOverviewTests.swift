@@ -229,17 +229,36 @@ struct ComparisonOverviewTests {
         }
     }
 
-    /// `.other` is also what a listing answers when a type was NOT REPORTED,
-    /// so an ordinary file can carry `kindNotReported`. Its text may not say
-    /// the entry IS a link or a special entry, and says what settles it; the
-    /// link's text says what it is and why bytes would answer another question.
-    @Test func kindNotReportedDoesNotClaimALinkAndLinkOnASideDoes() throws {
+    /// `.other` has TWO producers in `SFTPAttributeMapper.kind(fromPermissions:)`:
+    /// a listing that carried no permission bits at all (the type was NOT
+    /// REPORTED), and one whose bits arrived and named a FIFO, a socket or a
+    /// device (the type WAS reported, and is not one whose contents can be
+    /// compared). `kindNotReported` therefore may not say the type was not
+    /// reported as a fact, may not say the entry IS a link or a special entry,
+    /// and may not promise that comparing settles anything: it names the
+    /// attempt as an attempt. The link's text says what it is and why bytes
+    /// would answer another question.
+    ///
+    /// The first wording of this reason read "macSCP was not told what kind of
+    /// entry this is. Compare the contents to settle it." — true of the first
+    /// producer only, and a promise the second cannot keep.
+    @Test func kindNotReportedIsTrueOfBothProducersAndOnlyOffersAnAttempt() throws {
         let english = try Self.catalogue("en")
         let unreported = try #require(english[Presentation.key(for: .kindNotReported)])
-        #expect(unreported.contains("was not told"))
-        #expect(unreported.contains("Compare the contents"))
+        #expect(unreported.contains("could not establish that this is an ordinary file"))
+        // Both producers: the disjunction is there, and so is each half.
+        #expect(
+            unreported.contains(
+                "Its type was not reported, or it is not a kind whose contents can be compared"))
+        // Not the old unconditional claim, and not the old promise.
+        #expect(!unreported.contains("was not told"))
+        #expect(!unreported.contains("to settle it"))
+        // The attempt, as an attempt.
+        #expect(unreported.contains("You can try comparing the contents"))
         #expect(!unreported.localizedCaseInsensitiveContains("link"))
         #expect(!unreported.localizedCaseInsensitiveContains("special"))
+        // The English the code carries is this sentence.
+        #expect(Presentation.wording(for: .kindNotReported).english == unreported)
 
         let link = try #require(english[Presentation.key(for: .linkOnASide)])
         #expect(link.contains("one side is a link"))
@@ -252,13 +271,27 @@ struct ComparisonOverviewTests {
     /// branch deleted from one translation must not hide behind the English
     /// one being intact. `linkWord` is held on the link's text and held ABSENT
     /// from the unreported-type text, so the one cannot drift into the other.
-    private static let ownWords:
-        [String: (unreported: String, linkWord: String, atLeastOne: String)] = [
-            "en": ("was not told", "link", "at least one side"),
-            "de": ("nicht mitgeteilt", "Link", "Mindestens eine Seite"),
-            "fr": ("n’a pas reçu", "lien", "au moins un côté"),
-            "pl": ("nie otrzymał", "dowiąz", "co najmniej jedna strona"),
-        ]
+    private static let ownWords: [String: (
+        notTold: String, either: String, attempt: String, promise: String,
+        linkWord: String, atLeastOne: String
+    )] = [
+        "en": (
+            "was not told", "not a kind whose contents", "try", "to settle it", "link",
+            "at least one side"
+        ),
+        "de": (
+            "nicht mitgeteilt", "keine Art von Eintrag", "versuchen", "um es zu klären", "Link",
+            "Mindestens eine Seite"
+        ),
+        "fr": (
+            "n’a pas reçu", "pas un type d’entrée", "essayer", "pour le déterminer", "lien",
+            "au moins un côté"
+        ),
+        "pl": (
+            "nie otrzymał", "nie jest to rodzaj wpisu", "spróbować", "aby to ustalić", "dowiąz",
+            "co najmniej jedna strona"
+        ),
+    ]
 
     @Test func everyCatalogueCarriesTheUnreportedTypeReasonTheLinkReasonAndTheAtLeastOneSide() throws {
         #expect(Set(Self.ownWords.keys) == Set(Self.locales))
@@ -269,7 +302,12 @@ struct ComparisonOverviewTests {
             let link = try #require(catalogue[Presentation.key(for: .linkOnASide)])
             let etag = try #require(catalogue[Presentation.key(for: .etagIsNotAFileHash)])
             let checksum = try #require(catalogue[Presentation.key(for: .checksumUnavailable)])
-            #expect(unreported.contains(words.unreported), "\(locale): \(unreported)")
+            // The disjunction's second half and the attempt are there; the old
+            // unconditional claim and the old promise are not.
+            #expect(unreported.contains(words.either), "\(locale): \(unreported)")
+            #expect(unreported.contains(words.attempt), "\(locale): \(unreported)")
+            #expect(!unreported.contains(words.notTold), "\(locale): \(unreported)")
+            #expect(!unreported.contains(words.promise), "\(locale): \(unreported)")
             #expect(link.localizedCaseInsensitiveContains(words.linkWord), "\(locale): \(link)")
             #expect(
                 !unreported.localizedCaseInsensitiveContains(words.linkWord),

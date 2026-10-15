@@ -1625,7 +1625,7 @@
 "compare.reason.algorithmsDiffer" = "Nicht verglichen: Die beiden Seiten haben mit unterschiedlichen Prüfsummen-Algorithmen geantwortet, die nichts übereinander aussagen.";
 "compare.reason.etagIsNotAFileHash" = "Nicht verglichen: Mindestens eine Seite lieferte nur den ETag eines mehrteiligen Uploads, und der ist keine Prüfsumme des Dateiinhalts.";
 "compare.reason.linkOnASide" = "Nicht verglichen: Eine Seite ist ein Link. Ein Inhaltsvergleich würde vergleichen, worauf die Links zeigen — und das ist nicht, was diese Zeile aussagt.";
-"compare.reason.kindNotReported" = "Nicht verglichen: macSCP wurde nicht mitgeteilt, um welche Art von Eintrag es sich handelt. Vergleiche den Inhalt, um es zu klären.";
+"compare.reason.kindNotReported" = "Nicht verglichen: macSCP konnte nicht feststellen, dass dies eine gewöhnliche Datei ist. Der Typ wurde nicht gemeldet, oder es ist keine Art von Eintrag, deren Inhalt sich vergleichen lässt. Du kannst versuchen, den Inhalt zu vergleichen.";
 "compare.reason.unreadable" = "macSCP konnte diesen Pfad nicht lesen, deshalb wurde hier nichts verglichen.";
 "compare.action.compareAnyway" = "Inhalte trotzdem vergleichen";
 "compare.progress %lld" = "Bisher gefundene Einträge: %lld";

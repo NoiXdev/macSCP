@@ -582,11 +582,19 @@ struct BrowserContextMenuTests {
         #expect(offered.contains(.compareWithOtherPane))
     }
 
-    /// Only a symlink is withheld this way. A far DIRECTORY, a far `.other`
-    /// and a far name that is not there at all keep the entry: each of those
-    /// `stat` CAN see, so the comparison opens and refuses with a reason the
-    /// user can read, which is better than an entry that is simply absent.
-    @Test func aFarSideOfAnyOtherKindKeepsTheEntryAndItsReadableRefusal() {
+    /// Only a symlink is withheld this way. A far DIRECTORY, a far `.other`,
+    /// an ordinary far file and a far name that is not there at all keep the
+    /// entry. For a directory the comparison opens and refuses with a reason
+    /// the user can read, which is better than an entry that is simply
+    /// absent; a far `.other` is not refused there any more (it goes on to
+    /// the fetch), and the test asserts only that the entry is kept.
+    ///
+    /// This test was called `aFarSideOfAnyOtherKindKeepsTheEntryAndItsReadableRefusal`
+    /// and its comment read "each of those `stat` CAN see, so the comparison
+    /// opens and refuses with a reason the user can read". That was false of
+    /// the `.other` fixture below from `59a1c4f2`, when `diffUnmapped` stopped
+    /// refusing it; the name promised a refusal the body never asserted.
+    @Test func aFarSideThatIsNotALinkKeepsTheEntry() {
         let cases: [[RemoteFileItem]] = [
             [RemoteFileItem(name: "a", path: "/a", kind: .directory)],
             [RemoteFileItem(name: "a", path: "/a", kind: .other, size: nil)],
