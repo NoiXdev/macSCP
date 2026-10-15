@@ -763,7 +763,7 @@ struct ComparisonOverviewTests {
         var offered: [UndeterminedReason] = []
         var withheld: [UndeterminedReason] = []
         for reason in Self.allReasons {
-            let entry = Self.entries([fixtureRow("p", .undetermined(reason))])[0]
+            let entry = try #require(Self.entries([fixtureRow("p", .undetermined(reason))]).first)
             #expect((entry.settleButton != nil) == reason.canBeSettledByBytes, "\(reason)")
             if entry.settleButton != nil { offered.append(reason) } else { withheld.append(reason) }
             // A row that cannot be settled still says why.
@@ -805,6 +805,7 @@ struct ComparisonOverviewTests {
         var tracker = Presentation.SettleTracker()
         tracker.begin(1)
         let entries = Self.entries(rows, settle: tracker)
+        try #require(entries.count == 2)
 
         #expect(entries[0].settleButton == .init(title: Presentation.compareAnyway.text, isEnabled: true))
         #expect(entries[1].settleButton == .init(title: Presentation.compareAnyway.text, isEnabled: false))
@@ -820,16 +821,18 @@ struct ComparisonOverviewTests {
         tracker.begin(0)
         tracker.fail(0, text: "stale failure")
         for state in others {
-            let entry = Self.entries([fixtureRow("p", state)], settle: tracker)[0]
+            let entry = try #require(Self.entries([fixtureRow("p", state)], settle: tracker).first)
             #expect(entry.settleButton == nil, "\(state)")
             #expect(entry.settleNote == nil, "\(state)")
         }
         // Positive: the same tracker DOES put its note on an undetermined row.
         let undetermined = fixtureRow("p", .undetermined(.checksumUnavailable))
-        #expect(Self.entries([undetermined], settle: tracker)[0].settleNote == "stale failure")
+        #expect(
+            try #require(Self.entries([undetermined], settle: tracker).first).settleNote
+                == "stale failure")
         // A released session offers nothing to fetch with.
-        #expect(Self.entries([undetermined], canFetch: false)[0].settleButton == nil)
-        #expect(Self.entries([undetermined], canFetch: true)[0].settleButton != nil)
+        #expect(try #require(Self.entries([undetermined], canFetch: false).first).settleButton == nil)
+        #expect(try #require(Self.entries([undetermined], canFetch: true).first).settleButton != nil)
     }
 
     /// The entry's `id` IS its position in the comparison's rows, and it is
@@ -844,7 +847,7 @@ struct ComparisonOverviewTests {
     /// two rows: distinct identities, and a settling of one is not a settling
     /// of the other. `String` equality folded them, which is what
     /// `ComparisonPairing.pairs` guards bytes to prevent one layer down.
-    @Test func twoRowsSpelledDifferentlyAndEqualUnderStringAreTwoRows() {
+    @Test func twoRowsSpelledDifferentlyAndEqualUnderStringAreTwoRows() throws {
         let nfc = "\u{00E4}"
         let nfd = "a\u{0308}"
         // The premise: Swift calls these one string, and they are two files.
@@ -853,6 +856,7 @@ struct ComparisonOverviewTests {
         let rows = [fixtureRow(nfc, .same), fixtureRow(nfd, .undetermined(.checksumUnavailable))]
 
         let entries = Self.entries(rows)
+        try #require(entries.count == 2)
         #expect(entries.map(\.id) == [0, 1])
         #expect(Set(entries.map(\.id)).count == 2)
         // Positive: the two rows ARE told apart by state, so the pair is the
@@ -867,6 +871,7 @@ struct ComparisonOverviewTests {
         #expect(secondIsPending == true)
         #expect(firstIsPending == false)
         let marked = Self.entries(rows, settle: tracker)
+        try #require(marked.count == 2)
         #expect(marked[0].settleNote == nil)
         #expect(marked[1].settleNote == Presentation.settlePending.text)
     }
@@ -911,15 +916,20 @@ struct ComparisonOverviewTests {
         #expect(rig.comparison.rows.map(\.state) == [undetermined, undetermined])
         #expect(rig.entries().allSatisfy { $0.settleButton != nil })
         let before = rig.comparison.rows
-        let second = rig.entries()[1]
+        try #require(before.count == 2)
+        let entriesBefore = rig.entries()
+        try #require(entriesBefore.indices.contains(1))
+        let second = entriesBefore[1]
         #expect(second.path == "b")
 
         await rig.model.settle(second, on: rig.comparison)
 
+        try #require(rig.comparison.rows.count == 2)
         #expect(rig.comparison.rows[0] == before[0])
         #expect(rig.comparison.rows[1] == fixtureRow("b", .same))
         // What the row now shows: its new state, no button, no note.
         let after = rig.entries()
+        try #require(after.indices.contains(1))
         #expect(after[1].label == Presentation.label(for: .same))
         #expect(after[1].settleButton == nil)
         #expect(after[1].settleNote == nil)
@@ -973,9 +983,10 @@ struct ComparisonOverviewTests {
         let rig = try await makeSettleRig()
         defer { try? FileManager.default.removeItem(at: rig.root) }
         let entries = rig.entries()
+        let first = try #require(entries.first)
         let stale = Presentation.RowEntry(
-            id: 1, path: entries[0].path, label: entries[0].label, reason: entries[0].reason,
-            isMatch: false, settleButton: entries[0].settleButton, settleNote: nil)
+            id: 1, path: first.path, label: first.label, reason: first.reason,
+            isMatch: false, settleButton: first.settleButton, settleNote: nil)
         let before = rig.comparison.rows
 
         await rig.model.settle(stale, on: rig.comparison)

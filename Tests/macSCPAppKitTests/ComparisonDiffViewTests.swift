@@ -512,7 +512,7 @@ struct ComparisonDiffViewTests {
     /// and `String` equality is Unicode canonical equivalence — two rows whose
     /// paths differ only by normalization are two files, and the search
     /// answered the EARLIER one for both.
-    @Test func aRowIsFoundByItsPositionAndAPositionTheListLacksIsNotFound() {
+    @Test func aRowIsFoundByItsPositionAndAPositionTheListLacksIsNotFound() throws {
         let rows = [
             fixtureRow("a", .differs),
             fixtureRow("b", .same),
@@ -532,6 +532,7 @@ struct ComparisonDiffViewTests {
         #expect(nfc == nfd)
         #expect(Array(nfc.utf8) != Array(nfd.utf8))
         let folded = [fixtureRow(nfc, .same), fixtureRow(nfd, .differs)]
+        try #require(folded.count == 2)
         #expect(Presentation.index(of: 0, in: folded) == 0)
         #expect(Presentation.index(of: 1, in: folded) == 1)
         #expect(folded[0].state == .same)
