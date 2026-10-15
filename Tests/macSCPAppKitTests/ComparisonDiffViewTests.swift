@@ -508,9 +508,9 @@ struct ComparisonDiffViewTests {
 
     @Test func aRowIsFoundByItsPathAndNotByAnotherRowsPosition() {
         let rows = [
-            ComparisonRow(relativePath: "a", state: .differs),
-            ComparisonRow(relativePath: "b", state: .same),
-            ComparisonRow(relativePath: "c", state: .differs),
+            fixtureRow("a", .differs),
+            fixtureRow("b", .same),
+            fixtureRow("c", .differs),
         ]
         #expect(Presentation.index(of: "a", in: rows) == 0)
         #expect(Presentation.index(of: "b", in: rows) == 1)
@@ -520,9 +520,9 @@ struct ComparisonDiffViewTests {
         // A path that is the beginning of an EARLIER row's path is not that
         // row, and a path that is the whole of a later one is found.
         let nested = [
-            ComparisonRow(relativePath: "dir/file", state: .differs),
-            ComparisonRow(relativePath: "dir", state: .differs),
-            ComparisonRow(relativePath: "dir/file.bak", state: .differs),
+            fixtureRow("dir/file", .differs),
+            fixtureRow("dir", .differs),
+            fixtureRow("dir/file.bak", .differs),
         ]
         #expect(Presentation.index(of: "dir", in: nested) == 1)
         #expect(Presentation.index(of: "dir/file", in: nested) == 0)

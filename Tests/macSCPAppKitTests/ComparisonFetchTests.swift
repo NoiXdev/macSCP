@@ -267,7 +267,7 @@ struct ComparisonFetchTests {
 
         #expect(settled == .differs)
         #expect(rig.comparison.rows.count == before.count)
-        #expect(rig.comparison.rows[0] == ComparisonRow(relativePath: "a", state: .differs))
+        #expect(rig.comparison.rows[0] == fixtureRow("a", .differs))
         #expect(rig.comparison.rows[1] == before[1])
         #expect(rig.comparison.rows[1].state == undetermined)
     }
@@ -307,11 +307,46 @@ struct ComparisonFetchTests {
         let settled = try await rig.comparison.settleUndetermined(rowAt: 1)
 
         #expect(settled == .same)
-        #expect(rig.comparison.rows[0] == ComparisonRow(relativePath: "a", state: undetermined))
-        #expect(rig.comparison.rows[1] == ComparisonRow(relativePath: "b", state: .same))
+        #expect(rig.comparison.rows[0] == fixtureRow("a", undetermined))
+        #expect(rig.comparison.rows[1] == fixtureRow("b", .same))
         // Positive: it read the second row's files and not the first's.
         #expect(rig.left.reads == ["/L/b"])
         #expect(rig.right.reads == ["/R/b"])
+    }
+
+    /// A row the SECOND pairing pass made: the left side spells the name NFD,
+    /// the right side NFC, and they are one file to a person
+    /// (`ComparisonPairing.pairs`' own reason for having a second pass). Both
+    /// the settle and the diff have to fetch each side from that side's own
+    /// path.
+    ///
+    /// Measured 2026-10-15, with `MemoryFS` keyed by UTF-8 bytes: the row's
+    /// relative path joined to both roots asked the right side for the LEFT
+    /// spelling, which that side does not have, so a row the overview had just
+    /// offered "compare contents anyway" failed with a raw transfer error.
+    @Test func aRowPairedOnlyByItsNormalizedNameIsFetchedFromEachSidesOwnPath() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nfd = "su\u{0308}b.txt"
+        let nfc = "s\u{00FC}b.txt"
+        let rig = await makeFolderRig(
+            left: [BytePath(nfd): data("abc")], right: [BytePath(nfc): data("abd")],
+            temporaryRoot: root)
+        // Positive control: the pair WAS made — one row, not two one-sided
+        // ones — and it is a row bytes can settle.
+        #expect(rig.comparison.rows.count == 1)
+        #expect(rig.comparison.rows.map(\.state) == [.undetermined(.checksumUnavailable)])
+
+        let settled = try await rig.comparison.settleUndetermined(rowAt: 0)
+
+        #expect(settled == .differs)
+        #expect(rig.left.readBytePaths == [BytePath("/L/" + nfd)])
+        #expect(rig.right.readBytePaths == [BytePath("/R/" + nfc)])
+
+        // And the line diff of the same row, which fetches again.
+        let diff = try await rig.comparison.diff(forRowAt: 0)
+        #expect(try diff.get().isEmpty == false)
+        #expect(rig.right.readBytePaths == [BytePath("/R/" + nfc), BytePath("/R/" + nfc)])
     }
 
     /// The two halves of the feature agree about a pair. These two files hold
@@ -1335,6 +1370,23 @@ private final class ComparisonHolder {
         FileManager.default.createFile(
             atPath: stray.appendingPathComponent("file").path(percentEncoded: false), contents: Data("x".utf8))
     }
+}
+
+/// A row whose two sides' paths are its relative path under each root, which
+/// is what a walk over two roots whose entries are spelled ALIKE produces.
+/// For a test whose subject is not the two paths. A pair the second pairing
+/// pass made is spelled differently on each side and is not this shape;
+/// `FolderComparisonTests` builds those rows itself.
+///
+/// `root + "/" + relativePath`, as `RemotePath.join` spells it for a root
+/// that does not already end in a slash — which no root here does.
+func fixtureRow(
+    _ relativePath: String, _ state: ComparisonState,
+    leftRoot: String = "/L", rightRoot: String = "/R"
+) -> ComparisonRow {
+    ComparisonRow(
+        relativePath: relativePath, leftPath: leftRoot + "/" + relativePath,
+        rightPath: rightRoot + "/" + relativePath, state: state)
 }
 
 /// A fixture keyed by its name relative to a root, re-keyed under that root.

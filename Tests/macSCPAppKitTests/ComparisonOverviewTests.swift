@@ -379,7 +379,7 @@ struct ComparisonOverviewTests {
     // MARK: - Counts
 
     private static func rows(_ states: [ComparisonState]) -> [ComparisonRow] {
-        states.enumerated().map { ComparisonRow(relativePath: "p\($0.offset)", state: $0.element) }
+        states.enumerated().map { fixtureRow("p\($0.offset)", $0.element) }
     }
 
     @Test func countsPinEachState() {
@@ -485,15 +485,15 @@ struct ComparisonOverviewTests {
     @Test func aRowIsLabelledWithItsOwnStateAndNoOtherRowSharesItsLabel() {
         var labels: [String] = []
         for state in Self.rowStates {
-            let row = ComparisonRow(relativePath: "p", state: state)
+            let row = fixtureRow("p", state)
             #expect(Presentation.label(forRow: row) == Presentation.label(for: state))
             if case .undetermined = state { continue }
             labels.append(Presentation.label(forRow: row))
         }
         #expect(labels.count == 5)
         #expect(Set(labels).count == labels.count)
-        let sameRow = ComparisonRow(relativePath: "p", state: .same)
-        let undeterminedRow = ComparisonRow(relativePath: "p", state: .undetermined(.unreadable))
+        let sameRow = fixtureRow("p", .same)
+        let undeterminedRow = fixtureRow("p", .undetermined(.unreadable))
         #expect(Presentation.label(forRow: undeterminedRow) != Presentation.label(forRow: sameRow))
     }
 
@@ -763,7 +763,7 @@ struct ComparisonOverviewTests {
         var offered: [UndeterminedReason] = []
         var withheld: [UndeterminedReason] = []
         for reason in Self.allReasons {
-            let entry = Self.entries([ComparisonRow(relativePath: "p", state: .undetermined(reason))])[0]
+            let entry = Self.entries([fixtureRow("p", .undetermined(reason))])[0]
             #expect((entry.settleButton != nil) == reason.canBeSettledByBytes, "\(reason)")
             if entry.settleButton != nil { offered.append(reason) } else { withheld.append(reason) }
             // A row that cannot be settled still says why.
@@ -782,8 +782,8 @@ struct ComparisonOverviewTests {
     /// pass as a correct refusal.
     @Test func anUnreportedTypeIsOfferedCompareAnywayAndALinkIsNot() throws {
         let rows = [
-            ComparisonRow(relativePath: "unreported", state: .undetermined(.kindNotReported)),
-            ComparisonRow(relativePath: "link", state: .undetermined(.linkOnASide)),
+            fixtureRow("unreported", .undetermined(.kindNotReported)),
+            fixtureRow("link", .undetermined(.linkOnASide)),
         ]
         let entries = Self.entries(rows)
         #expect(entries.map(\.path) == ["unreported", "link"])
@@ -799,8 +799,8 @@ struct ComparisonOverviewTests {
 
     @Test func theButtonCarriesTheActionsOwnTitleAndIsEnabledUnlessThatRowIsPending() throws {
         let rows = [
-            ComparisonRow(relativePath: "a", state: .undetermined(.checksumUnavailable)),
-            ComparisonRow(relativePath: "b", state: .undetermined(.checksumUnavailable)),
+            fixtureRow("a", .undetermined(.checksumUnavailable)),
+            fixtureRow("b", .undetermined(.checksumUnavailable)),
         ]
         var tracker = Presentation.SettleTracker()
         tracker.begin("b")
@@ -820,12 +820,12 @@ struct ComparisonOverviewTests {
         tracker.begin("p")
         tracker.fail("p", text: "stale failure")
         for state in others {
-            let entry = Self.entries([ComparisonRow(relativePath: "p", state: state)], settle: tracker)[0]
+            let entry = Self.entries([fixtureRow("p", state)], settle: tracker)[0]
             #expect(entry.settleButton == nil, "\(state)")
             #expect(entry.settleNote == nil, "\(state)")
         }
         // Positive: the same tracker DOES put its note on an undetermined row.
-        let undetermined = ComparisonRow(relativePath: "p", state: .undetermined(.checksumUnavailable))
+        let undetermined = fixtureRow("p", .undetermined(.checksumUnavailable))
         #expect(Self.entries([undetermined], settle: tracker)[0].settleNote == "stale failure")
         // A released session offers nothing to fetch with.
         #expect(Self.entries([undetermined], canFetch: false)[0].settleButton == nil)
@@ -883,7 +883,7 @@ struct ComparisonOverviewTests {
         await rig.model.settle(second, on: rig.comparison)
 
         #expect(rig.comparison.rows[0] == before[0])
-        #expect(rig.comparison.rows[1] == ComparisonRow(relativePath: "b", state: .same))
+        #expect(rig.comparison.rows[1] == fixtureRow("b", .same))
         // What the row now shows: its new state, no button, no note.
         let after = rig.entries()
         #expect(after[1].label == Presentation.label(for: .same))

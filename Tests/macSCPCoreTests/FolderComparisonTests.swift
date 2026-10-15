@@ -61,7 +61,7 @@ import Testing
         try await FolderComparison.walk(
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
-        #expect(rows == [ComparisonRow(relativePath: "a", state: .same)])
+        #expect(rows == [expectedRow("a", .same)])
         #expect(left.listedPaths == ["/l"])
         // Positive control: the pair really was compared, so `.same` is a
         // measured answer and not a default.
@@ -305,7 +305,7 @@ import Testing
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
         #expect(rows.filter { $0.relativePath == "bad" }
-            == [ComparisonRow(relativePath: "bad", state: .undetermined(.unreadable))])
+            == [expectedRow("bad", .undetermined(.unreadable))])
         #expect(!rows.contains { $0.relativePath.hasPrefix("bad/") })
         #expect(!left.listedPaths.contains("/l/bad/inner"))
         // Positive control: "good" comes after "bad" in the queue.
@@ -329,9 +329,9 @@ import Testing
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
         #expect(rows == [
-            ComparisonRow(relativePath: "a", state: .same),
-            ComparisonRow(relativePath: "b", state: .undetermined(.unreadable)),
-            ComparisonRow(relativePath: "c", state: .same),
+            expectedRow("a", .same),
+            expectedRow("b", .undetermined(.unreadable)),
+            expectedRow("c", .same),
         ])
     }
 
@@ -465,7 +465,7 @@ import Testing
         try await FolderComparison.walk(
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
-        #expect(rows == [ComparisonRow(relativePath: "x", state: .typeMismatch)])
+        #expect(rows == [expectedRow("x", .typeMismatch)])
         #expect(left.listedPaths == ["/l"])
         #expect(right.listedPaths == ["/r"])
     }
@@ -485,8 +485,8 @@ import Testing
             left: left, leftRoot: "/l", right: right, rightRoot: "/r",
             algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
         #expect(rows == [
-            ComparisonRow(relativePath: "both", state: .undetermined(.linkOnASide)),
-            ComparisonRow(relativePath: "mixed", state: .undetermined(.linkOnASide)),
+            expectedRow("both", .undetermined(.linkOnASide)),
+            expectedRow("mixed", .undetermined(.linkOnASide)),
         ])
         #expect(left.listedPaths == ["/l"])
         #expect(right.listedPaths == ["/r"])
@@ -514,6 +514,82 @@ import Testing
         #expect(rows.map(\.relativePath) == ["a/x", "b/y", "a/deep/z"])
     }
 
+    // MARK: - A pair only the second pass could make
+
+    /// `ComparisonPairing.pairs` has a second pass for exactly one case: the
+    /// local side hands back NFD and the server stored NFC, so the same file
+    /// must not appear as two rows. The pair it makes then has a DIFFERENT
+    /// spelling on each side, and nothing may join one of them to both roots.
+    ///
+    /// A directory pair of that shape, descended. Measured 2026-10-15 with
+    /// the fakes keyed by UTF-8 bytes (see `BytePath`): with one relative
+    /// path joined to both roots, the right-hand listing of the left's
+    /// spelling — a path the right side does not have — threw, and the whole
+    /// subtree came back as one `.undetermined(.unreadable)` row saying
+    /// nothing here could be read. The directory is readable; only the
+    /// spelling was wrong.
+    @Test func aDirectoryPairedOnlyByItsNormalizedNameIsDescendedOnBothSides() async throws {
+        let nfd = "su\u{0308}b"  // s, u, combining diaeresis
+        let nfc = "s\u{00FC}b"  // s, ü
+        let left = FakeFS(listings: [
+            "/l": [dir(nfd)], BytePath("/l/" + nfd): [file("a", 1)],
+        ])
+        let right = FakeFS(listings: [
+            "/r": [dir(nfc)], BytePath("/r/" + nfc): [file("a", 2)],
+        ])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        // The child of the pair, classified. Not one unreadable row standing
+        // for the subtree.
+        #expect(rows.count == 1)
+        #expect(rows.first?.state == .differs)
+        #expect(rows.first.map { Array($0.relativePath.utf8) } == Array((nfd + "/a").utf8))
+        // Positive controls: the pair WAS made, and the walk DID descend —
+        // each side listed its root and then its own spelling of the pair.
+        #expect(left.listedPaths.map { BytePath($0) } == ["/l", BytePath("/l/" + nfd)])
+        #expect(right.listedPaths.map { BytePath($0) } == ["/r", BytePath("/r/" + nfc)])
+    }
+
+    /// The same pair as a FILE pair: the row has to carry each side's own
+    /// path, because that is what the App layer fetches both sides from
+    /// (`Comparison.fetchPair`, `diff(forRowAt:)`, `settleUndetermined`).
+    @Test func aFilePairedOnlyByItsNormalizedNameCarriesEachSidesOwnPath() async throws {
+        let nfd = "su\u{0308}b.txt"
+        let nfc = "s\u{00FC}b.txt"
+        let left = FakeFS(listings: ["/l": [file(nfd, 7)]])
+        let right = FakeFS(listings: ["/r": [file(nfc, 7)]])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.count == 1)
+        let row = try #require(rows.first)
+        #expect(BytePath(row.leftPath) == BytePath("/l/" + nfd))
+        #expect(BytePath(row.rightPath) == BytePath("/r/" + nfc))
+        // Positive control: the pair WAS made by the second pass — one row,
+        // not two one-sided ones — and the sizes tie, so it is undetermined
+        // on this connection rather than `.differs`.
+        #expect(row.state == .undetermined(.checksumUnavailable))
+    }
+
+    /// A ONE-SIDED row still carries two paths, and the absent side's is this
+    /// row's name under that root. Nothing fetches it; what matters is that
+    /// the row the user reads is complete.
+    @Test func aRowWithOneSideCarriesThatSidesPathAndTheOtherRootsSpelling() async throws {
+        let left = FakeFS(listings: ["/l": [file("gone", 1)]])
+        let right = FakeFS(listings: ["/r": []])
+        var rows: [ComparisonRow] = []
+        try await FolderComparison.walk(
+            left: left, leftRoot: "/l", right: right, rightRoot: "/r",
+            algorithm: .sha256, onRow: { rows.append($0) }, onProgress: { _ in })
+        #expect(rows.map(\.relativePath) == ["gone"])
+        #expect(rows.first?.state == .onlyLeft)
+        #expect(rows.first?.leftPath == "/l/gone")
+        #expect(rows.first?.rightPath == "/r/gone")
+    }
+
     // MARK: - The accounting of an unreadable directory
 
     /// A directory that failed to list counts as visited, and its row counts
@@ -536,6 +612,16 @@ import Testing
 }
 
 // MARK: - Helpers
+
+/// An expected row of a walk over `/l` and `/r`, whose two sides' paths are
+/// its relative path under each root. For a pair whose two sides are spelled
+/// ALIKE; a pair the second pairing pass made is not this shape and is
+/// asserted path by path.
+private func expectedRow(_ relativePath: String, _ state: ComparisonState) -> ComparisonRow {
+    ComparisonRow(
+        relativePath: relativePath, leftPath: "/l/" + relativePath,
+        rightPath: "/r/" + relativePath, state: state)
+}
 
 private func dir(_ name: String) -> RemoteFileItem {
     RemoteFileItem(name: name, path: name, kind: .directory)

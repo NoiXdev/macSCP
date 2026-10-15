@@ -46,5 +46,18 @@ public struct BytePath: Hashable, Sendable, ExpressibleByStringLiteral,
         hasher.combine(bytes)
     }
 
-    public var description: String { path }
+    /// The path AND its bytes in hex. Both, because the whole point of this
+    /// type is to tell apart two paths that print the same: a failure message
+    /// reading `["/r/süb"] == ["/r/süb"]` says nothing a reader can act on.
+    public var description: String {
+        "\(path) <\(Self.hex(bytes))>"
+    }
+
+    private static let hexDigits = Array("0123456789abcdef")
+
+    private static func hex(_ bytes: [UInt8]) -> String {
+        bytes.map { byte in
+            String([hexDigits[Int(byte >> 4)], hexDigits[Int(byte & 0x0F)]])
+        }.joined(separator: " ")
+    }
 }

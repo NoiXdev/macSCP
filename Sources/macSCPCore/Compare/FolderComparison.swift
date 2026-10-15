@@ -1,12 +1,53 @@
 import Foundation
 
 public struct ComparisonRow: Equatable, Sendable {
+    /// What the row is CALLED: the path relative to the roots, in the LEFT
+    /// side's spelling where the left side has this entry and in the right
+    /// side's otherwise. **For reading, never for addressing** — see
+    /// `leftPath` for why there is no such thing as the path of a row.
     public let relativePath: String
+
+    /// The LEFT side's entry, as the LEFT side spelled it.
+    ///
+    /// **Two paths, never one relative path joined to two roots.** The whole
+    /// reason `ComparisonPairing.pairs` has a second pass is that the same
+    /// file can be spelled NFD on one side and NFC on the other; joining
+    /// either spelling to the other side's root names a path that is not
+    /// there. Measured 2026-10-15: one `childRelative` joined to both roots
+    /// made a directory pair of that shape report its whole subtree as one
+    /// `.undetermined(.unreadable)` row — the directory was readable — and
+    /// made a file row's right-hand fetch fail with a raw transfer error on a
+    /// row the overview had said it could settle.
+    ///
+    /// For a ONE-SIDED row the absent side's path is the only thing left to
+    /// say: this row's name under that root. Nothing fetches it —
+    /// `.onlyLeft`, `.onlyRight`, `.bothDirectories` and `.typeMismatch` are
+    /// all refused by `Comparison.hasFilesOnBothSides` before a path is read.
+    public let leftPath: String
+
+    /// The RIGHT side's entry, as the RIGHT side spelled it. See `leftPath`.
+    public let rightPath: String
+
     public let state: ComparisonState
 
-    public init(relativePath: String, state: ComparisonState) {
+    public init(
+        relativePath: String, leftPath: String, rightPath: String, state: ComparisonState
+    ) {
         self.relativePath = relativePath
+        self.leftPath = leftPath
+        self.rightPath = rightPath
         self.state = state
+    }
+
+    /// Whether `path` is this row's relative path BYTE for byte.
+    ///
+    /// `==` on two `String`s is Unicode canonical equivalence, which folds
+    /// two genuinely distinct files — U+00E4 and `a` + U+0308 — into one.
+    /// Core guards bytes in `ComparisonPairing.pairs` and `FileDiff.sameBytes`
+    /// for the same reason; this is the third place, for the callers that
+    /// check a row is still the row they were handed.
+    public func hasRelativePath(_ path: String) -> Bool {
+        relativePath.utf8.elementsEqual(path.utf8)
     }
 }
 
@@ -53,15 +94,17 @@ public enum FolderComparison {
         onRow: (ComparisonRow) -> Void,
         onProgress: (ComparisonProgress) -> Void
     ) async throws {
-        var queue: [String] = [""]
+        // Each level carries its name AND both sides' own paths. Nothing
+        // here joins one relative path to two roots; see `ComparisonRow`.
+        var queue: [(relative: String, leftPath: String, rightPath: String)] = [
+            (relative: "", leftPath: leftRoot, rightPath: rightRoot)
+        ]
         var directoriesVisited = 0
         var rowsProduced = 0
 
         while !queue.isEmpty {
             try Task.checkCancellation()
-            let relative = queue.removeFirst()
-            let leftPath = join(leftRoot, relative)
-            let rightPath = join(rightRoot, relative)
+            let (relative, leftPath, rightPath) = queue.removeFirst()
 
             let leftItems: [RemoteFileItem]
             let rightItems: [RemoteFileItem]
@@ -77,7 +120,9 @@ public enum FolderComparison {
                 // is not descended into; the rest of the tree is still worth
                 // having, and the row names the path.
                 directoriesVisited += 1
-                onRow(ComparisonRow(relativePath: relative, state: .undetermined(.unreadable)))
+                onRow(ComparisonRow(
+                    relativePath: relative, leftPath: leftPath, rightPath: rightPath,
+                    state: .undetermined(.unreadable)))
                 rowsProduced += 1
                 onProgress(ComparisonProgress(
                     directoriesVisited: directoriesVisited, rowsProduced: rowsProduced))
@@ -88,6 +133,12 @@ public enum FolderComparison {
             for pair in ComparisonPairing.pairs(left: leftItems, right: rightItems) {
                 try Task.checkCancellation()
                 let childRelative = relative.isEmpty ? pair.name : relative + "/" + pair.name
+                // Each side's OWN path, as that side's listing spelled it. A
+                // side with no entry here has no path either, and the only
+                // thing left to say is this row's name under that root —
+                // which nothing fetches; see `ComparisonRow.leftPath`.
+                let childLeft = pair.left?.path ?? RemotePath.join(leftPath, pair.name)
+                let childRight = pair.right?.path ?? RemotePath.join(rightPath, pair.name)
                 let state: ComparisonState
                 do {
                     state = try await classify(
@@ -103,10 +154,13 @@ public enum FolderComparison {
                 // own case precisely so this branch cannot be written against
                 // a state that also means "two files compared and matched".
                 if state == .bothDirectories {
-                    queue.append(childRelative)
+                    queue.append(
+                        (relative: childRelative, leftPath: childLeft, rightPath: childRight))
                     continue
                 }
-                onRow(ComparisonRow(relativePath: childRelative, state: state))
+                onRow(ComparisonRow(
+                    relativePath: childRelative, leftPath: childLeft, rightPath: childRight,
+                    state: state))
                 rowsProduced += 1
             }
 
@@ -128,13 +182,6 @@ public enum FolderComparison {
     private static func propagateCancellation(_ error: any Error) throws {
         if error is CancellationError { throw error }
         try Task.checkCancellation()
-    }
-
-    /// `RemotePath.join`, not a bare `root + "/" + relative`: a root of "/"
-    /// would otherwise produce "//sub", a path no backend is promised to
-    /// accept.
-    private static func join(_ root: String, _ relative: String) -> String {
-        relative.isEmpty ? root : RemotePath.join(root, relative)
     }
 
     /// One retry, at the pair level, for the ordinary local↔S3 case.
