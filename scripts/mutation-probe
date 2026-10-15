@@ -104,15 +104,17 @@
 # testID for a test carries it (`.../ViewTestabilitySpike.swift:194:6`), so a
 # plant that edits a TEST file above a failing test moves its line, and the
 # control's failure would no longer match itself — the pre-existing failure
-# would come back as a catcher. Suite and function name identify a test within
-# one module; the location is redundant for that purpose.
+# would come back as a catcher. The cost is deliberate: the printed names no
+# longer say where the test is declared. Suite and function name still identify
+# a test within one module, so nothing is ambiguous, but a reader who wants the
+# line has to look the test up.
 #
 # What a control cannot do: a test that ALREADY fails cannot report that the
 # plant also breaks it, so a plant caught only by a pre-existing failure reads
 # GREEN. The GREEN text says so whenever the control had a failure.
 #
-# A signal is a sixth ending and is NOT one of these: on INT or TERM the script
-# reverts and exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
+# A signal is NOT one of these endings: on INT or TERM the script reverts and
+# exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
 # a handler that RETURNED, so bash resumed at the next statement and the run
 # continued against the reverted tree — printing "GREEN, and none of them
 # noticed the plant" about a tree that no longer carried one. Observed
@@ -140,7 +142,7 @@
 # The tree is restored with `git checkout --` on every exit path, including a
 # Ctrl-C: a probe that leaves its violation behind is worse than no probe.
 #
-# (--help prints lines 2-144 of this file: the header, and not the code under
+# (--help prints lines 2-146 of this file: the header, and not the code under
 # it. The range is a line number, so it is checked whenever this header grows.)
 
 set -uo pipefail
@@ -163,7 +165,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="${2:-}"; shift 2 ;;
         --apply)  APPLY="${2:-}";  shift 2 ;;
         --label)  LABEL="${2:-}";  shift 2 ;;
-        -h|--help) sed -n '2,144p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,146p' "$0"; exit 0 ;;
         *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
@@ -280,12 +282,24 @@ run_suite() {
         SUITE_RAN="${SUITE_RAN:-0}"
         # A KNOWN issue (`withKnownIssue`) is an expected failure and not a
         # catch, so `isKnown` is filtered in the control run and the planted
-        # run alike (header, defect 1). The `sub` removes the declaration
-        # location from the testID so the two runs' names can be compared
-        # (header, the paragraph on testID locations); a name without one is
-        # left alone.
+        # run alike (header, defect 1). A WARNING is not a failure either, and
+        # it DOES arrive as an `issueRecorded` event. Measured 2026-10-15 with
+        # an untracked test whose body was
+        # `Issue.record("just a warning", severity: .warning)`: the run exited
+        # 0 and printed "passed ... with 1 warning", and the event carried
+        # `"isFailure":false,"isKnown":false,"severity":"warning"` — so
+        # `isKnown` alone did not exclude it, and the unfiltered extraction
+        # listed that test as a PRE-EXISTING FAILURE of the control (and would
+        # have named it as the plant's catcher had the warning appeared only
+        # in the planted run). `isFailure != false` drops it; an event with no
+        # `isFailure` field at all (an older toolchain) is still kept, because
+        # unknown is not a reason to stop counting a failure. The `sub` removes
+        # the declaration location from the testID so the two runs' names can
+        # be compared (header, the paragraph on testID locations); a name
+        # without one is left alone.
         SUITE_FAILED="$(jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded"
-                                      and .payload.issue.isKnown != true)
+                                      and .payload.issue.isKnown != true
+                                      and .payload.issue.isFailure != false)
                                | (.payload.testID // empty)
                                | sub("/[^/]*\\.swift:[0-9]+:[0-9]+$"; "")' \
             "$events" 2>/dev/null | sort -u)"
@@ -475,8 +489,17 @@ if [[ -n "$CATCHERS" ]]; then
 elif [[ "$STATUS" -ne 0 && -z "$CONTROL_FAILED" ]]; then
     echo "RESULT: RED — $RAN test(s) ran and 'swift test' exited $STATUS, but no"
     echo "  verdict line names which test. The status is the verdict; the"
-    echo "  attribution is missing. Read \$TEST_LOG yourself before believing either."
+    echo "  attribution is missing. Read the full log before believing either:"
+    echo "    $TEST_LOG   (kept; remove it when done)"
     grep -E '✘|error:' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -10
+    # This is the one ending whose whole message is "the attribution is
+    # missing", and the log is the only place left to find it. It used to tell
+    # the reader to read a log that the line below had already deleted
+    # (measured 2026-10-15 by reading this branch: `$TEST_LOG` was named in
+    # the text and `rm -f "$TEST_LOG"` ran at the end of the verdict block). So
+    # this branch keeps the file and prints its path; every other ending
+    # still removes it.
+    KEEP_LOG=1
 else
     echo "RESULT: GREEN — $RAN test(s) ran and NONE of them noticed the plant."
     echo "  Either the guard is insensitive to this violation, or the plant is not one."
@@ -489,7 +512,7 @@ else
         echo "  ('swift test' exited 0.)"
     fi
 fi
-rm -f "$TEST_LOG"
+[[ -n "${KEEP_LOG:-}" ]] || rm -f "$TEST_LOG"
 
 echo "── revert"
 exit 0
