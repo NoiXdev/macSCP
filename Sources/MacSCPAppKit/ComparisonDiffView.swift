@@ -39,27 +39,48 @@ enum ComparisonDiffPresentation {
     /// What the lower half shows a diff of: the selected row of a folder
     /// comparison, or the one pair of a file-pair comparison.
     enum Target: Hashable, Sendable {
-        /// A row, by its path and not by its position: the list can change
-        /// under a selection, and a position would then name another file.
-        case row(path: String)
+        /// A row, by its POSITION in `Comparison.rows`, which is a row's
+        /// identity here.
+        ///
+        /// **It used to be the path, and a path is not an identity.** Two
+        /// genuinely distinct files — U+00E4 and `a` + U+0308 — are two
+        /// correctly classified rows, because `ComparisonPairing.pairs` keys
+        /// pass 1 on the UTF-8 bytes and refuses a pass-2 key two items
+        /// share; `String` equality is Unicode canonical equivalence, so
+        /// selecting the `.differs` row showed the `.same` row's diff and
+        /// reported "no line differs" about a file that differs. Measured
+        /// 2026-10-15.
+        ///
+        /// A position is stable here, which is what makes it usable: the
+        /// walk only ever APPENDS to `Comparison.rows`, and the one other
+        /// writer, `settleUndetermined(rowAt:)`, replaces a row in place with
+        /// the same two paths. Nothing reorders and nothing removes.
+        case row(index: Int)
         case filePair
     }
 
     /// The target of a comparison of this kind with this selection, or `nil`
     /// when there is nothing to diff yet. A file pair has no rows, so a
     /// selection means nothing to it.
-    static func target(kind: Comparison.Kind, selection: String?) -> Target? {
+    static func target(kind: Comparison.Kind, selection: Int?) -> Target? {
         switch kind {
-        case .folders: selection.map { Target.row(path: $0) }
+        case .folders: selection.map { Target.row(index: $0) }
         case .filePair: .filePair
         }
     }
 
-    /// The position of the row with this path, or `nil` when the list holds
-    /// none: asking for a diff by position without checking would diff
-    /// whatever sits there now.
-    static func index(of path: String, in rows: [ComparisonRow]) -> Int? {
-        rows.firstIndex { $0.relativePath == path }
+    /// The position a target names, or `nil` when the list does not hold it:
+    /// asking for a diff by position without checking would diff whatever
+    /// sits there now.
+    ///
+    /// **A bounds check and no search.** This read
+    /// `rows.firstIndex { $0.relativePath == path }`, which folded two
+    /// canonically equivalent paths together and answered with the earlier
+    /// row — see `Target.row(index:)`. There is nothing to search for any
+    /// more: a row's identity IS its position, so there is no second
+    /// spelling of it to match, and no first-versus-last to get wrong.
+    static func index(of position: Int, in rows: [ComparisonRow]) -> Int? {
+        rows.indices.contains(position) ? position : nil
     }
 
     // MARK: - What arrived
@@ -595,8 +616,8 @@ final class ComparisonDiffModel {
         loaded = ComparisonDiffPresentation.Loaded(target: target, outcome: outcome)
     }
 
-    /// The row is found by path, and a path that is no longer in the list is
-    /// not diffed as whatever sits at some other position.
+    /// The row is found by position, and a position the list does not hold
+    /// is not diffed as whatever sits at some other one.
     private func outcome(
         for target: ComparisonDiffPresentation.Target, on comparison: Comparison
     ) async -> ComparisonDiffPresentation.Outcome {
@@ -604,10 +625,9 @@ final class ComparisonDiffModel {
             switch target {
             case .filePair:
                 return ComparisonDiffPresentation.outcome(of: try await comparison.diffFilePair())
-            case .row(let path):
-                guard
-                    let index = ComparisonDiffPresentation.index(of: path, in: comparison.rows)
-                else { throw ComparisonFetchError.rowOutOfRange(-1) }
+            case .row(let position):
+                guard let index = ComparisonDiffPresentation.index(of: position, in: comparison.rows)
+                else { throw ComparisonFetchError.rowOutOfRange(position) }
                 return ComparisonDiffPresentation.outcome(
                     of: try await comparison.diff(forRowAt: index))
             }
@@ -621,10 +641,11 @@ final class ComparisonDiffModel {
 
 /// The whole body of the comparison window: for two folders the overview
 /// above and the diff of the selected row below, for a file pair the diff
-/// alone. Holds the selection, which is a row's path.
+/// alone. Holds the selection, which is a row's position — its identity;
+/// see `ComparisonDiffPresentation.Target.row(index:)`.
 struct ComparisonResultView: View {
     let comparison: Comparison
-    @State private var selection: String?
+    @State private var selection: Int?
 
     var body: some View {
         let diff = ComparisonDiffView(

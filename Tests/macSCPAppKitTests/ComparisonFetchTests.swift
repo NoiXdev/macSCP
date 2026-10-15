@@ -763,8 +763,8 @@ struct ComparisonFetchTests {
         let statuses = rig.queue.items.map(\.status)
         let rightReads = rig.right.reads
         let states = rig.comparison.rows.map(\.state)
-        let note = settler.tracker.failures[entry.path]
-        let pending = settler.tracker.isPending(entry.path)
+        let note = settler.tracker.failures[entry.id]
+        let pending = settler.tracker.isPending(entry.id)
         parked.open()
 
         #expect(stillRunning.isEmpty, "\(statuses)")
@@ -797,7 +797,7 @@ struct ComparisonFetchTests {
         #expect(rig.comparison.rows.map(\.state) == [.differs])
         #expect(rig.left.reads == ["/L/a"])
         #expect(rig.right.reads == ["/R/a"])
-        #expect(settler.tracker.failures[entry.path] == nil)
+        #expect(settler.tracker.failures[entry.id] == nil)
         // And the comparison keeps nothing: the task cleared its own entry.
         await rig.comparison.waitForTrackedWork()
     }

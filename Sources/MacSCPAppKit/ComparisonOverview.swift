@@ -334,16 +334,26 @@ enum ComparisonOverviewPresentation {
 
     /// One row of the list as the view draws it: the path, the label of the
     /// row's OWN state, and — only for an undetermined row — why.
-    struct RowEntry: Equatable, Sendable {
+    struct RowEntry: Equatable, Sendable, Identifiable {
+        /// The row's position in the comparison's rows, which is ALL of its
+        /// identity: what the list keys on, what `SettleTracker` keys on, and
+        /// what `Comparison.settleUndetermined(rowAt:)` is given. One value,
+        /// so there is nothing here that can get out of step with itself.
+        ///
+        /// It was three things before: the list keyed on `path`, the tracker
+        /// keyed on `path`, and a separate `index` was passed to the settle.
+        /// A path is not an identity — `String` equality is canonical
+        /// equivalence — and the shape of the fix is the one the diff
+        /// listing's own rows already have (`ComparisonDiffPresentation.Row.id`,
+        /// "the position in the listing, from 0 and without a gap").
+        let id: Int
+        /// What a person reads. Never what anything matches on.
         let path: String
         let label: String
         let reason: String?
         /// Whether the row is a match, which the view sets in a quieter
         /// colour. A property of the row's state, not of its label.
         let isMatch: Bool
-        /// The row's position in the comparison's rows: what
-        /// `Comparison.settleUndetermined(rowAt:)` is given.
-        let index: Int
         /// "Compare contents anyway", or `nil` for a row that does not offer
         /// it. See `rowEntries`.
         let settleButton: SettleButton?
@@ -358,27 +368,33 @@ enum ComparisonOverviewPresentation {
         let isEnabled: Bool
     }
 
-    /// What is under way and what failed, per row path. A value, so the
+    /// What is under way and what failed, per row IDENTITY — which is the
+    /// row's position in `Comparison.rows` (`RowEntry.id`). A value, so the
     /// transitions are decidable without a view; the model below holds one.
+    ///
+    /// **It used to key on the row's path.** Two genuinely distinct files
+    /// spelled U+00E4 and `a` + U+0308 are two rows, and `Set<String>` folds
+    /// them: beginning one marked the other pending and greyed out its
+    /// button. Measured 2026-10-15.
     struct SettleTracker: Equatable, Sendable {
-        private(set) var pending: Set<String> = []
-        private(set) var failures: [String: String] = [:]
+        private(set) var pending: Set<Int> = []
+        private(set) var failures: [Int: String] = [:]
 
-        func isPending(_ path: String) -> Bool { pending.contains(path) }
+        func isPending(_ row: Int) -> Bool { pending.contains(row) }
 
-        mutating func begin(_ path: String) {
-            pending.insert(path)
-            failures[path] = nil
+        mutating func begin(_ row: Int) {
+            pending.insert(row)
+            failures[row] = nil
         }
 
-        mutating func succeed(_ path: String) {
-            pending.remove(path)
-            failures[path] = nil
+        mutating func succeed(_ row: Int) {
+            pending.remove(row)
+            failures[row] = nil
         }
 
-        mutating func fail(_ path: String, text: String) {
-            pending.remove(path)
-            failures[path] = text
+        mutating func fail(_ row: Int, text: String) {
+            pending.remove(row)
+            failures[row] = text
         }
     }
 
@@ -427,17 +443,17 @@ enum ComparisonOverviewPresentation {
             switch row.state {
             case .undetermined(let why):
                 reason = text(for: why)
-                let pending = settle.isPending(row.relativePath)
+                let pending = settle.isPending(index)
                 if why.canBeSettledByBytes && canFetch {
                     button = SettleButton(title: compareAnyway.text, isEnabled: !pending)
                 }
-                note = pending ? settlePending.text : settle.failures[row.relativePath]
+                note = pending ? settlePending.text : settle.failures[index]
             case .onlyLeft, .onlyRight, .same, .differs, .typeMismatch, .bothDirectories:
                 reason = nil
             }
             return RowEntry(
-                path: row.relativePath, label: label(forRow: row), reason: reason,
-                isMatch: row.state == .same, index: index, settleButton: button,
+                id: index, path: row.relativePath, label: label(forRow: row), reason: reason,
+                isMatch: row.state == .same, settleButton: button,
                 settleNote: note)
         }
     }
@@ -522,24 +538,26 @@ final class ComparisonSettleModel {
 
     /// Settles the row `entry` stands for, and never throws: the row takes
     /// the state that comes back, or stays as it was with the reason beside
-    /// it. The row is checked BEFORE anything is fetched, by index and by
-    /// path, because settling another row's index would write an answer
-    /// onto a file nobody asked about.
+    /// it. The row is checked BEFORE anything is fetched, by position and by
+    /// path, because settling another row's position would write an answer
+    /// onto a file nobody asked about. The path half is BYTE-exact
+    /// (`ComparisonRow.hasRelativePath(_:)`); `==` on two `String`s folded
+    /// two distinct files into one.
     func settle(_ entry: ComparisonOverviewPresentation.RowEntry, on comparison: Comparison) async {
-        guard !tracker.isPending(entry.path) else { return }
-        tracker.begin(entry.path)
-        guard comparison.rows.indices.contains(entry.index),
-            comparison.rows[entry.index].relativePath == entry.path
+        guard !tracker.isPending(entry.id) else { return }
+        tracker.begin(entry.id)
+        guard comparison.rows.indices.contains(entry.id),
+            comparison.rows[entry.id].hasRelativePath(entry.path)
         else {
-            tracker.fail(entry.path, text: ComparisonOverviewPresentation.settleRowMoved.text)
+            tracker.fail(entry.id, text: ComparisonOverviewPresentation.settleRowMoved.text)
             return
         }
         do {
-            _ = try await comparison.settleUndetermined(rowAt: entry.index)
-            tracker.succeed(entry.path)
+            _ = try await comparison.settleUndetermined(rowAt: entry.id)
+            tracker.succeed(entry.id)
         } catch {
             tracker.fail(
-                entry.path, text: ComparisonOverviewPresentation.settleFailureText(for: error))
+                entry.id, text: ComparisonOverviewPresentation.settleFailureText(for: error))
         }
     }
 }
@@ -558,9 +576,11 @@ final class ComparisonSettleModel {
 /// it runs they are partial, and the line above them says so.
 struct ComparisonOverviewView: View {
     let comparison: Comparison
-    /// The path of the selected row, or `nil`. The window below draws the
-    /// content diff of it; this view only reports which row was chosen.
-    @Binding var selection: String?
+    /// The POSITION of the selected row, or `nil` — a row's identity here;
+    /// see `ComparisonDiffPresentation.Target.row(index:)`. The window below
+    /// draws the content diff of it; this view only reports which row was
+    /// chosen.
+    @Binding var selection: Int?
     @State private var settler = ComparisonSettleModel()
 
     var body: some View {
@@ -577,16 +597,14 @@ struct ComparisonOverviewView: View {
                 placeholder(rowCount: rows.count)
             } else {
                 List(selection: $selection) {
-                    ForEach(entries, id: \.path) { entry in
+                    ForEach(entries, id: \.id) { entry in
                         ComparisonOverviewRow(entry: entry) {
                             // Through the comparison, never a bare `Task`:
                             // the comparison owns what it started, and
                             // `cancel()` — the window's close and the tab's
                             // teardown both — is what has to reach this
                             // settle's two downloads.
-                            comparison.startTrackedWork {
-                                await settler.settle(entry, on: comparison)
-                            }
+                            comparison.startTrackedWork { await settler.settle(entry, on: comparison) }
                         }
                     }
                 }
