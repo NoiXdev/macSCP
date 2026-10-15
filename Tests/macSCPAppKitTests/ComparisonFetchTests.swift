@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Synchronization
 import Testing
 @testable import MacSCPAppKit
@@ -52,29 +53,26 @@ struct ComparisonFetchTests {
     /// `.undetermined(.checksumUnavailable)` rows, which is the shape
     /// "compare anyway" exists for.
     private func makeFolderRig(
-        left: [String: Data], right: [String: Data],
+        left: [BytePath: Data], right: [BytePath: Data],
         reportsSizes: Bool = true, temporaryRoot: URL,
-        leftKinds: [String: RemoteFileKind] = [:], rightKinds: [String: RemoteFileKind] = [:],
+        leftKinds: [BytePath: RemoteFileKind] = [:],
+        rightKinds: [BytePath: RemoteFileKind] = [:],
         leftChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
         rightChecksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
-        unlistable: Set<String> = [],
+        unlistable: Set<BytePath> = [],
         onLeftRead: @escaping @Sendable (String) async -> Void = { _ in },
         onRightRead: @escaping @Sendable (String) async -> Void = { _ in }
     ) async -> Rig {
         // `leftKinds`, `rightKinds` and `unlistable` are named by the path
         // relative to the root, as `left` and `right` are.
         let leftFS = MemoryFS(
-            files: Dictionary(uniqueKeysWithValues: left.map { ("/L/" + $0.key, $0.value) }),
-            reportsSizes: reportsSizes,
-            kinds: Dictionary(uniqueKeysWithValues: leftKinds.map { ("/L/" + $0.key, $0.value) }),
-            checksum: leftChecksum,
-            unlistable: Set(unlistable.map { "/L/" + $0 }), onRead: onLeftRead)
+            files: under("/L", left), reportsSizes: reportsSizes,
+            kinds: under("/L", leftKinds), checksum: leftChecksum,
+            unlistable: Set(unlistable.map { BytePath("/L/" + $0.path) }), onRead: onLeftRead)
         let rightFS = MemoryFS(
-            files: Dictionary(uniqueKeysWithValues: right.map { ("/R/" + $0.key, $0.value) }),
-            reportsSizes: reportsSizes,
-            kinds: Dictionary(uniqueKeysWithValues: rightKinds.map { ("/R/" + $0.key, $0.value) }),
-            checksum: rightChecksum,
-            unlistable: Set(unlistable.map { "/R/" + $0 }), onRead: onRightRead)
+            files: under("/R", right), reportsSizes: reportsSizes,
+            kinds: under("/R", rightKinds), checksum: rightChecksum,
+            unlistable: Set(unlistable.map { BytePath("/R/" + $0.path) }), onRead: onRightRead)
         let queue = TransferQueueViewModel()
         let comparison = Comparison(
             left: leftFS, leftRoot: "/L", right: rightFS, rightRoot: "/R",
@@ -1339,11 +1337,28 @@ private final class ComparisonHolder {
     }
 }
 
+/// A fixture keyed by its name relative to a root, re-keyed under that root.
+/// The join is on the BYTES — `BytePath("/L/" + name)` — so a name in one
+/// normalization form stays in it.
+func under<Value>(_ root: String, _ fixture: [BytePath: Value]) -> [BytePath: Value] {
+    Dictionary(uniqueKeysWithValues: fixture.map { (BytePath(root + "/" + $0.key.path), $0.value) })
+}
+
 /// An in-memory file system that records what it was asked. `list` answers
 /// the direct children of a directory from the keys of `files`.
+///
+/// **Every table is keyed by `BytePath`, never by `String`.** A `String` key
+/// folds canonically equivalent spellings together, so a fake keyed that way
+/// answers an NFD lookup from its NFC entry and no test on it can see a fetch
+/// aimed at a path built out of the wrong side's spelling. `BytePath`'s own
+/// doc comment holds the measurement. A dictionary literal is unchanged — the
+/// keys convert through `ExpressibleByStringLiteral` — and a lookup from a
+/// path the code under test built says `BytePath(path)`. `list` compares the
+/// parent directory the same way, because `RemotePath.parent(of:)` hands back
+/// a `String` and `==` on two of those folds as well.
 final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     private struct State {
-        var files: [String: Data]
+        var files: [BytePath: Data]
         var reads: [String] = []
         var statCalls = 0
         var listCalls = 0
@@ -1356,19 +1371,19 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
     /// What `stat` and `list` report as the KIND of a path. Anything not
     /// named here is an ordinary file, which is what every fixture that
     /// predates the kind check wants.
-    private let kinds: [String: RemoteFileKind]
+    private let kinds: [BytePath: RemoteFileKind]
     /// What `remoteChecksum` answers. Unavailable by default, which is what
     /// every fixture that predates the reason split wants.
     private let checksum: RemoteChecksumOutcome
     /// Directories whose listing throws, which is how a walk ends up with an
     /// `.undetermined(.unreadable)` row.
-    private let unlistable: Set<String>
+    private let unlistable: Set<BytePath>
 
     init(
-        files: [String: Data], reportsSizes: Bool = true,
-        kinds: [String: RemoteFileKind] = [:],
+        files: [BytePath: Data], reportsSizes: Bool = true,
+        kinds: [BytePath: RemoteFileKind] = [:],
         checksum: RemoteChecksumOutcome = .unavailableOnThisConnection,
-        unlistable: Set<String> = [],
+        unlistable: Set<BytePath> = [],
         onRead: @escaping @Sendable (String) async -> Void = { _ in },
         onStat: @escaping @Sendable (String) async throws -> Void = { _ in }
     ) {
@@ -1381,25 +1396,32 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
         self.onStat = onStat
     }
 
+    /// The paths `readStream` was asked for, as they were spelled. Compare
+    /// them through `BytePath` where a test is about a spelling: `==` on two
+    /// `String`s folds the normalization forms this fake exists to tell apart.
     var reads: [String] { state.withLock { $0.reads } }
+    /// `reads`, byte-keyed, for a test whose subject IS the spelling.
+    var readBytePaths: [BytePath] { state.withLock { $0.reads.map { BytePath($0) } } }
     var statCalls: Int { state.withLock { $0.statCalls } }
     var listCalls: Int { state.withLock { $0.listCalls } }
     var checksumCalls: Int { state.withLock { $0.checksumCalls } }
 
-    private func item(_ path: String, _ data: Data) -> RemoteFileItem {
-        RemoteFileItem(
-            name: path.split(separator: "/").last.map(String.init) ?? path, path: path,
+    private func item(_ path: BytePath, _ data: Data) -> RemoteFileItem {
+        let spelled = path.path
+        return RemoteFileItem(
+            name: spelled.split(separator: "/").last.map(String.init) ?? spelled, path: spelled,
             kind: kinds[path] ?? .file,
             size: reportsSizes ? UInt64(data.count) : nil)
     }
 
     func list(path: String) async throws -> [RemoteFileItem] {
-        if unlistable.contains(path) { throw RemoteFSError.notFound(path: path) }
-        let files = state.withLock { state -> [String: Data] in
+        if unlistable.contains(BytePath(path)) { throw RemoteFSError.notFound(path: path) }
+        let files = state.withLock { state -> [BytePath: Data] in
             state.listCalls += 1
             return state.files
         }
-        return files.filter { RemotePath.parent(of: $0.key) == path }
+        let parent = BytePath(path)
+        return files.filter { BytePath(RemotePath.parent(of: $0.key.path)) == parent }
             .map { item($0.key, $0.value) }
             .sorted { $0.name < $1.name }
     }
@@ -1408,16 +1430,16 @@ final class MemoryFS: RemoteFileSystem, RemoteChecksumProvider, Sendable {
         try await onStat(path)
         let data = state.withLock { state -> Data? in
             state.statCalls += 1
-            return state.files[path]
+            return state.files[BytePath(path)]
         }
         guard let data else { throw RemoteFSError.notFound(path: path) }
-        return item(path, data)
+        return item(BytePath(path), data)
     }
 
     func readStream(path: String, fromOffset offset: UInt64) async throws -> AsyncThrowingStream<Data, Error> {
         let data = state.withLock { state -> Data? in
             state.reads.append(path)
-            return state.files[path]
+            return state.files[BytePath(path)]
         }
         guard let data else { throw RemoteFSError.notFound(path: path) }
         let rest = data.dropFirst(Int(offset))

@@ -1150,18 +1150,16 @@ struct ComparisonDiffViewTests {
     }
 
     private func folderRig(
-        left: [String: Data], right: [String: Data],
+        left: [BytePath: Data], right: [BytePath: Data],
         onLeftRead: @escaping @Sendable (String) async -> Void = { _ in }
     ) async throws -> Rig {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ComparisonDiffViewTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let comparison = Comparison(
-            left: MemoryFS(
-                files: Dictionary(uniqueKeysWithValues: left.map { ("/L/" + $0.key, $0.value) }),
-                onRead: onLeftRead),
+            left: MemoryFS(files: under("/L", left), onRead: onLeftRead),
             leftRoot: "/L",
-            right: MemoryFS(files: Dictionary(uniqueKeysWithValues: right.map { ("/R/" + $0.key, $0.value) })),
+            right: MemoryFS(files: under("/R", right)),
             rightRoot: "/R", algorithm: .sha256, transferQueue: TransferQueueViewModel(),
             temporaryRoot: root)
         comparison.start()
