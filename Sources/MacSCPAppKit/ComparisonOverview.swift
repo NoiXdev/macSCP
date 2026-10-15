@@ -97,7 +97,9 @@ enum ComparisonOverviewPresentation {
     /// was not reported at all, so an ordinary file can land here. It once
     /// shared one sentence with the link, which read "It is a link or a
     /// special entry, or its type was not reported."; the two are now told
-    /// apart, because only one of them can be settled by a fetch.
+    /// apart, because only one of them is worth a fetch. (This read "because
+    /// only one of them can be settled by a fetch", which over-reaches for a
+    /// FIFO or a device node.)
     static func wording(for reason: UndeterminedReason) -> Wording {
         switch reason {
         case .checksumUnavailable:

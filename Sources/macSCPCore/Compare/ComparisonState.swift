@@ -33,7 +33,19 @@ public enum UndeterminedReason: Equatable, Sendable {
     /// listing answers for a special file, and ALSO for an entry whose type it
     /// did not report (a server whose listing carries no permission bits, a
     /// network file system that does not populate `d_type`), so an ordinary
-    /// file can land here. Unlike a link, a fetch can answer it.
+    /// file can land here. Unlike a link, a fetch is worth trying: for an
+    /// ordinary file it reads the bytes. (This sentence ended "Unlike a link,
+    /// a fetch can answer it.", which over-reaches for a FIFO or a device,
+    /// where what a fetch does was read and not measured, and may not end.)
+    ///
+    /// Three places produce `.other`, counted 2026-10-15 with
+    /// `/usr/bin/grep -rn -e "return \.other" -e "kind = \.other"
+    /// Sources/macSCPCore/RemoteFS Sources/macSCPCore/SSH`, which prints 3
+    /// lines: `SFTPAttributeMapper.kind(fromPermissions:)` twice (no
+    /// permission bits at all, and bits that name a FIFO, socket or device)
+    /// and `LocalFileSystem.listByReaddir` once (`DT_UNKNOWN`, and
+    /// `DT_FIFO`/`DT_CHR`/`DT_BLK`/`DT_SOCK`). Each is "not reported" or
+    /// "reported, and not a kind whose contents compare".
     case kindNotReported
     /// Listing a directory, or classifying a pair, threw. The walk reports the
     /// path with this reason and carries on, because one unreadable directory
@@ -83,8 +95,9 @@ public enum ComparisonClassification {
         // The comment here used to end "no content comparison is meaningful
         // either". That is true of a link, whose content is its target path,
         // and false of `.other`, which is also what a listing answers when a
-        // type was not reported at all: for that one a fetch can answer, and
-        // the two reasons say which is which. A link is the stronger claim, so
+        // type was not reported at all: for that one a fetch is worth
+        // trying (it read "a fetch can answer", which over-reaches for a FIFO
+        // or a device), and the two reasons say which is which. A link is the stronger claim, so
         // it is checked first and wins when the other side is `.other`.
         if left.kind == .symlink || right.kind == .symlink {
             return .undetermined(.linkOnASide)

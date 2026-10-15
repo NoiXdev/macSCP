@@ -299,7 +299,10 @@ extension UndeterminedReason {
     /// The checksum reasons say "the connection could not give a usable
     /// checksum" about two ordinary files; bytes answer that. So does
     /// `.kindNotReported`, which says a listing did not report what kind of
-    /// entry this is: a fetch is the one thing that can answer it. `.linkOnASide`
+    /// entry this is: for an ordinary file a fetch is what answers it. This
+    /// read "a fetch is the one thing that can answer it", which over-reaches
+    /// for a FIFO or a device, where a fetch was read and not measured and may
+    /// not end. `.linkOnASide`
     /// is refused because a link's content is its target path, so bytes would
     /// answer a different question from the one the row asks, and
     /// `.unreadable` because it may be a DIRECTORY the walk could not list as
@@ -471,8 +474,10 @@ extension Comparison {
             // treated `.other` as unsuitable. `.other` is also what `stat`
             // answers when the type was not reported (no permission bits
             // arrived), so on the very server that gives a row the reason
-            // `.kindNotReported` — settled by bytes, because a fetch is the
-            // one thing that can answer it — the diff of the settled row was
+            // `.kindNotReported` — settled by bytes, because for an ordinary
+            // file a fetch is what answers it; this clause read "because a
+            // fetch is the one thing that can answer it", which over-reaches
+            // for a FIFO or a device — the diff of the settled row was
             // refused as "not an ordinary file": the overview and the diff
             // telling the user two things about the same two files. An
             // unreported type goes on to the fetch.
@@ -561,11 +566,18 @@ extension Comparison {
             // The destination is a fresh `LocalFileSystem()`, a stateless
             // value, rather than a stored one: a third file system in this
             // object's graph is exactly what the ownership guard forbids.
+            //
+            // `cancelsWithTask`: selecting a row starts its diff, and moving
+            // the selection cancels the awaiting task; without this the
+            // download carried on behind a view that had gone elsewhere.
+            // Opt-in on the queue, so the other callers of
+            // `enqueueAndWait` are unchanged.
             try await queue.enqueueAndWait(
                 fileName: leftName, direction: .download,
                 source: sides.left, sourcePath: leftPath,
                 destination: LocalFileSystem(),
-                destinationDirectory: leftDirectory.path(percentEncoded: false))
+                destinationDirectory: leftDirectory.path(percentEncoded: false),
+                cancelsWithTask: true)
             // Between the two transfers too: a release during the first must
             // not be followed by a second download over the released system.
             guard fileSystems != nil else { throw ComparisonFetchError.sessionClosed }
@@ -573,7 +585,8 @@ extension Comparison {
                 fileName: rightName, direction: .download,
                 source: sides.right, sourcePath: rightPath,
                 destination: LocalFileSystem(),
-                destinationDirectory: rightDirectory.path(percentEncoded: false))
+                destinationDirectory: rightDirectory.path(percentEncoded: false),
+                cancelsWithTask: true)
         } catch {
             try? FileManager.default.removeItem(at: directory)
             // A transfer cancelled because the tab was torn down is not a
