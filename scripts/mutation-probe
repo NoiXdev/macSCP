@@ -11,22 +11,31 @@
 # indistinguishable from "the guard is green". The plant was recorded as "not
 # caught" when it had never been tried.
 #
-# So this script reports seven RESULT lines and never conflates them (counted in the
+# So this script reports nine RESULT lines and never conflates them (counted in the
 # code below, 2026-09-03 — an earlier version of this header said three while
 # the code had five; corrected again 2026-09-04 — the five-label list below folded
 # the two RED endings into one "RED / GREEN" line, so it enumerated five labels for
-# seven lines. Split to match, one label per `echo "RESULT:` line):
+# seven lines. Split to match, one label per `echo "RESULT:` line. Nine since
+# 2026-10-15, when the control run added two; re-counted with
+# `/usr/bin/grep -c '^ *echo "RESULT:' scripts/mutation-probe`, which prints 9 —
+# anchored on the line start so that this comment cannot match its own pattern):
 #
+#   CONTROL NOT         the UNPLANTED tree did not build, ran zero tests, or exited
+#     ESTABLISHED         non-zero with no failing test named; stops BEFORE planting
 #   PLANT FAILED       the --apply command exited non-zero; nothing was measured
 #   PLANT CHANGED       the --apply command matched nothing; a silent no-op
 #     NOTHING
 #   BUILD FAILED        the plant does not compile; no test ran; the probe is void
 #   NO TESTS RAN         the build succeeded but the filter matched nothing
-#   RED (caught)          tests ran, and a verdict line names what failed
-#   RED (uncaught)         tests ran and `swift test` exited non-zero, but no verdict
-#                           line names which test
-#   GREEN                   tests ran, `swift test` exited 0, and none of them
-#                            noticed the plant
+#   RUN INCOMPLETE        the planted run ran FEWER tests than the unplanted one:
+#                           it did not finish, and is neither red nor green
+#   RED (caught)          tests ran, and a failure the unplanted run did not have
+#                           is named
+#   RED (uncaught)         tests ran and `swift test` exited non-zero on a tree with
+#                           no pre-existing failure, but no verdict line names
+#                           which test
+#   GREEN                   tests ran, nothing new failed, and none of them noticed
+#                            the plant
 #
 # `NO TESTS RAN` has a second cause, found 2026-09-04 (the
 # ceilings-under-other-spellings plan, Task 2): a narrow --filter can
@@ -51,6 +60,56 @@
 # line that round reported. A suite's `testID` carries no parentheses; a
 # test's always does (even a zero-argument test's signature ends `()`),
 # so RAN now counts only `testEnded` events whose `testID` contains one.
+#
+# EVERY VERDICT IS READ AGAINST A CONTROL (added 2026-10-15). Before it plants
+# anything the script runs the same filter on the unplanted tree and records how
+# many tests ran (CONTROL_RAN) and which already fail (CONTROL_FAILED). Three
+# defects in the verdict logic, each measured on f0269692 before the change:
+#
+#   1. A KNOWN issue counted as a catcher. The caught-test list was every
+#      `issueRecorded` event's `testID`, with no look at `issue.isKnown`, so a
+#      test using `withKnownIssue` would be named as "the plant was caught by"
+#      in every run, including those where nothing caught the plant. Measured:
+#      `git show f0269692:scripts/mutation-probe | /usr/bin/grep -c isKnown`
+#      prints 0. (No `withKnownIssue` in the tree then: latent, not live.)
+#   2. No failure baseline. Any failure already present in the filtered scope was
+#      reported as the plant's catcher. Live in this tree: the test "Varying only
+#      isRegex leaves the pixels unchanged" in `ViewTestabilitySpike.swift`
+#      fails with nothing planted, and
+#      `git show f0269692:scripts/mutation-probe > scripts/.mutation-probe-old`
+#      then, after `chmod +x` on it, `scripts/.mutation-probe-old --filter
+#      ViewTestabilitySpike --apply "echo '// x' >> Sources/MacSCPAppKit/AppMain.swift"`
+#      printed `RESULT: RED — 7 test(s) ran, and the plant was caught by:` and
+#      named that test, for a plant that is a comment.
+#   3. RAN never compared to anything. `NO TESTS RAN` fired only on 0, so a plant
+#      that stops the runner after some tests had ended left a partial event
+#      file with RAN positive. Measured 2026-10-15 with an untracked test that
+#      ends the process only when a marker file exists, filter
+#      `ComparisonDiffView|<that suite>`, old script: a `fatalError` printed
+#      `RED — 56 test(s) ran and 'swift test' exited 1, but no verdict line`
+#      (the status branch caught it, but as a RED that reads like a catch); an
+#      `exit(0)` printed `GREEN — 56 test(s) ran, 'swift test' exited 0`. The
+#      control ran 57 both times. The second is a crash read as an all-clear:
+#      the build-failure bug, one step along.
+#
+# So the caught-test list is now the planted run's failures MINUS the control's
+# (pre-existing failures are printed apart, labelled, never as a catcher); a
+# KNOWN issue is not a failure in either run; and RAN falling below CONTROL_RAN
+# is its own ending. A control that cannot be established stops the script
+# before the plant: a verdict against no baseline is a verdict about nothing.
+# The price is a probe that takes about twice as long, on purpose.
+#
+# Failures are compared by testID with the trailing declaration location
+# (`/File.swift:LINE:COL`) removed. Measured 2026-10-15: the event file's
+# testID for a test carries it (`.../ViewTestabilitySpike.swift:194:6`), so a
+# plant that edits a TEST file above a failing test moves its line, and the
+# control's failure would no longer match itself — the pre-existing failure
+# would come back as a catcher. Suite and function name identify a test within
+# one module; the location is redundant for that purpose.
+#
+# What a control cannot do: a test that ALREADY fails cannot report that the
+# plant also breaks it, so a plant caught only by a pre-existing failure reads
+# GREEN. The GREEN text says so whenever the control had a failure.
 #
 # A signal is a sixth ending and is NOT one of these: on INT or TERM the script
 # reverts and exits non-zero WITHOUT a verdict (130 / 143). It used to trap with
@@ -81,7 +140,7 @@
 # The tree is restored with `git checkout --` on every exit path, including a
 # Ctrl-C: a probe that leaves its violation behind is worse than no probe.
 #
-# (--help prints lines 2-85 of this file: the header, and not the code under
+# (--help prints lines 2-144 of this file: the header, and not the code under
 # it. The range is a line number, so it is checked whenever this header grows.)
 
 set -uo pipefail
@@ -104,7 +163,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="${2:-}"; shift 2 ;;
         --apply)  APPLY="${2:-}";  shift 2 ;;
         --label)  LABEL="${2:-}";  shift 2 ;;
-        -h|--help) sed -n '2,85p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,144p' "$0"; exit 0 ;;
         *) echo "mutation-probe: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
@@ -170,6 +229,154 @@ trap restore EXIT
 trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 
+# Runs the filtered suite and leaves its figures in SUITE_RAN, SUITE_FAILED,
+# SUITE_STATUS and SUITE_LOG (the caller removes the log). One function, so the
+# control run and the planted run are read by the SAME code: a difference between
+# their figures is then a difference between the trees, not between the readings.
+run_suite() {
+    SUITE_LOG="$(mktemp)"
+    local events
+    events="$(mktemp)"
+    swift test --filter "$FILTER" --event-stream-output-path "$events" >"$SUITE_LOG" 2>&1
+    SUITE_STATUS=$?
+
+    # RAN and FAILED are read from the event stream first, not from stdout.
+    # Measured 2026-09-04 (Task 2 of the ceilings-under-other-spellings plan,
+    # `--filter theConnectDeadlineAlsoCoversNameResolution` against a planted
+    # 90 s connect timeout): the filtered run's red was real — one issue
+    # recorded, the test failed after 90.005 seconds — but the job's own
+    # stdout log stopped mid-way through the test's doc-comment echo, with no
+    # `✘ Test run with N tests` summary line for the old RAN regex to find.
+    # RAN came back 0 and this script reported NO TESTS RAN about a run that
+    # had, in fact, run and caught the plant — the exact "CI logs lose lines"
+    # shape (docs/BACKLOG.md) reproduced locally and deterministically.
+    # `--event-stream-output-path` writes one JSON object per event to a file
+    # the stdout race cannot touch, the same flag and the same jq shape
+    # `.github/workflows/ci.yml`'s "Test verdicts from the event stream" step
+    # already reads for the identical reason: `issueRecorded` events name what
+    # failed by `testID`.
+    #
+    # RAN counts test FUNCTIONS, not `@Test(arguments:)` CASES and not
+    # suites — both measured 2026-09-04 (fix round 1), same probe run
+    # (`--filter everyConnectionKindHasARigFixture`, `CLIMatrixITests.swift`,
+    # `@Test(arguments: ConnectionKind.allCases)`, 3 cases): the event stream
+    # carried 3 `testCaseStarted`/`testCaseEnded` pairs (no `messages`, so no
+    # verdict text) but only ONE `testEnded` for the function itself, whose
+    # message read "... with 3 test cases passed ..." — the per-case events
+    # are a different `payload.kind` this script does not read, and a
+    # parameterised function's N cases collapse into one `testEnded`. The
+    # SAME run's event file also carried a SECOND `testEnded`, for the suite
+    # itself, testID `macSCPCoreTests.CLIMatrixCoverageTests` with no
+    # parentheses and a message starting "Suite "; counting it went
+    # unnoticed through fix round 1 (every RESULT line that round reported
+    # was one too high — a 7-test suite read RAN 8). A test's testID always
+    # carries its function signature's parentheses; a suite's never does, so
+    # the filter below excludes any testID without a `(`.
+    SUITE_RAN=0
+    SUITE_FAILED=""
+    if [[ -s "$events" ]]; then
+        SUITE_RAN="$(jq -c 'select(.kind == "event" and .payload.kind == "testEnded"
+                                   and (.payload.testID | test("\\(")))' "$events" 2>/dev/null | wc -l | tr -d ' ')"
+        SUITE_RAN="${SUITE_RAN:-0}"
+        # A KNOWN issue (`withKnownIssue`) is an expected failure and not a
+        # catch, so `isKnown` is filtered in the control run and the planted
+        # run alike (header, defect 1). The `sub` removes the declaration
+        # location from the testID so the two runs' names can be compared
+        # (header, the paragraph on testID locations); a name without one is
+        # left alone.
+        SUITE_FAILED="$(jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded"
+                                      and .payload.issue.isKnown != true)
+                               | (.payload.testID // empty)
+                               | sub("/[^/]*\\.swift:[0-9]+:[0-9]+$"; "")' \
+            "$events" 2>/dev/null | sort -u)"
+    fi
+
+    # Falls back to the stdout parse ONLY when the event file is empty — an
+    # older toolchain that does not accept the flag, or a run that died before
+    # writing anything to it. A nonempty event file is trusted over stdout
+    # even when stdout also carries its own summary line, so the two derivations
+    # never have a chance to disagree silently.
+    if [[ ! -s "$events" ]]; then
+        SUITE_RAN="$(grep -oE 'Test run with [0-9]+ test' "$SUITE_LOG" | grep -oE '[0-9]+' | tail -1)"
+        SUITE_RAN="${SUITE_RAN:-0}"
+        # Anchored on the marker plus a space, not on `[a-zA-Z]`: swift-testing
+        # prints a DISPLAY-named test as `✘ Test "some name" recorded an
+        # issue`, and the character after `Test ` is then a quote. This tree
+        # carries 255 `@Test("…")` declarations (counted 2026-09-03,
+        # `grep -rhoE '@Test\("[^"]*"' Tests/ | wc -l`), so the old class
+        # excluded the majority spelling. The run SUMMARY (`✘ Test run with N
+        # tests failed…`) has to come back out, or every red is attributed to
+        # it instead of to a guard — which is the fallback path's own version
+        # of the bug the event stream exists to route around.
+        SUITE_FAILED="$(grep -E '^✘ Test ' "$SUITE_LOG" \
+            | grep -vE '^✘ Test run with' \
+            | grep -vE ' skipped(\.|:.*)?$' \
+            | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
+    fi
+    rm -f "$events"
+}
+
+# The CONTROL: the same build and the same filter on the tree as it stands
+# before anything is planted (staged work included, which is the baseline the
+# plant is measured against). Its ending is a RESULT line of its own, because a
+# control that could not be established is not a baseline, and a plant applied
+# on top of one would produce a verdict about nothing.
+control_void() {
+    echo "RESULT: CONTROL NOT ESTABLISHED — $1"
+    echo "  Nothing was planted. A verdict needs a baseline to be read against."
+    shift
+    for line in "$@"; do [[ -n "$line" ]] && printf '%s\n' "$line" | sed 's/^/  /'; done
+    exit 1
+}
+
+echo "── control build (unplanted tree)"
+CONTROL_BUILD_LOG="$(mktemp)"
+if ! swift build --build-tests >"$CONTROL_BUILD_LOG" 2>&1; then
+    errors="$(grep -E 'error:' "$CONTROL_BUILD_LOG" | sort -u | head -5)"
+    rm -f "$CONTROL_BUILD_LOG"
+    control_void "the unplanted tree does not build." "$errors"
+fi
+rm -f "$CONTROL_BUILD_LOG"
+
+echo "── control test --filter $FILTER"
+run_suite
+CONTROL_RAN="$SUITE_RAN"
+CONTROL_FAILED="$SUITE_FAILED"
+CONTROL_STATUS="$SUITE_STATUS"
+if [[ "$CONTROL_RAN" == "0" ]]; then
+    errors="$(grep -E 'error:|Fatal|fatalError' "$SUITE_LOG" | sort -u | head -5)"
+    rm -f "$SUITE_LOG"
+    control_void "the filter matches no test on the unplanted tree, or the runner died." "$errors"
+fi
+# A non-zero status with no failing test named is a control that crashed or
+# failed without a verdict line: its figures are not a baseline, and the planted
+# run's non-zero status could not be told apart from it.
+if [[ "$CONTROL_STATUS" -ne 0 && -z "$CONTROL_FAILED" ]]; then
+    errors="$(grep -E '✘|error:|Fatal|fatalError' "$SUITE_LOG" | sort -u | head -5)"
+    rm -f "$SUITE_LOG"
+    control_void "the unplanted run exited $CONTROL_STATUS, but no failing test is named." "$errors"
+fi
+rm -f "$SUITE_LOG"
+
+if [[ -z "$CONTROL_FAILED" ]]; then
+    echo "── control: $CONTROL_RAN test(s) ran, 0 pre-existing failures"
+else
+    echo "── control: $CONTROL_RAN test(s) ran, $(printf '%s\n' "$CONTROL_FAILED" | wc -l | tr -d ' ') pre-existing failure(s):"
+    echo "$CONTROL_FAILED" | sed 's/^/     /'
+fi
+
+# The no-op check below reads `git diff` as "the plant changed something", which
+# only holds if nothing else has touched the tree since the dirty-tree gate. The
+# control build now runs between the two, so it is checked here instead of
+# assumed: a build that rewrote a tracked file (a resolved-packages file, say)
+# would otherwise let a plant that matched nothing look like one that worked.
+if [[ -n "$(git diff --name-only)" ]]; then
+    echo "mutation-probe: the control run modified tracked files, so a plant could not" >&2
+    echo "  be told apart from it. Nothing was planted." >&2
+    git diff --name-only | sed 's/^/    /' >&2
+    exit 2
+fi
+
 echo "── plant${LABEL:+: $LABEL}"
 if ! eval "$APPLY"; then
     echo "RESULT: PLANT FAILED — the --apply command exited non-zero. Nothing was measured."
@@ -196,80 +403,55 @@ fi
 rm -f "$BUILD_LOG"
 
 echo "── test --filter $FILTER"
-TEST_LOG="$(mktemp)"
-EVENTS="$(mktemp)"
-swift test --filter "$FILTER" --event-stream-output-path "$EVENTS" >"$TEST_LOG" 2>&1
-STATUS=$?
+run_suite
+RAN="$SUITE_RAN"
+FAILED="$SUITE_FAILED"
+STATUS="$SUITE_STATUS"
+TEST_LOG="$SUITE_LOG"
 
-# RAN and FAILED are read from the event stream first, not from stdout.
-# Measured 2026-09-04 (Task 2 of the ceilings-under-other-spellings plan,
-# `--filter theConnectDeadlineAlsoCoversNameResolution` against a planted
-# 90 s connect timeout): the filtered run's red was real — one issue
-# recorded, the test failed after 90.005 seconds — but the job's own
-# stdout log stopped mid-way through the test's doc-comment echo, with no
-# `✘ Test run with N tests` summary line for the old RAN regex to find.
-# RAN came back 0 and this script reported NO TESTS RAN about a run that
-# had, in fact, run and caught the plant — the exact "CI logs lose lines"
-# shape (docs/BACKLOG.md) reproduced locally and deterministically.
-# `--event-stream-output-path` writes one JSON object per event to a file
-# the stdout race cannot touch, the same flag and the same jq shape
-# `.github/workflows/ci.yml`'s "Test verdicts from the event stream" step
-# already reads for the identical reason: `issueRecorded` events name what
-# failed by `testID`.
-#
-# RAN counts test FUNCTIONS, not `@Test(arguments:)` CASES and not
-# suites — both measured 2026-09-04 (fix round 1), same probe run
-# (`--filter everyConnectionKindHasARigFixture`, `CLIMatrixITests.swift`,
-# `@Test(arguments: ConnectionKind.allCases)`, 3 cases): the event stream
-# carried 3 `testCaseStarted`/`testCaseEnded` pairs (no `messages`, so no
-# verdict text) but only ONE `testEnded` for the function itself, whose
-# message read "... with 3 test cases passed ..." — the per-case events
-# are a different `payload.kind` this script does not read, and a
-# parameterised function's N cases collapse into one `testEnded`. The
-# SAME run's event file also carried a SECOND `testEnded`, for the suite
-# itself, testID `macSCPCoreTests.CLIMatrixCoverageTests` with no
-# parentheses and a message starting "Suite "; counting it went
-# unnoticed through fix round 1 (every RESULT line that round reported
-# was one too high — a 7-test suite read RAN 8). A test's testID always
-# carries its function signature's parentheses; a suite's never does, so
-# the filter below excludes any testID without a `(`.
-RAN=0
-FAILED=""
-if [[ -s "$EVENTS" ]]; then
-    RAN="$(jq -c 'select(.kind == "event" and .payload.kind == "testEnded"
-                         and (.payload.testID | test("\\(")))' "$EVENTS" 2>/dev/null | wc -l | tr -d ' ')"
-    RAN="${RAN:-0}"
-    FAILED="$(jq -r 'select(.kind == "event" and .payload.kind == "issueRecorded") | .payload.testID // empty' \
-        "$EVENTS" 2>/dev/null | sort -u)"
-fi
+# What the PLANT added: the planted run's failures minus the control's. Both
+# lists are `sort -u`, and `comm` needs both sorted the same way, hence the
+# explicit LC_ALL=C on the three commands. `printf '%s'` rather than `echo`, so
+# an empty list is an empty input and not one blank line.
+CATCHERS="$(LC_ALL=C comm -23 <(printf '%s' "$FAILED" | LC_ALL=C sort -u) \
+                              <(printf '%s' "$CONTROL_FAILED" | LC_ALL=C sort -u))"
 
-# Falls back to the stdout parse ONLY when the event file is empty — an
-# older toolchain that does not accept the flag, or a run that died before
-# writing anything to it. A nonempty event file is trusted over stdout
-# even when stdout also carries its own summary line, so the two derivations
-# never have a chance to disagree silently.
-if [[ ! -s "$EVENTS" ]]; then
-    RAN="$(grep -oE 'Test run with [0-9]+ test' "$TEST_LOG" | grep -oE '[0-9]+' | tail -1)"
-    RAN="${RAN:-0}"
-    # Anchored on the marker plus a space, not on `[a-zA-Z]`: swift-testing
-    # prints a DISPLAY-named test as `✘ Test "some name" recorded an
-    # issue`, and the character after `Test ` is then a quote. This tree
-    # carries 255 `@Test("…")` declarations (counted 2026-09-03,
-    # `grep -rhoE '@Test\("[^"]*"' Tests/ | wc -l`), so the old class
-    # excluded the majority spelling. The run SUMMARY (`✘ Test run with N
-    # tests failed…`) has to come back out, or every red is attributed to
-    # it instead of to a guard — which is the fallback path's own version
-    # of the bug the event stream exists to route around.
-    FAILED="$(grep -E '^✘ Test ' "$TEST_LOG" \
-        | grep -vE '^✘ Test run with' \
-        | grep -vE ' skipped(\.|:.*)?$' \
-        | sed 's/ recorded.*//;s/ failed.*//' | sort -u)"
-fi
-rm -f "$EVENTS"
+# Printed under every ending that reaches a verdict, so a failure that was
+# already there can never be read as the plant's catcher.
+print_preexisting() {
+    [[ -n "$CONTROL_FAILED" ]] || return 0
+    echo "  Pre-existing failures (also failing on the UNPLANTED tree — NOT the plant's catchers):"
+    echo "$CONTROL_FAILED" | sed 's/^/    /'
+}
 
 if [[ "$RAN" == "0" ]]; then
     echo "RESULT: NO TESTS RAN — the filter matched nothing, or the runner died."
     grep -E 'error:|Fatal|fatalError' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -5
+    rm -f "$TEST_LOG"
+    exit 1
+fi
+
+# A planted run that ran FEWER tests than the control did not finish. Measured
+# 2026-10-15 (the defect-3 case in the header): a process ended during one test,
+# with the same filter on a tree where it was not ended, left an event file
+# holding the tests that had finished before it died — RAN positive, nothing
+# named — and the old script printed GREEN when the process exited 0 and a
+# RED with no attribution when it trapped. Neither is the truth: the plant
+# stopped the runner, which is neither a catch nor a survivor and is something
+# the author of the probe has to look at. Any failure named before it stopped
+# is listed, as information and not as a verdict.
+if [[ "$RAN" -lt "$CONTROL_RAN" ]]; then
+    echo "RESULT: RUN INCOMPLETE — the planted run did not finish."
+    echo "  The test count fell from $CONTROL_RAN (unplanted) to $RAN (planted): the plant may"
+    echo "  have trapped the runner. This is neither RED nor GREEN; read the log before"
+    echo "  believing either."
+    echo "  'swift test' exited $STATUS."
+    if [[ -n "$CATCHERS" ]]; then
+        echo "  Failures named before it stopped (not a verdict):"
+        echo "$CATCHERS" | sed 's/^/    /'
+    fi
+    grep -E 'error:|Fatal|fatalError' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -5
+    print_preexisting
     rm -f "$TEST_LOG"
     exit 1
 fi
@@ -280,18 +462,32 @@ fi
 # the summary, or the interleaved-output loss that cost CI run 33741778350 its
 # only failing test's name — came out GREEN. That is the exact inference this
 # script exists to refuse.
-if [[ -n "$FAILED" ]]; then
+#
+# With a pre-existing failure in the control the status is read differently,
+# because `swift test` exits non-zero on THOSE alone: the status branch below
+# applies only when the control was clean, and a control with failures that
+# ends GREEN says so (a new failure without a verdict line would hide behind
+# the old ones).
+if [[ -n "$CATCHERS" ]]; then
     echo "RESULT: RED — $RAN test(s) ran, and the plant was caught by:"
-    echo "$FAILED" | sed 's/^/  /'
-elif [[ "$STATUS" -ne 0 ]]; then
+    echo "$CATCHERS" | sed 's/^/  /'
+    print_preexisting
+elif [[ "$STATUS" -ne 0 && -z "$CONTROL_FAILED" ]]; then
     echo "RESULT: RED — $RAN test(s) ran and 'swift test' exited $STATUS, but no"
     echo "  verdict line names which test. The status is the verdict; the"
     echo "  attribution is missing. Read \$TEST_LOG yourself before believing either."
     grep -E '✘|error:' "$TEST_LOG" | sed 's/^/  /' | sort -u | head -10
 else
-    echo "RESULT: GREEN — $RAN test(s) ran, 'swift test' exited 0, and NONE of them"
-    echo "  noticed the plant."
+    echo "RESULT: GREEN — $RAN test(s) ran and NONE of them noticed the plant."
     echo "  Either the guard is insensitive to this violation, or the plant is not one."
+    if [[ -n "$CONTROL_FAILED" ]]; then
+        echo "  'swift test' exited $STATUS (control: $CONTROL_STATUS) because of the pre-existing failures"
+        echo "  below. A plant caught ONLY by one of them cannot show here, and a new failure"
+        echo "  that names no test would read the same as they do."
+        print_preexisting
+    else
+        echo "  ('swift test' exited 0.)"
+    fi
 fi
 rm -f "$TEST_LOG"
 
