@@ -61,6 +61,12 @@ import macSCPCore
 /// A `.filePair` comparison is two files the user picked, has no walk and no
 /// rows, and is diffed straight away by `diffFilePair()`: size and checksum
 /// exist to avoid a fetch, not to stand in front of one somebody asked for.
+/// **A folder row is fetched from the two paths IT carries**
+/// (`ComparisonRow.leftPath`, `.rightPath`), never from its `relativePath`
+/// joined to the two roots: a pair the second pairing pass made is spelled
+/// differently on each side, and that join named a path the right side does
+/// not have. A file pair's two sides are the two roots, which are themselves
+/// each side's own path.
 /// Neither diff entry point ever asks a file system for a checksum — a folder
 /// row's classification already did, once, during the walk.
 ///
@@ -343,9 +349,7 @@ extension Comparison {
         guard Self.hasFilesOnBothSides(row.state) else {
             throw ComparisonFetchError.noContentToCompare(row.state)
         }
-        let fetched = try await fetch(
-            leftPath: Self.join(leftRoot, row.relativePath),
-            rightPath: Self.join(rightRoot, row.relativePath))
+        let fetched = try await fetch(leftPath: row.leftPath, rightPath: row.rightPath)
         return (fetched.left, fetched.right)
     }
 
@@ -360,9 +364,7 @@ extension Comparison {
         guard Self.hasFilesOnBothSides(row.state) else {
             throw ComparisonFetchError.noContentToCompare(row.state)
         }
-        return try await diff(
-            leftPath: Self.join(leftRoot, row.relativePath),
-            rightPath: Self.join(rightRoot, row.relativePath))
+        return try await diff(leftPath: row.leftPath, rightPath: row.rightPath)
     }
 
     /// The line diff of the two files a `.filePair` comparison was made for.
@@ -389,9 +391,7 @@ extension Comparison {
         guard case .undetermined(let reason) = row.state, reason.canBeSettledByBytes else {
             throw ComparisonFetchError.noContentToCompare(row.state)
         }
-        let fetched = try await fetch(
-            leftPath: Self.join(leftRoot, row.relativePath),
-            rightPath: Self.join(rightRoot, row.relativePath))
+        let fetched = try await fetch(leftPath: row.leftPath, rightPath: row.rightPath)
         defer { try? FileManager.default.removeItem(at: fetched.directory) }
 
         let equal = try await mappingReleaseToSessionClosed {
@@ -402,10 +402,14 @@ extension Comparison {
         // runs, so the index holds; the path is checked because writing the
         // answer onto another file's row would be the one wrong thing this
         // method could do.
-        guard rows.indices.contains(index), rows[index].relativePath == row.relativePath else {
+        guard rows.indices.contains(index),
+            rows[index].hasRelativePath(row.relativePath)
+        else {
             throw ComparisonFetchError.rowOutOfRange(index)
         }
-        rows[index] = ComparisonRow(relativePath: row.relativePath, state: settled)
+        rows[index] = ComparisonRow(
+            relativePath: row.relativePath, leftPath: row.leftPath, rightPath: row.rightPath,
+            state: settled)
         return settled
     }
 
@@ -643,11 +647,6 @@ extension Comparison {
         case .undetermined(let reason): reason.canBeSettledByBytes
         case .onlyLeft, .onlyRight, .bothDirectories, .typeMismatch: false
         }
-    }
-
-    /// `RemotePath.join`, with an empty relative part meaning the root itself.
-    private static func join(_ root: String, _ relative: String) -> String {
-        relative.isEmpty ? root : RemotePath.join(root, relative)
     }
 
     private static func fileName(of path: String) -> String {

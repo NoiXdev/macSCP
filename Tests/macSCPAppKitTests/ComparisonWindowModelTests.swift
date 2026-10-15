@@ -128,7 +128,9 @@ struct ComparisonWindowModelTests {
         #expect(model.comparison === comparison)
         #expect(!model.isUnavailable)
         // And what was measured is still readable through it.
-        #expect(model.comparison?.rows == [ComparisonRow(relativePath: "only.txt", state: .onlyLeft)])
+        #expect(model.comparison?.rows.count == 1)
+        #expect(model.comparison?.rows.first?.relativePath == "only.txt")
+        #expect(model.comparison?.rows.first?.state == .onlyLeft)
         guard case .completed? = model.comparison?.outcome else {
             Issue.record("expected .completed, got \(String(describing: model.comparison?.outcome))")
             return
@@ -344,7 +346,9 @@ struct ComparisonWindowModelTests {
         // The window's own reference is untouched while it finishes closing:
         // the rows are still readable through it.
         #expect(model.comparison === comparison)
-        #expect(comparison.rows == [ComparisonRow(relativePath: "only.txt", state: .onlyLeft)])
+        #expect(comparison.rows.count == 1)
+        #expect(comparison.rows.first?.relativePath == "only.txt")
+        #expect(comparison.rows.first?.state == .onlyLeft)
 
         // A window opened later from the same, now stale, seed finds
         // nothing, and says so: it is not a closed SESSION.

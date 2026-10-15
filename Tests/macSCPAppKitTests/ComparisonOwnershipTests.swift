@@ -187,7 +187,10 @@ struct ComparisonOwnershipTests {
         await comparison.waitForWalk()
 
         // Positive control: there IS a result to keep, and a connection to lose.
-        let expectedRows = [ComparisonRow(relativePath: "a.txt", state: .onlyRight)]
+        let expectedRows = [
+            fixtureRow(
+                "a.txt", .onlyRight, leftRoot: directory.path, rightRoot: "/remote")
+        ]
         let expectedProgress = ComparisonProgress(directoriesVisited: 1, rowsProduced: 1)
         #expect(comparison.rows == expectedRows)
         #expect(comparison.progress == expectedProgress)
@@ -421,7 +424,7 @@ struct ComparisonOwnershipTests {
             Issue.record("expected .completed, got \(String(describing: comparison.outcome))")
             return
         }
-        #expect(comparison.rows == [ComparisonRow(relativePath: "a.txt", state: .same)])
+        #expect(comparison.rows == [fixtureRow("a.txt", .same, leftRoot: "/l", rightRoot: "/r")])
         #expect(comparison.progress == ComparisonProgress(directoriesVisited: 1, rowsProduced: 1))
     }
 
