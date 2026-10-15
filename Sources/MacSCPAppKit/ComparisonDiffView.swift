@@ -141,7 +141,7 @@ enum ComparisonDiffPresentation {
             Wording(
                 key: "compare.refusal.notAnOrdinaryFile %@",
                 english:
-                    "No line comparison was made: “%@” is not an ordinary file, so there is no content to compare. It is a folder, a link or a special entry."
+                    "No line comparison was made: “%@” is not an ordinary file, so there is no content to compare. It is a folder or a link."
             )
         }
     }

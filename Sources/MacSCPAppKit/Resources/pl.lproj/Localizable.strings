@@ -1648,7 +1648,7 @@
 "compare.refusal.notUTF8" = "Nie wykonano porównania wiersz po wierszu: co najmniej jeden z dwóch plików nie jest poprawnym UTF-8, więc nie można go odczytać jako wierszy. Może to być tekst w innym kodowaniu, na przykład Latin-1 lub Windows-1252.";
 "compare.refusal.tooLarge %@ %@" = "Nie wykonano porównania wiersz po wierszu: jeden z dwóch plików ma %@ bajtów, a największy plik, który można porównać wiersz po wierszu, ma %@ bajtów.";
 "compare.refusal.tooManyLines %@ %@" = "Nie wykonano porównania wiersz po wierszu: lewy plik ma %@ wierszy, a prawy plik ma %@ wierszy, czyli za dużo, by porównać je razem.";
-"compare.refusal.notAnOrdinaryFile %@" = "Nie wykonano porównania wiersz po wierszu: „%@” nie jest zwykłym plikiem, więc nie ma zawartości do porównania. To folder, dowiązanie lub wpis specjalny.";
+"compare.refusal.notAnOrdinaryFile %@" = "Nie wykonano porównania wiersz po wierszu: „%@” nie jest zwykłym plikiem, więc nie ma zawartości do porównania. To folder lub dowiązanie.";
 "compare.diff.failure.onlyLeft" = "Ten wpis istnieje tylko po lewej stronie, więc nie ma z czym go porównać.";
 "compare.diff.failure.onlyRight" = "Ten wpis istnieje tylko po prawej stronie, więc nie ma z czym go porównać.";
 "compare.diff.failure.typeMismatch" = "Obie strony to wpisy różnego rodzaju, więc ich zawartości nie można porównać.";

@@ -1082,6 +1082,39 @@ struct ComparisonDiffViewTests {
         }
     }
 
+    /// What the refusal says an ordinary-file-less side IS. `diffUnmapped`
+    /// refuses a directory and a link and nothing else: `.other` is what a
+    /// listing answers when a type was not reported, and goes on to the fetch.
+    /// So a sentence that also names "a special entry" describes a case that
+    /// cannot produce it, in a string the user has no way to check. The old
+    /// ending, in each catalogue's words, was "a folder, a link or a special
+    /// entry". The positive halves are beside the negative: each text names a
+    /// folder AND a link, so a lookup that found nothing cannot pass.
+    private static let refusalKinds:
+        [String: (folder: String, link: String, special: String)] = [
+            "en": ("folder", "link", "special entry"),
+            "de": ("Ordner", "Link", "Sondereintrag"),
+            "fr": ("dossier", "lien", "entrée spéciale"),
+            "pl": ("folder", "dowiązanie", "wpis specjalny"),
+        ]
+
+    @Test func theNotAnOrdinaryFileSentenceNamesAFolderAndALinkAndNoSpecialEntry() throws {
+        #expect(Set(Self.refusalKinds.keys) == Set(Self.locales))
+        let key = Presentation.wording(for: .notAnOrdinaryFile(side: .left, path: "/p")).key
+        for locale in Self.locales {
+            let words = try #require(Self.refusalKinds[locale])
+            let text = try #require(try Self.catalogue(locale)[key], "\(locale) lacks \(key)")
+            #expect(text.contains(words.folder), "\(locale): \(text)")
+            #expect(text.contains(words.link), "\(locale): \(text)")
+            #expect(!text.contains(words.special), "\(locale): \(text)")
+        }
+        // The English the code carries is the English catalogue, so it cannot
+        // keep the clause the catalogue lost.
+        let carried = Presentation.wording(for: .notAnOrdinaryFile(side: .left, path: "/p")).english
+        #expect(carried.contains("folder") && carried.contains("link"))
+        #expect(!carried.contains("special entry"))
+    }
+
     @Test func noTwoWordingsShareAKeyOrAnEnglishText() {
         let wordings = Self.usedWordings
         let unique = Dictionary(grouping: wordings, by: \.key).mapValues { Set($0.map(\.english)) }

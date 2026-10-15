@@ -53,10 +53,19 @@ public enum DiffRefusal: Error, Equatable, Sendable {
     /// product: the product is this implementation's cost and not something
     /// anybody can act on.
     case tooManyLines(leftLines: Int, rightLines: Int, ceilingProduct: Int)
-    /// One side is not an ordinary file: a directory, a link, a device node,
-    /// or an entry whose type the backend did not report. Carries the side
-    /// and its PATH, and the sentence prints the path — which says which side
-    /// precisely, and in words no catalogue has to inflect.
+    /// One side is KNOWN not to be an ordinary file: a directory or a link.
+    /// Carries the side and its PATH, and the sentence prints the path —
+    /// which says which side precisely, and in words no catalogue has to
+    /// inflect.
+    ///
+    /// This comment used to read "a directory, a link, a device node, or an
+    /// entry whose type the backend did not report", and the sentence ended
+    /// "a folder, a link or a special entry". Both are withdrawn: `.other`
+    /// is what a backend answers when a type was not reported, so it is not
+    /// evidence of anything, and it now goes on to the fetch (a device node
+    /// fails there, by name). The only producer is the `switch` over the
+    /// kind in `Comparison.diffUnmapped`, whose refusing arm is
+    /// `.directory, .symlink`.
     ///
     /// **What this case cannot see, stated here because a refusal that
     /// silently misses the case it names is worse than one that says so.**
