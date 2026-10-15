@@ -601,10 +601,58 @@ struct BrowserContextMenuTests {
         }
     }
 
-    /// Byte-exact on the name, deliberately: a name that only matches under
-    /// normalisation falls through to the fallback, which is correct. This
-    /// model does not reinvent the two-pass pairing `ComparisonPairing` does.
-    @Test func theFarRowIsMatchedByItsNameExactly() {
+    /// The far row is matched by Swift `String` equality, which is UNICODE
+    /// CANONICAL EQUIVALENCE — not byte equality (fix round 3, N3).
+    ///
+    /// This test was called `theFarRowIsMatchedByItsNameExactly` and its doc
+    /// comment read "Byte-exact on the name, deliberately: a name that only
+    /// matches under normalisation falls through to the fallback, which is
+    /// correct." Both halves were wrong. `$0.name == only.name` is `String
+    /// ==`, which folds NFD and NFC — the property `ComparisonPairing.pairs`
+    /// keys on UTF-8 bytes to ESCAPE, and says so in its own doc comment —
+    /// so a name that matches only under normalisation is CAUGHT, not missed.
+    /// And its three fixtures were a capital, a trailing space and a
+    /// different name: no normalisation case at all, which is why making the
+    /// match genuinely byte-exact left the suite green and put the stronger
+    /// behaviour in the tree by accident of `==` rather than by decision.
+    ///
+    /// The NFD case below is what makes it a decision. It is also the
+    /// assertion that protects the gate from being "tidied" to byte keys for
+    /// consistency with `ComparisonPairing` — a change a careful reader would
+    /// make for a good-sounding reason, which would silently let a far
+    /// symlink whose name is spelled in the other normal form through to the
+    /// diff, where `stat` follows it.
+    @Test func theFarRowIsMatchedByCanonicalEquivalenceAndNotByBytes() {
+        // "cafe\u{301}" (NFD) and "caf\u{e9}" (NFC) are canonically
+        // equivalent and byte-different. The far row is listed in one form,
+        // the selected row carries the other.
+        let nfd = "cafe\u{301}"
+        let nfc = "caf\u{e9}"
+        #expect(nfd == nfc)
+        #expect(Array(nfd.utf8) != Array(nfc.utf8))
+
+        let farListing = [
+            RemoteFileItem(name: nfd, path: "/\(nfd)", kind: .symlink, size: nil)
+        ]
+        let nearRow = RemoteFileItem(name: nfc, path: "/\(nfc)", kind: .file, size: 1)
+        let entries = BrowserContextMenu.entries(
+            for: [nearRow], side: .local, destinationRows: farListing)
+        #expect(entries.isEmpty == false)
+        #expect(entries.contains(.compareWithOtherPane) == false)
+
+        // Positive beside it: the same near row against a far listing of the
+        // same name as an ordinary FILE is offered, so the negative above is
+        // about the kind and not about the name failing to match at all.
+        let asAFile = [RemoteFileItem(name: nfd, path: "/\(nfd)", kind: .file, size: 1)]
+        #expect(BrowserContextMenu.entries(
+            for: [nearRow], side: .local, destinationRows: asAFile)
+            .contains(.compareWithOtherPane))
+    }
+
+    /// What `String ==` does NOT fold, and the fallback those land in: case,
+    /// a trailing space, and a different name are different names, so the
+    /// entry is offered and the comparison answers for itself.
+    @Test func aFarNameThatMerelyLooksSimilarIsADifferentName() {
         let almost = [
             RemoteFileItem(name: "A", path: "/A", kind: .symlink, size: nil),
             RemoteFileItem(name: "a ", path: "/a ", kind: .symlink, size: nil),

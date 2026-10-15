@@ -468,10 +468,15 @@ struct ComparisonFetchTests {
     }
 
     /// Fix round 1, F1. A file pair skips the classification — that is what
-    /// it is for — so `diffFilePair()` is the ONLY place either side's kind
-    /// is ever looked at, and the FAR side of a one-row comparison is a path
-    /// the menu model never saw at all. A side that is not an ordinary file
-    /// is refused with a reason, before a byte moves.
+    /// it is for — so the diff is the only place either side's kind AS
+    /// `stat` REPORTS IT is ever looked at. The qualifier is fix round 3's:
+    /// this read "`diffFilePair()` is the ONLY place either side's kind is
+    /// ever looked at, and the FAR side of a one-row comparison is a path the
+    /// menu model never saw at all", and round 2 made both halves false —
+    /// the menu model reads the far side's kind from the other pane's
+    /// listing, and the check is in `diffUnmapped`, which `diffFilePair()`
+    /// delegates to. A side that is not an ordinary file is refused with a
+    /// reason, before a byte moves.
     @Test func asideThatIsNotAnOrdinaryFileIsRefusedBeforeAnyByteIsFetched() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

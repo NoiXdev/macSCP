@@ -442,39 +442,13 @@ extension ContentView {
                                             ? NSURL(fileURLWithPath: item.path)
                                             : nil
                                     },
-                                    onMenuAction: { entry, selection in
-                                        switch entry {
-                                        case .transferToOtherPane:
-                                            transferSelection(
-                                                selection, from: .local, in: tab, session: session)
-                                        case .transferToSession(let target):
-                                            transferToSession(
-                                                selection, from: .local, target: target,
-                                                in: tab, session: session)
-                                        case .copyPath:
-                                            copyPaths(of: selection)
-                                        case .openInEditor:
-                                            break   // never emitted for the local pane (menu model)
-                                        // The two diff-view doors (Task 12). Both
-                                        // are forwarded by `BrowserPane`, which
-                                        // handles neither itself; the handlers are
-                                        // in `ContentView+Comparison.swift`.
-                                        case .compareWithOtherPane:
-                                            compareWithOtherPane(selection, from: .local,
-                                                in: tab, session: session)
-                                        case .compareTwoSelected:
-                                            compareTwoSelected(selection, on: .local, in: tab)
-                                        case .rename, .infoAndPermissions, .newFolder, .newFile,
-                                            .delete, .computeChecksum:
-                                            break   // handled inside BrowserPane, never forwarded
-                                        case .backendFileAction:
-                                            break   // never contributed on the LOCAL pane (fileActions is nil here)
-                                        case .userFileAction:
-                                            break   // handled inside BrowserPane (BrowserPane+FileActions.swift), never forwarded
-                                        case .compressTo, .extractArchive:
-                                            break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
-                                        }
-                                    },
+                                    // One router for both panes, and the
+                                    // side is the PANE'S (fix round 3, N1):
+                                    // this closure names none, so the two
+                                    // mirrored blocks cannot be given each
+                                    // other's. See
+                                    // `handleBrowserMenuEntry(_:selection:side:in:session:)`.
+                                    onMenuAction: { entry, selection, side in handleBrowserMenuEntry(entry, selection: selection, side: side, in: tab, session: session) },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
                                     userFileActions: { fileActionsForMenu() },
                                     // Where this pane's "Transfer ▸ To the
@@ -552,59 +526,13 @@ extension ContentView {
                                             ? remotePromiseProvider(for: item, in: tab, session: session)
                                             : nil
                                     },
-                                    onMenuAction: { entry, selection in
-                                        switch entry {
-                                        case .transferToOtherPane:
-                                            transferSelection(
-                                                selection, from: .remote, in: tab, session: session)
-                                        case .transferToSession(let target):
-                                            transferToSession(
-                                                selection, from: .remote, target: target,
-                                                in: tab, session: session)
-                                        case .openInEditor:
-                                            if let item = selection.first {
-                                                openInEditor(item, in: tab, session: session)
-                                            }
-                                        case .copyPath:
-                                            copyPaths(of: selection)
-                                        case .rename, .infoAndPermissions, .newFolder, .newFile,
-                                            .delete, .computeChecksum:
-                                            break   // handled inside BrowserPane, never forwarded
-                                        // The two diff-view doors (Task 12), the
-                                        // mirror of the local pane's pair above.
-                                        case .compareWithOtherPane:
-                                            compareWithOtherPane(selection, from: .remote,
-                                                in: tab, session: session)
-                                        case .compareTwoSelected:
-                                            compareTwoSelected(selection, on: .remote, in: tab)
-                                        case .compressTo, .extractArchive:
-                                            break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
-                                        case .userFileAction:
-                                            break   // handled inside BrowserPane (BrowserPane+FileActions.swift), never forwarded
-                                        case .backendFileAction(let action):
-                                            // Currently the only backend-contributed action is
-                                            // S3's presigned URL (M14/T5) — keyed off `action.id`
-                                            // so a future second contribution doesn't need a new
-                                            // `BrowserMenuEntry` case, just another `if` here.
-                                            // `selection.count == 1` mirrors the menu-model gate
-                                            // (`BrowserContextMenu.entries`) that only ever offers
-                                            // `backendFileAction` for a single selected file.
-                                            if action.id == "s3.presignedURL",
-                                                selection.count == 1, let file = selection.first,
-                                                let provider = session.remoteFS as? PresignedURLProvider
-                                            {
-                                                // Same "no leading slash" convention
-                                                // `S3FileSystem.objectKey(forPath:)` uses
-                                                // internally: normalize first (collapses any
-                                                // repeated slashes), then drop the single
-                                                // leading one.
-                                                let normalizedPath = RemotePath.normalizedAbsolute(file.path)
-                                                let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
-                                                presignedSheetItem = PresignedSheetItem(
-                                                    itemKey: key, provider: provider)
-                                            }
-                                        }
-                                    },
+                                    // One router for both panes, and the
+                                    // side is the PANE'S (fix round 3, N1):
+                                    // this closure names none, so the two
+                                    // mirrored blocks cannot be given each
+                                    // other's. See
+                                    // `handleBrowserMenuEntry(_:selection:side:in:session:)`.
+                                    onMenuAction: { entry, selection, side in handleBrowserMenuEntry(entry, selection: selection, side: side, in: tab, session: session) },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
                                     fileActions: {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)

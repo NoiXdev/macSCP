@@ -17,6 +17,11 @@ struct ComparisonEntryWiringGuardTests {
     private static let appKit = sources.appendingPathComponent("MacSCPAppKit")
     private static let doorFile = "ContentView+Comparison.swift"
     private static let comparisonFile = "Comparison.swift"
+    /// Where the one menu-action switch lives. Its own file, for the reason
+    /// that file's own doc comment gives: beside the `transferSelection` it
+    /// routes to, it broke a bound `ToolbarTransferConfirmationGuardTests`
+    /// holds over `ContentView+Transfers.swift`.
+    private static let routerFile = "ContentView+MenuActions.swift"
 
     /// Code only: comments and string literals blanked, whitespace collapsed
     /// so a rewrap cannot move an anchor.
@@ -61,30 +66,79 @@ struct ComparisonEntryWiringGuardTests {
     /// switches there are exhaustive, so a missing arm is a build failure —
     /// but an arm that falls through to `break` is not, and that is what this
     /// catches: the entry would be offered and clicking it would do nothing.
-    @Test func bothPanesHandleBothEntries() throws {
+    /// Both entries reach a handler, and NEITHER PANE SPELLS ITS SIDE at the
+    /// menu call at all (fix round 3, N1).
+    ///
+    /// Round 2 anchored each arm together with its own body, which killed the
+    /// within-pane body swap. One layer out it was still open: give the LOCAL
+    /// switch the `.remote` arms and the REMOTE switch the `.local` arms and
+    /// every anchor is still present exactly once, because the guard reads
+    /// the file as one string — the reviewer's probe P1, green scoped AND
+    /// against the whole AppKit target. Both doors of both panes wrong,
+    /// silently, from one copy-paste between two mirrored blocks.
+    ///
+    /// The fix is structural and goes one step further than a per-region
+    /// scan: there is now ONE switch, in `ContentView+Transfers.swift`, and
+    /// the side is not an argument either call site writes — `BrowserPane`
+    /// hands it to `onMenuAction`, off the `side` it was already constructed
+    /// with and already uses for the menu model and the key commands. So the
+    /// two closures are textually identical, there is no second spelling of a
+    /// side to permute, and the swap P1 plants cannot be written.
+    @Test func bothPanesHandleBothEntriesAndNeitherSpellsItsSide() throws {
         let detail = try Self.code("ContentView+Detail.swift")
-        // Positive: the two switches are still there, one per pane.
-        #expect(Self.occurrences(of: "case .transferToOtherPane:", in: detail) == 2)
-
-        // Each arm TOGETHER WITH ITS OWN BODY, as one anchored string (fix
-        // round 1, F3, plant A). The first round counted the arms and counted
-        // the calls, independently — so swapping the two bodies of one pane
-        // left every count unchanged while both doors of that pane went dead,
-        // each handler's own guard returning at once. An anchor that spans
-        // the arm and the call cannot be satisfied by a permutation.
-        for side in ["local", "remote"] {
-            let row = "case .compareWithOtherPane: compareWithOtherPane(selection, "
-                + "from: .\(side), in: tab, session: session)"
-            let pair = "case .compareTwoSelected: compareTwoSelected(selection, "
-                + "on: .\(side), in: tab)"
-            #expect(Self.occurrences(of: row, in: detail) == 1, "\(row)")
-            #expect(Self.occurrences(of: pair, in: detail) == 1, "\(pair)")
+        // Positive: both panes still route their menu somewhere.
+        let call = "onMenuAction: { entry, selection, side in "
+            + "handleBrowserMenuEntry(entry, selection: selection, side: side, "
+            + "in: tab, session: session) },"
+        #expect(Self.occurrences(of: call, in: detail) == 2, "\(call)")
+        #expect(Self.occurrences(of: "handleBrowserMenuEntry(", in: detail) == 2)
+        // Negative, with the count above beside it: the switch is gone from
+        // this file, so there is no per-pane arm left to give to the wrong
+        // pane.
+        for arm in [
+            "case .compareWithOtherPane", "case .compareTwoSelected",
+            "case .transferToOtherPane", "case .copyPath",
+        ] {
+            #expect(!detail.contains(arm), "a pane still switches on \(arm)")
         }
-        // And neither arm of either switch carries the other door's body.
-        #expect(
-            Self.occurrences(of: "case .compareWithOtherPane: compareTwoSelected", in: detail) == 0)
-        #expect(
-            Self.occurrences(of: "case .compareTwoSelected: compareWithOtherPane", in: detail) == 0)
+
+        // The one switch, each arm anchored together with its own body: a
+        // body swap WITHIN it is still a permutation, and still caught.
+        let router = try Self.body("func handleBrowserMenuEntry(", in: Self.routerFile)
+        for (arm, body) in [
+            ("case .compareWithOtherPane:",
+             "compareWithOtherPane(selection, from: side, in: tab, session: session)"),
+            ("case .compareTwoSelected:",
+             "compareTwoSelected(selection, on: side, in: tab)"),
+        ] {
+            #expect(Self.occurrences(of: "\(arm) \(body)", in: router) == 1, "\(arm)")
+        }
+        #expect(Self.occurrences(of: "case .compareWithOtherPane: compareTwoSelected", in: router) == 0)
+        #expect(Self.occurrences(of: "case .compareTwoSelected: compareWithOtherPane", in: router) == 0)
+
+        // And the side the router hands on is the one it was given, never a
+        // literal: a literal here would be the same defect one level in.
+        for literal in ["from: .local", "from: .remote", "on: .local", "on: .remote"] {
+            #expect(!router.contains(literal), "the router spells \(literal)")
+        }
+    }
+
+    /// The side reaches the router from `BrowserPane`, which is the only
+    /// place either pane's side is written down.
+    @Test func theSideComesFromThePaneRatherThanFromTheCallSite() throws {
+        let pane = try Self.code("BrowserPane.swift")
+        #expect(pane.contains(
+            "var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem], BrowserPaneSide) -> Void)? = nil"))
+        #expect(pane.contains("default: onMenuAction?(entry, selection, side)"))
+        // Positive beside it: `side` really is the pane's own stored one, so
+        // the forward above is not reading something a caller passed twice.
+        #expect(pane.contains("let side: BrowserPaneSide"))
+
+        // Each pane writes its side exactly once, in its own construction,
+        // and that is the spelling every other guard already brackets.
+        let detail = try Self.code("ContentView+Detail.swift")
+        #expect(Self.occurrences(of: "side: .local,", in: detail) == 1)
+        #expect(Self.occurrences(of: "side: .remote,", in: detail) == 1)
     }
 
     /// `BrowserPane` forwards what it does not handle itself, so neither
@@ -93,11 +147,59 @@ struct ComparisonEntryWiringGuardTests {
         let pane = try Self.code("BrowserPane.swift")
         // Positive: the forwarding default is there, and the pane does keep
         // other entries to itself.
-        #expect(pane.contains("default: onMenuAction?(entry, selection)"))
+        #expect(pane.contains("default: onMenuAction?(entry, selection, side)"))
         #expect(pane.contains("case .rename:"))
         // Negative: it claims neither comparison entry.
         #expect(!pane.contains("case .compareWithOtherPane"))
         #expect(!pane.contains("case .compareTwoSelected"))
+    }
+
+    /// The tree-wide caller set of `BrowserContextMenu.entries(` (fix round
+    /// 3, item 4).
+    ///
+    /// `destinationRows` is DEFAULTED, and deliberately — house style defaults
+    /// exactly this (`supportsArchiving`'s own doc comment gives the same
+    /// reasoning), and removing it would force five unrelated call sites to
+    /// spell `[]`. The five on the default are latent rather than wrong:
+    /// none of them asks about a comparison entry. What a scoped count cannot
+    /// see is a SEVENTH caller in some other file defaulting into the weaker
+    /// behaviour with nothing failing, so the set is asserted here the way
+    /// this suite asserts `startComparison(`'s: adding a caller is a decision
+    /// somebody makes in this test.
+    @Test func everyCallerOfTheMenuModelIsAccountedFor() throws {
+        var callers: [String: Int] = [:]
+        for url in try Self.swiftFiles() {
+            let code = Self.collapsed(try SourceCorpus.code(of: url))
+            let calls = Self.occurrences(of: "BrowserContextMenu.entries(", in: code)
+            guard calls > 0 else { continue }
+            callers[url.lastPathComponent] = calls
+        }
+        // Six production calls, in three files. The declaration is not a call
+        // and does not appear here.
+        #expect(callers == [
+            "BrowserKeyCommand.swift": 4,
+            "RemoteFileTableView.swift": 1,
+            "ContentView+Transfers.swift": 1,
+        ], "\(callers)")
+        #expect(callers.values.reduce(0, +) == 6)
+
+        // Exactly one of the six passes `destinationRows`, and it is the
+        // context menu's own — the only one that can offer a comparison entry.
+        let table = try Self.code("RemoteFileTableView.swift")
+        #expect(Self.occurrences(of: "destinationRows: currentDestinationRows)", in: table) == 1)
+        var passing: [String] = []
+        for url in try Self.swiftFiles() {
+            let code = Self.collapsed(try SourceCorpus.code(of: url))
+            if Self.occurrences(of: "destinationRows:", in: code) > 0 {
+                passing.append(url.lastPathComponent)
+            }
+        }
+        // The menu model's declaration, the two views that forward the
+        // closure, and the window that supplies it. No other file names it.
+        #expect(passing.sorted() == [
+            "BrowserContextMenu.swift", "BrowserPane.swift", "ContentView+Detail.swift",
+            "RemoteFileTableView.swift",
+        ], "\(passing.sorted())")
     }
 
     /// Both items are titled from the catalogue, never from a literal in the
@@ -269,9 +371,13 @@ struct ComparisonEntryWiringGuardTests {
     }
 
     /// Fix round 1, F1. A file pair has no classification, so the kind check
-    /// in the shared diff step is the only thing between the FAR side of a
-    /// one-row comparison — a path the menu model never saw — and the
-    /// transfer queue. It is stated once, where both diff entry points pass.
+    /// in the shared diff step is the last thing between the FAR side of a
+    /// one-row comparison and the transfer queue — and the only one at all
+    /// for a far side the menu model had no row for. It is stated once, where
+    /// both diff entry points pass. This read "the only thing between the FAR
+    /// side of a one-row comparison — a path the menu model never saw — and
+    /// the transfer queue" until fix round 3: since round 2 the menu model
+    /// does see that side, when the other pane has listed it.
     @Test func theOnlyKindCheckAFilePairGetsIsStatedOnceAndBeforeTheFetch() throws {
         let comparison = try Self.code(Self.comparisonFile)
         #expect(Self.occurrences(of: "notAnOrdinaryFile", in: comparison) == 1)

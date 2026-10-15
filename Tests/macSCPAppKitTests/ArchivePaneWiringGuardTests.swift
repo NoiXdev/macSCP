@@ -56,7 +56,12 @@ struct ArchivePaneWiringGuardTests {
             code.range(of: "case .compressTo(let format): startCompress(format, selection: selection)"))
         let extract = try #require(
             code.range(of: "case .extractArchive(let format): beginExtract(format, selection: selection)"))
-        let forward = try #require(code.range(of: "default: onMenuAction?(entry, selection)"))
+        // The forward carries the pane's own `side` since the diff view's fix
+        // round 3 (N1); this anchor read `default: onMenuAction?(entry,
+        // selection)` until then. What it pins is unchanged — that the
+        // archive arms come BEFORE the forwarding default — and only the
+        // spelling of the default moved.
+        let forward = try #require(code.range(of: "default: onMenuAction?(entry, selection, side)"))
         #expect(compress.upperBound <= forward.lowerBound)
         #expect(extract.upperBound <= forward.lowerBound)
     }

@@ -117,6 +117,48 @@ struct ComparisonDiffViewTests {
 
     // MARK: - Five refusals, five texts
 
+    /// The list above is hand-maintained, and that is the one thing about it
+    /// nothing checked (fix round 3, item 5). A SIXTH `DiffRefusal` case not
+    /// added to `refusals` leaves every count in this file at 5 and passes,
+    /// so its wording, its key, its distinctness and its "never reads as
+    /// nothing differs" all go untested in silence. The structural floor is
+    /// real — `wording(for:)` and `refusalText` switch exhaustively with no
+    /// `default:`, so a sixth case does not compile until somebody names it —
+    /// which makes the exposure "untested", not "unwritten".
+    ///
+    /// `DiffRefusal` has associated values, so it cannot be `CaseIterable`.
+    /// The list is therefore tied to the number of `case` declarations in the
+    /// enum's own body, read from source: the technique this suite already
+    /// uses for the view code below.
+    @Test func theRefusalListHoldsEveryCaseTheEnumDeclares() throws {
+        let core = Self.repoRoot.appendingPathComponent("Sources/macSCPCore")
+        let source = try SourceCorpus.code(
+            of: core.appendingPathComponent("Compare/DiffEligibility.swift"))
+        let body = try TransferQueueBarCancelGuardTests.declarationBody(
+            of: "public enum DiffRefusal: Error, Equatable, Sendable", in: source)
+        // Top-level `case` declarations of the enum's own body — not the
+        // nested `Side`'s, whose cases sit one brace deeper.
+        var depth = 0
+        var declared = 0
+        for line in body.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            // `declarationBody` hands back the body WITHOUT its outer
+            // braces, so the enum's own cases sit at depth 0 and the nested
+            // `Side`'s at depth 1.
+            if depth == 0, trimmed.hasPrefix("case ") { declared += 1 }
+            for character in line {
+                if character == "{" { depth += 1 }
+                if character == "}" { depth -= 1 }
+            }
+        }
+        #expect(declared == Self.refusals.count, "\(declared) cases, \(Self.refusals.count) listed")
+        // Positive for the reader itself: it found cases at all, and it did
+        // NOT count the nested enum's two.
+        #expect(declared == 5)
+        #expect(body.contains("case left"))
+        #expect(body.contains("case right"))
+    }
+
     @Test func eachRefusalHasItsOwnKeyAndItsOwnText() {
         let wordings = Self.refusals.map { Presentation.wording(for: $0) }
         #expect(wordings.count == 5)

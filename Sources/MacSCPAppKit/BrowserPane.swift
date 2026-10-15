@@ -26,7 +26,18 @@ struct BrowserPane: View {
     /// source of truth for which pane this is (M11g/T2 review, finding M6).
     let fileSystem: any RemoteFileSystem
     var pasteboardWriter: ((RemoteFileItem) -> NSPasteboardWriting?)? = nil
-    var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem]) -> Void)? = nil
+    /// What the pane does NOT handle itself, forwarded to its owner —
+    /// together with THIS PANE'S SIDE (diff view fix round 3, N1).
+    ///
+    /// The side is a parameter of the callback rather than something the
+    /// owner writes down again at the call: `side` below is already the
+    /// single source of truth for which pane this is, and it already decides
+    /// the menu model's answers and the key commands. Two mirrored call sites
+    /// each re-spelling it was a permutation nobody could see — swap the two
+    /// and every anchor a source scan counts is still present exactly once,
+    /// while both panes act on the other one's file system. Handed over, the
+    /// defect cannot be written.
+    var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem], BrowserPaneSide) -> Void)? = nil
     /// Cross-session transfer targets for the context menu (M8b/T4) —
     /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
@@ -350,7 +361,7 @@ struct BrowserPane: View {
                             beginExtract(format, selection: selection)
                         case .userFileAction(let action):
                             beginFileAction(action, selection: selection)
-                        default: onMenuAction?(entry, selection)
+                        default: onMenuAction?(entry, selection, side)
                         }
                     },
                     onGoUp: { Task { await viewModel.goUp() } },

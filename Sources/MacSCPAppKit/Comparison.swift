@@ -437,12 +437,16 @@ extension Comparison {
             // The KIND before the size (fix round 1, F1). A `.filePair`
             // comparison skips the classification by design — the user asked
             // for the content — so this is the only place either side's kind
-            // is looked at, and for a one-row comparison the FAR side is a
-            // path `BrowserContextMenu` never saw: it is spelled by
-            // `ContentView.compareWithOtherPane(…)` out of a name and a
-            // directory, and nothing before this asks what is there. Without
-            // this, a directory on the far side was handed to the transfer
-            // queue as a download and the user got a raw transfer failure.
+            // AS `stat` REPORTS IT is looked at. The qualifier is fix round
+            // 3's: this comment read "the only place either side's kind is
+            // looked at", which stopped being true in round 2, when the menu
+            // model began reading the FAR side's kind from the other pane's
+            // listing (`BrowserContextMenu.entries(… destinationRows:)`) —
+            // better information, since a listing sees a link where `stat`
+            // follows it. What this check is still alone in seeing is a far
+            // side the menu model had no row for. Without it, a directory
+            // there was handed to the transfer queue as a download and the
+            // user got a raw transfer failure.
             //
             // Before the size, not after: both orders answer truthfully, and
             // only this one answers with the fact the user can act on. See
