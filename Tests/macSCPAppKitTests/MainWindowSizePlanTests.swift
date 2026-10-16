@@ -368,16 +368,18 @@ struct MainWindowSizePlanTests {
 
         /// What `ContentView.shrinkIfPristine()` does, in its order.
         ///
-        /// `hasEverConnected` is a parameter, `false` by default so the
-        /// walks written before the shrink was narrowed (2026-10-16) keep
-        /// asserting what they asserted. That default is NOT a faithful model
-        /// of the app for them: a window that has connected and then
-        /// disconnected passes `true` there and does not shrink, so the
-        /// sequence those walks replay (connect, drag, disconnect, shrink) no
-        /// longer happens in a running window. They still pin what the plan
-        /// does for the one window that does shrink, and the walk that
-        /// follows them passes `true`.
-        mutating func disconnectLastTab(hasEverConnected: Bool = false) {
+        /// `hasEverConnected` has NO default: every call says which window it
+        /// is. The app sets the flag the first time any tab of the window is
+        /// connected and never clears it (`ContentView.hasEverConnected`), so
+        /// a walk that calls `connect()` and then this MUST pass `true`, and
+        /// only a window that never called `connect()` may pass `false`.
+        ///
+        /// Withdrawn: "`hasEverConnected` is a parameter, `false` by default
+        /// so the walks written before the shrink was narrowed (2026-10-16)
+        /// keep asserting what they asserted." That default let three walks
+        /// replay connect, drag, disconnect, shrink, a sequence the running
+        /// app can no longer perform, and stay green.
+        mutating func disconnectLastTab(hasEverConnected: Bool) {
             guard let shrink = MainWindowSizePlan.shrink(
                 current: frame, isPristine: true, hasEverConnected: hasEverConnected,
                 isPrimaryWindow: true, isFullScreen: false,
@@ -422,27 +424,46 @@ struct MainWindowSizePlanTests {
         #expect(window.persisted == Self.browser)
     }
 
-    /// (b) Quit after a disconnect shrank the window: before the fix the
-    /// autosave held 700×460 and nothing held the browser size.
-    @Test func quitAfterAShrinkStillStoresTheBrowserSize() {
+    /// (b) Quit after a shrink: the autosave holds the size the window was at,
+    /// not the form size the shrink left it at, and that size is persisted.
+    ///
+    /// The window here has NEVER connected: it is the only kind that still
+    /// shrinks (`hasEverConnected`), so the size is one the user dragged an
+    /// unconnected form window to, then a second tab was opened and closed
+    /// again. That is the reachable setup. Replaced: the body used to read
+    /// `window.connect()`, `window.userResize(to: Self.browser)`,
+    /// `window.disconnectLastTab()` and then `#expect(window.frame == Self.form)`
+    /// — a connected window shrinking when its connection closed, which the app
+    /// no longer does. The property is unchanged (a shrink suspends the
+    /// autosave before the resize, so quit stores the size and not the form);
+    /// the sequence that reaches it is not. Renamed from
+    /// `quitAfterAShrinkStillStoresTheBrowserSize`: what is stored is a size
+    /// the user dragged an UNCONNECTED window to, not a browser size.
+    @Test func quitAfterAnUnconnectedWindowShrankStillStoresTheSizeItWasDraggedTo() {
         var window = AutosaveModel(frame: Self.form)
-        window.connect()
-        window.userResize(to: Self.browser)
-        window.disconnectLastTab()
+        window.resize(to: Self.browser)
+        window.disconnectLastTab(hasEverConnected: false)
         #expect(window.frame == Self.form)
+        #expect(window.suspended)
         #expect(window.stored == Self.browser)
         #expect(window.persisted == Self.browser)
     }
 
     /// (c) A connect after a relaunch — started from the form size, the one
     /// case where the stored frame does not already carry the size — grows
-    /// to the persisted browser size, not to the floor; and the autosave is
-    /// writing again afterwards.
+    /// to the persisted size, not to the floor; and the autosave is writing
+    /// again afterwards.
+    ///
+    /// Same setup change as (b), for the same reason: the persisted size
+    /// comes from an unconnected window's shrink, the only shrink left.
+    /// Replaced: `window.connect()`, `window.userResize(to: Self.browser)`,
+    /// `window.disconnectLastTab()` before the relaunch. The route through a
+    /// connected window's drag is walked by
+    /// `aWindowSizedWhileConnectedComesBackAtThatSizeAfterAClosedConnectionAndARelaunch`.
     @Test func aConnectAfterARelaunchGrowsToThePersistedSize() {
         var window = AutosaveModel(frame: Self.form)
-        window.connect()
-        window.userResize(to: Self.browser)
-        window.disconnectLastTab()
+        window.resize(to: Self.browser)
+        window.disconnectLastTab(hasEverConnected: false)
         var relaunched = AutosaveModel(frame: Self.form, persisted: window.persisted)
         relaunched.connect()
         #expect(relaunched.frame == Self.browser)
@@ -451,17 +472,44 @@ struct MainWindowSizePlanTests {
 
     /// A shrink, then a connect in the same run: the autosave comes back on
     /// with the grown frame, so a later drag is written again.
+    ///
+    /// The shrink is the unconnected window's, as in (b), and the connect is
+    /// that window's first, which is why it is reachable: the flag only turns
+    /// true at that connect. Replaced: the setup used to connect and drag
+    /// first and then call `window.disconnectLastTab()`.
     @Test func aConnectAfterAShrinkResumesTheAutosave() {
         var window = AutosaveModel(frame: Self.form)
-        window.connect()
-        window.userResize(to: Self.browser)
-        window.disconnectLastTab()
+        window.resize(to: Self.browser)
+        window.disconnectLastTab(hasEverConnected: false)
+        #expect(window.suspended)
         window.connect()
         #expect(!window.suspended)
         let wider = CGSize(width: 1600, height: 900)
         window.userResize(to: wider)
         #expect(window.stored == wider)
         #expect(window.persisted == wider)
+    }
+
+    /// The promise the user documentation makes, walked end to end: connect,
+    /// size the window, close the connection — the window keeps its size —
+    /// then quit, relaunch and connect again, and it comes back at that size.
+    /// Both ways a relaunch can open: at the frame the autosave stored, and
+    /// (the worst case, which the persisted size exists for) at the form size.
+    @Test func aWindowSizedWhileConnectedComesBackAtThatSizeAfterAClosedConnectionAndARelaunch() {
+        var window = AutosaveModel(frame: Self.form)
+        window.connect()
+        window.userResize(to: Self.browser)
+        window.disconnectLastTab(hasEverConnected: true)
+        #expect(window.frame == Self.browser)
+
+        var atStoredFrame = AutosaveModel(frame: window.stored ?? Self.form, persisted: window.persisted)
+        atStoredFrame.connect()
+        #expect(atStoredFrame.frame == Self.browser)
+
+        var atFormSize = AutosaveModel(frame: Self.form, persisted: window.persisted)
+        atFormSize.connect()
+        #expect(atFormSize.frame == Self.browser)
+        #expect(atFormSize.stored == Self.browser)
     }
 
     /// The reported case, walked: a window that connected, was sized by the
