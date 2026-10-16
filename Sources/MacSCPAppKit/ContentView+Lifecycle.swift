@@ -1707,7 +1707,10 @@ extension ContentView {
     /// Closes a tab: tab-local teardown first, then either removal from the
     /// model (the last tab is not removable — `TabsViewModel.closeTab`
     /// returns false and it simply stays as a torn-down form tab, reverting
-    /// the window to the compact size via `shrinkIfPristine`) or, with
+    /// the window to the compact size via `shrinkIfPristine` when that window
+    /// has never been connected, and leaving its size alone when it has;
+    /// withdrawn: "reverting the window to the compact size via
+    /// `shrinkIfPristine`", which held for every window) or, with
     /// another tab around, removal from the model. Only when the CLOSED tab
     /// was the active one does the auto-activated neighbor get its attention
     /// indicator reset (same rule as `activate(_:)`) — closing a background
@@ -2197,8 +2200,19 @@ extension ContentView {
     }
 
     /// Remembers the browser size and shrinks back to the compact form size
-    /// — but ONLY when the action left the window with a single unconnected
-    /// tab (M8a/T3). With another tab still around, the window keeps its size.
+    /// — but ONLY in a window that has never had a connected tab, and only
+    /// when the action left it with a single unconnected tab (M8a/T3). With
+    /// another tab still around, or once any tab of this window has been
+    /// connected (`hasEverConnected`), the window keeps its size.
+    ///
+    /// Withdrawn: "but ONLY when the action left the window with a single
+    /// unconnected tab (M8a/T3). With another tab still around, the window
+    /// keeps its size." That sentence counted "the connection was just
+    /// closed" as the same state as "nothing was ever connected", and shrank
+    /// a window the user had sized (maintainer report, 2026-10-16). The three
+    /// callers, `performClose`, the release of tabs from a window and
+    /// `disconnectToForm(_:)`, pass the same flag through the plan, so none of
+    /// them shrinks a window that has connected.
     ///
     /// The primary window also persists the size and suspends its frame
     /// autosave BEFORE the resize, so the form size is never the frame
@@ -2207,7 +2221,7 @@ extension ContentView {
         guard let window,
               let shrink = MainWindowSizePlan.shrink(
                 current: window.frame.size, isPristine: isPristine,
-                isPrimaryWindow: isPrimaryWindow,
+                hasEverConnected: hasEverConnected, isPrimaryWindow: isPrimaryWindow,
                 isFullScreen: window.styleMask.contains(.fullScreen),
                 frameAutosaveSuspended: frameAutosaveSuspended)
         else { return }

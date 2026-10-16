@@ -324,7 +324,10 @@ struct ContentView: View {
     /// subscription and no polling, and `.onChange(…, initial: true)` sees
     /// every transition in both directions.
     @Environment(\.controlActiveState) var controlActiveState
-    /// Last browser window size, remembered on disconnect — the next
+    /// Last browser window size, remembered when a window that has never
+    /// connected shrinks back to the form (withdrawn: "remembered on
+    /// disconnect", which stopped being true when a window that has
+    /// connected stopped shrinking on disconnect, 2026-10-16) — the next
     /// connect grows to it instead of the minimum size, if it's larger.
     /// In memory, for this run only; the primary window also persists it
     /// (`SettingsStore.mainWindowBrowserSize`) and prefers that — see
@@ -336,6 +339,15 @@ struct ContentView: View {
     /// `false` in a window opened by a move, which has no autosave name.
     /// See `MainWindowSizePlan`.
     @State var frameAutosaveSuspended = false
+    /// Whether any tab of THIS window has ever been connected. Starts `false`,
+    /// flips to `true` in the `.onChange` of `anyTabConnected` in `body`, and
+    /// is never set back: it is what keeps a window the user has sized from
+    /// shrinking to the form when the last connection is closed
+    /// (`MainWindowSizePlan.shrink(…hasEverConnected:…)`). A window-scoped
+    /// `@State`, like `frameAutosaveSuspended` — a tab that moves in carries
+    /// its connection with it, and the any-tab form of the check is what
+    /// notices that.
+    @State var hasEverConnected = false
     /// The width the session sidebar comes up at, read from `SettingsStore`
     /// once, when the window is built.
     ///
@@ -956,9 +968,18 @@ struct ContentView: View {
     /// place that writes the frame and the place that reads it.
     static let primaryFrameAutosaveName = "macSCP.primary"
 
-    /// "Fresh window" state: a single, unconnected tab. Drives the compact
-    /// form geometry — with a second tab around, the window keeps its
-    /// browser size even while the active tab shows a form.
+    /// A single, unconnected tab. Drives the compact form geometry — with a
+    /// second tab around, the window keeps its browser size even while the
+    /// active tab shows a form.
+    ///
+    /// This is a fact about the tabs RIGHT NOW, not about the window's
+    /// history. It was documented as the "Fresh window" state, which is only
+    /// half of what it computes: a window that has connected and then closed
+    /// its connection is pristine too. Withdrawn: "\"Fresh window\" state:
+    /// a single, unconnected tab." The minimum-size and tab-strip decisions
+    /// read it as it is; the decision to SHRINK reads it together with
+    /// `hasEverConnected`, which is what separates a window nobody has
+    /// connected in from one that has been sized and disconnected.
     var isPristine: Bool {
         tabsModel.isLastTab && !tabsModel.activeTab.isConnected
     }
@@ -968,6 +989,13 @@ struct ContentView: View {
     /// that doesn't observe `tabsModel`, so this is the value it reads to
     /// enable/disable its two entries.
     private var isActiveTabConnected: Bool { activeTab.isConnected }
+
+    /// Whether ANY tab of this window is connected, the active one or not.
+    /// Read by the `.onChange` in `body` that sets `hasEverConnected`: the
+    /// active tab alone would miss a connected tab that arrives in the
+    /// window in the background, and `SessionTab.isConnected` is `@Observable`
+    /// state, so the change is seen.
+    private var anyTabConnected: Bool { tabsModel.tabs.contains(where: \.isConnected) }
 
     /// Mirrored into `tabCommands.activeTabSupportsShell` via `.onChange`
     /// below (M12/T7b), same rationale/mechanism as `isActiveTabConnected`
@@ -1067,6 +1095,17 @@ struct ContentView: View {
             // render too, not just on later transitions.
             .onChange(of: isActiveTabConnected, initial: true) { _, newValue in
                 tabCommands.isActiveTabConnected = newValue
+            }
+            // Remembers that this window has had a connected tab, for good
+            // (`hasEverConnected`, never reset): a window that has connected
+            // keeps the size the user left it at when the connection closes,
+            // instead of shrinking to the form. It watches ANY tab rather than
+            // the active one so a connected tab that moves in is counted, and
+            // `initial: true` covers a window built around one. It fires while
+            // the tab is connected, so it has always run before the teardown
+            // that precedes `shrinkIfPristine()`.
+            .onChange(of: anyTabConnected, initial: true) { _, newValue in
+                if newValue { hasEverConnected = true }
             }
             // Keeps `tabCommands.activeTabSupportsShell` in sync (M12/T7b) —
             // see that property's doc comment; mirrors `isActiveTabConnected`

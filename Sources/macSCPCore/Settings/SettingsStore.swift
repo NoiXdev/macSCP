@@ -520,9 +520,13 @@ public final class SettingsStore {
     /// `mainWindowBrowserSize`, stored as `{"width": w, "height": h}`).
     ///
     /// A connect grows the main window to this size rather than to the
-    /// smallest browser size, so a window that shrank to the connection form
-    /// on a disconnect — or came back at the form size after a relaunch —
-    /// opens its next session at the size it was used at. Geometry, not a
+    /// smallest browser size, so a window that came back at the form size
+    /// after a relaunch opens its next session at the size it was used at.
+    /// Withdrawn: "so a window that shrank to the connection form on a
+    /// disconnect — or came back at the form size after a relaunch — opens
+    /// its next session at the size it was used at." A window that has
+    /// connected no longer shrinks on a disconnect (2026-10-16), so the first
+    /// half no longer describes anything that happens. Geometry, not a
     /// secret, and not a window: when it is written and what it grows are
     /// App-layer decisions (`MainWindowSizePlan`), because nothing in Core
     /// knows about windows.

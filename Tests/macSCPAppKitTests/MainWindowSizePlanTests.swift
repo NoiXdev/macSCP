@@ -80,11 +80,39 @@ struct MainWindowSizePlanTests {
 
     @Test func onlyAPristineWindowLargerThanTheFormShrinks() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: false, isPrimaryWindow: true, isFullScreen: false,
+            current: Self.browser, isPristine: false, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false) == nil)
         #expect(MainWindowSizePlan.shrink(
-            current: Self.form, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
+            current: Self.form, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false) == nil)
+    }
+
+    /// A window in which a tab has connected keeps whatever size the user
+    /// left it at, even when it is back to one unconnected tab and larger
+    /// than the form: the same arguments that shrink above, with only
+    /// `hasEverConnected` flipped, in every combination of the other flags.
+    @Test func aWindowThatHasConnectedNeverShrinks() {
+        for isPrimaryWindow in [true, false] {
+            for isFullScreen in [true, false] {
+                for suspended in [true, false] {
+                    #expect(MainWindowSizePlan.shrink(
+                        current: Self.browser, isPristine: true, hasEverConnected: true,
+                        isPrimaryWindow: isPrimaryWindow, isFullScreen: isFullScreen,
+                        frameAutosaveSuspended: suspended) == nil)
+                }
+            }
+        }
+    }
+
+    /// The positive beside the negative above: the same arguments with
+    /// `hasEverConnected` false do shrink, so the `nil`s above are the flag's
+    /// doing and not a property of the other arguments.
+    @Test func aWindowThatHasNeverConnectedStillShrinks() {
+        #expect(MainWindowSizePlan.shrink(
+            current: Self.browser, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: false, frameAutosaveSuspended: false) != nil)
     }
 
     /// The primary window, shrinking from its browser size: the size is
@@ -92,7 +120,8 @@ struct MainWindowSizePlanTests {
     /// form size is never written as the window's frame.
     @Test func thePrimaryWindowPersistsItsBrowserSizeAndSuspendsTheAutosave() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
+            current: Self.browser, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: false)
             == .init(browserSize: Self.browser, persistsBrowserSize: true, suspendsFrameAutosave: true))
     }
@@ -103,14 +132,16 @@ struct MainWindowSizePlanTests {
     @Test func aSecondShrinkWhileSuspendedPersistsNothing() {
         let draggedForm = CGSize(width: 800, height: 500)
         #expect(MainWindowSizePlan.shrink(
-            current: draggedForm, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
+            current: draggedForm, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: false,
             frameAutosaveSuspended: true)
             == .init(browserSize: draggedForm, persistsBrowserSize: false, suspendsFrameAutosave: true))
     }
 
     @Test func aSecondaryWindowShrinksWithoutPersistingOrSuspending() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: true, isPrimaryWindow: false, isFullScreen: false,
+            current: Self.browser, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: false, isFullScreen: false,
             frameAutosaveSuspended: false)
             == .init(browserSize: Self.browser, persistsBrowserSize: false, suspendsFrameAutosave: false))
     }
@@ -161,7 +192,8 @@ struct MainWindowSizePlanTests {
     /// size.
     @Test func aShrinkInFullScreenPersistsNothing() {
         #expect(MainWindowSizePlan.shrink(
-            current: Self.browser, isPristine: true, isPrimaryWindow: true, isFullScreen: true,
+            current: Self.browser, isPristine: true, hasEverConnected: false,
+            isPrimaryWindow: true, isFullScreen: true,
             frameAutosaveSuspended: false)
             == .init(browserSize: Self.browser, persistsBrowserSize: false, suspendsFrameAutosave: true))
     }
@@ -335,9 +367,20 @@ struct MainWindowSizePlanTests {
         }
 
         /// What `ContentView.shrinkIfPristine()` does, in its order.
-        mutating func disconnectLastTab() {
+        ///
+        /// `hasEverConnected` is a parameter, `false` by default so the
+        /// walks written before the shrink was narrowed (2026-10-16) keep
+        /// asserting what they asserted. That default is NOT a faithful model
+        /// of the app for them: a window that has connected and then
+        /// disconnected passes `true` there and does not shrink, so the
+        /// sequence those walks replay (connect, drag, disconnect, shrink) no
+        /// longer happens in a running window. They still pin what the plan
+        /// does for the one window that does shrink, and the walk that
+        /// follows them passes `true`.
+        mutating func disconnectLastTab(hasEverConnected: Bool = false) {
             guard let shrink = MainWindowSizePlan.shrink(
-                current: frame, isPristine: true, isPrimaryWindow: true, isFullScreen: false,
+                current: frame, isPristine: true, hasEverConnected: hasEverConnected,
+                isPrimaryWindow: true, isFullScreen: false,
                 frameAutosaveSuspended: suspended)
             else { return }
             if shrink.persistsBrowserSize { persisted = shrink.browserSize }
@@ -421,7 +464,45 @@ struct MainWindowSizePlanTests {
         #expect(window.persisted == wider)
     }
 
+    /// The reported case, walked: a window that connected, was sized by the
+    /// user, and then had its connection closed stays at that size, with its
+    /// autosave still writing and the browser size still persisted from the
+    /// drag — so nothing is lost by the shrink not happening.
+    @Test func disconnectingAWindowThatHasConnectedKeepsItsSizeAndItsPersistedOne() {
+        var window = AutosaveModel(frame: Self.form)
+        window.connect()
+        window.userResize(to: Self.browser)
+        window.disconnectLastTab(hasEverConnected: true)
+        #expect(window.frame == Self.browser)
+        #expect(window.stored == Self.browser)
+        #expect(window.persisted == Self.browser)
+        #expect(!window.suspended)
+        // And a drag after the disconnect is written by the autosave, which
+        // the shrink used to have suspended.
+        let dragged = CGSize(width: 1500, height: 950)
+        window.resize(to: dragged)
+        #expect(window.stored == dragged)
+    }
+
     // MARK: - Source guards
+
+    /// `hasEverConnected` is set in one place and never cleared: the
+    /// declaration, and the one assignment in the any-tab `.onChange`. A
+    /// second assignment of any value would let a window forget that it had
+    /// connected. Read from the code with comments stripped.
+    @Test func hasEverConnectedIsSetOnceAndNeverReset() throws {
+        let contentView = try Self.code(of: Self.contentViewFile)
+        #expect(contentView.contains("@State var hasEverConnected = false"),
+            "the declaration moved — re-anchor this guard")
+        #expect(contentView.contains("if newValue { hasEverConnected = true }"),
+            "the one place the flag flips is gone")
+        #expect(try Self.occurrences(of: "hasEverConnected = ") == 2, """
+            `hasEverConnected` is assigned somewhere besides its declaration and the \
+            `.onChange` that sets it to true — a reset would shrink a window the user sized.
+            """)
+        #expect(try Self.occurrences(of: "hasEverConnected: hasEverConnected") == 1,
+            "shrinkIfPristine() must hand the flag to the plan, and nothing else needs to")
+    }
 
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()

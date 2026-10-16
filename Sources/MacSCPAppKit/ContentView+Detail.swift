@@ -2315,8 +2315,11 @@ private struct SidebarWidthSample: Equatable {
 /// of those is destructive. A pristine window (one unconnected tab) holds
 /// its content to 700 points against a 500-point detail minimum, leaving
 /// 200 for the sidebar, well under the 340 `SettingsStore
-/// .sidebarWidthRange` allows. Disconnecting the last tab shrinks the
-/// window to exactly that; a recorder that wrote down every width it saw
+/// .sidebarWidthRange` allows. Closing the last tab of a window that has
+/// never connected shrinks the window to exactly that (withdrawn:
+/// "Disconnecting the last tab shrinks the window to exactly that", which
+/// held for every window until 2026-10-16, when a window that has connected
+/// stopped shrinking); a recorder that wrote down every width it saw
 /// would take a sidebar the user had dragged to 340 and store 200 in its
 /// place, having been told nothing by the user at all.
 ///
