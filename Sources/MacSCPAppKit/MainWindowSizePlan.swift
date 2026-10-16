@@ -39,8 +39,27 @@ import Foundation
 /// Primary window only. A window opened by a move has no autosave name (see
 /// `applyFrameAutosave(to:)`) and keeps its remembered size in memory, as
 /// every window did before.
+///
+/// **Narrowed 2026-10-16 (maintainer report: "the window keeps shrinking and
+/// doesn't stay at the size you set").** The two halves above describe a
+/// shrink after EVERY disconnect, and the paragraph headed "What went wrong
+/// before" describes the state before them: "A disconnect that left one
+/// unconnected tab shrank the window to the form size". A window in which a
+/// tab has connected no longer shrinks at all (`shrink`'s `hasEverConnected`);
+/// it keeps the size the user left it at, so its autosave is never suspended
+/// by a disconnect and the shrink no longer persists a browser size for it.
+/// That size reaches `SettingsStore.mainWindowBrowserSize` through the
+/// live-resize recording (`persistsLiveResize`) while the window is
+/// connected, and the autosave holds the frame itself. Both halves still
+/// apply, unchanged, to the one case that does shrink: a window nobody has
+/// connected in, left with one form tab after a second one closed. Half 2's
+/// "at the shrink, and whenever the user finishes dragging" is therefore
+/// mostly the second of the two now.
 enum MainWindowSizePlan {
-    /// The compact size a window with one unconnected tab shrinks to. Its
+    /// The compact size a window that has never connected shrinks to when it
+    /// is left with one unconnected tab (withdrawn: "The compact size a
+    /// window with one unconnected tab shrinks to.", which named no
+    /// precondition on the window's history). Its
     /// width is also that window's minimum width, and its height every
     /// window's minimum height (`ContentView.windowChrome(_:)`).
     static let formSize = CGSize(width: 700, height: 460)
@@ -89,8 +108,23 @@ enum MainWindowSizePlan {
         let suspendsFrameAutosave: Bool
     }
 
-    /// Only a window left with a single unconnected tab shrinks, and only
-    /// when it is larger than the form in some dimension (M8a/T3).
+    /// Only a window that has NEVER had a connected tab shrinks, and only
+    /// when it is left with a single unconnected tab and is larger than the
+    /// form in some dimension (M8a/T3).
+    ///
+    /// Withdrawn: "Only a window left with a single unconnected tab shrinks,
+    /// and only when it is larger than the form in some dimension (M8a/T3)."
+    /// That rule caught one case too many. "Never connected yet" and "the
+    /// connection was just closed" are the same state in `isPristine`, so a
+    /// window the user had sized and then disconnected in was shrunk back to
+    /// the form (maintainer report, 2026-10-16: "the window keeps shrinking
+    /// and doesn't stay at the size you set"). A window that has had a
+    /// connected tab keeps whatever size the user left it at, for the rest of
+    /// its life: `hasEverConnected` answers `nil` before anything else is
+    /// asked. A window nobody has connected in still opens compact, still
+    /// grows on its first connect (`connectGrowth`), and still shrinks when
+    /// a second form tab, closed again, leaves a form window the user had
+    /// dragged larger.
     ///
     /// An already-suspended primary window was already shrunk once and not
     /// connected since, so what it measures now is a form window the user
@@ -98,9 +132,10 @@ enum MainWindowSizePlan {
     /// size measured in full screen (fix round 1): that is the screen's
     /// size, not one the user chose for the window.
     static func shrink(
-        current: CGSize, isPristine: Bool, isPrimaryWindow: Bool, isFullScreen: Bool,
-        frameAutosaveSuspended: Bool
+        current: CGSize, isPristine: Bool, hasEverConnected: Bool, isPrimaryWindow: Bool,
+        isFullScreen: Bool, frameAutosaveSuspended: Bool
     ) -> Shrink? {
+        guard !hasEverConnected else { return nil }
         guard isPristine, current.width > formSize.width || current.height > formSize.height
         else { return nil }
         return Shrink(

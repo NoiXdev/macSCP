@@ -131,6 +131,10 @@ present:
   only tab is connected, the window stays at browser size; a form tab shows
   the form top-aligned in the large window. It only shrinks back once exactly
   one unconnected tab remains again. `lastBrowserSize` stays window-wide.
+  *Superseded 2026-10-16:* "It only shrinks back once exactly one
+  unconnected tab remains again." now holds only for a window in which no
+  tab has ever connected (`hasEverConnected`); a window that has connected
+  keeps the size the user left it at when its connection closes.
 - **Window title:** "macSCP — ‹titleName of the active tab›", otherwise
   "macSCP".
 - **Toolbar** acts on the active tab (upload/download/⌘T/disconnect).
