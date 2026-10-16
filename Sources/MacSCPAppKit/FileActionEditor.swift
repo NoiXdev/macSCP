@@ -25,9 +25,13 @@ import macSCPCore
 /// the action runs in. Nothing is run, and the sample files stand for nothing
 /// the server said.
 ///
-/// View code, with no test that draws it (this project has no SwiftUI
-/// rendering harness). What is tested is what it renders:
-/// `fileActionProblemText`, `FileActionAuthoring`, and the wiring guard.
+/// Two kinds of test. What it renders is tested as data:
+/// `fileActionProblemText`, `FileActionAuthoring`, and the wiring guard. What
+/// it needs in width is measured by hosting it: `FileActionEditorLayoutGuardTests`
+/// does that per catalogue. This comment used to say "View code, with no test
+/// that draws it (this project has no SwiftUI rendering harness)"; the harness
+/// is `ViewTestabilitySpike`'s, and the width of this sheet is now measured
+/// with it.
 struct FileActionEditor: View {
     let existing: FileAction?
     let store: FileActionStore
@@ -104,6 +108,39 @@ struct FileActionEditor: View {
     }
 
     var body: some View {
+        sheetContent
+            .frame(width: Self.sheetWidth)
+    }
+
+    /// The width the sheet grants its content, in points.
+    ///
+    /// Fixed, and that is a limit rather than a feature: a fixed frame does
+    /// not refuse content that needs more, it lets it overflow and centres
+    /// it, clipping both edges. A flexible frame does not help, measured
+    /// 2026-10-16 on this content with the German and the Polish catalogue:
+    /// `.frame(minWidth:idealWidth:)`, `.frame(idealWidth:)` and a `ZStack`
+    /// floor each either reported the frame's own width while the content
+    /// (which, asked at 380 pt, answered 411 pt) overflowed it, or opened the
+    /// sheet at its widest unwrapped text (843 pt in German). So the width is not
+    /// something the layout can negotiate, and what keeps content inside it
+    /// is `FileActionEditorLayoutGuardTests`, which measures the content per
+    /// catalogue against this number.
+    ///
+    /// The number was 520 against English alone. The "Runs" choice was a
+    /// segmented picker, whose labels sit side by side and cannot wrap; in
+    /// Polish that alone needed more than 520. It is a radio group now, which
+    /// stacks, so what is widest is one label, not two.
+    ///
+    /// Every localized control that cannot wrap is `.fixedSize()` — the radio
+    /// group, the two checkboxes, the kind picker and the placement menu — so
+    /// what the content reports as its minimum width is what it needs. A
+    /// compressible control would report a smaller minimum and be squeezed
+    /// (its labels cut) without anything overflowing, which no width
+    /// measurement can see.
+    static let sheetWidth: CGFloat = 520
+
+    /// Everything the sheet draws, before any width is imposed on it.
+    var sheetContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(isEditing
                 ? L10n.string("fileAction.editor.titleEdit", "Edit File Action")
@@ -143,7 +180,8 @@ struct FileActionEditor: View {
                         }
                     }
                     .labelsHidden()
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.radioGroup)
+                    .fixedSize()
                     Text(perSelection == .oncePerFile
                         ? L10n.string(
                             "fileAction.editor.form.perFile.hint",
@@ -166,6 +204,7 @@ struct FileActionEditor: View {
                         isOn: $runsOnLocal)
                 }
                 .toggleStyle(.checkbox)
+                .fixedSize()
             }
 
             variablesSection
@@ -210,7 +249,6 @@ struct FileActionEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 520)
         .textFieldStyle(.roundedBorder)
     }
 
@@ -291,7 +329,7 @@ struct FileActionEditor: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .fixedSize()
                 if snippetBelongsInCommandAsPlaceholder(draft.wrappedValue.variable) {
                     let insertLabel = L10n.string("snippets.variables.insert", "Insert in command")
                     Button {
@@ -328,6 +366,7 @@ struct FileActionEditor: View {
                         .tag(SnippetVariable.Placement.environment)
                 }
                 .labelsHidden()
+                .fixedSize()
                 TextField(
                     L10n.string("snippets.variables.default", "Default"),
                     text: draft.defaultValue,
