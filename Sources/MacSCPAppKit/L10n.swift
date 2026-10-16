@@ -64,7 +64,21 @@ enum L10n {
     /// returned if the resource bundle can't be located (see `bundle`
     /// above) or the key is otherwise missing from the table.
     static func string(_ key: String, _ defaultValue: String) -> String {
-        NSLocalizedString(key, bundle: bundle, value: defaultValue, comment: "")
+        if let code = localeOverride, let override = localizedBundle(code) {
+            return override.localizedString(forKey: key, value: defaultValue, table: nil)
+        }
+        return NSLocalizedString(key, bundle: bundle, value: defaultValue, comment: "")
+    }
+
+    /// Resolves every lookup made inside `operation` against one catalogue
+    /// (`"de"`, `"pl"`, …) instead of the process language, so a test can
+    /// draw a view in each language the app ships in. Task-local: it covers
+    /// the synchronous call tree beneath it and nothing outside it, and
+    /// nothing in the app sets it.
+    @TaskLocal static var localeOverride: String?
+
+    private static func localizedBundle(_ code: String) -> Bundle? {
+        bundle.path(forResource: code, ofType: "lproj").flatMap(Bundle.init(path:))
     }
 
     /// `Text` convenience for SwiftUI call sites.
