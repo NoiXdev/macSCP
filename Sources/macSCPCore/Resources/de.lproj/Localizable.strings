@@ -129,11 +129,11 @@
 "core.connect.jumpSessionRequired" = "Verbindung für den Jump-Host auswählen.";
 
 /* Host-Key-TOFU-Prompts — volle Schärfe in jeder Sprache. */
-"core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen.";
+"core.hostkey.mismatch %@ %@ %@" = "ACHTUNG: Der Host-Key von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung abgebrochen. Wenn du den Schlüssel dieses Hosts selbst gewechselt hast, entferne ihn im Menü „Sessions“ unter „Bekannte Hosts“ und verbinde dich erneut.";
 "core.hostkey.rejected" = "Verbindung abgebrochen — Host-Key nicht bestätigt.";
 
 /* Server-Zertifikat-TOFU (M21/T10) — spiegelt den Host-Key-Fall 1:1: gleicher Schweregrad, gleiches „keine Ausnahme"-Prinzip. */
-"core.certificate.mismatch %@ %@ %@" = "ACHTUNG: Das Zertifikat von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung verweigert.";
+"core.certificate.mismatch %@ %@ %@" = "ACHTUNG: Das Zertifikat von %1$@ hat sich geändert! Erwartet %2$@, präsentiert %3$@. Möglicher Man-in-the-Middle — Verbindung verweigert. Wenn du das Zertifikat dieses Servers selbst ersetzt hast, entferne es im Menü „Sessions“ unter „Server-Zertifikate“ und verbinde dich erneut.";
 "core.certificate.rejected" = "Verbindung verweigert — Zertifikat nicht bestätigt.";
 "core.certificate.trustStoreUnreadable" = "Verbindung verweigert — der Speicher für vertrauenswürdige Zertifikate konnte nicht gelesen werden.";
 

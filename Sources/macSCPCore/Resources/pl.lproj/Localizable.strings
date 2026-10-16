@@ -131,11 +131,11 @@
 "core.connect.jumpSessionRequired" = "Wybierz połączenie dla hosta pośredniczącego.";
 
 /* Host-key TOFU prompts — keep full severity in every language. */
-"core.hostkey.mismatch %@ %@ %@" = "OSTRZEŻENIE: Klucz hosta dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie przerwane.";
+"core.hostkey.mismatch %@ %@ %@" = "OSTRZEŻENIE: Klucz hosta dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie przerwane. Jeśli samodzielnie zmieniłeś klucz tego hosta, usuń go w menu „Sesje” w pozycji „Znane hosty” i połącz się ponownie.";
 "core.hostkey.rejected" = "Połączenie przerwane — klucz hosta nie został potwierdzony.";
 
 /* TOFU certyfikatu serwera (M21/T10) — lustrzane odbicie przypadku klucza hosta: ta sama waga, ta sama zasada „bez wyjątków". */
-"core.certificate.mismatch %@ %@ %@" = "OSTRZEŻENIE: Certyfikat dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie odrzucone.";
+"core.certificate.mismatch %@ %@ %@" = "OSTRZEŻENIE: Certyfikat dla %1$@ uległ zmianie! Oczekiwano %2$@, otrzymano %3$@. Możliwy atak typu man-in-the-middle — połączenie odrzucone. Jeśli samodzielnie wymieniłeś certyfikat tego serwera, usuń go w menu „Sesje” w pozycji „Certyfikaty serwera” i połącz się ponownie.";
 "core.certificate.rejected" = "Połączenie odrzucone — certyfikat nie został potwierdzony.";
 "core.certificate.trustStoreUnreadable" = "Połączenie odrzucone — nie można było odczytać magazynu zaufanych certyfikatów.";
 
