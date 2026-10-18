@@ -87,15 +87,35 @@ struct SheetBoundTests {
         }
     }
 
+    /// Reads a bound knowing nothing about the conformer but the protocol.
+    private nonisolated static func grantedWidth<V: BoundedView>(of _: V.Type) -> CGFloat {
+        V.bound.grantedWidth
+    }
+
     /// A conformer is reachable from the test target and states its bound
     /// as a type-level value.
     @Test func aBoundedViewStatesItsBoundOnTheType() {
-        struct Probe: BoundedView {
-            static let bound = SheetBound.width(300)
-            var body: some View { Color.clear.sheetBound(Self.bound) }
-        }
-        #expect(Probe.bound.grantedWidth == 300)
-        let hosted = Self.size(of: Probe(), offered: Self.huge)
-        #expect(hosted.width == Probe.bound.grantedWidth, "\(hosted)")
+        #expect(BoundProbe.bound.grantedWidth == 300)
+        // The same figure reached through the protocol alone. This is how a
+        // registry of bounded views reads each bound, and it fails to
+        // compile if the `bound` requirement leaves `BoundedView`.
+        #expect(Self.grantedWidth(of: BoundProbe.self) == 300)
+        #expect(boundWidthFromNonisolatedContext() == 300)
+        let hosted = Self.size(of: BoundProbe(), offered: Self.huge)
+        #expect(hosted.width == BoundProbe.bound.grantedWidth, "\(hosted)")
     }
+}
+
+/// A conformer declared at file scope, so its `bound` is not isolated by an
+/// enclosing function.
+private struct BoundProbe: BoundedView {
+    static let bound = SheetBound.width(300)
+    var body: some View { Color.clear.sheetBound(Self.bound) }
+}
+
+/// Reads a conformer's bound by name from a nonisolated context. It compiles
+/// only while `BoundedView.bound` is not main-actor isolated; the doc comment
+/// on the requirement states what a caller may rely on.
+private nonisolated func boundWidthFromNonisolatedContext() -> CGFloat {
+    BoundProbe.bound.grantedWidth
 }

@@ -40,6 +40,16 @@ enum SheetBound: Equatable, Sendable {
 
 /// A view that states the size it bounds itself to as a type-level value.
 protocol BoundedView: View {
+    /// The view's bound. Declare it as a constant (`static let bound = ...`),
+    /// never a computed `static var` that can answer differently over time:
+    /// `sheetBound(_:)` wraps the view in a different frame per case, which
+    /// is a different place in the view tree, so a bound that changed while
+    /// the view is on screen would rebuild the wrapped content and reset its
+    /// `@State`.
+    ///
+    /// Not main-actor isolated: it can be read from a nonisolated context,
+    /// for one conformer by name or for any through a generic
+    /// `V: BoundedView` (see `SheetBoundTests`).
     static var bound: SheetBound { get }
 }
 
