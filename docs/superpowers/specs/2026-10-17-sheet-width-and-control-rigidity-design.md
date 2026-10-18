@@ -146,7 +146,7 @@ paragraphs meant to wrap, whose own ideal widths run 659 to 819 points. As
 a sheet-level bound it would be red for every sheet always. It is a
 per-control instrument.
 
-**Rigid means a floor at the ideal, not a shrink to it.** Author's call:
+**Rigid means the control holds its ideal and is never compressed below it.****Corrected in place 2026-10-18, after Task 8's measurements.** The rigidity rule here first read `Rigid means **a floor at the ideal, not a shrink to it**`, justified by `several of the twenty-one segmented sites currently stretch to fill their row, and shrinking them would change how up to twenty-seven controls look`. **No command produced that sentence.** Measured by Task 8 on Darwin 27: a bare 3-segment picker reports 242.5 pt at 40-200 pt offered and 295.5 pt at 300-2000 pt, and in a 2000-pt host it draws at its ideal, CENTRED, even under `.frame(maxWidth: .infinity)`, in a `VStack` and in a `Form`. Beside a `TextField` in an `HStack` it draws at 155.0 pt, its ideal, in all four arrangements tried, with the field taking the slack. A segmented picker therefore compresses below its ideal but never grows past it — which the original defect corroborates, the German picker having been squeezed from 432 pt to 360 pt. The floor would have made each component claim width the bare control never claimed and moved it from centred to leading, which is the layout change this plan's non-goals exclude. `AtLeastIdealWidth` is deleted; all three components are their control plus `.fixedSize()`. Author's call:
 several of the twenty-one segmented sites currently stretch to fill their
 row, and shrinking them would change how up to twenty-seven controls look,
 which the non-goals exclude. A floor satisfies the definition above —
