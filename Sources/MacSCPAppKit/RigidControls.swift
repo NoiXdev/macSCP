@@ -1,7 +1,23 @@
 import SwiftUI
 
-// Three controls that hold their ideal width by default, and the two
-// per-site seams that let a call site say otherwise.
+// Three controls that hold their ideal width by default, and the one
+// per-site seam that lets a call site say otherwise.
+//
+// **Corrected 2026-10-18, Task 10.** The line above read "Three controls that
+// hold their ideal width by default, and the two per-site seams that let a call
+// site say otherwise." The second seam is gone: item 2 of the list below read
+//
+// > `isInAResizableContainer: true` on `TagFilterJoinPicker` and
+// > `SheetSearchField`, the two shared views that wrap these components.
+//
+// and both opt-outs are removed. The session sidebar was the one caller of
+// each, because it is a container the user narrows, and neither needed it:
+// `SheetSearchField` held rigid fits the width the sidebar leaves it, and
+// `TagFilterJoinPicker` there became a small pop-up button
+// (`TagFilterJoinPicker.Presentation.compactMenu`), which fits where the
+// segmented form does not. `ResizableContainerFloorTests` measures both against
+// that width in every catalogue. What remains is the wrapping checkbox, so a
+// contributor who finds `wraps: true` is looking at the only seam.
 //
 // **Corrected 2026-10-18, fix round 3.** This header opened "Three controls
 // that cannot be compressed below their ideal width." and said of the
@@ -19,31 +35,31 @@ import SwiftUI
 // Each component takes a label, never a styled control, so the bare
 // compressible spelling is not what a call site writes.
 //
-// **The two seams, and why each is justified.** In both, RIGID IS THE
-// DEFAULT, so forgetting the argument is safe: a compressible control keeps the
-// guard green while its label is cut, which is the defect this work removes,
-// and an opt-in would reproduce it silently at every call site that forgot it.
+// **The seam, and why it is justified.** RIGID IS THE DEFAULT, so forgetting the
+// argument is safe: a compressible control keeps the guard green while its
+// label is cut, which is the defect this work removes, and an opt-in would
+// reproduce it silently at every call site that forgot it.
 //
-// 1. `CheckboxRow(_:isOn:wraps:)`, `wraps: true`. Rigid vertically, free to
-//    break across lines horizontally. Allowed because the invariant is "no text
-//    is silently lost", and a WRAPPED label loses none; only a truncated one
-//    does. It is for a sentence (`.fixedSize()` fixes both axes, so a sentence
-//    held to one line sets the minimum width of the whole view it sits in).
-//    `RigidControlTests.aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt` pins
-//    that it neither truncates nor reports its one-line ideal as its minimum.
-// 2. `isInAResizableContainer: true` on `TagFilterJoinPicker` and
-//    `SheetSearchField`, the two shared views that wrap these components.
-//    Allowed for one reason: a container the user resizes (the session
-//    sidebar, down to `SettingsStore.sidebarWidthRange`'s lower bound) has no
-//    single width to hold a rigid control against, and a rigid control there
-//    overflows instead. It is a per-site opt-out for that surface only and
-//    belongs to the resizable containers' own migration, not to a bounded
-//    view.
+// `CheckboxRow(_:isOn:wraps:)`, `wraps: true`. Rigid vertically, free to
+// break across lines horizontally. Allowed because the invariant is "no text
+// is silently lost", and a WRAPPED label loses none; only a truncated one
+// does. It is for a sentence (`.fixedSize()` fixes both axes, so a sentence
+// held to one line sets the minimum width of the whole view it sits in).
+// `RigidControlTests.aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt` pins
+// that it neither truncates nor reports its one-line ideal as its minimum.
 //
 // Rigid menu pickers are NOT components: a `Picker` in the menu style held
 // with `.fixedSize()`, written by hand. A pop-up shows one label, which is why
 // it fits where a segmented control of the same labels did not. Nothing but
 // review keeps their `.fixedSize()` in place.
+//
+// **Corrected 2026-10-18, Task 10.** The paragraph below says the command it
+// names "prints five lines" and that "All five carry `.fixedSize()`". It now
+// prints seven: the same five and two more, `FileSearchBar` (1, the filter or
+// jump choice, a pop-up since this task) and `SidebarTagFilterBar` (1, the
+// sidebar's join choice, a small pop-up). Both carry `.fixedSize()`, read by
+// eye at the site. Re-run it to confirm; the figure is only as good as the
+// day it was counted.
 //
 // **Corrected 2026-10-18, fix round 4.** This paragraph first read "Three more
 // rigid controls are NOT components", naming `AuditLogSheet` and the jump
