@@ -33,7 +33,10 @@ import macSCPCore
 /// harness. What the view is HANDED is tested — see
 /// `SnippetDryRunPresentationTests` — and that both entrances hand it the
 /// same kind of value is `SnippetDryRunEntranceGuardTests`.
-struct SnippetDryRunSheet: View {
+struct SnippetDryRunSheet: BoundedView {
+    /// The size `SnippetDryRunSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(460)
+
     let snippetName: String
     let dryRun: SnippetDryRun
     /// `nil` when there is nothing to send from here — see this type's own
@@ -106,7 +109,7 @@ struct SnippetDryRunSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .sheetBound(Self.bound)
     }
 
     /// The resolved command, painted from the dry run's own tokens.

@@ -62,7 +62,10 @@ import macSCPCore
 /// Untested, like `SnippetActionSheet`/`TerminalPanelHeader` before it: no
 /// SwiftUI rendering harness exists in this project (see those views' own
 /// doc comments for the same boundary).
-struct SnippetVariablePromptSheet: View {
+struct SnippetVariablePromptSheet: BoundedView {
+    /// The size `SnippetVariablePromptSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(380)
+
     let snippet: Snippet
     let onConfirm: (_ values: [String: String]) -> Void
     let onCancel: () -> Void
@@ -107,7 +110,7 @@ struct SnippetVariablePromptSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .sheetBound(Self.bound)
     }
 
     /// One declaration's field. `variable.prompt` is what the declaration

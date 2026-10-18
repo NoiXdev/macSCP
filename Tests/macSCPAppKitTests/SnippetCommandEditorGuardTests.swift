@@ -129,7 +129,7 @@ struct SnippetCommandEditorGuardTests {
     /// The declaration the command-Return scan starts from, named once so
     /// the scan, its reverted-shortcut fixture and the test that counts
     /// matches (`BoundedViewVisibilityTests`) read the same text.
-    static let editorDeclaration = "struct SnippetEditorView: View {"
+    static let editorDeclaration = "struct SnippetEditorView: BoundedView {"
     static let sheetSourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetsSheet.swift")
     /// Where the declaration checks live now that the editor needs both

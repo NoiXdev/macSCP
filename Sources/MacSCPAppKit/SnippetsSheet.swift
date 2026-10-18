@@ -23,7 +23,10 @@ import macSCPCore
 /// already live with. What IS tested is the decision the body renders —
 /// `SnippetsLoad`, which decides whether this sheet may say "No snippets
 /// yet." — in `SnippetsPresentationTests`.
-struct SnippetsSheet: View {
+struct SnippetsSheet: BoundedView {
+    /// The size `SnippetsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 720, height: 460)
+
     let store: SnippetStore
     /// What was remembered for one declaration of one snippet, or `nil`.
     ///
@@ -228,7 +231,7 @@ struct SnippetsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 720, height: 460)
+        .sheetBound(Self.bound)
         .onAppear { reload() }
         .sheet(item: $editorTarget) { target in
             SnippetEditorView(
@@ -566,7 +569,10 @@ private struct SnippetTagFilterRow: View {
 /// as-is and now inserts a typed Return as a line break too (see that
 /// file's own doc comment) — Save moved off plain Return onto ⌘Return so
 /// the two no longer collide.
-struct SnippetEditorView: View {
+struct SnippetEditorView: BoundedView {
+    /// The size `SnippetEditorView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(460)
+
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
     /// rather than re-read here: it is what `SnippetTagSuggestions` needs to
@@ -877,7 +883,7 @@ struct SnippetEditorView: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // The values for a test run, asked with the trigger path's own
         // prompt. Confirming reaches `testRun` and NOTHING else: no

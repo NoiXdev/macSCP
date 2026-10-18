@@ -10,7 +10,10 @@ import macSCPCore
 /// the app's management sheets — list + caption footer + destructive
 /// `confirmationDialog` — but selection is single (`Edit…` only ever acts on
 /// one set) rather than `KnownHostsSheet`'s multi-selection `Table`.
-struct LoginSetsSheet: View {
+struct LoginSetsSheet: BoundedView {
+    /// The size `LoginSetsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 720, height: 460)
+
     let sessionList: SessionListViewModel
     /// Opens the import file picker as soon as the sheet appears (M19/T8) —
     /// how the Sessions menu's "Import Logins…" reaches the import, which
@@ -227,7 +230,7 @@ struct LoginSetsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 720, height: 460)
+        .sheetBound(Self.bound)
         .onAppear {
             refreshMergeCandidate()
             // "Import Logins…" from the Sessions menu opens this sheet with
@@ -841,7 +844,10 @@ struct LoginSetsSheet: View {
 /// connection form's login-set picker was always empty. Nothing in here
 /// names a protocol any more, so the next backend arrives with its schema
 /// and no edit to this file.
-struct LoginSetEditorView: View {
+struct LoginSetEditorView: BoundedView {
+    /// The size `LoginSetEditorView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(460)
+
     let existing: LoginSet?
     let onSave: (LoginSet, String?) -> Void
     let onCancel: () -> Void
@@ -983,7 +989,7 @@ struct LoginSetEditorView: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // Switching the protocol starts that backend's form clean, the same
         // rule `ConnectionViewModel.kind` follows: the namespaced storage

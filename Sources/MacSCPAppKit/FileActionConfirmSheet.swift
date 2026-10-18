@@ -19,7 +19,10 @@ import macSCPCore
 /// selection: a refusal's payload can be the hostile value itself.
 ///
 /// Presented by `BrowserPane`, which owns every sheet its menu entries open.
-struct FileActionConfirmSheet: View {
+struct FileActionConfirmSheet: BoundedView {
+    /// The size `FileActionConfirmSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(520)
+
     let request: FileActionRequest
     let onRun: () -> Void
     let onCancel: () -> Void
@@ -68,7 +71,7 @@ struct FileActionConfirmSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .sheetBound(Self.bound)
         .interactiveDismissDisabled(true)
     }
 
