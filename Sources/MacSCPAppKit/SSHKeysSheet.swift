@@ -656,13 +656,13 @@ struct GenerateKeySheet: BoundedView {
                 }
                 let typeLabel = L10n.string("keys.generate.type", "Type")
                 KeyFieldRow(label: typeLabel) {
-                    Picker(typeLabel, selection: $form.typeChoice) {
-                        Text(L10n.string("keys.type.ed25519", "ED25519")).tag(GenerateKeyForm.TypeChoice.ed25519)
-                        Text(L10n.string("keys.type.rsa", "RSA")).tag(GenerateKeyForm.TypeChoice.rsa)
-                        Text(L10n.string("keys.type.ecdsa", "ECDSA")).tag(GenerateKeyForm.TypeChoice.ecdsa)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    SegmentedChoice(
+                        typeLabel, selection: $form.typeChoice,
+                        options: [
+                            (GenerateKeyForm.TypeChoice.ed25519, L10n.string("keys.type.ed25519", "ED25519")),
+                            (GenerateKeyForm.TypeChoice.rsa, L10n.string("keys.type.rsa", "RSA")),
+                            (GenerateKeyForm.TypeChoice.ecdsa, L10n.string("keys.type.ecdsa", "ECDSA")),
+                        ])
                 }
                 if !form.resolvedType.isConnectable {
                     Text(L10n.string(
@@ -673,13 +673,9 @@ struct GenerateKeySheet: BoundedView {
                 if form.typeChoice == .rsa {
                     let bitsLabel = L10n.string("keys.generate.bits", "Key size")
                     KeyFieldRow(label: bitsLabel) {
-                        Picker(bitsLabel, selection: $form.rsaBits) {
-                            Text("2048").tag(2048)
-                            Text("3072").tag(3072)
-                            Text("4096").tag(4096)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
+                        SegmentedChoice(
+                            bitsLabel, selection: $form.rsaBits,
+                            options: [(2048, "2048"), (3072, "3072"), (4096, "4096")])
                     }
                 }
                 let passphraseLabel = L10n.string("keys.generate.passphrase", "Passphrase (optional)")
