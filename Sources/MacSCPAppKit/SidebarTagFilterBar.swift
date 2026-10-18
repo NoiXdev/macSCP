@@ -62,7 +62,7 @@ private struct HostTagFilterRow: View {
                 }
             }
             if filter.showsJoinChoice {
-                TagFilterJoinPicker(filter: $filter)
+                TagFilterJoinPicker(filter: $filter, isInAResizableContainer: true)
             }
         }
     }
@@ -126,7 +126,7 @@ struct TagFilterSheet: BoundedView {
                 .font(.headline)
 
             if filter.showsJoinChoice {
-                TagFilterJoinPicker(filter: $filter, holdsItsIdeal: true)
+                TagFilterJoinPicker(filter: $filter)
             }
 
             ScrollView {
@@ -167,20 +167,29 @@ struct TagFilterSheet: BoundedView {
 /// positions are called.
 struct TagFilterJoinPicker: View {
     @Binding var filter: SidebarTagFilter
-    /// Whether the picker is held at its ideal width (`SegmentedChoice`) or
-    /// left to compress. The dialog holds it: its bound is a measured width,
-    /// and a squeezed picker there would lose a label with nothing
-    /// overflowing. The sidebar row does not yet: it sits in a container the
-    /// user resizes down to `SettingsStore.sidebarWidthRange`'s lower bound,
-    /// where a rigid picker would overflow instead, which is the resizable
-    /// containers' own task. Defaults to the compressible form so the row is
-    /// unchanged.
-    var holdsItsIdeal = false
+    /// Opt-out from the picker being held at its ideal width
+    /// (`SegmentedChoice`).
+    ///
+    /// **Rigid is the default, on purpose.** A squeezed picker loses a label
+    /// with nothing overflowing, so the guard cannot see it; a call site that
+    /// forgot an opt-IN would produce that silently, and forgetting this
+    /// argument is safe instead. The sidebar's chip row is the one caller that
+    /// passes `true`: it sits in a container the user resizes down to
+    /// `SettingsStore.sidebarWidthRange`'s lower bound, where a rigid picker
+    /// would overflow, which is the resizable containers' own task. The other
+    /// call site, in `TagFilterSheet`, takes the default.
+    var isInAResizableContainer = false
 
     private var join: Binding<SidebarTagFilter.Join> {
         Binding(
             get: { filter.join },
             set: { filter = filter.joined($0) })
+    }
+
+    /// The control's short name for assistive technology, the same on both
+    /// branches. The long sentence stays the tooltip.
+    private var accessibilityName: String {
+        L10n.string("sidebar.filter.button", "Filter by tag")
     }
 
     private var helpText: String {
@@ -190,26 +199,24 @@ struct TagFilterJoinPicker: View {
     }
 
     var body: some View {
-        if holdsItsIdeal {
+        if isInAResizableContainer {
+            Picker(accessibilityName, selection: join) {
+                Text(L10n.string("sidebar.filter.join.all", "All tags"))
+                    .tag(SidebarTagFilter.Join.all)
+                Text(L10n.string("sidebar.filter.join.any", "Any tag"))
+                    .tag(SidebarTagFilter.Join.any)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help(helpText)
+        } else {
             SegmentedChoice(
-                helpText, selection: join,
+                accessibilityName, selection: join,
                 options: [
                     (SidebarTagFilter.Join.all, L10n.string("sidebar.filter.join.all", "All tags")),
                     (SidebarTagFilter.Join.any, L10n.string("sidebar.filter.join.any", "Any tag")),
                 ]
             )
-            .help(helpText)
-        } else {
-            Picker(selection: join) {
-                Text(L10n.string("sidebar.filter.join.all", "All tags"))
-                    .tag(SidebarTagFilter.Join.all)
-                Text(L10n.string("sidebar.filter.join.any", "Any tag"))
-                    .tag(SidebarTagFilter.Join.any)
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .help(helpText)
         }
     }

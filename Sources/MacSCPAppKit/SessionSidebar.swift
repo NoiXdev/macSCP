@@ -515,7 +515,8 @@ struct SessionSidebar: View {
             // user mid-query.
             if !viewModel.sessions.isEmpty {
                 SheetSearchField(
-                    text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+                    text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
+                    isInAResizableContainer: true)
                     .padding(.horizontal, 10)
                     .padding(.bottom, 6)
             }

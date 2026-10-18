@@ -18,12 +18,25 @@ struct SheetSearchField: View {
     @Binding var isRegex: Bool
     /// Non-nil when the current regex is invalid (host passes it in).
     var errorText: String?
-    /// Whether the regex checkbox is held at its ideal width. The bounded
-    /// sheets hold it, so a squeezed label there overflows where the guard
-    /// can see it; the session sidebar does not yet, because it is a container
-    /// the user resizes and its migration is the resizable containers' own
-    /// task. Defaults to the compressible form so the sidebar is unchanged.
-    var holdsItsIdeal = false
+    /// Opt-out from the regex checkbox being held at its ideal width.
+    ///
+    /// **Rigid is the default, on purpose.** A compressible control reports a
+    /// small minimum, so the layout guard stays green while its label is cut;
+    /// a call site that forgot an opt-IN would produce exactly that, silently.
+    /// Forgetting this argument is therefore safe: the checkbox is held and a
+    /// bound that cannot take it goes red. The one caller that passes `true` is
+    /// the session sidebar, a container the user resizes down to
+    /// `SettingsStore.sidebarWidthRange`'s lower bound, where a rigid checkbox
+    /// would overflow instead; migrating it is the resizable containers' own
+    /// task.
+    ///
+    /// Counted 2026-10-18 with `grep -rn 'SheetSearchField[(]' Sources/MacSCPAppKit`
+    /// (bracketed so that this comment does not match its own pattern; the
+    /// declaration has no call parenthesis): nine lines, eight inside a
+    /// `BoundedView` (AuditLogSheet, HiddenImportsSheet, KnownHostsSheet,
+    /// LoginSetsSheet, ServerCertificatesSheet, SnippetsSheet, SSHKeysSheet,
+    /// TerminalSnippetPopover) and the one in SessionSidebar.
+    var isInAResizableContainer = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -48,11 +61,11 @@ extension SheetSearchField {
     @ViewBuilder
     fileprivate var regexToggle: some View {
         let label = L10n.string("search.regex", "Regex")
-        if holdsItsIdeal {
-            CheckboxRow(label, isOn: $isRegex)
-        } else {
+        if isInAResizableContainer {
             Toggle(label, isOn: $isRegex)
                 .toggleStyle(.checkbox)
+        } else {
+            CheckboxRow(label, isOn: $isRegex)
         }
     }
 }
