@@ -347,6 +347,21 @@ enum BoundedViewRegistry {
             ])
     }
 
+    /// A snippet whose two declarations share a name. A faulty declaration
+    /// is drawn open and offers no fold control (`SnippetVariableFolding`),
+    /// so this is the way to put an open declaration card on screen without
+    /// a click: the kind picker, the remember checkbox and the allowed-values
+    /// field are all on it.
+    private static var snippetWithOpenDeclarations: Snippet {
+        Snippet(
+            name: "Deploy a release", command: "deploy {{TARGET}}",
+            tags: [],
+            variables: [
+                variable("TARGET", .selection(["staging", "production"]), .placeholder),
+                variable("TARGET", .freeText, .placeholder),
+            ])
+    }
+
     private static var changelog: [ChangelogRelease] {
         [
             ChangelogRelease(
@@ -443,6 +458,13 @@ enum BoundedViewRegistry {
             BoundedViewEntry("a stored snippet with tags and two declarations") {
                 SnippetEditorView(
                     existing: snippetWithVariables, allSnippets: [snippetWithVariables],
+                    store: SnippetStore(directory: unwrittenDirectory),
+                    rememberedValue: { _, _ in nil }, onSaved: {})
+            },
+            BoundedViewEntry("a stored snippet whose declarations are open on a fault") {
+                SnippetEditorView(
+                    existing: snippetWithOpenDeclarations,
+                    allSnippets: [snippetWithOpenDeclarations],
                     store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil }, onSaved: {})
             },
