@@ -90,9 +90,16 @@ struct RigidControlScanTests {
     /// One compressible spelling, the pattern that finds it, and every file
     /// that is allowed to carry it, with how many times.
     ///
-    /// The left edge is `(?:^|\W)`, not `\b`: a Unicode word boundary finds no
-    /// edge in `x.sheetBound(` or `Module.Name`, and an earlier scan on this
-    /// branch matched nothing because of it. The right edge is `(?!\w)`.
+    /// The left edge is `(?:^|\W)`, not `\b`: in Swift's `Regex` a word
+    /// boundary finds no edge in `x.sheetBound(` or `Module.Name`, and an
+    /// earlier scan on this branch matched nothing because of it. The right edge
+    /// is `(?!\w)`. This file reads through `NSRegularExpression`, where `\b` DOES
+    /// match those (measured 2026-10-18 with a throwaway program over
+    /// `x.isInAResizableContainer`: `NSRegularExpression` 1, `range(of:)` true,
+    /// `Regex` false), so swapping the edges back to `\b` here stays green, and
+    /// that was observed: the edges are spelled for the engine this file might
+    /// be ported to, and the samples below that put a `.` before the name are
+    /// what would catch the port.
     fileprivate struct Style: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String
@@ -416,10 +423,10 @@ struct RigidControlScanTests {
     }
 
     /// The seam's users. Counted 2026-10-18 with
-    /// `grep -rn 'wraps:' Sources/MacSCPAppKit`, which prints the component's
-    /// declaration and the one site that opts in; the comment lines it also
-    /// prints are not code and are not read here. The first read of this scan
-    /// listed `wraps: true` once per file by count only; the site is named.
+    /// `grep -rn 'wraps:' Sources/MacSCPAppKit`, which prints 5 lines: in
+    /// `RigidControls.swift` two comments, the stored property and the
+    /// initializer (all excluded here), and in `SnippetsSheet.swift` the one
+    /// site that opts in.
     @Test func onlyTheListedSitesOptIntoWrapping() throws {
         let sources = try Self.blankedSources().filter { $0.key != Self.componentFile }
         let labelled = Self.counts(#"(?:^|\W)wraps\s*:"#, in: sources)
