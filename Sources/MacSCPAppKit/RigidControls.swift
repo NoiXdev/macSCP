@@ -3,30 +3,44 @@ import SwiftUI
 // Three controls that hold their ideal width by default, and the one
 // per-site seam that lets a call site say otherwise.
 //
-// **Corrected 2026-10-18, Task 10.** The line above read "Three controls that
-// hold their ideal width by default, and the two per-site seams that let a call
-// site say otherwise." The second seam is gone: item 2 of the list below read
+// **Corrected 2026-10-18, Task 10.** This header's first line read
 //
-// > `isInAResizableContainer: true` on `TagFilterJoinPicker` and
-// > `SheetSearchField`, the two shared views that wrap these components.
+// > Three controls that hold their ideal width by default, and the two
+// > per-site seams that let a call site say otherwise.
 //
-// and both opt-outs are removed. The session sidebar was the one caller of
-// each, because it is a container the user narrows, and neither needed it:
+// and its heading "The two seams, and why each is justified." introduced a
+// numbered list whose second item read, in full:
+//
+// > 2. `isInAResizableContainer: true` on `TagFilterJoinPicker` and
+// >    `SheetSearchField`, the two shared views that wrap these components.
+// >    Allowed for one reason: a container the user resizes (the session
+// >    sidebar, down to `SettingsStore.sidebarWidthRange`'s lower bound) has no
+// >    single width to hold a rigid control against, and a rigid control there
+// >    overflows instead. It is a per-site opt-out for that surface only and
+// >    belongs to the resizable containers' own migration, not to a bounded
+// >    view.
+//
+// Both opt-outs are removed. The session sidebar was the one caller of each,
+// because it is a container the user narrows, and neither needed it:
 // `SheetSearchField` held rigid fits the width the sidebar leaves it, and
 // `TagFilterJoinPicker` there became a small pop-up button
 // (`TagFilterJoinPicker.Presentation.compactMenu`), which fits where the
 // segmented form does not. `ResizableContainerFloorTests` measures both against
-// that width in every catalogue. What remains is the wrapping checkbox, so a
-// contributor who finds `wraps: true` is looking at the only seam.
+// that width in every catalogue. One seam remains, the wrapping checkbox, in the
+// paragraph headed "The seam" below; there is no list in this header any more.
 //
-// **Corrected 2026-10-18, fix round 3.** This header opened "Three controls
-// that cannot be compressed below their ideal width." and said of the
-// components "The compressible form is not writable through these types: each
-// takes a label, never a styled control." Neither is true of the tree any
-// more. Two compressibility seams exist, a test asserts that one of them
-// compresses, and a contributor reading the old header would conclude that
-// adding another is forbidden or, finding these, that they are accidents.
-// They are neither; they are listed below with the reason each is allowed.
+// **Corrected 2026-10-18, fix round 3, and again in Task 10.** Round 3 replaced
+// this header's opening, which had said "Three controls that cannot be
+// compressed below their ideal width." and, of the components, "The
+// compressible form is not writable through these types: each takes a label,
+// never a styled control." Neither was true of the tree. Round 3's replacement
+// then said "Two compressibility seams exist, a test asserts that one of them
+// compresses" and ended "They are neither; they are listed below with the
+// reason each is allowed." Task 10 withdraws the count and the "each": one seam
+// exists, a test asserts that it compresses, and its reason is in the paragraph
+// below. What stands is round 3's point: a contributor reading the old header
+// would conclude that adding a seam is forbidden or, finding the
+// one that exists, that it is an accident. It is neither; its reason is below.
 //
 // **Why the components exist.** A compressed control reports a small minimum,
 // is shrunk inside its row and truncates its labels, and NOTHING overflows, so
