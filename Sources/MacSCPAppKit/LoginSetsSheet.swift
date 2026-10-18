@@ -956,13 +956,11 @@ struct LoginSetEditorView: BoundedView {
             // `.webdav` unreachable.
             let kindLabel = L10n.string("loginSets.editor.kind", "Type")
             FormRow(label: kindLabel) {
-                Picker(kindLabel, selection: $kind) {
-                    ForEach(ConnectionKind.allCases, id: \.self) { kind in
-                        Text(LoginSetsSheet.kindLabel(kind)).tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                SegmentedChoice(
+                    kindLabel, selection: $kind,
+                    options: ConnectionKind.allCases.map { kind in
+                        (kind, LoginSetsSheet.kindLabel(kind))
+                    })
             }
 
             SchemaFormView(
