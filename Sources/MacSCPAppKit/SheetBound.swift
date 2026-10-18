@@ -47,9 +47,11 @@ protocol BoundedView: View {
     /// the view is on screen would rebuild the wrapped content and reset its
     /// `@State`.
     ///
-    /// Not main-actor isolated: it can be read from a nonisolated context,
+    /// Main-actor isolated, like `View`: read it from a main-actor context,
     /// for one conformer by name or for any through a generic
-    /// `V: BoundedView` (see `SheetBoundTests`).
+    /// `V: BoundedView` (see `SheetBoundTests`). A nonisolated read compiles
+    /// only as a warning, because `View` is `@preconcurrency`, and CI counts
+    /// warnings.
     static var bound: SheetBound { get }
 }
 
