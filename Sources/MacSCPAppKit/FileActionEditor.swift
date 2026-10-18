@@ -32,7 +32,7 @@ import macSCPCore
 /// that draws it (this project has no SwiftUI rendering harness)"; the harness
 /// is `ViewTestabilitySpike`'s, and the width of this sheet is now measured
 /// with it.
-struct FileActionEditor: View {
+struct FileActionEditor: BoundedView {
     let existing: FileAction?
     let store: FileActionStore
     let onSaved: () -> Void
@@ -109,10 +109,10 @@ struct FileActionEditor: View {
 
     var body: some View {
         sheetContent
-            .frame(width: Self.sheetWidth)
+            .sheetBound(Self.bound)
     }
 
-    /// The width the sheet grants its content, in points.
+    /// The width the sheet grants its content, in points: `bound.grantedWidth`.
     ///
     /// Fixed, and that is a limit rather than a feature: a fixed frame does
     /// not refuse content that needs more, it lets it overflow and centres
@@ -137,7 +137,7 @@ struct FileActionEditor: View {
     /// compressible control would report a smaller minimum and be squeezed
     /// (its labels cut) without anything overflowing, which no width
     /// measurement can see.
-    static let sheetWidth: CGFloat = 520
+    static let bound: SheetBound = .width(520)
 
     /// Everything the sheet draws, before any width is imposed on it.
     var sheetContent: some View {
