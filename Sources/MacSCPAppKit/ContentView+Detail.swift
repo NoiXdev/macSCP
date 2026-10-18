@@ -2621,12 +2621,7 @@ struct ConnectingAttemptView: BoundedView {
 /// clicks the button. What IS tested is the one new decision it makes
 /// beyond what `SnippetMenuItems`/`SnippetMenuModel` already own: which
 /// snippets the search narrows the list to — `TerminalSnippetSearch`, below.
-struct TerminalPanelHeader: BoundedView {
-    /// The width of the snippet popover this header presents — NOT of the header
-    /// itself, which fills the terminal panel. `snippetPopover` applies it with
-    /// `.sheetBound(Self.bound)`.
-    static let bound: SheetBound = .width(280)
-
+struct TerminalPanelHeader: View {
     /// The active tab's display name (`SessionTab.displayTitle`). This
     /// panel exists only on a connected tab, and for a connected tab that
     /// is the name the tab strip and the window title show too:
@@ -2702,7 +2697,21 @@ struct TerminalPanelHeader: BoundedView {
             .foregroundStyle(theme.foreground.swiftUIColor)
             .help(L10n.string("terminal.snippets.button", "Snippets"))
             .popover(isPresented: $isSnippetPopoverPresented) {
-                snippetPopover
+                // The popover's state stays HERE, in the `@State`s above,
+                // and goes down as bindings: held by the popover itself it
+                // would start empty every time the popover is reopened.
+                TerminalSnippetPopover(
+                    snippets: snippets,
+                    supportsShell: supportsShell,
+                    theme: theme,
+                    onRunSnippet: onRunSnippet,
+                    isPresented: $isSnippetPopoverPresented,
+                    searchText: $searchText,
+                    searchIsRegex: $searchIsRegex,
+                    selectedSnippetID: $selectedSnippetID,
+                    hoveredRow: $hoveredRow,
+                    previewPinnedRow: $previewPinnedRow,
+                    actionSheetSnippet: $actionSheetSnippet)
             }
         }
         // Moves from this header's own former 12/6 to the panel's existing
@@ -2717,6 +2726,38 @@ struct TerminalPanelHeader: BoundedView {
         .padding(.vertical, DesignTokens.terminalPanelInsetVertical)
         .background(theme.background.swiftUIColor)
     }
+}
+
+/// The snippet popover the terminal panel's header presents (P3d, Task 3),
+/// extracted from `TerminalPanelHeader` so the width it grants is declared by
+/// the view whose content that width bounds: a `BoundedView`'s `bound` is the
+/// bound of its OWN content, and the header, which fills the panel, is not
+/// 280 points wide.
+///
+/// **It owns no state.** The six pieces of popover state (the search text and
+/// its regex flag, the selected row, the hovered row, the pinned preview row,
+/// the snippet whose action window is up) stay `@State` on the header and
+/// arrive as bindings, together with whether the popover is presented. State
+/// held here would start empty on every reopen, because a popover's content
+/// is rebuilt each time it opens; held by the header it survives, as it did
+/// when this was a property of the header.
+struct TerminalSnippetPopover: BoundedView {
+    /// The popover's width, applied with `.sheetBound(Self.bound)` in `body`.
+    static let bound: SheetBound = .width(280)
+
+    let snippets: [Snippet]
+    let supportsShell: Bool
+    let theme: TerminalTheme
+    let onRunSnippet: (Snippet, Bool) -> Void
+
+    @Binding var isPresented: Bool
+    @Binding var searchText: String
+    @Binding var searchIsRegex: Bool
+    /// Highlight only — see the header's `selectedSnippetID`.
+    @Binding var selectedSnippetID: Snippet.ID?
+    @Binding var hoveredRow: SnippetListPlan.Row?
+    @Binding var previewPinnedRow: SnippetListPlan.Row?
+    @Binding var actionSheetSnippet: Snippet?
 
     /// The popover's secondary text — headings, the empty-state line and
     /// the hover line. `.secondary` would resolve against the SYSTEM
@@ -2748,7 +2789,9 @@ struct TerminalPanelHeader: BoundedView {
     ///
     /// Mostly untested, like `TerminalPanelHeader.body` itself: this
     /// project has no SwiftUI rendering harness (`TerminalPanelHeader`'s
-    /// own doc comment states the boundary already). The gesture split
+    /// own doc comment states the boundary already). The popover lives in
+    /// its own type, `TerminalSnippetPopover`, so that the width it is
+    /// bounded to is declared by the view that has it. The gesture split
     /// between single/double click, the hover line's content, row
     /// selection highlighting, and `hoveredRow`'s clearing when the search
     /// filter drops its row cannot be observed by a test; `SnippetListPlan`
@@ -2756,8 +2799,7 @@ struct TerminalPanelHeader: BoundedView {
     /// (tested below), and — since the final fix pass — the row context
     /// menu's contents (`SnippetRowContextMenu`, rendered into a real
     /// `NSMenu` by `TerminalContextMenuTests`) are.
-    @ViewBuilder
-    private var snippetPopover: some View {
+    var body: some View {
         let (sections, searchError) = filteredSections(text: searchText, isRegex: searchIsRegex)
         VStack(alignment: .leading, spacing: 8) {
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
@@ -2832,12 +2874,12 @@ struct TerminalPanelHeader: BoundedView {
                 // a variable).
                 onInsert: {
                     actionSheetSnippet = nil
-                    isSnippetPopoverPresented = false
+                    isPresented = false
                     DispatchQueue.main.async { onRunSnippet(snippet, false) }
                 },
                 onExecute: {
                     actionSheetSnippet = nil
-                    isSnippetPopoverPresented = false
+                    isPresented = false
                     DispatchQueue.main.async { onRunSnippet(snippet, true) }
                 },
                 onCancel: { actionSheetSnippet = nil }
@@ -2855,8 +2897,8 @@ struct TerminalPanelHeader: BoundedView {
         .onChange(of: searchIsRegex) { _, _ in clearHoveredRowIfFilteredOut() }
     }
 
-    /// The narrowed, grouped, per-row shape `snippetPopover` renders —
-    /// pulled out of that view's body so `clearHoveredRowIfFilteredOut()`
+    /// The narrowed, grouped, per-row shape this view renders —
+    /// pulled out of this view's body so `clearHoveredRowIfFilteredOut()`
     /// can recompute the identical filtered set without duplicating the
     /// search predicate, `SnippetMenuModel.build` and `SnippetListPlan.build`
     /// pipeline a second time.
@@ -2872,7 +2914,7 @@ struct TerminalPanelHeader: BoundedView {
 
     /// `hoveredRow`'s row can vanish from `sections` when the search text
     /// or the regex toggle changes without the pointer moving at all — see
-    /// `snippetPopover`'s `.onChange` doc comment for why `onHover` alone
+    /// this view's `.onChange` doc comment for why `onHover` alone
     /// cannot catch this. Leaves `hoveredRow` untouched when it is `nil`
     /// already or its row is still present, so a hover that survives the
     /// search narrowing keeps showing its command uninterrupted.
@@ -2952,11 +2994,11 @@ struct TerminalPanelHeader: BoundedView {
                     // asks for is not aimed at a screen the popover still
                     // owns.
                     onExecute: {
-                        isSnippetPopoverPresented = false
+                        isPresented = false
                         DispatchQueue.main.async { onRunSnippet(row.snippet, true) }
                     },
                     onInsert: {
-                        isSnippetPopoverPresented = false
+                        isPresented = false
                         DispatchQueue.main.async { onRunSnippet(row.snippet, false) }
                     },
                     onPreview: { previewPinnedRow = row }
@@ -2964,7 +3006,7 @@ struct TerminalPanelHeader: BoundedView {
             }
     }
 
-    /// The fixed bottom line `snippetPopover` reserves for the hovered (or
+    /// The fixed bottom line this view reserves for the hovered (or
     /// right-click-"Preview"-pinned) row's command. A live hover always
     /// wins over a pin — moving the pointer over a different row updates
     /// the line immediately, the same way a real tooltip would track the
@@ -2998,7 +3040,7 @@ struct TerminalPanelHeader: BoundedView {
 }
 
 /// The row context menu's content (P3d, Task 3), pulled out of
-/// `TerminalPanelHeader.snippetRow(_:)` for the same reason
+/// `TerminalSnippetPopover.snippetRow(_:)` for the same reason
 /// `TerminalSnippetSearch` and `SnippetPreviewLine` were pulled out below: a
 /// standalone type `Tests/macSCPAppKitTests/` can render on its own, rather
 /// than a menu built inline in a view body where nothing can observe its
@@ -3059,7 +3101,7 @@ enum TerminalSnippetSearch {
 /// line immediately, the same way a real tooltip would track the pointer,
 /// regardless of which row was pinned earlier. The pin only surfaces again
 /// once the pointer leaves the list entirely and `hovered` goes back to
-/// `nil` — see `TerminalPanelHeader.snippetRow(_:)`'s `onHover` closure,
+/// `nil` — see `TerminalSnippetPopover.snippetRow(_:)`'s `onHover` closure,
 /// which clears `hoveredRow` but never `previewPinnedRow`.
 enum SnippetPreviewLine {
     static func row(

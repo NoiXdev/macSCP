@@ -23,7 +23,7 @@ import Testing
             RenameKeySheet.self,
             SnippetEditorView.self,
             TagFilterSheet.self,
-            TerminalPanelHeader.self,
+            TerminalSnippetPopover.self,
             TerminalSettingsTab.self,
             CLISettingsSection.self,
             TagFilterJoinPicker.self,
