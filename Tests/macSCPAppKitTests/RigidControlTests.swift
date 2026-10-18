@@ -126,10 +126,11 @@ struct RigidControlTests {
     }
 
     /// Without this, `eachComponentIsRigidInEveryLanguage` passes for ANY
-    /// floor, because both of its figures go through the wrapper: a wrong
-    /// constant (the review's mutation was an ideal taken at a `.zero`
-    /// proposal) agrees with itself. The wrapper's ideal has to be the
-    /// control's own.
+    /// width, because both of its figures come from the component itself: a
+    /// component pinned to a wrong width agrees with itself (the review's
+    /// mutation against the first version, a custom layout since deleted, took
+    /// the ideal at a `.zero` proposal and left every other test green). The
+    /// component's ideal has to be the bare control's own.
     @Test func theComponentsIdealIsTheBareControlsIdeal() {
         func ideals<R: View, B: View>(
             _ locale: String, _ rigid: @MainActor () -> R, _ bare: @MainActor () -> B
@@ -182,20 +183,16 @@ struct RigidControlTests {
         #expect(checkboxes.values.contains { $0[0] < $0[1] }, "\(checkboxes)")
     }
 
-    /// Per kind, in both directions. The segmented picker is a FLOOR at its
-    /// ideal that still stretches: offered 2000 pt it reports 2000, which
-    /// `.fixedSize()` would not (the positive beside it). A checkbox and a
-    /// radio group are rigid AT the ideal: offered 2000 pt they still report
-    /// their ideal, which is what the raw controls do
-    /// (`aBareCheckboxOrRadioGroupDoesNotStretch`).
-    @Test func eachKindStretchesOrHoldsAsItsRawControlDoes() {
+    /// Rigid AT the ideal, with no stretch, for all three kinds: offered 2000
+    /// pt each component still reports its ideal, which is what the raw
+    /// controls do (`aBareSegmentedPickerDoesNotGrowPastItsIdeal`,
+    /// `aBareCheckboxOrRadioGroupDoesNotStretch`).
+    @Test func eachComponentHoldsItsIdealWhenOfferedMore() {
         for locale in LayoutMeasure.shippedLocales {
+            let segmentedIdeal = LayoutMeasure.idealWidth(locale: locale) { Self.rigidSegmented() }
             #expect(
-                Self.width(locale: locale) { Self.rigidSegmented() } == Self.offered,
-                "segmented \(locale)")
-            #expect(
-                Self.width(locale: locale) { Self.rigidSegmented().fixedSize() } < Self.offered,
-                "segmented under fixedSize \(locale)")
+                Self.width(locale: locale) { Self.rigidSegmented() } == segmentedIdeal,
+                "segmented \(locale): ideal \(segmentedIdeal)")
 
             let radioIdeal = LayoutMeasure.idealWidth(locale: locale) { Self.rigidRadio() }
             #expect(
@@ -208,11 +205,11 @@ struct RigidControlTests {
         }
     }
 
-    /// The measurement that decides which kind gets which shape. A raw
-    /// checkbox reports less than the 2000 pt it is offered (101 pt in the
-    /// Task 8 review); this test is the command that reproduces it. The rigid
-    /// components for these two kinds hold their ideal because stretching
-    /// them would be the change, not its preservation.
+    /// One of the two measurements that make `.fixedSize()` the
+    /// behaviour-preserving shape. A raw checkbox reports less than the 2000 pt
+    /// it is offered (101 pt in the Task 8 review); this test is the command
+    /// that reproduces it. Stretching the component would be the change, not
+    /// its preservation.
     @Test func aBareCheckboxOrRadioGroupDoesNotStretch() {
         for locale in LayoutMeasure.shippedLocales {
             #expect(
@@ -224,49 +221,78 @@ struct RigidControlTests {
         }
     }
 
-    /// Stacks probe for a maximum with an infinite proposal; the segmented
-    /// component answers with a finite width.
-    @Test func anInfiniteProposalGetsAFiniteAnswer() {
+    /// The other measurement that makes `.fixedSize()` the right shape for the
+    /// segmented kind. The premise that once justified a stretching custom
+    /// layout was "several of the twenty-one segmented sites currently stretch
+    /// to fill their row"; no command produced it. This test is the command
+    /// that contradicts it: a bare segmented picker is DRAWN at its ideal width
+    /// in a 2000-pt host, alone and beside a flexible `TextField` in an `HStack`
+    /// (the shape of the variable rows in `FileActionEditor` and `SnippetsSheet`),
+    /// with the picker on either side of the field.
+    ///
+    /// The positive beside it: the `HStack` reports the whole 2000 pt, so the
+    /// field is flexible and the picker really was offered slack.
+    @Test func aBareSegmentedPickerDoesNotGrowPastItsIdeal() throws {
+        func picker() -> some View { Self.bareSegmented() }
+        func field() -> some View { TextField("", text: .constant("")) }
         for locale in LayoutMeasure.shippedLocales {
-            let reported = Self.width(locale: locale, offered: .infinity) { Self.rigidSegmented() }
-            #expect(reported.isFinite && reported > 0, "\(locale): \(reported)")
+            let ideal = LayoutMeasure.idealWidth(locale: locale) { picker() }
+            let shapes: [(String, CGFloat?, CGFloat)] = [
+                (
+                    "alone", Self.renderedSegmentedWidth(locale: locale) { picker() },
+                    Self.width(locale: locale) { picker() }
+                ),
+                (
+                    "beside a field",
+                    Self.renderedSegmentedWidth(locale: locale) {
+                        HStack(spacing: 8) { field(); picker() }
+                    },
+                    Self.width(locale: locale) { HStack(spacing: 8) { field(); picker() } }
+                ),
+                (
+                    "before a field",
+                    Self.renderedSegmentedWidth(locale: locale) {
+                        HStack(spacing: 8) { picker(); field() }
+                    },
+                    Self.width(locale: locale) { HStack(spacing: 8) { picker(); field() } }
+                ),
+            ]
+            for (shape, drawn, reported) in shapes {
+                let drawnWidth = try #require(drawn, "\(locale) \(shape): no segmented control found")
+                #expect(
+                    drawnWidth == ideal,
+                    "\(locale) \(shape): drawn \(drawnWidth), ideal \(ideal), offered \(Self.offered)")
+                if shape != "alone" {
+                    #expect(reported == Self.offered, "\(locale) \(shape): row reports \(reported)")
+                }
+            }
         }
     }
 
-    /// The measurement behind the segmented component's stretch. A bare
-    /// segmented picker reports its ideal when offered far more, so it does not
-    /// grow past its ideal. The component, which reports the whole offer,
-    /// therefore claims row width the bare control never did. This test
-    /// records that; it is the command that reproduces it.
-    @Test func aBareSegmentedPickerDoesNotGrowPastItsIdeal() {
-        for locale in LayoutMeasure.shippedLocales {
-            let ideal = LayoutMeasure.idealWidth(locale: locale) { Self.bareSegmented() }
-            let reported = Self.width(locale: locale) { Self.bareSegmented() }
-            #expect(
-                reported == ideal,
-                "\(locale): offered \(Self.offered), reported \(reported), ideal \(ideal)")
-        }
-    }
+    /// The width the segmented control is drawn at when `build` is hosted in a
+    /// `offered`-wide view, found by walking the AppKit tree for the platform
+    /// host of the segmented control. `nil` when none is found, which the caller
+    /// turns into a failure rather than a pass.
+    private static func renderedSegmentedWidth<V: View>(
+        locale: String, of build: @MainActor () -> V
+    ) -> CGFloat? {
+        L10n.$localeOverride.withValue(locale) {
+            let host = NSHostingView(rootView: build())
+            host.frame = CGRect(x: 0, y: 0, width: offered, height: 200)
+            let window = NSWindow(
+                contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: true)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
 
-    /// Placement: the component draws the control at the leading edge of the
-    /// slot it was given (a bare picker is centred in it). The control is
-    /// found in the hosted view tree and its frame read. This guards the
-    /// origin only; see the note on `AtLeastIdealWidth`.
-    @Test func theSegmentedControlIsPlacedAtTheLeadingEdge() throws {
-        let host = NSHostingView(rootView: Self.rigidSegmented())
-        host.frame = CGRect(x: 0, y: 0, width: Self.offered, height: 200)
-        let window = NSWindow(
-            contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: true)
-        window.contentView = host
-        host.layoutSubtreeIfNeeded()
-
-        func find(in view: NSView) -> NSView? {
-            if "\(type(of: view))".contains("AppKitPlatformViewHost") { return view }
-            for child in view.subviews { if let hit = find(in: child) { return hit } }
-            return nil
+            @MainActor func find(in view: NSView) -> NSView? {
+                let name = "\(type(of: view))"
+                if name.contains("AppKitPlatformViewHost") && name.contains("Segmented") {
+                    return view
+                }
+                for child in view.subviews { if let hit = find(in: child) { return hit } }
+                return nil
+            }
+            return find(in: host)?.frame.width
         }
-        let control = try #require(find(in: host))
-        #expect(control.frame.minX == 0, "\(control.frame)")
-        #expect(control.frame.width < Self.offered, "\(control.frame)")
     }
 }
