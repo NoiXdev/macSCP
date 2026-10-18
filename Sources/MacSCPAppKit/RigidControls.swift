@@ -86,18 +86,31 @@ struct RadioChoice<Value: Hashable & CaseIterable>: View {
 }
 
 /// A checkbox that cannot be compressed below its ideal width.
+///
+/// **Two forms, and the call site chooses.** The default holds the label on one
+/// line at its ideal width in both axes: right for a word or a short phrase,
+/// where a squeezed label truncates and a truncated label loses text. With
+/// `wraps: true` the label is rigid vertically only: it may break across
+/// lines to fit the width it is given, and takes the height that needs. That
+/// is the form for a SENTENCE, which cannot sensibly be held to one line
+/// (`.fixedSize()` fixes both axes, so a sentence held to one line sets the
+/// minimum width of the whole view it sits in). A wrapped label loses nothing;
+/// `RigidControlTests.aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt` pins
+/// that it neither truncates nor reports a minimum equal to its one-line ideal.
 struct CheckboxRow: View {
     private let label: String
     private let isOn: Binding<Bool>
+    private let wraps: Bool
 
-    init(_ label: String, isOn: Binding<Bool>) {
+    init(_ label: String, isOn: Binding<Bool>, wraps: Bool = false) {
         self.label = label
         self.isOn = isOn
+        self.wraps = wraps
     }
 
     var body: some View {
         Toggle(label, isOn: isOn)
             .toggleStyle(.checkbox)
-            .fixedSize()
+            .fixedSize(horizontal: !wraps, vertical: true)
     }
 }
