@@ -16,7 +16,7 @@ import macSCPCore
 /// were cut off. That arrived as a screenshot. This is the same finding
 /// arriving as a red test instead: each catalogue is drawn through
 /// `L10n.localeOverride`, the editor is hosted, and the width it needs is
-/// compared with `FileActionEditor.sheetWidth`.
+/// compared with `FileActionEditor.bound.grantedWidth`.
 ///
 /// **What is measured.** `NSHostingController.sizeThatFits(in:)` with a
 /// proposed width of zero returns the smallest width the content can take
@@ -101,7 +101,7 @@ struct FileActionEditorLayoutGuardTests {
     // MARK: - The guard
 
     @Test func theContentNeedsNoMoreThanTheSheetGrantsInEveryLanguage() {
-        let granted = FileActionEditor.sheetWidth
+        let granted = FileActionEditor.bound.grantedWidth
         for locale in Self.locales {
             for draft in Self.drafts {
                 let needed = Self.requiredWidth(locale: locale, action: draft.action)
