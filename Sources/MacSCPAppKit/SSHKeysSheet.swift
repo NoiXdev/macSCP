@@ -626,7 +626,12 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// given at its own declaration.
 struct GenerateKeySheet: BoundedView {
     /// The size `GenerateKeySheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
-    static let bound: SheetBound = .width(380)
+    ///
+    /// 420, up from 380 (2026-10-18): the rigid type picker measured 377.0 pt
+    /// in every catalogue against 380, a margin of 3 pt that the next catalogue
+    /// edit would cross for a legitimate reason. 420 is the width the two
+    /// passphrase sheets in this file already use.
+    static let bound: SheetBound = .width(420)
 
     let store: ManagedKeyStore
     /// `false` means the key exists but its passphrase did not reach the
