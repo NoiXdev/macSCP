@@ -11,8 +11,9 @@ import macSCPCore
 /// `SheetSearchField` + `sheetSearchPredicate`, the `SheetFacetPicker`
 /// under it and the `SheetListEmptyState` that names which of the two
 /// narrowings emptied the list, footer buttons and the shared
-/// `SheetOverflowMenu`, fixed
-/// `.frame(width: 720, height: 460)`, row `.contextMenu`).
+/// `SheetOverflowMenu`, its size
+/// declared as a `SheetBound` (`.size(width: 720, height: 460)`), row
+/// `.contextMenu`).
 ///
 /// The facet here is the KEY TYPE (facet design, 2026-08-29), derived from
 /// the keys on disk rather than from `KeyType`'s cases: a type nobody has

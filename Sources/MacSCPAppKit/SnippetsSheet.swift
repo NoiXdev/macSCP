@@ -5,8 +5,8 @@ import macSCPCore
 /// Snippet management sheet (Terminal-Snippets milestone, Task 3): lists
 /// every saved `Snippet`, with single-selection New/Edit/Delete and a
 /// search field filtering on name and command — the same shape
-/// `LoginSetsSheet` uses (single selection, footer buttons, fixed
-/// `.frame(width: 720, height: 460)`, row `.contextMenu`, `SheetSearchField`
+/// `LoginSetsSheet` uses (single selection, footer buttons, its size
+/// declared as a `SheetBound` (`.size(width: 720, height: 460)`), row `.contextMenu`, `SheetSearchField`
 /// + `sheetSearchPredicate`, the M18 "clear the selection when the search
 /// filters it out" fix). Unlike `LoginSetsSheet` there is no view-model
 /// layer between this sheet and its store — `SnippetStore` is read and
