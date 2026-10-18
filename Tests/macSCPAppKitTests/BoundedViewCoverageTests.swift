@@ -21,6 +21,14 @@ import Testing
 /// **The scan reads the comment-and-string-blanked view**, so a doc comment
 /// that quotes a conformance is not counted as one. A conformance declared in
 /// an `extension`, and one listed among others, count as well.
+///
+/// **What the scan cannot see.** A conformance spelled without the protocol's
+/// own name on the declaration — through a typealias of it, or through a
+/// protocol that refines it — is invisible to a source scan. Such a type is
+/// still a conformer to the compiler, so the registry can hold it (its entry
+/// needs the conformance to build) while the scan misses it: the red then
+/// reads "only in the registry". Observed by planting a typealias on one
+/// conformer, which also took the scan under its floor of names.
 @Suite("Bounded view coverage")
 struct BoundedViewCoverageTests {
     /// The names of the types `Sources/MacSCPAppKit` declares to conform to
