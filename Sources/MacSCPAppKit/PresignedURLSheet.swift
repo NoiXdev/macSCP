@@ -48,12 +48,13 @@ struct PresignedURLSheet: BoundedView {
         VStack(alignment: .leading, spacing: 14) {
             Text(L10n.string("presigned.sheet.title", "Share Link")).font(.headline)
 
-            Picker("", selection: $method) {
-                Text(L10n.string("presigned.method.get", "Download (GET)")).tag(PresignedMethod.get)
-                Text(L10n.string("presigned.method.put", "Upload (PUT)")).tag(PresignedMethod.put)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            SegmentedChoice(
+                "", selection: $method,
+                options: [
+                    (PresignedMethod.get, L10n.string("presigned.method.get", "Download (GET)")),
+                    (PresignedMethod.put, L10n.string("presigned.method.put", "Upload (PUT)")),
+                ]
+            )
             .onChange(of: method) { _, _ in resetOutput() }
 
             Picker(L10n.string("presigned.expiry.label", "Expires after"), selection: $expiry) {
