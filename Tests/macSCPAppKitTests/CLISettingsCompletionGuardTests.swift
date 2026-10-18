@@ -119,12 +119,25 @@ struct CLISettingsCompletionGuardTests {
                 try SourceCorpus.commentFree(of: file))
     }
 
+    /// The shell row is a view of its own, so that
+    /// `ResizableContainerFloorTests` can measure the real row, and it carries
+    /// the picker's label key and the `allCases` iteration this guard reads.
+    /// It is part of the section as far as these scans are concerned, so its
+    /// body is read with the section's. `declarationBodyRange` throws if the
+    /// row's declaration is gone, so the extra span cannot silently be empty.
+    static let rowDeclaration = "struct CompletionShellRow: View"
+
     private static func sectionBodies() throws -> (code: String, withLiterals: String) {
         let all = try views(of: Self.settingsViewFile)
-        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
-            of: Self.sectionDeclaration, in: all.code)
-        return (TransferQueueBarCancelGuardTests.slice(range, of: all.code),
-                TransferQueueBarCancelGuardTests.slice(range, of: all.withLiterals))
+        let ranges = try [Self.sectionDeclaration, Self.rowDeclaration].map {
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(of: $0, in: all.code)
+        }
+        return (
+            ranges.map { TransferQueueBarCancelGuardTests.slice($0, of: all.code) }
+                .joined(separator: "\n"),
+            ranges.map { TransferQueueBarCancelGuardTests.slice($0, of: all.withLiterals) }
+                .joined(separator: "\n")
+        )
     }
 
     /// Positive anchor for every scan below: the strict view really does

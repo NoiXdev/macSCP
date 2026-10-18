@@ -97,6 +97,12 @@ struct SettingsView: View {
     /// the `.frame` call site's own comment for the detail.
     static let minimumSize = CGSize(width: 680, height: 620)
 
+    /// The width of the section list on the left, which is fixed. What is left
+    /// of `minimumSize.width` after it is the narrowest a section is ever
+    /// drawn in; `ResizableContainerFloorTests` holds the two Settings
+    /// sections that carry segmented controls to that figure.
+    static let sidebarColumnWidth: CGFloat = 180
+
     var store: SettingsStore
     /// App-global update-check state (M11h/T2) — same `UpdateCheckModel`
     /// instance the app menu's "Check for Updates…" item drives, threaded
@@ -142,7 +148,7 @@ struct SettingsView: View {
             // spin in a `_sizeThatFits` loop on macOS 26 if left to negotiate
             // an intrinsic width against the detail column) — verified with
             // an idle-CPU smoke test after this change (see task report).
-            .navigationSplitViewColumnWidth(180)
+            .navigationSplitViewColumnWidth(Self.sidebarColumnWidth)
         } detail: {
             Group {
                 switch selection ?? .general {
@@ -1003,6 +1009,36 @@ private struct OpenWithSettingsTab: View {
     }
 }
 
+/// The cursor style row of the Terminal section: its label and a segmented
+/// choice held at its ideal width.
+///
+/// A view of its own because `ResizableContainerFloorTests` has to measure it,
+/// and the section around it cannot be measured whole: a grouped `Form` reports
+/// the same minimum width whatever its rows hold
+/// (`ResizableContainerFloorTests.aGroupedFormReportsTheSameWidthWhateverItHolds`).
+struct TerminalCursorStyleRow: View {
+    @Binding var style: TerminalCursorStyle
+
+    var body: some View {
+        let label = L10n.string("settings.terminal.cursor", "Cursor")
+        LabeledContent(label) {
+            SegmentedChoice(
+                label, selection: $style,
+                options: [
+                    (
+                        TerminalCursorStyle.block,
+                        L10n.string("settings.terminal.cursor.block", "Block")
+                    ),
+                    (TerminalCursorStyle.bar, L10n.string("settings.terminal.cursor.bar", "Bar")),
+                    (
+                        TerminalCursorStyle.underline,
+                        L10n.string("settings.terminal.cursor.underline", "Underline")
+                    ),
+                ])
+        }
+    }
+}
+
 /// The "Terminal" section (M9d): font family/size and cursor style/blink,
 /// with a live preview. The external-terminal-target picker moved to the
 /// protocol-specific `SSHSettingsSection` in M18/T7. `@Bindable` (like
@@ -1117,18 +1153,7 @@ struct TerminalSettingsTab: View {
                 }
 
                 Section {
-                    Picker(
-                        L10n.string("settings.terminal.cursor", "Cursor"),
-                        selection: $store.terminalCursorStyle
-                    ) {
-                        Text(L10n.string("settings.terminal.cursor.block", "Block"))
-                            .tag(TerminalCursorStyle.block)
-                        Text(L10n.string("settings.terminal.cursor.bar", "Bar"))
-                            .tag(TerminalCursorStyle.bar)
-                        Text(L10n.string("settings.terminal.cursor.underline", "Underline"))
-                            .tag(TerminalCursorStyle.underline)
-                    }
-                    .pickerStyle(.segmented)
+                    TerminalCursorStyleRow(style: $store.terminalCursorStyle)
 
                     Toggle(
                         L10n.string("settings.terminal.cursorBlink", "Blinking"),
@@ -1888,6 +1913,22 @@ enum CLICompletionPresentation: Equatable, Sendable {
     }
 }
 
+/// The shell row of the command-line section: its label and a segmented choice
+/// held at its ideal width. A view of its own for the reason
+/// `TerminalCursorStyleRow` is.
+struct CompletionShellRow: View {
+    @Binding var shell: ShellCompletionRecipe.Shell
+
+    var body: some View {
+        let label = L10n.string("settings.cli.completion.shell", "Shell")
+        LabeledContent(label) {
+            SegmentedChoice(
+                label, selection: $shell,
+                options: ShellCompletionRecipe.Shell.allCases.map { ($0, $0.rawValue) })
+        }
+    }
+}
+
 /// The command-line companion's install section. Deliberately thin: every
 /// decision — does the shortcut exist, does it still point at THIS app copy,
 /// is the path occupied by something that must not be overwritten — is made by
@@ -2177,15 +2218,7 @@ struct CLISettingsSection: View {
                     // labels are the raw values on purpose: a shell's name
                     // is its name in every language, and it is also what
                     // the user types.
-                    Picker(
-                        L10n.string("settings.cli.completion.shell", "Shell"),
-                        selection: $completionShell
-                    ) {
-                        ForEach(ShellCompletionRecipe.Shell.allCases, id: \.self) { shell in
-                            Text(shell.rawValue).tag(shell)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    CompletionShellRow(shell: $completionShell)
 
                     Text(completionLine)
                         .font(.system(.caption, design: .monospaced))
