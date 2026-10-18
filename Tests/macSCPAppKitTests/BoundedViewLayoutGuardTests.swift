@@ -131,14 +131,87 @@ struct BoundedViewLayoutGuardTests {
     /// language, would be a measurement of nothing: a view that never saw
     /// the override, or an instrument that answers before it has drawn
     /// anything.
+    ///
+    /// **The across-the-registry half of this is weak, and the named half
+    /// below it is why that is tolerable.** Counted 2026-10-18 with this
+    /// suite's own committed reporter, `MACSCP_BOUND_FIGURES=1 swift test
+    /// --filter BoundedViewFigureReportTests`: **32 of the 38 entries report
+    /// the same minimum width in all four catalogues**, so "at least one
+    /// entry moved" can be satisfied by `AuditLogSheet` alone while every
+    /// other view goes flat. The deleted `FileActionEditorLayoutGuardTests`
+    /// pinned THAT view's width to move, and this check inherits that
+    /// obligation explicitly rather than hoping the registry-wide version
+    /// covers it: `FileActionEditor` is the view whose rigid controls the
+    /// whole guard was written for, and it is exactly the view Tasks 8 to 10
+    /// could flatten without any other entry noticing.
     @Test func theRegistryMeasuresSomething() {
         var movesWithTheLanguage = false
+        var editorEntries = 0
+        let editorName = String(describing: FileActionEditor.self)
         for entry in BoundedViewRegistry.all {
             let widths = LayoutMeasure.shippedLocales.map { Self.neededWidth(entry, $0) }
             #expect(widths.allSatisfy { $0 > 0 }, "\(entry.typeName), \(entry.stateName): \(widths)")
             if Set(widths).count > 1 { movesWithTheLanguage = true }
+            // The inherited obligation, on every entry of that one type.
+            // Measured 2026-10-18: 411.0 / 364.0 / 370.0 / 405.0 for `de`,
+            // `en`, `fr`, `pl`, for both drafts.
+            if entry.typeName == editorName {
+                editorEntries += 1
+                #expect(
+                    Set(widths).count > 1,
+                    "\(entry.typeName), \(entry.stateName): one width in every catalogue, \(widths)")
+            }
         }
         #expect(movesWithTheLanguage, "no entry's width changed with the catalogue")
+        #expect(editorEntries > 0, "the registry has no \(editorName) entry to hold to that")
+    }
+
+    /// The height the guard compares is the height of RIGID content, and
+    /// this is the check that notices when it stops being.
+    ///
+    /// `theHeightMeasurementMovesWithTheProposedWidth` below does not notice:
+    /// measured 2026-10-18 through `scripts/mutation-probe`, narrowing
+    /// `WhatsNewSheet`'s granted height to 150 is RED with `neededHeight`'s
+    /// `.fixedSize(horizontal: false, vertical: true)` and GREEN without it,
+    /// and that GREEN was a verdict over the whole suite — so a 236-pt
+    /// content inside a 150-pt bound went unreported while every other check
+    /// here, that one included, stayed satisfied. A flow-layout entry's BARE
+    /// height still grows when the proposed width is cut to a third, which is
+    /// why "it moved" cannot tell the two apart.
+    ///
+    /// So: at each entry's own granted width, compare the figure the guard
+    /// uses against the same measurement without the modifier. Rigid is never
+    /// the smaller of the two, and for at least one entry it is strictly
+    /// larger. Measured the same day, German: `WhatsNewSheet` 236.0 against
+    /// 109.0, `TagFilterSheet` 188.24 against 132.0, `HiddenImportsSheet`
+    /// 207.0 against 191.0, every other height-granting entry equal both
+    /// ways. The rigid figure comes from `neededHeight` itself rather than
+    /// from a second copy of that expression, so removing the modifier there
+    /// collapses this comparison instead of leaving it comparing a copy with
+    /// itself.
+    ///
+    /// No entry is named: the registry is filtered to those that grant a
+    /// height, and which of them carries a wrapping paragraph is read off the
+    /// measurement rather than spelled.
+    @Test func theHeightHalfMeasuresRigidContent() {
+        let entries = BoundedViewRegistry.all.filter { $0.bound.grantedHeight != nil }
+        #expect(!entries.isEmpty, "no entry grants a height, so the height half measures nothing")
+        var rigidExceedsBare = false
+        for entry in entries {
+            let granted = entry.bound.grantedWidth
+            let rigid = Self.neededHeight(entry, "de", at: granted)
+            let bare = SheetBound.$isSuspendedForMeasurement.withValue(true) {
+                LayoutMeasure.minimumHeight(locale: "de", at: granted, of: entry.content)
+            }
+            #expect(
+                rigid >= bare,
+                "\(entry.typeName), \(entry.stateName): rigid \(rigid) below bare \(bare)")
+            if rigid > bare { rigidExceedsBare = true }
+        }
+        #expect(rigidExceedsBare, """
+            no entry's height grew when its content was made vertically rigid, so the guard's \
+            height half is measuring what the content can be squeezed to
+            """)
     }
 
     /// The height half moves with the width it is offered, which is what
@@ -150,6 +223,12 @@ struct BoundedViewLayoutGuardTests {
     /// `List` or a `ScrollView` reports the same height at any width — so
     /// the per-entry check is that the figure is positive, and the
     /// across-entries check is that at least one entry's figure moved.
+    ///
+    /// It does NOT establish that the figure is a height the content needs
+    /// rather than one it can be squeezed to; `theHeightHalfMeasuresRigidContent`
+    /// above is the check for that, and the sentence here used to claim this
+    /// one refused "a height half that reports a truncated single line",
+    /// which it does not.
     @Test func theHeightMeasurementMovesWithTheProposedWidth() {
         let entries = BoundedViewRegistry.all.filter { $0.bound.grantedHeight != nil }
         #expect(!entries.isEmpty, "no entry grants a height, so the height half measures nothing")
