@@ -60,7 +60,7 @@ struct BoundedViewEntry {
 /// failure rather than a gap.
 @MainActor
 enum BoundedViewRegistry {
-    static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets }
+    static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets + cappedViews }
 
     // MARK: - Shared fixtures
 
@@ -442,6 +442,114 @@ enum BoundedViewRegistry {
                         name: "deploy key", username: "deploy", authKind: .privateKey,
                         keyPath: "~/.ssh/id_ed25519"),
                     onSave: { _, _ in }, onCancel: {})
+            },
+        ]
+    }
+
+    // MARK: - Pass 4: the capped views
+
+    /// The surface a failed connect shows with everything on it: dialed
+    /// from a stored session (so Retry and Edit session are there) and with
+    /// a key the remedy can convert (so Convert key and Copy command are
+    /// too). Eight buttons in one row is what this view is widest in.
+    private static var failureContentWithEveryAction: ConnectFailureContent {
+        ConnectFailurePlan.content(
+            hasStoredSession: true, remedy: .convertKey(path: "~/.ssh/id_rsa"))
+    }
+
+    /// The technical message, reachable only through `read(from:)` — the
+    /// type's initializer is `fileprivate` so that nothing but the dialog
+    /// can build one out of arbitrary text.
+    private static var failureDetails: ConnectFailureDetailText? {
+        ConnectFailureDetailText.read(
+            from: .failed(
+                message: "ssh: handshake failed: no matching host key algorithm",
+                field: nil))
+    }
+
+    private static var hostKeyCandidate: HostKeyCandidate {
+        HostKeyCandidate(
+            host: "staging.example.net", port: 22, keyType: "ssh-ed25519",
+            publicKeyBase64: "AAAAC3NzaC1lZDI1NTE5AAAAIGVzdGluZ2tleWZvcm1lYXN1cmVtZW50cw==")
+    }
+
+    private static var certificateCandidate: ServerCertificateCandidate {
+        ServerCertificateCandidate(
+            host: "s3.example.net", port: 443, derBase64: "MIIBITCBxaADAgECAgEB",
+            subject: "CN=s3.example.net", issuer: "CN=Example Issuing CA",
+            notAfter: Date(timeIntervalSince1970: 1_790_000_000))
+    }
+
+    /// Never dialed: nothing in a measurement presses Connect.
+    private static func connectionForm() -> ConnectionViewModel {
+        ConnectionViewModel(connector: { _, _ in
+            fatalError("not exercised by a layout measurement — nothing here dials")
+        })
+    }
+
+    /// The views whose bound is a cap, plus `TerminalSnippetPopover`.
+    ///
+    /// A cap is compared against its MAXIMUM: it clips there, so comparing
+    /// against the minimum would pass every view always
+    /// (`SheetBoundTests.aCapIsMeasuredAgainstItsMaximum`).
+    private static var cappedViews: [BoundedViewEntry] {
+        [
+            BoundedViewEntry("a server's own refusal text, selectable") {
+                ConnectFailureDetailsSheet(
+                    title: failureContentWithEveryAction.detailsTitle,
+                    details: failureDetails
+                        ?? ConnectFailureDetailText.read(from: .failed(message: "", field: nil))!,
+                    onClose: {})
+            },
+            BoundedViewEntry("a new SSH connection, with the schema's own fields") {
+                ConnectionFormView(
+                    viewModel: connectionForm(),
+                    sessionList: emptySessionList(),
+                    globalTerminalType: .default,
+                    managedKeyStore: keyStore,
+                    secretStore: UnreachableSecretStore(),
+                    currentReconnectAttempt: { UUID() },
+                    onConnected: { _, _ in })
+            },
+            BoundedViewEntry("a probe that gave up on a known target") {
+                LostConnectionView(
+                    content: LostConnectionPlan.content(
+                        reason: .probeGaveUp, targetIsKnown: true,
+                        behaviour: .offerOnly, attempts: 3),
+                    onReconnect: {}, onDismiss: {})
+            },
+            BoundedViewEntry("every action offered, with a key to convert") {
+                ConnectFailureView(
+                    content: failureContentWithEveryAction, details: failureDetails,
+                    onRetry: {}, onEdit: {}, onEditSession: {}, onDiagnose: {},
+                    onConvertKey: {}, onCopyCommand: {}, onClose: {})
+            },
+            BoundedViewEntry("a dial in flight, with its cancel button") {
+                ConnectingAttemptView(onCancel: {})
+            },
+            BoundedViewEntry("an unknown host key, awaiting consent") {
+                TunnelHostKeyPromptView(
+                    candidate: hostKeyCandidate, onTrust: {}, onCancel: {})
+            },
+            BoundedViewEntry("an untrusted certificate, awaiting consent") {
+                CertificatePromptView(
+                    candidate: certificateCandidate, onTrust: {}, onCancel: {})
+            },
+            BoundedViewEntry("two tagged snippets, with the hover line") {
+                TerminalSnippetPopover(
+                    snippets: [snippetWithVariables, Snippet(
+                        name: "Tail the log", command: "tail -f /var/log/syslog",
+                        tags: ["ops"])],
+                    supportsShell: true,
+                    theme: TerminalThemePreset.default.theme,
+                    onRunSnippet: { _, _ in },
+                    isPresented: .constant(true),
+                    searchText: .constant(""),
+                    searchIsRegex: .constant(false),
+                    selectedSnippetID: .constant(nil),
+                    hoveredRow: .constant(nil),
+                    previewPinnedRow: .constant(nil),
+                    actionSheetSnippet: .constant(nil))
             },
         ]
     }
