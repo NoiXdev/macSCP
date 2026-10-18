@@ -55,9 +55,11 @@ struct BoundedViewEntry {
 /// A view gets two entries where it has an either/or branch with localized
 /// text on both sides, and one otherwise.
 ///
-/// `BoundedViewCoverageTests` holds this list to the `: BoundedView`
-/// conformances in `Sources/`, so a view added there and not here is a
-/// failure rather than a gap.
+/// **Nothing holds this list to the conformances in `Sources/` yet.** Task 7
+/// of this plan adds `BoundedViewCoverageTests`, a set equality between the
+/// `typeName`s here and the `: BoundedView` conformances there; until it
+/// lands, a view added in `Sources/` and not here is a silent gap, and the
+/// 33-to-33 agreement was checked by hand.
 @MainActor
 enum BoundedViewRegistry {
     static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets + cappedViews }
@@ -288,20 +290,31 @@ enum BoundedViewRegistry {
 
     // MARK: - Pass 3: the listing sheets and the two editors
 
-    /// A directory of its own per call, so two entries never read each
-    /// other's file. Nothing is written to it during a measurement.
-    private static func freshDirectory() -> URL {
-        let directory = temporaryDirectory
-            .appendingPathComponent("bounded-view-registry-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
+    /// One path these stores read from, and it **does not exist**.
+    ///
+    /// Every store below is asked only to read, and every one of them answers
+    /// an absent file with an empty result — which is the state these entries
+    /// are measured in anyway, since `.onAppear` never runs under
+    /// `sizeThatFits`. So no directory is created, and there is nothing to
+    /// remove. A distinctive path component rather than `temporaryDirectory`
+    /// itself, so that a `snippets.json` some other test left in `$TMPDIR`
+    /// cannot be read as this registry's content.
+    ///
+    /// It was a `UUID`-named directory created per call until fix round 1 of
+    /// 2026-10-18. A builder runs once per locale per test, so one filtered
+    /// run of the guard left 138 of them behind: counted with
+    /// `ls -d "$TMPDIR"/bounded-view-registry-* | wc -l`, 4428 before the run
+    /// and 4566 after.
+    private static var unwrittenDirectory: URL {
+        temporaryDirectory.appendingPathComponent(
+            "bounded-view-registry-unwritten", isDirectory: true)
     }
 
     /// `SessionListViewModel` reads its stores in `init`, so a view model
     /// over an empty directory is an empty one — which is the state
     /// `LoginSetsSheet` is measured in. See `listingSheets` for why.
     private static func emptySessionList() -> SessionListViewModel {
-        let directory = freshDirectory()
+        let directory = unwrittenDirectory
         return SessionListViewModel(
             store: SessionStore(directory: directory), secrets: UnreachableSecretStore(),
             auditStore: AuditLogStore(directory: directory),
@@ -377,14 +390,14 @@ enum BoundedViewRegistry {
         [
             BoundedViewEntry("a session's log, before its events are read") {
                 AuditLogSheet(
-                    session: storedSession, store: AuditLogStore(directory: freshDirectory()))
+                    session: storedSession, store: AuditLogStore(directory: unwrittenDirectory))
             },
             BoundedViewEntry("no stored actions, with the empty-state sentence") {
-                FileActionsSheet(store: FileActionStore(directory: freshDirectory()))
+                FileActionsSheet(store: FileActionStore(directory: unwrittenDirectory))
             },
             BoundedViewEntry("nothing hidden, with the empty-state sentence") {
                 HiddenImportsSheet(
-                    store: HiddenImportStore(directory: freshDirectory()),
+                    store: HiddenImportStore(directory: unwrittenDirectory),
                     hosts: [
                         SSHConfigHost(
                             alias: "staging", hostName: "staging.example.net", user: "deploy",
@@ -398,18 +411,18 @@ enum BoundedViewRegistry {
                     onImport: {})
             },
             BoundedViewEntry("no known hosts, with the facet bar and the search field") {
-                KnownHostsSheet(store: KnownHostsStore(directory: freshDirectory()))
+                KnownHostsSheet(store: KnownHostsStore(directory: unwrittenDirectory))
             },
             BoundedViewEntry("no stored logins, with the overflow menu and the search field") {
                 LoginSetsSheet(sessionList: emptySessionList())
             },
             BoundedViewEntry("no trusted certificates, with the search field") {
                 ServerCertificatesSheet(
-                    store: TrustedCertificateStore(directory: freshDirectory()))
+                    store: TrustedCertificateStore(directory: unwrittenDirectory))
             },
             BoundedViewEntry("no stored snippets, with the tag filter and the search field") {
                 SnippetsSheet(
-                    store: SnippetStore(directory: freshDirectory()),
+                    store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil })
             },
 
@@ -424,13 +437,13 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a new snippet") {
                 SnippetEditorView(
-                    existing: nil, allSnippets: [], store: SnippetStore(directory: freshDirectory()),
+                    existing: nil, allSnippets: [], store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil }, onSaved: {})
             },
             BoundedViewEntry("a stored snippet with tags and two declarations") {
                 SnippetEditorView(
                     existing: snippetWithVariables, allSnippets: [snippetWithVariables],
-                    store: SnippetStore(directory: freshDirectory()),
+                    store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil }, onSaved: {})
             },
             BoundedViewEntry("a new login") {
