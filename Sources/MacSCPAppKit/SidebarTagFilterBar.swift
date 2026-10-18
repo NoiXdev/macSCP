@@ -106,7 +106,10 @@ private struct HostTagFilterDialogButton: View {
 /// Roomier, not different — the join sits here under the same rule it does in
 /// the row (`showsJoinChoice`), and "Show all" clears the same way the
 /// sidebar's own empty state does.
-struct TagFilterSheet: View {
+struct TagFilterSheet: BoundedView {
+    /// The size `TagFilterSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 300, height: 360)
+
     let tags: [String]
     @Binding var filter: SidebarTagFilter
     @Environment(\.dismiss) private var dismiss
@@ -143,7 +146,7 @@ struct TagFilterSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 300, height: 360)
+        .sheetBound(Self.bound)
     }
 }
 

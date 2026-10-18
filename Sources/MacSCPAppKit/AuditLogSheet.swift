@@ -36,7 +36,10 @@ struct AuditLogTextDocument: FileDocument {
 /// also says why the log still opens newest-first, why the sort is applied
 /// to the filter result, and why the chosen order is not remembered past
 /// the sheet closing.
-struct AuditLogSheet: View {
+struct AuditLogSheet: BoundedView {
+    /// The size `AuditLogSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 640, height: 480)
+
     let session: StoredSession
     let store: AuditLogStore
 
@@ -178,7 +181,7 @@ struct AuditLogSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 640, height: 480)
+        .sheetBound(Self.bound)
         .onAppear { events = store.events(for: session.id) }
         .confirmationDialog(
             L10n.string("audit.clear.title", "Clear audit log?"),

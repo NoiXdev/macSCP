@@ -26,7 +26,10 @@ import macSCPCore
 /// `EditButton`/selection-mode dance for the same behavior. Each column is
 /// click-to-sort; the rules live in `KnownHostsSorting`, which also says
 /// why the chosen order is not remembered past the sheet closing.
-struct KnownHostsSheet: View {
+struct KnownHostsSheet: BoundedView {
+    /// The size `KnownHostsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 720, height: 460)
+
     let store: KnownHostsStore
 
     @Environment(\.dismiss) private var dismiss
@@ -187,7 +190,7 @@ struct KnownHostsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 720, height: 460)
+        .sheetBound(Self.bound)
         .onAppear { load() }
         .confirmationDialog(
             L10n.string("knownHosts.remove.title", "Remove known host?"),

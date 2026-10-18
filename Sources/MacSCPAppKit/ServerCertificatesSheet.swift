@@ -32,7 +32,10 @@ private struct TrustedCertificateRow: Identifiable {
 /// The `knownHosts.cert.*` L10n keys are inherited from M21 and kept as they
 /// are: the strings are already translated into all four languages, and
 /// renaming keys buys nothing a reader of this file needs.
-struct ServerCertificatesSheet: View {
+struct ServerCertificatesSheet: BoundedView {
+    /// The size `ServerCertificatesSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 900, height: 460)
+
     /// Defaults to the directory every call site already uses — `ContentView`
     /// builds this sheet without arguments, and the parameter stays for tests
     /// and for a future window-scoped store.
@@ -149,7 +152,7 @@ struct ServerCertificatesSheet: View {
         // widths above (180 + 60 + 160 + 360 + 100). The height matches
         // `KnownHostsSheet` — the surrounding chrome (title, search field,
         // footer) is identical and the table fills whatever is left.
-        .frame(width: 900, height: 460)
+        .sheetBound(Self.bound)
         .onAppear { load() }
         .confirmationDialog(
             L10n.string("knownHosts.cert.remove.title", "Remove trusted certificate?"),

@@ -23,7 +23,10 @@ import macSCPCore
 /// Presented from the Terminal menu, next to "Manage Snippets…". View code
 /// with no test that draws it; `FileActionEditorWiringGuardTests` holds the
 /// wiring, and `FileActionAuthoringTests` the import review.
-struct FileActionsSheet: View {
+struct FileActionsSheet: BoundedView {
+    /// The size `FileActionsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 640, height: 440)
+
     let store: FileActionStore
 
     @Environment(\.dismiss) private var dismiss
@@ -136,7 +139,7 @@ struct FileActionsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 640, height: 440)
+        .sheetBound(Self.bound)
         .onAppear { reload() }
         .sheet(item: $editorTarget) { target in
             FileActionEditor(existing: target.existing, store: store, onSaved: { reload() })
