@@ -23,11 +23,13 @@ import SwiftUI
 /// so a view must mark each localized control that cannot wrap `.fixedSize()`
 /// for the figure to mean "needs".
 ///
-/// This lives in the test-support target but imports `MacSCPAppKit` through
-/// `@testable`, because `L10n.localeOverride` is internal to the app layer.
-/// That works because every build `swift test` makes is built testable.
+/// This lives in the AppKit test target, not in `MacSCPTestSupport`: that
+/// target is a plain, non-test target shared with the Core tests, and
+/// reaching `L10n.localeOverride` (internal to the app layer) from it would
+/// need a `@testable import` that only links in a testable build and would
+/// make every Core test link AppKit.
 @MainActor
-public enum LayoutMeasure {
+enum LayoutMeasure {
     private static let resources: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
@@ -36,14 +38,14 @@ public enum LayoutMeasure {
     /// Every shipped catalogue, read from the `.lproj` directory listing
     /// under `Sources/MacSCPAppKit/Resources`, sorted. No locale is spelled
     /// here, so a fifth language is measured the day its `.lproj` lands.
-    public static var shippedLocales: [String] {
+    static var shippedLocales: [String] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: resources.path)) ?? []
         return names.filter { $0.hasSuffix(".lproj") }
             .map { String($0.dropLast(".lproj".count)) }.sorted()
     }
 
     /// The smallest width the content can take without clipping.
-    public static func minimumWidth<V: View>(
+    static func minimumWidth<V: View>(
         locale: String, of build: @MainActor () -> V
     ) -> CGFloat {
         L10n.$localeOverride.withValue(locale) {
@@ -53,7 +55,12 @@ public enum LayoutMeasure {
     }
 
     /// The smallest height the content can take at `width` without clipping.
-    public static func minimumHeight<V: View>(
+    ///
+    /// Only content that is vertically rigid reports its wrapped height: a
+    /// bare `Text` is offered a height of zero, truncates to one line and
+    /// reports that. Mark wrapping text `.fixedSize(horizontal: false,
+    /// vertical: true)` (see `LayoutMeasureTests`).
+    static func minimumHeight<V: View>(
         locale: String, at width: CGFloat, of build: @MainActor () -> V
     ) -> CGFloat {
         L10n.$localeOverride.withValue(locale) {
@@ -63,7 +70,7 @@ public enum LayoutMeasure {
     }
 
     /// The width the content would take if nothing pushed back.
-    public static func idealWidth<V: View>(
+    static func idealWidth<V: View>(
         locale: String, of build: @MainActor () -> V
     ) -> CGFloat {
         L10n.$localeOverride.withValue(locale) {
