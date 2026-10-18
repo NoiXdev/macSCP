@@ -87,6 +87,37 @@ struct SheetBoundTests {
         }
     }
 
+    /// The seam a layout measurement reads a bounded view through.
+    ///
+    /// A view that applies its own bound reports that bound and nothing
+    /// else, so a guard that hosts it whole compares a number against
+    /// itself and is green for any content whatever. With
+    /// `isSuspendedForMeasurement` set, the modifier applies no frame and
+    /// the same host reports what the frame wraps.
+    ///
+    /// Three checks, because the interesting failure of a suspension is
+    /// that it does nothing and the interesting failure of a task-local is
+    /// that it leaks: the bounded figure is the declared bound, the
+    /// suspended figure is smaller and not zero (so it measured the content
+    /// rather than failing to measure), and the figure after the scope is
+    /// the bounded one again.
+    @Test func aMeasurementCanSuspendTheBound() {
+        // The proposal `LayoutMeasure.minimumWidth` makes: no width, and all
+        // the height in the world. Offered no height as well, a `Text` has
+        // nowhere to put a line and reports a width of zero, which is also
+        // what a measurement of nothing reports.
+        let narrow = CGSize(width: 0, height: 100_000)
+        let bounded = Self.size(of: TextBoundProbe(), offered: narrow).width
+        let suspended = SheetBound.$isSuspendedForMeasurement.withValue(true) {
+            Self.size(of: TextBoundProbe(), offered: narrow).width
+        }
+        let afterwards = Self.size(of: TextBoundProbe(), offered: narrow).width
+        #expect(bounded == TextBoundProbe.bound.grantedWidth, "\(bounded)")
+        #expect(suspended > 0, "\(suspended)")
+        #expect(suspended < bounded, "suspended \(suspended), bounded \(bounded)")
+        #expect(afterwards == bounded, "\(afterwards)")
+    }
+
     /// Reads a bound knowing nothing about the conformer but the protocol.
     private static func grantedWidth<V: BoundedView>(of _: V.Type) -> CGFloat {
         V.bound.grantedWidth
@@ -110,4 +141,17 @@ struct SheetBoundTests {
 private struct BoundProbe: BoundedView {
     static let bound = SheetBound.width(300)
     var body: some View { Color.clear.sheetBound(Self.bound) }
+}
+
+/// A conformer whose content has a width of its own, so suspending the
+/// bound reports a figure that is neither the bound nor zero. `Color.clear`
+/// would report zero suspended, which is also what a measurement that drew
+/// nothing at all would report — and so would a bare `Text`, which offered
+/// no width compresses to none rather than refusing (measured 2026-10-18:
+/// `Text` alone reports 0.0 where the same text under `.fixedSize()`
+/// reports its drawn width). That asymmetry is the whole reason the views
+/// this project measures mark what cannot compress.
+private struct TextBoundProbe: BoundedView {
+    static let bound = SheetBound.width(300)
+    var body: some View { Text(verbatim: "a word").fixedSize().sheetBound(Self.bound) }
 }

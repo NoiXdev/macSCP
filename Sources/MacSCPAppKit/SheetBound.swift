@@ -55,18 +55,44 @@ protocol BoundedView: View {
     static var bound: SheetBound { get }
 }
 
+extension SheetBound {
+    /// While true, `sheetBound(_:)` applies no frame at all, so a hosted
+    /// `BoundedView` measures as the content its bound wraps.
+    ///
+    /// **Why a bound has to be removable to be measured.** A view that
+    /// applies its own bound reports that bound and nothing else:
+    /// `NSHostingController.sizeThatFits` answers with the frame's width,
+    /// not with what the frame contains, so hosting the view whole compares
+    /// a number against itself and passes for any content whatever. The
+    /// clipping this project measures for happens INSIDE the frame, where
+    /// no size a layout reports changes. The figures are in
+    /// `BoundedViewLayoutGuardTests.theSeamIsWhatLetsTheGuardGoRed`, which
+    /// measures `FileActionEditor` both ways in one test.
+    ///
+    /// Set only from the layout guard, and read exactly where
+    /// `L10n.localeOverride` is read: inside `body`, which SwiftUI evaluates
+    /// while `sizeThatFits` runs, so a synchronous `withValue` around one
+    /// measurement covers it. Nothing in the app sets it, so every rendered
+    /// sheet takes the `false` branch.
+    @TaskLocal static var isSuspendedForMeasurement = false
+}
+
 extension View {
     /// Applies `bound` as the frame its case names, so a view's rendered
     /// size is exactly what the explicit `.frame` call it replaces gave it.
     @ViewBuilder
     func sheetBound(_ bound: SheetBound) -> some View {
-        switch bound {
-        case .width(let width):
-            frame(width: width)
-        case .size(let width, let height):
-            frame(width: width, height: height)
-        case .capped(let minWidth, let maxWidth):
-            frame(minWidth: minWidth, maxWidth: maxWidth)
+        if SheetBound.isSuspendedForMeasurement {
+            self
+        } else {
+            switch bound {
+            case .width(let width):
+                frame(width: width)
+            case .size(let width, let height):
+                frame(width: width, height: height)
+            case .capped(let minWidth, let maxWidth):
+                frame(minWidth: minWidth, maxWidth: maxWidth)
+            }
         }
     }
 }
