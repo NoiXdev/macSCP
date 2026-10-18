@@ -524,6 +524,18 @@ enum BoundedViewRegistry {
                     currentReconnectAttempt: { UUID() },
                     onConnected: { _, _ in })
             },
+            BoundedViewEntry("a new SSH connection through a jump host, entered by hand") {
+                let viewModel = connectionForm()
+                viewModel.jumpEnabled = true
+                return ConnectionFormView(
+                    viewModel: viewModel,
+                    sessionList: emptySessionList(),
+                    globalTerminalType: .default,
+                    managedKeyStore: keyStore,
+                    secretStore: UnreachableSecretStore(),
+                    currentReconnectAttempt: { UUID() },
+                    onConnected: { _, _ in })
+            },
             BoundedViewEntry("a probe that gave up on a known target") {
                 LostConnectionView(
                     content: LostConnectionPlan.content(
