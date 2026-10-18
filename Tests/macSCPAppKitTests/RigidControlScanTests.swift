@@ -43,6 +43,13 @@ import Testing
 /// container seam returning under another name. The first and third are
 /// unscannable by spelling; the measurement suites (`BoundedViewLayoutGuardTests`,
 /// `ResizableContainerFloorTests`) are what see their effect.
+///
+/// **Nor does it see a `Toggle` that names no style.** On macOS a bare
+/// `Toggle("label", isOn:)` is a compressible checkbox by default, so "the
+/// checkbox style appears only in the component" does NOT mean no compressible
+/// checkbox exists outside it. Counted 2026-10-18 with
+/// `grep -rn -e '[^a-zA-Z]Toggle(' Sources/MacSCPAppKit`, which prints 37
+/// lines; they are not migrated and not listed here, by decision.
 @Suite("Rigid control scan")
 struct RigidControlScanTests {
     private static let appKitSources: URL = SourceCorpus.url(of: .sources)
@@ -63,7 +70,6 @@ struct RigidControlScanTests {
 
     private static func regex(_ pattern: String) -> NSRegularExpression {
         // A pattern that does not compile is a bug in this file, not a result.
-        // swiftlint:disable:next force_try
         try! NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
     }
 
@@ -270,6 +276,11 @@ struct RigidControlScanTests {
     /// The lines of the modifier chain that `lines[start]` belongs to: that
     /// line, then every following line that starts with `.`, skipping blank
     /// ones (a blanked comment is blank). The first other line ends it.
+    ///
+    /// It reads FORWARD only: a `.fixedSize()` written before the style
+    /// (`Picker {}.fixedSize().pickerStyle(.menu)`) is rigid and still reads as
+    /// missing. That is the loud direction, and every listed menu writes the
+    /// style first, so it stands.
     private static func modifierChain(startingAt start: Int, in lines: [Substring]) -> [String] {
         var chain = [lines[start].trimmingCharacters(in: .whitespaces)]
         var index = start + 1
