@@ -108,7 +108,13 @@ private struct HostTagFilterDialogButton: View {
 /// sidebar's own empty state does.
 struct TagFilterSheet: BoundedView {
     /// The size `TagFilterSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
-    static let bound: SheetBound = .size(width: 300, height: 360)
+    ///
+    /// 320 wide, up from 300 (2026-10-18): the join picker held at its ideal
+    /// needs 306.0 pt in French (`BoundedViewLayoutGuardTests` printed
+    /// `fr: needs 306.0 pt, granted 300.0 pt`). Widened rather than changed
+    /// to a menu: two segments are the whole choice, and a menu would hide
+    /// one of the two behind a click.
+    static let bound: SheetBound = .size(width: 320, height: 360)
 
     let tags: [String]
     @Binding var filter: SidebarTagFilter
@@ -120,7 +126,7 @@ struct TagFilterSheet: BoundedView {
                 .font(.headline)
 
             if filter.showsJoinChoice {
-                TagFilterJoinPicker(filter: $filter)
+                TagFilterJoinPicker(filter: $filter, holdsItsIdeal: true)
             }
 
             ScrollView {
@@ -161,25 +167,50 @@ struct TagFilterSheet: BoundedView {
 /// positions are called.
 struct TagFilterJoinPicker: View {
     @Binding var filter: SidebarTagFilter
+    /// Whether the picker is held at its ideal width (`SegmentedChoice`) or
+    /// left to compress. The dialog holds it: its bound is a measured width,
+    /// and a squeezed picker there would lose a label with nothing
+    /// overflowing. The sidebar row does not yet: it sits in a container the
+    /// user resizes down to `SettingsStore.sidebarWidthRange`'s lower bound,
+    /// where a rigid picker would overflow instead, which is the resizable
+    /// containers' own task. Defaults to the compressible form so the row is
+    /// unchanged.
+    var holdsItsIdeal = false
+
+    private var join: Binding<SidebarTagFilter.Join> {
+        Binding(
+            get: { filter.join },
+            set: { filter = filter.joined($0) })
+    }
+
+    private var helpText: String {
+        L10n.string(
+            "sidebar.filter.join.help",
+            "Whether a connection must carry all selected tags or just one of them.")
+    }
 
     var body: some View {
-        Picker(
-            selection: Binding(
-                get: { filter.join },
-                set: { filter = filter.joined($0) }
+        if holdsItsIdeal {
+            SegmentedChoice(
+                helpText, selection: join,
+                options: [
+                    (SidebarTagFilter.Join.all, L10n.string("sidebar.filter.join.all", "All tags")),
+                    (SidebarTagFilter.Join.any, L10n.string("sidebar.filter.join.any", "Any tag")),
+                ]
             )
-        ) {
-            Text(L10n.string("sidebar.filter.join.all", "All tags"))
-                .tag(SidebarTagFilter.Join.all)
-            Text(L10n.string("sidebar.filter.join.any", "Any tag"))
-                .tag(SidebarTagFilter.Join.any)
-        } label: {
-            EmptyView()
+            .help(helpText)
+        } else {
+            Picker(selection: join) {
+                Text(L10n.string("sidebar.filter.join.all", "All tags"))
+                    .tag(SidebarTagFilter.Join.all)
+                Text(L10n.string("sidebar.filter.join.any", "Any tag"))
+                    .tag(SidebarTagFilter.Join.any)
+            } label: {
+                EmptyView()
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help(helpText)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .help(L10n.string(
-            "sidebar.filter.join.help",
-            "Whether a connection must carry all selected tags or just one of them."))
     }
 }
