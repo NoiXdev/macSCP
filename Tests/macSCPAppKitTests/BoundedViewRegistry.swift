@@ -402,8 +402,34 @@ enum BoundedViewRegistry {
     /// `aSheetThatLoadsItsRowsOnAppearIsMeasuredEmpty` measures a seeded
     /// store and an empty one and gets the same figure from both. So what
     /// these entries measure is each sheet's chrome and its empty-state
-    /// sentence — which, for `HiddenImportsSheet` and the others like it,
-    /// IS the longest localized text the sheet ever shows.
+    /// sentence, and for seven of the nine that is not enough to call the
+    /// sheet covered.
+    ///
+    /// **Corrected 2026-10-18.** The sentence above ended "— which, for
+    /// `HiddenImportsSheet` and the others like it, IS the longest localized
+    /// text the sheet ever shows." Nothing ever measured that, and for at
+    /// least one of these sheets it is false: `KnownHostsSheet`'s row
+    /// affordances (`knownHosts.copyFingerprint`, `knownHosts.remove`) and its
+    /// two error sentences (`knownHosts.loadError %@`,
+    /// `knownHosts.removeError %@`) are localized, are never rendered in the
+    /// state this registry puts up, and nothing compares their width with the
+    /// empty-state sentence's.
+    ///
+    /// What IS measured is the Task 6 review's classification. Two of the nine
+    /// are genuinely covered: `AuditLogSheet`, whose minimum moves with the
+    /// catalogue (157.5 / 157.5 / 202.5 / 207.5 of 640), and
+    /// `HiddenImportsSheet`, the only entry on either axis whose HEIGHT moves
+    /// with it (207 / 191 / 207 / 207 of 460). The other seven —
+    /// `FileActionsSheet`, `ImportFromSourceSheet`, `KnownHostsSheet`,
+    /// `LoginSetsSheet`, `ServerCertificatesSheet`, `SnippetsSheet` and
+    /// `SSHKeysSheet` — report one width in all four catalogues and sit
+    /// between 2.4x and 8.3x inside what their bound grants (`FileActionsSheet`
+    /// 267.0 of 640, `ImportFromSourceSheet` 94.0 of 780). Measured 2026-10-18
+    /// on Darwin 27.0.0 with
+    /// `MACSCP_BOUND_FIGURES=1 swift test --filter BoundedViewFigureReportTests`.
+    /// What the seven still buy is what that review said they buy: the rows the
+    /// type-set equality needs, and a red if a later task narrows a bound below
+    /// the chrome minimum.
     /// `ImportFromSourceSheet` is the ninth, for a different reason: its
     /// rows arrive through `await model.load(...)`, and an entry's builder
     /// is synchronous.
