@@ -75,7 +75,9 @@ struct HiddenImportsSheet: BoundedView {
             }
 
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+            SheetSearchField(
+                text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
+                holdsItsIdeal: true)
 
             // Only claim "nothing hidden" when the list is GENUINELY empty
             // (same rule as `KnownHostsSheet.load()`'s review finding): after

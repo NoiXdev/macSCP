@@ -102,7 +102,14 @@ struct AuditLogSheet: BoundedView {
             // side by side. A pop-up button shows one label. `.fixedSize()`
             // keeps it uncompressible so a regression is measured rather than
             // squeezed.
-            Picker("", selection: $filter) {
+            //
+            // Not `RadioChoice`, the other control that answers this: a
+            // radio group lists all six options and stacks them, so the sheet
+            // would trade 874 pt of width for six rows of height above a log
+            // that is the sheet's whole point. The picker is named after the
+            // property it filters (the log's "Event" column), so assistive
+            // technology announces what the control is for.
+            Picker(L10n.string("audit.column.kind", "Event"), selection: $filter) {
                 Text(L10n.string("audit.filter.all", "All")).tag(Filter.all)
                 Text(L10n.string("audit.filter.transfers", "Transfers")).tag(Filter.transfers)
                 Text(L10n.string("audit.filter.fileOps", "File Ops")).tag(Filter.fileOps)
@@ -115,7 +122,9 @@ struct AuditLogSheet: BoundedView {
             .fixedSize()
 
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+            SheetSearchField(
+                text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
+                holdsItsIdeal: true)
 
             // Genuinely empty (`events.isEmpty`, ignoring filter/search) gets
             // the "no entries yet" text; a non-empty log with zero rows

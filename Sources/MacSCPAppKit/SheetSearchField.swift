@@ -18,6 +18,12 @@ struct SheetSearchField: View {
     @Binding var isRegex: Bool
     /// Non-nil when the current regex is invalid (host passes it in).
     var errorText: String?
+    /// Whether the regex checkbox is held at its ideal width. The bounded
+    /// sheets hold it, so a squeezed label there overflows where the guard
+    /// can see it; the session sidebar does not yet, because it is a container
+    /// the user resizes and its migration is the resizable containers' own
+    /// task. Defaults to the compressible form so the sidebar is unchanged.
+    var holdsItsIdeal = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -26,8 +32,7 @@ struct SheetSearchField: View {
             TextField(
                 L10n.string("search.placeholder", "Search"), text: $text)
                 .textFieldStyle(.roundedBorder)
-            Toggle(L10n.string("search.regex", "Regex"), isOn: $isRegex)
-                .toggleStyle(.checkbox)
+            regexToggle
                 .help(L10n.string("search.regex.help", "Match with a regular expression"))
             if let errorText {
                 Text(errorText)
@@ -35,6 +40,19 @@ struct SheetSearchField: View {
                     .foregroundStyle(.red)
                     .lineLimit(1)
             }
+        }
+    }
+}
+
+extension SheetSearchField {
+    @ViewBuilder
+    fileprivate var regexToggle: some View {
+        let label = L10n.string("search.regex", "Regex")
+        if holdsItsIdeal {
+            CheckboxRow(label, isOn: $isRegex)
+        } else {
+            Toggle(label, isOn: $isRegex)
+                .toggleStyle(.checkbox)
         }
     }
 }
