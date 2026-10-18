@@ -34,9 +34,12 @@ import Testing
     // MARK: - The widened guard anchors
 
     // Five source-scanning guards used to anchor on `private struct X: View`
-    // and now anchor on `struct X: View`. Widening an anchor can only add
-    // matches, and each of those guards reads the FIRST one, so the failure
-    // that is still reachable is a second site the guard would read instead.
+    // and now anchor on `struct X: View`; three of the six rows below (the
+    // lost and failed surfaces, and the snippet editor) have since moved on
+    // to `struct X: BoundedView`, with the types they name. Widening an
+    // anchor can only add matches, and each of those guards reads the FIRST
+    // one, so the failure that is still reachable is a second site the guard
+    // would read instead.
     //
     // The anchor and the file of every row are read from the guard's own
     // constants, not spelled here, so editing an anchor or repointing a

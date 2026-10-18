@@ -720,8 +720,6 @@ extension ContentView {
                     onTrust: { tab.certificateBridge.resolve(trust: true) },
                     onCancel: { tab.certificateBridge.resolve(trust: false) }
                 )
-                .padding(24)
-                .frame(minWidth: 420, maxWidth: 460)
                 .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 // The single "no session yet" surface (connection-liveness
@@ -2389,7 +2387,10 @@ private struct SidebarWidthRecorder: View {
 /// the type here rather than a rule someone has to remember. In particular
 /// this surface does NOT show the host, the account, the failure text the
 /// server sent, or anything from the form.
-struct LostConnectionView: View {
+struct LostConnectionView: BoundedView {
+    /// The size `LostConnectionView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 460)
+
     let content: LostConnectionContent
     let onReconnect: () -> Void
     let onDismiss: () -> Void
@@ -2428,7 +2429,7 @@ struct LostConnectionView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 420, maxWidth: 460)
+        .sheetBound(Self.bound)
     }
 }
 
@@ -2453,7 +2454,10 @@ struct LostConnectionView: View {
 /// view cannot read the string at all), which is the maintainer's
 /// decision — a general sentence here, everything precise one click away
 /// for debugging.
-struct ConnectFailureView: View {
+struct ConnectFailureView: BoundedView {
+    /// The size `ConnectFailureView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 460)
+
     let content: ConnectFailureContent
     /// The technical text, or `nil` when the layer below published none —
     /// in which case the details control is not offered at all rather than
@@ -2550,7 +2554,7 @@ struct ConnectFailureView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 420, maxWidth: 460)
+        .sheetBound(Self.bound)
         .sheet(isPresented: $showsDetails) {
             if let details {
                 ConnectFailureDetailsSheet(
@@ -2579,7 +2583,10 @@ struct ConnectFailureView: View {
 /// need different wording later, and sharing one key would silently change
 /// this surface's text the next time someone edits the dot's tooltip for
 /// its OWN reasons.
-struct ConnectingAttemptView: View {
+struct ConnectingAttemptView: BoundedView {
+    /// The size `ConnectingAttemptView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 460)
+
     let onCancel: () -> Void
 
     var body: some View {
@@ -2598,7 +2605,7 @@ struct ConnectingAttemptView: View {
                 .buttonStyle(.polished)
         }
         .padding(24)
-        .frame(minWidth: 420, maxWidth: 460)
+        .sheetBound(Self.bound)
     }
 }
 
@@ -2614,7 +2621,12 @@ struct ConnectingAttemptView: View {
 /// clicks the button. What IS tested is the one new decision it makes
 /// beyond what `SnippetMenuItems`/`SnippetMenuModel` already own: which
 /// snippets the search narrows the list to — `TerminalSnippetSearch`, below.
-struct TerminalPanelHeader: View {
+struct TerminalPanelHeader: BoundedView {
+    /// The width of the snippet popover this header presents — NOT of the header
+    /// itself, which fills the terminal panel. `snippetPopover` applies it with
+    /// `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(280)
+
     /// The active tab's display name (`SessionTab.displayTitle`). This
     /// panel exists only on a connected tab, and for a connected tab that
     /// is the name the tab strip and the window title show too:
@@ -2790,7 +2802,7 @@ struct TerminalPanelHeader: View {
             }
         }
         .padding(12)
-        .frame(width: 280)
+        .sheetBound(Self.bound)
         .background(theme.background.swiftUIColor)
         .sheet(item: $actionSheetSnippet) { snippet in
             // Task 2's action window, reused verbatim. Insert/Execute both

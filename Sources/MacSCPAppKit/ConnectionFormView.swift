@@ -1,7 +1,10 @@
 import SwiftUI
 import macSCPCore
 
-struct ConnectionFormView: View {
+struct ConnectionFormView: BoundedView {
+    /// The size `ConnectionFormView` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 460)
+
     @Bindable var viewModel: ConnectionViewModel
     /// Full view model (M10b/T3), not an array of its lists: the group
     /// picker reads its `groups` (`SessionEditorGroupPicker`), and
@@ -649,7 +652,7 @@ struct ConnectionFormView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 420, maxWidth: 460)
+        .sheetBound(Self.bound)
         .fileImporter(isPresented: $showKeyImporter, allowedContentTypes: [.item]) { result in
             if case .success(let url) = result {
                 viewModel.keyPath = url.path(percentEncoded: false)
