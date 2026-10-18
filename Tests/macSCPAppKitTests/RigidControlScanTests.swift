@@ -45,13 +45,21 @@ import Testing
 /// `ResizableContainerFloorTests`) are what see their effect.
 ///
 /// **A width frame around a rigid component is the fourth, and it is caught
-/// one level deep.** A `.frame(width:)` collapses a rigid component's reported
-/// minimum exactly as a compressible control does, so neither a width guard nor
-/// a floor guard moves — the measurement is in
+/// one level deep.** A `.frame(width:)`, `.frame(maxWidth:)` or
+/// `.frame(minWidth:)` collapses a rigid component's reported minimum exactly
+/// as a compressible control does, so neither a width guard nor a floor guard
+/// moves — measured by
+/// `RigidControlTests.aWidthOrMinWidthFrameCollapsesTheMinimum`, and watched by
 /// `noRigidComponentIsHeldToAWidthFrame`, which reads the modifier chain on
-/// each of the 19 component calls, where both instances this branch deleted
-/// stood. A frame on an ENCLOSING container is not read, and nothing in this
-/// tree measures it.
+/// each of the 19 component calls. **Corrected 2026-10-18:** this paragraph
+/// said those calls are "where both instances this branch deleted stood". One
+/// of the two stood there. `SnippetsSheet`'s `.frame(width: 150)` sits on a
+/// component call and is watched; `FileSearchBar`'s `.frame(width: 118)` was
+/// replaced in `aece2e2b` by a hand-written `.pickerStyle(.menu)` picker, and
+/// `FileSearchBar.swift` holds no component call at all, so a width frame
+/// returning to that line is caught by nothing — item (1) of the
+/// coverage-debt row in `docs/BACKLOG.md`. A frame on an ENCLOSING container
+/// is not read either, and nothing in this tree measures it.
 ///
 /// **Nor does it see a `Toggle` that names no style.** On macOS a bare
 /// `Toggle("label", isOn:)` is a compressible checkbox by default, so "the
@@ -403,10 +411,34 @@ struct RigidControlScanTests {
             ]),
     ]
 
-    /// A width frame, in the two spellings that CAP a width. `minWidth:` and
-    /// `idealWidth:` raise a floor rather than cap, so they are not matched;
-    /// `maxWidth: .infinity` caps at infinity, which collapses nothing, and the
-    /// lookahead excludes it.
+    /// A frame spelling that collapses a rigid component's reported minimum.
+    /// Which spellings those are is measured, not reasoned:
+    /// `RigidControlTests.aWidthOrMinWidthFrameCollapsesTheMinimum` reports,
+    /// through this repository's own `LayoutMeasure`,
+    ///
+    /// ```
+    /// MACSCP_BOUND_FIGURES=1 swift test --filter aWidthOrMinWidthFrameCollapsesTheMinimum
+    /// frame: de alone 149.0 width100 100.0 maxWidth100 100.0 minWidth100 100.0 maxWidthInfinity 149.0 minWidth100AndInfinity 100.0
+    /// frame: fr alone 174.0 width100 100.0 maxWidth100 100.0 minWidth100 100.0 maxWidthInfinity 174.0 minWidth100AndInfinity 100.0
+    /// ```
+    ///
+    /// So `width:`, `maxWidth:` and `minWidth:` are all matched, and
+    /// `maxWidth: .infinity` — which leaves the minimum exactly where it was —
+    /// is excluded by the lookahead. A frame writing both
+    /// (`minWidth: 100, maxWidth: .infinity`) collapses to 100.0 and is caught
+    /// on its `minWidth`. `idealWidth:` is not matched and is not measured
+    /// either way.
+    ///
+    /// **Corrected 2026-10-18, by measurement.** This comment read "A width
+    /// frame, in the two spellings that CAP a width. `minWidth:` and
+    /// `idealWidth:` raise a floor rather than cap, so they are not matched".
+    /// That is a claim about how SwiftUI behaves and it is false of
+    /// `minWidth:`: a floor of 100 reports 100, the same figure a hard width
+    /// gives. `theCallChainReaderSeesWhatItIsWrittenToSee` asserted the hole
+    /// open, in a must-not-match sample, which is worse than leaving it
+    /// unsaid. `grep -rn -F -e '.frame(minWidth:' Sources/MacSCPAppKit` prints
+    /// 25 lines, so the spelling is a house idiom; none of them sits on a
+    /// component call, so widening the pattern reds nothing today.
     ///
     /// The lookahead swallows the whitespace itself, `:(?!\s*\.infinity)` and
     /// not `:\s*(?!\.infinity)`. The second form was written first and read
@@ -415,7 +447,7 @@ struct RigidControlScanTests {
     /// the dot, and a negative lookahead that cannot see what it excludes
     /// always succeeds.
     private static let widthFramePattern =
-        #"\.frame\((?:[^)]*[,\s])?(?:width|maxWidth)\s*:(?!\s*\.infinity)"#
+        #"\.frame\((?:[^)]*[,\s])?(?:width|maxWidth|minWidth)\s*:(?!\s*\.infinity)"#
 
     /// The modifier chain written on the call whose opening parenthesis ends at
     /// `openParenEnd`: the rest of the line that call closes on, then every
@@ -483,37 +515,60 @@ struct RigidControlScanTests {
     /// reports, exactly as a compressible control does, and no measurement in
     /// this tree moves.
     ///
-    /// Measured 2026-10-18 on Darwin 27, in a standalone binary outside this
-    /// repository, on a segmented control carrying three German labels: rigid
-    /// alone, minimum 477.0; in `.frame(width: 100)`, minimum 100.0; inside
-    /// `.frame(maxWidth: 100)`, minimum 100.0; in a `VStack` inside
-    /// `.frame(width: 100)`, minimum 100.0. The overflow is drawn clipped, and
+    /// The measurement that reproduces as committed is
+    /// `RigidControlTests.aWidthOrMinWidthFrameCollapsesTheMinimum`
+    /// (`MACSCP_BOUND_FIGURES=1 swift test --filter aWidthOrMinWidthFrameCollapsesTheMinimum`),
+    /// which reports a rigid `SegmentedChoice` at 149.0 in German and 100.0
+    /// under each of `.frame(width: 100)`, `.frame(maxWidth: 100)` and
+    /// `.frame(minWidth: 100)`. The overflow is drawn clipped, and
     /// `BoundedViewLayoutGuardTests` then reads the frame's figure instead of
     /// the content's — which withdraws the Task 8 conclusion that "A caller can
     /// still wrap the result in `.frame(width:)`, but that clips and overflows,
     /// which the Task 6 guard sees".
     ///
-    /// The shape is not hypothetical: this branch deleted two instances of it,
-    /// `SnippetsSheet`'s `.frame(width: 150)` in `c8bfdb63` and
-    /// `FileSearchBar`'s `.frame(width: 118)` in `aece2e2b`. Nothing but this
-    /// check stops either from coming back.
+    /// The final reviewer's own figures — a segmented control with three German
+    /// labels at minimum 477.0 alone, 100.0 in `.frame(width: 100)`, 100.0
+    /// inside `.frame(maxWidth: 100)` and 100.0 in a `VStack` inside
+    /// `.frame(width: 100)` — were taken in a standalone binary outside this
+    /// repository and **are not reproducible as committed**; the last of the
+    /// four is the one the test above cannot show, because nothing here
+    /// measures a frame on an enclosing container.
+    ///
+    /// The shape is not hypothetical: this branch deleted `SnippetsSheet`'s
+    /// `.frame(width: 150)` in `c8bfdb63`, and nothing but this check stops it
+    /// coming back. **Corrected 2026-10-18:** this paragraph read "this branch
+    /// deleted two instances of it, `SnippetsSheet`'s `.frame(width: 150)` in
+    /// `c8bfdb63` and `FileSearchBar`'s `.frame(width: 118)` in `aece2e2b`.
+    /// Nothing but this check stops either from coming back." The second half
+    /// is false of this check: `aece2e2b` replaced that call with a
+    /// hand-written `.pickerStyle(.menu)` picker, there is no component call
+    /// anywhere in `FileSearchBar.swift`, and so this scan never looks at the
+    /// line. A width frame returning there is caught by nothing — which is
+    /// item (1) of the coverage-debt row in `docs/BACKLOG.md`, the one
+    /// recording that the menu kind has no component.
     ///
     /// The positive half is the second expectation: the per-file call counts
     /// equal the list above EXACTLY, so a scan that has stopped finding the
     /// component — a rename, a changed spelling — reads 0 against a listed
     /// count and is red, instead of passing by inspecting nothing.
     ///
-    /// **Proved red 2026-10-18.** The plant puts the deleted frame back on the
+    /// **Proved red 2026-10-18, twice.** Each plant puts a frame back on the
     /// snippet kind picker, through `scripts/mutation-probe`, which reverts
-    /// index-safely and refuses a dirty tree:
+    /// index-safely and refuses a dirty tree. The first plants the width frame
+    /// `c8bfdb63` deleted, the second the `minWidth` floor the pattern was
+    /// widened for:
     ///
     /// ```
     /// scripts/mutation-probe --filter noRigidComponentIsHeldToAWidthFrame \
     ///   --label 'width frame back on the snippet kind picker' \
     ///   --apply "perl -0pi -e 's/\n                        \]\)\n                \} else \{\n/\n                        ])\n                    .frame(width: 150)\n                } else {\n/' Sources/MacSCPAppKit/SnippetsSheet.swift"
+    ///
+    /// scripts/mutation-probe --filter noRigidComponentIsHeldToAWidthFrame \
+    ///   --label 'minWidth floor back on the snippet kind picker' \
+    ///   --apply "perl -0pi -e 's/\n                        \]\)\n                \} else \{\n/\n                        ])\n                    .frame(minWidth: 100)\n                } else {\n/' Sources/MacSCPAppKit/SnippetsSheet.swift"
     /// ```
     ///
-    /// which printed, verbatim:
+    /// Both printed, verbatim:
     ///
     /// ```
     /// ── control: 1 test(s) ran, 0 pre-existing failures
@@ -580,16 +635,21 @@ struct RigidControlScanTests {
         // A call the reader cannot close reads as an empty chain, not as a hit.
         #expect(chains("SegmentedChoice(a, selection: b") == [[]])
 
-        // The frame pattern's own edges.
+        // The frame pattern's own edges. `.frame(minWidth: 100)` sat in the
+        // must-NOT-match list until 2026-10-18, on the strength of the
+        // withdrawn sentence quoted above `widthFramePattern`; measured, it
+        // collapses the minimum to 100.0 exactly as a hard width does, so it
+        // belongs here. An infinite cap is the one spelling that does not.
         for sample in [
             ".frame(width: 150)", ".frame( width : 150)", ".frame(maxWidth: 118)",
-            ".frame(minWidth: 100, maxWidth: 200)", ".padding().frame(width: 150)",
+            ".frame(minWidth: 100)", ".frame(minWidth: 100, maxWidth: 200)",
+            ".frame(minWidth: 100, maxWidth: .infinity)", ".padding().frame(width: 150)",
         ] {
             #expect(Self.count(Self.widthFramePattern, in: sample) == 1, "must match: \(sample)")
         }
         for sample in [
-            ".frame(height: 150)", ".frame(minWidth: 100)", ".frame(idealWidth: 100)",
-            ".frame(maxWidth: .infinity)", ".fixedSize()",
+            ".frame(height: 150)", ".frame(idealWidth: 100)", ".frame(maxWidth: .infinity)",
+            ".fixedSize()",
         ] {
             #expect(Self.count(Self.widthFramePattern, in: sample) == 0, "must not match: \(sample)")
         }

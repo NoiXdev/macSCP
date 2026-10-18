@@ -238,6 +238,61 @@ struct RigidControlTests {
         }
     }
 
+    /// Which frame spellings collapse a rigid component's reported minimum —
+    /// the measurement `RigidControlScanTests.widthFramePattern` is written
+    /// from, taken through this repository's own harness so that it reproduces
+    /// as committed.
+    ///
+    /// Measured 2026-10-18 on Darwin 27.0.0 (macOS 27.0.1, arm64), printed by
+    ///
+    /// ```
+    /// MACSCP_BOUND_FIGURES=1 swift test --filter aWidthOrMinWidthFrameCollapsesTheMinimum
+    /// ```
+    ///
+    /// ```
+    /// frame: de alone 149.0 width100 100.0 maxWidth100 100.0 minWidth100 100.0 maxWidthInfinity 149.0 minWidth100AndInfinity 100.0
+    /// frame: fr alone 174.0 width100 100.0 maxWidth100 100.0 minWidth100 100.0 maxWidthInfinity 174.0 minWidth100AndInfinity 100.0
+    /// ```
+    ///
+    /// Three results, and each one decides a branch of that pattern.
+    /// `.frame(width:)` and `.frame(maxWidth:)` collapse the minimum, so both
+    /// are matched. **`.frame(minWidth:)` collapses it too** — 149.0 to 100.0,
+    /// the same figure a hard width gives — so it is matched as well, although
+    /// a floor reads like the safe spelling. `.frame(maxWidth: .infinity)`
+    /// leaves the minimum where it was, so it is excluded, and a frame that
+    /// writes both (`minWidth: 100, maxWidth: .infinity`) collapses and is
+    /// caught on its `minWidth`.
+    @Test func aWidthOrMinWidthFrameCollapsesTheMinimum() {
+        let printing = ProcessInfo.processInfo.environment["MACSCP_BOUND_FIGURES"] == "1"
+        for locale in LayoutMeasure.shippedLocales {
+            @MainActor func minimum<V: View>(_ build: @MainActor () -> V) -> CGFloat {
+                LayoutMeasure.minimumWidth(locale: locale, of: build)
+            }
+            let alone = minimum { Self.rigidSegmented() }
+            let width = minimum { Self.rigidSegmented().frame(width: 100) }
+            let maxWidth = minimum { Self.rigidSegmented().frame(maxWidth: 100) }
+            let minWidth = minimum { Self.rigidSegmented().frame(minWidth: 100) }
+            let infinity = minimum { Self.rigidSegmented().frame(maxWidth: .infinity) }
+            let floorAndInfinity = minimum {
+                Self.rigidSegmented().frame(minWidth: 100, maxWidth: .infinity)
+            }
+            if printing {
+                print(
+                    "frame: \(locale) alone \(alone) width100 \(width) maxWidth100 \(maxWidth) "
+                        + "minWidth100 \(minWidth) maxWidthInfinity \(infinity) "
+                        + "minWidth100AndInfinity \(floorAndInfinity)")
+            }
+            #expect(alone > 100, "\(locale): the sample must be wider than the frames below it")
+            #expect(width == 100, "\(locale): width frame \(width), alone \(alone)")
+            #expect(maxWidth == 100, "\(locale): maxWidth frame \(maxWidth), alone \(alone)")
+            #expect(minWidth == 100, "\(locale): minWidth frame \(minWidth), alone \(alone)")
+            #expect(infinity == alone, "\(locale): maxWidth .infinity \(infinity), alone \(alone)")
+            #expect(
+                floorAndInfinity == 100,
+                "\(locale): minWidth with an infinite cap \(floorAndInfinity), alone \(alone)")
+        }
+    }
+
     /// The connection form's jump toggle, in the shape the tree writes it:
     /// a `Toggle` that names no style at all.
     private static func bareJumpToggle() -> some View {
