@@ -447,15 +447,16 @@ struct ConnectionFormView: BoundedView {
                             // feature) and the schema-driven S3 section.
                             let typeLabel = L10n.string("connection.type.label", "Connection type")
                             FormRow(label: typeLabel) {
-                                Picker(typeLabel, selection: $viewModel.kind) {
-                                    ForEach(ConnectionKind.allCases, id: \.self) { kind in
+                                SegmentedChoice(
+                                    typeLabel, selection: $viewModel.kind,
+                                    options: ConnectionKind.allCases.map { kind in
                                         let descriptor = BackendDescriptor.descriptor(for: kind)
-                                        Text(L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault))
-                                            .tag(kind)
+                                        return (
+                                            kind,
+                                            L10n.string(descriptor.badgeLabelKey, descriptor.badgeLabelDefault)
+                                        )
                                     }
-                                }
-                                .pickerStyle(.segmented)
-                                .labelsHidden()
+                                )
                                 // Connection type is fixed after creation — editing a
                                 // session never changes its protocol.
                                 .disabled(isEditMode)
@@ -961,6 +962,14 @@ struct ConnectionFormView: BoundedView {
                     // full manual block unchanged from before this feature.
                     let jumpSourceLabel = L10n.string("form.jump.source.label", "Source")
                     FormRow(label: jumpSourceLabel) {
+                        // Still a plain segmented `Picker`, not `SegmentedChoice`:
+                        // held at its ideal width this row needs more than
+                        // `Self.bound` grants in German, and widening that
+                        // bound past what the main window leaves the form is
+                        // the maintainer's call. The registry entry "a new
+                        // SSH connection through a jump host, entered by
+                        // hand" holds the rows that are rigid; this one and
+                        // the authentication row below are the exceptions.
                         Picker(jumpSourceLabel, selection: Binding(
                             get: { viewModel.jumpSourceMode },
                             set: { viewModel.selectJumpSourceMode($0) }
@@ -1012,17 +1021,22 @@ struct ConnectionFormView: BoundedView {
                             // secret to drop -- see
                             // `ConnectionViewModel.selectJumpLoginMode`. The
                             // source and auth pickers above/below do the same.
-                            Picker(loginModeLabel, selection: Binding(
-                                get: { viewModel.jumpLoginMode },
-                                set: { viewModel.selectJumpLoginMode($0) }
-                            )) {
-                                Text(L10n.string("form.loginMode.set", "Login set"))
-                                    .tag(ConnectionViewModel.LoginMode.set)
-                                Text(L10n.string("form.loginMode.manual", "Manual"))
-                                    .tag(ConnectionViewModel.LoginMode.manual)
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
+                            SegmentedChoice(
+                                loginModeLabel,
+                                selection: Binding(
+                                    get: { viewModel.jumpLoginMode },
+                                    set: { viewModel.selectJumpLoginMode($0) }
+                                ),
+                                options: [
+                                    (
+                                        ConnectionViewModel.LoginMode.set,
+                                        L10n.string("form.loginMode.set", "Login set")
+                                    ),
+                                    (
+                                        ConnectionViewModel.LoginMode.manual,
+                                        L10n.string("form.loginMode.manual", "Manual")
+                                    ),
+                                ])
                         }
 
                         if viewModel.jumpLoginMode == .set {
@@ -1057,6 +1071,9 @@ struct ConnectionFormView: BoundedView {
 
                             let jumpAuthMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
                             FormRow(label: jumpAuthMethodLabel) {
+                                // Plain `Picker` for the reason the source row above
+                                // gives: rigid, it needs more than `Self.bound` grants
+                                // in French.
                                 Picker(jumpAuthMethodLabel, selection: Binding(
                                     get: { viewModel.jumpAuthChoice },
                                     set: { viewModel.selectJumpAuthChoice($0) }
@@ -1176,14 +1193,18 @@ struct ConnectionFormView: BoundedView {
     private var loginModeSwitcher: some View {
         let loginModeLabel = L10n.string("form.loginMode.label", "Login")
         return FormRow(label: loginModeLabel) {
-            Picker(loginModeLabel, selection: $viewModel.loginMode) {
-                Text(L10n.string("form.loginMode.set", "Login set"))
-                    .tag(ConnectionViewModel.LoginMode.set)
-                Text(L10n.string("form.loginMode.manual", "Manual"))
-                    .tag(ConnectionViewModel.LoginMode.manual)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            SegmentedChoice(
+                loginModeLabel, selection: $viewModel.loginMode,
+                options: [
+                    (
+                        ConnectionViewModel.LoginMode.set,
+                        L10n.string("form.loginMode.set", "Login set")
+                    ),
+                    (
+                        ConnectionViewModel.LoginMode.manual,
+                        L10n.string("form.loginMode.manual", "Manual")
+                    ),
+                ])
         }
     }
 
