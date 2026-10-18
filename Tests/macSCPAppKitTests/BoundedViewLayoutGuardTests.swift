@@ -150,7 +150,26 @@ struct BoundedViewLayoutGuardTests {
     /// --filter BoundedViewFigureReportTests`: **32 of the 38 entries report
     /// the same minimum width in all four catalogues**, so "at least one
     /// entry moved" can be satisfied by `AuditLogSheet` alone while every
-    /// other view goes flat. The deleted `FileActionEditorLayoutGuardTests`
+    /// other view goes flat.
+    ///
+    /// **Corrected 2026-10-18, after the control migration.** The sentence
+    /// above read "32 of the 38 entries report the same minimum width in all
+    /// four catalogues". The registry has 40 entries now and **31 of the 40**
+    /// report one minimum. The weakness is the same (nine entries move, and
+    /// `AuditLogSheet` is still one of them, now at 157.5 / 157.5 / 202.5 /
+    /// 207.5); the figure it was counted from is not. The command, run from
+    /// the repository root, prints the count:
+    ///
+    /// ```
+    /// MACSCP_BOUND_FIGURES=1 swift test --filter BoundedViewFigureReportTests 2>&1 | grep '^boundfigures:' | python3 -I -c "import re,sys; r=[len(set(re.findall(r' (?:de|en|fr|pl) ([0-9.]+)/', l.split(' | ')[0])))==1 for l in sys.stdin]; print(sum(r), 'of', len(r))"
+    /// ```
+    ///
+    /// It prints `31 of 40` at this head. The same parse over the reporter's
+    /// output saved before the migration began gives `32 of 38`, so the count
+    /// reproduces the figure it replaces. (A
+    /// count of 29 was taken one commit earlier, before the sentence
+    /// checkbox in `SnippetEditorView` was allowed to wrap; two entries that
+    /// moved then are flat again.) The deleted `FileActionEditorLayoutGuardTests`
     /// pinned THAT view's width to move, and this check inherits that
     /// obligation explicitly rather than hoping the registry-wide version
     /// covers it: `FileActionEditor` is the view whose rigid controls the
