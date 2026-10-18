@@ -65,11 +65,13 @@ struct FileActionEditorWiringGuardTests {
 
     @Test func thePickerBindsThePerSelectionFormAndTheTogglesBindTheSides() throws {
         let editor = try Self.code(Self.editorFile)
-        #expect(editor.contains("Picker("))
+        // `RadioChoice` offers one radio per case of the type it is bound to,
+        // so binding it to `$perSelection` is what puts every
+        // `FileActionPerSelection` case on screen.
+        #expect(editor.contains("RadioChoice("))
         #expect(editor.contains("selection: $perSelection"))
-        #expect(editor.contains("FileActionPerSelection.allCases"))
-        // Two toggles, one per side, each folded into the action's `runsOn`.
-        #expect(editor.components(separatedBy: "Toggle(").count - 1 >= 2)
+        // Two checkboxes, one per side, each folded into the action's `runsOn`.
+        #expect(editor.components(separatedBy: "CheckboxRow(").count - 1 >= 2)
         #expect(editor.contains("runsOn:"))
         #expect(editor.contains("BrowserPaneSide.allCases"))
         #expect(editor.contains("perSelection:"))
