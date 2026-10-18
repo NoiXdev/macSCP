@@ -205,6 +205,39 @@ struct RigidControlTests {
         }
     }
 
+    private static func sentenceCheckbox(wraps: Bool) -> some View {
+        CheckboxRow(
+            L10n.string(
+                "snippets.editor.skipPlacementCheck",
+                "Don't check where values are placed in this command"),
+            isOn: .constant(true), wraps: wraps)
+    }
+
+    /// The wrapping form of `CheckboxRow` exists so that a SENTENCE can break
+    /// across lines instead of setting the minimum width of the view it sits
+    /// in. Three properties, per catalogue: it can be narrower than its
+    /// one-line ideal (the default form cannot, `eachComponentIsRigidInEveryLanguage`),
+    /// its one-line ideal is the default form's (nothing else changed), and
+    /// at half that width it is TALLER than at the ideal, which is what
+    /// "wrapped, not truncated" means: a truncated label would keep its height
+    /// and lose text.
+    @Test func aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt() {
+        for locale in LayoutMeasure.shippedLocales {
+            let rigid = Self.figures(locale) { Self.sentenceCheckbox(wraps: false) }
+            let wrapping = Self.figures(locale) { Self.sentenceCheckbox(wraps: true) }
+            #expect(rigid[0] == rigid[1], "\(locale) default form: \(rigid)")
+            #expect(wrapping[0] < wrapping[1], "\(locale) wrapping form: \(wrapping)")
+            #expect(wrapping[1] == rigid[1], "\(locale) ideal: wrapping \(wrapping[1]), default \(rigid[1])")
+            let narrow = LayoutMeasure.minimumHeight(locale: locale, at: wrapping[1] / 2) {
+                Self.sentenceCheckbox(wraps: true)
+            }
+            let flat = LayoutMeasure.minimumHeight(locale: locale, at: wrapping[1]) {
+                Self.sentenceCheckbox(wraps: true)
+            }
+            #expect(narrow > flat, "\(locale): height at half the ideal \(narrow), at the ideal \(flat)")
+        }
+    }
+
     /// One of the two measurements that make `.fixedSize()` the
     /// behaviour-preserving shape. A raw checkbox reports less than the 2000 pt
     /// it is offered (101 pt in the Task 8 review); this test is the command
