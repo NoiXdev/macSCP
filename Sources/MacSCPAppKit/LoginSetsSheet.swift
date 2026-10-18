@@ -841,7 +841,7 @@ struct LoginSetsSheet: View {
 /// connection form's login-set picker was always empty. Nothing in here
 /// names a protocol any more, so the next backend arrives with its schema
 /// and no edit to this file.
-private struct LoginSetEditorView: View {
+struct LoginSetEditorView: View {
     let existing: LoginSet?
     let onSave: (LoginSet, String?) -> Void
     let onCancel: () -> Void

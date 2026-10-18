@@ -309,7 +309,7 @@ struct SnippetCommandEditorGuardTests {
     func snippetEditorSavesOnCommandReturn() throws {
         let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
-            containing: "private struct SnippetEditorView: View {", in: source)
+            containing: "struct SnippetEditorView: View {", in: source)
         #expect(body.contains("SnippetCommandEditor("), """
             Sanity check: the scanned struct body must still contain the editor call site, or \
             this test would pass for the wrong reason (a struct that no longer builds the \
@@ -322,7 +322,7 @@ struct SnippetCommandEditorGuardTests {
     @Test("the command-Return scan reacts to a reverted shortcut")
     func commandReturnScanReactsToRegression() throws {
         let reverted = """
-            private struct SnippetEditorView: View {
+            struct SnippetEditorView: View {
                 var body: some View {
                     SnippetCommandEditor(text: $command)
                     Button("Save") { save() }.keyboardShortcut(.defaultAction)
@@ -330,7 +330,7 @@ struct SnippetCommandEditorGuardTests {
             }
             """
         let body = try Self.functionBody(
-            containing: "private struct SnippetEditorView: View {", in: reverted)
+            containing: "struct SnippetEditorView: View {", in: reverted)
         #expect(!body.contains("keyboardShortcut(.return, modifiers: .command)"))
     }
 

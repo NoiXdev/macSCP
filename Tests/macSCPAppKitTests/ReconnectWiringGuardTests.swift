@@ -851,7 +851,7 @@ struct ReconnectWiringGuardTests {
     /// by whitespace.
     @Test func theLostSurfaceRendersNoStringOfItsOwn() throws {
         let body = try Self.strippedBody(
-            after: "private struct LostConnectionView: View", in: Self.detailFile)
+            after: "struct LostConnectionView: View", in: Self.detailFile)
         #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
         let literals = Self.localizedCallsWithALiteralArgument(in: body)
         #expect(literals.isEmpty, """
@@ -871,7 +871,7 @@ struct ReconnectWiringGuardTests {
     /// the view renders localized text at all.
     @Test func theLostSurfaceRendersTheCauseDetail() throws {
         let body = try Self.strippedBody(
-            after: "private struct LostConnectionView: View", in: Self.detailFile)
+            after: "struct LostConnectionView: View", in: Self.detailFile)
         #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
         #expect(body.contains("content.detail"), """
             `LostConnectionView` no longer reads `content.detail` — the per-cause sentence             the plan builds is then never rendered, and nothing else in the suite notices.
@@ -1479,7 +1479,7 @@ struct ReconnectWiringGuardTests {
     /// app uses.
     @Test func theFailedSurfaceRendersNoStringOfItsOwn() throws {
         let body = try Self.strippedBody(
-            after: "private struct ConnectFailureView: View", in: Self.detailFile)
+            after: "struct ConnectFailureView: View", in: Self.detailFile)
         #expect(body.contains("L10n.string("), "the surface renders no localized text at all?")
         let literals = Self.localizedCallsWithALiteralArgument(in: body)
         #expect(literals.isEmpty, """

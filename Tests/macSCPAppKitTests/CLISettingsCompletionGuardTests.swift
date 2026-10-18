@@ -69,7 +69,7 @@ struct CLISettingsCompletionGuardTests {
     /// section itself calls the recipe and iterates its shell list. The
     /// negative reads the whole FILE instead: see
     /// `theViewSpellsNoneOfTheCommandsItself`.
-    private static let sectionDeclaration = "private struct CLISettingsSection: View"
+    private static let sectionDeclaration = "struct CLISettingsSection: View"
 
     /// A tool token no Swift source can contain, so splitting a line around
     /// it leaves exactly the parts `ShellCompletionRecipe` spells itself.

@@ -39,7 +39,7 @@ struct TerminalKeyboardWiringGuardTests {
 
     private static let wrapperFile = "Sources/MacSCPAppKit/SSHTerminalView.swift"
     private static let settingsViewFile = "Sources/MacSCPAppKit/SettingsView.swift"
-    private static let settingsTab = "private struct TerminalSettingsTab: View"
+    private static let settingsTab = "struct TerminalSettingsTab: View"
 
     private static let keys = [
         "settings.terminal.optionAsMeta",

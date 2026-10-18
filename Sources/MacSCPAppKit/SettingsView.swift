@@ -1008,7 +1008,7 @@ private struct OpenWithSettingsTab: View {
 /// protocol-specific `SSHSettingsSection` in M18/T7. `@Bindable` (like
 /// `GeneralSettingsSection`) so the controls below can bind directly to
 /// `$store.*`.
-private struct TerminalSettingsTab: View {
+struct TerminalSettingsTab: View {
     @Bindable var store: SettingsStore
 
     /// Drives the `.itermcolors` picker (plan of 2026-09-19, Task 3) —
@@ -1907,7 +1907,7 @@ enum CLICompletionPresentation: Equatable, Sendable {
 /// which can hang on a slow or broken profile and would freeze this window. So
 /// the requirement is stated plainly in the footer instead of pretended to be
 /// verified, and macSCP never edits a shell profile to "fix" it.
-private struct CLISettingsSection: View {
+struct CLISettingsSection: View {
     private let installer: CLIToolInstaller
 
     @State private var state: CLIInstallState

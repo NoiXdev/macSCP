@@ -106,7 +106,7 @@ private struct HostTagFilterDialogButton: View {
 /// Roomier, not different — the join sits here under the same rule it does in
 /// the row (`showsJoinChoice`), and "Show all" clears the same way the
 /// sidebar's own empty state does.
-private struct TagFilterSheet: View {
+struct TagFilterSheet: View {
     let tags: [String]
     @Binding var filter: SidebarTagFilter
     @Environment(\.dismiss) private var dismiss
@@ -156,7 +156,7 @@ private struct TagFilterSheet: View {
 /// Both surfaces that offer the choice draw THIS view, so the row and the
 /// dialog cannot come to disagree about when it appears or what its two
 /// positions are called.
-private struct TagFilterJoinPicker: View {
+struct TagFilterJoinPicker: View {
     @Binding var filter: SidebarTagFilter
 
     var body: some View {
