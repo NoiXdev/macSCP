@@ -1092,12 +1092,11 @@ struct SnippetEditorView: BoundedView {
             // where somebody may want to tick this first, and a greyed-out
             // checkbox would explain neither itself nor when it would come
             // back.
-            Toggle(
+            CheckboxRow(
                 L10n.string(
                     "snippets.editor.skipPlacementCheck",
                     "Don't check where values are placed in this command"),
                 isOn: $skipsPlacementCheck)
-                .toggleStyle(.checkbox)
                 .font(.caption)
             Text(L10n.string(
                 "snippets.editor.skipPlacementCheck.hint",
@@ -1193,14 +1192,12 @@ struct SnippetEditorView: BoundedView {
                     TextField(
                         L10n.string("snippets.variables.name", "Name"), text: draft.name,
                         prompt: Text(L10n.string("snippets.variables.name", "Name")))
-                    Picker("", selection: draft.isSelection) {
-                        Text(L10n.string("snippets.variables.kind.freeText", "Free text"))
-                            .tag(false)
-                        Text(L10n.string("snippets.variables.kind.selection", "Choice")).tag(true)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 150)
+                    SegmentedChoice(
+                        "", selection: draft.isSelection,
+                        options: [
+                            (false, L10n.string("snippets.variables.kind.freeText", "Free text")),
+                            (true, L10n.string("snippets.variables.kind.selection", "Choice")),
+                        ])
                 } else {
                     Text(snippetCollapsedVariableSummary(for: draft.wrappedValue.variable))
                         .font(.caption)
@@ -1281,10 +1278,9 @@ struct SnippetEditorView: BoundedView {
                         prompt: Text(L10n.string("snippets.variables.default", "Default")))
                 }
 
-                Toggle(
+                CheckboxRow(
                     L10n.string("snippets.variables.remember", "Remember last value"),
                     isOn: draft.remembersLastValue)
-                    .toggleStyle(.checkbox)
                     .font(.caption)
             }
         }
