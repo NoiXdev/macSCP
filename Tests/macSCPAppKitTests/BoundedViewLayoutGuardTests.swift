@@ -345,8 +345,8 @@ struct BoundedViewLayoutGuardTests {
 
     /// A view registered in two states must really be in two states.
     ///
-    /// Two entries that measure identically in every catalogue, on both
-    /// figures the instrument reports, are one state entered twice: the
+    /// Two entries that measure identically in every catalogue, on every
+    /// figure the instrument reports, are one state entered twice: the
     /// second costs a measurement and tests nothing, and its `stateName`
     /// says something about the view that is not true. Found this way on
     /// 2026-10-18, before this check existed: `FileActionConfirmSheet`'s
@@ -355,10 +355,18 @@ struct BoundedViewLayoutGuardTests {
     /// because the action they were planned from was refused by
     /// `FileActionTemplate.firstProblem` and both rendered that one refusal.
     ///
-    /// Both figures, because one is not enough: the two `FileActionEditor`
+    /// Both widths, because one is not enough: the two `FileActionEditor`
     /// drafts share a minimum width (411.0 pt in German for each) and are
     /// told apart only by their ideal (843.0 against 1268.0), the variable
     /// row being what the second adds.
+    ///
+    /// And the height too, because two widths are not enough either: once
+    /// `SnippetEditorView`'s placement-check checkbox was held at its ideal,
+    /// that one control set the minimum width of both its states and the two
+    /// ideals came out equal, so a new snippet and a stored one with two
+    /// declarations tied on both widths. They still differ in height, the
+    /// declarations being extra rows. The height is measured at the entry's
+    /// own granted width, as the guard measures it.
     @Test func entriesOfOneTypeMeasureDifferentStates() {
         let byType = Dictionary(grouping: BoundedViewRegistry.all, by: \.typeName)
         var checkedAPair = false
@@ -371,7 +379,9 @@ struct BoundedViewLayoutGuardTests {
                     let ideal = SheetBound.$isSuspendedForMeasurement.withValue(true) {
                         LayoutMeasure.idealWidth(locale: locale, of: entry.content)
                     }
-                    return [minimum, ideal]
+                    let height = Self.neededHeight(
+                        entry, locale, at: entry.bound.grantedWidth)
+                    return [minimum, ideal, height]
                 }
                 if let twin = seen[shape] {
                     Issue.record("""
