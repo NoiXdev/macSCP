@@ -11,6 +11,11 @@ struct BrowserPane: View {
     /// `ContentView+Detail.swift` take it as their `.frame(minWidth:)`, so the
     /// number is spelled once and `ResizableContainerFloorTests` reads the same
     /// one when it holds the search bar to it.
+    ///
+    /// "Both" counted 2026-10-18 with
+    /// `grep -n 'BrowserPane[.]minimumWidth' Sources/MacSCPAppKit/ContentView+Detail.swift`
+    /// (bracketed so this comment does not match its own pattern, and the
+    /// pattern names the other file, not this one): two lines, one per pane.
     static let minimumWidth: CGFloat = 280
 
     let title: String

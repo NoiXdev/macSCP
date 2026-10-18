@@ -866,6 +866,7 @@
 "search.placeholder" = "Suchen";
 "search.mode.filter" = "Filtern";
 "search.mode.jump" = "Springen";
+"search.mode" = "Suchmodus";
 "search.regexHelp" = "Regulärer Ausdruck";
 "search.close" = "Suche schließen";
 "search.count.filter %1$lld %2$lld" = "%1$lld von %2$lld";

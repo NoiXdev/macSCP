@@ -1916,6 +1916,10 @@ enum CLICompletionPresentation: Equatable, Sendable {
 /// The shell row of the command-line section: its label and a segmented choice
 /// held at its ideal width. A view of its own for the reason
 /// `TerminalCursorStyleRow` is.
+///
+/// The shell list is the recipe's own, so this picker cannot offer a shell the
+/// CLI has no script for. The labels are the raw values on purpose: a shell's
+/// name is its name in every language, and it is also what the user types.
 struct CompletionShellRow: View {
     @Binding var shell: ShellCompletionRecipe.Shell
 
@@ -2213,11 +2217,8 @@ struct CLISettingsSection: View {
                         ))
                     .fixedSize(horizontal: false, vertical: true)
 
-                    // The shell list is the recipe's own, so this picker
-                    // cannot offer a shell the CLI has no script for. The
-                    // labels are the raw values on purpose: a shell's name
-                    // is its name in every language, and it is also what
-                    // the user types.
+                    // The shell picker: why its list and labels are what they
+                    // are is on `CompletionShellRow`.
                     CompletionShellRow(shell: $completionShell)
 
                     Text(completionLine)
