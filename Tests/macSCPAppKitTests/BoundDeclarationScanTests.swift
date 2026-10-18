@@ -12,9 +12,20 @@ import Testing
 ///
 /// "Root" is read off the indentation, as `scripts/sheet-bound-inventory`
 /// reads it: a modifier at eight spaces is a modifier of a `body` (or of a
-/// computed view property) at the first level of a type. A `.frame` nested
-/// deeper bounds a control inside the view, which is not what this scan is
-/// about.
+/// computed view property) at the first level of a type.
+///
+/// **What this scan catches, and what it does not.** It catches a reverted
+/// literal at root indentation, and nothing else. A view escapes it by
+/// indenting differently (`FileActionEditor`'s own application of its bound
+/// sits at twelve spaces, and the `.frame(minWidth: 420, maxWidth: 460)` that
+/// belonged to `CertificatePromptView` sat at sixteen, at a call site, and
+/// was a sheet's bound, not a control's); by capping at a call site instead
+/// of in the view; by naming the number (`Self.someWidth` is the very
+/// spelling that hid `FileActionEditor` from the inventory in the first
+/// place); or by a near miss such as `.frame(width: 420.0)`. Coverage of a
+/// NEW bounded view therefore does not rest on this scan: it rests on
+/// `BoundedView` conformance, and on the set equality the per-language
+/// measurement checks its registry against.
 ///
 /// Both halves read the blanked code view, so a comment that quotes a
 /// spelling neither trips the negative half nor satisfies the positive one.
@@ -78,6 +89,9 @@ struct BoundDeclarationScanTests {
             "        .frame(width: 420)", "        .frame(width: 640, height: 480)",
             "        .frame(minWidth: 420, maxWidth: 460)",
         ]
+        // `zip` stops at the shorter side, so a spelling added without a sample
+        // would otherwise go unproved in silence.
+        #expect(samples.count == Self.rootLevelSpellings.count)
         for (spelling, sample) in zip(Self.rootLevelSpellings, samples) {
             #expect(sample.range(of: spelling.pattern, options: .regularExpression) != nil, "\(spelling.name)")
         }
