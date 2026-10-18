@@ -502,7 +502,16 @@ one. The four passes, by how a view is constructed:
    `LoginSetEditorView`.
 4. **The capped views** — `ConnectFailureDetailsSheet`, `ConnectionFormView`,
    `LostConnectionView`, `ConnectFailureView`, `ConnectingAttemptView`,
-   `TunnelHostKeyPromptView`, `TerminalPanelHeader`.
+   `TunnelHostKeyPromptView`, `TerminalSnippetPopover`.
+
+   **Corrected in place 2026-10-18**, after Task 5's review. This line first
+   read `` `TunnelHostKeyPromptView`, `TerminalPanelHeader`. `` —
+   `TerminalPanelHeader` applied its 280-point bound inside `snippetPopover`
+   rather than in its own `body`, so Task 5 extracted the popover into
+   `TerminalSnippetPopover: BoundedView` and the header is no longer a
+   conformer. Registering the header here would fail Task 7's set equality,
+   and measuring it against 280 would be vacuous: it truncates with
+   `lineLimit(1)` and never approaches that width.
 
 Each entry's `stateName` names the state and each state is the one that puts
 that view's widest and tallest content up — a listing with rows rather than
