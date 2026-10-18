@@ -1,13 +1,51 @@
 import SwiftUI
 
-// Three controls that cannot be compressed below their ideal width.
+// Three controls that hold their ideal width by default, and the two
+// per-site seams that let a call site say otherwise.
 //
-// **Why they exist.** A compressed control reports a small minimum, is shrunk
-// inside its row and truncates its labels, and NOTHING overflows, so no width
-// measurement can see it. Once a control cannot be compressed, squeezing it
-// becomes overflow, and overflow is what `BoundedView` measures. The compressible
-// form is not writable through these types: each takes a label, never a styled
-// control.
+// **Corrected 2026-10-18, fix round 3.** This header opened "Three controls
+// that cannot be compressed below their ideal width." and said of the
+// components "The compressible form is not writable through these types: each
+// takes a label, never a styled control." Neither is true of the tree any
+// more. Two compressibility seams exist, a test asserts that one of them
+// compresses, and a contributor reading the old header would conclude that
+// adding another is forbidden or, finding these, that they are accidents.
+// They are neither; they are listed below with the reason each is allowed.
+//
+// **Why the components exist.** A compressed control reports a small minimum,
+// is shrunk inside its row and truncates its labels, and NOTHING overflows, so
+// no width measurement can see it. Once a control cannot be compressed,
+// squeezing it becomes overflow, and overflow is what `BoundedView` measures.
+// Each component takes a label, never a styled control, so the bare
+// compressible spelling is not what a call site writes.
+//
+// **The two seams, and why each is justified.** In both, RIGID IS THE
+// DEFAULT, so forgetting the argument is safe: a compressible control keeps the
+// guard green while its label is cut, which is the defect this work removes,
+// and an opt-in would reproduce it silently at every call site that forgot it.
+//
+// 1. `CheckboxRow(_:isOn:wraps:)`, `wraps: true`. Rigid vertically, free to
+//    break across lines horizontally. Allowed because the invariant is "no text
+//    is silently lost", and a WRAPPED label loses none; only a truncated one
+//    does. It is for a sentence (`.fixedSize()` fixes both axes, so a sentence
+//    held to one line sets the minimum width of the whole view it sits in).
+//    `RigidControlTests.aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt` pins
+//    that it neither truncates nor reports its one-line ideal as its minimum.
+// 2. `isInAResizableContainer: true` on `TagFilterJoinPicker` and
+//    `SheetSearchField`, the two shared views that wrap these components.
+//    Allowed for one reason: a container the user resizes (the session
+//    sidebar, down to `SettingsStore.sidebarWidthRange`'s lower bound) has no
+//    single width to hold a rigid control against, and a rigid control there
+//    overflows instead. It is a per-site opt-out for that surface only and
+//    belongs to the resizable containers' own migration, not to a bounded
+//    view.
+//
+// Three more rigid controls are NOT components: `Picker` with
+// `.pickerStyle(.menu)`, `.labelsHidden()` and `.fixedSize()`, written by hand
+// at `AuditLogSheet` and at the jump source and jump authentication rows of
+// `ConnectionFormView`. A pop-up shows one label, which is why it fits where a
+// segmented control of the same labels did not. Nothing but review keeps their
+// `.fixedSize()` in place.
 //
 // **Why `.fixedSize()` and no custom layout.** "Rigid" here means rigid AT the
 // ideal, with no stretch, because none of the three kinds stretches to begin
