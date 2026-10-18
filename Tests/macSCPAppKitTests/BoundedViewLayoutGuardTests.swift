@@ -68,6 +68,17 @@ struct BoundedViewLayoutGuardTests {
     /// is green for every view whatever its content, which is a guard that
     /// cannot go red. `theHeightMeasurementMovesWithTheProposedWidth` is the
     /// positive check that this one does.
+    ///
+    /// Measured on the registry itself, 2026-10-18, German, at each entry's
+    /// granted width: rigid against bare, `WhatsNewSheet` 236.0 against
+    /// 109.0, `TagFilterSheet` 188.24 against 132.0, `HiddenImportsSheet`
+    /// 207.0 against 191.0 — and every other entry that grants a height the
+    /// same figure both ways, because its tallest element is a `List` or a
+    /// `ScrollView` rather than a paragraph. The difference is the whole
+    /// comparison for the first three: narrowing `WhatsNewSheet`'s granted
+    /// height to 150 through `scripts/mutation-probe` is RED with this
+    /// `.fixedSize` and GREEN with it dropped, which is the same plant
+    /// read twice.
     private static func neededHeight(
         _ entry: BoundedViewEntry, _ locale: String, at width: CGFloat
     ) -> CGFloat {
@@ -177,8 +188,12 @@ struct BoundedViewLayoutGuardTests {
         let store = SnippetStore(directory: seeded)
         try store.save(Snippet(name: "the first stored snippet", command: "echo one"))
         try store.save(Snippet(name: "the second stored snippet", command: "echo two"))
-        #expect(try store.all().count == 2)
-        #expect(try SnippetStore(directory: empty).all().isEmpty)
+        // Read out of the `#expect` and into a `let`: `#expect(try …)` over a
+        // call the macro cannot see as throwing warns, and CI counts warnings.
+        let seededSnippets = try store.all()
+        let emptySnippets = try SnippetStore(directory: empty).all()
+        #expect(seededSnippets.count == 2)
+        #expect(emptySnippets.isEmpty)
 
         func measure(_ directory: URL) -> (width: CGFloat, height: CGFloat) {
             func sheet() -> SnippetsSheet {
