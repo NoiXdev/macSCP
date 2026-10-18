@@ -26,7 +26,8 @@ AppKit (`NSHostingController`), Swift Testing.
 - Build the view **inside** `L10n.$localeOverride.withValue`, never outside:
   measured 2026-10-17, building outside reported 373 pt where the correct
   figure is 411, silently, and the guard passed.
-- Rigid means **a floor at the ideal, not a shrink to it**.
+- Rigid means **the control holds its ideal and is never compressed below it**.
+    **Corrected in place 2026-10-18, after Task 8's measurements.** The rigidity rule here first read `Rigid means **a floor at the ideal, not a shrink to it**`, justified by `several of the twenty-one segmented sites currently stretch to fill their row, and shrinking them would change how up to twenty-seven controls look`. **No command produced that sentence.** Measured by Task 8 on Darwin 27: a bare 3-segment picker reports 242.5 pt at 40-200 pt offered and 295.5 pt at 300-2000 pt, and in a 2000-pt host it draws at its ideal, CENTRED, even under `.frame(maxWidth: .infinity)`, in a `VStack` and in a `Form`. Beside a `TextField` in an `HStack` it draws at 155.0 pt, its ideal, in all four arrangements tried, with the field taking the slack. A segmented picker therefore compresses below its ideal but never grows past it — which the original defect corroborates, the German picker having been squeezed from 432 pt to 360 pt. The floor would have made each component claim width the bare control never claimed and moved it from centred to leading, which is the layout change this plan's non-goals exclude. `AtLeastIdealWidth` is deleted; all three components are their control plus `.fixedSize()`.
 - Height is measured **where a view fixes it**.
 - Remedies for a red measurement, all three sanctioned: make the control
   rigid; widen the bound to the maximum measured **across all four
