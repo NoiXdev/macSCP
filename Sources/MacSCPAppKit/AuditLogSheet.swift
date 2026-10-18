@@ -94,6 +94,14 @@ struct AuditLogSheet: BoundedView {
         VStack(alignment: .leading, spacing: 14) {
             Text(session.name).font(.headline)
 
+            // A menu, not `SegmentedChoice`. Measured 2026-10-18 by
+            // `BoundedViewLayoutGuardTests`: these six labels as a segmented
+            // picker held at its ideal need 874.0 pt in French and 901.0 pt in
+            // Polish against `Self.bound`'s 640, past `MainWindowSizePlan.formSize`
+            // as well, because a segmented control is as wide as ALL its labels
+            // side by side. A pop-up button shows one label. `.fixedSize()`
+            // keeps it uncompressible so a regression is measured rather than
+            // squeezed.
             Picker("", selection: $filter) {
                 Text(L10n.string("audit.filter.all", "All")).tag(Filter.all)
                 Text(L10n.string("audit.filter.transfers", "Transfers")).tag(Filter.transfers)
@@ -102,8 +110,9 @@ struct AuditLogSheet: BoundedView {
                 Text(L10n.string("audit.filter.connection", "Connection")).tag(Filter.connection)
                 Text(L10n.string("audit.filter.errors", "Errors")).tag(Filter.errors)
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .labelsHidden()
+            .fixedSize()
 
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
