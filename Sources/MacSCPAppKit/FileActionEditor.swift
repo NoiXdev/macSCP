@@ -178,14 +178,9 @@ struct FileActionEditor: BoundedView {
             let formLabel = L10n.string("fileAction.editor.form", "Runs")
             FormRow(label: formLabel) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Picker(formLabel, selection: $perSelection) {
-                        ForEach(FileActionPerSelection.allCases, id: \.self) { form in
-                            Text(fileActionFormLabel(form)).tag(form)
-                        }
+                    RadioChoice(formLabel, selection: $perSelection) { form in
+                        fileActionFormLabel(form)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.radioGroup)
-                    .fixedSize()
                     Text(perSelection == .oncePerFile
                         ? L10n.string(
                             "fileAction.editor.form.perFile.hint",
@@ -200,15 +195,13 @@ struct FileActionEditor: BoundedView {
 
             FormRow(label: L10n.string("fileAction.editor.where", "Where")) {
                 HStack(spacing: 16) {
-                    Toggle(
+                    CheckboxRow(
                         L10n.string("fileAction.editor.side.remote", "Remote pane"),
                         isOn: $runsOnRemote)
-                    Toggle(
+                    CheckboxRow(
                         L10n.string("fileAction.editor.side.local", "Local pane"),
                         isOn: $runsOnLocal)
                 }
-                .toggleStyle(.checkbox)
-                .fixedSize()
             }
 
             variablesSection
@@ -327,13 +320,12 @@ struct FileActionEditor: BoundedView {
                 TextField(
                     L10n.string("snippets.variables.name", "Name"), text: draft.name,
                     prompt: Text(L10n.string("snippets.variables.name", "Name")))
-                Picker("", selection: draft.isSelection) {
-                    Text(L10n.string("snippets.variables.kind.freeText", "Free text")).tag(false)
-                    Text(L10n.string("snippets.variables.kind.selection", "Choice")).tag(true)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .fixedSize()
+                SegmentedChoice(
+                    "", selection: draft.isSelection,
+                    options: [
+                        (false, L10n.string("snippets.variables.kind.freeText", "Free text")),
+                        (true, L10n.string("snippets.variables.kind.selection", "Choice")),
+                    ])
                 if snippetBelongsInCommandAsPlaceholder(draft.wrappedValue.variable) {
                     let insertLabel = L10n.string("snippets.variables.insert", "Insert in command")
                     Button {
