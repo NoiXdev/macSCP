@@ -122,9 +122,7 @@ struct AuditLogSheet: BoundedView {
             .fixedSize()
 
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-            SheetSearchField(
-                text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
-                holdsItsIdeal: true)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
             // Genuinely empty (`events.isEmpty`, ignoring filter/search) gets
             // the "no entries yet" text; a non-empty log with zero rows

@@ -103,9 +103,7 @@ struct SSHKeysSheet: BoundedView {
 
             let (predicate, searchError) = sheetSearchPredicate(
                 text: searchText, isRegex: searchIsRegex)
-            SheetSearchField(
-                text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
-                holdsItsIdeal: true)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
             SheetFacetPicker(
                 values: SheetFacetFilter.values(of: load.keys) { Self.keyTypeLabel($0.type) },

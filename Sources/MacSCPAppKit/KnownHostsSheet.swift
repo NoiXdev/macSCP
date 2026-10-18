@@ -101,9 +101,7 @@ struct KnownHostsSheet: BoundedView {
             Text(L10n.string("knownHosts.title", "Known Hosts")).font(.headline)
 
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-            SheetSearchField(
-                text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
-                holdsItsIdeal: true)
+            SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
             SheetFacetPicker(
                 values: facetValues,
