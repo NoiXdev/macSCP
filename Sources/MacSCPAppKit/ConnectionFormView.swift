@@ -962,14 +962,18 @@ struct ConnectionFormView: BoundedView {
                     // full manual block unchanged from before this feature.
                     let jumpSourceLabel = L10n.string("form.jump.source.label", "Source")
                     FormRow(label: jumpSourceLabel) {
-                        // Still a plain segmented `Picker`, not `SegmentedChoice`:
-                        // held at its ideal width this row needs more than
-                        // `Self.bound` grants in German, and widening that
-                        // bound past what the main window leaves the form is
-                        // the maintainer's call. The registry entry "a new
-                        // SSH connection through a jump host, entered by
-                        // hand" holds the rows that are rigid; this one and
-                        // the authentication row below are the exceptions.
+                        // A menu, not `SegmentedChoice`. Measured 2026-10-18 by
+                        // `BoundedViewLayoutGuardTests` on the registry entry "a
+                        // new SSH connection through a jump host, entered by
+                        // hand": this row as a segmented picker held at its ideal
+                        // needs 525.0 pt in German against `Self.bound`'s 460,
+                        // because a segmented control is as wide as ALL its
+                        // labels side by side. A pop-up button shows one label,
+                        // so the row fits again; the entry's minimum is then the
+                        // type switcher's (`MACSCP_BOUND_FIGURES=1 swift test
+                        // --filter BoundedViewFigureReportTests`). `.fixedSize()`
+                        // keeps it uncompressible so a regression is measured
+                        // rather than squeezed.
                         Picker(jumpSourceLabel, selection: Binding(
                             get: { viewModel.jumpSourceMode },
                             set: { viewModel.selectJumpSourceMode($0) }
@@ -979,8 +983,9 @@ struct ConnectionFormView: BoundedView {
                             Text(L10n.string("form.loginMode.manual", "Manual"))
                                 .tag(ConnectionViewModel.JumpSourceMode.manual)
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         .labelsHidden()
+                        .fixedSize()
                     }
 
                     if viewModel.jumpSourceMode == .session {
@@ -1071,9 +1076,9 @@ struct ConnectionFormView: BoundedView {
 
                             let jumpAuthMethodLabel = L10n.string("connection.field.authMethod", "Authentication")
                             FormRow(label: jumpAuthMethodLabel) {
-                                // Plain `Picker` for the reason the source row above
-                                // gives: rigid, it needs more than `Self.bound` grants
-                                // in French.
+                                // A menu for the reason the source row above gives:
+                                // as a segmented picker held at its ideal this row
+                                // needs 486.0 pt in French against `Self.bound`'s 460.
                                 Picker(jumpAuthMethodLabel, selection: Binding(
                                     get: { viewModel.jumpAuthChoice },
                                     set: { viewModel.selectJumpAuthChoice($0) }
@@ -1085,8 +1090,9 @@ struct ConnectionFormView: BoundedView {
                                     Text(L10n.string("connection.auth.agent", "Agent"))
                                         .tag(ConnectionViewModel.AuthChoice.agent)
                                 }
-                                .pickerStyle(.segmented)
+                                .pickerStyle(.menu)
                                 .labelsHidden()
+                                .fixedSize()
                             }
 
                             if viewModel.jumpAuthChoice == .password {
