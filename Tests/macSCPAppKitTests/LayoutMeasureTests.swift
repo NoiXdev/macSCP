@@ -38,6 +38,34 @@ struct LayoutMeasureTests {
         #expect(Set(widths).count > 1, "\(widths)")
     }
 
+    /// The one hard figure in this branch, and the first test a different
+    /// machine will fail.
+    ///
+    /// **411 pt, measured 2026-10-18 on Darwin 27.0.0 (macOS 27.0.1, build
+    /// 26A434, arm64), Swift 6.4.** It reproduces two ways, and they are the
+    /// same measurement read from two instruments:
+    ///
+    /// ```
+    /// swift test --filter theGermanFigureIsTheOneTheCommittedGuardReports
+    /// MACSCP_BOUND_FIGURES=1 swift test --filter BoundedViewFigureReportTests
+    /// ```
+    ///
+    /// the second of which prints, among its forty lines,
+    /// `boundfigures: FileActionEditor [a new draft] wide de 411.0/843.0 …`.
+    /// The point of pinning it is that the two agree: this harness and the
+    /// guard that every other layout figure comes from are one instrument, not
+    /// two.
+    ///
+    /// **What to do when it goes red.** A text measurement is a property of the
+    /// system font, the text engine and the OS version, so a run on macos-15 —
+    /// which no CI run has made (`docs/BACKLOG.md`, the row beginning "Every
+    /// layout figure the guards hold was measured on Darwin 27") — may well
+    /// report a different number. The ruling, from the plan's own dispatch:
+    /// **a red here is answered by re-measuring and recording the new figure
+    /// with its date and platform, never by reverting the component.** The
+    /// figure is evidence about the host, not a requirement on the view; what
+    /// IS a requirement is measured by `BoundedViewLayoutGuardTests`, which
+    /// compares each view's need with what it grants and needs no constant.
     @Test func theGermanFigureIsTheOneTheCommittedGuardReports() {
         let width = LayoutMeasure.minimumWidth(locale: "de") { Self.editor().sheetContent }
         #expect(width == 411, "\(width)")
