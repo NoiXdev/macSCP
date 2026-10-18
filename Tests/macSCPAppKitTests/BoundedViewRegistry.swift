@@ -60,7 +60,7 @@ struct BoundedViewEntry {
 /// failure rather than a gap.
 @MainActor
 enum BoundedViewRegistry {
-    static var all: [BoundedViewEntry] { valueInSheets }
+    static var all: [BoundedViewEntry] { valueInSheets + keySheets }
 
     // MARK: - Shared fixtures
 
@@ -228,6 +228,60 @@ enum BoundedViewRegistry {
             BoundedViewEntry("a new draft") { fileActionEditor(existing: nil) },
             BoundedViewEntry("a draft with a declaration of each kind") {
                 fileActionEditor(existing: actionWithVariables)
+            },
+        ]
+    }
+
+    // MARK: - Pass 2: the key sheets
+
+    /// A stored key with every field filled: the listing row shows its name,
+    /// comment, type and fingerprint, and the rename sheet fills its two
+    /// fields from it.
+    private static var storedKey: ManagedKey {
+        ManagedKey(
+            name: "work laptop", comment: "testuser@workstation", type: .ed25519,
+            fingerprint: "SHA256:0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+            publicKeyOpenSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 testuser@workstation",
+            createdAt: Date(timeIntervalSince1970: 1_760_000_000),
+            hasPassphrase: true, fileName: "work-laptop")
+    }
+
+    private static var keyStore: ManagedKeyStore {
+        ManagedKeyStore(directory: temporaryDirectory)
+    }
+
+    /// `SSHKeysSheet` and the five sheets it presents.
+    ///
+    /// **One state each, and the reason is a limit worth naming.** Every
+    /// branch these six take beyond their first render is driven by their
+    /// own `@State` — a failure message, a run in flight, a chosen key type,
+    /// a loaded listing — which a constructor cannot reach. `SSHKeysSheet`
+    /// in particular renders the empty listing its `@State` starts at, not a
+    /// listing with rows, so the figures below are its chrome: its toolbar,
+    /// its search field and its table headers. Widening that would mean
+    /// giving these views a seam for their initial state, which is a change
+    /// to `Sources/` that this task does not make.
+    private static var keySheets: [BoundedViewEntry] {
+        [
+            BoundedViewEntry("the empty listing, with the toolbar and the search field") {
+                SSHKeysSheet()
+            },
+            BoundedViewEntry("a fresh form, with the type choice on screen") {
+                GenerateKeySheet(store: keyStore, onGenerated: { _ in })
+            },
+            BoundedViewEntry("a key file picked, with its name prefilled") {
+                ImportKeySheet(
+                    fileURL: temporaryDirectory.appendingPathComponent("id_ed25519"),
+                    store: keyStore, onImported: { _, _ in })
+            },
+            BoundedViewEntry("a stored key's name and comment in the fields") {
+                RenameKeySheet(key: storedKey, store: keyStore, onRenamed: {})
+            },
+            BoundedViewEntry("a stored key whose passphrase is being corrected") {
+                CorrectKeyPassphraseSheet(key: storedKey, store: keyStore, onCorrected: {})
+            },
+            BoundedViewEntry("a stored key whose passphrase is being changed") {
+                ChangeKeyPassphraseSheet(key: storedKey, store: keyStore, onChanged: { _ in })
             },
         ]
     }
