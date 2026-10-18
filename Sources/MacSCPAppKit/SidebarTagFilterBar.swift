@@ -43,7 +43,10 @@ struct SidebarTagFilterBar: View {
 /// (`TagFilterChip`) and the horizontal-scroll shell around it
 /// (`TagFilterScrollRow`) are shared with `SnippetTagFilterRow`; only the
 /// chip SEQUENCE inside differs between the two rows.
-private struct HostTagFilterRow: View {
+///
+/// Internal rather than private so that `ResizableContainerFloorTests` measures
+/// this row itself, not a copy of the call it makes.
+struct HostTagFilterRow: View {
     let tags: [String]
     @Binding var filter: SidebarTagFilter
 

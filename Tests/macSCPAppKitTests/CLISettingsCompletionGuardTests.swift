@@ -162,11 +162,28 @@ struct CLISettingsCompletionGuardTests {
             the copyable line is being produced somewhere other than the one \
             function the shell-level tests actually run.
             """)
-        #expect(code.contains("ShellCompletionRecipe.Shell.allCases"), """
-            CLISettingsSection no longer iterates \
+        // The iteration lives in the row, so it is read in the row alone, and
+        // the section is read alone for the call that draws it. Over the union
+        // either string in either place would satisfy both, and a section that
+        // drew its own hand-written shell list would keep this green while an
+        // orphaned row went on supplying the iteration.
+        let all = try Self.views(of: Self.settingsViewFile)
+        let row = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: Self.rowDeclaration, in: all.code), of: all.code)
+        let section = TransferQueueBarCancelGuardTests.slice(
+            try TransferQueueBarCancelGuardTests.declarationBodyRange(
+                of: Self.sectionDeclaration, in: all.code), of: all.code)
+        #expect(row.contains("ShellCompletionRecipe.Shell.allCases"), """
+            CompletionShellRow no longer iterates \
             ShellCompletionRecipe.Shell.allCases -- a shell list written out \
             in the view goes one behind the enum the CLI is tested against, \
             and keeps rendering.
+            """)
+        #expect(section.contains("CompletionShellRow("), """
+            CLISettingsSection no longer draws CompletionShellRow -- the row \
+            that iterates the recipe's shell list is an orphan, and whatever \
+            the section draws instead is not held to it.
             """)
     }
 

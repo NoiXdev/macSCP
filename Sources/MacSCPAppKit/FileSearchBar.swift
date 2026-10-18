@@ -101,11 +101,14 @@ struct FileSearchBar: View {
     /// is a local App-layer mapping, not a change to Core's type.
     ///
     /// Drawn as a pop-up button held at its ideal width. It used to be a
-    /// segmented control squeezed into a 118 pt slot; held at its ideal that
-    /// control takes more than the slot in German and French, which would raise
-    /// the bar past `BrowserPane.minimumWidth`, and a pop-up shows one label so
-    /// it takes less than the slot in every catalogue.
-    /// `ResizableContainerFloorTests` measures the bar against that width.
+    /// segmented control squeezed into a 118 pt slot
+    /// (`git show a78ca9ca:Sources/MacSCPAppKit/FileSearchBar.swift` and look for
+    /// `frame(width: 118)`); held at its ideal that control takes more than the
+    /// slot in at least one catalogue, which would raise the bar past
+    /// `BrowserPane.minimumWidth`, and a pop-up shows one label so it takes less
+    /// than the slot in every catalogue. The per-catalogue figures are in
+    /// `ResizableContainerFloorTests`' doc comment, and `ResizableContainerFloorTests`
+    /// measures the bar against that width.
     private var modePicker: some View {
         Picker("", selection: Binding<Int>(
             get: { viewModel.searchMode == .jump ? 1 : 0 },
@@ -117,6 +120,12 @@ struct FileSearchBar: View {
         .pickerStyle(.menu)
         .labelsHidden()
         .fixedSize()
+        // `labelsHidden` strips the name assistive technology reads, and a
+        // pop-up shows only its chosen item, unlike the segmented control it
+        // replaced, which showed both. The name is restored here and as the
+        // tooltip, the way `TagFilterJoinPicker` does it.
+        .accessibilityLabel(L10n.string("search.mode", "Search mode"))
+        .help(L10n.string("search.mode", "Search mode"))
     }
 
     /// The trailing readout: the match count, UNLESS the current

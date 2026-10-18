@@ -198,10 +198,13 @@ struct ResizableContainerFloorTests {
         let twoTags = SidebarTagFilter(tags: ["a", "b"], join: .all)
         all.append(
             Container(
-                typeName: "TagFilterJoinPicker", stateName: "two tags selected",
+                typeName: "TagFilterJoinPicker",
+                stateName: "two tags selected, in the sidebar's own chip row",
                 ceiling: Self.sidebarCeiling, suspendsBound: false,
-                content: { Self.sidebarJoinPicker(twoTags) },
-                held: [("the join choice drawn alone", { Self.sidebarJoinPicker(twoTags) })]))
+                content: {
+                    AnyView(HostTagFilterRow(tags: ["a", "b"], filter: .constant(twoTags)))
+                },
+                held: [("the join choice as a menu", { Self.compactJoinPicker(twoTags) })]))
 
         all.append(
             Container(
@@ -238,9 +241,10 @@ struct ResizableContainerFloorTests {
         )
     }
 
-    /// The join choice as the sidebar draws it: the same call `HostTagFilterRow`
-    /// makes, so a change to the sidebar's presentation is measured here.
-    private static func sidebarJoinPicker(_ filter: SidebarTagFilter) -> AnyView {
+    /// The join choice as a small pop-up, drawn alone: what the sidebar's row
+    /// must be at least as wide as. The row itself is measured above, so what
+    /// the sidebar really draws is what is compared with its ceiling.
+    private static func compactJoinPicker(_ filter: SidebarTagFilter) -> AnyView {
         AnyView(TagFilterJoinPicker(filter: .constant(filter), presentation: .compactMenu))
     }
 
@@ -326,18 +330,53 @@ struct ResizableContainerFloorTests {
         #expect(checked > 0)
     }
 
-    /// `sidebarJoinPicker` above copies the one call `HostTagFilterRow` makes,
-    /// because that row is `private` and cannot be built from here. This holds
-    /// the copy to the original: the row's source spells the same
-    /// presentation, once, and the tag dialog's does not.
-    @Test func theSidebarRowDrawsTheJoinPickerTheWayThisSuiteMeasuresIt() throws {
+    private static func declarationBody(_ declaration: String, in code: String) throws -> String {
+        let range = try TransferQueueBarCancelGuardTests.declarationBodyRange(
+            of: declaration, in: code)
+        return TransferQueueBarCancelGuardTests.slice(range, of: code)
+    }
+
+    /// Which of the two places that draw `TagFilterJoinPicker` asks for the
+    /// small pop-up. The container above measures `HostTagFilterRow`, so a
+    /// change to what the sidebar draws is measured; this says it is the
+    /// SIDEBAR that has it and the tag dialog that does not. Counting the
+    /// calls that mention the pop-up, without saying whose they are, cannot
+    /// tell the two swapped, and the dialog (a bounded sheet measured with the
+    /// segmented form) would then be a pop-up while the suite is green.
+    ///
+    /// Each span is the brace-balanced body of its own declaration. The two
+    /// negatives have their positives beside them: the row makes exactly one
+    /// call to the picker and the dialog makes one that names no presentation.
+    @Test func theSidebarRowHasTheCompactMenuAndTheTagDialogDoesNot() throws {
         let sources = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
-        let file = sources.appendingPathComponent("SidebarTagFilterBar.swift")
-        let code = try SourceCorpus.code(of: file)
-        let calls = code.components(separatedBy: "TagFilterJoinPicker(filter:")
-            .dropFirst().map { String($0.prefix { $0 != ")" }) }
-        #expect(calls.count == 2, "\(calls)")
-        #expect(calls.filter { $0.contains("presentation: .compactMenu") }.count == 1, "\(calls)")
+        let code = try SourceCorpus.code(
+            of: sources.appendingPathComponent("SidebarTagFilterBar.swift"))
+        let row = try Self.declarationBody("struct HostTagFilterRow: View", in: code)
+        let dialog = try Self.declarationBody("struct TagFilterSheet: BoundedView", in: code)
+        #expect(row.components(separatedBy: "TagFilterJoinPicker(").count == 2, "\(row)")
+        #expect(row.contains("presentation: .compactMenu"), "\(row)")
+        #expect(dialog.components(separatedBy: "TagFilterJoinPicker(").count == 2, "\(dialog)")
+        #expect(!dialog.contains(".compactMenu"), "\(dialog)")
+    }
+
+    /// The two Settings rows are measured instead of their sections, so each
+    /// section must still draw its row: a section that stopped would leave the
+    /// suite measuring a view nothing renders, and green. The section is
+    /// scanned alone, not together with the row.
+    @Test func eachSettingsSectionStillDrawsTheRowItIsMeasuredThrough() throws {
+        let code = try SourceCorpus.code(
+            of: SourceCorpus.url(of: .sources).appendingPathComponent(
+                "MacSCPAppKit/SettingsView.swift"))
+        let terminal = try Self.declarationBody("struct TerminalSettingsTab: View", in: code)
+        let commandLine = try Self.declarationBody("struct CLISettingsSection: View", in: code)
+        #expect(terminal.contains("TerminalCursorStyleRow("))
+        #expect(commandLine.contains("CompletionShellRow("))
+        // The positives beside them: the declarations of the rows are found,
+        // and each row is not itself the section.
+        #expect(try Self.declarationBody("struct TerminalCursorStyleRow: View", in: code)
+            .contains("SegmentedChoice("))
+        #expect(try Self.declarationBody("struct CompletionShellRow: View", in: code)
+            .contains("SegmentedChoice("))
     }
 
     /// Why the two Settings sections are measured by a row and not whole: a

@@ -209,6 +209,11 @@ struct SessionSidebar: View {
     /// filter. The sidebar is at least `SettingsStore.sidebarWidthRange`'s lower
     /// bound wide, so the last two are offered that much less than the column;
     /// `ResizableContainerFloorTests` subtracts it twice.
+    ///
+    /// "The title, the search field and the tag filter" counted 2026-10-18 with
+    /// `grep -n 'Self[.]horizontalInset' Sources/MacSCPAppKit/SessionSidebar.swift`
+    /// (bracketed so this comment does not match its own pattern): three
+    /// lines, one `.padding(.horizontal, …)` for each of the three.
     static let horizontalInset: CGFloat = 10
 
     let viewModel: SessionListViewModel
