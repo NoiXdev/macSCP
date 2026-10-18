@@ -60,7 +60,7 @@ struct BoundedViewEntry {
 /// failure rather than a gap.
 @MainActor
 enum BoundedViewRegistry {
-    static var all: [BoundedViewEntry] { valueInSheets + keySheets }
+    static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets }
 
     // MARK: - Shared fixtures
 
@@ -282,6 +282,166 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a stored key whose passphrase is being changed") {
                 ChangeKeyPassphraseSheet(key: storedKey, store: keyStore, onChanged: { _ in })
+            },
+        ]
+    }
+
+    // MARK: - Pass 3: the listing sheets and the two editors
+
+    /// A directory of its own per call, so two entries never read each
+    /// other's file. Nothing is written to it during a measurement.
+    private static func freshDirectory() -> URL {
+        let directory = temporaryDirectory
+            .appendingPathComponent("bounded-view-registry-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    /// `SessionListViewModel` reads its stores in `init`, so a view model
+    /// over an empty directory is an empty one — which is the state
+    /// `LoginSetsSheet` is measured in. See `listingSheets` for why.
+    private static func emptySessionList() -> SessionListViewModel {
+        let directory = freshDirectory()
+        return SessionListViewModel(
+            store: SessionStore(directory: directory), secrets: UnreachableSecretStore(),
+            auditStore: AuditLogStore(directory: directory),
+            loginSetStore: LoginSetStore(directory: directory),
+            keys: ManagedKeyStore(directory: directory))
+    }
+
+    /// Never called: no measurement asks for a secret. `SessionListViewModel`
+    /// requires one to exist.
+    private struct UnreachableSecretStore: SecretStore {
+        func savePassword(_ password: String, for sessionID: UUID) throws {}
+        func password(for sessionID: UUID) throws -> String? { nil }
+        func deletePassword(for sessionID: UUID) throws {}
+    }
+
+    private static var storedSession: StoredSession {
+        StoredSession(
+            name: "staging", kind: .ssh,
+            ssh: StoredSSHConfig(
+                host: "staging.example.net", username: "deploy", authKind: .agent))
+    }
+
+    private static var snippetWithVariables: Snippet {
+        Snippet(
+            name: "Deploy a release", command: "deploy {{TARGET}} {{TAG}}",
+            tags: ["deploy", "release"],
+            variables: [
+                variable("TARGET", .selection(["staging", "production"]), .placeholder),
+                variable("TAG", .freeText, .placeholder),
+            ])
+    }
+
+    private static var changelog: [ChangelogRelease] {
+        [
+            ChangelogRelease(
+                version: "1.6.0", date: "2026-10-01",
+                sections: [
+                    ChangelogRelease.Section(
+                        title: "Features",
+                        entries: [
+                            .init(scope: "views", text: "every sheet states the width it grants"),
+                            .init(scope: nil, text: "the transfer queue reports what it skipped"),
+                        ]),
+                    ChangelogRelease.Section(
+                        title: "Bug Fixes",
+                        entries: [.init(scope: "terminal", text: "a pasted command keeps its newlines")]),
+                ]),
+        ]
+    }
+
+    /// The sheets whose bound fixes both axes, plus the two editors those
+    /// sheets present.
+    ///
+    /// **Eight of them are measured empty, and that is a property of the
+    /// instrument rather than a choice.** `AuditLogSheet`,
+    /// `FileActionsSheet`, `HiddenImportsSheet`, `KnownHostsSheet`,
+    /// `LoginSetsSheet`, `ServerCertificatesSheet`, `SnippetsSheet` and
+    /// `SSHKeysSheet` (pass 2) read their rows in `.onAppear`, and
+    /// `NSHostingController.sizeThatFits` never appears a view:
+    /// `aSheetThatLoadsItsRowsOnAppearIsMeasuredEmpty` measures a seeded
+    /// store and an empty one and gets the same figure from both. So what
+    /// these entries measure is each sheet's chrome and its empty-state
+    /// sentence — which, for `HiddenImportsSheet` and the others like it,
+    /// IS the longest localized text the sheet ever shows.
+    /// `ImportFromSourceSheet` is the ninth, for a different reason: its
+    /// rows arrive through `await model.load(...)`, and an entry's builder
+    /// is synchronous.
+    ///
+    /// The three that are NOT empty — `TagFilterSheet`, `WhatsNewSheet` and
+    /// the two editors — take their content as plain inputs, so their
+    /// entries put real rows up.
+    private static var listingSheets: [BoundedViewEntry] {
+        [
+            BoundedViewEntry("a session's log, before its events are read") {
+                AuditLogSheet(
+                    session: storedSession, store: AuditLogStore(directory: freshDirectory()))
+            },
+            BoundedViewEntry("no stored actions, with the empty-state sentence") {
+                FileActionsSheet(store: FileActionStore(directory: freshDirectory()))
+            },
+            BoundedViewEntry("nothing hidden, with the empty-state sentence") {
+                HiddenImportsSheet(
+                    store: HiddenImportStore(directory: freshDirectory()),
+                    hosts: [
+                        SSHConfigHost(
+                            alias: "staging", hostName: "staging.example.net", user: "deploy",
+                            port: 22, identityFile: nil)
+                    ],
+                    onChange: {})
+            },
+            BoundedViewEntry("a source chosen, before its bookmarks are read") {
+                ImportFromSourceSheet(
+                    model: ImportFromSourceViewModel(sessions: [storedSession], groups: []),
+                    onImport: {})
+            },
+            BoundedViewEntry("no known hosts, with the facet bar and the search field") {
+                KnownHostsSheet(store: KnownHostsStore(directory: freshDirectory()))
+            },
+            BoundedViewEntry("no stored logins, with the overflow menu and the search field") {
+                LoginSetsSheet(sessionList: emptySessionList())
+            },
+            BoundedViewEntry("no trusted certificates, with the search field") {
+                ServerCertificatesSheet(
+                    store: TrustedCertificateStore(directory: freshDirectory()))
+            },
+            BoundedViewEntry("no stored snippets, with the tag filter and the search field") {
+                SnippetsSheet(
+                    store: SnippetStore(directory: freshDirectory()),
+                    rememberedValue: { _, _ in nil })
+            },
+
+            // Content in, so these three really do put rows up.
+            BoundedViewEntry("a release with two sections of entries") {
+                WhatsNewSheet(currentVersion: "1.6.0", releases: changelog, onClose: {})
+            },
+            BoundedViewEntry("two tags selected, so the join choice is on screen") {
+                TagFilterSheet(
+                    tags: ["deploy", "production", "staging"],
+                    filter: .constant(SidebarTagFilter(tags: ["deploy", "production"], join: .any)))
+            },
+            BoundedViewEntry("a new snippet") {
+                SnippetEditorView(
+                    existing: nil, allSnippets: [], store: SnippetStore(directory: freshDirectory()),
+                    rememberedValue: { _, _ in nil }, onSaved: {})
+            },
+            BoundedViewEntry("a stored snippet with tags and two declarations") {
+                SnippetEditorView(
+                    existing: snippetWithVariables, allSnippets: [snippetWithVariables],
+                    store: SnippetStore(directory: freshDirectory()),
+                    rememberedValue: { _, _ in nil }, onSaved: {})
+            },
+            BoundedViewEntry("a new login") {
+                LoginSetEditorView(existing: nil, onSave: { _, _ in }, onCancel: {})
+            },
+            BoundedViewEntry("a stored login that authenticates with a key file") {
+                LoginSetEditorView(
+                    existing: LoginSet(
+                        name: "deploy key", username: "deploy", authKind: .privateKey,
+                        keyPath: "~/.ssh/id_ed25519"),
+                    onSave: { _, _ in }, onCancel: {})
             },
         ]
     }

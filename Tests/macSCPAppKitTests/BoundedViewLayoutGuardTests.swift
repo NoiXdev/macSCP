@@ -130,6 +130,83 @@ struct BoundedViewLayoutGuardTests {
         #expect(movesWithTheLanguage, "no entry's width changed with the catalogue")
     }
 
+    /// The height half moves with the width it is offered, which is what
+    /// makes the height comparison in the guard a comparison of anything.
+    /// Offered a third of its granted width, content that wraps needs more
+    /// height than at the full width.
+    ///
+    /// Not every entry can show that — a sheet whose tallest element is a
+    /// `List` or a `ScrollView` reports the same height at any width — so
+    /// the per-entry check is that the figure is positive, and the
+    /// across-entries check is that at least one entry's figure moved.
+    @Test func theHeightMeasurementMovesWithTheProposedWidth() {
+        let entries = BoundedViewRegistry.all.filter { $0.bound.grantedHeight != nil }
+        #expect(!entries.isEmpty, "no entry grants a height, so the height half measures nothing")
+        var movesWithTheWidth = false
+        for entry in entries {
+            let granted = entry.bound.grantedWidth
+            let atGranted = Self.neededHeight(entry, "en", at: granted)
+            let atNarrow = Self.neededHeight(entry, "en", at: granted / 3)
+            #expect(atGranted > 0, "\(entry.typeName), \(entry.stateName): \(atGranted)")
+            if atNarrow > atGranted { movesWithTheWidth = true }
+        }
+        #expect(movesWithTheWidth, "no entry's height changed with the proposed width")
+    }
+
+    /// Not a check on the views: a pin on the behaviour that decides what
+    /// nine of the registry's entries are able to show.
+    ///
+    /// Eight listing sheets read their rows in `.onAppear`, and
+    /// `NSHostingController.sizeThatFits` lays a view out without ever
+    /// appearing it. Measured 2026-10-18 on `SnippetsSheet`: a store seeded
+    /// with two snippets and an empty store report the same width and the
+    /// same height. The seeded store really does hold them — that is the
+    /// positive half, and without it this test would pass just as happily
+    /// over two empty directories.
+    ///
+    /// So those entries measure each sheet's chrome and its empty-state
+    /// sentence, not a row. If SwiftUI ever runs `.onAppear` here, every one
+    /// of those figures changes and this test is where that is noticed.
+    @Test func aSheetThatLoadsItsRowsOnAppearIsMeasuredEmpty() throws {
+        let seeded = try Self.directory()
+        let empty = try Self.directory()
+        defer {
+            try? FileManager.default.removeItem(at: seeded)
+            try? FileManager.default.removeItem(at: empty)
+        }
+        let store = SnippetStore(directory: seeded)
+        try store.save(Snippet(name: "the first stored snippet", command: "echo one"))
+        try store.save(Snippet(name: "the second stored snippet", command: "echo two"))
+        #expect(try store.all().count == 2)
+        #expect(try SnippetStore(directory: empty).all().isEmpty)
+
+        func measure(_ directory: URL) -> (width: CGFloat, height: CGFloat) {
+            func sheet() -> SnippetsSheet {
+                SnippetsSheet(
+                    store: SnippetStore(directory: directory), rememberedValue: { _, _ in nil })
+            }
+            return SheetBound.$isSuspendedForMeasurement.withValue(true) {
+                (
+                    LayoutMeasure.minimumWidth(locale: "en", of: sheet),
+                    LayoutMeasure.minimumHeight(
+                        locale: "en", at: SnippetsSheet.bound.grantedWidth
+                    ) { sheet().fixedSize(horizontal: false, vertical: true) }
+                )
+            }
+        }
+        let withRows = measure(seeded)
+        let withoutRows = measure(empty)
+        #expect(withRows.width > 0 && withRows.height > 0, "\(withRows)")
+        #expect(withRows == withoutRows, "seeded \(withRows), empty \(withoutRows)")
+    }
+
+    private static func directory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bounded-view-guard-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     /// A view registered in two states must really be in two states.
     ///
     /// Two entries that measure identically in every catalogue, on both
