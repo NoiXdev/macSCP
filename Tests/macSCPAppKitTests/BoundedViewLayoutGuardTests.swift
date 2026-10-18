@@ -260,6 +260,13 @@ struct BoundedViewLayoutGuardTests {
     /// the figure the deleted `FileActionEditorLayoutGuardTests` reported
     /// for the same view, and `LayoutMeasureTests` pins it independently of
     /// the registry.
+    ///
+    /// The seam figure is compared for INEQUALITY with the bound rather than
+    /// for being below it, so that this test stays a statement about the
+    /// instrument. Under the `de`-only overflow plant of 2026-10-18 the
+    /// editor's content needed 713.0 pt inside a 520 pt bound; a `<` here
+    /// went red alongside the guard, reporting the view's defect a second
+    /// time in a test whose subject is the seam.
     @Test func theSeamIsWhatLetsTheGuardGoRed() throws {
         let entry = try #require(
             BoundedViewRegistry.all.first { $0.typeName == String(describing: FileActionEditor.self) },
@@ -267,7 +274,7 @@ struct BoundedViewLayoutGuardTests {
         let whole = LayoutMeasure.minimumWidth(locale: "de", of: entry.content)
         let throughTheSeam = Self.neededWidth(entry, "de")
         #expect(whole == entry.bound.grantedWidth, "\(whole)")
-        #expect(throughTheSeam < whole, "seam \(throughTheSeam), whole \(whole)")
+        #expect(throughTheSeam != whole, "seam \(throughTheSeam), whole \(whole)")
         // The same view the deleted guard measured, by the path it measured
         // it: the registry's entry is not a differently-built stand-in.
         let direct = LayoutMeasure.minimumWidth(locale: "de") {
