@@ -38,6 +38,13 @@ struct BoundedViewStateOnScreenTests {
                 host.frame = CGRect(x: 0, y: 0, width: 900, height: 900)
                 let window = NSWindow(
                     contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: true)
+                // Four call sites times four catalogues is sixteen windows a
+                // run, and a window nothing closes stays alive for the whole
+                // process. `isReleasedWhenClosed` is turned off first because
+                // ARC owns this one: a close that also released it would be a
+                // second release.
+                window.isReleasedWhenClosed = false
+                defer { window.close() }
                 window.contentView = host
                 host.layoutSubtreeIfNeeded()
                 var found: [String] = []
