@@ -35,8 +35,26 @@ import macSCPCore
 /// nothing.
 ///
 /// The locale list is the `.lproj` directory listing, so a fifth language is
-/// measured the day its catalogue lands. No locale code and no display
-/// string is spelled here.
+/// measured the day its catalogue lands — the sweep over every entry reads
+/// that listing and spells no code. No display string is spelled here.
+///
+/// **Corrected 2026-10-18.** The sentence above ended "No locale code and no
+/// display string is spelled here." The display-string half holds. The locale
+/// half was false of this file when it was written: the single-locale checks
+/// below — the height comparison, the narrow-width comparison, the snippets
+/// case and the three measurements in `theSeamIsWhatLetsTheGuardGoRed` — each
+/// name one catalogue outright, because what they measure is a difference
+/// between two ways of measuring and not a difference between languages.
+/// Counted 2026-10-18, after this paragraph was written, under the session's
+/// ugrep and `/usr/bin/grep` alike:
+///
+/// ```
+/// grep -o -e '"[a-z][a-z]"' Tests/macSCPAppKitTests/BoundedViewLayoutGuardTests.swift | wc -l
+/// ```
+///
+/// prints 13 — thirteen occurrences on ten lines, which `grep -c` would report
+/// as 10, and four of the thirteen are the shipped-catalogue list that
+/// `everyShippedLanguageIsMeasured` holds the `.lproj` listing to.
 @Suite("Bounded view layout guard", .serialized)
 @MainActor
 struct BoundedViewLayoutGuardTests {
