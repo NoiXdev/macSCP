@@ -28,7 +28,12 @@ import Testing
 ///    unconstrained `View` method; a view that never conforms and writes a
 ///    literal into the call is bounded and in neither set. Every call site
 ///    must pass `Self.bound`, which only a type that declares a `bound` has.
-/// 4. The positive halves: each scan sees what it is written to see.
+/// 4. **Conformers and applications agree.** The number of conformer names
+///    equals the number of `.sheetBound(Self.bound)` call sites. A view that
+///    drops its conformance and keeps `static let bound` and the modifier
+///    looks conformant, measures nothing, and is silent in checks 1 to 3;
+///    it leaves one more application than conformers.
+/// 5. The positive halves: each scan sees what it is written to see.
 ///
 /// All scans read the comment-and-string-blanked view, so a doc comment that
 /// quotes a conformance, a protocol or a call is not counted as one.
@@ -37,9 +42,9 @@ import Testing
 /// is not in `Sources/`: if it is not private, it compiles as a registry
 /// entry (`BoundedViewEntry.init` requires conformance, not a location) and
 /// the red reads "only in the registry". Two such probes exist in
-/// `SheetBoundTests` and are private. And a type that does not conform but
-/// declares its own `static let bound` and passes `Self.bound` is not seen
-/// by check 3.
+/// `SheetBoundTests` and are private. And check 4 compares two totals: a
+/// swap that keeps both equal (one conformer drops its application while a
+/// non-conformer gains one) is not seen by it.
 @Suite("Bounded view coverage")
 struct BoundedViewCoverageTests {
     private static let appKitSources: URL = SourceCorpus.url(of: .sources)
@@ -223,5 +228,48 @@ struct BoundedViewCoverageTests {
         #expect(clean.calls == 2 && clean.offenders.isEmpty, "\(clean)")
         let declaration = Self.sheetBoundCalls(in: "    func sheetBound(_ bound: SheetBound) -> some View {")
         #expect(declaration.calls == 0 && declaration.declarations == 1, "\(declaration)")
+    }
+
+    // MARK: - Conformers and applications agree
+
+    /// The number of types declared as `BoundedView` conformers, and the
+    /// number of `sheetBound` calls that pass `Self.bound`, over the app's
+    /// sources.
+    static func conformerAndApplicationCounts() throws -> (conformers: Int, applications: Int) {
+        let applications = try blankedSources().reduce(0) {
+            let found = sheetBoundCalls(in: $1.code)
+            return $0 + found.calls - found.offenders.count
+        }
+        return (try boundedViewTypeNamesInSources().count, applications)
+    }
+
+    /// Equal, not "at least". The two directions mean different defects:
+    ///
+    /// - **More applications than conformers** is the copied view: someone
+    ///   kept `static let bound` and `.sheetBound(Self.bound)` and dropped
+    ///   `: BoundedView`, so it is bounded, unregistered and silent in every
+    ///   other guard. It is also what an honest second application in one
+    ///   type would look like, and that is deliberately NOT allowed: a type
+    ///   that applies its bound in two branches of a `body` should apply it
+    ///   once, on the container, so the bound has one place to read and one
+    ///   place to change. A floor
+    ///   (`applications >= conformers`) could not detect the copied view at
+    ///   all, since that is exactly the direction in which it is satisfied.
+    /// - **More conformers than applications** is a declared bound that
+    ///   nothing applies: the type claims a size, is measured against it, and
+    ///   is rendered with none.
+    ///
+    /// Both totals are 33 on 2026-10-18 (the commands are beside the floors
+    /// above).
+    @Test func everyConformerAppliesItsBoundExactlyOnce() throws {
+        let counts = try Self.conformerAndApplicationCounts()
+        #expect(
+            counts.conformers == counts.applications,
+            """
+            \(counts.conformers) BoundedView conformers but \(counts.applications) applications of \
+            sheetBound(Self.bound). More applications: a view keeps `static let bound` and the modifier \
+            without conforming (conform it, or remove both), or a conformer applies its bound twice \
+            (apply it once, on the container). More conformers: a conformer declares a bound nothing applies.
+            """)
     }
 }
