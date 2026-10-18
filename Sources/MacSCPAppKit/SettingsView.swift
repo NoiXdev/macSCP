@@ -1851,9 +1851,9 @@ private struct S3SettingsSection: View {
 /// What Settings' "Shell Completion" section can show, decided by the
 /// install state alone.
 ///
-/// A pure function outside the view, for one reason: the view is `private`
-/// and a `switch` inside a computed property of a `View` can be checked
-/// only by reading its source, while this can be run over EVERY
+/// A pure function outside the view, for one reason: a `switch` inside a
+/// computed property of a `View` can be checked only by reading its source,
+/// whatever the view's access level, while this can be run over EVERY
 /// `CLIInstallState` case — which is how `.translocated` came to be its own
 /// branch instead of a path handed out by accident
 /// (`CLISettingsCompletionPresentationTests`, Task 1 review 2026-09-10).

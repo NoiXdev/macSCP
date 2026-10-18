@@ -36,7 +36,7 @@ struct TerminalMouseWiringGuardTests {
     private static let terminalViewFileName = "\(String(describing: MacSCPTerminalView.self)).swift"
     private static let terminalViewFile = "Sources/MacSCPAppKit/\(terminalViewFileName)"
     private static let wrapperFile = "Sources/MacSCPAppKit/SSHTerminalView.swift"
-    private static let settingsViewFile = "Sources/MacSCPAppKit/SettingsView.swift"
+    static let settingsViewFile = "Sources/MacSCPAppKit/SettingsView.swift"
 
     private static let menuOverride = "override func menu(for event: NSEvent) -> NSMenu?"
     private static let rightMouseDownOverride = "override func rightMouseDown(with event: NSEvent)"
@@ -45,7 +45,7 @@ struct TerminalMouseWiringGuardTests {
     private static let controlClickTest = "private static func isControlClick(_ event: NSEvent) -> Bool"
     private static let mouseUpOverride = "override func mouseUp(with event: NSEvent)"
     private static let mouseDraggedOverride = "override func mouseDragged(with event: NSEvent)"
-    private static let settingsTab = "struct TerminalSettingsTab: View"
+    static let settingsTab = "struct TerminalSettingsTab: View"
 
     private static let keys = [
         "settings.terminal.copyOnSelect",

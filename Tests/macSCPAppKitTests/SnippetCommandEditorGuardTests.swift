@@ -126,7 +126,11 @@ struct SnippetCommandEditorGuardTests {
 
     private static let editorSourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetCommandEditor.swift")
-    private static let sheetSourceFile = repoRoot
+    /// The declaration the command-Return scan starts from, named once so
+    /// the scan, its reverted-shortcut fixture and the test that counts
+    /// matches (`BoundedViewVisibilityTests`) read the same text.
+    static let editorDeclaration = "struct SnippetEditorView: View {"
+    static let sheetSourceFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SnippetsSheet.swift")
     /// Where the declaration checks live now that the editor needs both
     /// halves of their answer — the sentence AND which row it is about
@@ -309,7 +313,7 @@ struct SnippetCommandEditorGuardTests {
     func snippetEditorSavesOnCommandReturn() throws {
         let source = try SourceCorpus.text(of: Self.sheetSourceFile)
         let body = try Self.functionBody(
-            containing: "struct SnippetEditorView: View {", in: source)
+            containing: Self.editorDeclaration, in: source)
         #expect(body.contains("SnippetCommandEditor("), """
             Sanity check: the scanned struct body must still contain the editor call site, or \
             this test would pass for the wrong reason (a struct that no longer builds the \
@@ -322,7 +326,7 @@ struct SnippetCommandEditorGuardTests {
     @Test("the command-Return scan reacts to a reverted shortcut")
     func commandReturnScanReactsToRegression() throws {
         let reverted = """
-            struct SnippetEditorView: View {
+            \(Self.editorDeclaration)
                 var body: some View {
                     SnippetCommandEditor(text: $command)
                     Button("Save") { save() }.keyboardShortcut(.defaultAction)
@@ -330,7 +334,7 @@ struct SnippetCommandEditorGuardTests {
             }
             """
         let body = try Self.functionBody(
-            containing: "struct SnippetEditorView: View {", in: reverted)
+            containing: Self.editorDeclaration, in: reverted)
         #expect(!body.contains("keyboardShortcut(.return, modifiers: .command)"))
     }
 
