@@ -46,7 +46,7 @@ struct ExtractDestinationSheet: BoundedView {
     let onExtract: (ExtractDestination) -> Void
     let onCancel: () -> Void
 
-    private enum Choice: Hashable {
+    private enum Choice: Hashable, CaseIterable {
         case thisFolder, subfolder
     }
 
@@ -74,14 +74,12 @@ struct ExtractDestinationSheet: BoundedView {
                 .truncationMode(.middle)
 
             if preview.allowsSubfolder {
-                Picker("", selection: $choice) {
-                    Text(L10n.string("archive.extract.here", "Into this folder"))
-                        .tag(Choice.thisFolder)
-                    Text(L10n.string("archive.extract.subfolder", "Into a new folder:"))
-                        .tag(Choice.subfolder)
+                RadioChoice("", selection: $choice) { choice in
+                    switch choice {
+                    case .thisFolder: L10n.string("archive.extract.here", "Into this folder")
+                    case .subfolder: L10n.string("archive.extract.subfolder", "Into a new folder:")
+                    }
                 }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
 
                 TextField(
                     L10n.string("archive.extract.subfolderName", "Folder name"),
