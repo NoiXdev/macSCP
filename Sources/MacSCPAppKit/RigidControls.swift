@@ -40,12 +40,23 @@ import SwiftUI
 //    belongs to the resizable containers' own migration, not to a bounded
 //    view.
 //
-// Three more rigid controls are NOT components: `Picker` with
-// `.pickerStyle(.menu)`, `.labelsHidden()` and `.fixedSize()`, written by hand
-// at `AuditLogSheet` and at the jump source and jump authentication rows of
-// `ConnectionFormView`. A pop-up shows one label, which is why it fits where a
-// segmented control of the same labels did not. Nothing but review keeps their
-// `.fixedSize()` in place.
+// Rigid menu pickers are NOT components: a `Picker` in the menu style held
+// with `.fixedSize()`, written by hand. A pop-up shows one label, which is why
+// it fits where a segmented control of the same labels did not. Nothing but
+// review keeps their `.fixedSize()` in place.
+//
+// **Corrected 2026-10-18, fix round 4.** This paragraph first read "Three more
+// rigid controls are NOT components", naming `AuditLogSheet` and the jump
+// source and jump authentication rows of `ConnectionFormView`. The three are
+// real; the count was not, and it was written without counting. Counted with
+// `grep -rn 'pickerStyle[(][.]menu[)]' Sources/MacSCPAppKit` (bracketed so this
+// comment does not match its own pattern), which prints five lines:
+// `AuditLogSheet` (1), `ConnectionFormView` (2, the jump source and jump
+// authentication rows), `SheetFacetPicker` (1, drawn inside `SSHKeysSheet`,
+// `KnownHostsSheet` and `LoginSetsSheet`) and `DiagnosticsPanel` (1, outside
+// any bounded view). All five carry `.fixedSize()`, read by eye at each site,
+// not by the command: it finds the style, not the modifier. Treat the list as
+// "at least these": a menu written in another spelling is not found by it.
 //
 // **Why `.fixedSize()` and no custom layout.** "Rigid" here means rigid AT the
 // ideal, with no stretch, because none of the three kinds stretches to begin
