@@ -2389,7 +2389,7 @@ private struct SidebarWidthRecorder: View {
 /// the type here rather than a rule someone has to remember. In particular
 /// this surface does NOT show the host, the account, the failure text the
 /// server sent, or anything from the form.
-private struct LostConnectionView: View {
+struct LostConnectionView: View {
     let content: LostConnectionContent
     let onReconnect: () -> Void
     let onDismiss: () -> Void
@@ -2453,7 +2453,7 @@ private struct LostConnectionView: View {
 /// view cannot read the string at all), which is the maintainer's
 /// decision — a general sentence here, everything precise one click away
 /// for debugging.
-private struct ConnectFailureView: View {
+struct ConnectFailureView: View {
     let content: ConnectFailureContent
     /// The technical text, or `nil` when the layer below published none —
     /// in which case the details control is not offered at all rather than
@@ -2579,7 +2579,7 @@ private struct ConnectFailureView: View {
 /// need different wording later, and sharing one key would silently change
 /// this surface's text the next time someone edits the dot's tooltip for
 /// its OWN reasons.
-private struct ConnectingAttemptView: View {
+struct ConnectingAttemptView: View {
     let onCancel: () -> Void
 
     var body: some View {
@@ -2614,7 +2614,7 @@ private struct ConnectingAttemptView: View {
 /// clicks the button. What IS tested is the one new decision it makes
 /// beyond what `SnippetMenuItems`/`SnippetMenuModel` already own: which
 /// snippets the search narrows the list to — `TerminalSnippetSearch`, below.
-private struct TerminalPanelHeader: View {
+struct TerminalPanelHeader: View {
     /// The active tab's display name (`SessionTab.displayTitle`). This
     /// panel exists only on a connected tab, and for a connected tab that
     /// is the name the tab strip and the window title show too:

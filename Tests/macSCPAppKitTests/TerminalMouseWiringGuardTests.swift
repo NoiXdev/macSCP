@@ -45,7 +45,7 @@ struct TerminalMouseWiringGuardTests {
     private static let controlClickTest = "private static func isControlClick(_ event: NSEvent) -> Bool"
     private static let mouseUpOverride = "override func mouseUp(with event: NSEvent)"
     private static let mouseDraggedOverride = "override func mouseDragged(with event: NSEvent)"
-    private static let settingsTab = "private struct TerminalSettingsTab: View"
+    private static let settingsTab = "struct TerminalSettingsTab: View"
 
     private static let keys = [
         "settings.terminal.copyOnSelect",

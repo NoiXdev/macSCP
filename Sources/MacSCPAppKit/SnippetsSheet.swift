@@ -566,7 +566,7 @@ private struct SnippetTagFilterRow: View {
 /// as-is and now inserts a typed Return as a line break too (see that
 /// file's own doc comment) — Save moved off plain Return onto ⌘Return so
 /// the two no longer collide.
-private struct SnippetEditorView: View {
+struct SnippetEditorView: View {
     let existing: Snippet?
     /// The sheet's already-loaded list, passed straight through (Task 5)
     /// rather than re-read here: it is what `SnippetTagSuggestions` needs to

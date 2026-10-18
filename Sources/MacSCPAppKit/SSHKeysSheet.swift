@@ -616,7 +616,7 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// `ImportKeySheet`/`RenameKeySheet` below: a top-level `private` type is
 /// file-scoped, so it stays usable from `SSHKeysSheet.body`'s
 /// `.sheet(isPresented:)` above without needing wider visibility.
-private struct GenerateKeySheet: View {
+struct GenerateKeySheet: View {
     let store: ManagedKeyStore
     /// `false` means the key exists but its passphrase did not reach the
     /// Keychain — see `GenerateKeyForm.run`.
@@ -997,7 +997,7 @@ struct ImportKeySheet: View {
 /// Rename sheet (M18/T5 Step 2): name/comment only — an UPSERT of the same
 /// `id` (file and Keychain slot are untouched, per the M17 invariant that
 /// only metadata changes here).
-private struct RenameKeySheet: View {
+struct RenameKeySheet: View {
     let key: ManagedKey
     let store: ManagedKeyStore
     let onRenamed: () -> Void
@@ -1078,7 +1078,7 @@ private struct RenameKeySheet: View {
 /// (Core), where `KeyPassphraseFormsTests` can edit the field mid-run and
 /// cancel one — the same split `GenerateKeySheet` uses, and for the same
 /// reason: `ssh-keygen` is awaited, so the field stays live while it runs.
-private struct CorrectKeyPassphraseSheet: View {
+struct CorrectKeyPassphraseSheet: View {
     let key: ManagedKey
     let store: ManagedKeyStore
     let onCorrected: () -> Void
@@ -1193,7 +1193,7 @@ private struct CorrectKeyPassphraseSheet: View {
 /// `SSHKeysSheet.reportPassphraseChange(_:)` says out loud.
 ///
 /// The fields, the latch and the run live in `ChangeKeyPassphraseForm` (Core).
-private struct ChangeKeyPassphraseSheet: View {
+struct ChangeKeyPassphraseSheet: View {
     let key: ManagedKey
     let store: ManagedKeyStore
     /// Called with how the run ended, not merely that it ended: the parent
