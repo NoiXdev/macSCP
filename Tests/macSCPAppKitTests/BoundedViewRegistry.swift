@@ -64,6 +64,16 @@ struct BoundedViewEntry {
 enum BoundedViewRegistry {
     static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets + cappedViews }
 
+    // MARK: - States other tests must name
+
+    /// The three states whose whole reason for being is that a particular
+    /// section is on screen. `BoundedViewStateOnScreenTests` looks them up by
+    /// these names and asserts the section really is there, so the name is
+    /// read from here rather than spelled in two places.
+    static let jumpHostState = "a new SSH connection through a jump host, entered by hand"
+    static let collapsedDeclarationsState = "a stored snippet with tags and two declarations"
+    static let openDeclarationsState = "a stored snippet whose declarations are open on a fault"
+
     // MARK: - Shared fixtures
 
     /// A store over the temporary directory: these sheets read it to render,
@@ -455,13 +465,13 @@ enum BoundedViewRegistry {
                     existing: nil, allSnippets: [], store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil }, onSaved: {})
             },
-            BoundedViewEntry("a stored snippet with tags and two declarations") {
+            BoundedViewEntry(collapsedDeclarationsState) {
                 SnippetEditorView(
                     existing: snippetWithVariables, allSnippets: [snippetWithVariables],
                     store: SnippetStore(directory: unwrittenDirectory),
                     rememberedValue: { _, _ in nil }, onSaved: {})
             },
-            BoundedViewEntry("a stored snippet whose declarations are open on a fault") {
+            BoundedViewEntry(openDeclarationsState) {
                 SnippetEditorView(
                     existing: snippetWithOpenDeclarations,
                     allSnippets: [snippetWithOpenDeclarations],
@@ -546,7 +556,7 @@ enum BoundedViewRegistry {
                     currentReconnectAttempt: { UUID() },
                     onConnected: { _, _ in })
             },
-            BoundedViewEntry("a new SSH connection through a jump host, entered by hand") {
+            BoundedViewEntry(jumpHostState) {
                 let viewModel = connectionForm()
                 viewModel.jumpEnabled = true
                 return ConnectionFormView(
