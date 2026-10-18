@@ -17,8 +17,9 @@ import Testing
 /// the hosted view.
 ///
 /// **How "on screen" is read.** The entry is hosted in a window and the AppKit
-/// view tree is walked for the controls SwiftUI backs with real views: text
-/// fields (by placeholder) and segmented controls (by their segment labels).
+/// view tree is walked for the controls SwiftUI backs with real views, here
+/// text fields by placeholder. (Segmented controls are real views too and
+/// could be walked by their segment labels; nothing here needs it.)
 /// Plain `Text` is drawn, not a view, so it cannot be found this way; the
 /// accessibility tree is empty in a test process (measured 2026-10-18: every
 /// label list came back `[]`).
