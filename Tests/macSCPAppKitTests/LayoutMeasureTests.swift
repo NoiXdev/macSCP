@@ -9,9 +9,12 @@ import macSCPCore
 /// guard reads its figures from.
 ///
 /// The editor's sheet content is the reference view because the committed
-/// guard (`FileActionEditorLayoutGuardTests`) already reports a width for it
-/// in each language; the harness has to reproduce that figure or it is a
-/// second, different instrument.
+/// guard already reports a width for it in each language; the harness has to
+/// reproduce that figure or it is a second, different instrument. That guard
+/// was `FileActionEditorLayoutGuardTests` when this was written and is
+/// `BoundedViewLayoutGuardTests` now, whose `FileActionEditor` entry reports
+/// the same 411 pt in German that `theGermanFigureIsTheOneTheCommittedGuardReports`
+/// pins below.
 @Suite("Layout measure", .serialized)
 @MainActor
 struct LayoutMeasureTests {

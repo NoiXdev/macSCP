@@ -27,8 +27,10 @@ import macSCPCore
 ///
 /// Two kinds of test. What it renders is tested as data:
 /// `fileActionProblemText`, `FileActionAuthoring`, and the wiring guard. What
-/// it needs in width is measured by hosting it: `FileActionEditorLayoutGuardTests`
-/// does that per catalogue. This comment used to say "View code, with no test
+/// it needs in width is measured by hosting it: `BoundedViewLayoutGuardTests`
+/// does that per catalogue, for this view and for every other that bounds
+/// its own size. It was `FileActionEditorLayoutGuardTests`, which measured
+/// this one alone, until that suite was replaced by the registry. This comment used to say "View code, with no test
 /// that draws it (this project has no SwiftUI rendering harness)"; the harness
 /// is `ViewTestabilitySpike`'s, and the width of this sheet is now measured
 /// with it.
@@ -123,8 +125,10 @@ struct FileActionEditor: BoundedView {
     /// (which, asked at 380 pt, answered 411 pt) overflowed it, or opened the
     /// sheet at its widest unwrapped text (843 pt in German). So the width is not
     /// something the layout can negotiate, and what keeps content inside it
-    /// is `FileActionEditorLayoutGuardTests`, which measures the content per
-    /// catalogue against this number.
+    /// is `BoundedViewLayoutGuardTests`, which measures the content per
+    /// catalogue against this number — through
+    /// `SheetBound.isSuspendedForMeasurement`, because a view that applies
+    /// its own bound otherwise reports that bound and nothing else.
     ///
     /// The number was 520 against English alone. The "Runs" choice was a
     /// segmented picker, whose labels sit side by side and cannot wrap; in
