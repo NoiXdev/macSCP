@@ -66,8 +66,20 @@ struct BoundedViewLayoutGuardTests {
     /// measures 16.0 pt at both 120 and 600 pt for a paragraph that really
     /// needs 384.0 and 80.0). A comparison of ~16 pt against a granted 440 pt
     /// is green for every view whatever its content, which is a guard that
-    /// cannot go red. `theHeightMeasurementMovesWithTheProposedWidth` is the
-    /// positive check that this one does.
+    /// cannot go red. `theHeightHalfMeasuresRigidContent` is the positive
+    /// check that this one does.
+    ///
+    /// **Corrected 2026-10-18, fix round 2.** The two lines above read:
+    ///
+    /// > `theHeightMeasurementMovesWithTheProposedWidth` is the
+    /// > positive check that this one does.
+    ///
+    /// That test cannot establish it. Removing this `.fixedSize` through
+    /// `scripts/mutation-probe`, with no bound narrowed, leaves it green —
+    /// a flow-layout entry's bare height still grows when the proposed width
+    /// is cut to a third, so "it moved" cannot tell a needed height from a
+    /// squeezed one. `theHeightHalfMeasuresRigidContent` compares the two
+    /// measurements directly and is the one test that plant turns red.
     ///
     /// Measured on the registry itself, 2026-10-18, German, at each entry's
     /// granted width: rigid against bare, `WhatsNewSheet` 236.0 against
@@ -226,9 +238,39 @@ struct BoundedViewLayoutGuardTests {
     ///
     /// It does NOT establish that the figure is a height the content needs
     /// rather than one it can be squeezed to; `theHeightHalfMeasuresRigidContent`
-    /// above is the check for that, and the sentence here used to claim this
-    /// one refused "a height half that reports a truncated single line",
-    /// which it does not.
+    /// above is the check for that.
+    ///
+    /// **What fix round 1 withdrew, corrected in round 2.** The sentence it
+    /// overstated is `neededHeight`'s, not this one's, and it reads, verbatim:
+    ///
+    /// > `theHeightMeasurementMovesWithTheProposedWidth` is the
+    /// > positive check that this one does.
+    ///
+    /// — "this one" being the height half's ability to go red. Round 1 wrote
+    /// here instead that the comment "used to claim this one refused `a height
+    /// half that reports a truncated single line`", and **that quotation was
+    /// never in this file**. One command settles it, and it is pinned to a
+    /// commit so that this paragraph cannot change its answer:
+    ///
+    /// ```
+    /// git show 7a6fcb78:Tests/macSCPAppKitTests/BoundedViewLayoutGuardTests.swift \
+    ///   | grep -c 'truncated single line'
+    /// ```
+    ///
+    /// prints `0` — `7a6fcb78` being the commit round 1 was written against.
+    /// A `git log -S'truncated single line' --all` taken the same day, before
+    /// this correction, named exactly one commit: `812078ce`, the one that
+    /// claimed to be withdrawing the phrase. That second command is NOT
+    /// pinned and will answer differently from here on, because the
+    /// paragraph you are reading quotes the phrase in order to name it.
+    ///
+    /// Where the phrase really came from: the task's own report, in a table
+    /// cell describing this test, which the round-1 review quoted and
+    /// attributed to this comment — and round 1 repeated the attribution
+    /// without reading the file. A quote nobody can find is worse than no
+    /// quote: it cannot be checked, and it borrows a reader's trust. It is
+    /// the failure the quoting rule exists to prevent, committed by the
+    /// correction applying that rule.
     @Test func theHeightMeasurementMovesWithTheProposedWidth() {
         let entries = BoundedViewRegistry.all.filter { $0.bound.grantedHeight != nil }
         #expect(!entries.isEmpty, "no entry grants a height, so the height half measures nothing")
