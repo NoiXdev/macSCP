@@ -55,11 +55,11 @@ struct BoundedViewEntry {
 /// A view gets two entries where it has an either/or branch with localized
 /// text on both sides, and one otherwise.
 ///
-/// **Nothing holds this list to the conformances in `Sources/` yet.** Task 7
-/// of this plan adds `BoundedViewCoverageTests`, a set equality between the
-/// `typeName`s here and the `: BoundedView` conformances there; until it
-/// lands, a view added in `Sources/` and not here is a silent gap, and the
-/// 33-to-33 agreement was checked by hand.
+/// **`BoundedViewCoverageTests` holds this list to the conformances in
+/// `Sources/`.** It is a set equality between the `typeName`s here and the
+/// conforming types the blanked source of `MacSCPAppKit` declares, so a view
+/// added there and not here, or listed here and no longer declared there, is
+/// a red that names which side holds the extra type.
 @MainActor
 enum BoundedViewRegistry {
     static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets + cappedViews }
