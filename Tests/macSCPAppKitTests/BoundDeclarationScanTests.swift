@@ -10,9 +10,9 @@ import Testing
 /// single search found every view that clips, and a clipping defect reached
 /// the maintainer as a screenshot instead of a red test.
 ///
-/// "Root" is read off the indentation, as `scripts/sheet-bound-inventory`
-/// reads it: a modifier at eight spaces is a modifier of a `body` (or of a
-/// computed view property) at the first level of a type.
+/// "Root" is read off the indentation: a modifier at eight spaces is a
+/// modifier of a `body` (or of a computed view property) at the first level
+/// of a type.
 ///
 /// **What this scan catches, and what it does not.** It catches a reverted
 /// literal at root indentation, and nothing else. A view escapes it by
