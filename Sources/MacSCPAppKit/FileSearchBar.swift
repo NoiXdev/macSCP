@@ -67,7 +67,6 @@ struct FileSearchBar: View {
             .onExitCommand(perform: onClose)
 
             modePicker
-                .frame(width: 118)
 
             Toggle(isOn: Binding(
                 get: { viewModel.searchIsRegex },
@@ -100,6 +99,13 @@ struct FileSearchBar: View {
     /// is `Equatable` but deliberately not `Hashable` — it has no UI-facing
     /// reason to be, and `Picker`'s selection requires `Hashable` — so this
     /// is a local App-layer mapping, not a change to Core's type.
+    ///
+    /// Drawn as a pop-up button held at its ideal width. It used to be a
+    /// segmented control squeezed into a 118 pt slot; held at its ideal that
+    /// control takes more than the slot in German and French, which would raise
+    /// the bar past `BrowserPane.minimumWidth`, and a pop-up shows one label so
+    /// it takes less than the slot in every catalogue.
+    /// `ResizableContainerFloorTests` measures the bar against that width.
     private var modePicker: some View {
         Picker("", selection: Binding<Int>(
             get: { viewModel.searchMode == .jump ? 1 : 0 },
@@ -108,8 +114,9 @@ struct FileSearchBar: View {
             Text(L10n.string("search.mode.filter", "Filter")).tag(0)
             Text(L10n.string("search.mode.jump", "Jump")).tag(1)
         }
-        .pickerStyle(.segmented)
+        .pickerStyle(.menu)
         .labelsHidden()
+        .fixedSize()
     }
 
     /// The trailing readout: the match count, UNLESS the current

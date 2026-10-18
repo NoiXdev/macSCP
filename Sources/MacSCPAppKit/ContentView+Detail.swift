@@ -506,7 +506,7 @@ extension ContentView {
                                     // declaration, since there is no descriptor.
                                     supportsPermissions: PermissionsAvailability.isOfferedByTheLocalFileSystem
                                 )
-                                .frame(minWidth: 280)
+                                .frame(minWidth: BrowserPane.minimumWidth)
 
                                 BrowserPane(
                                     title: L10n.string("browser.paneRemote", "Remote"),
@@ -601,7 +601,7 @@ extension ContentView {
                                             typeFileActionBytes($0, into: session.terminal)
                                         })
                                 )
-                                .frame(minWidth: 280)
+                                .frame(minWidth: BrowserPane.minimumWidth)
                             }
                             .frame(minHeight: 200)
                             .layoutPriority(1)

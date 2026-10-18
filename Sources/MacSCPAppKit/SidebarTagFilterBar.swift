@@ -62,7 +62,7 @@ private struct HostTagFilterRow: View {
                 }
             }
             if filter.showsJoinChoice {
-                TagFilterJoinPicker(filter: $filter, isInAResizableContainer: true)
+                TagFilterJoinPicker(filter: $filter, presentation: .compactMenu)
             }
         }
     }
@@ -166,19 +166,24 @@ struct TagFilterSheet: BoundedView {
 /// dialog cannot come to disagree about when it appears or what its two
 /// positions are called.
 struct TagFilterJoinPicker: View {
+    /// How the two positions are drawn. Both are rigid: neither can be
+    /// squeezed below its ideal width, so a label is never cut.
+    enum Presentation {
+        /// Two segments side by side (`SegmentedChoice`), as the tag dialog
+        /// draws it. The widest thing in it is both labels together.
+        case segmented
+        /// A small pop-up button showing the chosen position, as the sidebar
+        /// draws it. The widest thing in it is ONE label, which is what lets
+        /// it fit the sidebar's narrowest width in every catalogue where the
+        /// segmented form does not: `ResizableContainerFloorTests` measures
+        /// the sidebar's form against that width.
+        case compactMenu
+    }
+
     @Binding var filter: SidebarTagFilter
-    /// Opt-out from the picker being held at its ideal width
-    /// (`SegmentedChoice`).
-    ///
-    /// **Rigid is the default, on purpose.** A squeezed picker loses a label
-    /// with nothing overflowing, so the guard cannot see it; a call site that
-    /// forgot an opt-IN would produce that silently, and forgetting this
-    /// argument is safe instead. The sidebar's chip row is the one caller that
-    /// passes `true`: it sits in a container the user resizes down to
-    /// `SettingsStore.sidebarWidthRange`'s lower bound, where a rigid picker
-    /// would overflow, which is the resizable containers' own task. The other
-    /// call site, in `TagFilterSheet`, takes the default.
-    var isInAResizableContainer = false
+    /// The default is the segmented form, so a call site that says nothing gets
+    /// the one the dialog was measured with.
+    var presentation: Presentation = .segmented
 
     private var join: Binding<SidebarTagFilter.Join> {
         Binding(
@@ -199,17 +204,20 @@ struct TagFilterJoinPicker: View {
     }
 
     var body: some View {
-        if isInAResizableContainer {
+        switch presentation {
+        case .compactMenu:
             Picker(accessibilityName, selection: join) {
                 Text(L10n.string("sidebar.filter.join.all", "All tags"))
                     .tag(SidebarTagFilter.Join.all)
                 Text(L10n.string("sidebar.filter.join.any", "Any tag"))
                     .tag(SidebarTagFilter.Join.any)
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
             .help(helpText)
-        } else {
+        case .segmented:
             SegmentedChoice(
                 accessibilityName, selection: join,
                 options: [

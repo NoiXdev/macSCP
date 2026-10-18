@@ -7,6 +7,12 @@ import macSCPCore
 /// With `onDropURLs` set, the pane becomes a drop target for file URLs
 /// (tint highlight).
 struct BrowserPane: View {
+    /// The narrowest a pane can be dragged to. Both panes in
+    /// `ContentView+Detail.swift` take it as their `.frame(minWidth:)`, so the
+    /// number is spelled once and `ResizableContainerFloorTests` reads the same
+    /// one when it holds the search bar to it.
+    static let minimumWidth: CGFloat = 280
+
     let title: String
     let tint: Color
     let softTint: Color

@@ -205,6 +205,12 @@ enum SessionRowTunnelMenuPlan: Equatable {
 /// was the defect class this shape removed, and `SidebarTreeWiringTests` for
 /// the guard that keeps one from creeping back in here.
 struct SessionSidebar: View {
+    /// The space on each side of the title, the search field and the tag
+    /// filter. The sidebar is at least `SettingsStore.sidebarWidthRange`'s lower
+    /// bound wide, so the last two are offered that much less than the column;
+    /// `ResizableContainerFloorTests` subtracts it twice.
+    static let horizontalInset: CGFloat = 10
+
     let viewModel: SessionListViewModel
     let importedHosts: [SSHConfigHost]
     let activeSessionID: UUID?
@@ -497,7 +503,7 @@ struct SessionSidebar: View {
                 .tracking(1.0)
                 .foregroundStyle(DesignTokens.inkTertiary)
                 .padding(.top, 2)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, Self.horizontalInset)
                 .padding(.bottom, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -515,9 +521,8 @@ struct SessionSidebar: View {
             // user mid-query.
             if !viewModel.sessions.isEmpty {
                 SheetSearchField(
-                    text: $searchText, isRegex: $searchIsRegex, errorText: searchError,
-                    isInAResizableContainer: true)
-                    .padding(.horizontal, 10)
+                    text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
+                    .padding(.horizontal, Self.horizontalInset)
                     .padding(.bottom, 6)
             }
 
@@ -530,7 +535,7 @@ struct SessionSidebar: View {
             // frame drawn over nothing.
             if showsTagFilterBar, !availableTags.isEmpty {
                 SidebarTagFilterBar(tags: availableTags, filter: $tagFilter)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, Self.horizontalInset)
                     .padding(.bottom, 6)
             }
 
