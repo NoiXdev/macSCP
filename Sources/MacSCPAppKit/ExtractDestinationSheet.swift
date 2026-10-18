@@ -37,7 +37,10 @@ import macSCPCore
 /// flag a remote extraction is given.
 ///
 /// Presented by `BrowserPane`, which owns every sheet its menu entries open.
-struct ExtractDestinationSheet: View {
+struct ExtractDestinationSheet: BoundedView {
+    /// The size `ExtractDestinationSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(420)
+
     let archiveName: String
     let preview: ExtractPreview
     let onExtract: (ExtractDestination) -> Void
@@ -157,7 +160,7 @@ struct ExtractDestinationSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .sheetBound(Self.bound)
         .interactiveDismissDisabled(true)
     }
 

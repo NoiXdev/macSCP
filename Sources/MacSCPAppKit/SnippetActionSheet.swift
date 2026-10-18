@@ -47,7 +47,10 @@ import macSCPCore
 /// and no wrapping function like `insertButton` to isolate by brace
 /// counting, so the scanner only needs to find each button's own block by
 /// its localization key and read the one modifier line that follows it.
-struct SnippetActionSheet: View {
+struct SnippetActionSheet: BoundedView {
+    /// The size `SnippetActionSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(420)
+
     let snippet: Snippet
     let onInsert: () -> Void
     let onExecute: () -> Void
@@ -86,6 +89,6 @@ struct SnippetActionSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .sheetBound(Self.bound)
     }
 }

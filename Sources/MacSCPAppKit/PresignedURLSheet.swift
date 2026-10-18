@@ -11,7 +11,10 @@ import macSCPCore
 /// The generated URL is clipboard-only: it is never logged, persisted, or
 /// surfaced in `errorText` — only ever assigned to `generatedURL`, which
 /// feeds the read-only field and the "Copy" button below.
-struct PresignedURLSheet: View {
+struct PresignedURLSheet: BoundedView {
+    /// The size `PresignedURLSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(420)
+
     let itemKey: String
     let provider: any PresignedURLProvider
 
@@ -114,7 +117,7 @@ struct PresignedURLSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .sheetBound(Self.bound)
     }
 
     private func expiryLabel(_ expiry: PresignedExpiry) -> String {

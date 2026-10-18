@@ -21,7 +21,10 @@ import macSCPCore
 ///
 /// `GenerateKeySheet` and `SSHPublicKeyDocument` below are this file's own
 /// types (moved from the removed `SSHKeysSettingsTab.swift`).
-struct SSHKeysSheet: View {
+struct SSHKeysSheet: BoundedView {
+    /// The size `SSHKeysSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 720, height: 460)
+
     @Environment(\.dismiss) private var dismiss
 
     /// The READ, not just its result: an unreadable store must not render as
@@ -168,7 +171,7 @@ struct SSHKeysSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 720, height: 460)
+        .sheetBound(Self.bound)
         .onAppear { reload() }
         .sheet(isPresented: $showGenerate) {
             GenerateKeySheet(store: store) { keptPassphrase in
@@ -620,7 +623,10 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// `.sheet(isPresented:)` above. `RenameKeySheet` below is internal for
 /// the same reason; `ImportKeySheet` is internal for a different one,
 /// given at its own declaration.
-struct GenerateKeySheet: View {
+struct GenerateKeySheet: BoundedView {
+    /// The size `GenerateKeySheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(380)
+
     let store: ManagedKeyStore
     /// `false` means the key exists but its passphrase did not reach the
     /// Keychain — see `GenerateKeyForm.run`.
@@ -708,7 +714,7 @@ struct GenerateKeySheet: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // However the sheet goes away — Cancel, Escape, the parent closing —
         // a run still in flight is cancelled, so a dismissed sheet adds no
@@ -768,7 +774,10 @@ struct GenerateKeySheet: View {
 /// `onImported` hands back the `ManagedKey` it created — that caller has to
 /// re-point a session at the new file, and the key is where its path comes
 /// from. It ignores the `Bool`; `onImported`'s own doc says why.
-struct ImportKeySheet: View {
+struct ImportKeySheet: BoundedView {
+    /// The size `ImportKeySheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(380)
+
     let fileURL: URL
     let store: ManagedKeyStore
     /// The key that was created, and whether its passphrase reached the
@@ -866,7 +875,7 @@ struct ImportKeySheet: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // However the sheet goes away — Cancel, Escape, the parent closing —
         // a run still in flight is cancelled, so a dismissed sheet adds no
@@ -1001,7 +1010,10 @@ struct ImportKeySheet: View {
 /// Rename sheet (M18/T5 Step 2): name/comment only — an UPSERT of the same
 /// `id` (file and Keychain slot are untouched, per the M17 invariant that
 /// only metadata changes here).
-struct RenameKeySheet: View {
+struct RenameKeySheet: BoundedView {
+    /// The size `RenameKeySheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(380)
+
     let key: ManagedKey
     let store: ManagedKeyStore
     let onRenamed: () -> Void
@@ -1050,7 +1062,7 @@ struct RenameKeySheet: View {
             }
         }
         .padding(20)
-        .frame(width: 380)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
     }
 
@@ -1082,7 +1094,10 @@ struct RenameKeySheet: View {
 /// (Core), where `KeyPassphraseFormsTests` can edit the field mid-run and
 /// cancel one — the same split `GenerateKeySheet` uses, and for the same
 /// reason: `ssh-keygen` is awaited, so the field stays live while it runs.
-struct CorrectKeyPassphraseSheet: View {
+struct CorrectKeyPassphraseSheet: BoundedView {
+    /// The size `CorrectKeyPassphraseSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(420)
+
     let key: ManagedKey
     let store: ManagedKeyStore
     let onCorrected: () -> Void
@@ -1128,7 +1143,7 @@ struct CorrectKeyPassphraseSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // However the sheet goes away — Cancel, Escape, the parent closing —
         // a run still in flight is cancelled. Nothing has been written at
@@ -1197,7 +1212,10 @@ struct CorrectKeyPassphraseSheet: View {
 /// `SSHKeysSheet.reportPassphraseChange(_:)` says out loud.
 ///
 /// The fields, the latch and the run live in `ChangeKeyPassphraseForm` (Core).
-struct ChangeKeyPassphraseSheet: View {
+struct ChangeKeyPassphraseSheet: BoundedView {
+    /// The size `ChangeKeyPassphraseSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .width(420)
+
     let key: ManagedKey
     let store: ManagedKeyStore
     /// Called with how the run ended, not merely that it ended: the parent
@@ -1262,7 +1280,7 @@ struct ChangeKeyPassphraseSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .sheetBound(Self.bound)
         .textFieldStyle(.roundedBorder)
         // Safe at every point, which is why it is unconditional: a cancelled
         // rewrite is rolled back before the error leaves the tool, so however
