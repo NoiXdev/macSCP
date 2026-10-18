@@ -214,13 +214,19 @@ By the maintainer's ruling of 2026-10-17, all three are available:
    two positive checks against it: the measured widths must differ between
    catalogues, and each label the measurement depends on must come back as
    that catalogue's own value.
-2. **Ten types become module-internal.** Ruled 2026-10-17
-   (`private aufmachen`). Seven are bounded views —
-   `LoginSetEditorView`, `GenerateKeySheet`, `RenameKeySheet`,
-   `CorrectKeyPassphraseSheet`, `ChangeKeyPassphraseSheet`,
-   `SnippetEditorView`, `TerminalPanelHeader` — and three are the resizable
+2. **Fourteen types become module-internal.** Ruled 2026-10-17
+   (`private aufmachen`). **This number was written as ten when the ruling
+   was given, and as seven when the question was first put.** Both were
+   short for the same reason the scope was: they were read off the
+   width-only census. Counted 2026-10-18 by a script that walks all three
+   spellings and reads each owner's declaration, eleven of the thirty-three
+   bounded views are owned by a `private` type — `ChangeKeyPassphraseSheet`,
+   `ConnectFailureView`, `ConnectingAttemptView`, `CorrectKeyPassphraseSheet`,
+   `GenerateKeySheet`, `LoginSetEditorView`, `LostConnectionView`,
+   `RenameKeySheet`, `SnippetEditorView`, `TagFilterSheet`,
+   `TerminalPanelHeader` — and three more are the private resizable
    containers of Constraint 3: `TerminalSettingsTab`, `CLISettingsSection`,
-   `TagFilterJoinPicker`. Measured 2026-10-17; `internal` does not leave
+   `TagFilterJoinPicker`. Fourteen distinct types. `internal` does not leave
    `MacSCPAppKit`.
 3. **Rigidity raises the minimum content width of a resizable container.**
    In a container that sizes to its content the change is unobservable; in

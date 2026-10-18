@@ -1,0 +1,60 @@
+"""The full inventory the plan is decomposed from: every bounded view, its
+file, line, declared bound, enclosing type and that type's visibility.
+"""
+
+import os
+import re
+import sys
+
+ROOT = "Sources/MacSCPAppKit"
+
+SPELLINGS = [
+    ("width", re.compile(r"^        \.frame\(width: (\d+)\)$")),
+    ("width+height", re.compile(r"^        \.frame\(width: (\d+), height: (\d+)\)$")),
+    ("capped", re.compile(r"^        \.frame\(minWidth: (\d+), maxWidth: (\d+)\)$")),
+]
+EXTRA = [
+    ("FileActionEditor.swift", "constant", "Self.sheetWidth"),
+    ("ContentView+Detail.swift", "capped (nested)", "minWidth 420 maxWidth 460"),
+]
+TYPE_DECL = re.compile(r"^(public |private |internal |fileprivate )?(?:struct|enum|final class|class) (\w+)")
+
+
+def main():
+    rows = []
+    for name in sorted(os.listdir(ROOT)):
+        if not name.endswith(".swift"):
+            continue
+        with open(os.path.join(ROOT, name), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        decls = []
+        for i, line in enumerate(lines):
+            match = TYPE_DECL.match(line)
+            if match:
+                decls.append((i, match.group(2), (match.group(1) or "internal ").strip()))
+        for i, line in enumerate(lines):
+            for kind, pattern in SPELLINGS:
+                match = pattern.match(line)
+                if not match:
+                    continue
+                owner = ("<file>", "internal")
+                for start, type_name, vis in decls:
+                    if start <= i:
+                        owner = (type_name, vis)
+                bound = " x ".join(match.groups())
+                rows.append((name, i + 1, kind, bound, owner[0], owner[1]))
+
+    print(f"{'file':34} {'line':>5} {'spelling':14} {'bound':12} {'type':30} visibility")
+    for row in sorted(rows, key=lambda r: (r[2], r[0], r[1])):
+        print(f"{row[0]:34} {row[1]:>5} {row[2]:14} {row[3]:12} {row[4]:30} {row[5]}")
+    print(f"\n{len(rows)} returned by the three commands, plus {len(EXTRA)} the commands miss:")
+    for item in EXTRA:
+        print(f"  {item[0]:34} {item[1]:14} {item[2]}")
+    print(f"total {len(rows) + len(EXTRA)}")
+
+    private = sorted({r[4] for r in rows if r[5] == "private"})
+    print(f"\nprivate bounded types ({len(private)}): {', '.join(private)}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
