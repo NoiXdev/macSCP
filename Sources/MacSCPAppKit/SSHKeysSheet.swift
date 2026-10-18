@@ -612,10 +612,14 @@ struct SSHPrivateKeyExportDocument: FileDocument {
 /// persisting the result via `store.add`. Shape mirrors
 /// `LoginSetsSheet.LoginSetEditorView` (own small field-row helper below,
 /// `.polished`/`.polishedProminent` buttons). Moved here from the removed
-/// `SSHKeysSettingsTab.swift` (M18/T6) — `private` like its neighbors
-/// `ImportKeySheet`/`RenameKeySheet` below: a top-level `private` type is
-/// file-scoped, so it stays usable from `SSHKeysSheet.body`'s
-/// `.sheet(isPresented:)` above without needing wider visibility.
+/// `SSHKeysSettingsTab.swift` (M18/T6). Internal, not `private`: a
+/// `private` top-level type is file-scoped and cannot be named from the
+/// test target even with `@testable import`, and the size-bound
+/// measurement there has to name every view that bounds its own size. It
+/// is still only presented from `SSHKeysSheet.body`'s
+/// `.sheet(isPresented:)` above. `RenameKeySheet` below is internal for
+/// the same reason; `ImportKeySheet` is internal for a different one,
+/// given at its own declaration.
 struct GenerateKeySheet: View {
     let store: ManagedKeyStore
     /// `false` means the key exists but its passphrase did not reach the

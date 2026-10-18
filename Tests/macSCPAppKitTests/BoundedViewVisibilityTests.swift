@@ -37,10 +37,15 @@ import Testing
     // and now anchor on `struct X: View`. Widening an anchor can only add
     // matches, and each of those guards reads the FIRST one, so the failure
     // that is still reachable is a second site the guard would read instead.
-    // Each count below is taken in the view the guard itself reads:
-    // `SourceCorpus.code(of:)` (comments and string literals blanked) where
-    // the guard scans `.code`, `SourceCorpus.text(of:)` (raw) where it scans
-    // raw text.
+    //
+    // The anchor and the file of every row are read from the guard's own
+    // constants, not spelled here, so editing an anchor or repointing a
+    // guard at another file moves this count with it. What cannot be read
+    // is WHICH VIEW of the file a guard scans (`SourceCorpus.code(of:)`,
+    // comments and strings blanked, or `SourceCorpus.text(of:)`, raw): that
+    // is decided inside each guard's own helper, and deriving it would mean
+    // restructuring five guards. So `reading` stays a literal per row, and a
+    // guard that moves between the two views is NOT caught here.
 
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -49,30 +54,54 @@ import Testing
         case code, raw
     }
 
-    private static func occurrences(
-        of anchor: String, in relative: String, view: Reading
-    ) throws -> Int {
-        let url = repoRoot.appendingPathComponent(relative)
-        let text = try view == .code ? SourceCorpus.code(of: url) : SourceCorpus.text(of: url)
-        return text.components(separatedBy: anchor).count - 1
+    private struct WidenedAnchor {
+        let guardName: String
+        let anchor: String
+        let file: URL
+        let reading: Reading
     }
 
-    private static let widenedAnchors: [(anchor: String, file: String, view: Reading)] = [
-        // CLISettingsCompletionGuardTests.sectionDeclaration, reads `.code`
-        ("struct CLISettingsSection: View", "Sources/MacSCPAppKit/SettingsView.swift", .code),
-        // TerminalKeyboardWiringGuardTests / TerminalMouseWiringGuardTests.settingsTab, read `.code`
-        ("struct TerminalSettingsTab: View", "Sources/MacSCPAppKit/SettingsView.swift", .code),
-        // ReconnectWiringGuardTests.strippedBody(after:in:), anchor found in RAW text
-        ("struct LostConnectionView: View", "Sources/MacSCPAppKit/ContentView+Detail.swift", .raw),
-        ("struct ConnectFailureView: View", "Sources/MacSCPAppKit/ContentView+Detail.swift", .raw),
-        // SnippetCommandEditorGuardTests.functionBody(containing:in:), reads RAW text
-        ("struct SnippetEditorView: View {", "Sources/MacSCPAppKit/SnippetsSheet.swift", .raw),
+    private static func relative(_ path: String) -> URL {
+        repoRoot.appendingPathComponent(path)
+    }
+
+    private static let widenedAnchors: [WidenedAnchor] = [
+        WidenedAnchor(
+            guardName: "CLISettingsCompletionGuardTests",
+            anchor: CLISettingsCompletionGuardTests.sectionDeclaration,
+            file: CLISettingsCompletionGuardTests.settingsViewFile, reading: .code),
+        WidenedAnchor(
+            guardName: "TerminalKeyboardWiringGuardTests",
+            anchor: TerminalKeyboardWiringGuardTests.settingsTab,
+            file: relative(TerminalKeyboardWiringGuardTests.settingsViewFile), reading: .code),
+        WidenedAnchor(
+            guardName: "TerminalMouseWiringGuardTests",
+            anchor: TerminalMouseWiringGuardTests.settingsTab,
+            file: relative(TerminalMouseWiringGuardTests.settingsViewFile), reading: .code),
+        WidenedAnchor(
+            guardName: "ReconnectWiringGuardTests (lost)",
+            anchor: ReconnectWiringGuardTests.lostConnectionAnchor,
+            file: ReconnectWiringGuardTests.detailFile, reading: .raw),
+        WidenedAnchor(
+            guardName: "ReconnectWiringGuardTests (failed)",
+            anchor: ReconnectWiringGuardTests.connectFailureAnchor,
+            file: ReconnectWiringGuardTests.detailFile, reading: .raw),
+        WidenedAnchor(
+            guardName: "SnippetCommandEditorGuardTests",
+            anchor: SnippetCommandEditorGuardTests.editorDeclaration,
+            file: SnippetCommandEditorGuardTests.sheetSourceFile, reading: .raw),
     ]
 
     @Test(arguments: BoundedViewVisibilityTests.widenedAnchors.indices)
     func eachWidenedGuardAnchorMatchesExactlyOnce(index: Int) throws {
         let entry = Self.widenedAnchors[index]
-        let count = try Self.occurrences(of: entry.anchor, in: entry.file, view: entry.view)
-        #expect(count == 1)
+        let text = try entry.reading == .code
+            ? SourceCorpus.code(of: entry.file) : SourceCorpus.text(of: entry.file)
+        let count = text.components(separatedBy: entry.anchor).count - 1
+        #expect(count == 1, """
+            \(entry.guardName) reads the first match of `\(entry.anchor)` in \
+            \(entry.file.lastPathComponent) (\(entry.reading) view); there are \(count) \
+            matches, so it may be reading the wrong site.
+            """)
     }
 }

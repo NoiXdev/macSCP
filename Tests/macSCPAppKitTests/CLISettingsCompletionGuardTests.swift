@@ -54,7 +54,7 @@ struct CLISettingsCompletionGuardTests {
         .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    private static let settingsViewFile = repoRoot
+    static let settingsViewFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SettingsView.swift")
 
     private static let catalogLocales = ["en", "de", "fr", "pl"]
@@ -69,7 +69,7 @@ struct CLISettingsCompletionGuardTests {
     /// section itself calls the recipe and iterates its shell list. The
     /// negative reads the whole FILE instead: see
     /// `theViewSpellsNoneOfTheCommandsItself`.
-    private static let sectionDeclaration = "struct CLISettingsSection: View"
+    static let sectionDeclaration = "struct CLISettingsSection: View"
 
     /// A tool token no Swift source can contain, so splitting a line around
     /// it leaves exactly the parts `ShellCompletionRecipe` spells itself.
@@ -506,7 +506,7 @@ struct CLISettingsCompletionGuardTests {
 /// What the Shell Completion section shows, per install state — the claim
 /// the source guard above deliberately does NOT make.
 ///
-/// It is a pure function rather than a `switch` inside a `private` view,
+/// It is a pure function rather than a `switch` inside a view's `body`,
 /// for one reason: a table can run it over EVERY `CLIInstallState` case,
 /// and a scan of the view's source can only report that the words
 /// `CLIToolInstaller.toolName` appear somewhere in it. The section's own
