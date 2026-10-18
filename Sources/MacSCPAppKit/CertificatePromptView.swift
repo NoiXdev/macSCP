@@ -72,7 +72,13 @@ final class CertificatePromptBridge {
 /// A mismatch NEVER reaches this view — `WebDAVSessionDelegate
 /// .decideCertificate` refuses it before ever consulting the decider this
 /// prompt answers; see `ContentView`'s certificate-mismatch handling.
-struct CertificatePromptView: View {
+struct CertificatePromptView: BoundedView {
+    /// The size `CertificatePromptView` bounds itself to, applied with
+    /// `.sheetBound(Self.bound)`. It was applied at the call site in
+    /// `ContentView+Detail.swift`, where no search for a view's own bound
+    /// found it. It wraps the 24 pt padding, in that order, as it did there.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 460)
+
     let candidate: ServerCertificateCandidate
     let onTrust: () -> Void
     let onCancel: () -> Void
@@ -127,6 +133,8 @@ struct CertificatePromptView: View {
                 .buttonStyle(.polishedProminent)
             }
         }
+        .padding(24)
+        .sheetBound(Self.bound)
     }
 
     @ViewBuilder

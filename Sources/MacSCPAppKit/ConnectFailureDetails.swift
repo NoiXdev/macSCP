@@ -133,7 +133,10 @@ struct ConnectFailureDetailText: Equatable, CustomStringConvertible,
 /// `textSelection` because the point of the dialog is to get the text INTO
 /// a bug report, and a scrolling body because a server's own refusal text
 /// has no length this layout could assume.
-struct ConnectFailureDetailsSheet: View {
+struct ConnectFailureDetailsSheet: BoundedView {
+    /// The size `ConnectFailureDetailsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .capped(minWidth: 420, maxWidth: 520)
+
     /// The dialog's headline, a catalog key like every other fixed string
     /// on this surface — see `ConnectFailureContent.detailsTitle`.
     let title: ConnectFailureContent.Message
@@ -159,6 +162,6 @@ struct ConnectFailureDetailsSheet: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 420, maxWidth: 520)
+        .sheetBound(Self.bound)
     }
 }

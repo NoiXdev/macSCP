@@ -1229,8 +1229,8 @@ struct ReconnectWiringGuardTests {
     /// The two declarations the surface scans below start from, named once
     /// so the tests that scan and the test that counts them
     /// (`BoundedViewVisibilityTests`) read the same text.
-    static let lostConnectionAnchor = "struct LostConnectionView: View"
-    static let connectFailureAnchor = "struct ConnectFailureView: View"
+    static let lostConnectionAnchor = "struct LostConnectionView: BoundedView"
+    static let connectFailureAnchor = "struct ConnectFailureView: BoundedView"
     static let detailFile = file("Sources/MacSCPAppKit/ContentView+Detail.swift")
     private static let tabStripFile = file("Sources/MacSCPAppKit/TabStripView.swift")
 
