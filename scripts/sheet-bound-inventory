@@ -1,5 +1,23 @@
-"""The full inventory the plan is decomposed from: every bounded view, its
-file, line, declared bound, enclosing type and that type's visibility.
+"""The inventory of every view that bounds its own size: the `BoundedView`
+conformers of Sources/MacSCPAppKit, each with its file, line, declared
+`SheetBound`, kind and visibility.
+
+Run from the repository root:
+
+    python3 -I scripts/sheet-bound-inventory
+
+History. This script used to find bounded views by three regular
+expressions over a root-level `.frame(...)` call (`width:`, `width:
+height:` and `minWidth: maxWidth:`) and carried two hardcoded entries for the
+two spellings those expressions could not see. Once every bounded view
+declared its size through `BoundedView`, the three expressions returned
+nothing and the two entries described a tree that no longer existed, so the
+script now reads the one marker the guards read. It agrees with the registry
+when `BoundedViewCoverageTests` is green: that suite holds the registry's
+type names equal to the conformers it scans for in the same sources.
+
+Comment lines are dropped before scanning, so a doc comment that quotes a
+conformance is not counted as one.
 """
 
 import os
@@ -8,16 +26,21 @@ import sys
 
 ROOT = "Sources/MacSCPAppKit"
 
-SPELLINGS = [
-    ("width", re.compile(r"^        \.frame\(width: (\d+)\)$")),
-    ("width+height", re.compile(r"^        \.frame\(width: (\d+), height: (\d+)\)$")),
-    ("capped", re.compile(r"^        \.frame\(minWidth: (\d+), maxWidth: (\d+)\)$")),
-]
-EXTRA = [
-    ("FileActionEditor.swift", "constant", "Self.sheetWidth"),
-    ("ContentView+Detail.swift", "capped (nested)", "minWidth 420 maxWidth 460"),
-]
-TYPE_DECL = re.compile(r"^(public |private |internal |fileprivate )?(?:struct|enum|final class|class) (\w+)")
+# A conformer: a struct, class or enum with the protocol among its inherited
+# types. The inherited list may wrap, so the span up to the opening brace is
+# read as one run.
+CONFORMER = re.compile(
+    r"^[ \t]*(?:(public|private|internal|fileprivate)[ \t]+)?(?:final[ \t]+)?"
+    r"(?:struct|class|enum)[ \t]+(\w+)[^{]*:[^{]*(?<!\w)BoundedView(?!\w)",
+    re.MULTILINE,
+)
+BOUND = re.compile(
+    r"static[ \t]+let[ \t]+bound[ \t]*:[ \t]*SheetBound[ \t]*=[ \t]*\.(width|size|capped)\(([^)]*)\)"
+)
+
+
+def without_comment_lines(text):
+    return "\n".join("" if line.lstrip().startswith("//") else line for line in text.splitlines())
 
 
 def main():
@@ -26,34 +49,36 @@ def main():
         if not name.endswith(".swift"):
             continue
         with open(os.path.join(ROOT, name), encoding="utf-8") as handle:
-            lines = handle.read().splitlines()
-        decls = []
-        for i, line in enumerate(lines):
-            match = TYPE_DECL.match(line)
-            if match:
-                decls.append((i, match.group(2), (match.group(1) or "internal ").strip()))
-        for i, line in enumerate(lines):
-            for kind, pattern in SPELLINGS:
-                match = pattern.match(line)
-                if not match:
-                    continue
-                owner = ("<file>", "internal")
-                for start, type_name, vis in decls:
-                    if start <= i:
-                        owner = (type_name, vis)
-                bound = " x ".join(match.groups())
-                rows.append((name, i + 1, kind, bound, owner[0], owner[1]))
+            text = without_comment_lines(handle.read())
+        found = list(CONFORMER.finditer(text))
+        for index, match in enumerate(found):
+            end = found[index + 1].start() if index + 1 < len(found) else len(text)
+            bound = BOUND.search(text, match.end(), end)
+            line = text.count("\n", 0, match.start()) + 1
+            visibility = match.group(1) or "internal"
+            if bound:
+                kind = bound.group(1)
+                figure = " ".join(bound.group(2).replace(",", " ").split())
+            else:
+                kind, figure = "?", "no `static let bound` found"
+            rows.append((name, line, kind, figure, match.group(2), visibility))
 
-    print(f"{'file':34} {'line':>5} {'spelling':14} {'bound':12} {'type':30} visibility")
+    print(f"{'file':34} {'line':>5} {'kind':7} {'bound':42} {'type':30} visibility")
     for row in sorted(rows, key=lambda r: (r[2], r[0], r[1])):
-        print(f"{row[0]:34} {row[1]:>5} {row[2]:14} {row[3]:12} {row[4]:30} {row[5]}")
-    print(f"\n{len(rows)} returned by the three commands, plus {len(EXTRA)} the commands miss:")
-    for item in EXTRA:
-        print(f"  {item[0]:34} {item[1]:14} {item[2]}")
-    print(f"total {len(rows) + len(EXTRA)}")
+        print(f"{row[0]:34} {row[1]:>5} {row[2]:7} {row[3]:42} {row[4]:30} {row[5]}")
 
-    private = sorted({r[4] for r in rows if r[5] == "private"})
-    print(f"\nprivate bounded types ({len(private)}): {', '.join(private)}")
+    kinds = {}
+    for row in rows:
+        kinds[row[2]] = kinds.get(row[2], 0) + 1
+    summary = ", ".join(f"{count} {kind}" for kind, count in sorted(kinds.items()))
+    print(f"\ntotal {len(rows)} BoundedView conformers ({summary})")
+    unread = [r[4] for r in rows if r[2] == "?"]
+    if unread:
+        print(f"conformers whose bound the script could not read: {', '.join(unread)}")
+        return 1
+    not_internal = sorted({r[4] for r in rows if r[5] != "internal"})
+    print(f"conformers not internal ({len(not_internal)}): {', '.join(not_internal) if not_internal else 'none'}")
+    return 0
 
 
 if __name__ == "__main__":
