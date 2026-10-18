@@ -11,10 +11,11 @@ as a static value, so the bound is discoverable instead of being a number in
 a modifier that three different `grep`s find three different subsets of. A
 test-target registry pairs each conformer with a builder and the state to
 measure it in; a set-equality guard holds the registry to the conformances in
-`Sources/`. Rigidity is a `Layout` that takes the maximum of its subview's
-ideal width and the proposal, so a control cannot be compressed below its
-ideal but still stretches, and three components bake it in so the
-compressible form is not writable at a call site.
+`Sources/`. Rigidity is `.fixedSize()`, baked into three components so the
+compressible form is not writable at a call site. (This sentence first read
+`Rigidity is a `Layout` that takes the maximum of its subview's ideal width
+and the proposal, so a control cannot be compressed below its ideal but
+still stretches`; see the Global Constraints correction below.)
 
 **Tech Stack:** Swift 6 (`.swiftLanguageMode(.v6)`), SwiftPM, SwiftUI,
 AppKit (`NSHostingController`), Swift Testing.
@@ -590,7 +591,20 @@ git commit -m "test(views): hold the layout registry to the conformances in Sour
 
 ---
 
-### Task 8: `AtLeastIdealWidth` and the three rigid components
+### Task 8: the three rigid components
+
+> **Corrected in place 2026-10-18, after this task's own measurements.**
+> This heading first read ``### Task 8: `AtLeastIdealWidth` and the three
+> rigid components``, and everything below it through the commit step
+> prescribes a custom `Layout` that **was built, measured and deleted
+> inside this task**. Read what follows as the record of what was tried,
+> not as instructions: a reader following it would rebuild the deleted
+> type. What shipped is each control plus `.fixedSize()`, for all three
+> kinds. The reason is in the Global Constraints correction above — a
+> segmented picker compresses below its ideal and never grows past it, so
+> a floor that stretches would have made every migrated control claim
+> width its bare control never claimed and moved it from centred to
+> leading.
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/RigidControls.swift`
