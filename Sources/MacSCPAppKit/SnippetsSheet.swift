@@ -1092,11 +1092,17 @@ struct SnippetEditorView: BoundedView {
             // where somebody may want to tick this first, and a greyed-out
             // checkbox would explain neither itself nor when it would come
             // back.
+            // A sentence, so the wrapping form: held to one line this label
+            // alone set the editor's minimum width in every catalogue
+            // (`MACSCP_BOUND_FIGURES=1 swift test --filter
+            // BoundedViewFigureReportTests` printed de 291.0, en 321.0, fr 375.0,
+            // pl 346.0 for the "a new snippet" entry, against 160.0 before the
+            // checkbox was rigid). A wrapped label loses no text.
             CheckboxRow(
                 L10n.string(
                     "snippets.editor.skipPlacementCheck",
                     "Don't check where values are placed in this command"),
-                isOn: $skipsPlacementCheck)
+                isOn: $skipsPlacementCheck, wraps: true)
                 .font(.caption)
             Text(L10n.string(
                 "snippets.editor.skipPlacementCheck.hint",
