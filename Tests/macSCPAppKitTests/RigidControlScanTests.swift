@@ -44,6 +44,15 @@ import Testing
 /// unscannable by spelling; the measurement suites (`BoundedViewLayoutGuardTests`,
 /// `ResizableContainerFloorTests`) are what see their effect.
 ///
+/// **A width frame around a rigid component is the fourth, and it is caught
+/// one level deep.** A `.frame(width:)` collapses a rigid component's reported
+/// minimum exactly as a compressible control does, so neither a width guard nor
+/// a floor guard moves — the measurement is in
+/// `noRigidComponentIsHeldToAWidthFrame`, which reads the modifier chain on
+/// each of the 19 component calls, where both instances this branch deleted
+/// stood. A frame on an ENCLOSING container is not read, and nothing in this
+/// tree measures it.
+///
 /// **Nor does it see a `Toggle` that names no style.** On macOS a bare
 /// `Toggle("label", isOn:)` is a compressible checkbox by default, so "the
 /// checkbox style appears only in the component" does NOT mean no compressible
@@ -343,6 +352,266 @@ struct RigidControlScanTests {
         // view does not count.
         #expect(!Self.chainHoldsItsIdealWidth(Self.modifierChain(startingAt: 1, in: bare)))
         #expect(!Self.chainHoldsItsIdealWidth(Self.modifierChain(startingAt: 1, in: lines("a\n.pickerStyle(.menu)"))))
+    }
+
+    // MARK: - A width frame around a rigid component
+
+    /// One rigid component, the pattern that finds a call to it, and every
+    /// file that writes one, with how many times.
+    ///
+    /// Counted 2026-10-18 with `grep -rn 'SegmentedChoice[(]' Sources/MacSCPAppKit`
+    /// (12 lines), `grep -rn 'RadioChoice[(]' Sources/MacSCPAppKit` (2) and
+    /// `grep -rn 'CheckboxRow[(]' Sources/MacSCPAppKit` (6), the parentheses
+    /// bracketed so that this comment does not match its own pattern, and the
+    /// same three figures under `/usr/bin/grep`. 20 lines in all; the counts
+    /// below sum to 19, because the sixth `CheckboxRow[(]` line is
+    /// `RigidControls.swift:57`, that file's own header prose, which the
+    /// blanked view does not see. `theCallSiteScanReadsCodeAndNotProse` is the
+    /// check on that.
+    fileprivate struct Component: Sendable, CustomTestStringConvertible {
+        let name: String
+        let pattern: String
+        let sites: [String: Int]
+        var testDescription: String { name }
+    }
+
+    fileprivate static let components = [
+        Component(
+            name: "SegmentedChoice",
+            pattern: #"(?:^|\W)SegmentedChoice\("#,
+            sites: [
+                "ConnectionFormView.swift": 3,
+                "FileActionEditor.swift": 1,
+                "LoginSetsSheet.swift": 1,
+                "PresignedURLSheet.swift": 1,
+                "SSHKeysSheet.swift": 2,
+                "SettingsView.swift": 2,
+                "SidebarTagFilterBar.swift": 1,
+                "SnippetsSheet.swift": 1,
+            ]),
+        Component(
+            name: "RadioChoice",
+            pattern: #"(?:^|\W)RadioChoice\("#,
+            sites: ["ExtractDestinationSheet.swift": 1, "FileActionEditor.swift": 1]),
+        Component(
+            name: "CheckboxRow",
+            pattern: #"(?:^|\W)CheckboxRow\("#,
+            sites: [
+                "FileActionEditor.swift": 2,
+                "SheetSearchField.swift": 1,
+                "SnippetsSheet.swift": 2,
+            ]),
+    ]
+
+    /// A width frame, in the two spellings that CAP a width. `minWidth:` and
+    /// `idealWidth:` raise a floor rather than cap, so they are not matched;
+    /// `maxWidth: .infinity` caps at infinity, which collapses nothing, and the
+    /// lookahead excludes it.
+    ///
+    /// The lookahead swallows the whitespace itself, `:(?!\s*\.infinity)` and
+    /// not `:\s*(?!\.infinity)`. The second form was written first and read
+    /// `.frame(maxWidth: .infinity)` as a hit: `\s*` backtracks to zero
+    /// characters, the lookahead then stands before a SPACE rather than before
+    /// the dot, and a negative lookahead that cannot see what it excludes
+    /// always succeeds.
+    private static let widthFramePattern =
+        #"\.frame\((?:[^)]*[,\s])?(?:width|maxWidth)\s*:(?!\s*\.infinity)"#
+
+    /// The modifier chain written on the call whose opening parenthesis ends at
+    /// `openParenEnd`: the rest of the line that call closes on, then every
+    /// following line beginning with `.`, blank lines skipped (a blanked
+    /// comment is blank). The first other line ends it, so a modifier on an
+    /// enclosing container — whose `}` line breaks the chain — is not read as
+    /// this call's.
+    ///
+    /// It reads FORWARD and it reads ONE level. A frame written on a container
+    /// (`VStack { SegmentedChoice(…) }.frame(width: 100)`) collapses the
+    /// component's reported minimum exactly as a frame on the call does, and
+    /// nothing here sees it: this check narrows the hole rather than closing
+    /// it, as the suite header says.
+    private static func chainAfterCall(openParenEnd: Int, in text: NSString) -> [String] {
+        let open = UInt16(UnicodeScalar("(").value)
+        let close = UInt16(UnicodeScalar(")").value)
+        var depth = 1
+        var index = openParenEnd
+        while index < text.length, depth > 0 {
+            let character = text.character(at: index)
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+            }
+            index += 1
+        }
+        guard depth == 0 else { return [] }
+        let rest = text.substring(from: index).split(
+            separator: "\n", omittingEmptySubsequences: false)
+        var chain: [String] = []
+        if let closingLine = rest.first {
+            chain.append(closingLine.trimmingCharacters(in: .whitespaces))
+        }
+        for line in rest.dropFirst() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            guard trimmed.hasPrefix(".") else { break }
+            chain.append(trimmed)
+        }
+        return chain
+    }
+
+    /// Every call to `component`, as `file:line`, with the modifier chain
+    /// written on it.
+    private static func callChains(
+        of component: Component, in sources: [String: String]
+    ) -> [(site: String, chain: [String])] {
+        var result: [(site: String, chain: [String])] = []
+        for (name, code) in sources.sorted(by: { $0.key < $1.key }) {
+            let text = code as NSString
+            let matches = regex(component.pattern).matches(
+                in: code, range: NSRange(location: 0, length: text.length))
+            for match in matches {
+                let end = match.range.location + match.range.length
+                let line = text.substring(to: match.range.location).filter { $0 == "\n" }.count + 1
+                result.append(
+                    (site: "\(name):\(line)", chain: chainAfterCall(openParenEnd: end, in: text)))
+            }
+        }
+        return result
+    }
+
+    /// A width frame around a RIGID component collapses the minimum width it
+    /// reports, exactly as a compressible control does, and no measurement in
+    /// this tree moves.
+    ///
+    /// Measured 2026-10-18 on Darwin 27, in a standalone binary outside this
+    /// repository, on a segmented control carrying three German labels: rigid
+    /// alone, minimum 477.0; in `.frame(width: 100)`, minimum 100.0; inside
+    /// `.frame(maxWidth: 100)`, minimum 100.0; in a `VStack` inside
+    /// `.frame(width: 100)`, minimum 100.0. The overflow is drawn clipped, and
+    /// `BoundedViewLayoutGuardTests` then reads the frame's figure instead of
+    /// the content's — which withdraws the Task 8 conclusion that "A caller can
+    /// still wrap the result in `.frame(width:)`, but that clips and overflows,
+    /// which the Task 6 guard sees".
+    ///
+    /// The shape is not hypothetical: this branch deleted two instances of it,
+    /// `SnippetsSheet`'s `.frame(width: 150)` in `c8bfdb63` and
+    /// `FileSearchBar`'s `.frame(width: 118)` in `aece2e2b`. Nothing but this
+    /// check stops either from coming back.
+    ///
+    /// The positive half is the second expectation: the per-file call counts
+    /// equal the list above EXACTLY, so a scan that has stopped finding the
+    /// component — a rename, a changed spelling — reads 0 against a listed
+    /// count and is red, instead of passing by inspecting nothing.
+    ///
+    /// **Proved red 2026-10-18.** The plant puts the deleted frame back on the
+    /// snippet kind picker, through `scripts/mutation-probe`, which reverts
+    /// index-safely and refuses a dirty tree:
+    ///
+    /// ```
+    /// scripts/mutation-probe --filter noRigidComponentIsHeldToAWidthFrame \
+    ///   --label 'width frame back on the snippet kind picker' \
+    ///   --apply "perl -0pi -e 's/\n                        \]\)\n                \} else \{\n/\n                        ])\n                    .frame(width: 150)\n                } else {\n/' Sources/MacSCPAppKit/SnippetsSheet.swift"
+    /// ```
+    ///
+    /// which printed, verbatim:
+    ///
+    /// ```
+    /// ── control: 1 test(s) ran, 0 pre-existing failures
+    /// RESULT: RED — 1 test(s) ran, and the plant was caught by:
+    ///   macSCPAppKitTests.RigidControlScanTests/noRigidComponentIsHeldToAWidthFrame(component:)
+    /// ```
+    ///
+    /// The issue message is not quoted because the script deletes its log
+    /// before printing (`docs/BACKLOG.md`, the row beginning
+    /// "`scripts/mutation-probe` prints the names of the tests that caught a
+    /// plant"); the catcher's name and the control's zero are what it reports.
+    @Test(arguments: RigidControlScanTests.components)
+    fileprivate func noRigidComponentIsHeldToAWidthFrame(component: Component) throws {
+        let sources = try Self.blankedSources()
+        let calls = Self.callChains(of: component, in: sources)
+        let offenders = calls.filter { call in
+            call.chain.contains { Self.count(Self.widthFramePattern, in: $0) > 0 }
+        }
+        #expect(
+            offenders.isEmpty,
+            "\(component.name) in a width frame at: \(offenders.map(\.site).joined(separator: ", "))")
+
+        var inspected: [String: Int] = [:]
+        for call in calls {
+            inspected[String(call.site.split(separator: ":")[0]), default: 0] += 1
+        }
+        #expect(inspected == component.sites, "\(component.name) called at [\(Self.describe(inspected))]")
+    }
+
+    /// The positive for the reader itself: a planted frame is found in each
+    /// place one can be written, and a frame belonging to another view is not.
+    @Test func theCallChainReaderSeesWhatItIsWrittenToSee() {
+        func chains(_ text: String) -> [[String]] {
+            Self.callChains(of: Self.components[0], in: ["X.swift": text]).map(\.chain)
+        }
+        func caught(_ text: String) -> Bool {
+            chains(text).contains { chain in
+                chain.contains { Self.count(Self.widthFramePattern, in: $0) > 0 }
+            }
+        }
+
+        // The frame on the line that closes the call.
+        #expect(caught("SegmentedChoice(a, selection: b).frame(width: 150)"))
+        // A multi-line call with nested parentheses and a bracketed array, the
+        // frame on the line after the one that closes it.
+        #expect(
+            caught(
+                """
+                SegmentedChoice(
+                    x, selection: y,
+                    options: [
+                        (false, f(a)),
+                        (true, f(b)),
+                    ])
+                .frame(width: 150)
+                """))
+        // Another modifier and a blank line do not end the chain.
+        #expect(caught("SegmentedChoice(a)\n.help(h)\n\n.frame(maxWidth: 118)"))
+        // A frame on an enclosing view, past the `}` that ends the chain.
+        #expect(!caught("VStack {\nSegmentedChoice(a)\n}\n.frame(width: 150)"))
+        // The modifier shapes the call sites really carry.
+        #expect(!caught("SegmentedChoice(a)\n.help(h)"))
+        #expect(!caught("SegmentedChoice(a)"))
+        // A call the reader cannot close reads as an empty chain, not as a hit.
+        #expect(chains("SegmentedChoice(a, selection: b") == [[]])
+
+        // The frame pattern's own edges.
+        for sample in [
+            ".frame(width: 150)", ".frame( width : 150)", ".frame(maxWidth: 118)",
+            ".frame(minWidth: 100, maxWidth: 200)", ".padding().frame(width: 150)",
+        ] {
+            #expect(Self.count(Self.widthFramePattern, in: sample) == 1, "must match: \(sample)")
+        }
+        for sample in [
+            ".frame(height: 150)", ".frame(minWidth: 100)", ".frame(idealWidth: 100)",
+            ".frame(maxWidth: .infinity)", ".fixedSize()",
+        ] {
+            #expect(Self.count(Self.widthFramePattern, in: sample) == 0, "must not match: \(sample)")
+        }
+    }
+
+    /// Why the blanked view is read here too: `RigidControls.swift`'s header
+    /// writes a call in prose, and a scanner cannot tell that from a call. It
+    /// is the twentieth line the three greps return, and the nineteen counted
+    /// above exclude it.
+    @Test func theCallSiteScanReadsCodeAndNotProse() throws {
+        let sources = try Self.blankedSources()
+        let component = try #require(sources[Self.componentFile])
+        #expect(component.contains("struct CheckboxRow"))
+        #expect(Self.callChains(of: Self.components[2], in: [Self.componentFile: component]).isEmpty)
+
+        let prose = "// CheckboxRow(_:isOn:wraps:)\nCheckboxRow(x)\n.frame(width: 10)\n"
+        #expect(Self.count(Self.components[2].pattern, in: prose) == 2)
+        let blanked = try SwiftSource.blankingCommentsAndStrings(prose)
+        let found = Self.callChains(of: Self.components[2], in: ["X.swift": blanked])
+        #expect(found.count == 1)
+        let chain = try #require(found.first?.chain)
+        #expect(chain.contains { Self.count(Self.widthFramePattern, in: $0) > 0 })
     }
 
     // MARK: - Default 1: the tag filter's join picker
