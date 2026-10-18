@@ -238,6 +238,61 @@ struct RigidControlTests {
         }
     }
 
+    /// The connection form's jump toggle, in the shape the tree writes it:
+    /// a `Toggle` that names no style at all.
+    private static func bareJumpToggle() -> some View {
+        Toggle(
+            L10n.string("form.jump.toggle", "Connect through an intermediate host (ProxyJump)"),
+            isOn: .constant(true))
+    }
+
+    private static func rigidJumpToggle() -> some View {
+        CheckboxRow(
+            L10n.string("form.jump.toggle", "Connect through an intermediate host (ProxyJump)"),
+            isOn: .constant(true))
+    }
+
+    /// The measurement `docs/BACKLOG.md`'s `Toggle(` row was missing: a
+    /// styleless `Toggle` carrying a real catalogue sentence is compressible,
+    /// and the same sentence through `CheckboxRow` is not.
+    ///
+    /// The row that records 37 `Toggle(` lines refused to assert
+    /// compressibility it had not measured, and rightly: "the checkbox style
+    /// appears only in the component" says nothing about a `Toggle` that names
+    /// no style, because on macOS that IS a checkbox by default. This is the
+    /// command for it. The label is `form.jump.toggle`, read from the
+    /// catalogue rather than spelled, and three of the 37 sites sit inside
+    /// `ConnectionFormView`, a `BoundedView` capped at 460 pt.
+    ///
+    /// Figures measured 2026-10-18 on Darwin 27.0.0 (macOS 27.0.1, arm64),
+    /// printed by this test under `MACSCP_BOUND_FIGURES=1` — the same gate the
+    /// registry's figure report uses, because this is the same kind of record:
+    ///
+    /// ```
+    /// MACSCP_BOUND_FIGURES=1 swift test --filter theJumpToggleIsCompressibleWhereTheComponentIsNot
+    /// ```
+    ///
+    /// What it asserts is the relationship, not the figures: the bare toggle's
+    /// minimum is below its ideal in every catalogue, the component's is equal
+    /// to its ideal, and the component's ideal is the bare control's own — so a
+    /// squeeze that the bare form absorbs silently becomes an overflow the
+    /// bounded-view guard can see.
+    @Test func theJumpToggleIsCompressibleWhereTheComponentIsNot() {
+        let printing = ProcessInfo.processInfo.environment["MACSCP_BOUND_FIGURES"] == "1"
+        for locale in LayoutMeasure.shippedLocales {
+            let bare = Self.figures(locale) { Self.bareJumpToggle() }
+            let rigid = Self.figures(locale) { Self.rigidJumpToggle() }
+            if printing {
+                print(
+                    "jumptoggle: \(locale) bare \(bare[0])/\(bare[1]) "
+                        + "through CheckboxRow \(rigid[0])/\(rigid[1])")
+            }
+            #expect(bare[0] < bare[1], "\(locale) bare: minimum \(bare[0]), ideal \(bare[1])")
+            #expect(rigid[0] == rigid[1], "\(locale) component: minimum \(rigid[0]), ideal \(rigid[1])")
+            #expect(rigid[1] == bare[1], "\(locale) ideal: component \(rigid[1]), bare \(bare[1])")
+        }
+    }
+
     /// One of the two measurements that make `.fixedSize()` the
     /// behaviour-preserving shape. A raw checkbox reports less than the 2000 pt
     /// it is offered (101 pt in the Task 8 review); this test is the command
