@@ -40,7 +40,10 @@ private struct HiddenImportRow: Identifiable {
 /// `KnownHostsSheet`/`LoginSetsSheet` (title + list + caption footer +
 /// `.polishedProminent` Close) for consistency across the app's management
 /// sheets.
-struct HiddenImportsSheet: View {
+struct HiddenImportsSheet: BoundedView {
+    /// The size `HiddenImportsSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 720, height: 460)
+
     let store: HiddenImportStore
     /// The full, unfiltered `~/.ssh/config` parse — the SAME inventory
     /// `ContentView.refreshImportedHosts()` re-splits, so this sheet's
@@ -116,7 +119,7 @@ struct HiddenImportsSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 720, height: 460)
+        .sheetBound(Self.bound)
         .onAppear { load() }
     }
 

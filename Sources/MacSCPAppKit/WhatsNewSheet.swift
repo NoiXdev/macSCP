@@ -83,7 +83,10 @@ struct WhatsNewList: View {
 /// `ChangelogResource.load()`'s `nil` produces, so a future caller —
 /// Task 3's Settings pane, or a test — gets an honest sheet instead of a
 /// blank one.
-struct WhatsNewSheet: View {
+struct WhatsNewSheet: BoundedView {
+    /// The size `WhatsNewSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 520, height: 480)
+
     let currentVersion: String
     let releases: [ChangelogRelease]
     let onClose: () -> Void
@@ -115,6 +118,6 @@ struct WhatsNewSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 520, height: 480)
+        .sheetBound(Self.bound)
     }
 }

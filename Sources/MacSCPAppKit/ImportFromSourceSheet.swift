@@ -110,7 +110,10 @@ enum ImportPreviewPresentation {
 /// appears and reads no folder: `ContentView.beginExternalImport` does that
 /// before presenting, which is what lets a missing default folder raise a
 /// picker instead of an error inside a sheet.
-struct ImportFromSourceSheet: View {
+struct ImportFromSourceSheet: BoundedView {
+    /// The size `ImportFromSourceSheet` bounds itself to, applied with `.sheetBound(Self.bound)`.
+    static let bound: SheetBound = .size(width: 780, height: 540)
+
     @Bindable var model: ImportFromSourceViewModel
     /// The user pressed Import. The window dismisses the sheet and applies —
     /// planning cannot happen while this sheet is up, because the shared
@@ -156,7 +159,7 @@ struct ImportFromSourceSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 780, height: 540)
+        .sheetBound(Self.bound)
     }
 
     private var header: some View {
