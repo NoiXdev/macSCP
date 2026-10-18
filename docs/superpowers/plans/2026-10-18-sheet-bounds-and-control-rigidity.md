@@ -375,7 +375,10 @@ git commit -m "feat(views): declare a view's size bound as a value"
 
 ```swift
 @Test func noViewSpellsASizeLiteralAtItsRoot() throws
-// Negative half: over SourceCorpus.files(under: app views), the blanked
+// Negative half: over the app's own sources —
+// SourceCorpus.files(under: SourceCorpus.url(of: .sources)
+//     .appendingPathComponent("MacSCPAppKit"))
+// — the blanked
 // code view contains no root-level `.frame(width: <digits>` ,
 // `.frame(width: <digits>, height:` or `.frame(minWidth: <digits>, maxWidth:`.
 
@@ -556,7 +559,10 @@ Expected: FAIL naming the removed type.
 
 - [ ] **Step 3: Implement `boundedViewTypeNamesInSources()`**
 
-Read `SourceCorpus.code(of:)` for the app views — the blanked view, so a
+Read `SourceCorpus.code(of:)` for each file under
+`SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")` —
+`Root` has exactly two cases, `.sources` and `.tests`, so the app tree is
+reached by that path and not by a case of its own. The blanked view, so a
 comment quoting a conformance is not counted — and collect the type name
 preceding each `: BoundedView` conformance.
 
@@ -752,7 +758,9 @@ git commit -m "fix(views): stop the resizable containers squeezing their localiz
 
 ```swift
 @Test func theRawStylesAppearOnlyInTheComponentFile() throws
-// Negative: in the blanked code view of Sources/MacSCPAppKit, the three
+// Negative: in the blanked code view of each file under
+// SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit"),
+// the three
 // raw style spellings appear in no file but RigidControls.swift.
 
 @Test func theComponentFileStillCarriesThem() throws
