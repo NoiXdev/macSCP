@@ -163,9 +163,6 @@ let package = Package(
                 // direct use from a plain (non-test) target.
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-                // `LayoutMeasure.swift` enters `L10n.localeOverride`, which is
-                // internal to the app layer, through `@testable import`.
-                "MacSCPAppKit",
             ],
             path: "Tests/MacSCPTestSupport",
             swiftSettings: [.swiftLanguageMode(.v6)]
