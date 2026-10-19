@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-/// `createBucket(_:versioning:objectLock:)` on `S3FileSystem`, against the
+/// `createBucket(_:protection:)` on `S3FileSystem`, against the
 /// canned transport: which requests go out, in which order, with what, and
 /// which calls send nothing at all. No network; the rig half is
 /// `S3CreateBucketGatedTests`.
@@ -32,25 +32,10 @@ struct S3CreateBucketTests {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [])
         let before = await transport.requests.count
         let reason = await Self.protocolReason {
-            try await fs.createBucket(name, versioning: true, objectLock: true)
+            try await fs.createBucket(name, protection: .lockedAndVersioned)
         }
         let problem = try #require(S3BucketName.problem(with: name))
         #expect(reason?.contains("\(problem)") == true, "\(String(describing: reason))")
-        #expect(await transport.requests.count == before)
-    }
-
-    /// Object Lock needs a versioned bucket. The call does not quietly turn
-    /// versioning on for a caller that said it wanted it off: that
-    /// combination is a contradiction in the caller's own request, so it is
-    /// named and refused before anything is sent.
-    @Test func objectLockWithoutVersioningIsRefusedBeforeAnyRequest() async throws {
-        let (fs, transport) = try await S3SettingsFake.connect(responses: [])
-        let before = await transport.requests.count
-        let reason = await Self.protocolReason {
-            try await fs.createBucket("fresh-bucket", versioning: false, objectLock: true)
-        }
-        #expect(reason?.contains("versioning") == true, "\(String(describing: reason))")
-        #expect(reason?.contains("object lock") == true, "\(String(describing: reason))")
         #expect(await transport.requests.count == before)
     }
 
@@ -58,7 +43,7 @@ struct S3CreateBucketTests {
 
     @Test func aPlainBucketIsOneBodylessPutOnTheBucketRoot() async throws {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [Self.ok()])
-        try await fs.createBucket("fresh-bucket", versioning: false, objectLock: false)
+        try await fs.createBucket("fresh-bucket", protection: .none)
         let requests = Array(await transport.requests.dropFirst())  // connect's probe
         #expect(requests.count == 1)
         let sent = try #require(requests.first)
@@ -73,7 +58,7 @@ struct S3CreateBucketTests {
 
     @Test func versioningIsASecondRequestAfterTheCreate() async throws {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [Self.ok(), Self.ok()])
-        try await fs.createBucket("fresh-bucket", versioning: true, objectLock: false)
+        try await fs.createBucket("fresh-bucket", protection: .versioned)
         let requests = Array(await transport.requests.dropFirst())
         try #require(requests.count == 2)
         #expect(requests[0].httpMethod == "PUT")
@@ -90,7 +75,7 @@ struct S3CreateBucketTests {
 
     @Test func objectLockRidesOnTheCreateAsASignedHeaderAndVersioningFollows() async throws {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [Self.ok(), Self.ok()])
-        try await fs.createBucket("fresh-bucket", versioning: true, objectLock: true)
+        try await fs.createBucket("fresh-bucket", protection: .lockedAndVersioned)
         let requests = Array(await transport.requests.dropFirst())
         try #require(requests.count == 2)
         let create = requests[0]
@@ -120,7 +105,7 @@ struct S3CreateBucketTests {
             Self.ok(),
         ])
         let fs = try await S3FileSystem.connect(config, transport: transport)
-        try await fs.createBucket("fresh-bucket", versioning: false, objectLock: false)
+        try await fs.createBucket("fresh-bucket", protection: .none)
         let sent = try #require(await transport.requests.last)
         let body = try #require(sent.httpBody)
         let text = try #require(String(data: body, encoding: .utf8))
@@ -130,18 +115,44 @@ struct S3CreateBucketTests {
 
     // MARK: - Failures
 
-    @Test func aRefusedCreateIsMappedAndNoVersioningRequestFollows() async throws {
-        let conflict = Data("<Error><Code>BucketAlreadyExists</Code></Error>".utf8)
+    /// The two refusals a create is most likely to meet: the name is taken
+    /// by someone else, or by this very account. Each keeps its own finding
+    /// instead of "the server answered with status 409", and no versioning
+    /// request follows a refused create.
+    @Test(arguments: [
+        ("BucketAlreadyExists", RemoteFSFinding.bucketNameTaken),
+        ("BucketAlreadyOwnedByYou", RemoteFSFinding.bucketAlreadyOwnedByYou),
+    ])
+    func aRefusedCreateIsMappedToItsOwnFindingAndNoVersioningRequestFollows(
+        code: String, expected: RemoteFSFinding
+    ) async throws {
+        let conflict = Data("<Error><Code>\(code)</Code></Error>".utf8)
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
             (conflict, S3SettingsFake.httpResponse(status: 409))
         ])
         do {
-            try await fs.createBucket("fresh-bucket", versioning: true, objectLock: true)
+            try await fs.createBucket("fresh-bucket", protection: .lockedAndVersioned)
+            Issue.record("a 409 was reported as success")
+        } catch {
+            #expect((error as? RemoteFSError) == .finding(expected))
+        }
+        #expect(await transport.requests.count == 2)  // the probe, and the create
+    }
+
+    /// The control for the pair above: a 409 whose code is not one of the two
+    /// is still the generic mapping, so the named findings are chosen by the
+    /// code and not by the status.
+    @Test func aConflictWithAnotherCodeKeepsTheGenericMapping() async throws {
+        let conflict = Data("<Error><Code>OperationAborted</Code></Error>".utf8)
+        let (fs, _) = try await S3SettingsFake.connect(responses: [
+            (conflict, S3SettingsFake.httpResponse(status: 409))
+        ])
+        do {
+            try await fs.createBucket("fresh-bucket", protection: .none)
             Issue.record("a 409 was reported as success")
         } catch {
             #expect((error as? RemoteFSError) == .finding(.unexpectedStatus(code: 409)))
         }
-        #expect(await transport.requests.count == 2)  // the probe, and the create
     }
 
     /// The create has succeeded by the time the versioning request fails, so
@@ -153,7 +164,7 @@ struct S3CreateBucketTests {
             Self.ok(), (Data(), S3SettingsFake.httpResponse(status: 403)),
         ])
         do {
-            try await fs.createBucket("fresh-bucket", versioning: true, objectLock: false)
+            try await fs.createBucket("fresh-bucket", protection: .versioned)
             Issue.record("a 403 was reported as success")
         } catch {
             #expect((error as? RemoteFSError) == .authenticationFailed)

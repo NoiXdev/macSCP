@@ -35,8 +35,8 @@ public enum BucketVersioning: String, Sendable, CaseIterable {
 /// its methods here and its conformance in the extension at the bottom of
 /// `S3FileSystem.swift`.
 public protocol S3BucketSettings: Sendable {
-    /// Creates `bucket`, with versioning switched on when `versioning` is
-    /// true and with Object Lock when `objectLock` is.
+    /// Creates `bucket`, with the versioning and Object Lock `protection`
+    /// names.
     ///
     /// **Both switches are offered here because creation is when a person
     /// decides what a bucket is for, not because the store forbids them
@@ -46,15 +46,18 @@ public protocol S3BucketSettings: Sendable {
     /// enabled afterwards; macSCP offers no such call, for scope and
     /// irreversibility (see the Object Lock block below).
     ///
-    /// **`objectLock: true` requires `versioning: true`.** Object Lock works
-    /// only on a versioned bucket. A store that sees
-    /// `x-amz-bucket-object-lock-enabled: true` on `CreateBucket` enables
-    /// versioning on its own, but the call does not lean on that, and it
-    /// does not resolve a contradiction in the caller's request either:
-    /// `objectLock: true` with `versioning: false` is refused with
-    /// `RemoteFSError.protocolError` before any request, naming both
-    /// switches. A caller derives `versioning` from the lock toggle, not the
-    /// other way round.
+    /// **Object Lock requires versioning, and the parameter says so.**
+    /// Object Lock works only on a versioned bucket, so `BucketProtection`
+    /// has no case that asks for the lock without versioning: the
+    /// contradiction cannot be written, and nothing has to refuse it at run
+    /// time. (An earlier shape took two `Bool`s and refused
+    /// `objectLock: true, versioning: false` with `.protocolError`; a refusal
+    /// beat silently forcing versioning on, for the reason
+    /// `S3XMLText.escaped` gives about dropping a character, and the enum is
+    /// the same decision put where it cannot be got wrong.) A store that
+    /// sees `x-amz-bucket-object-lock-enabled: true` on `CreateBucket`
+    /// enables versioning on its own, but the call does not lean on that:
+    /// `.lockedAndVersioned` sends the versioning request itself.
     ///
     /// `bucket` goes through `S3BucketName.problem(with:)` first; a name
     /// that fails is refused with `.protocolError` naming the problem, again
@@ -68,11 +71,17 @@ public protocol S3BucketSettings: Sendable {
     /// region and that is unmeasured here. A caller that means "a new bucket"
     /// checks that the name is free before calling.
     ///
+    /// A refused create keeps its own finding for the two refusals a create
+    /// meets most often: `.bucketNameTaken` (`BucketAlreadyExists`) and
+    /// `.bucketAlreadyOwnedByYou` (`BucketAlreadyOwnedByYou`). Whether a
+    /// given store ANSWERS with the second for a re-create is the previous
+    /// paragraph's question; the rig does not.
+    ///
     /// Two requests when versioning is on (the create, then the versioning),
     /// so a failure of the SECOND leaves the bucket created and
     /// unversioned. The error thrown is that request's own; the call does
     /// not delete the bucket it just made.
-    func createBucket(_ bucket: String, versioning: Bool, objectLock: Bool) async throws
+    func createBucket(_ bucket: String, protection: BucketProtection) async throws
 
     /// The versioning state of `bucket`. `.never` when the store reports no
     /// status at all.
@@ -187,6 +196,29 @@ public protocol S3BucketSettings: Sendable {
 
     /// Puts `key` under a legal hold (`true`) or lifts it (`false`).
     func setLegalHold(_ on: Bool, ofKey key: String, inBucket bucket: String, versionId: String?) async throws
+}
+
+/// What a bucket is created with: the versioning and Object Lock switches as
+/// ONE choice, because Object Lock works only on a versioned bucket and two
+/// independent `Bool`s would let a caller write the combination that cannot
+/// exist.
+///
+/// The cases are offered at creation because that is when a person decides
+/// what a bucket is for. They are not offered there because the store
+/// forbids them later (AWS permits Object Lock on an existing versioned
+/// bucket; macSCP offers no call for it, for scope and irreversibility).
+public enum BucketProtection: Sendable, Equatable, CaseIterable {
+    /// Neither: a plain bucket, whose versioning reads back `.never`.
+    case none
+    /// Versioning enabled, no Object Lock.
+    case versioned
+    /// Object Lock, which needs versioning: both are enabled.
+    case lockedAndVersioned
+
+    /// Whether the create is followed by a request enabling versioning.
+    var enablesVersioning: Bool { self != .none }
+    /// Whether the create itself carries the Object Lock header.
+    var enablesObjectLock: Bool { self == .lockedAndVersioned }
 }
 
 /// How an Object Lock retention is enforced. The raw values are the wire

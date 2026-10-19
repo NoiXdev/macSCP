@@ -74,12 +74,24 @@ public enum S3SettingsXML {
     /// The body of a `CreateBucket` for `region`, or `nil` for none.
     ///
     /// `us-east-1` sends no body, and every other region names itself in a
-    /// `LocationConstraint`. That split is AWS's as this author remembers it
-    /// (a constraint naming `us-east-1` is refused, and a request without
-    /// one for any other region is refused with
-    /// `IllegalLocationConstraintException`); **neither half was measured
-    /// against AWS here.** The rig is `us-east-1` and gets no body, and a
+    /// `LocationConstraint`. That split is AWS's: a constraint naming
+    /// `us-east-1` is refused, and a request without one for any other
+    /// region is refused with `IllegalLocationConstraintException`. It was
+    /// confirmed against AWS's reference
+    /// (docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html) on
+    /// 2026-10-19 by READING it; no request from this repository has
+    /// exercised either half. The rig is `us-east-1` and gets no body, and a
     /// test pins only that the body is built and signed.
+    ///
+    /// **A third half is unmeasured and is not the body's:** the request is
+    /// signed with `config.region` whatever the endpoint. AWS's reference
+    /// says a regional endpoint takes its own region in both the body and
+    /// the signature, and the GLOBAL endpoint (`s3.amazonaws.com`, which is
+    /// macSCP's AWS preset) must be signed `us-east-1`. So the preset
+    /// together with a region other than `us-east-1` is the combination
+    /// this does not handle and nobody has tried against a real endpoint;
+    /// `S3RedirectDecision.decide` would refuse the redirect a wrong guess
+    /// provokes. The open row is in `docs/BACKLOG.md`.
     public static func createBucketBody(region: String) throws -> Data? {
         guard region != "us-east-1" else { return nil }
         let xml =

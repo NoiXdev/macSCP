@@ -154,6 +154,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// from the rule's author rather than from this module, and a finding
     /// carries none.
     case corsRuleInvalid
+    /// A bucket could not be created because its name belongs to someone
+    /// else (`BucketAlreadyExists`). Bucket names are shared across a whole
+    /// store, so this is the refusal a create meets most often.
+    case bucketNameTaken
+    /// A bucket could not be created because this account already owns one
+    /// with that name (`BucketAlreadyOwnedByYou`). Told apart from
+    /// `.bucketNameTaken` because the remedy differs: the name is not lost,
+    /// it is already the user's own.
+    case bucketAlreadyOwnedByYou
 
     /// The payload-free name of a finding: what a catalogue key is derived
     /// from, and what a guard iterates when it has to reach every finding.
@@ -171,6 +180,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case requestBodyUnencodable
         case objectUnderLegalHold, objectUnderRetention, objectLockNotConfigured
         case bucketNotEmpty, operationNotSupported, corsRuleInvalid
+        case bucketNameTaken, bucketAlreadyOwnedByYou
     }
 
     public var name: Name {
@@ -199,6 +209,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .bucketNotEmpty: return .bucketNotEmpty
         case .operationNotSupported: return .operationNotSupported
         case .corsRuleInvalid: return .corsRuleInvalid
+        case .bucketNameTaken: return .bucketNameTaken
+        case .bucketAlreadyOwnedByYou: return .bucketAlreadyOwnedByYou
         }
     }
 
@@ -227,7 +239,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
-            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid,
+            .bucketNameTaken, .bucketAlreadyOwnedByYou:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -251,7 +264,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
-            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid,
+            .bucketNameTaken, .bucketAlreadyOwnedByYou:
             return CoreL10n.string(messageKey)
         }
     }
@@ -321,6 +335,10 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "this server does not support that operation"
         case .corsRuleInvalid:
             return "a CORS rule is not valid, so nothing was sent"
+        case .bucketNameTaken:
+            return "that bucket name is already taken by another account"
+        case .bucketAlreadyOwnedByYou:
+            return "you already own a bucket with that name"
         }
     }
 
@@ -365,7 +383,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
             .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable,
             .objectUnderLegalHold, .objectUnderRetention, .objectLockNotConfigured,
-            .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
+            .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid,
+            .bucketNameTaken, .bucketAlreadyOwnedByYou:
             return false
         }
     }

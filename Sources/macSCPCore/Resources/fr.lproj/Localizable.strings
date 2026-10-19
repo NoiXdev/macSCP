@@ -212,4 +212,6 @@
 "core.finding.bucketNotEmpty" = "Le bucket contient encore des objets, il ne peut donc pas être supprimé";
 "core.finding.operationNotSupported" = "Ce serveur ne prend pas en charge cette opération";
 "core.finding.corsRuleInvalid" = "Une règle CORS n'est pas valide, rien n'a donc été envoyé";
+"core.finding.bucketNameTaken" = "Ce nom de bucket est déjà utilisé par un autre compte";
+"core.finding.bucketAlreadyOwnedByYou" = "Vous possédez déjà un bucket portant ce nom";
 "core.archive.defaultName" = "Archive";
