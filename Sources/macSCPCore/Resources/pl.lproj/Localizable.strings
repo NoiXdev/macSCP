@@ -205,4 +205,9 @@
 "core.finding.noSuchBucket" = "To połączenie zaczyna się od listy bucketów, więc ścieżka musi wskazywać bucket";
 "core.finding.uploadPartUnacknowledged %@" = "Serwer nie potwierdził części %@ wysyłania";
 "core.finding.requestBodyUnencodable" = "Wartości w żądaniu nie da się zapisać w formacie, którego wymaga serwer";
+"core.finding.objectUnderLegalHold %@" = "%@ jest objęty blokadą prawną (legal hold), więc nie można go usunąć";
+"core.finding.objectUnderRetention %@" = "%@ jest objęty okresem retencji, więc nie można go usunąć";
+"core.finding.objectLockNotConfigured" = "Blokada obiektów nie jest skonfigurowana dla tego bucketu";
+"core.finding.bucketNotEmpty" = "Bucket nadal zawiera obiekty, więc nie można go usunąć";
+"core.finding.operationNotSupported" = "Ten serwer nie obsługuje tej operacji";
 "core.archive.defaultName" = "Archiwum";

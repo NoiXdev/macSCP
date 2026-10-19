@@ -45,7 +45,7 @@ import Testing
     /// uses, and it is locale-independent — a machine running in `de` reads
     /// its own catalogue and both halves still agree.
     ///
-    /// That the catalogue FILES declare all eighteen keys, in all four
+    /// That the catalogue FILES declare every key, in all four
     /// languages, is `everyRemoteFSFindingHasItsOwnSentence`'s job.
     @Test func everyFindingResolvesToASentenceAndNotToItsKey() {
         for finding in RemoteFSFinding.everyCase {
@@ -76,12 +76,14 @@ import Testing
         case .unexpectedStatus(let code): return String(code)
         case .pathExistsAndIsNotADirectory(let path): return path
         case .uploadPartUnacknowledged(let part): return String(part)
+        case .objectUnderLegalHold(let path), .objectUnderRetention(let path): return path
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
-            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
             return nil
         }
     }
@@ -193,13 +195,14 @@ extension RemoteFSFinding {
     /// does not compile until it has a sample, and cannot be left out of
     /// the guards above.
     ///
-    /// The payloads are placeholders: a status code, a path this project
-    /// owns and an upload part number it counted out itself, which is
-    /// exactly what the three payload-carrying findings are allowed to hold
-    /// (counted in the switch below, 2026-10-01: three of eighteen).
+    /// The payloads are placeholders: a status code, a path the caller
+    /// asked about and an upload part number this project counted out
+    /// itself, which is exactly what the payload-carrying findings are
+    /// allowed to hold (counted in the switch below, 2026-10-19: five of
+    /// twenty-three).
     ///
     /// `formatArgument` is `nil` for a finding whose key carries no format
-    /// specifier, and the interpolated value as a string for the three that
+    /// specifier, and the interpolated value as a string for the five that
     /// do — which is what lets
     /// `everyLogSentenceMatchesItsEnglishCatalogueEntry` format the
     /// catalogue value the same way `message` would.
@@ -225,6 +228,13 @@ extension RemoteFSFinding {
             case .noSuchBucket: return (.noSuchBucket, nil)
             case .uploadPartUnacknowledged: return (.uploadPartUnacknowledged(part: 7), "7")
             case .requestBodyUnencodable: return (.requestBodyUnencodable, nil)
+            case .objectUnderLegalHold:
+                return (.objectUnderLegalHold(path: "/b/k"), "/b/k")
+            case .objectUnderRetention:
+                return (.objectUnderRetention(path: "/b/k"), "/b/k")
+            case .objectLockNotConfigured: return (.objectLockNotConfigured, nil)
+            case .bucketNotEmpty: return (.bucketNotEmpty, nil)
+            case .operationNotSupported: return (.operationNotSupported, nil)
             }
         }
     }
