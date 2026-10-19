@@ -154,7 +154,11 @@ public enum S3SettingsXML {
     /// it), a `MaxAgeSeconds` that is not an integer is too, and only a
     /// `CORSRule` directly under the root and a field directly under a rule
     /// count. An element inside a rule that this type has no field for is
-    /// skipped.
+    /// skipped, which makes this read lossy; that is why
+    /// `S3BucketSettings.cors(ofBucket:)` hands back the raw document beside
+    /// the rules, so a caller can tell "these rules are everything" from
+    /// "these rules are what was understood". Text values are kept as
+    /// written; `MaxAgeSeconds` is trimmed before it is read as a number.
     public static func parseCORS(_ data: Data) throws -> [CORSRule] {
         let delegate = CORSDelegate()
         let parser = XMLParser(data: data)
@@ -174,12 +178,18 @@ public enum S3SettingsXML {
 
     /// The `PutBucketCors` request body for `rules`. Values are XML-escaped
     /// (`S3XMLText.escaped`, which refuses what XML cannot carry). Fields
-    /// are written in the order S3's documentation lists them; an absent
-    /// `ID` or `MaxAgeSeconds` writes no element.
+    /// are written in the order the spec's section 4 names the schema
+    /// (`docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md`:
+    /// `ID`, `AllowedOrigin`, `AllowedMethod`, `AllowedHeader`,
+    /// `ExposeHeader`, `MaxAgeSeconds`), which the rig accepted; the store
+    /// does not hold it to that order. An absent `ID` or `MaxAgeSeconds`
+    /// writes no element.
     ///
     /// Does NOT validate: `CORSRule.validate()` is the caller's gate
-    /// (`setCORS`), so this stays the exact inverse of `parseCORS` and
-    /// round-trips any rule, valid or not.
+    /// (`setCORS`), so this stays the inverse of `parseCORS` for any rule,
+    /// valid or not. Values are kept exactly as written, spaces at either
+    /// end included (`parseCORS` does not trim them, and
+    /// `S3CORSTests.spacesAroundAValueSurviveTheRoundTrip` holds that).
     public static func corsBody(_ rules: [CORSRule]) throws -> Data {
         var xml =
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -257,17 +267,22 @@ public enum S3SettingsXML {
             _ parser: XMLParser, didEndElement elementName: String,
             namespaceURI: String?, qualifiedName qName: String?
         ) {
-            let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             // `depth` still counts the element that is ending: a rule is 2
             // (root 1, rule 2) and a field of a rule is 3.
             if inRule && depth == 3 {
+                // Text values are kept AS WRITTEN: `S3XMLText.escaped`
+                // preserves whitespace, so trimming here would make a value
+                // with a leading or trailing space come back as another
+                // value. Only the number is trimmed; whitespace around a
+                // number is formatting.
                 switch elementName {
-                case "ID": id = text
-                case "AllowedOrigin": origins.append(text)
-                case "AllowedMethod": methods.append(text)
-                case "AllowedHeader": allowedHeaders.append(text)
-                case "ExposeHeader": exposeHeaders.append(text)
+                case "ID": id = currentText
+                case "AllowedOrigin": origins.append(currentText)
+                case "AllowedMethod": methods.append(currentText)
+                case "AllowedHeader": allowedHeaders.append(currentText)
+                case "ExposeHeader": exposeHeaders.append(currentText)
                 case "MaxAgeSeconds":
+                    let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard let seconds = Int(text) else {
                         abortReason = "MaxAgeSeconds \"\(text)\" is not an integer"
                         parser.abortParsing()

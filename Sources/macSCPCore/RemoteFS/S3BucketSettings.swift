@@ -43,19 +43,50 @@ public protocol S3BucketSettings: Sendable {
     /// `RemoteFSError.finding(.operationNotSupported)` before any request.
     func setVersioning(_ state: BucketVersioning, ofBucket bucket: String) async throws
 
-    /// The CORS rules of `bucket`, in the order the store returned them, or
-    /// `nil` when none are configured at all (`NoSuchCORSConfiguration`).
-    /// `nil` and `[]` are different answers: a bucket whose configuration
-    /// exists and holds zero rules reads back as `[]`.
-    func cors(ofBucket bucket: String) async throws -> [CORSRule]?
+    /// The CORS configuration of `bucket`, or `nil` when none is configured
+    /// at all (`NoSuchCORSConfiguration`). `nil` and a configuration holding
+    /// zero rules are different answers (`BucketCORS.rules` is `[]` for the
+    /// second).
+    ///
+    /// Hands back the document as received alongside the parsed rules
+    /// (`BucketCORS.rawBody`): the parse is lossy by construction (an element
+    /// `CORSRule` has no field for is skipped), so a caller that has to know
+    /// whether the rules are everything the store sent can only find out from
+    /// the raw text.
+    func cors(ofBucket bucket: String) async throws -> BucketCORS?
 
-    /// Replaces `bucket`'s CORS configuration with `rules`. Every rule goes
-    /// through `CORSRule.validate()` first, and a rule that fails throws
-    /// `RemoteFSError.protocolError` naming the failure before any request is
-    /// built — the store cannot be relied on to refuse what S3 refuses. A UI
-    /// that wants to explain a refusal in the user's language calls
-    /// `validate()` itself first; this error is the backstop, not the message.
+    /// Replaces `bucket`'s CORS configuration with `rules`.
+    ///
+    /// **An empty list clears the configuration** (`DELETE ?cors`), and the
+    /// pair is deliberately asymmetric: S3 has no configuration that holds
+    /// zero rules (a `PUT` of one is `400 MalformedXML`, measured 2026-10-19,
+    /// previous rules left untouched), so what `setCORS([])` produces reads
+    /// back as `nil`, never as `[]`. `nil` is the state the write side
+    /// reaches this way; without it a caller that read `nil` could not put
+    /// the bucket back.
+    ///
+    /// Every rule goes through `CORSRule.validate()` first, and a rule that
+    /// fails throws `RemoteFSError.finding(.corsRuleInvalid)` before any
+    /// request is built — the store cannot be relied on to refuse what S3
+    /// refuses. The finding is payload-free; a UI that wants to say WHY calls
+    /// `validate()` itself.
     func setCORS(_ rules: [CORSRule], ofBucket bucket: String) async throws
+}
+
+/// A bucket's CORS configuration as `cors(ofBucket:)` returns it: the rules
+/// this module could read, and the document they were read from.
+public struct BucketCORS: Sendable, Equatable {
+    /// The rules, in the order the store returned them.
+    public let rules: [CORSRule]
+    /// The response body exactly as received. The source of truth for a
+    /// caller that shows the configuration as text, and the only place an
+    /// element `CORSRule` cannot hold is still visible.
+    public let rawBody: Data
+
+    public init(rules: [CORSRule], rawBody: Data) {
+        self.rules = rules
+        self.rawBody = rawBody
+    }
 }
 
 /// One `<CORSRule>` of a bucket's CORS configuration.
@@ -98,9 +129,16 @@ public struct CORSRule: Sendable, Equatable, Identifiable {
     /// why the refusal is pinned in `S3CORSTests`, before the transport.
     ///
     /// Checked in this order: an origin, a method, then each method against
-    /// `allowedMethodNames`; the first failure is the answer.
+    /// `allowedMethodNames`; the first failure is the answer. An origin that
+    /// is empty or only whitespace is no origin, the way a method outside the
+    /// five (the empty string included) is no method: a list with one blank
+    /// entry is not a rule that names an origin.
     public func validate() -> CORSValidation {
         if allowedOrigins.isEmpty { return .noOrigin }
+        for origin in allowedOrigins
+        where origin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .noOrigin
+        }
         if allowedMethods.isEmpty { return .noMethod }
         for method in allowedMethods where !Self.allowedMethodNames.contains(method) {
             return .methodNotAllowed(method)

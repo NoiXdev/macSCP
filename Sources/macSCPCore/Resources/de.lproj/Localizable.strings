@@ -208,4 +208,5 @@
 "core.finding.objectLockNotConfigured" = "Für diesen Bucket ist Object Lock nicht eingerichtet";
 "core.finding.bucketNotEmpty" = "Der Bucket enthält noch Objekte, deshalb lässt er sich nicht löschen";
 "core.finding.operationNotSupported" = "Dieser Server unterstützt diese Operation nicht";
+"core.finding.corsRuleInvalid" = "Eine CORS-Regel ist nicht gültig, deshalb wurde nichts gesendet";
 "core.archive.defaultName" = "Archiv";

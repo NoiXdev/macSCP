@@ -38,9 +38,11 @@ struct S3CORSGatedTests {
             id: "fetch", allowedOrigins: ["*"], allowedMethods: ["FETCH"],
             allowedHeaders: [], exposeHeaders: [], maxAgeSeconds: nil)
 
-        var before: [CORSRule]?
-        var after: [CORSRule]?
-        var afterRefusal: [CORSRule]?
+        var before: BucketCORS?
+        var after: BucketCORS?
+        var afterRefusal: BucketCORS?
+        var afterClearing: BucketCORS?
+        var cleared = false
         var refusal: (any Error)?
         var failure: (any Error)?
         do {
@@ -53,6 +55,11 @@ struct S3CORSGatedTests {
                 refusal = error
             }
             afterRefusal = try await fs.cors(ofBucket: bucket)
+            // Writing no rules removes the configuration, and it then reads
+            // back as `nil` (never as `[]`): the asymmetry the protocol documents.
+            try await fs.setCORS([], ofBucket: bucket)
+            cleared = true
+            afterClearing = try await fs.cors(ofBucket: bucket)
         } catch {
             failure = error
         }
@@ -63,13 +70,14 @@ struct S3CORSGatedTests {
         #expect(failure == nil)
         // A bucket nothing was written to has no configuration at all.
         #expect(before == nil)
-        #expect(after == [rule])
+        #expect(after?.rules == [rule])
         // The refusal is macSCP's, and the stored configuration is untouched.
-        if case .protocolError? = (refusal as? RemoteFSError) {
-        } else {
-            Issue.record("expected the FETCH rule to be refused locally, got \(String(describing: refusal))")
-        }
-        #expect(afterRefusal == [rule])
+        #expect(
+            (refusal as? RemoteFSError) == .finding(.corsRuleInvalid),
+            "the FETCH rule was expected to be refused locally")
+        #expect(afterRefusal?.rules == [rule])
+        #expect(cleared)
+        #expect(afterClearing == nil)
         #expect(deleted.map { (200..<300).contains($0) } == true)
     }
 }

@@ -211,4 +211,5 @@
 "core.finding.objectLockNotConfigured" = "Le verrouillage d'objets n'est pas configuré sur ce bucket";
 "core.finding.bucketNotEmpty" = "Le bucket contient encore des objets, il ne peut donc pas être supprimé";
 "core.finding.operationNotSupported" = "Ce serveur ne prend pas en charge cette opération";
+"core.finding.corsRuleInvalid" = "Une règle CORS n'est pas valide, rien n'a donc été envoyé";
 "core.archive.defaultName" = "Archive";

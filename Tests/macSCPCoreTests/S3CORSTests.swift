@@ -79,6 +79,28 @@ struct S3CORSTests {
         #expect(try S3SettingsXML.parseCORS(body) == [tricky])
     }
 
+    /// `S3XMLText.escaped` preserves whitespace, so the parse must not trim
+    /// it: a value with a space at either end is another value. The number is
+    /// the exception, because whitespace around a number is formatting.
+    @Test func spacesAroundAValueSurviveTheRoundTrip() throws {
+        let spaced = CORSRule(
+            id: "  spaced  ", allowedOrigins: [" https://a.example.com "],
+            allowedMethods: ["GET"], allowedHeaders: ["\tx-amz-meta-foo "],
+            exposeHeaders: [" ETag"], maxAgeSeconds: 30)
+        let body = try S3SettingsXML.corsBody([spaced])
+        #expect(try S3SettingsXML.parseCORS(body) == [spaced])
+    }
+
+    @Test func whitespaceAroundTheNumberIsFormattingAndIsTrimmed() throws {
+        let xml = """
+            <CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>\
+            <AllowedMethod>GET</AllowedMethod><MaxAgeSeconds>
+              30
+            </MaxAgeSeconds></CORSRule></CORSConfiguration>
+            """
+        #expect(try S3SettingsXML.parseCORS(Data(xml.utf8)) == [rule(maxAge: 30)])
+    }
+
     @Test func aValueXMLCannotCarryIsRefusedWhileBuilding() {
         #expect(throws: RemoteFSError.finding(.requestBodyUnencodable)) {
             try S3SettingsXML.corsBody([rule(origins: ["bad\u{1}origin"])])
@@ -191,6 +213,20 @@ struct S3CORSTests {
         #expect(rule(methods: ["GET", "FETCH", "TRACE"]).validate() == .methodNotAllowed("FETCH"))
     }
 
+    /// A list with an entry that names nothing is not a rule that names an
+    /// origin: the method side refuses `""` and `"GET "`, and the origin side
+    /// holds to the same standard. The second half keeps a real origin
+    /// accepted, so the check cannot pass by refusing everything.
+    @Test(arguments: [[""], ["  "], ["https://a.example.com", ""], ["\t\n"]])
+    func anOriginThatNamesNothingIsNoOrigin(origins: [String]) {
+        #expect(rule(origins: origins).validate() == .noOrigin)
+    }
+
+    @Test func realOriginsAreStillAccepted() {
+        #expect(rule(origins: ["*"]).validate() == .ok)
+        #expect(rule(origins: ["https://a.example.com", "http://localhost:3000"]).validate() == .ok)
+    }
+
     // MARK: - The Content-MD5 helper
 
     @Test func theDigestHelperIsTheBase64OfTheMD5() {
@@ -206,8 +242,9 @@ struct S3CORSTests {
                 .utf8)
         let (fs, transport) = try await S3SettingsFake.connect(
             responses: [(answer, S3SettingsFake.httpResponse(status: 200))])
-        let rules = try await fs.cors(ofBucket: "other")
-        #expect(rules == [rule()])
+        let configuration = try await fs.cors(ofBucket: "other")
+        #expect(configuration?.rules == [rule()])
+        #expect(configuration?.rawBody == answer)
         let sent = try #require(await transport.requests.last)
         #expect(sent.httpMethod == "GET")
         #expect(sent.url?.path == "/other")
@@ -267,11 +304,8 @@ struct S3CORSTests {
             try await fs.setCORS([rule(methods: ["FETCH"])], ofBucket: "other")
             Issue.record("a FETCH rule was sent")
         } catch {
-            guard case .protocolError(let reason) = (error as? RemoteFSError) else {
-                Issue.record("expected .protocolError, got \(error)")
-                return
-            }
-            #expect(reason.contains("FETCH"))
+            // A payload-free finding: the offending method is not in it.
+            #expect((error as? RemoteFSError) == .finding(.corsRuleInvalid))
         }
         #expect(await transport.requests.count == before)
     }
@@ -280,11 +314,55 @@ struct S3CORSTests {
         let (fs, transport) = try await S3SettingsFake.connect(
             responses: [(Data(), S3SettingsFake.httpResponse(status: 200))])
         let before = await transport.requests.count
-        await #expect(throws: RemoteFSError.self) {
+        await #expect(throws: RemoteFSError.finding(.corsRuleInvalid)) {
             try await fs.setCORS(
                 [rule(id: "good"), rule(origins: []), rule(id: "also-good")], ofBucket: "other")
         }
         #expect(await transport.requests.count == before)
+    }
+
+    /// No rules is not a configuration S3 can hold (a PUT of one is
+    /// `400 MalformedXML`), so writing `[]` removes the configuration: one
+    /// DELETE on the `cors` subresource, no body, and no PUT.
+    @Test func writingNoRulesIsADeleteOfTheConfigurationAndNotAPut() async throws {
+        let (fs, transport) = try await S3SettingsFake.connect(
+            responses: [(Data(), S3SettingsFake.httpResponse(status: 204))])
+        let before = await transport.requests.count
+        try await fs.setCORS([], ofBucket: "other")
+        let sent = await transport.requests
+        #expect(sent.count == before + 1)
+        let request = try #require(sent.last)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path == "/other")
+        #expect(request.url?.query == "cors=")
+        #expect(request.httpBody == nil)
+        #expect(sent.contains { $0.httpMethod == "PUT" } == false)
+    }
+
+    @Test func aRefusedRemovalIsMappedThroughTheSharedStatusMapping() async throws {
+        let (fs, _) = try await S3SettingsFake.connect(
+            responses: [(Data(), S3SettingsFake.httpResponse(status: 403))])
+        do {
+            try await fs.setCORS([], ofBucket: "other")
+            Issue.record("a 403 was reported as success")
+        } catch {
+            #expect((error as? RemoteFSError) == .authenticationFailed)
+        }
+    }
+
+    /// The parse is lossy (an element a rule has no field for is skipped),
+    /// so the document the rules came from is handed back untouched: it is
+    /// the only place the skipped element is still visible.
+    @Test func theRawDocumentKeepsWhatTheParsedRulesDropped() async throws {
+        let answer = Data(
+            ("<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
+                + "<AllowedMethod>GET</AllowedMethod><FutureThing>x</FutureThing>"
+                + "</CORSRule></CORSConfiguration>").utf8)
+        let (fs, _) = try await S3SettingsFake.connect(
+            responses: [(answer, S3SettingsFake.httpResponse(status: 200))])
+        let configuration = try #require(try await fs.cors(ofBucket: "other"))
+        #expect(configuration.rules == [rule()])
+        #expect(String(data: configuration.rawBody, encoding: .utf8)?.contains("FutureThing") == true)
     }
 
     @Test func aNamedRefusalOfTheWriteBecomesItsFinding() async throws {

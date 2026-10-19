@@ -210,4 +210,5 @@
 "core.finding.objectLockNotConfigured" = "Blokada obiektów nie jest skonfigurowana dla tego bucketu";
 "core.finding.bucketNotEmpty" = "Bucket nadal zawiera obiekty, więc nie można go usunąć";
 "core.finding.operationNotSupported" = "Ten serwer nie obsługuje tej operacji";
+"core.finding.corsRuleInvalid" = "Reguła CORS jest nieprawidłowa, więc nic nie zostało wysłane";
 "core.archive.defaultName" = "Archiwum";
