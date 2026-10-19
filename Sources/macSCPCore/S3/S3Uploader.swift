@@ -322,10 +322,18 @@ public struct S3Uploader: Sendable {
 
     /// Maps a non-2xx HTTP status to the `RemoteFSError` it represents —
     /// the STATUS-ONLY half of what `S3FileSystem.mapErrorStatus` applies to
-    /// every other request, kept as a small local copy since `S3Uploader`
-    /// only sees the `S3RequestBuilder` seam, not `S3FileSystem` itself.
-    /// It does not read the response body's `<Code>`, so the refusals
-    /// `S3ErrorCode` names are not named on an upload's own requests.
+    /// every other request. It does not read the response body's `<Code>`, so
+    /// the refusals `S3ErrorCode` names are not named on an upload's own
+    /// requests.
+    ///
+    /// Visibility is not what keeps it that way: `mapErrorStatus` and
+    /// `S3ErrorCode` are both reachable from here. What is missing is the
+    /// BODY, which this function and its call sites do not carry. Every
+    /// `perform` call returns the response data, but of the five callers
+    /// (counted 2026-10-19 with `grep -c "throw Self\.mapStatus" Sources/macSCPCore/S3/S3Uploader.swift`)
+    /// only the initiate step binds it (`initiateData`); the other four
+    /// discard it with `_`. Until the data is plumbed through, this stays a
+    /// local, status-only copy.
     private static func mapStatus(_ statusCode: Int, key: String) -> RemoteFSError {
         switch statusCode {
         case 403:

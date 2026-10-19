@@ -21,9 +21,9 @@ import Foundation
 /// Nothing the store wrote. The body's `<Message>` is never read, and the
 /// only payload a finding built here holds is the caller's own `path`.
 public enum S3ErrorCode {
-    /// The text of the first `<Code>` element in `body`, or `nil` when the
-    /// body is not XML or has no such element (a `HEAD` answer has no body
-    /// at all, and a proxy's refusal is often HTML).
+    /// The text of the first non-empty `<Code>` element in `body`, or `nil`
+    /// when the body is not XML or has no such element (a `HEAD` answer has
+    /// no body at all, and a proxy's refusal is often HTML).
     public static func parse(_ body: Data) -> String? {
         let delegate = CodeDelegate()
         let parser = XMLParser(data: body)
@@ -31,8 +31,7 @@ public enum S3ErrorCode {
         _ = parser.parse()
         // Read the delegate, not `parse()`'s verdict: the delegate aborts the
         // parse once it has the code, which makes `parse()` answer `false`.
-        guard let code = delegate.code, !code.isEmpty else { return nil }
-        return code
+        return delegate.code
     }
 
     /// The finding for a named `code`, or `nil` for any code not named here.
@@ -46,10 +45,13 @@ public enum S3ErrorCode {
     /// message to split them is out too: that is the server's sentence, and a
     /// finding carries none.
     ///
-    /// `status` is accepted so the call site reads as one question, but the
-    /// code decides: stores that speak S3 disagree on the status for the same
-    /// code, and a code that is named here is named whatever status it came
-    /// with.
+    /// `status` and `path` are both accepted and NEITHER is read: the
+    /// signature is the shape the call sites were planned around, and the
+    /// five findings named here need no payload. The code alone decides —
+    /// stores that speak S3 disagree on the status for the same code, and a
+    /// code that is named here is named whatever status it came with. A
+    /// future named finding that carries a path (as `.objectUnderLegalHold`
+    /// does) is why `path` is kept rather than dropped.
     public static func finding(forCode code: String, status: Int, path: String) -> RemoteFSError? {
         switch code {
         case "ObjectLockConfigurationNotFoundError":
@@ -61,6 +63,24 @@ public enum S3ErrorCode {
         default:
             return nil
         }
+    }
+
+    /// The per-key refusals listed in a `DeleteObjects` answer: one
+    /// `(key, code)` per `<Error>` element, in document order.
+    ///
+    /// `DeleteObjects` reports a key it could not delete INSIDE an HTTP 200
+    /// `<DeleteResult>`, so that refusal never reaches the non-2xx path that
+    /// feeds `parse`. `key` is the key this project sent, echoed back, and
+    /// `code` is looked up in `finding(forCode:status:path:)` the same way a
+    /// whole-response code is. The element's `<Message>` is not read, so the
+    /// store's sentence cannot travel. A body that is not XML, or lists no
+    /// `<Error>`, yields an empty list.
+    public static func perKeyRefusals(in body: Data) -> [(key: String, code: String)] {
+        let delegate = RefusalDelegate()
+        let parser = XMLParser(data: body)
+        parser.delegate = delegate
+        _ = parser.parse()
+        return delegate.refusals
     }
 
     private final class CodeDelegate: NSObject, XMLParserDelegate {
@@ -86,9 +106,59 @@ public enum S3ErrorCode {
             namespaceURI: String?, qualifiedName qName: String?
         ) {
             guard elementName == "Code", inCode else { return }
-            code = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             inCode = false
+            let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            // An empty element names nothing; keep looking for the first
+            // one that does.
+            guard !text.isEmpty else { return }
+            code = text
             parser.abortParsing()
+        }
+    }
+
+    private final class RefusalDelegate: NSObject, XMLParserDelegate {
+        private(set) var refusals: [(key: String, code: String)] = []
+        private var inError = false
+        private var key = ""
+        private var code = ""
+        private var field: String?
+        private var currentText = ""
+
+        func parser(
+            _ parser: XMLParser, didStartElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            if elementName == "Error" {
+                inError = true
+                key = ""
+                code = ""
+            }
+            field = inError && (elementName == "Key" || elementName == "Code") ? elementName : nil
+            currentText = ""
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            if field != nil { currentText += string }
+        }
+
+        func parser(
+            _ parser: XMLParser, didEndElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?
+        ) {
+            switch elementName {
+            case "Key" where field == "Key":
+                key = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            case "Code" where field == "Code":
+                code = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            case "Error":
+                if inError, !code.isEmpty { refusals.append((key: key, code: code)) }
+                inError = false
+            default:
+                break
+            }
+            field = nil
+            currentText = ""
         }
     }
 }
