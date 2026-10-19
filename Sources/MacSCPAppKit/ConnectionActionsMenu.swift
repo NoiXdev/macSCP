@@ -1,0 +1,50 @@
+import SwiftUI
+import macSCPCore
+
+/// The toolbar menu that renders the active session's connection-level
+/// actions (S3 bucket settings, Task 7): the list its backend's descriptor
+/// carries in `connectionActions`, titled from the catalogue.
+///
+/// The view reads the descriptor and nothing else -- never a `ConnectionKind`
+/// -- so a fourth backend that fills its own list appears here without a line
+/// changing. A backend with an empty list draws NOTHING: `isPresented(for:)`
+/// is what the toolbar asks before it constructs this view at all, because an
+/// empty `Menu` is a capsule with nothing behind it.
+///
+/// Declares no width of its own, so it is not a `BoundedView`: the toolbar
+/// sizes a menu from its label, and the rows are sized by AppKit.
+struct ConnectionActionsMenu: View {
+    let descriptor: BackendDescriptor
+
+    /// What choosing an action does. `nil` while the window has no handler
+    /// for the action ids yet, in which case every row is DISABLED rather than
+    /// enabled and inert -- an entry that looks live and does nothing is the
+    /// worse of the two failures (`PaneToggleState` makes the same choice for
+    /// the pane toggles).
+    let onSelect: ((ConnectionActionContribution) -> Void)?
+
+    /// Whether the toolbar draws this menu for `descriptor` at all.
+    static func isPresented(for descriptor: BackendDescriptor) -> Bool {
+        !descriptor.connectionActions.isEmpty
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(descriptor.connectionActions) { action in
+                Button {
+                    onSelect?(action)
+                } label: {
+                    Label(
+                        L10n.string(action.titleKey, action.titleDefault),
+                        systemImage: action.systemImage)
+                }
+                .disabled(onSelect == nil)
+            }
+        } label: {
+            Label(
+                L10n.string("connection.actions.menu", "Connection Actions"),
+                systemImage: "ellipsis.circle")
+        }
+        .help(L10n.string("connection.actions.menu", "Connection Actions"))
+    }
+}

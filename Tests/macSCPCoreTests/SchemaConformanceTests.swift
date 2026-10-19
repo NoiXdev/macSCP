@@ -27,6 +27,7 @@ struct SchemaConformanceTests {
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [],
+            connectionActions: [],
             endpoint: { _ in nil }, dial: nil, diagnostics: [])
     }
 

@@ -941,6 +941,7 @@ struct NetworkTraceTests {
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [],
+            connectionActions: [],
             endpoint: { _ in endpoint },
             dial: constant(id: DiagnosticStepID.dial, detail: "dialled"),
             diagnostics: [constant(id: "probe.after", detail: "after")])

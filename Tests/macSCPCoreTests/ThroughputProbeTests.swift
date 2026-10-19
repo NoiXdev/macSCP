@@ -604,6 +604,7 @@ struct ThroughputProbeTests {
             connect: { _, _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B", secretEnvironmentVariable: nil,
             requiresSecret: { _ in requiresSecret }, fileActions: [],
+            connectionActions: [],
             endpoint: ssh.endpoint, dial: nil, diagnostics: [])
         return ConnectionDiagnostics(
             descriptor: descriptor, values: values, secrets: nil, sessionID: UUID(),

@@ -1768,6 +1768,7 @@ struct ConnectionDiagnosticsJumpTests {
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [],
+            connectionActions: [],
             endpoint: ssh.endpoint, dial: dial, diagnostics: diagnostics)
     }
 

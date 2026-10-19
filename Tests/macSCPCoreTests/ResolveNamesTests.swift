@@ -537,6 +537,7 @@ struct ResolveNamesTests {
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in false },
             fileActions: [],
+            connectionActions: [],
             endpoint: { _ in endpoint }, dial: nil, diagnostics: [])
     }
 }
