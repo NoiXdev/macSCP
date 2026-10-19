@@ -70,7 +70,12 @@ public enum S3ErrorCode {
     ///
     /// `DeleteObjects` reports a key it could not delete INSIDE an HTTP 200
     /// `<DeleteResult>`, so that refusal never reaches the non-2xx path that
-    /// feeds `parse`. `key` is the key this project sent, echoed back, and
+    /// feeds `parse`. `key` is the text of the echoed `<Key>`, exactly as
+    /// written (not trimmed: a key may begin or end with a space, and a
+    /// caller matches it against the keys it sent). It is a value the STORE
+    /// wrote, so it is not trusted to be one of those keys, and a finding must
+    /// never carry it as a path: `S3FileSystem.deleteTree` looks it up among
+    /// the keys of the batch it sent and uses its own spelling.
     /// `code` is looked up in `finding(forCode:status:path:)` the same way a
     /// whole-response code is. The element's `<Message>` is not read, so the
     /// store's sentence cannot travel. A body that is not XML, or lists no
@@ -148,7 +153,7 @@ public enum S3ErrorCode {
         ) {
             switch elementName {
             case "Key" where field == "Key":
-                key = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                key = currentText
             case "Code" where field == "Code":
                 code = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
             case "Error":

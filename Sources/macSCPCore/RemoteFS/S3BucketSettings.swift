@@ -71,6 +71,90 @@ public protocol S3BucketSettings: Sendable {
     /// refuses. The finding is payload-free; a UI that wants to say WHY calls
     /// `validate()` itself.
     func setCORS(_ rules: [CORSRule], ofBucket bucket: String) async throws
+
+    // MARK: - Object Lock
+    //
+    // **There is no method here that enables Object Lock on a bucket, and
+    // there must never be one.** Whether a bucket has Object Lock is decided
+    // when it is created. The Docker rig's store (RustFS) accepts
+    // `PUT ?object-lock` on a bucket created without it, and the lock then
+    // genuinely bites (measured 2026-10-19), which AWS refuses; a test
+    // against the rig would pass for a flow a real provider rejects. So
+    // `setObjectLockDefault` reads the bucket first and refuses one that has
+    // no Object Lock (`RemoteFSFinding.objectLockNotConfigured`), and
+    // `S3ObjectLockTests.theProtocolOffersNoWayToEnableLockOnAnExistingBucket`
+    // pins the surface.
+
+    /// The default retention of `bucket`: the days, and the mode every new
+    /// object gets. `nil` when there is none to report, which covers two
+    /// different bucket states this signature does not tell apart: a bucket
+    /// with NO Object Lock at all (`GET ?object-lock` answers `404`
+    /// `ObjectLockConfigurationNotFoundError`, measured 2026-10-19 — not an
+    /// empty configuration), and a bucket that has Object Lock but no default
+    /// retention. `nil` is never "zero days".
+    ///
+    /// A default expressed in YEARS is refused with `.protocolError`, not
+    /// converted: a year is not a fixed number of days, and reporting 365 for
+    /// it would make a caller that writes the value back change the bucket's
+    /// retention.
+    func objectLockDefault(ofBucket bucket: String) async throws -> (days: Int, mode: RetentionMode)?
+
+    /// Sets the default retention of `bucket`, which applies to objects
+    /// written AFTER it is set (measured 2026-10-19: an object already in the
+    /// bucket stays unlocked).
+    ///
+    /// Fewer than one day is refused with `.protocolError` before any
+    /// request. A bucket that has no Object Lock is refused with
+    /// `RemoteFSError.finding(.objectLockNotConfigured)` after one read and
+    /// without a write: this call is not a way to turn Object Lock on.
+    func setObjectLockDefault(days: Int, mode: RetentionMode, ofBucket bucket: String) async throws
+
+    /// The retention in force on `key`, or `nil` when it has none.
+    ///
+    /// `versionId` names one version of the object; `nil` is the current
+    /// version, and is the only value this half of the work supplies.
+    func retention(ofKey key: String, inBucket bucket: String, versionId: String?) async throws -> ObjectRetention?
+
+    /// Sets the retention of `key`. This is the call that can place a
+    /// COMPLIANCE retention, which nobody can remove before its date (a
+    /// delete is refused even with the governance bypass, measured
+    /// 2026-10-19); the caller is the place that warns about it. Shortening a GOVERNANCE retention needs a bypass
+    /// header this call does not send, so the store refuses it.
+    func setRetention(
+        _ retention: ObjectRetention, ofKey key: String, inBucket bucket: String, versionId: String?
+    ) async throws
+
+    /// Whether `key` is under a legal hold. An object that was never put
+    /// under one reads `false`.
+    func legalHold(ofKey key: String, inBucket bucket: String, versionId: String?) async throws -> Bool
+
+    /// Puts `key` under a legal hold (`true`) or lifts it (`false`).
+    func setLegalHold(_ on: Bool, ofKey key: String, inBucket bucket: String, versionId: String?) async throws
+}
+
+/// How an Object Lock retention is enforced. The raw values are the wire
+/// spellings.
+///
+/// GOVERNANCE can be shortened or removed by a caller allowed to bypass it.
+/// COMPLIANCE cannot be changed by anyone until its date.
+public enum RetentionMode: String, Sendable, CaseIterable {
+    case governance = "GOVERNANCE"
+    case compliance = "COMPLIANCE"
+}
+
+/// A retention on one object: until when, and how firmly.
+///
+/// The date travels at millisecond precision (`RetainUntilDate` is written
+/// and read with three fractional digits), so a `Date` finer than that does
+/// not come back equal.
+public struct ObjectRetention: Sendable, Equatable {
+    public var mode: RetentionMode
+    public var retainUntil: Date
+
+    public init(mode: RetentionMode, retainUntil: Date) {
+        self.mode = mode
+        self.retainUntil = retainUntil
+    }
 }
 
 /// A bucket's CORS configuration as `cors(ofBucket:)` returns it: the rules

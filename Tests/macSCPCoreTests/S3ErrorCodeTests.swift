@@ -81,6 +81,20 @@ import Testing
         #expect(refusals.map(\.code) == ["AccessDenied", "InternalError"])
     }
 
+    /// The echoed key is reported exactly as written. `deleteTree` matches it
+    /// against the keys it sent, and a key may begin or end with a space: a
+    /// trimmed copy would match none of them, and the refusal it belongs to
+    /// would go unnamed.
+    @Test func anEchoedKeyKeepsTheSpacesAroundIt() {
+        let body = Data(
+            "<DeleteResult><Error><Key> d/a </Key><Code> AccessDenied </Code></Error></DeleteResult>"
+                .utf8)
+        let refusals = S3ErrorCode.perKeyRefusals(in: body)
+        #expect(refusals.map(\.key) == [" d/a "])
+        // The code is a token, and is still trimmed.
+        #expect(refusals.map(\.code) == ["AccessDenied"])
+    }
+
     @Test func aDeleteResultWithNoErrorsYieldsNone() {
         let body = Data("<DeleteResult><Deleted><Key>d/ok</Key></Deleted></DeleteResult>".utf8)
         #expect(S3ErrorCode.perKeyRefusals(in: body).isEmpty)
