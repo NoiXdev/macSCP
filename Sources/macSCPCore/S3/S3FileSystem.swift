@@ -843,8 +843,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// that lists per-key `<Error>` entries for objects it failed to delete
     /// — the same "200 lies" shape `copyObject` already guards against for
     /// CopyObject. A clean response never contains an `<Error` element, so a
-    /// substring check on the body is enough to catch a partial failure
-    /// without a full XML parse.
+    /// substring check on the body is enough to DETECT a partial failure.
+    /// What the failure is called is read next: each per-key `<Code>` goes
+    /// through `S3ErrorCode`, exactly as a whole-response code does, and the
+    /// first one it names is thrown as its finding. A code it does not name —
+    /// `AccessDenied` among them, which a legal hold and a retention period
+    /// both answer with, so only the `?legal-hold` read a later task owns can
+    /// tell them apart — keeps the generic `.protocolError` below. That
+    /// asymmetry is deliberate, not an omission.
     ///
     /// A PLAIN FILE takes the single-`DELETE` branch instead — see the
     /// comment on it. Which of the two runs is what `deleteLookup` in front
@@ -897,6 +903,16 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             }
             let responseBody = String(data: data, encoding: .utf8) ?? ""
             if responseBody.contains("<Error") {
+                // The path is the per-key `<Key>` the store echoes back,
+                // which is a key this project sent; `<Message>` is never read.
+                for refusal in S3ErrorCode.perKeyRefusals(in: data) {
+                    if let named = S3ErrorCode.finding(
+                        forCode: refusal.code, status: response.statusCode,
+                        path: reportedPath(bucket: bucket, key: refusal.key))
+                    {
+                        throw named
+                    }
+                }
                 throw RemoteFSError.protocolError(
                     reason: "S3 deleteTree: one or more objects could not be deleted")
             }

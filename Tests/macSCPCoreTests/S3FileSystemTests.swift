@@ -1240,6 +1240,58 @@ struct S3FileSystemTests {
         }
     }
 
+    /// The same HTTP 200 `<DeleteResult>`, but the per-key `<Code>` is one
+    /// `S3ErrorCode` names: the refusal reads as its finding rather than as
+    /// a generic `.protocolError`, the way every non-2xx path now does.
+    /// `NotImplemented` stands in because it is a named code whose finding
+    /// takes no payload; the routing is the same for any named code.
+    @Test func deleteTreeNamesAPerKeyRefusalInsideAnHTTP200DeleteResult() async throws {
+        let deleteResultWithNamedError = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <DeleteResult>
+            <Error>
+                <Key>d/a</Key>
+                <Code>NotImplemented</Code>
+                <Message>A header you provided implies functionality that is not implemented.</Message>
+            </Error>
+        </DeleteResult>
+        """
+        let (fs, _) = try await connect(responses: [
+            (Data(), httpResponse(status: 404)),  // HEAD: not an object
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),  // one-key list: something's there
+            (Data(listingWithKeys(["d/", "d/a"]).utf8), httpResponse(status: 200)),
+            (Data(deleteResultWithNamedError.utf8), httpResponse(status: 200)),
+        ])
+
+        await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
+            try await fs.deleteTree(at: "/d")
+        }
+    }
+
+    /// `AccessDenied` is what a legal hold and a retention period BOTH answer
+    /// with, and `S3ErrorCode` leaves it unnamed on purpose: telling them
+    /// apart needs the `?legal-hold` read the delete path owns (a later
+    /// task). Inside a `<DeleteResult>` it therefore falls through to the
+    /// generic `.protocolError` it always produced; this pins that the
+    /// asymmetry is deliberate, not an omission.
+    @Test func deleteTreeKeepsTheGenericErrorForAnUnnamedPerKeyCode() async throws {
+        let deleteResultWithAccessDenied = """
+        <DeleteResult>
+            <Error><Key>d/a</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error>
+        </DeleteResult>
+        """
+        let (fs, _) = try await connect(responses: [
+            (Data(), httpResponse(status: 404)),
+            (Data(directoryDListingXML.utf8), httpResponse(status: 200)),
+            (Data(listingWithKeys(["d/", "d/a"]).utf8), httpResponse(status: 200)),
+            (Data(deleteResultWithAccessDenied.utf8), httpResponse(status: 200)),
+        ])
+
+        await expectProtocolError {
+            try await fs.deleteTree(at: "/d")
+        }
+    }
+
     /// `parseObjectKeys` used to throw its condition as prose, which was a
     /// second untyped copy of what `.listingUnparsable` names and
     /// `S3ListParser` already throws. Same condition, one spelling.

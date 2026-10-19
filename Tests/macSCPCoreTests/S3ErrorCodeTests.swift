@@ -50,6 +50,12 @@ import Testing
         #expect(finding.name == expected)
     }
 
+    /// A negative with its positives elsewhere, named here so this does not
+    /// read as a check that could go silent: that the sentences a finding
+    /// produces are the project's own is pinned from the other side by
+    /// `RemoteFSFindingTests.everyFindingResolvesToASentenceAndNotToItsKey`
+    /// and `RemoteFSFindingTests.everyLogSentenceMatchesItsEnglishCatalogueEntry`,
+    /// which fix each sentence to its catalogue entry.
     @Test func noNewFindingCarriesTheServersSentence() {
         // The store's message is the thing that must NOT travel. Compute the Bool
         // before the expectation so neither the sentence nor its spelling can
@@ -58,6 +64,34 @@ import Testing
         let finding = RemoteFSFinding.objectUnderLegalHold(path: "/b/k")
         let leaks = finding.logSentence.contains(serverSentence)
         #expect(leaks == false)
+    }
+
+    /// A `<DeleteResult>` lists one `<Error>` per refused key; each yields
+    /// its key and code, and the server's `<Message>` is read by nobody.
+    @Test func aDeleteResultYieldsEachRefusedKeyWithItsCode() {
+        let body = Data("""
+        <DeleteResult>
+            <Deleted><Key>d/ok</Key></Deleted>
+            <Error><Key>d/a</Key><Code>AccessDenied</Code><Message>Access Denied</Message></Error>
+            <Error><Key>d/b&amp;c</Key><Code>InternalError</Code><Message>Try again</Message></Error>
+        </DeleteResult>
+        """.utf8)
+        let refusals = S3ErrorCode.perKeyRefusals(in: body)
+        #expect(refusals.map(\.key) == ["d/a", "d/b&c"])
+        #expect(refusals.map(\.code) == ["AccessDenied", "InternalError"])
+    }
+
+    @Test func aDeleteResultWithNoErrorsYieldsNone() {
+        let body = Data("<DeleteResult><Deleted><Key>d/ok</Key></Deleted></DeleteResult>".utf8)
+        #expect(S3ErrorCode.perKeyRefusals(in: body).isEmpty)
+        #expect(S3ErrorCode.perKeyRefusals(in: Data("not xml".utf8)).isEmpty)
+    }
+
+    /// An empty `<Code>` names nothing, so the first NON-empty one is the
+    /// code.
+    @Test func anEmptyCodeElementIsSkipped() {
+        let body = Data("<Error><Code></Code><Code>BucketNotEmpty</Code></Error>".utf8)
+        #expect(S3ErrorCode.parse(body) == "BucketNotEmpty")
     }
 
     /// The route end to end, without a network: a refused request's body is
