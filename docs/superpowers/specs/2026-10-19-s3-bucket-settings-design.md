@@ -30,9 +30,14 @@ removing that marker brings the file back. Nothing in macSCP can see a marker,
 let alone lift one.
 
 That recovery is the second half. This half is what must exist first for it to
-mean anything: **a bucket only keeps history if someone turned versioning on,
-and on a real provider that decision is made when the bucket is created**
-(§4).
+mean anything: **a bucket only keeps history if someone turned versioning on.**
+
+**Corrected 2026-10-19 (third pass):** this sentence first ended "and on a
+real provider that decision is made when the bucket is created (§4)".
+Withdrawn. Versioning is turned on with `PUT ?versioning` at any time — Task
+2 of the plan does exactly that to an existing bucket — and Object Lock can
+also be enabled on an existing versioned bucket (§4). Neither decision is
+confined to creation.
 
 ---
 
@@ -41,9 +46,12 @@ and on a real provider that decision is made when the bucket is created**
 1. A protocol's own actions reach the window through one seam, not an S3
    special case. S3 fills it; another backend can fill it later without the
    surface changing.
-2. Create a bucket, with the two switches that can only be set at creation:
-   versioning and Object Lock — **including the first bucket of an account**
-   (§6.1).
+2. Create a bucket, offering versioning and Object Lock at creation —
+   **including the first bucket of an account** (§6.1). **Corrected
+   2026-10-19 (third pass):** this goal first read "with the two switches that
+   can **only be set at creation**". Withdrawn: neither is creation-only
+   (§4, §6.1). They are offered there because that is when a person decides
+   what a bucket is for, not because the store forbids them later.
 3. Turn versioning on and off on an existing bucket, showing honestly that
    "off" is not the same as "never on".
 4. Read and write a bucket's CORS rules.
@@ -83,7 +91,8 @@ and on a real provider that decision is made when the bucket is created**
   store, never assumed from a 200.
 - A COMPLIANCE retention set by someone who did not understand it (§6.5).
 - **A test that is green against the rig for a flow a real provider refuses.**
-  §4 names two measured instances.
+  §4 names one measured instance. (**Corrected 2026-10-19:** first read
+  "two"; the Object Lock half was withdrawn — see §4.)
 
 ---
 
@@ -156,8 +165,9 @@ readings of "the rig is more permissive" invite the wrong generalisation: a
 zero-rule `<CORSConfiguration>` is refused `400 MalformedXML` by the rig, as
 by AWS, and the previously stored rules survive untouched.
 
-Both have the same consequence, and it is the sharpest constraint in this
-document:
+That divergence has one consequence, and it is the sharpest constraint in
+this document (**corrected 2026-10-19:** this sentence first read "Both have
+the same consequence", when there were two):
 
 > **The rig is more permissive than the world.** CORS input must be validated
 > by macSCP, because **the rig will not supply the refusal to pin against** —
@@ -235,9 +245,27 @@ tests.
 
 ### 6.1 Create bucket
 
-Name, and two switches that exist only here: **versioning on** and **Object
-Lock on**. The dialog says that both are final at creation — Object Lock
-cannot be added later (§4), and versioning, once on, can only be suspended.
+Name, plus **versioning on** and **Object Lock on**.
+
+**Corrected 2026-10-19 (third pass), and this one would have become user-facing
+copy.** The paragraph first read: "Name, and two switches that exist only
+here: **versioning on** and **Object Lock on**. The dialog says that both are
+final at creation — Object Lock cannot be added later (§4), and versioning,
+once on, can only be suspended." Everything before the last clause is
+withdrawn. Neither switch exists only here and neither is final at creation.
+
+What the dialog must actually say, which is still worth saying because both
+are one-way doors once taken:
+
+- **Versioning** can be turned on later, and once on it can only be
+  **suspended**, never returned to never-versioned (§6.2). Every version
+  already stored stays and keeps costing storage.
+- **Object Lock** can be turned on later too, on a versioned bucket — but
+  **macSCP will not do it** (§4), and once on it can never be turned off and
+  versioning can never be suspended again.
+
+So the honest sentence is not "you must decide now" but "if you decide yes,
+you cannot undo it".
 
 **Maintainer decision 2026-10-19: the connect refusal is relaxed so the first
 bucket can be created.** As the tree stands this is impossible:
