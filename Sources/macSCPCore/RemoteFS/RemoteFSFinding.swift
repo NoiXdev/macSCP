@@ -125,6 +125,25 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// A value the request has to carry cannot be written in the wire format
     /// the server expects.
     case requestBodyUnencodable
+    /// A delete was refused because the object is under a legal hold.
+    ///
+    /// DEFINED, NOT YET THROWN: the store answers a legal hold and a
+    /// retention period with the same `AccessDenied`, so
+    /// `S3ErrorCode.finding(forCode:status:path:)` cannot choose between this
+    /// and `.objectUnderRetention` and returns `nil` for that code. The
+    /// delete path that reads `?legal-hold` first is what will throw one of
+    /// the two; until it exists, nothing constructs either.
+    case objectUnderLegalHold(path: String)
+    /// A delete was refused because the object is under a retention period.
+    /// Defined and not yet thrown, for the reason `.objectUnderLegalHold`
+    /// gives.
+    case objectUnderRetention(path: String)
+    /// Object lock was asked about on a bucket that has none configured.
+    case objectLockNotConfigured
+    /// A bucket could not be deleted because it still holds objects.
+    case bucketNotEmpty
+    /// The store does not implement the operation that was asked of it.
+    case operationNotSupported
 
     /// The payload-free name of a finding: what a catalogue key is derived
     /// from, and what a guard iterates when it has to reach every finding.
@@ -140,6 +159,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case redirectUnreadable, redirectBodyNotResendable, redirectNotResignable
         case resumeNotSupported, noSuchBucket, uploadPartUnacknowledged
         case requestBodyUnencodable
+        case objectUnderLegalHold, objectUnderRetention, objectLockNotConfigured
+        case bucketNotEmpty, operationNotSupported
     }
 
     public var name: Name {
@@ -162,6 +183,11 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .noSuchBucket: return .noSuchBucket
         case .uploadPartUnacknowledged: return .uploadPartUnacknowledged
         case .requestBodyUnencodable: return .requestBodyUnencodable
+        case .objectUnderLegalHold: return .objectUnderLegalHold
+        case .objectUnderRetention: return .objectUnderRetention
+        case .objectLockNotConfigured: return .objectLockNotConfigured
+        case .bucketNotEmpty: return .bucketNotEmpty
+        case .operationNotSupported: return .operationNotSupported
         }
     }
 
@@ -169,8 +195,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// that iterates `allCases` can ask for the key without inventing a
     /// payload.
     ///
-    /// The three names that interpolate — counted in the switch below on
-    /// 2026-09-28 — carry the format specifier in the key, as this project's
+    /// The five names that interpolate — counted in the switch below on
+    /// 2026-10-19 — carry the format specifier in the key, as this project's
     /// other argument-taking keys do (`core.transfer.notFound %@`).
     ///
     /// No `default:`, here or in `message` below, for the same reason
@@ -182,14 +208,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
     public static func messageKey(for name: Name) -> String {
         switch name {
         case .unexpectedStatus, .pathExistsAndIsNotADirectory,
-            .uploadPartUnacknowledged:
+            .uploadPartUnacknowledged, .objectUnderLegalHold, .objectUnderRetention:
             return "core.finding.\(name.rawValue) %@"
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
-            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -205,12 +232,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return String(format: CoreL10n.string(messageKey), path)
         case .uploadPartUnacknowledged(let part):
             return String(format: CoreL10n.string(messageKey), String(part))
+        case .objectUnderLegalHold(let path), .objectUnderRetention(let path):
+            return String(format: CoreL10n.string(messageKey), path)
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .nonHTTPResponse, .listingUnparsable,
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
-            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
             return CoreL10n.string(messageKey)
         }
     }
@@ -268,6 +298,16 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "the server did not confirm part \(part) of the upload"
         case .requestBodyUnencodable:
             return "a value in the request cannot be written in the format the server needs"
+        case .objectUnderLegalHold(let path):
+            return "\(path) is under a legal hold, so it cannot be deleted"
+        case .objectUnderRetention(let path):
+            return "\(path) is under a retention period, so it cannot be deleted"
+        case .objectLockNotConfigured:
+            return "object lock is not configured on this bucket"
+        case .bucketNotEmpty:
+            return "the bucket still holds objects, so it cannot be deleted"
+        case .operationNotSupported:
+            return "this server does not support that operation"
         }
     }
 
@@ -310,7 +350,9 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .pathExistsAndIsNotADirectory,
             .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
-            .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable:
+            .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable,
+            .objectUnderLegalHold, .objectUnderRetention, .objectLockNotConfigured,
+            .bucketNotEmpty, .operationNotSupported:
             return false
         }
     }

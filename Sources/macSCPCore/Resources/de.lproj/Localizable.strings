@@ -203,4 +203,9 @@
 "core.finding.noSuchBucket" = "Diese Verbindung beginnt bei der Bucket-Liste, der Pfad muss also einen Bucket benennen";
 "core.finding.uploadPartUnacknowledged %@" = "Der Server hat Teil %@ des Uploads nicht bestätigt";
 "core.finding.requestBodyUnencodable" = "Ein Wert in der Anfrage lässt sich nicht in dem Format schreiben, das der Server braucht";
+"core.finding.objectUnderLegalHold %@" = "%@ steht unter einem Legal Hold, deshalb lässt es sich nicht löschen";
+"core.finding.objectUnderRetention %@" = "%@ steht unter einer Aufbewahrungsfrist, deshalb lässt es sich nicht löschen";
+"core.finding.objectLockNotConfigured" = "Für diesen Bucket ist Object Lock nicht eingerichtet";
+"core.finding.bucketNotEmpty" = "Der Bucket enthält noch Objekte, deshalb lässt er sich nicht löschen";
+"core.finding.operationNotSupported" = "Dieser Server unterstützt diese Operation nicht";
 "core.archive.defaultName" = "Archiv";

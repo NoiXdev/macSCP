@@ -416,7 +416,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         case 404:
             isObject = false
         default:
-            throw Self.mapErrorStatus(headResponse.statusCode, path: reportedPath(bucket: bucket, key: key))
+            // A HEAD answer has no body to read a code from.
+            throw Self.mapErrorStatus(
+                headResponse.statusCode, body: Data(),
+                path: reportedPath(bucket: bucket, key: key))
         }
 
         let listRequest = try buildListRequest(
@@ -428,7 +431,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             hasChildren = try S3ListParser.hasAnyEntries(data)
         default:
             throw Self.mapErrorStatus(
-                listResponse.statusCode, path: reportedPath(bucket: bucket, key: key + "/"))
+                listResponse.statusCode, body: data,
+                path: reportedPath(bucket: bucket, key: key + "/"))
         }
 
         switch (isObject, hasChildren) {
@@ -889,7 +893,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
             let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
-                throw Self.mapErrorStatus(response.statusCode, path: path)
+                throw Self.mapErrorStatus(response.statusCode, body: data, path: path)
             }
             let responseBody = String(data: data, encoding: .utf8) ?? ""
             if responseBody.contains("<Error") {
@@ -998,7 +1002,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             let page = try S3ListParser.parse(data, prefix: prefix)
             return rerootedIntoBucket(bucket, page)
         default:
-            throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: bucket, key: prefix))
+            throw Self.mapErrorStatus(
+                response.statusCode, body: data, path: reportedPath(bucket: bucket, key: prefix))
         }
     }
 
@@ -1044,7 +1049,7 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         case 403:
             throw RemoteFSError.bucketListForbidden
         default:
-            throw Self.mapErrorStatus(response.statusCode, path: "/")
+            throw Self.mapErrorStatus(response.statusCode, body: data, path: "/")
         }
     }
 
@@ -1109,7 +1114,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
 
         let (data, response) = try await send(request)
         guard (200..<300).contains(response.statusCode) else {
-            throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: destinationBucket, key: toKey))
+            throw Self.mapErrorStatus(
+                response.statusCode, body: data,
+                path: reportedPath(bucket: destinationBucket, key: toKey))
         }
         let body = String(data: data, encoding: .utf8) ?? ""
         if body.contains("<Error") || !body.contains("<CopyObjectResult") {
@@ -1133,7 +1140,8 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 bucket: bucket, prefix: prefix, continuationToken: token, delimiter: false)
             let (data, response) = try await send(request)
             guard (200..<300).contains(response.statusCode) else {
-                throw Self.mapErrorStatus(response.statusCode, path: reportedPath(bucket: bucket, key: prefix))
+                throw Self.mapErrorStatus(
+                    response.statusCode, body: data, path: reportedPath(bucket: bucket, key: prefix))
             }
             let page = try Self.parseObjectKeys(data)
             keys.append(contentsOf: page.keys)
@@ -1218,17 +1226,29 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// so the two never drift into duplicated (and possibly inconsistent)
     /// HTTP-status handling.
     private func sendExpectingSuccess(_ request: URLRequest, path: String) async throws {
-        let (_, response) = try await send(request)
+        let (data, response) = try await send(request)
         guard (200..<300).contains(response.statusCode) else {
-            throw Self.mapErrorStatus(response.statusCode, path: path)
+            throw Self.mapErrorStatus(response.statusCode, body: data, path: path)
         }
     }
 
-    /// Maps a non-2xx HTTP status to the `RemoteFSError` it represents:
-    /// 403 → `.authenticationFailed`, 404 → `.notFound(path:)`, anything
-    /// else → `.finding(.unexpectedStatus(code:))`. Callers only reach this
-    /// for a status already known to be outside the 2xx range.
-    private static func mapErrorStatus(_ statusCode: Int, path: String) -> RemoteFSError {
+    /// Maps a non-2xx HTTP response to the `RemoteFSError` it represents.
+    ///
+    /// The body is read FIRST, for its `<Code>`: a code `S3ErrorCode` names
+    /// becomes its finding, whatever the status. A body with no code, or a
+    /// code that is not named, falls through to the status alone: 403 →
+    /// `.authenticationFailed`, 404 → `.notFound(path:)`, anything else →
+    /// `.finding(.unexpectedStatus(code:))` — exactly the mapping this had
+    /// before the body was an input. Callers only reach this for a status
+    /// already known to be outside the 2xx range.
+    ///
+    /// Not `private`, only so the mapping can be tested without a network.
+    static func mapErrorStatus(_ statusCode: Int, body: Data, path: String) -> RemoteFSError {
+        if let code = S3ErrorCode.parse(body),
+            let named = S3ErrorCode.finding(forCode: code, status: statusCode, path: path)
+        {
+            return named
+        }
         switch statusCode {
         case 403:
             return .authenticationFailed
