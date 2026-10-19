@@ -1,7 +1,15 @@
 import Foundation
 
 /// A protocol-specific FILE-level action a backend contributes to the context
-/// menu (M12 seam; empty for ssh/s3 now — S3 presigned URL lands in M14).
+/// menu (M12 seam). The list a backend contributes is its descriptor's
+/// `fileActions`; S3's holds `s3.presignedURL`.
+///
+/// This comment used to end "(M12 seam; empty for ssh/s3 now — S3 presigned
+/// URL lands in M14)", and both halves are withdrawn: S3's list stopped being
+/// empty when `df0a74a3` added `s3.presignedURL` to it (found with `git log
+/// -S'FileActionContribution(id: "s3.presignedURL"' -- Sources/macSCPCore/
+/// Capabilities/BackendDescriptor.swift`), and "lands in M14" was a promise in
+/// the future tense that had been kept.
 public struct FileActionContribution: Sendable, Equatable, Identifiable {
     public let id: String
     public let titleKey: String
@@ -17,9 +25,16 @@ public struct FileActionContribution: Sendable, Equatable, Identifiable {
 ///
 /// The sibling of `FileActionContribution` above, and deliberately the same
 /// shape plus an icon: the toolbar draws a glyph where the context menu does
-/// not. `id` is the dispatch key -- the window routes by it and never by
-/// `ConnectionKind` -- and `titleKey`/`titleDefault` follow the catalogue
-/// convention every contribution here uses.
+/// not. `id` is the dispatch key -- the window is meant to route by it and
+/// never by `ConnectionKind`, as it already does for `FileActionContribution`
+/// -- and `titleKey`/`titleDefault` follow the catalogue convention every
+/// contribution here uses.
+///
+/// Nothing routes by a connection action's `id` yet: the toolbar menu has no
+/// handler wired (`ConnectionActionsMenu.onSelect`), so the rows render
+/// disabled. An earlier wording of this paragraph said "the window routes by
+/// it and never by `ConnectionKind`", present tense; that was true of the file
+/// actions and aspirational here, and is withdrawn.
 public struct ConnectionActionContribution: Sendable, Equatable, Identifiable {
     public let id: String
     public let titleKey: String

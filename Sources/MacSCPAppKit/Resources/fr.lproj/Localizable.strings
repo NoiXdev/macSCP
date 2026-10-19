@@ -436,6 +436,7 @@
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Actions de connexion";
+"connection.actions.menuHelp" = "Gérer cette connexion";
 "connection.action.createBucket" = "Créer un bucket…";
 "connection.action.versioning" = "Gestion des versions…";
 "connection.action.cors" = "Règles CORS…";

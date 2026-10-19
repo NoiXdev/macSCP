@@ -23,6 +23,12 @@ struct ConnectionActionsMenu: View {
     /// the pane toggles).
     let onSelect: ((ConnectionActionContribution) -> Void)?
 
+    /// The catalogue keys of the menu's own label and its tooltip. Named here
+    /// so the tests that hold them to all four languages read them rather than
+    /// spell them.
+    static let labelKey = "connection.actions.menu"
+    static let helpKey = "connection.actions.menuHelp"
+
     /// Whether the toolbar draws this menu for `descriptor` at all.
     static func isPresented(for descriptor: BackendDescriptor) -> Bool {
         !descriptor.connectionActions.isEmpty
@@ -42,9 +48,9 @@ struct ConnectionActionsMenu: View {
             }
         } label: {
             Label(
-                L10n.string("connection.actions.menu", "Connection Actions"),
+                L10n.string(Self.labelKey, "Connection Actions"),
                 systemImage: "ellipsis.circle")
         }
-        .help(L10n.string("connection.actions.menu", "Connection Actions"))
+        .help(L10n.string(Self.helpKey, "Manage this connection"))
     }
 }
