@@ -83,7 +83,7 @@ import Testing
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
-            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
             return nil
         }
     }
@@ -235,6 +235,7 @@ extension RemoteFSFinding {
             case .objectLockNotConfigured: return (.objectLockNotConfigured, nil)
             case .bucketNotEmpty: return (.bucketNotEmpty, nil)
             case .operationNotSupported: return (.operationNotSupported, nil)
+            case .corsRuleInvalid: return (.corsRuleInvalid, nil)
             }
         }
     }

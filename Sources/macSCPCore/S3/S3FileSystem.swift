@@ -1661,7 +1661,7 @@ extension S3FileSystem: S3BucketSettings {
         try await sendExpectingSuccess(request, path: "/" + bucket)
     }
 
-    public func cors(ofBucket bucket: String) async throws -> [CORSRule]? {
+    public func cors(ofBucket bucket: String) async throws -> BucketCORS? {
         let request = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "GET",
             query: [(name: "cors", value: "")], config: config)
@@ -1669,29 +1669,33 @@ extension S3FileSystem: S3BucketSettings {
         // The status goes in with the body: an unset bucket answers with an
         // ERROR (`NoSuchCORSConfiguration`), and `nil` is how that is told
         // apart from a configuration holding no rules.
-        return try S3SettingsXML.parseCORSResponse(
-            status: response.statusCode, body: data, path: "/" + bucket)
+        guard
+            let rules = try S3SettingsXML.parseCORSResponse(
+                status: response.statusCode, body: data, path: "/" + bucket)
+        else { return nil }
+        return BucketCORS(rules: rules, rawBody: data)
     }
 
     public func setCORS(_ rules: [CORSRule], ofBucket bucket: String) async throws {
         // macSCP's own gate, before anything is built or sent. The rig
         // stores a `FETCH` method that AWS refuses, so the store is not the
-        // place this is decided (`CORSRule.validate()`).
-        for rule in rules {
-            switch rule.validate() {
-            case .ok:
-                break
-            case .methodNotAllowed(let method):
-                throw RemoteFSError.protocolError(
-                    reason: "Invalid CORS rule: method \"\(method)\" is not one of "
-                        + CORSRule.allowedMethodNames.joined(separator: ", "))
-            case .noOrigin:
-                throw RemoteFSError.protocolError(
-                    reason: "Invalid CORS rule: it names no allowed origin")
-            case .noMethod:
-                throw RemoteFSError.protocolError(
-                    reason: "Invalid CORS rule: it names no allowed method")
-            }
+        // place this is decided (`CORSRule.validate()`). The finding names no
+        // part of the rule; the UI asks `validate()` for that.
+        for rule in rules where rule.validate() != .ok {
+            throw RemoteFSError.finding(.corsRuleInvalid)
+        }
+        // No rules is a removal, not a PUT: a configuration holding zero
+        // rules does not exist at S3 (a PUT of one is `400 MalformedXML`,
+        // measured 2026-10-19), and the removal is the operation that clears
+        // it (`204`, after which the read is `NoSuchCORSConfiguration`). The
+        // asymmetry (write `[]`, read `nil`) is documented on
+        // `S3BucketSettings.setCORS`.
+        if rules.isEmpty {
+            let removal = try Self.signedRequest(
+                .bucketRoot(bucket: bucket), method: "DELETE",
+                query: [(name: "cors", value: "")], config: config)
+            try await sendExpectingSuccess(removal, path: "/" + bucket)
+            return
         }
         let body = try S3SettingsXML.corsBody(rules)
         // AWS does not list `Content-MD5` as mandatory for `PutBucketCors`

@@ -144,6 +144,15 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case bucketNotEmpty
     /// The store does not implement the operation that was asked of it.
     case operationNotSupported
+    /// A CORS rule was refused by macSCP's own validation
+    /// (`CORSRule.validate()`) before any request was sent.
+    ///
+    /// Payload-free on purpose: which part of the rule failed is the
+    /// validator's answer (`CORSValidation`), which a UI reads directly. A
+    /// payload here would be the offending method or origin, text that came
+    /// from the rule's author rather than from this module, and a finding
+    /// carries none.
+    case corsRuleInvalid
 
     /// The payload-free name of a finding: what a catalogue key is derived
     /// from, and what a guard iterates when it has to reach every finding.
@@ -160,7 +169,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case resumeNotSupported, noSuchBucket, uploadPartUnacknowledged
         case requestBodyUnencodable
         case objectUnderLegalHold, objectUnderRetention, objectLockNotConfigured
-        case bucketNotEmpty, operationNotSupported
+        case bucketNotEmpty, operationNotSupported, corsRuleInvalid
     }
 
     public var name: Name {
@@ -188,6 +197,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .objectLockNotConfigured: return .objectLockNotConfigured
         case .bucketNotEmpty: return .bucketNotEmpty
         case .operationNotSupported: return .operationNotSupported
+        case .corsRuleInvalid: return .corsRuleInvalid
         }
     }
 
@@ -216,7 +226,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
-            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
             return "core.finding.\(name.rawValue)"
         }
     }
@@ -240,7 +250,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .resourceDetailsUnparsable,
             .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
             .resumeNotSupported, .noSuchBucket, .requestBodyUnencodable,
-            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported:
+            .objectLockNotConfigured, .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
             return CoreL10n.string(messageKey)
         }
     }
@@ -308,6 +318,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "the bucket still holds objects, so it cannot be deleted"
         case .operationNotSupported:
             return "this server does not support that operation"
+        case .corsRuleInvalid:
+            return "a CORS rule is not valid, so nothing was sent"
         }
     }
 
@@ -352,7 +364,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
             .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
             .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable,
             .objectUnderLegalHold, .objectUnderRetention, .objectLockNotConfigured,
-            .bucketNotEmpty, .operationNotSupported:
+            .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid:
             return false
         }
     }
