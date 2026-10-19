@@ -1084,12 +1084,44 @@ have, and quote the withdrawn bare figure. Do **not** re-sweep the section's row
 numbers — the section already names those as stale and says the fix "is a sweep
 of its own", and that remains true.
 
-- [ ] **Step 6: Run the full suite and both gated suites**
+- [ ] **Step 6: Open a row for the warning gate's macro-expansion blind spot**
+
+**Added 2026-10-20, measured by the controller from Task 7's review (I4).** Seven
+warnings exist in the Core test target at four sites —
+`S3CreateBucketTests.swift:54:49`, `:65:56`, `:84:51` and
+`ArchiveRunnerTests.swift:82:76`. They appear on the **default** build system,
+measured cold into a fresh scratch path with no `--build-system` flag:
+
+    swift build --target macSCPCoreTests --scratch-path <fresh dir>
+
+`grep -c 'warning:'` over that log prints 14 (each diagnostic twice: once in the
+caret diagram, once as its own header), and
+`grep -o 'macro expansion #expect:1:[0-9]*' | sort -u | wc -l` prints 7.
+
+CI's gate matches **none** of them. Its pattern is
+`^[^[:space:]]+:[0-9]+:[0-9]+: warning:` (`.github/workflows/ci.yml`, the
+"Unique warning locations" step), and neither route reaches it:
+
+- The warning's own location is `macro expansion #expect:1:46:` — it contains a
+  space, so `[^[:space:]]+` cannot match it.
+- The real source location appears only on a `note: expanded code originates
+  here` line, which says `note:` and not `warning:`, and begins with a backtick
+  and a hyphen rather than a path.
+
+So `MAX_WARNINGS: 0` was never at risk from these — but the reason is that the
+gate cannot see a diagnostic reported against a macro-expansion buffer, and in
+this repository every test assertion is `#expect`. That is the failure mode
+`CLAUDE.md` describes for negative checks: a budget of zero that passes looks
+exactly like a budget that can see nothing. Open the row with the commands
+above; **do not fix the warnings and do not edit `ci.yml` in this plan** — the
+gate's pattern is its own change with its own review.
+
+- [ ] **Step 7: Run the full suite and both gated suites**
 
 Run: `swift test`
 Run: `MACSCP_ITEST=1 swift test`
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git commit -m "docs: close the bucket-settings half of the s3Manager row"
