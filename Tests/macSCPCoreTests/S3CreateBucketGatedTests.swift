@@ -31,7 +31,7 @@ struct S3CreateBucketGatedTests {
     /// Creates `bucket` with the given switches, reads it back, and removes
     /// it whether or not the reads succeeded.
     private func createReadAndRemove(
-        versioning: Bool, objectLock: Bool, purpose: String
+        protection: BucketProtection, purpose: String
     ) async throws -> (observed: Observed, failure: (any Error)?, deleted: Int?) {
         let fs = try await S3FileSystem.connect(S3SettingsRig.config)
         defer { Task { await fs.disconnect() } }
@@ -39,7 +39,7 @@ struct S3CreateBucketGatedTests {
         var observed = Observed()
         var failure: (any Error)?
         do {
-            try await fs.createBucket(bucket, versioning: versioning, objectLock: objectLock)
+            try await fs.createBucket(bucket, protection: protection)
             observed.versioning = try await fs.versioning(ofBucket: bucket)
             observed.hasObjectLock = try await fs.hasObjectLock(ofBucket: bucket)
             observed.defaultRetention = try await fs.objectLockDefault(ofBucket: bucket) != nil
@@ -54,7 +54,7 @@ struct S3CreateBucketGatedTests {
 
     @Test func bothSwitchesGiveAVersionedBucketWithObjectLock() async throws {
         let result = try await createReadAndRemove(
-            versioning: true, objectLock: true, purpose: "create-both")
+            protection: .lockedAndVersioned, purpose: "create-both")
         #expect(result.failure == nil)
         #expect(result.observed.versioning == .enabled)
         #expect(result.observed.hasObjectLock == true)
@@ -66,7 +66,7 @@ struct S3CreateBucketGatedTests {
 
     @Test func versioningAloneGivesAVersionedBucketWithoutObjectLock() async throws {
         let result = try await createReadAndRemove(
-            versioning: true, objectLock: false, purpose: "create-versioned")
+            protection: .versioned, purpose: "create-versioned")
         #expect(result.failure == nil)
         #expect(result.observed.versioning == .enabled)
         #expect(result.observed.hasObjectLock == false)
@@ -75,7 +75,7 @@ struct S3CreateBucketGatedTests {
 
     @Test func neitherSwitchGivesAPlainBucket() async throws {
         let result = try await createReadAndRemove(
-            versioning: false, objectLock: false, purpose: "create-plain")
+            protection: .none, purpose: "create-plain")
         #expect(result.failure == nil)
         #expect(result.observed.versioning == BucketVersioning.never)
         #expect(result.observed.hasObjectLock == false)
@@ -101,9 +101,9 @@ struct S3CreateBucketGatedTests {
         var after: (versioning: BucketVersioning, hasLock: Bool)?
         var failure: (any Error)?
         do {
-            try await fs.createBucket(bucket, versioning: false, objectLock: false)
+            try await fs.createBucket(bucket, protection: .none)
             do {
-                try await fs.createBucket(bucket, versioning: true, objectLock: true)
+                try await fs.createBucket(bucket, protection: .lockedAndVersioned)
             } catch {
                 second = error
             }

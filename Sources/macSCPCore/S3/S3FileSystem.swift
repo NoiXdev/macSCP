@@ -1704,26 +1704,21 @@ extension S3FileSystem: PresignedURLProvider {
 /// `S3BucketSettings` conformance: a bucket's settings, one signed request
 /// per call, built and sent the way `listBuckets()` is — `signedRequest`
 /// pairs the URL with the canonical path, `send` is the one way out, and a
-/// non-2xx answer goes through `mapErrorStatus` with its body so a named S3
-/// refusal keeps its own finding.
+/// non-2xx answer goes through `mapErrorStatus` with its body. A refusal
+/// `S3ErrorCode` names keeps its own finding (a create meets
+/// `.bucketNameTaken` and `.bucketAlreadyOwnedByYou`); any other code falls
+/// through to the status-only mapping.
 ///
 /// The bucket is the ARGUMENT, never the connection's own: a connection
 /// opened at the account's bucket list has no single bucket, and one opened
 /// on a bucket may be asked about another the same key can reach.
 extension S3FileSystem: S3BucketSettings {
-    public func createBucket(_ bucket: String, versioning: Bool, objectLock: Bool) async throws {
+    public func createBucket(_ bucket: String, protection: BucketProtection) async throws {
         if let problem = S3BucketName.problem(with: bucket) {
             throw RemoteFSError.protocolError(reason: "bucket name is not valid: \(problem)")
         }
-        // Object Lock needs a versioned bucket. A request that asks for the
-        // one without the other contradicts itself, and silently turning
-        // versioning on would answer a question the caller did not ask.
-        if objectLock && !versioning {
-            throw RemoteFSError.protocolError(
-                reason: "object lock requires versioning, and versioning was declined")
-        }
         var headers: [String: String] = [:]
-        if objectLock { headers["x-amz-bucket-object-lock-enabled"] = "true" }
+        if protection.enablesObjectLock { headers["x-amz-bucket-object-lock-enabled"] = "true" }
         // A region other than `us-east-1` is named in the body; see
         // `S3SettingsXML.createBucketBody` for what is and is not measured.
         let body = try S3SettingsXML.createBucketBody(region: config.region)
@@ -1734,7 +1729,7 @@ extension S3FileSystem: S3BucketSettings {
         try await sendExpectingSuccess(request, path: "/" + bucket)
         // The lock rides on the create; versioning is its own request, and
         // is sent for a locked bucket too rather than left to the store.
-        if versioning || objectLock {
+        if protection.enablesVersioning {
             try await setVersioning(.enabled, ofBucket: bucket)
         }
     }

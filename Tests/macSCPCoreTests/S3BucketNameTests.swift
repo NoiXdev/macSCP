@@ -83,6 +83,13 @@ struct S3BucketNameTests {
     /// lengths, dots inside a name, a digit at either edge, and strings that
     /// resemble an address without being one. A rule written too wide
     /// refuses one of these.
+    ///
+    /// `a-.-b` and `1.2.3.-4` are on the list on purpose and are NOT claims
+    /// that AWS accepts them: AWS refuses a dot beside a hyphen. They
+    /// are names this layer deliberately does not check (see the "Not
+    /// checked" paragraph of `S3BucketName`), so the store is left to
+    /// refuse them, and the list pins that the subset implemented here
+    /// is exactly the subset documented.
     @Test(arguments: [
         "abc", "a1b", "123", "1a2",
         "my.bucket.name", "a.b", "a-.-b",

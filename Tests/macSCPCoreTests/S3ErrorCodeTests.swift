@@ -38,6 +38,8 @@ import Testing
         ("ObjectLockConfigurationNotFoundError", 404, RemoteFSFinding.Name.objectLockNotConfigured),
         ("BucketNotEmpty", 409, RemoteFSFinding.Name.bucketNotEmpty),
         ("NotImplemented", 501, RemoteFSFinding.Name.operationNotSupported),
+        ("BucketAlreadyExists", 409, RemoteFSFinding.Name.bucketNameTaken),
+        ("BucketAlreadyOwnedByYou", 409, RemoteFSFinding.Name.bucketAlreadyOwnedByYou),
     ])
     func aNamedCodeBecomesItsFinding(
         code: String, status: Int, expected: RemoteFSFinding.Name

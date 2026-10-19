@@ -10,6 +10,14 @@ import Foundation
 ///
 /// ## Five names, on purpose
 ///
+/// Five codes are named in `finding(forCode:status:path:)`, counted on
+/// 2026-10-19 with `grep -c '^        case "' Sources/macSCPCore/S3/S3ErrorCode.swift`
+/// (which prints 5; the pattern is eight spaces then `case "`, the arms of
+/// that one switch). An earlier version of this heading said five while the
+/// switch held three. The two delete refusals
+/// (`.objectUnderLegalHold`, `.objectUnderRetention`) are built elsewhere
+/// and are not among the five.
+///
 /// Each named code costs a `RemoteFSFinding` case, a `Name` case, a `name`
 /// arm and four catalogue sentences, so only the refusals a user of the
 /// bucket settings can provoke are named. Every other code returns `nil`,
@@ -58,6 +66,10 @@ public enum S3ErrorCode {
             return .finding(.objectLockNotConfigured)
         case "BucketNotEmpty":
             return .finding(.bucketNotEmpty)
+        case "BucketAlreadyExists":
+            return .finding(.bucketNameTaken)
+        case "BucketAlreadyOwnedByYou":
+            return .finding(.bucketAlreadyOwnedByYou)
         case "NotImplemented":
             return .finding(.operationNotSupported)
         default:
