@@ -1612,6 +1612,38 @@ extension S3FileSystem: PresignedURLProvider {
     }
 }
 
+/// `S3BucketSettings` conformance: a bucket's settings, one signed request
+/// per call, built and sent the way `listBuckets()` is — `signedRequest`
+/// pairs the URL with the canonical path, `send` is the one way out, and a
+/// non-2xx answer goes through `mapErrorStatus` with its body so a named S3
+/// refusal keeps its own finding.
+///
+/// The bucket is the ARGUMENT, never the connection's own: a connection
+/// opened at the account's bucket list has no single bucket, and one opened
+/// on a bucket may be asked about another the same key can reach.
+extension S3FileSystem: S3BucketSettings {
+    public func versioning(ofBucket bucket: String) async throws -> BucketVersioning {
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "GET",
+            query: [(name: "versioning", value: "")], config: config)
+        let (data, response) = try await send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw Self.mapErrorStatus(response.statusCode, body: data, path: "/" + bucket)
+        }
+        return try S3SettingsXML.parseVersioning(data)
+    }
+
+    public func setVersioning(_ state: BucketVersioning, ofBucket bucket: String) async throws {
+        // Built first: `.never` throws here, before a request exists.
+        let body = try S3SettingsXML.versioningBody(state)
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "PUT",
+            query: [(name: "versioning", value: "")],
+            body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
+        try await sendExpectingSuccess(request, path: "/" + bucket)
+    }
+}
+
 /// The checksum capability for an object store, which is a different kind of
 /// answer from SSH's: **nothing is computed on request here.** S3 offers no
 /// way to ask a bucket for a digest, and the maintainer's ruling of
