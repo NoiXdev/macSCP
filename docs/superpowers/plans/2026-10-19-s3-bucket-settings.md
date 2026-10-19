@@ -992,10 +992,24 @@ outcome that cannot occur, and this task's file list did not cover any of them:
   files — and the localization parity checks read every key a case declares.
   Deleting the strings while the case stands breaks the parity suite; deleting
   the case is a separate decision with its own review.
-- The five comment sites naming `connect` as the case's single thrower, which
-  Task 6's fix round put in a `docs/BACKLOG.md` row rather than in a report
-  only. This step checks that row still names them, and corrects it if the
-  count has moved.
+- The **six** comment sites that describe the case, which Task 6's fix round put
+  in a `docs/BACKLOG.md` row rather than in a report only. This step checks that
+  row still names them, and corrects it if the count has moved.
+
+  **Corrected 2026-10-20, by Task 6's re-review and verified by the
+  controller.** This bullet first read "The five comment sites naming `connect`
+  as the case's single thrower". Both halves were wrong. The count was five when
+  this bullet was written and became six in the same fix round, which found an
+  older site the two reviews had missed (`RemoteFSError.swift` near line 16).
+  And "naming `connect` as the case's single thrower" is literally true of only
+  two of them — `ConnectionViewModel.swift` near 2310 ("`.bucketListEmpty` is
+  connect-time only — `connect` is its single thrower") and
+  `RemoteBrowserViewModel.swift` near 1278. The others make different claims:
+  near 2307 it is reachability ("both reachable ONLY with `startsAtBucketList`
+  on"), near 2319 it is a true description of an arm that is now dead, and
+  `RemoteFSError.swift` near 24 describes what the case meant at the form. They
+  are all stale, for different reasons, which is why the row names each by its
+  opening words rather than under one heading.
 
 The row records the decision, not a fix: keep the case or delete it with its
 consumers in one pass. Either way the comments go with it.
