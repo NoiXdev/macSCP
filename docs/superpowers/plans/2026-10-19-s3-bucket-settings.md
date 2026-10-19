@@ -1000,12 +1000,33 @@ outcome that cannot occur, and this task's file list did not cover any of them:
 The row records the decision, not a fix: keep the case or delete it with its
 consumers in one pass. Either way the comments go with it.
 
-- [ ] **Step 5: Run the full suite and both gated suites**
+- [ ] **Step 5: Pin the census section's live figure to a commit**
+
+**Added 2026-10-19, measured by the controller while closing Task 6.** The
+closing census section of `docs/BACKLOG.md` prints three comparable outputs. Two
+name a commit and reproduce exactly — re-run on this date they still print
+`opens-Open=90 shown=47 hidden=43` and `opens-Open=94 shown=51 hidden=43`, the
+recorded figures. The third runs the same `awk` over the live `docs/BACKLOG.md`
+and is recorded as `opens-Open=95 shown=52 hidden=43` with no date and no commit
+beside it. Run as committed, that third command now prints
+`docs/BACKLOG.md opens-Open=137 shown=92 hidden=45`.
+
+So the one figure in that section a reader can check against the working tree is
+the one that contradicts it, by 42. **39 of those 42 predate this branch**: the
+same command over this branch's base prints `opens-Open=134 shown=89 hidden=45`.
+Three are this branch's own rows, one of them Task 6's.
+
+Pin it: give that third line a commit of its own, exactly as its two neighbours
+have, and quote the withdrawn bare figure. Do **not** re-sweep the section's row
+numbers — the section already names those as stale and says the fix "is a sweep
+of its own", and that remains true.
+
+- [ ] **Step 6: Run the full suite and both gated suites**
 
 Run: `swift test`
 Run: `MACSCP_ITEST=1 swift test`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git commit -m "docs: close the bucket-settings half of the s3Manager row"
