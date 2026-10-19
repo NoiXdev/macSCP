@@ -696,6 +696,28 @@ A test pins that a wired id is enabled and an unwired id is not — the positive
 beside the negative, since "disabled" is the state a broken dispatcher also
 produces.
 
+**You will break a guard, and this is the one, named here so you do not discover
+it as a mystery red.** Task 7's fix round added
+`ConnectionActionsMenuTests.theRowsAreDisabledWhileThereIsNoHandler`
+(`Tests/macSCPAppKitTests/ConnectionActionsMenuTests.swift:186`). It requires a
+`.disabled(...)` inside the `ForEach` conditioned on the handler being `nil`,
+reading the handler's name from the view's own declaration, and it exists because
+without it the whole user-visible behaviour of that commit was unpinned — a
+plant deleting the line came back GREEN during review.
+
+Replacing `.disabled(onSelect == nil)` with per-row availability makes that test
+red **correctly**: the property it names stops being the property the code has.
+Rewrite it to the new rule — a row is disabled when its own id has no arm —
+rather than deleting it, and keep both halves it was built with: the condition is
+read, not merely present (a `.disabled(false)` plant must stay red), and the
+handler's name is derived, not spelled. Say in your report which plants you
+re-ran against the rewritten guard.
+
+**Added 2026-10-20, from Task 7's re-review.** This obligation was missing when
+Task 8 was given the handler seam earlier the same day: the amendment named the
+file to change and not the guard that change invalidates, which is the plan-level
+form of the mistake this project has a rule about for comments.
+
 **Interfaces:**
 - Consumes: `S3BucketSettings.versioning(ofBucket:)`, `BucketVersioning`, `ConnectionActionContribution` id `s3.versioning`.
 
