@@ -115,4 +115,177 @@ public enum S3SettingsXML {
             currentText = ""
         }
     }
+
+    // MARK: - CORS
+
+    /// Reads a `GetBucketCors` ANSWER: the status as well as the body,
+    /// because "no CORS configuration" is how S3 reports an unset bucket and
+    /// it arrives as an error response.
+    ///
+    /// - A 2xx is `parseCORS(body)`; an empty `<CORSConfiguration/>` is `[]`.
+    /// - `NoSuchCORSConfiguration` in a non-2xx body is `nil`: none set. The
+    ///   code decides, not the status, for the reason `S3ErrorCode` gives.
+    ///   `nil` and `[]` are different answers and stay different.
+    /// - Any other non-2xx goes through `S3FileSystem.mapErrorStatus`, so a
+    ///   named refusal keeps its finding; `path` is only what that mapping
+    ///   puts into a `.notFound`.
+    static func parseCORSResponse(status: Int, body: Data, path: String = "") throws -> [CORSRule]? {
+        if (200..<300).contains(status) {
+            return try parseCORS(body)
+        }
+        if S3ErrorCode.parse(body) == "NoSuchCORSConfiguration" {
+            return nil
+        }
+        throw S3FileSystem.mapErrorStatus(status, body: body, path: path)
+    }
+
+    /// Reads a `CORSConfiguration` document.
+    ///
+    /// The fields of a rule are read WITHOUT depending on their order: the
+    /// rig returns `AllowedHeader`, `AllowedMethod`, `AllowedOrigin`,
+    /// `ExposeHeader`, `ID`, `MaxAgeSeconds` alphabetically whatever order
+    /// they were written in (measured 2026-10-19). The order of the RULES
+    /// themselves, and of the values under one element name, is kept.
+    ///
+    /// Held to `parseVersioning`'s standard: a document whose root is not
+    /// `CORSConfiguration` and a document that is not well-formed are
+    /// `.protocolError` (reading either as "no rules" would report a bucket
+    /// unconfigured on the strength of an answer that said nothing about
+    /// it), a `MaxAgeSeconds` that is not an integer is too, and only a
+    /// `CORSRule` directly under the root and a field directly under a rule
+    /// count. An element inside a rule that this type has no field for is
+    /// skipped.
+    public static func parseCORS(_ data: Data) throws -> [CORSRule] {
+        let delegate = CORSDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse(), delegate.sawRoot else {
+            // An abort for a foreign root or a bad number is the delegate's
+            // own doing, so Foundation's description would be about the abort.
+            let reason =
+                delegate.abortReason
+                ?? parser.parserError?.localizedDescription
+                ?? "no CORSConfiguration element"
+            throw RemoteFSError.protocolError(
+                reason: "Failed to parse S3 CORS response: \(reason)")
+        }
+        return delegate.rules
+    }
+
+    /// The `PutBucketCors` request body for `rules`. Values are XML-escaped
+    /// (`S3XMLText.escaped`, which refuses what XML cannot carry). Fields
+    /// are written in the order S3's documentation lists them; an absent
+    /// `ID` or `MaxAgeSeconds` writes no element.
+    ///
+    /// Does NOT validate: `CORSRule.validate()` is the caller's gate
+    /// (`setCORS`), so this stays the exact inverse of `parseCORS` and
+    /// round-trips any rule, valid or not.
+    public static func corsBody(_ rules: [CORSRule]) throws -> Data {
+        var xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            + "<CORSConfiguration xmlns=\"\(namespace)\">"
+        for rule in rules {
+            xml += "<CORSRule>"
+            if let id = rule.id { xml += "<ID>\(try S3XMLText.escaped(id))</ID>" }
+            for origin in rule.allowedOrigins {
+                xml += "<AllowedOrigin>\(try S3XMLText.escaped(origin))</AllowedOrigin>"
+            }
+            for method in rule.allowedMethods {
+                xml += "<AllowedMethod>\(try S3XMLText.escaped(method))</AllowedMethod>"
+            }
+            for header in rule.allowedHeaders {
+                xml += "<AllowedHeader>\(try S3XMLText.escaped(header))</AllowedHeader>"
+            }
+            for header in rule.exposeHeaders {
+                xml += "<ExposeHeader>\(try S3XMLText.escaped(header))</ExposeHeader>"
+            }
+            if let maxAge = rule.maxAgeSeconds {
+                xml += "<MaxAgeSeconds>\(maxAge)</MaxAgeSeconds>"
+            }
+            xml += "</CORSRule>"
+        }
+        xml += "</CORSConfiguration>"
+        return Data(xml.utf8)
+    }
+
+    private final class CORSDelegate: NSObject, XMLParserDelegate {
+        private(set) var sawRoot = false
+        private(set) var abortReason: String?
+        private(set) var rules: [CORSRule] = []
+        private var depth = 0
+        private var currentText = ""
+        private var inRule = false
+        private var id: String?
+        private var origins: [String] = []
+        private var methods: [String] = []
+        private var allowedHeaders: [String] = []
+        private var exposeHeaders: [String] = []
+        private var maxAge: Int?
+
+        func parser(
+            _ parser: XMLParser, didStartElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?,
+            attributes attributeDict: [String: String] = [:]
+        ) {
+            if depth == 0 {
+                guard elementName == "CORSConfiguration" else {
+                    // Not a CORS document: stop reading and let the caller
+                    // report it.
+                    abortReason = "no CORSConfiguration element"
+                    parser.abortParsing()
+                    return
+                }
+                sawRoot = true
+            } else if depth == 1 && elementName == "CORSRule" {
+                inRule = true
+                id = nil
+                origins = []
+                methods = []
+                allowedHeaders = []
+                exposeHeaders = []
+                maxAge = nil
+            }
+            depth += 1
+            currentText = ""
+        }
+
+        func parser(_ parser: XMLParser, foundCharacters string: String) {
+            currentText += string
+        }
+
+        func parser(
+            _ parser: XMLParser, didEndElement elementName: String,
+            namespaceURI: String?, qualifiedName qName: String?
+        ) {
+            let text = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            // `depth` still counts the element that is ending: a rule is 2
+            // (root 1, rule 2) and a field of a rule is 3.
+            if inRule && depth == 3 {
+                switch elementName {
+                case "ID": id = text
+                case "AllowedOrigin": origins.append(text)
+                case "AllowedMethod": methods.append(text)
+                case "AllowedHeader": allowedHeaders.append(text)
+                case "ExposeHeader": exposeHeaders.append(text)
+                case "MaxAgeSeconds":
+                    guard let seconds = Int(text) else {
+                        abortReason = "MaxAgeSeconds \"\(text)\" is not an integer"
+                        parser.abortParsing()
+                        return
+                    }
+                    maxAge = seconds
+                default: break
+                }
+            } else if inRule && depth == 2 && elementName == "CORSRule" {
+                rules.append(
+                    CORSRule(
+                        id: id, allowedOrigins: origins, allowedMethods: methods,
+                        allowedHeaders: allowedHeaders, exposeHeaders: exposeHeaders,
+                        maxAgeSeconds: maxAge))
+                inRule = false
+            }
+            depth -= 1
+            currentText = ""
+        }
+    }
 }

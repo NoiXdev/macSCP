@@ -894,10 +894,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
             let body = try Self.deleteObjectsXML(keys: batch)
-            let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
             let request = try buildSignedRequest(
                 bucket: bucket, method: "POST", key: "", query: [(name: "delete", value: "")],
-                extraHeaders: ["Content-MD5": md5], body: body,
+                extraHeaders: ["Content-MD5": Self.contentMD5(of: body)], body: body,
                 payloadHash: SigV4Signer.hexSHA256(body))
 
             let (data, response) = try await send(request)
@@ -1249,6 +1248,15 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         guard (200..<300).contains(response.statusCode) else {
             throw Self.mapErrorStatus(response.statusCode, body: data, path: path)
         }
+    }
+
+    /// The `Content-MD5` header value for `body`: the base64 of its MD5.
+    ///
+    /// Named once because it was spelled inline twice (`deleteTree`,
+    /// `setVersioning`) before `setCORS` would have made a third. The
+    /// callers sign the header, which is what makes the store check it.
+    static func contentMD5(of body: Data) -> String {
+        Data(Insecure.MD5.hash(data: body)).base64EncodedString()
     }
 
     /// Maps a non-2xx HTTP response to the `RemoteFSError` it represents.
@@ -1643,13 +1651,57 @@ extension S3FileSystem: S3BucketSettings {
         // (docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html),
         // and a caller that signs its own requests has to send it. The rig
         // accepts the request without it, so only a test of the request
-        // itself can pin this (`S3BucketSettingsTests`). Same construction
-        // as `deleteTree`.
-        let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
+        // itself can pin this (`S3BucketSettingsTests`). The digest is
+        // `contentMD5(of:)`, as in `deleteTree` and `setCORS`.
         let request = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "PUT",
             query: [(name: "versioning", value: "")],
-            extraHeaders: ["Content-MD5": md5],
+            extraHeaders: ["Content-MD5": Self.contentMD5(of: body)],
+            body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
+        try await sendExpectingSuccess(request, path: "/" + bucket)
+    }
+
+    public func cors(ofBucket bucket: String) async throws -> [CORSRule]? {
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "GET",
+            query: [(name: "cors", value: "")], config: config)
+        let (data, response) = try await send(request)
+        // The status goes in with the body: an unset bucket answers with an
+        // ERROR (`NoSuchCORSConfiguration`), and `nil` is how that is told
+        // apart from a configuration holding no rules.
+        return try S3SettingsXML.parseCORSResponse(
+            status: response.statusCode, body: data, path: "/" + bucket)
+    }
+
+    public func setCORS(_ rules: [CORSRule], ofBucket bucket: String) async throws {
+        // macSCP's own gate, before anything is built or sent. The rig
+        // stores a `FETCH` method that AWS refuses, so the store is not the
+        // place this is decided (`CORSRule.validate()`).
+        for rule in rules {
+            switch rule.validate() {
+            case .ok:
+                break
+            case .methodNotAllowed(let method):
+                throw RemoteFSError.protocolError(
+                    reason: "Invalid CORS rule: method \"\(method)\" is not one of "
+                        + CORSRule.allowedMethodNames.joined(separator: ", "))
+            case .noOrigin:
+                throw RemoteFSError.protocolError(
+                    reason: "Invalid CORS rule: it names no allowed origin")
+            case .noMethod:
+                throw RemoteFSError.protocolError(
+                    reason: "Invalid CORS rule: it names no allowed method")
+            }
+        }
+        let body = try S3SettingsXML.corsBody(rules)
+        // AWS does not list `Content-MD5` as mandatory for `PutBucketCors`
+        // (unlike `PutBucketVersioning`), but a correct digest is accepted by
+        // a store that does not demand it, and leaving it off would be a call
+        // that works against the rig and may fail elsewhere.
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "PUT",
+            query: [(name: "cors", value: "")],
+            extraHeaders: ["Content-MD5": Self.contentMD5(of: body)],
             body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
         try await sendExpectingSuccess(request, path: "/" + bucket)
     }
