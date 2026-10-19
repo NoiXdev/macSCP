@@ -23,7 +23,7 @@
 - Commit footer on every commit: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`. Conventional Commits.
 - Every written artifact is English. Commit/push only on explicit request.
 - Gated rig suites run under `MACSCP_ITEST=1`; the rig is started **from the main checkout only**.
-- **The rig is more permissive than AWS in two measured ways** (spec §4): it accepts Object Lock on an existing bucket, and it stores a CORS method of `FETCH`. Both refusals are macSCP's own and must be pinned against macSCP, never against the store's answer.
+- **The rig is more permissive than AWS in one measured way** (spec §4): it stores a CORS method of `FETCH`, which AWS refuses. That refusal is macSCP's own and must be pinned against macSCP, never against the store's answer. **Corrected 2026-10-19:** this line first read “more permissive than AWS in **two** measured ways … it accepts Object Lock on an existing bucket, and it stores a CORS method of `FETCH`. **Both** refusals are macSCP's own”. The Object Lock half is withdrawn — AWS allows enabling Object Lock on an existing versioned bucket, so the rig does not diverge there (spec §4).
 
 ## Review Focus
 
@@ -371,7 +371,7 @@ extension S3BucketSettings {
 
 `versionId` is carried from the start and is `nil` everywhere in this half — the second half supplies it (spec §5).
 
-**There is no call to enable Object Lock on an existing bucket, and there must never be one.** The rig would accept it; AWS refuses it (spec §4).
+**There is no call to enable Object Lock on an existing bucket, and there must never be one** — for scope and irreversibility: the maintainer asked for the two switches at bucket creation, retrofitting a lock is a change nobody requested, and it can never be undone. **Corrected 2026-10-19:** the rationale here first read “The rig would accept it; AWS refuses it (spec §4)”. That is withdrawn — AWS permits it on an existing versioned bucket. The restriction is unchanged; only its reason is.
 
 - [ ] **Step 1: Write the failing tests**
 
