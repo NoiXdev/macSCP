@@ -11,6 +11,27 @@ public struct FileActionContribution: Sendable, Equatable, Identifiable {
     }
 }
 
+/// A CONNECTION-level action a backend contributes to the window's toolbar:
+/// something the user does to the connection's store as a whole rather than
+/// to a selected file (S3 bucket settings, Task 7).
+///
+/// The sibling of `FileActionContribution` above, and deliberately the same
+/// shape plus an icon: the toolbar draws a glyph where the context menu does
+/// not. `id` is the dispatch key -- the window routes by it and never by
+/// `ConnectionKind` -- and `titleKey`/`titleDefault` follow the catalogue
+/// convention every contribution here uses.
+public struct ConnectionActionContribution: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let titleKey: String
+    public let titleDefault: String
+    /// An SF Symbol name.
+    public let systemImage: String
+    public init(id: String, titleKey: String, titleDefault: String, systemImage: String) {
+        self.id = id; self.titleKey = titleKey; self.titleDefault = titleDefault
+        self.systemImage = systemImage
+    }
+}
+
 /// Everything a diagnostic probe needs beyond the form values it is handed.
 ///
 /// The secret arrives as its SOURCE plus the session it answers for, never as

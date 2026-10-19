@@ -1762,6 +1762,7 @@ struct ConnectionDiagnosticsTests {
             badgeLabelKey: "b", badgeLabelDefault: "B",
             secretEnvironmentVariable: nil, requiresSecret: { _ in requiresSecret },
             fileActions: [],
+            connectionActions: [],
             endpoint: { _ in endpoint }, dial: dial, diagnostics: diagnostics)
     }
 

@@ -2,13 +2,33 @@ import Foundation
 import NIOCore
 
 /// The static, connection-free description of a protocol (M12): its
-/// capabilities, its connection-form schema/presets, a badge label, and the
-/// file actions it contributes to the context menu. One per `ConnectionKind`.
+/// capabilities, its connection-form schema/presets, a badge label, the
+/// file actions it contributes to the context menu, and the connection-level
+/// actions it contributes to the toolbar. One per `ConnectionKind`.
 ///
-/// There is no connection-level action list: one shipped empty in M12 and was
-/// still empty ten milestones later, so M22's final review removed it rather
-/// than let an unused seam ossify. Diagnostics actions, if they ever land,
-/// will be designed against a real caller.
+/// **The connection-level action list is back (S3 bucket settings, Task 7).**
+/// This header used to say, and the paragraph is withdrawn:
+///
+///     There is no connection-level action list: one shipped empty in M12 and was
+///     still empty ten milestones later, so M22's final review removed it rather
+///     than let an unused seam ossify. Diagnostics actions, if they ever land,
+///     will be designed against a real caller.
+///
+/// What changed is the condition that paragraph itself named. "A real caller"
+/// arrived, though not as diagnostics: S3's bucket settings contribute
+/// entries to `connectionActions` below, and
+/// `BackendContributionTests.onlyS3ContributesConnectionActions` pins how many.
+/// SSH and WebDAV contribute none, which is a real answer rather than an
+/// omission -- the toolbar draws nothing for an empty list.
+///
+/// The seam is rebuilt on the terms that deletion set, not on the terms of the
+/// original: `connectionActions` has NO default value, so the compiler asks
+/// every backend (and every synthetic descriptor a test builds) the question
+/// instead of letting "no actions" be the path of least resistance, which is
+/// how the first list came to ship empty and stay that way. And
+/// `BackendContributionTests.theSeamIsNotEmptyInEveryBackend` fails if every
+/// backend's list ever empties again -- at that point the seam has become what
+/// M22 removed, and it should go with them.
 public struct BackendDescriptor: Sendable {
     public let kind: ConnectionKind
     public let capabilities: ProtocolCapabilities
@@ -36,8 +56,10 @@ public struct BackendDescriptor: Sendable {
     /// A stored member rather than a computed `switch` (unlike `sessionValues`)
     /// for consistency with its sibling closures `makeConfig`, `displaySummary`
     /// and `connect` — not because a test needs a synthetic adapter to exercise
-    /// (the one synthetic descriptor, in `SchemaConformanceTests`, passes an
-    /// empty `apply` that is never called; `BackendApplyTests` and friends
+    /// (the synthetic descriptors tests build -- `SchemaConformanceTests`'s is
+    /// one, and the wording "the one synthetic descriptor" is withdrawn: it
+    /// was not the only one -- pass an empty `apply` that is never called, or
+    /// the SSH descriptor's own; `BackendApplyTests` and friends
     /// call the three real descriptors' own `apply` directly).
     public let apply: @Sendable (FieldValues, inout StoredSession) -> Void
 
@@ -91,6 +113,16 @@ public struct BackendDescriptor: Sendable {
     public let requiresSecret: @Sendable (FieldValues) -> Bool
 
     public let fileActions: [FileActionContribution]
+
+    /// What this backend adds to the window's toolbar: actions on the
+    /// connection's store as a whole, as opposed to `fileActions` above, which
+    /// act on a selected file. Empty means the toolbar draws nothing for this
+    /// backend -- not an empty menu.
+    ///
+    /// No default, deliberately: see this type's header for why the list
+    /// returned and why leaving it to a default is the mistake it came back
+    /// from.
+    public let connectionActions: [ConnectionActionContribution]
 
     /// The host and port a diagnosis probes for these values, read from the
     /// backend's own fields (design §2).
@@ -456,6 +488,7 @@ public struct BackendDescriptor: Sendable {
             values[SSHField.authKind] != StoredSession.AuthKind.agent.rawValue
         },
         fileActions: [],
+        connectionActions: [],
         endpoint: { values in SSHFieldSchema.endpoint(values) },
         dial: .sshConnect, diagnostics: [])
 
@@ -481,6 +514,20 @@ public struct BackendDescriptor: Sendable {
         secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: { _ in true },
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
+        ],
+        connectionActions: [
+            ConnectionActionContribution(
+                id: "s3.createBucket", titleKey: "connection.action.createBucket",
+                titleDefault: "Create Bucket…", systemImage: "plus.square"),
+            ConnectionActionContribution(
+                id: "s3.versioning", titleKey: "connection.action.versioning",
+                titleDefault: "Versioning…", systemImage: "clock.arrow.circlepath"),
+            ConnectionActionContribution(
+                id: "s3.cors", titleKey: "connection.action.cors",
+                titleDefault: "CORS Rules…", systemImage: "arrow.left.arrow.right"),
+            ConnectionActionContribution(
+                id: "s3.objectLock", titleKey: "connection.action.objectLock",
+                titleDefault: "Object Lock…", systemImage: "lock"),
         ],
         endpoint: { values in S3FieldSchema.endpoint(values) },
         dial: .s3EndpointHead, diagnostics: [.s3AccessLevel])
@@ -522,6 +569,7 @@ public struct BackendDescriptor: Sendable {
         // SSH variable name rather than inventing a third one.
         secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
         fileActions: [],
+        connectionActions: [],
         endpoint: { values in WebDAVFieldSchema.endpoint(values) },
         dial: .webdavOptions, diagnostics: [.webdavClaims])
 }

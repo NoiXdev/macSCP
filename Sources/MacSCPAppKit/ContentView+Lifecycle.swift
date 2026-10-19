@@ -53,6 +53,18 @@ extension ContentView {
         .toolbar {
             if let session = activeTab.session {
                 ToolbarItemGroup(placement: .primaryAction) {
+                    // The connection's own actions (S3 bucket settings, Task
+                    // 7): FIRST, so the menu lands in the free area left of
+                    // the icon group below. The descriptor decides whether
+                    // it exists at all -- a backend with no actions draws no
+                    // menu, not an empty one. No handler is wired yet (the
+                    // sheets arrive with the action ids they open), so the
+                    // rows render disabled instead of inert.
+                    let descriptor = BackendDescriptor.descriptor(
+                        for: activeTab.connectionViewModel.kind)
+                    if ConnectionActionsMenu.isPresented(for: descriptor) {
+                        ConnectionActionsMenu(descriptor: descriptor, onSelect: nil)
+                    }
                     uploadButton(in: activeTab, session: session)
                     downloadButton(in: activeTab, session: session)
                     // Files toggle (P2 terminal-chrome milestone, Task 3):

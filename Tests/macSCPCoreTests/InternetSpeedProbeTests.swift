@@ -640,6 +640,7 @@ struct InternetSpeedProbeTests {
             connect: { _, _, _, _ in throw RemoteFSError.protocolError(reason: "unused") },
             badgeLabelKey: "b", badgeLabelDefault: "B", secretEnvironmentVariable: nil,
             requiresSecret: { _ in false }, fileActions: [],
+            connectionActions: [],
             endpoint: ssh.endpoint, dial: nil, diagnostics: [])
         var settings = DiagnosticInternetSpeedSettings(service: service)
         settings.downloadBytes = 1000

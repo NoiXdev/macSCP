@@ -432,6 +432,13 @@
 "menu.delete" = "Usuń…";
 "browser.action.presignedURL" = "Link udostępniania…";
 
+/* Connection-level actions (S3 bucket settings, Task 7) */
+"connection.actions.menu" = "Akcje połączenia";
+"connection.action.createBucket" = "Utwórz bucket…";
+"connection.action.versioning" = "Wersjonowanie…";
+"connection.action.cors" = "Reguły CORS…";
+"connection.action.objectLock" = "Blokada obiektów…";
+
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";
 "common.apply" = "Zastosuj";
