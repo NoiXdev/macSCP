@@ -831,8 +831,11 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// trailing-slash marker key) and removes them in `<=1000`-key
     /// `DeleteObjects` batches — S3's maximum per call. Each batch is one
     /// signed `POST {bucket}?delete` carrying an XML `<Delete>` body and a
-    /// SIGNED `Content-MD5` header, which S3 requires for this call (unlike
-    /// every other request this file builds).
+    /// SIGNED `Content-MD5` header, which S3 requires for this call. Correction:
+    /// this sentence used to read "(unlike every other request this file
+    /// builds)", which stopped being true when `setVersioning` began sending
+    /// the same header, because AWS marks `Content-MD5` required for
+    /// `PutBucketVersioning` too.
     ///
     /// `Task.checkCancellation()` runs once per batch, not per key — a batch
     /// already in flight always completes. Like `rename`'s directory re-key
@@ -1636,9 +1639,17 @@ extension S3FileSystem: S3BucketSettings {
     public func setVersioning(_ state: BucketVersioning, ofBucket bucket: String) async throws {
         // Built first: `.never` throws here, before a request exists.
         let body = try S3SettingsXML.versioningBody(state)
+        // AWS marks `Content-MD5` REQUIRED for `PutBucketVersioning`
+        // (docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html),
+        // and a caller that signs its own requests has to send it. The rig
+        // accepts the request without it, so only a test of the request
+        // itself can pin this (`S3BucketSettingsTests`). Same construction
+        // as `deleteTree`.
+        let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
         let request = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "PUT",
             query: [(name: "versioning", value: "")],
+            extraHeaders: ["Content-MD5": md5],
             body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
         try await sendExpectingSuccess(request, path: "/" + bucket)
     }

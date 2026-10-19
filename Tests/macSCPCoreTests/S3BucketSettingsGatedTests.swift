@@ -28,13 +28,11 @@ struct S3BucketSettingsGatedTests {
 
     @Test func versioningRoundTripsThroughTheStore() async throws {
         let fs = try await S3FileSystem.connect(Self.config)
+        defer { Task { await fs.disconnect() } }
         let bucket = "macscp-versioning-\(UUID().uuidString.lowercased().prefix(12))"
         let created = try await bucketRequest("PUT", bucket, in: fs)
         #expect((200..<300).contains(created))
-        guard (200..<300).contains(created) else {
-            await fs.disconnect()
-            return
-        }
+        guard (200..<300).contains(created) else { return }
 
         var observed: [BucketVersioning] = []
         var failure: (any Error)?
@@ -50,7 +48,6 @@ struct S3BucketSettingsGatedTests {
 
         // Cleanup runs whether or not the round trip got to its end.
         let deleted = try? await bucketRequest("DELETE", bucket, in: fs)
-        await fs.disconnect()
 
         #expect(failure == nil)
         #expect(observed == [.never, .enabled, .suspended])
