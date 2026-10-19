@@ -51,9 +51,10 @@ and on a real provider that decision is made when the bucket is created**
 6. Set a retention or a legal hold on a single file, from the file list's
    context menu.
 7. **Every refusal the store returns is shown as what it is — on the existing
-   operations as much as the new ones.** A locked object that cannot be
-   deleted says so where the user meets it, which today is the ordinary
-   Delete command (§7).
+   operations as much as the new ones** (§7). **Corrected 2026-10-19:** this
+   goal first read "A locked object that cannot be deleted says so where the
+   user meets it, which today is the ordinary Delete command". Measured, the
+   ordinary Delete command does not meet a refusal at all — see §7.
 
 ## 3. Non-goals and anti-goals
 
@@ -117,28 +118,64 @@ several `AllowedOrigin`, several `AllowedMethod`, `AllowedHeader`, several
 document was refused with `400`. **A form can therefore express every valid
 configuration**, which is what §6.3 rests on.
 
-### The two divergences from AWS, and both are traps
+### The divergences from AWS
 
-1. **RustFS accepts `PUT ?object-lock` on a bucket created WITHOUT Object
-   Lock** — `200`, and the lock then genuinely bites (`403` on a delete).
-   **AWS refuses this**; there, Object Lock exists only if the bucket was
-   created with it.
-2. **RustFS stores a CORS rule whose method is `FETCH`** — `200`, and reads it
+**Corrected 2026-10-19, during Task 4.** This section first read:
+
+> **The two divergences from AWS, and both are traps**
+> 1. **RustFS accepts `PUT ?object-lock` on a bucket created WITHOUT Object
+>    Lock** — `200`, and the lock then genuinely bites (`403` on a delete).
+>    **AWS refuses this**; there, Object Lock exists only if the bucket was
+>    created with it.
+
+**Item 1 is withdrawn: it is not a divergence.** AWS's current configuration
+guide says Object Lock can be enabled on an EXISTING bucket, through the
+console, CLI, SDKs or the REST API, provided versioning is on; and once
+enabled it cannot be disabled and versioning cannot be suspended. Two older
+AWS pages (the Security Hub remediation page and the AWS Config
+prerequisites page) still say it can only be enabled at creation, which is
+very likely where the withdrawn sentence came from — it was written from
+recollection with no source beside it, which is the failure this file has a
+rule about.
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-configure.html
+
+The RustFS behaviour itself was measured correctly and is unchanged: a
+`PUT ?object-lock` on a bucket created without it answers `200` and the lock
+then genuinely bites. What was wrong was the claim about AWS beside it.
+
+**The one measured divergence that stands:**
+
+1. **RustFS stores a CORS rule whose method is `FETCH`** — `200`, and reads it
    back unchanged. AWS allows only GET, PUT, POST, DELETE, HEAD. (It does
-   refuse a rule with no `AllowedOrigin`, `400` — so it checks the structure
-   and not the vocabulary.)
+   refuse a rule with no `AllowedOrigin`, `400`, and refuses an empty
+   configuration with `400 MalformedXML` — so it checks the structure and not
+   the vocabulary.)
+
+**And one place where the rig AGREES with AWS**, recorded because three
+readings of "the rig is more permissive" invite the wrong generalisation: a
+zero-rule `<CORSConfiguration>` is refused `400 MalformedXML` by the rig, as
+by AWS, and the previously stored rules survive untouched.
 
 Both have the same consequence, and it is the sharpest constraint in this
 document:
 
-> **The rig is more permissive than the world.** No code here may offer to
-> enable Object Lock on an existing bucket, and CORS input must be validated
-> by macSCP. In both cases a test must pin macSCP's own refusal, because **the
-> rig will not supply the refusal to pin against.**
+> **The rig is more permissive than the world.** CORS input must be validated
+> by macSCP, because **the rig will not supply the refusal to pin against** —
+> the test must pin macSCP's own refusal.
 
-Divergence 1 is why "create bucket" is in scope at all — which was the
-maintainer's own ordering on 2026-09-16 ("create bucket … first"), and the
-measurement is why that ordering was right.
+**No code here offers to enable Object Lock on an existing bucket**, but the
+reason is not the withdrawn one above. It is scope and irreversibility: the
+maintainer asked for the two switches at bucket creation, enabling the lock
+later is a retrofit nobody requested, and it cannot be undone once done. A
+backlog row records that AWS now permits it, so the maintainer can ask for it
+deliberately rather than inheriting it by accident.
+
+This section first read, and this clause is withdrawn with item 1 above:
+"Divergence 1 is why “create bucket” is in scope at all — which was the
+maintainer's own ordering on 2026-09-16 (“create bucket … first”), and the
+measurement is why that ordering was right." The maintainer's ordering is
+unchanged and still recorded; what is withdrawn is the claim that this
+measurement justified it.
 
 **Left behind by the probe:** the bucket `macscp-probe-lock` is still on the
 rig and cannot be removed — it holds one object under a COMPLIANCE retention
@@ -276,9 +313,32 @@ equivalent ceremony.
 
 `S3FileSystem.mapErrorStatus(_:path:)` turns **every** 403 into
 `RemoteFSError.authenticationFailed` and discards the response body; no S3
-error-code parser exists in the error path. Verified by reading it. So today,
-deleting an object under a legal hold tells the user "authentication failed" —
-in the ordinary Delete command, which is exactly where they meet it.
+error-code parser exists in the error path. Verified by reading it. Where a
+refusal does arrive, it is therefore unreadable.
+
+**Corrected 2026-10-19, measured during Task 4.** This paragraph first ended:
+"So today, deleting an object under a legal hold tells the user
+“authentication failed” — in the ordinary Delete command, which is exactly
+where they meet it." **That is wrong, and the error is instructive.** Object
+Lock protects a VERSION, not the name. Measured on a lock-enabled versioned
+bucket with a legal hold in place:
+
+```
+PLAIN DELETE (no versionId) of the held object:   204   (a delete marker goes on top)
+GET it afterwards:                                404
+the locked version:                               still listed
+VERSIONED DELETE of the held version:             403   "Object has a legal hold and cannot be deleted."
+```
+
+So the ordinary Delete command **succeeds** on a locked object and the data
+survives underneath. The refusal is reachable only through a versioned delete,
+which nothing in macSCP issues today — it arrives with the version history,
+the second half of this work. The error mapping Task 1 built is still right
+and still needed; what was wrong was the claim about where a user meets it.
+
+**This belongs in the user documentation rather than being quietly correct:**
+on a versioned bucket, deleting a locked file appears to work, and that is S3
+behaving as designed, not macSCP hiding a refusal.
 
 Making that honest means parsing the store's `<Code>` into named
 `RemoteFSFinding` cases inside that shared mapper, which `delete`, `write`,
