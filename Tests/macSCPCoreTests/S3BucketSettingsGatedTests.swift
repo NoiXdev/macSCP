@@ -15,22 +15,11 @@ import Testing
     .serialized
 )
 struct S3BucketSettingsGatedTests {
-    private static let config = S3ConnectionConfig(
-        accessKeyID: "macscp", secretAccessKey: "macscpsecretkey",
-        region: "us-east-1", endpoint: "http://127.0.0.1:19000",
-        bucket: "macscp-seed", usePathStyle: true, sessionToken: nil)
-
-    private func bucketRequest(_ method: String, _ bucket: String, in fs: S3FileSystem) async throws -> Int {
-        let request = try S3FileSystem.signedRequest(
-            .bucketRoot(bucket: bucket), method: method, config: Self.config)
-        return try await fs.perform(request).1.statusCode
-    }
-
     @Test func versioningRoundTripsThroughTheStore() async throws {
-        let fs = try await S3FileSystem.connect(Self.config)
+        let fs = try await S3FileSystem.connect(S3SettingsRig.config)
         defer { Task { await fs.disconnect() } }
-        let bucket = "macscp-versioning-\(UUID().uuidString.lowercased().prefix(12))"
-        let created = try await bucketRequest("PUT", bucket, in: fs)
+        let bucket = S3SettingsRig.throwawayBucketName(purpose: "versioning")
+        let created = try await S3SettingsRig.bucketRequest("PUT", bucket, in: fs)
         #expect((200..<300).contains(created))
         guard (200..<300).contains(created) else { return }
 
@@ -47,7 +36,7 @@ struct S3BucketSettingsGatedTests {
         }
 
         // Cleanup runs whether or not the round trip got to its end.
-        let deleted = try? await bucketRequest("DELETE", bucket, in: fs)
+        let deleted = try? await S3SettingsRig.bucketRequest("DELETE", bucket, in: fs)
 
         #expect(failure == nil)
         #expect(observed == [.never, .enabled, .suspended])
