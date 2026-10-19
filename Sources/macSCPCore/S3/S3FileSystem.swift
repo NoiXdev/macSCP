@@ -170,12 +170,25 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             case .bucketList:
                 // The permission is checked HERE, once, so the failure lands
                 // on the form the user is looking at rather than deep in the
-                // browser (design §2). An account with no buckets is its own
-                // outcome for the same reason: an empty browser explains
-                // nothing.
-                if try await fs.listBuckets().isEmpty {
-                    throw RemoteFSError.bucketListEmpty
-                }
+                // browser (design §2). The call is also the readiness probe:
+                // a 403 stays `bucketListForbidden`, and an account that may
+                // not list buckets is a different situation from one that has
+                // none.
+                //
+                // An account with NO buckets is not refused. This used to
+                // read "An account with no buckets is its own outcome for the
+                // same reason: an empty browser explains nothing", and
+                // `connect` threw `bucketListEmpty` for it. That held while
+                // an empty browser offered nothing to do. The browser now
+                // carries the action that resolves the empty state — creating
+                // a bucket (`createBucket(_:protection:)`, surfaced as the
+                // browser's create-bucket action in Task 11 of the
+                // s3-bucket-settings plan) — and refusing the connect would
+                // leave that action unreachable: a first bucket could never
+                // be made from the app. This applies to `.bucketList` only;
+                // the `.bucket` arm above still fails the connect for a named
+                // bucket that does not exist.
+                _ = try await fs.listBuckets()
             }
         } catch {
             // A dial that fails still built a session, and nothing else will
