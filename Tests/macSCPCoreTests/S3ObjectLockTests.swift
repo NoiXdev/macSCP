@@ -702,6 +702,7 @@ struct S3ObjectLockTests {
             "legalHold(ofKey:inBucket:versionId:)",
             "setLegalHold(_:ofKey:inBucket:versionId:)",
             "versioning(ofBucket:)", "setCORS(_:ofBucket:)",
+            "createBucket(_:versioning:objectLock:)",
         ] {
             #expect(surface.contains(expected), "\(expected) is not on the scanned surface")
         }

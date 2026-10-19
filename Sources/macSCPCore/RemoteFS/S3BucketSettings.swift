@@ -22,11 +22,12 @@ public enum BucketVersioning: String, Sendable, CaseIterable {
 /// account's bucket list has no single bucket at all, so nothing here reads
 /// one from the connection.
 ///
-/// The bucket argument is NOT validated here: an empty or malformed name
-/// goes into the request as given. Name validation belongs to
-/// `S3BucketName.problem(with:)`, which the create-bucket task of the
-/// bucket-settings plan introduces, and callers that take a name from a user
-/// run it before calling.
+/// The bucket argument is NOT validated by the methods that act on an
+/// existing bucket: an empty or malformed name goes into the request as
+/// given. Name validation belongs to `S3BucketName.problem(with:)`, which
+/// callers that take a name from a user run before calling and which
+/// `createBucket` runs itself, because a name that fails it has no business
+/// reaching a store at creation.
 ///
 /// One protocol for all of a bucket's settings rather than one per setting:
 /// a backend either speaks bucket-level S3 or it does not, and a caller
@@ -34,6 +35,45 @@ public enum BucketVersioning: String, Sendable, CaseIterable {
 /// its methods here and its conformance in the extension at the bottom of
 /// `S3FileSystem.swift`.
 public protocol S3BucketSettings: Sendable {
+    /// Creates `bucket`, with versioning switched on when `versioning` is
+    /// true and with Object Lock when `objectLock` is.
+    ///
+    /// **Both switches are offered here because creation is when a person
+    /// decides what a bucket is for, not because the store forbids them
+    /// later.** `CreateBucket` has no versioning flag at all (versioning is a
+    /// separate `PUT ?versioning`, which this call makes itself, through
+    /// `setVersioning`), and AWS lets a versioned bucket have Object Lock
+    /// enabled afterwards; macSCP offers no such call, for scope and
+    /// irreversibility (see the Object Lock block below).
+    ///
+    /// **`objectLock: true` requires `versioning: true`.** Object Lock works
+    /// only on a versioned bucket. A store that sees
+    /// `x-amz-bucket-object-lock-enabled: true` on `CreateBucket` enables
+    /// versioning on its own, but the call does not lean on that, and it
+    /// does not resolve a contradiction in the caller's request either:
+    /// `objectLock: true` with `versioning: false` is refused with
+    /// `RemoteFSError.protocolError` before any request, naming both
+    /// switches. A caller derives `versioning` from the lock toggle, not the
+    /// other way round.
+    ///
+    /// `bucket` goes through `S3BucketName.problem(with:)` first; a name
+    /// that fails is refused with `.protocolError` naming the problem, again
+    /// before any request.
+    ///
+    /// **A name that already exists is not refused by this call.** The
+    /// Docker rig answers a second create of a bucket the key owns with
+    /// success, does not let the Object Lock header retrofit a lock onto it,
+    /// and takes the versioning request that follows (measured 2026-10-19,
+    /// `S3CreateBucketGatedTests`). AWS answers a re-create differently by
+    /// region and that is unmeasured here. A caller that means "a new bucket"
+    /// checks that the name is free before calling.
+    ///
+    /// Two requests when versioning is on (the create, then the versioning),
+    /// so a failure of the SECOND leaves the bucket created and
+    /// unversioned. The error thrown is that request's own; the call does
+    /// not delete the bucket it just made.
+    func createBucket(_ bucket: String, versioning: Bool, objectLock: Bool) async throws
+
     /// The versioning state of `bucket`. `.never` when the store reports no
     /// status at all.
     func versioning(ofBucket bucket: String) async throws -> BucketVersioning

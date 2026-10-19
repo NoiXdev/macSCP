@@ -7,8 +7,9 @@ import Testing
 ///
 /// Creates and deletes its OWN throwaway bucket; the rig's seeded buckets
 /// (`macscp-seed`, `macscp-second`) and `macscp-probe-lock` are never named
-/// here. There is no `createBucket` on the capability yet (a later task adds
-/// it), so the bucket is made and removed with raw signed requests.
+/// here. The bucket is made and removed with raw signed requests, so that
+/// this suite's set-up does not depend on `createBucket`, which
+/// `S3CreateBucketGatedTests` exercises.
 @Suite(
     "S3BucketSettings against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),

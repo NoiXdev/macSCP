@@ -71,6 +71,25 @@ public enum S3SettingsXML {
         return Data(xml.utf8)
     }
 
+    /// The body of a `CreateBucket` for `region`, or `nil` for none.
+    ///
+    /// `us-east-1` sends no body, and every other region names itself in a
+    /// `LocationConstraint`. That split is AWS's as this author remembers it
+    /// (a constraint naming `us-east-1` is refused, and a request without
+    /// one for any other region is refused with
+    /// `IllegalLocationConstraintException`); **neither half was measured
+    /// against AWS here.** The rig is `us-east-1` and gets no body, and a
+    /// test pins only that the body is built and signed.
+    public static func createBucketBody(region: String) throws -> Data? {
+        guard region != "us-east-1" else { return nil }
+        let xml =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            + "<CreateBucketConfiguration xmlns=\"\(namespace)\">"
+            + "<LocationConstraint>\(try S3XMLText.escaped(region))</LocationConstraint>"
+            + "</CreateBucketConfiguration>"
+        return Data(xml.utf8)
+    }
+
     private final class VersioningDelegate: NSObject, XMLParserDelegate {
         private(set) var sawRoot = false
         private(set) var rejectedRoot = false

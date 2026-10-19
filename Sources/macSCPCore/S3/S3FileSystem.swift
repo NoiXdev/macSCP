@@ -1711,6 +1711,34 @@ extension S3FileSystem: PresignedURLProvider {
 /// opened at the account's bucket list has no single bucket, and one opened
 /// on a bucket may be asked about another the same key can reach.
 extension S3FileSystem: S3BucketSettings {
+    public func createBucket(_ bucket: String, versioning: Bool, objectLock: Bool) async throws {
+        if let problem = S3BucketName.problem(with: bucket) {
+            throw RemoteFSError.protocolError(reason: "bucket name is not valid: \(problem)")
+        }
+        // Object Lock needs a versioned bucket. A request that asks for the
+        // one without the other contradicts itself, and silently turning
+        // versioning on would answer a question the caller did not ask.
+        if objectLock && !versioning {
+            throw RemoteFSError.protocolError(
+                reason: "object lock requires versioning, and versioning was declined")
+        }
+        var headers: [String: String] = [:]
+        if objectLock { headers["x-amz-bucket-object-lock-enabled"] = "true" }
+        // A region other than `us-east-1` is named in the body; see
+        // `S3SettingsXML.createBucketBody` for what is and is not measured.
+        let body = try S3SettingsXML.createBucketBody(region: config.region)
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "PUT", extraHeaders: headers,
+            body: body, payloadHash: body.map { SigV4Signer.hexSHA256($0) } ?? SigV4Signer.emptyPayloadHash,
+            config: config)
+        try await sendExpectingSuccess(request, path: "/" + bucket)
+        // The lock rides on the create; versioning is its own request, and
+        // is sent for a locked bucket too rather than left to the store.
+        if versioning || objectLock {
+            try await setVersioning(.enabled, ofBucket: bucket)
+        }
+    }
+
     public func versioning(ofBucket bucket: String) async throws -> BucketVersioning {
         let request = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "GET",
