@@ -1545,11 +1545,14 @@ struct S3FileSystemTests {
     </ListAllMyBucketsResult>
     """
 
-    /// What every S3 implementation answers `ListObjectsV2` on a bucket that
-    /// is not there.
+    /// A plausible 404 body for a bucket that is not there, naming the bucket
+    /// `config` points at. It is not measured against any provider and the
+    /// code under test never reads it: `NoSuchBucket` has no arm in
+    /// `S3ErrorCode.finding(forCode:status:path:)`, so the 404 STATUS alone
+    /// decides the outcome and an empty body would behave the same.
     private let noSuchBucketXML = """
     <?xml version="1.0" encoding="UTF-8"?>
-    <Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>nope</BucketName></Error>
+    <Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>macscp-seed</BucketName></Error>
     """
 
     /// What AWS answers a key without `s3:ListAllMyBuckets`. MinIO does NOT
@@ -1672,6 +1675,11 @@ struct S3FileSystemTests {
         #expect((url.query ?? "").contains("list-type=2"))
     }
 
+    /// Outcome 2 of the design's §2 table, as that row now stands: 200 with
+    /// zero buckets no longer refuses. (It used to be its own error,
+    /// `bucketListEmpty`; the outcome numbering on the neighbouring tests
+    /// still counts it.)
+    ///
     /// An account with no buckets connects in bucket-list mode, and its root
     /// is an empty listing. The connect-time `ListBuckets` is still sent and
     /// still answered: it is the readiness and authorisation probe, so the
@@ -1700,12 +1708,27 @@ struct S3FileSystemTests {
     /// bucket that does not exist is still a failed connect. The configured
     /// bucket is the one thing the user typed, so its absence is an error at
     /// the form; an account with none to browse is not.
-    @Test func aNamedBucketThatDoesNotExistStillRefusesTheConnect() async {
+    ///
+    /// Asserts the error and the wire, not just "some `RemoteFSError`": the
+    /// natural over-reach is routing `.bucket` through `ListBuckets` as well,
+    /// and that still throws a `RemoteFSError` (`.notFound(path: "/")`, from
+    /// the status alone), so a type-only assertion would stay green through
+    /// it. The error here is the same `.notFound(path: "/")` that the
+    /// over-reach throws, so it pins the case and not the route; the route is
+    /// pinned by the wire: exactly one request, and it is the `ListObjectsV2`
+    /// probe of the configured bucket rather than `GET /`.
+    @Test func aNamedBucketThatDoesNotExistStillRefusesTheConnect() async throws {
         let transport = FakeS3Transport(
             responses: [(Data(noSuchBucketXML.utf8), httpResponse(status: 404))])
-        await #expect(throws: RemoteFSError.self) {
+        await #expect(throws: RemoteFSError.notFound(path: "/")) {
             _ = try await S3FileSystem.connect(self.config, transport: transport)
         }
+
+        let requests = await transport.requests
+        #expect(requests.count == 1)
+        let url = try #require(requests.first?.url)
+        #expect(url.path == "/macscp-seed")
+        #expect((url.query ?? "").contains("list-type=2"))
     }
 
     /// Outcome 3: 403 `AccessDenied` on `ListBuckets` — a key without

@@ -179,15 +179,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 // read "An account with no buckets is its own outcome for the
                 // same reason: an empty browser explains nothing", and
                 // `connect` threw `bucketListEmpty` for it. That held while
-                // an empty browser offered nothing to do. The browser now
-                // carries the action that resolves the empty state — creating
-                // a bucket (`createBucket(_:protection:)`, surfaced as the
-                // browser's create-bucket action in Task 11 of the
-                // s3-bucket-settings plan) — and refusing the connect would
-                // leave that action unreachable: a first bucket could never
-                // be made from the app. This applies to `.bucketList` only;
-                // the `.bucket` arm above still fails the connect for a named
-                // bucket that does not exist.
+                // an empty browser offered nothing to do.
+                //
+                // What would resolve an empty browser is creating a bucket,
+                // and `createBucket(_:protection:)` exists in Core. NO
+                // browser surface calls it yet: the create-bucket action in
+                // the bucket browser is planned (the s3-bucket-settings
+                // plan) and is not in this tree, so until it lands an
+                // account with no buckets opens on a blank browser. The
+                // refusal is lifted ahead of that action because keeping it
+                // would make the action unreachable for exactly the account
+                // it is for. The first version of this comment, in
+                // `612f1ece`, said "The browser now carries the action that
+                // resolves the empty state"; that was not true of the tree
+                // and is withdrawn.
+                //
+                // This applies to `.bucketList` only; the `.bucket` arm
+                // above still fails the connect for a named bucket that does
+                // not exist.
                 _ = try await fs.listBuckets()
             }
         } catch {
