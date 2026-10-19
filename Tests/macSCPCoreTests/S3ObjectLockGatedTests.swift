@@ -18,9 +18,9 @@ import Testing
 ///
 /// What the rig CANNOT show: that macSCP sends a `Content-MD5` on
 /// `PUT ?object-lock` (the rig does not require it; `S3ObjectLockTests`
-/// pins the request), and that Object Lock cannot be switched on for an
+/// pins the request), and that macSCP does not switch Object Lock on for an
 /// existing bucket (the rig allows it; the first test below shows macSCP
-/// refusing it anyway).
+/// declining anyway).
 @Suite(
     "S3 Object Lock against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
@@ -41,11 +41,13 @@ struct S3ObjectLockGatedTests {
         guard (200..<300).contains(created) else { return }
 
         var before: (days: Int, mode: RetentionMode)?
+        var hasLock: Bool?
         var refusal: (any Error)?
         var rawStatus: Int?
         var failure: (any Error)?
         do {
             before = try await fs.objectLockDefault(ofBucket: bucket)
+            hasLock = try await fs.hasObjectLock(ofBucket: bucket)
             do {
                 try await fs.setObjectLockDefault(days: 1, mode: .governance, ofBucket: bucket)
             } catch {
@@ -63,6 +65,7 @@ struct S3ObjectLockGatedTests {
 
         #expect(failure == nil)
         #expect(before == nil)
+        #expect(hasLock == false)
         #expect((refusal as? RemoteFSError) == .finding(.objectLockNotConfigured))
         #expect(rawStatus == 404, "the store now reports an Object Lock configuration")
         #expect(deleted.map { (200..<300).contains($0) } == true)
@@ -80,13 +83,17 @@ struct S3ObjectLockGatedTests {
         guard (200..<300).contains(created) else { return }
 
         var initial: (days: Int, mode: RetentionMode)?
+        var hasLockBefore: Bool?
+        var hasLockAfter: Bool?
         var afterSet: (days: Int, mode: RetentionMode)?
         var afterChange: (days: Int, mode: RetentionMode)?
         var failure: (any Error)?
         do {
             // Object Lock on, no default: `nil`, and not a zero-day default.
             initial = try await fs.objectLockDefault(ofBucket: bucket)
+            hasLockBefore = try await fs.hasObjectLock(ofBucket: bucket)
             try await fs.setObjectLockDefault(days: 1, mode: .governance, ofBucket: bucket)
+            hasLockAfter = try await fs.hasObjectLock(ofBucket: bucket)
             afterSet = try await fs.objectLockDefault(ofBucket: bucket)
             try await fs.setObjectLockDefault(days: 3, mode: .governance, ofBucket: bucket)
             afterChange = try await fs.objectLockDefault(ofBucket: bucket)
@@ -98,6 +105,10 @@ struct S3ObjectLockGatedTests {
 
         #expect(failure == nil)
         #expect(initial == nil)
+        // The lock is there before any default is: `nil` above does not mean
+        // "no lock", and this is the call that says so.
+        #expect(hasLockBefore == true)
+        #expect(hasLockAfter == true)
         #expect(afterSet?.days == 1 && afterSet?.mode == .governance)
         #expect(afterChange?.days == 3 && afterChange?.mode == .governance)
         #expect(deleted.map { (200..<300).contains($0) } == true)

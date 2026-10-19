@@ -75,15 +75,32 @@ public protocol S3BucketSettings: Sendable {
     // MARK: - Object Lock
     //
     // **There is no method here that enables Object Lock on a bucket, and
-    // there must never be one.** Whether a bucket has Object Lock is decided
-    // when it is created. The Docker rig's store (RustFS) accepts
-    // `PUT ?object-lock` on a bucket created without it, and the lock then
-    // genuinely bites (measured 2026-10-19), which AWS refuses; a test
-    // against the rig would pass for a flow a real provider rejects. So
-    // `setObjectLockDefault` reads the bucket first and refuses one that has
-    // no Object Lock (`RemoteFSFinding.objectLockNotConfigured`), and
+    // none is to be added without being asked for.** The reason is scope and
+    // irreversibility, not capability: the maintainer asked for the lock to
+    // be a switch at bucket creation, enabling it later is a retrofit nobody
+    // requested, and once enabled it cannot be undone. (AWS does permit it
+    // on an existing versioned bucket; the design spec's section "The
+    // divergences from AWS" has the correction.) The Docker rig's store
+    // accepts `PUT ?object-lock` on a bucket created without a lock, and the
+    // lock then bites (measured 2026-10-19), so a call that wrote blindly
+    // would turn the lock on by accident, on the store the tests run
+    // against. `setObjectLockDefault` therefore reads the bucket first and
+    // refuses one that has no Object Lock
+    // (`RemoteFSFinding.objectLockNotConfigured`), and
     // `S3ObjectLockTests.theProtocolOffersNoWayToEnableLockOnAnExistingBucket`
     // pins the surface.
+
+    /// Whether `bucket` has Object Lock at all, as opposed to whether it has
+    /// a default retention (`objectLockDefault`, which is `nil` for both a
+    /// bucket with no lock and a lock with no default yet).
+    ///
+    /// The distinction is the one a UI needs to decide whether to offer a
+    /// per-object retention or legal hold: a lock-enabled bucket with no
+    /// default is exactly where a first retention is set, and reading it as
+    /// "no Object Lock" would hide that. `false` is the store's answer that
+    /// the bucket has none (`404` `ObjectLockConfigurationNotFoundError`,
+    /// measured 2026-10-19); any other failure throws, and is never `false`.
+    func hasObjectLock(ofBucket bucket: String) async throws -> Bool
 
     /// The default retention of `bucket`: the days, and the mode every new
     /// object gets. `nil` when there is none to report, which covers two

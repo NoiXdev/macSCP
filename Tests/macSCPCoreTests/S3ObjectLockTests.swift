@@ -307,6 +307,62 @@ struct S3ObjectLockTests {
         #expect(sent.url?.query == "object-lock=")
     }
 
+    // MARK: - Whether a bucket has Object Lock at all
+
+    /// The three states, each through the same call: a lock with a default,
+    /// a lock with NO default (the one `objectLockDefault` cannot tell from
+    /// "no lock"), and no lock.
+    @Test(arguments: [
+        ("a default retention", 0, true),
+        ("a lock with no default yet", 1, true),
+        ("no lock at all", 2, false),
+    ])
+    func hasObjectLockTellsALockWithoutADefaultFromNoLock(
+        label: String, scenario: Int, expected: Bool
+    ) async throws {
+        let response: (Data, HTTPURLResponse)
+        switch scenario {
+        case 0:
+            response = answer(
+                Self.lockDocument(
+                    "<ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention>"
+                        + "<Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule>"))
+        case 1:
+            response = answer(Self.lockEnabledNoDefault)
+        default:
+            response = answer(Self.error("ObjectLockConfigurationNotFoundError"), status: 404)
+        }
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [response])
+        #expect(try await fs.hasObjectLock(ofBucket: "other") == expected, "\(label)")
+        let sent = try #require(await transport.requests.last)
+        #expect(sent.httpMethod == "GET")
+        #expect(sent.url?.path == "/other")
+        #expect(sent.url?.query == "object-lock=")
+    }
+
+    /// `false` is the store saying the bucket has no lock, and nothing else
+    /// is: a refusal, a missing bucket and an unreadable answer all throw.
+    @Test func aFailureIsNeverReadAsNoObjectLock() async throws {
+        let cases: [((Data, HTTPURLResponse), RemoteFSError?)] = [
+            (answer(Data(), status: 403), .authenticationFailed),
+            (answer(Self.error("NoSuchBucket"), status: 404), .notFound(path: "/other")),
+            (answer(Data("<html>proxy</html>".utf8)), nil),
+        ]
+        for (response, expected) in cases {
+            let (fs, _) = try await S3SettingsFake.connect(responses: [response])
+            do {
+                let has = try await fs.hasObjectLock(ofBucket: "other")
+                Issue.record("a failure was read as \(has)")
+            } catch {
+                if let expected {
+                    #expect((error as? RemoteFSError) == expected)
+                } else {
+                    #expect(error is RemoteFSError)
+                }
+            }
+        }
+    }
+
     @Test func aBucketWithoutObjectLockReadsNilAndNotAnError() async throws {
         let (fs, _) = try await S3SettingsFake.connect(responses: [
             answer(Self.error("ObjectLockConfigurationNotFoundError"), status: 404)
@@ -625,17 +681,20 @@ struct S3ObjectLockTests {
 
     // MARK: - No way to switch Object Lock on
 
-    /// Spec section 4: the rig accepts `PUT ?object-lock` on a bucket that
-    /// was created without it and AWS refuses, so the absence is a fact about
-    /// macSCP's own surface and no test against the rig can show it. The
-    /// surface is read from the protocol's declaration; the positive checks
-    /// beside the negative one are what keep the scan from going stale in
-    /// silence.
+    /// Enabling Object Lock on an existing bucket is out of scope here (the
+    /// maintainer asked for the lock at bucket creation; a retrofit was not
+    /// asked for and cannot be undone), and the rig would let it through,
+    /// accepting `PUT ?object-lock` on a bucket created without a lock. So
+    /// the absence is a fact about macSCP's own surface that no test against
+    /// the rig can show. The surface is read from the protocol's declaration;
+    /// the positive checks beside the negative one are what keep the scan
+    /// from going stale in silence.
     @Test func theProtocolOffersNoWayToEnableLockOnAnExistingBucket() throws {
         let surface = try S3BucketSettingsSurface.methodNames
-        // Positive: the scan is reading the declaration. The six real lock
+        // Positive: the scan is reading the declaration. The seven real lock
         // methods are on it, and so are the other settings.
         for expected in [
+            "hasObjectLock(ofBucket:)",
             "objectLockDefault(ofBucket:)",
             "setObjectLockDefault(days:mode:ofBucket:)",
             "retention(ofKey:inBucket:versionId:)",
