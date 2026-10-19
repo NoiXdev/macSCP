@@ -628,7 +628,20 @@ Expected: FAIL — `value of type 'BackendDescriptor' has no member 'connectionA
 
 - [ ] **Step 3: Add `ConnectionActionContribution` and the descriptor member**
 
-Every existing `BackendDescriptor(...)` construction gains `connectionActions:`. A synthetic descriptor exists in `SchemaConformanceTests` and needs it too.
+Every existing `BackendDescriptor(...)` construction gains `connectionActions:`.
+
+**Corrected 2026-10-20, during execution, and this is the third site of the same
+error.** This step first read "A synthetic descriptor exists in
+`SchemaConformanceTests` and needs it too." There are **eight** synthetic
+descriptors in tests, not one, and `SchemaConformanceTests` is one of them;
+`grep -rn 'BackendDescriptor(' Sources Tests --include='*.swift'` prints 12
+lines, of which one is a test function name
+(`theBadgeNamesTheProtocolThroughTheBackendDescriptor()`), leaving 11 real
+construction sites: 3 production and 8 synthetic. The plan did not invent the
+singular — it copied it from a doc comment on `apply` that said "the one
+synthetic descriptor, in `SchemaConformanceTests`", which Task 7 corrected in
+`46bfdebb`. A wrong count in a comment became a wrong count in a plan, which is
+the whole argument for counting in the moment you write a number.
 
 - [ ] **Step 4: Build `ConnectionActionsMenu`**
 
@@ -659,7 +672,29 @@ git commit -m "feat(app): a connection's own actions, as one list per backend"
 **Files:**
 - Create: `Sources/MacSCPAppKit/BucketVersioningSheet.swift`
 - Modify: `Sources/MacSCPAppKit/ContentView+MenuActions.swift`
+- Modify: `Sources/MacSCPAppKit/ContentView+Lifecycle.swift` (**added 2026-10-20
+  — see "This task owns the handler seam" below**)
 - Test: `Tests/macSCPAppKitTests/BucketVersioningSheetTests.swift`
+
+**This task owns the handler seam, added 2026-10-20 from Task 7's review (I2).**
+Task 7 built the menu but had no handler to give it, so
+`ContentView+Lifecycle.swift` passes `onSelect: nil` and all four rows render
+disabled. No later task's file list touched that file, so without this
+assignment every row would stay disabled for the rest of the plan — a menu that
+is placed, localized, tested and permanently dead.
+
+Replace the `nil` with a dispatcher that routes by contribution **id**, the way
+`ContentView+MenuActions.swift` already dispatches file actions, and give it
+**per-row availability** rather than one flag for the menu: the call site in
+`ContentView+Lifecycle.swift` is the only place that knows both the descriptor
+and the session's root mode, which is what Task 11's gate needs (I3, recorded
+there). Wire `s3.versioning` to this task's sheet; the other three ids stay
+unavailable until Tasks 9, 10 and 11 add their arms, and a row with no arm
+stays disabled rather than enabled-and-inert.
+
+A test pins that a wired id is enabled and an unwired id is not — the positive
+beside the negative, since "disabled" is the state a broken dispatcher also
+produces.
 
 **Interfaces:**
 - Consumes: `S3BucketSettings.versioning(ofBucket:)`, `BucketVersioning`, `ConnectionActionContribution` id `s3.versioning`.
@@ -855,7 +890,21 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
 - Test: `Tests/macSCPAppKitTests/CreateBucketSheetTests.swift`
 
 **Interfaces:**
-- Consumes: `S3BucketName.problem(with:)`, `createBucket(_:protection:)`, Task 6's empty-account connect. (**Corrected 2026-10-19:** first read `createBucket(_:versioning:objectLock:)` — see Task 5.)
+- Consumes: `S3BucketName.problem(with:)`, `createBucket(_:protection:)`, Task 6's empty-account connect, and Task 8's per-row availability hook in `ContentView+Lifecycle.swift`. (**Corrected 2026-10-19:** first read `createBucket(_:versioning:objectLock:)` — see Task 5. **Extended 2026-10-20:** the availability hook, see below.)
+
+**The bucket-list gate needs a consumer, added 2026-10-20 from Task 7's review
+(I3).** Spec §6.1 says create bucket is offered in bucket-list mode only, and
+this task's `CreateBucketModel.isOffered(rootMode:)` is that rule — but as the
+plan stood, nothing rendered it: the file list was sheet plus test, and the menu
+row had no route to a `RootMode` at all. A rule with no caller is the same
+defect as an empty seam.
+
+So this task also supplies the `s3.createBucket` row's availability through the
+hook Task 8 builds, and `isOffered(rootMode:)` is what the hook asks. Note this
+is a **different** gate from `aNameAlreadyInTheListBlocksTheButton` below: that
+one is inside the sheet and refuses a name the account already owns; this one
+decides whether the row can be chosen at all. Both are required, and neither
+substitutes for the other.
 
 - [ ] **Step 1: Write the failing tests**
 
