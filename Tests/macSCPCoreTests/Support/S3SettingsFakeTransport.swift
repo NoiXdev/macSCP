@@ -38,8 +38,10 @@ enum S3SettingsFake {
 /// The set-up the GATED bucket-settings suites share (`MACSCP_ITEST=1`, the
 /// Docker S3 rig): the rig's connection config, and the raw signed
 /// bucket-level request a suite uses to create and delete its OWN throwaway
-/// bucket — there is no `createBucket` on the capability yet. The rig's
-/// seeded buckets (`macscp-seed`, `macscp-second`) and `macscp-probe-lock`
+/// bucket. (`createBucket` exists on the capability now and
+/// `S3CreateBucketGatedTests` exercises it; the suites built on this keep a
+/// raw create so that their set-up does not depend on the call they are not
+/// testing.) The rig's seeded buckets (`macscp-seed`, `macscp-second`) and `macscp-probe-lock`
 /// are never named by a suite built on this.
 enum S3SettingsRig {
     static let config = S3ConnectionConfig(
