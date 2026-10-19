@@ -73,6 +73,28 @@ struct ConnectionActionsMenuTests {
         #expect(checked > 0)
     }
 
+    /// The menu's own label and tooltip are catalogue entries too, and are
+    /// held to the same four languages. The keys are the view's own constants,
+    /// not copies. A tooltip that repeats its label verbatim tells the user
+    /// nothing, so the two must differ in the source text.
+    @Test func theMenuLabelAndTooltipResolveInAllFourLocalesAndDiffer() {
+        let sentinel = "ZZ-UNRESOLVED-ZZ"
+        for key in [ConnectionActionsMenu.labelKey, ConnectionActionsMenu.helpKey] {
+            for locale in Self.locales {
+                let resolved = L10n.$localeOverride.withValue(locale) {
+                    L10n.string(key, sentinel)
+                }
+                #expect(resolved != sentinel)
+                #expect(!resolved.isEmpty)
+            }
+        }
+        let english = [ConnectionActionsMenu.labelKey, ConnectionActionsMenu.helpKey].map { key in
+            L10n.$localeOverride.withValue("en") { L10n.string(key, sentinel) }
+        }
+        #expect(english.count == 2)
+        #expect(Set(english).count == 2)
+    }
+
     // MARK: - Wiring (source scans)
 
     /// `#filePath` is
@@ -131,5 +153,47 @@ struct ConnectionActionsMenuTests {
         #expect(!menu.contains(".s3"))
         #expect(!menu.contains(".ssh"))
         #expect(!menu.contains(".webdav"))
+    }
+
+    /// The window half of the same rule. Spec §5: the window reads the list
+    /// "without switching on `ConnectionKind`". The stretch of the toolbar
+    /// group that places the menu -- from the group's opening up to the first
+    /// icon -- must name no backend and branch on none. The positive check is
+    /// that the stretch really contains the construction, so an emptied
+    /// stretch cannot satisfy the negatives.
+    @Test func theWindowPlacesTheMenuWithoutNamingABackend() throws {
+        let group = try #require(try Self.toolbarGroup())
+        let firstIcon = try #require(group.range(of: "uploadButton("))
+        let placement = group[group.startIndex..<firstIcon.lowerBound]
+        #expect(placement.contains("ConnectionActionsMenu("))
+        for banned in ["ConnectionKind", ".s3", ".ssh", ".webdav", "switch ", "case "] {
+            #expect(!placement.contains(banned))
+        }
+    }
+
+    /// The one decision a person meets on the commit that introduced the menu:
+    /// with no handler wired, every row is DISABLED rather than enabled and
+    /// inert. The rule is `MacSCPApp.swift`'s ("a menu entry that is enabled
+    /// and does nothing is exactly what `PaneToggleState`'s own doc comment
+    /// rules out"); this holds the menu to it.
+    ///
+    /// Nothing is spelled that the file could be asked: the handler's name is
+    /// read from the declaration of the file's one optional-closure property,
+    /// and the check is that a `.disabled(...)` inside the `ForEach` that draws
+    /// the rows is conditioned on THAT name being `nil`. A reviewer's probe
+    /// deleted the line and the whole suite stayed green; this is the check
+    /// that probe turns red.
+    @Test func theRowsAreDisabledWhileThereIsNoHandler() throws {
+        let menu = try Self.code("Sources/MacSCPAppKit/ConnectionActionsMenu.swift")
+        let declaration = try Regex(#"let\s+(\w+):\s*\(\("#)
+        let handler = try #require(
+            menu.firstMatch(of: declaration)?.output[1].substring.map(String.init))
+        let rows = try #require(menu.range(of: "ForEach("))
+        let afterRows = menu[rows.upperBound...]
+        let disabled = try #require(afterRows.range(of: ".disabled("))
+        let argument = afterRows[disabled.upperBound...].prefix { $0 != ")" }
+        #expect(argument.contains(handler))
+        #expect(argument.contains("nil"))
+        #expect(argument.contains("=="))
     }
 }
