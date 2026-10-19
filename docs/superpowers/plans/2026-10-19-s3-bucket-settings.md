@@ -959,7 +959,10 @@ git commit -m "feat(core): record the bucket settings in the audit trail"
 ### Task 13: Closeout — docs, backlog, and the rig's leftover
 
 **Files:**
-- Modify: `docs/BACKLOG.md` (the s3Manager wishlist row)
+- Modify: `docs/BACKLOG.md` (the s3Manager wishlist row, and the row Task 6's
+  fix round opened for the unreachable `bucketListEmpty`)
+- Modify: `docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md` (§2
+  table, row 2 — see Step 4)
 - Create: a page under `/Users/noidee/_dev/noix-docs/src/content/docs/macscp/guide/`
 
 - [ ] **Step 1: Write the user documentation**
@@ -974,12 +977,35 @@ Move create bucket, CORS, Object Lock and versioning from "Missing" to done, nam
 
 A row for `macscp-probe-lock` — the bucket left on the rig under a COMPLIANCE retention until 2026-12-31 — naming that a gated test asserting on the bucket **list** will see it until the volume is reset.
 
-- [ ] **Step 4: Run the full suite and both gated suites**
+- [ ] **Step 4: Record what Task 6 made unreachable**
+
+**Added 2026-10-19, from Task 6's review.** Task 6 removed the only thrower of
+`RemoteFSError.bucketListEmpty`, so three kinds of artifact now describe an
+outcome that cannot occur, and this task's file list did not cover any of them:
+
+- `docs/superpowers/specs/2026-09-02-s3-bucket-browser-design.md:44` (§2 table,
+  row 2) — a measurement record, so the correction quotes the wording it
+  replaces rather than deleting it.
+- The four `core.connect.s3BucketListEmpty` catalogue strings (`en`, `de`, `fr`,
+  `pl`). **They are not deleted.** The enum case still has consumers — the CLI
+  mapping, `DialProbes`, two view models, `TransferFailureKind`, two AppKit
+  files — and the localization parity checks read every key a case declares.
+  Deleting the strings while the case stands breaks the parity suite; deleting
+  the case is a separate decision with its own review.
+- The five comment sites naming `connect` as the case's single thrower, which
+  Task 6's fix round put in a `docs/BACKLOG.md` row rather than in a report
+  only. This step checks that row still names them, and corrects it if the
+  count has moved.
+
+The row records the decision, not a fix: keep the case or delete it with its
+consumers in one pass. Either way the comments go with it.
+
+- [ ] **Step 5: Run the full suite and both gated suites**
 
 Run: `swift test`
 Run: `MACSCP_ITEST=1 swift test`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git commit -m "docs: close the bucket-settings half of the s3Manager row"
