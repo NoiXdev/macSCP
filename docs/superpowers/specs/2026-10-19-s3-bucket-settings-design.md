@@ -81,12 +81,31 @@ confined to creation.
 **Anti-goals** — these make the work a failure even if it ships:
 - **An empty seam.** A connection-level action list shipped empty in M12, was
   still empty ten milestones later, and M22's final review deleted it rather
-  than let it ossify — the note sits in the file this design adds to
-  (`BackendDescriptor.swift`, the paragraph beginning "There is no
-  connection-level action list"). Rebuilding it is defensible only because
-  there is now a real caller, which is the condition that note itself names
-  ("designed against a real caller"). If the five actions shrink to none, the
-  seam goes with them.
+  than let it ossify. Rebuilding it is defensible only because there is now a
+  real caller, which is the condition that note itself named ("designed
+  against a real caller"). **If the FOUR actions on this seam shrink to none,
+  the seam goes with them** — pinned by
+  `BackendContributionTests.theSeamIsNotEmptyInEveryBackend`.
+
+  **Corrected 2026-10-20, after Task 7 rebuilt the seam.** Two claims here are
+  withdrawn.
+
+  First, the pointer. This bullet read "the note sits in the file this design
+  adds to (`BackendDescriptor.swift`, the paragraph beginning "There is no
+  connection-level action list")". Task 7 rewrote that header, quoting the
+  withdrawn paragraph rather than deleting it, so that sentence now survives
+  only INSIDE a withdrawal and the header's own paragraph begins elsewhere. A
+  reader following the old pointer lands on the quotation of a note, not on a
+  note. Cite the symbol instead: the header doc comment of `BackendDescriptor`.
+
+  Second, the count. This bullet read "If the five actions shrink to none, the
+  seam goes with them", and §6 is still titled "The five actions" — correctly,
+  because it covers §6.1 to §6.5. But **only four of the five are on this
+  seam.** §6.5, Object Lock per file, is a `fileActions` contribution reached
+  from the context menu (§6.5's own first line), and `fileActions` is a seam
+  that was never empty and was never deleted. So the anti-goal's arithmetic was
+  one too many for the thing it guards, and the guard test counts four. The
+  fifth action disappearing would say nothing about this seam at all.
 - A setting that silently did nothing. Every write is read back from the
   store, never assumed from a 200.
 - A COMPLIANCE retention set by someone who did not understand it (§6.5).
