@@ -1788,15 +1788,29 @@ extension S3FileSystem: S3BucketSettings {
         try await sendExpectingSuccess(request, path: "/" + bucket)
     }
 
-    public func objectLockDefault(ofBucket bucket: String) async throws -> (days: Int, mode: RetentionMode)? {
+    /// `GET ?object-lock`, read as the state it describes. The status goes in
+    /// with the body: a bucket without Object Lock answers with an ERROR.
+    /// The one read behind `objectLockDefault`, `hasObjectLock` and the
+    /// check `setObjectLockDefault` makes before it writes.
+    private func objectLockState(ofBucket bucket: String) async throws -> S3SettingsXML.ObjectLockState {
         let request = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "GET",
             query: [(name: "object-lock", value: "")], config: config)
         let (data, response) = try await send(request)
-        // Status and body together: a bucket without Object Lock answers
-        // with an ERROR, and `nil` is how that is read.
-        return try S3SettingsXML.parseObjectLockResponse(
+        return try S3SettingsXML.parseObjectLockState(
             status: response.statusCode, body: data, path: "/" + bucket)
+    }
+
+    public func hasObjectLock(ofBucket bucket: String) async throws -> Bool {
+        if case .enabled = try await objectLockState(ofBucket: bucket) { return true }
+        return false
+    }
+
+    public func objectLockDefault(ofBucket bucket: String) async throws -> (days: Int, mode: RetentionMode)? {
+        guard case .enabled(let retention?) = try await objectLockState(ofBucket: bucket) else {
+            return nil
+        }
+        return (days: retention.days, mode: retention.mode)
     }
 
     public func setObjectLockDefault(
@@ -1806,18 +1820,12 @@ extension S3FileSystem: S3BucketSettings {
         let body = try S3SettingsXML.objectLockBody(days: days, mode: mode)
         // **Not a way to enable Object Lock.** The rig accepts this PUT on a
         // bucket that was created without Object Lock and the lock then
-        // bites; AWS refuses it (measured 2026-10-19, spec section 4).
-        // Sending it blind would make this method the very thing the
-        // protocol must not offer, and only on the store the tests run
-        // against. So the bucket is read first, and one that has no Object
-        // Lock is refused here, before a write exists.
-        let request = try Self.signedRequest(
-            .bucketRoot(bucket: bucket), method: "GET",
-            query: [(name: "object-lock", value: "")], config: config)
-        let (data, response) = try await send(request)
-        let state = try S3SettingsXML.parseObjectLockState(
-            status: response.statusCode, body: data, path: "/" + bucket)
-        guard case .enabled = state else {
+        // bites (measured 2026-10-19). Sending it blind would make this
+        // method an enable call, which nobody asked for and which cannot be
+        // undone (see the Object Lock block of `S3BucketSettings`). So the
+        // bucket is read first, and one that has no Object Lock is refused
+        // here, before a write exists.
+        guard case .enabled = try await objectLockState(ofBucket: bucket) else {
             throw RemoteFSError.finding(.objectLockNotConfigured)
         }
         // Content-MD5 is required in practice for a caller that signs its

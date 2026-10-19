@@ -2,15 +2,17 @@ import Foundation
 import MacSCPTestSupport
 
 /// The method surface of `S3BucketSettings`, read from the source rather than
-/// retyped: the protocol's own requirements, and the methods of any extension
-/// of it.
+/// retyped: the protocol's own requirements, and the methods of any
+/// extension of it declared in the SAME file (`S3BucketSettings.swift`, the
+/// only file read). An extension of the protocol in another file is not on
+/// the scanned surface.
 ///
 /// It exists for one guard (`S3ObjectLockTests`): there must be no way, on
-/// this capability, to enable Object Lock on an existing bucket. The rig
-/// accepts that request and AWS refuses it, so no test against the rig can
-/// show the absence; a scan of what the protocol offers can. A literal list of
-/// method names in a test would be a second copy that a rename leaves behind,
-/// so the names come from the declaration.
+/// this capability, to enable Object Lock on an existing bucket, which was
+/// not asked for and cannot be undone. The rig accepts that request, so no
+/// test against the rig can show the absence; a scan of what the protocol
+/// offers can. A literal list of method names in a test would be a second
+/// copy that a rename leaves behind, so the names come from the declaration.
 ///
 /// Read through `SourceCorpus.code(of:)`, which blanks comments and string
 /// literals, so a doc comment that quotes a method (this protocol's own
