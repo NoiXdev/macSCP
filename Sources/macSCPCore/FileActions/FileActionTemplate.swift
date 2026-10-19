@@ -257,7 +257,9 @@ public enum FileActionTemplate {
         }
         let scalars = command.unicodeScalars
         for span in spans where span.placement == .commandName {
-            if scalars[span.range].contains { scalar in scalar == "=" } { return false }
+            if scalars[span.range].contains(where: { scalar in scalar == "=" }) {
+                return false
+            }
         }
         var scalarIndex = scalars.startIndex
         while scalarIndex < scalars.endIndex {
