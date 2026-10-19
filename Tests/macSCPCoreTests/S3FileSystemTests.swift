@@ -1545,6 +1545,13 @@ struct S3FileSystemTests {
     </ListAllMyBucketsResult>
     """
 
+    /// What every S3 implementation answers `ListObjectsV2` on a bucket that
+    /// is not there.
+    private let noSuchBucketXML = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message><BucketName>nope</BucketName></Error>
+    """
+
     /// What AWS answers a key without `s3:ListAllMyBuckets`. MinIO does NOT
     /// answer this — measured 2026-09-02, it returns the FILTERED list
     /// instead (docker/test-server/README.md), which is why this outcome is
@@ -1665,15 +1672,39 @@ struct S3FileSystemTests {
         #expect((url.query ?? "").contains("list-type=2"))
     }
 
-    /// Outcome 2: 200 with zero buckets. The key may list, the account has
-    /// none — its own case, because "an empty browser" is not an answer the
-    /// form can explain.
-    @Test func aBucketListWithNoBucketsIsItsOwnOutcome() async throws {
-        let config = bucketListConfig
+    /// An account with no buckets connects in bucket-list mode, and its root
+    /// is an empty listing. The connect-time `ListBuckets` is still sent and
+    /// still answered: it is the readiness and authorisation probe, so the
+    /// request count and path pin that the relaxation removed a throw and
+    /// not the probe. The second canned answer is the browser's own listing
+    /// of `/`.
+    @Test func anAccountWithNoBucketsConnectsInBucketListMode() async throws {
+        let transport = FakeS3Transport(responses: [
+            (Data(emptyBucketListXML.utf8), httpResponse(status: 200)),
+            (Data(emptyBucketListXML.utf8), httpResponse(status: 200)),
+        ])
+        let fs = try await S3FileSystem.connect(bucketListConfig, transport: transport)
+        let root = try await fs.list(path: "/")
+        await fs.disconnect()
+
+        #expect(root.isEmpty)
+        let requests = await transport.requests
+        #expect(requests.count == 2)
+        let probe = try #require(requests.first)
+        #expect(probe.httpMethod == "GET")
+        #expect(probe.url?.path == "/")
+        #expect(probe.url?.query == nil)
+    }
+
+    /// What keeps the relaxation inside its reason: with a bucket NAMED, a
+    /// bucket that does not exist is still a failed connect. The configured
+    /// bucket is the one thing the user typed, so its absence is an error at
+    /// the form; an account with none to browse is not.
+    @Test func aNamedBucketThatDoesNotExistStillRefusesTheConnect() async {
         let transport = FakeS3Transport(
-            responses: [(Data(emptyBucketListXML.utf8), httpResponse(status: 200))])
-        await #expect(throws: RemoteFSError.bucketListEmpty) {
-            _ = try await S3FileSystem.connect(config, transport: transport)
+            responses: [(Data(noSuchBucketXML.utf8), httpResponse(status: 404))])
+        await #expect(throws: RemoteFSError.self) {
+            _ = try await S3FileSystem.connect(self.config, transport: transport)
         }
     }
 
