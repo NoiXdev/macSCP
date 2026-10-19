@@ -22,6 +22,12 @@ public enum BucketVersioning: String, Sendable, CaseIterable {
 /// account's bucket list has no single bucket at all, so nothing here reads
 /// one from the connection.
 ///
+/// The bucket argument is NOT validated here: an empty or malformed name
+/// goes into the request as given. Name validation belongs to
+/// `S3BucketName.problem(with:)`, which the create-bucket task of the
+/// bucket-settings plan introduces, and callers that take a name from a user
+/// run it before calling.
+///
 /// One protocol for all of a bucket's settings rather than one per setting:
 /// a backend either speaks bucket-level S3 or it does not, and a caller
 /// asking `as? S3BucketSettings` is asking exactly that. Each setting adds
