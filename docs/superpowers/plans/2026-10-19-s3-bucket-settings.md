@@ -449,11 +449,26 @@ public enum BucketNameProblem: Equatable, Sendable {
 public enum S3BucketName { public static func problem(with name: String) -> BucketNameProblem? }
 
 extension S3BucketSettings {
-    func createBucket(_ name: String, versioning: Bool, objectLock: Bool) async throws
+    enum BucketProtection: Sendable { case none, versioned, lockedAndVersioned }
+    func createBucket(_ name: String, protection: BucketProtection) async throws
 }
 ```
 
-`objectLock: true` sends `x-amz-bucket-object-lock-enabled: true` on the `CreateBucket` **and** implies versioning, which S3 requires; the call sets versioning itself rather than relying on the store.
+`.lockedAndVersioned` sends `x-amz-bucket-object-lock-enabled: true` on the
+`CreateBucket` and turns versioning on, which S3 requires; the call sets
+versioning itself rather than relying on the store, because `CreateBucket` has
+no versioning flag.
+
+**Corrected 2026-10-19, during execution.** The interface above first read
+"`func createBucket(_ name: String, versioning: Bool, objectLock: Bool) async
+throws`", and this step first read "`objectLock: true` sends
+`x-amz-bucket-object-lock-enabled: true` on the `CreateBucket` **and** implies
+versioning, which S3 requires; the call sets versioning itself rather than
+relying on the store." Two `Bool`s can express `objectLock: true,
+versioning: false`, which S3 cannot do. The implementer refused that
+combination at runtime; the controller ruled it should be unrepresentable
+instead, which deletes the refusal, its test and a mutation probe that could
+only ever be an equivalent mutant.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -840,7 +855,7 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
 - Test: `Tests/macSCPAppKitTests/CreateBucketSheetTests.swift`
 
 **Interfaces:**
-- Consumes: `S3BucketName.problem(with:)`, `createBucket(_:versioning:objectLock:)`, Task 6's empty-account connect.
+- Consumes: `S3BucketName.problem(with:)`, `createBucket(_:protection:)`, Task 6's empty-account connect. (**Corrected 2026-10-19:** first read `createBucket(_:versioning:objectLock:)` — see Task 5.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -853,6 +868,10 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
 }
 
 @MainActor @Test func objectLockIsFinalAndTheSheetSaysSo() {
+    // The note says Object Lock can never be turned off again and freezes
+    // versioning with it — NOT that it can only be set at creation, which
+    // spec §6.1 withdrew on 2026-10-19. The honest sentence is "if you say
+    // yes, you cannot undo it", not "you must decide now".
     let model = CreateBucketModel()
     #expect(model.objectLockNoteKey == "s3.createBucket.objectLockIsFinal")
 }
@@ -869,6 +888,26 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
     // invisible afterwards.
     #expect(CreateBucketModel.isOffered(rootMode: .bucketList) == true)
     #expect(CreateBucketModel.isOffered(rootMode: .bucket("x")) == false)
+}
+
+@MainActor @Test func aNameAlreadyInTheListBlocksTheButton() {
+    // **Added 2026-10-19 from Task 5's review.** MEASURED on the rig: a
+    // second `createBucket` of a bucket the key already owns SUCCEEDS, the
+    // Object Lock header does not retrofit, and the versioning request DOES
+    // take effect. Since `.never` is unrepresentable at the store, that is a
+    // one-way door opened on a bucket the user did not mean to touch, and the
+    // sheet reports "created".
+    //
+    // Core cannot tell created-from-already-owned apart on a 200, so the
+    // check lives here: this sheet is offered only in bucket-list mode, so it
+    // already holds the list and the check costs no request.
+    let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+    model.name = "macscp-seed"
+    #expect(model.canCreate == false)
+    #expect(model.problem == nil)            // the NAME is valid; it is taken
+    #expect(model.nameIsTakenKey == "s3.createBucket.nameIsTaken")
+    model.name = "macscp-third"
+    #expect(model.canCreate == true)         // the positive control
 }
 ```
 
