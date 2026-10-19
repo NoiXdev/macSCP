@@ -53,10 +53,32 @@ enum S3SettingsRig {
     }
 
     /// `method` (`PUT` creates, `DELETE` removes) on the bucket root; the
-    /// HTTP status.
-    static func bucketRequest(_ method: String, _ bucket: String, in fs: S3FileSystem) async throws -> Int {
+    /// HTTP status. `extraHeaders` are signed with the request: creating a
+    /// bucket WITH Object Lock is a `PUT` carrying
+    /// `x-amz-bucket-object-lock-enabled: true`.
+    static func bucketRequest(
+        _ method: String, _ bucket: String, extraHeaders: [String: String] = [:],
+        in fs: S3FileSystem
+    ) async throws -> Int {
         let request = try S3FileSystem.signedRequest(
-            .bucketRoot(bucket: bucket), method: method, config: config)
+            .bucketRoot(bucket: bucket), method: method, extraHeaders: extraHeaders,
+            config: config)
         return try await fs.perform(request).1.statusCode
+    }
+
+    /// A raw signed request on one object, for what the capability does not
+    /// offer: writing an object, and a `DELETE` that names a version (this
+    /// half of the work sends none itself). Returns the whole answer.
+    static func objectRequest(
+        _ method: String, bucket: String, key: String,
+        query: [(name: String, value: String)] = [],
+        extraHeaders: [String: String] = [:], body: Data? = nil, in fs: S3FileSystem
+    ) async throws -> (Data, HTTPURLResponse) {
+        let request = try S3FileSystem.signedRequest(
+            .objectKey(bucket: bucket, key: key), method: method, query: query,
+            extraHeaders: extraHeaders, body: body,
+            payloadHash: body.map { SigV4Signer.hexSHA256($0) } ?? SigV4Signer.emptyPayloadHash,
+            config: config)
+        return try await fs.perform(request)
     }
 }

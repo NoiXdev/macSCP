@@ -739,11 +739,76 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// prefix-batch walk for a key that is BOTH an object and a prefix
     /// (`docs/BACKLOG.md`, "A key that is both an object and a prefix"),
     /// since that walk never reaches the bare key itself.
+    ///
+    /// A refusal is read through `refusalOfDelete`, so a delete the store
+    /// refuses under an Object Lock says so instead of reading as a failed
+    /// credential. Measured 2026-10-19 (the rig): a plain `DELETE` of a
+    /// locked object in a lock-enabled bucket is NOT refused. The bucket is
+    /// versioned, so it answers `204` and leaves a delete marker; only a
+    /// delete that names a `versionId` meets the `403`, and nothing here sends
+    /// one yet. The refusal below is therefore not reachable from this method
+    /// against that store today, and is what the version-aware half will meet.
     private func delete(bucket: String, key: String) async throws {
         let request = try buildSignedRequest(
             bucket: bucket, method: "DELETE", key: key, query: [],
             payloadHash: SigV4Signer.emptyPayloadHash)
-        try await sendExpectingSuccess(request, path: reportedPath(bucket: bucket, key: key))
+        let (data, response) = try await send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw await refusalOfDelete(
+                status: response.statusCode, body: data, bucket: bucket, key: key)
+        }
+    }
+
+    /// The error for a refused `DELETE` of `key`: what `mapErrorStatus` makes
+    /// of the answer, except that an `AccessDenied` is first asked whether an
+    /// Object Lock is the reason.
+    ///
+    /// A legal hold and a retention period answer with the same
+    /// `AccessDenied` (and so does a credential without the permission), so
+    /// the code cannot tell them apart (`S3ErrorCode.finding`). The object can:
+    /// `lockFinding` reads its `?legal-hold` and `?retention`. Only when one
+    /// of them is in force is the answer `.objectUnderLegalHold` or
+    /// `.objectUnderRetention`; otherwise it is `mapErrorStatus`'s, unchanged,
+    /// because telling a user their file is "under a retention period" when
+    /// their key merely lacks `s3:DeleteObject` would be the defect
+    /// `S3ErrorCode` exists to remove, pointing the other way.
+    ///
+    /// The path in a finding is `key`, the caller's own, never one the store
+    /// wrote. Not `private`, so the rig test can hand it a refusal it provoked
+    /// with a versioned delete.
+    func refusalOfDelete(status: Int, body: Data, bucket: String, key: String) async -> RemoteFSError {
+        if S3ErrorCode.parse(body) == "AccessDenied",
+            let locked = await lockFinding(forRefusedDeleteOf: key, inBucket: bucket)
+        {
+            return locked
+        }
+        return Self.mapErrorStatus(
+            status, body: body, path: reportedPath(bucket: bucket, key: key))
+    }
+
+    /// `.objectUnderLegalHold` when `key` is under a legal hold,
+    /// `.objectUnderRetention` when it has a retention whose date has not
+    /// passed, `nil` when neither is established.
+    ///
+    /// The hold is asked first: an object can be under both and either one
+    /// refuses the delete, and the hold is the one a user lifts without
+    /// waiting. A read that FAILS (a bucket without Object Lock answers
+    /// `400 InvalidRequest` to both, a network error, a missing permission)
+    /// establishes nothing, and `nil` sends the caller back to the original
+    /// refusal; a probe's failure never replaces the answer it was asked
+    /// about. The current version is the one read (`versionId: nil`), which is
+    /// the only version this half deletes.
+    private func lockFinding(forRefusedDeleteOf key: String, inBucket bucket: String) async -> RemoteFSError? {
+        let path = reportedPath(bucket: bucket, key: key)
+        if (try? await legalHold(ofKey: key, inBucket: bucket, versionId: nil)) == true {
+            return .finding(.objectUnderLegalHold(path: path))
+        }
+        if let held = try? await retention(ofKey: key, inBucket: bucket, versionId: nil),
+            held.retainUntil > Date()
+        {
+            return .finding(.objectUnderRetention(path: path))
+        }
+        return nil
     }
 
     /// Creates a 0-byte marker object whose key ends in "/" — the universal
@@ -905,14 +970,27 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             }
             let responseBody = String(data: data, encoding: .utf8) ?? ""
             if responseBody.contains("<Error") {
-                // The path is the per-key `<Key>` the store echoes back,
-                // which is a key this project sent; `<Message>` is never read.
+                // A finding's path is the CALLER's own key, never the one
+                // the store echoes: the echoed `<Key>` is matched against
+                // the keys of THIS batch and the batch's spelling is used.
+                // An echoed key that is not in the batch is a value the
+                // store chose, and is skipped rather than shown as a path.
+                // `<Message>` is never read.
+                let sent = Dictionary(batch.map { ($0, $0) }, uniquingKeysWith: { first, _ in first })
                 for refusal in S3ErrorCode.perKeyRefusals(in: data) {
+                    guard let key = sent[refusal.key] else { continue }
                     if let named = S3ErrorCode.finding(
                         forCode: refusal.code, status: response.statusCode,
-                        path: reportedPath(bucket: bucket, key: refusal.key))
+                        path: reportedPath(bucket: bucket, key: key))
                     {
                         throw named
+                    }
+                    // `AccessDenied` is the code a lock and a missing
+                    // permission share; the object says which.
+                    if refusal.code == "AccessDenied",
+                        let locked = await lockFinding(forRefusedDeleteOf: key, inBucket: bucket)
+                    {
+                        throw locked
                     }
                 }
                 throw RemoteFSError.protocolError(
@@ -1708,6 +1786,125 @@ extension S3FileSystem: S3BucketSettings {
             extraHeaders: ["Content-MD5": Self.contentMD5(of: body)],
             body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
         try await sendExpectingSuccess(request, path: "/" + bucket)
+    }
+
+    public func objectLockDefault(ofBucket bucket: String) async throws -> (days: Int, mode: RetentionMode)? {
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "GET",
+            query: [(name: "object-lock", value: "")], config: config)
+        let (data, response) = try await send(request)
+        // Status and body together: a bucket without Object Lock answers
+        // with an ERROR, and `nil` is how that is read.
+        return try S3SettingsXML.parseObjectLockResponse(
+            status: response.statusCode, body: data, path: "/" + bucket)
+    }
+
+    public func setObjectLockDefault(
+        days: Int, mode: RetentionMode, ofBucket bucket: String
+    ) async throws {
+        // Built first: fewer than one day throws here, before any request.
+        let body = try S3SettingsXML.objectLockBody(days: days, mode: mode)
+        // **Not a way to enable Object Lock.** The rig accepts this PUT on a
+        // bucket that was created without Object Lock and the lock then
+        // bites; AWS refuses it (measured 2026-10-19, spec section 4).
+        // Sending it blind would make this method the very thing the
+        // protocol must not offer, and only on the store the tests run
+        // against. So the bucket is read first, and one that has no Object
+        // Lock is refused here, before a write exists.
+        let request = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "GET",
+            query: [(name: "object-lock", value: "")], config: config)
+        let (data, response) = try await send(request)
+        let state = try S3SettingsXML.parseObjectLockState(
+            status: response.statusCode, body: data, path: "/" + bucket)
+        guard case .enabled = state else {
+            throw RemoteFSError.finding(.objectLockNotConfigured)
+        }
+        // Content-MD5 is required in practice for a caller that signs its
+        // own requests: against AWS's reference, a `PutObjectLockConfiguration`
+        // without it fails 400 (maintainer ruling A, measured). The rig does
+        // not insist, so only a test of the request itself pins this
+        // (`S3ObjectLockTests`). Signed, as in `setVersioning` and `setCORS`.
+        let put = try Self.signedRequest(
+            .bucketRoot(bucket: bucket), method: "PUT",
+            query: [(name: "object-lock", value: "")],
+            extraHeaders: ["Content-MD5": Self.contentMD5(of: body)],
+            body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
+        try await sendExpectingSuccess(put, path: "/" + bucket)
+    }
+
+    public func retention(
+        ofKey key: String, inBucket bucket: String, versionId: String?
+    ) async throws -> ObjectRetention? {
+        let path = Self.objectLockPath(bucket: bucket, key: key)
+        let request = try Self.objectLockRequest(
+            "GET", subresource: "retention", bucket: bucket, key: key, versionId: versionId,
+            body: nil, config: config)
+        let (data, response) = try await send(request)
+        return try S3SettingsXML.parseRetentionResponse(
+            status: response.statusCode, body: data, path: path)
+    }
+
+    public func setRetention(
+        _ retention: ObjectRetention, ofKey key: String, inBucket bucket: String, versionId: String?
+    ) async throws {
+        let request = try Self.objectLockRequest(
+            "PUT", subresource: "retention", bucket: bucket, key: key, versionId: versionId,
+            body: S3SettingsXML.retentionBody(retention), config: config)
+        try await sendExpectingSuccess(request, path: Self.objectLockPath(bucket: bucket, key: key))
+    }
+
+    public func legalHold(
+        ofKey key: String, inBucket bucket: String, versionId: String?
+    ) async throws -> Bool {
+        let path = Self.objectLockPath(bucket: bucket, key: key)
+        let request = try Self.objectLockRequest(
+            "GET", subresource: "legal-hold", bucket: bucket, key: key, versionId: versionId,
+            body: nil, config: config)
+        let (data, response) = try await send(request)
+        return try S3SettingsXML.parseLegalHoldResponse(
+            status: response.statusCode, body: data, path: path)
+    }
+
+    public func setLegalHold(
+        _ on: Bool, ofKey key: String, inBucket bucket: String, versionId: String?
+    ) async throws {
+        let request = try Self.objectLockRequest(
+            "PUT", subresource: "legal-hold", bucket: bucket, key: key, versionId: versionId,
+            body: S3SettingsXML.legalHoldBody(on), config: config)
+        try await sendExpectingSuccess(request, path: Self.objectLockPath(bucket: bucket, key: key))
+    }
+
+    /// A signed request on one object's `?retention` or `?legal-hold`, for
+    /// one version when `versionId` is given and for the current one when it
+    /// is `nil`. A body is sent with its signed `Content-MD5`: AWS does not
+    /// list it as mandatory for these two as it does for the bucket-level
+    /// ones, and a correct digest is accepted by a store that does not demand
+    /// it (the reasoning `setCORS` gives).
+    ///
+    /// `key` is the object's key inside `bucket`, as a listing reports it: no
+    /// leading slash, nothing normalised.
+    private static func objectLockRequest(
+        _ method: String, subresource: String, bucket: String, key: String,
+        versionId: String?, body: Data?, config: S3ConnectionConfig
+    ) throws -> URLRequest {
+        var query = [(name: subresource, value: "")]
+        if let versionId { query.append((name: "versionId", value: versionId)) }
+        guard let body else {
+            return try signedRequest(
+                .objectKey(bucket: bucket, key: key), method: method, query: query, config: config)
+        }
+        return try signedRequest(
+            .objectKey(bucket: bucket, key: key), method: method, query: query,
+            extraHeaders: ["Content-MD5": contentMD5(of: body)],
+            body: body, payloadHash: SigV4Signer.hexSHA256(body), config: config)
+    }
+
+    /// What a `.notFound` from these calls names: the bucket and the key the
+    /// CALLER passed (this protocol is addressed by bucket, not by a
+    /// connection's root, so the path is `/bucket/key` in both modes).
+    private static func objectLockPath(bucket: String, key: String) -> String {
+        "/" + bucket + "/" + key
     }
 }
 

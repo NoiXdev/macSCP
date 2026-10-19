@@ -127,15 +127,16 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case requestBodyUnencodable
     /// A delete was refused because the object is under a legal hold.
     ///
-    /// DEFINED, NOT YET THROWN: the store answers a legal hold and a
-    /// retention period with the same `AccessDenied`, so
-    /// `S3ErrorCode.finding(forCode:status:path:)` cannot choose between this
-    /// and `.objectUnderRetention` and returns `nil` for that code. The
-    /// delete path that reads `?legal-hold` first is what will throw one of
-    /// the two; until it exists, nothing constructs either.
+    /// The store answers a legal hold and a retention period with the same
+    /// `AccessDenied`, so `S3ErrorCode.finding(forCode:status:path:)` cannot
+    /// choose between this and `.objectUnderRetention` and returns `nil` for
+    /// that code. The delete path reads the object's `?legal-hold` and
+    /// `?retention` and throws one of the two (`S3FileSystem.refusalOfDelete`,
+    /// and `deleteTree` for a refusal inside a `DeleteObjects` answer). The
+    /// path is always the caller's own key.
     case objectUnderLegalHold(path: String)
     /// A delete was refused because the object is under a retention period.
-    /// Defined and not yet thrown, for the reason `.objectUnderLegalHold`
+    /// Thrown by the same delete path, for the reason `.objectUnderLegalHold`
     /// gives.
     case objectUnderRetention(path: String)
     /// Object lock was asked about on a bucket that has none configured.
