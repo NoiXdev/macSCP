@@ -916,13 +916,31 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
 
 **The bucket-list gate needs a consumer, added 2026-10-20 from Task 7's review
 (I3).** Spec §6.1 says create bucket is offered in bucket-list mode only, and
-this task's `CreateBucketModel.isOffered(rootMode:)` is that rule — but as the
+this task's `CreateBucketModel.isOffered(rootIsContainerList:)` is that rule —
+but as the
 plan stood, nothing rendered it: the file list was sheet plus test, and the menu
 row had no route to a `RootMode` at all. A rule with no caller is the same
 defect as an empty seam.
 
 So this task also supplies the `s3.createBucket` row's availability through the
-hook Task 8 builds, and `isOffered(rootMode:)` is what the hook asks. Note this
+hook Task 8 builds, and `isOffered(rootIsContainerList:)` is what the hook asks.
+
+**Corrected 2026-10-20, raised by Task 8's implementer against its own work.**
+Both signatures above first read `isOffered(rootMode:)`, and the test below first
+read `isOffered(rootMode: .bucketList)` / `isOffered(rootMode: .bucket("x"))`.
+**The App cannot name a `RootMode` in production code**: `S3FileSystem.RootMode`
+is internal to Core, so a plan that asks the App to switch on it asks for
+something that does not compile outside a test with `@testable import`. Task 8
+built `ConnectionActionContext` with a `rootIsContainerList: Bool` taken from
+`RemoteFileSystem.rootIsContainerList` — a member that already exists and that
+the App already read **six times across four files** before this task
+(`git grep -n 'rootIsContainerList' dda95109 -- 'Sources/MacSCPAppKit/*.swift'`
+prints seven lines, one of them a comment at `ContentView+Detail.swift:544`) — so the gate asks the question the App
+can actually answer. Note what this costs and what it does not: the predicate no
+longer knows WHICH bucket, only whether the root is a list of them, which is all
+§6.1's rule needs.
+
+Note this
 is a **different** gate from `aNameAlreadyInTheListBlocksTheButton` below: that
 one is inside the sheet and refuses a name the account already owns; this one
 decides whether the row can be chosen at all. Both are required, and neither
@@ -957,8 +975,8 @@ substitutes for the other.
 @MainActor @Test func theActionIsOfferedOnlyInBucketListMode() {
     // Author's call, spec §6.1: a bucket made in single-bucket mode would be
     // invisible afterwards.
-    #expect(CreateBucketModel.isOffered(rootMode: .bucketList) == true)
-    #expect(CreateBucketModel.isOffered(rootMode: .bucket("x")) == false)
+    #expect(CreateBucketModel.isOffered(rootIsContainerList: true) == true)
+    #expect(CreateBucketModel.isOffered(rootIsContainerList: false) == false)
 }
 
 @MainActor @Test func aNameAlreadyInTheListBlocksTheButton() {
