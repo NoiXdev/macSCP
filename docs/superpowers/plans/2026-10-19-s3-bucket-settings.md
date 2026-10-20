@@ -1232,12 +1232,41 @@ warnings and do not edit `ci.yml` in this plan** — the gate's pattern is its o
 change with its own review, and it is now a larger change than this step first
 implied.
 
-- [ ] **Step 7: Run the full suite and both gated suites**
+- [ ] **Step 7: Open the Core rows Task 9's review earned**
+
+**Added 2026-10-20 from Task 9's review.** Three findings land in Core, which
+Task 9's brief excluded, so each is a row rather than a late edit to a reviewed
+task. All three are about `S3SettingsXML` / `CORSRule`:
+
+1. **Move the lossy-parse check into Core.** Task 9 detects a lossy CORS parse in
+   the App by re-serializing the parsed rules and comparing element-name and
+   attribute-name counts (`ElementCensus`). The reviewer verified the mechanism
+   against `CORSDelegate` and 28 constructed inputs — every element `corsBody`
+   writes maps injectively back to a distinct consumed element, so equality holds
+   **iff every element was consumed**, which is the property itself rather than a
+   proxy for it. The problem is where it lives: its correctness depends on
+   `CORSDelegate`'s depth bookkeeping one target away, so a change to `parseCORS`
+   can falsify the App's check with nothing going red. That is this project's
+   "comments that describe other code" failure with a scan standing in for the
+   comment. Preferred shape, from the review: one Core function
+   `S3SettingsXML.parseCORSReportingLoss(_:) -> (rules, isLossless)`, census
+   private inside it, tested beside `S3CORSTests`.
+2. **`corsBody` is documented as `parseCORS`'s inverse and is not, for a value
+   holding a carriage return.** `<AllowedOrigin>a&#13;b</AllowedOrigin>` parses to
+   `a\rb` and re-serializes as `a\nb`. Task 9 closes the user-visible half by
+   asserting `parseCORS(canonical) == rules` beside the census; the doc comment's
+   claim is still too strong and the asymmetry is Core's.
+3. **`CORSRule.validate()` has no range check**, so a negative `MaxAgeSeconds`
+   passes the pre-send gate and is refused by the store instead — the one place
+   this sheet's validation is less strict than the thing it is protecting the
+   user from.
+
+- [ ] **Step 8: Run the full suite and both gated suites**
 
 Run: `swift test`
 Run: `MACSCP_ITEST=1 swift test`
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git commit -m "docs: close the bucket-settings half of the s3Manager row"
