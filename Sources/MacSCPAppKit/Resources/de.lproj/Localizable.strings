@@ -462,13 +462,14 @@
 "s3.cors.pane.form" = "Felder";
 "s3.cors.pane.text" = "Text";
 "s3.cors.text.label" = "CORS-Konfiguration als Text";
-"s3.cors.formCannotShowThis" = "Der Text enthält etwas, das die Felder nicht darstellen können: ein Element, das nicht zu einer Regel gehört, eine andere Methode als GET, PUT, POST, DELETE oder HEAD oder einen Wert über mehrere Zeilen. Bearbeite ihn als Text.";
+"s3.cors.formCannotShowThis" = "Der Text enthält etwas, wofür eine Regel keinen Platz hat (%@). Deshalb sind die Felder aus, und der Text lässt sich so nicht speichern. Entferne es im Text, um zu speichern.";
+"s3.cors.formCannotShowMethod %@" = "„%@“ ist keine Methode, die erlaubt werden kann, deshalb sind die Felder aus. Verwende im Text GET, PUT, POST, DELETE oder HEAD.";
+"s3.cors.formCannotShowValue %lld" = "Ein Wert in Regel %lld geht über mehrere Zeilen, und ein Feld kann das nicht aufnehmen. Bearbeite die Regeln als Text.";
 "s3.cors.formNeedsReadableText" = "Die Felder sind aus, bis der Text wieder eine lesbare CORS-Konfiguration ist.";
 "s3.cors.problem.unreadable" = "Der Text ist noch keine lesbare CORS-Konfiguration und kann deshalb nicht gespeichert werden.";
-"s3.cors.problem.dropsSomething" = "Der Text enthält etwas, wofür eine Regel keinen Platz hat; beim Speichern ginge es verloren. Entferne es, um zu speichern.";
+"s3.cors.problem.valueChanges" = "Beim Speichern würde sich ein Wert im Text ändern, deshalb lässt er sich so nicht speichern.";
 "s3.cors.problem.noOrigin %lld" = "Regel %lld braucht mindestens einen erlaubten Ursprung.";
 "s3.cors.problem.noMethod %lld" = "Regel %lld braucht mindestens eine erlaubte Methode.";
-"s3.cors.problem.method %@" = "„%@“ ist keine Methode, die erlaubt werden kann. Verwende GET, PUT, POST, DELETE oder HEAD.";
 "s3.cors.rule.title %lld" = "Regel %lld";
 "s3.cors.field.id" = "Name (optional)";
 "s3.cors.field.origins" = "Erlaubte Ursprünge (* erlaubt jede Website)";

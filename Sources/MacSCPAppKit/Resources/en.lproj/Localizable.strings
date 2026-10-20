@@ -468,13 +468,14 @@
 "s3.cors.pane.form" = "Fields";
 "s3.cors.pane.text" = "Text";
 "s3.cors.text.label" = "CORS configuration as text";
-"s3.cors.formCannotShowThis" = "The text holds something the fields cannot show: an element that is not part of a rule, a method other than GET, PUT, POST, DELETE or HEAD, or a value spread over several lines. Edit it as text.";
+"s3.cors.formCannotShowThis" = "The text holds something a rule has no place for (%@), so the fields are off and the text cannot be saved as it is. Remove it in the text to save.";
+"s3.cors.formCannotShowMethod %@" = "“%@” is not a method that can be allowed, so the fields are off. Use GET, PUT, POST, DELETE or HEAD in the text.";
+"s3.cors.formCannotShowValue %lld" = "A value in rule %lld runs over more than one line, which a field cannot hold. Edit the rules as text.";
 "s3.cors.formNeedsReadableText" = "The fields are off until the text is a readable CORS configuration again.";
 "s3.cors.problem.unreadable" = "The text is not a readable CORS configuration yet, so it cannot be saved.";
-"s3.cors.problem.dropsSomething" = "The text holds something a rule has no place for, and saving would drop it. Remove it to save.";
+"s3.cors.problem.valueChanges" = "Saving would change a value in the text, so it cannot be saved as it is.";
 "s3.cors.problem.noOrigin %lld" = "Rule %lld needs at least one allowed origin.";
 "s3.cors.problem.noMethod %lld" = "Rule %lld needs at least one allowed method.";
-"s3.cors.problem.method %@" = "“%@” is not a method that can be allowed. Use GET, PUT, POST, DELETE or HEAD.";
 "s3.cors.rule.title %lld" = "Rule %lld";
 "s3.cors.field.id" = "Name (optional)";
 "s3.cors.field.origins" = "Allowed origins (* allows any website)";

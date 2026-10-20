@@ -15,7 +15,8 @@ import macSCPCore
 /// question the parse cannot answer for itself: does the text say anything the
 /// rules do not? (`isLossless`.) If it does, the form switches itself off
 /// and names what it cannot show, and nothing can be saved until the text
-/// stops saying it. The spec (section 6.3) calls this the honest edge:
+/// stops saying it. Two questions make one answer: whether every ELEMENT of
+/// the text was consumed, and whether every VALUE comes back as it went out. The spec (section 6.3) calls this the honest edge:
 /// measured as near-unreachable, because the store refuses elements outside
 /// the documented schema, and built because the alternative is a form that
 /// silently rewrites a configuration it did not understand.
@@ -39,9 +40,24 @@ final class BucketCORSModel {
     }
 
     /// The two panes.
-    enum Pane: Hashable {
+    enum Pane: Hashable, CaseIterable {
         case form
         case text
+    }
+
+    /// Why the fields are off. Each case carries what the sentence for it
+    /// names, so the sentence says which element, which method or which rule.
+    enum FormBlock: Equatable {
+        /// The text does not parse as a CORS configuration.
+        case unreadable
+        /// The text holds elements or attributes the rules leave out.
+        case leftOut([String])
+        /// A rule allows a method the fields have no box for.
+        case method(String)
+        /// A value in rule `rule` (counting from one) runs over several lines.
+        case value(rule: Int)
+        /// A value would change on the way back out, and nothing above says why.
+        case unstable
     }
 
     private(set) var load: Load
@@ -54,12 +70,17 @@ final class BucketCORSModel {
     /// The text parses as a CORS configuration.
     private(set) var isReadable = true
     /// The text says nothing the rules leave out (no element a rule has no
-    /// field for, no field twice, no attribute): saving the rules loses
-    /// nothing the text holds.
+    /// field for, no field twice, no attribute) and every value in it survives
+    /// being written back: saving the rules loses nothing the text holds.
     private(set) var isLossless = true
+    /// The elements and attributes the text holds that the rules leave out,
+    /// by name; empty while the text is lossless or unreadable.
+    private(set) var leftOutNames: [String] = []
+    /// Why the fields are off, or `nil` while they are on.
+    private(set) var formBlock: FormBlock?
     /// The fields can show the rules: the text is readable, lossless, and
     /// every value fits a one-line field and every method has a box.
-    private(set) var formIsAvailable = true
+    var formIsAvailable: Bool { formBlock == nil }
     /// The first rule that fails `CORSRule.validate()`, or `nil`.
     private(set) var problem: CORSValidation?
     /// Which rule it is, counting from zero.
@@ -105,6 +126,7 @@ final class BucketCORSModel {
         rules = []
         baselineRules = []
         adopt(loaded)
+        chooseOpeningPane()
     }
 
     /// A sheet whose read already failed with `loadFailure`.
@@ -134,22 +156,40 @@ final class BucketCORSModel {
         let rules: [CORSRule]
         let isReadable: Bool
         let isLossless: Bool
+        /// The names of the elements and attributes the rules leave out.
+        let leftOut: [String]
     }
 
     /// Reads `text`: the rules it parses to, and whether those rules are all it
-    /// says. The second is decided by counting: the element names (and
-    /// attribute names) of the document against those of the document the
-    /// rules write back out. A document that holds anything the rules do not
-    /// has a different count, in whatever order its fields come.
+    /// says. The second is two checks, and both must hold.
+    ///
+    /// The ELEMENTS are decided by counting: the element names (and attribute
+    /// names) of the document against those of the document the rules write
+    /// back out. A document that holds an element or attribute the rules do
+    /// not has a different count, in whatever order its fields come.
+    ///
+    /// The VALUES are decided by writing the rules out and reading them back:
+    /// the result must be the rules. Counting cannot see a value that changes
+    /// on the way (`a&#13;b` is a carriage return that XML reads back as a
+    /// newline), because no element is left out of it.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 1).** This comment read,
+    /// verbatim: "A document that holds anything the rules do not has a
+    /// different count, in whatever order its fields come." Withdrawn:
+    /// a value is something the rules hold and can fail to hold again, and
+    /// the count is the same for it. The second check above is what covers it.
     nonisolated static func read(_ text: String) -> Reading {
         let data = Data(text.utf8)
         guard let rules = try? S3SettingsXML.parseCORS(data) else {
-            return Reading(rules: [], isReadable: false, isLossless: false)
+            return Reading(rules: [], isReadable: false, isLossless: false, leftOut: [])
         }
         guard let canonical = try? S3SettingsXML.corsBody(rules),
             let theirs = ElementCensus.of(data), let ours = ElementCensus.of(canonical)
-        else { return Reading(rules: rules, isReadable: true, isLossless: false) }
-        return Reading(rules: rules, isReadable: true, isLossless: theirs == ours)
+        else { return Reading(rules: rules, isReadable: true, isLossless: false, leftOut: []) }
+        let valuesSurvive = (try? S3SettingsXML.parseCORS(canonical)) == rules
+        return Reading(
+            rules: rules, isReadable: true, isLossless: theirs == ours && valuesSurvive,
+            leftOut: theirs.excess(over: ours))
     }
 
     /// The document the form's rules are shown as: the body the store would be
@@ -172,27 +212,46 @@ final class BucketCORSModel {
         return xml
     }
 
-    /// Whether the fields can show `rules`: every method has a box, and no
-    /// value runs over more than one line.
-    nonisolated static func formCanShow(_ rules: [CORSRule]) -> Bool {
+    /// The first thing in `rules` the fields cannot show, in document order, or
+    /// `nil`: a method without a box, or a value that runs over more than one
+    /// line.
+    nonisolated static func firstUnshowable(in rules: [CORSRule]) -> FormBlock? {
         func oneLine(_ value: String) -> Bool { value.rangeOfCharacter(from: .newlines) == nil }
-        for rule in rules {
-            guard rule.id.map(oneLine) ?? true else { return false }
-            let values = rule.allowedOrigins + rule.allowedHeaders + rule.exposeHeaders
-            guard values.allSatisfy(oneLine) else { return false }
-            guard rule.allowedMethods.allSatisfy(CORSRule.allowedMethodNames.contains) else {
-                return false
+        for (index, rule) in rules.enumerated() {
+            let values = (rule.id.map { [$0] } ?? []) + rule.allowedOrigins
+                + rule.allowedHeaders + rule.exposeHeaders
+            if !values.allSatisfy(oneLine) { return .value(rule: index + 1) }
+            if let method = rule.allowedMethods.first(where: {
+                !CORSRule.allowedMethodNames.contains($0)
+            }) {
+                return .method(method)
             }
         }
-        return true
+        return nil
+    }
+
+    /// Whether the fields can show `rules`.
+    nonisolated static func formCanShow(_ rules: [CORSRule]) -> Bool {
+        firstUnshowable(in: rules) == nil
     }
 
     private func reanalyze() {
         let reading = Self.read(source)
         isReadable = reading.isReadable
         isLossless = reading.isLossless
+        leftOutNames = reading.leftOut
         if reading.isReadable { rules = reading.rules }
-        formIsAvailable = reading.isReadable && reading.isLossless && Self.formCanShow(rules)
+        if !reading.isReadable {
+            formBlock = .unreadable
+        } else if !reading.leftOut.isEmpty {
+            formBlock = .leftOut(reading.leftOut)
+        } else if let unshowable = Self.firstUnshowable(in: rules) {
+            formBlock = unshowable
+        } else if !reading.isLossless {
+            formBlock = .unstable
+        } else {
+            formBlock = nil
+        }
         problem = nil
         problemRuleIndex = nil
         if reading.isReadable {
@@ -210,6 +269,15 @@ final class BucketCORSModel {
     /// Takes a configuration read from the store as the stored state, and
     /// shows it: as fields when the fields can show it, as the document the
     /// store sent when they cannot.
+    ///
+    /// **It does not choose a pane.** Which pane the user is in is the user's;
+    /// `visiblePane` already answers for a form that has become unavailable.
+    /// `chooseOpeningPane()` is for a sheet that is opening.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 1).** This function ended with
+    /// `pane = formIsAvailable ? .form : .text`, and a save reaches it through
+    /// the read-back, so a successful save moved a user out of the text pane
+    /// while a refused save left them in it.
     private func adopt(_ loaded: BucketCORS?) {
         let loadedRules = loaded?.rules ?? []
         baselineRules = loadedRules
@@ -227,6 +295,12 @@ final class BucketCORSModel {
         load = .ready
         saveFailure = nil
         reanalyze()
+    }
+
+    /// Picks the pane a sheet opens on: the fields when they can show the
+    /// configuration, the text when they cannot. Called by the paths that open
+    /// a sheet and by nothing that runs after the user has chosen.
+    private func chooseOpeningPane() {
         pane = formIsAvailable ? .form : .text
     }
 
@@ -236,9 +310,29 @@ final class BucketCORSModel {
     /// cannot show the configuration.
     var visiblePane: Pane { pane == .form && !formIsAvailable ? .text : pane }
 
+    /// Whether `target` can be chosen now. The text always can; the fields
+    /// cannot while they are off. `selectPane` asks it, and so does
+    /// `hasAnotherPaneToChoose`, so the control and the model cannot disagree.
+    func canSelect(_ target: Pane) -> Bool { target == .text || formIsAvailable }
+
+    /// Whether the control has anything to offer: a pane other than the one on
+    /// screen that can be chosen. While the fields are off the only pane that
+    /// can be chosen is the one shown, so the control is greyed as a whole. A
+    /// control that accepts a click and does nothing is a live-but-inert row
+    /// in another coat.
+    ///
+    /// Greyed as a whole and not segment by segment because SwiftUI does not
+    /// honour `.disabled` on one option of a segmented `Picker` here: the
+    /// hosted `NSSegmentedControl` reported the segment enabled
+    /// (`BucketCORSSheetTests.theFieldsSegmentIsGreyedWhileTheFormIsOff`, red
+    /// on the first attempt, which put `.disabled` on the option).
+    var hasAnotherPaneToChoose: Bool {
+        Pane.allCases.contains { $0 != visiblePane && canSelect($0) }
+    }
+
     /// Switches pane. The form is not switched to while it is unavailable.
     func selectPane(_ target: Pane) {
-        if target == .form && !formIsAvailable { return }
+        guard canSelect(target) else { return }
         pane = target
     }
 
@@ -246,9 +340,37 @@ final class BucketCORSModel {
     /// on.
     var formUnavailableReasonKey: String? { formUnavailableLine?.key }
 
+    /// The line that says why the fields are off, naming the element, method or
+    /// rule responsible where it can.
     var formUnavailableLine: CatalogueLine? {
-        if formIsAvailable { return nil }
-        return isReadable ? Self.formCannotShowThisLine : Self.formNeedsReadableTextLine
+        switch formBlock {
+        case nil: nil
+        case .unreadable?: Self.formNeedsReadableTextLine
+        case .leftOut?: Self.formCannotShowThisLine
+        case .method?: Self.formCannotShowMethodLine
+        case .value?: Self.formCannotShowValueLine
+        case .unstable?: Self.valueChangesLine
+        }
+    }
+
+    /// `formUnavailableLine` as shown, with the name or number filled in.
+    var formUnavailableSentence: String? {
+        guard let line = formUnavailableLine else { return nil }
+        switch formBlock {
+        case .leftOut(let names)?: return String(format: line.text, Self.listed(names))
+        case .method(let method)?: return String(format: line.text, method)
+        case .value(let rule)?: return String(format: line.text, rule)
+        default: return line.text
+        }
+    }
+
+    /// Up to three names, each clipped, joined for a sentence. The names come
+    /// from the document, and the sheet's height was measured against a
+    /// sentence of bounded length.
+    nonisolated static func listed(_ names: [String]) -> String {
+        let shown = names.prefix(3).map { String($0.prefix(40)) }
+        let more = names.count > 3 ? ", …" : ""
+        return shown.joined(separator: ", ") + more
     }
 
     // MARK: - Editing through the fields
@@ -323,13 +445,21 @@ final class BucketCORSModel {
 
     /// The bucket has no CORS configuration and the sheet is not adding one.
     var hasNoConfiguration: Bool {
-        load == .ready && baselineRules.isEmpty && rules.isEmpty
+        load == .ready && baselineRules.isEmpty && baselineWasLossless && rules.isEmpty
     }
 
     /// Saving as it stands would remove the bucket's configuration: every rule
-    /// has been taken away.
+    /// has been taken away. A stored document that parsed to no rules but said
+    /// more than its rules did counts as a configuration here, so saving the
+    /// empty list over it carries the sentence too.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 1).** The condition read,
+    /// verbatim: `load == .ready && isReadable && rules.isEmpty && !baselineRules.isEmpty`.
+    /// Withdrawn: it was false for a lossy baseline with no rules, which is
+    /// the one clear that had no warning.
     var clearsTheConfiguration: Bool {
-        load == .ready && isReadable && rules.isEmpty && !baselineRules.isEmpty
+        load == .ready && isReadable && rules.isEmpty
+            && (!baselineRules.isEmpty || !baselineWasLossless)
     }
 
     /// Reads `bucket`'s CORS configuration and shows it, or shows why it could
@@ -338,6 +468,7 @@ final class BucketCORSModel {
         load = .reading
         do {
             adopt(try await settings.cors(ofBucket: bucket))
+            chooseOpeningPane()
         } catch {
             load = .failed(Self.message(for: error, applying: false))
         }
@@ -391,26 +522,28 @@ final class BucketCORSModel {
     // MARK: - What the sheet says
 
     /// Why saving is not possible, as a sentence, or `nil`.
+    ///
+    /// Only what `formUnavailableLine` does not already say. A method outside
+    /// the five, and an element a rule has no place for, each have a sentence
+    /// of their own that says the text cannot be saved as it is, so a second
+    /// red sentence would say one cause twice.
     var blockerLine: CatalogueLine? {
         if !isReadable { return Self.unreadableLine }
-        if !isLossless { return Self.dropsSomethingLine }
+        if !isLossless, case .value? = formBlock { return Self.valueChangesLine }
         switch problem {
         case .noOrigin: return Self.noOriginLine
         case .noMethod: return Self.noMethodLine
-        case .methodNotAllowed: return Self.methodLine
-        case .ok, nil: return nil
+        case .methodNotAllowed, .ok, nil: return nil
         }
     }
 
-    /// `blockerLine`, with the rule's number or the method's name in it.
+    /// `blockerLine`, with the rule's number in it.
     var blockerSentence: String? {
         guard let line = blockerLine else { return nil }
         if !isReadable || !isLossless { return line.text }
         switch problem {
         case .noOrigin?, .noMethod?:
             return String(format: line.text, (problemRuleIndex ?? 0) + 1)
-        case .methodNotAllowed(let method)?:
-            return String(format: line.text, method)
         default:
             return line.text
         }
@@ -448,26 +581,33 @@ final class BucketCORSModel {
     static let paneTextLine = CatalogueLine(key: "s3.cors.pane.text", english: "Text")
     static let textLabelLine = CatalogueLine(
         key: "s3.cors.text.label", english: "CORS configuration as text")
+    /// The key has no specifier suffix, unlike the others that take an argument:
+    /// the plan's own test names it exactly (`aConfigurationTheFormCannotShow...`).
     static let formCannotShowThisLine = CatalogueLine(
         key: "s3.cors.formCannotShowThis",
         english:
-            "The text holds something the fields cannot show: an element that is not part of a rule, a method other than GET, PUT, POST, DELETE or HEAD, or a value spread over several lines. Edit it as text.")
+            "The text holds something a rule has no place for (%@), so the fields are off and the text cannot be saved as it is. Remove it in the text to save.")
+    static let formCannotShowMethodLine = CatalogueLine(
+        key: "s3.cors.formCannotShowMethod %@",
+        english:
+            "“%@” is not a method that can be allowed, so the fields are off. Use GET, PUT, POST, DELETE or HEAD in the text.")
+    static let formCannotShowValueLine = CatalogueLine(
+        key: "s3.cors.formCannotShowValue %lld",
+        english:
+            "A value in rule %lld runs over more than one line, which a field cannot hold. Edit the rules as text.")
     static let formNeedsReadableTextLine = CatalogueLine(
         key: "s3.cors.formNeedsReadableText",
         english: "The fields are off until the text is a readable CORS configuration again.")
     static let unreadableLine = CatalogueLine(
         key: "s3.cors.problem.unreadable",
         english: "The text is not a readable CORS configuration yet, so it cannot be saved.")
-    static let dropsSomethingLine = CatalogueLine(
-        key: "s3.cors.problem.dropsSomething",
-        english: "The text holds something a rule has no place for, and saving would drop it. Remove it to save.")
+    static let valueChangesLine = CatalogueLine(
+        key: "s3.cors.problem.valueChanges",
+        english: "Saving would change a value in the text, so it cannot be saved as it is.")
     static let noOriginLine = CatalogueLine(
         key: "s3.cors.problem.noOrigin %lld", english: "Rule %lld needs at least one allowed origin.")
     static let noMethodLine = CatalogueLine(
         key: "s3.cors.problem.noMethod %lld", english: "Rule %lld needs at least one allowed method.")
-    static let methodLine = CatalogueLine(
-        key: "s3.cors.problem.method %@",
-        english: "“%@” is not a method that can be allowed. Use GET, PUT, POST, DELETE or HEAD.")
     static let ruleTitleLine = CatalogueLine(key: "s3.cors.rule.title %lld", english: "Rule %lld")
     static let idFieldLine = CatalogueLine(key: "s3.cors.field.id", english: "Name (optional)")
     static let originsFieldLine = CatalogueLine(
@@ -514,6 +654,13 @@ final class BucketCORSModel {
 /// and it says nothing about a rule.
 private struct ElementCensus: Equatable {
     private let counts: [String: Int]
+
+    /// The names `self` holds more of than `other`: what a document says that
+    /// the rules written back from it do not. Sorted, each once. An attribute
+    /// is named with its element, `Element@attribute`.
+    func excess(over other: ElementCensus) -> [String] {
+        counts.filter { $0.value > other.counts[$0.key, default: 0] }.keys.sorted()
+    }
 
     static func of(_ data: Data) -> ElementCensus? {
         let collector = Collector()
@@ -637,7 +784,9 @@ struct BucketCORSSheet: BoundedView {
             options: [
                 (BucketCORSModel.Pane.form, BucketCORSModel.paneFormLine.text),
                 (BucketCORSModel.Pane.text, BucketCORSModel.paneTextLine.text),
-            ])
+            ]
+        )
+        .disabled(!model.hasAnotherPaneToChoose)
 
         Group {
             switch model.visiblePane {
@@ -654,8 +803,8 @@ struct BucketCORSSheet: BoundedView {
         .disabled(model.isSaving)
 
         VStack(alignment: .leading, spacing: 4) {
-            if let reason = model.formUnavailableLine {
-                notice(reason.text, color: .secondary)
+            if let reason = model.formUnavailableSentence {
+                notice(reason, color: .secondary)
             }
             if model.hasNoConfiguration {
                 notice(BucketCORSModel.noneLine.text, color: .secondary)
