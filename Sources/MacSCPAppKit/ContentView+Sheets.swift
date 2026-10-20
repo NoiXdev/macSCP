@@ -150,6 +150,11 @@ extension ContentView {
         .sheet(item: $versioningSheetItem) { item in
             BucketVersioningSheet(bucket: item.bucket, settings: item.settings)
         }
+        // Bucket CORS sheet (S3 bucket settings, Task 9): opened from the same
+        // menu, through the same dispatcher.
+        .sheet(item: $corsSheetItem) { item in
+            BucketCORSSheet(bucket: item.bucket, settings: item.settings)
+        }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
         // reads straight from `auditStore`, independent of any tab.

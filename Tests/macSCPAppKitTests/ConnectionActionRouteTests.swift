@@ -82,6 +82,26 @@ struct ConnectionActionRouteTests {
         #expect(!ConnectionActionRoute.versioning.isAvailable(in: without))
     }
 
+    /// Both rows that open a sheet need the capability AND a bucket, and each
+    /// is asked of its own case: a route whose condition were copied from its
+    /// neighbour would pass the first half and fail the second.
+    @Test func corsNeedsTheCapabilityAndABucket() {
+        let withIt = Self.inOneBucket()
+        let without = Self.inOneBucket(settings: nil)
+        let blank = Self.inOneBucket("   ")
+        #expect(ConnectionActionRoute.cors.isAvailable(in: withIt))
+        #expect(!ConnectionActionRoute.cors.isAvailable(in: without))
+        #expect(!ConnectionActionRoute.cors.isAvailable(in: blank))
+        let atTheList = ConnectionActionContext(
+            settings: FakeBucketSettings(), rootIsContainerList: true, remotePath: "/",
+            configuredBucket: "ignored")
+        #expect(!ConnectionActionRoute.cors.isAvailable(in: atTheList))
+        let inABucket = ConnectionActionContext(
+            settings: FakeBucketSettings(), rootIsContainerList: true,
+            remotePath: "/macscp-seed/x", configuredBucket: "ignored")
+        #expect(ConnectionActionRoute.cors.isAvailable(in: inABucket))
+    }
+
     @Test func inOneBucketTheBucketIsTheConfiguredOneNotAPathComponent() {
         let context = Self.inOneBucket("  macscp-seed \n")
         #expect(context.bucket == "macscp-seed")
@@ -176,8 +196,20 @@ struct ConnectionActionRouteTests {
     /// does nothing, the failure the whole menu is built to rule out, and no
     /// other check here would see it. So the state each arm assigns (read off
     /// the arms, after the `switch`) must be the item of a `.sheet(item:)` in
-    /// the window's sheet file, and the sheet it builds is the versioning one
-    /// (named through the type, so a rename moves this with it).
+    /// the window's sheet file, and the sheet that presentation builds is the
+    /// one the arm's item is for.
+    ///
+    /// **Changed 2026-10-20 (S3 bucket settings, Task 9).** This test used to
+    /// end with a single expected sheet, `BucketVersioningSheet`, spelled
+    /// through its type: verbatim `let built = String(describing: BucketVersioningSheet.self) + "("`
+    /// and `#expect(rest.contains(built), "\(state) is presented, but not as \(built)")`.
+    /// With a second arm that held only for the first, and a check made to hold
+    /// for both by loosening it would have proved neither. The sheet is now
+    /// DERIVED per arm: the item type the arm constructs is `<Sheet>Item`
+    /// (`BucketVersioningSheetItem` for `BucketVersioningSheet`), and the
+    /// presentation is looked for only up to the next `.sheet(`, so one sheet's
+    /// body cannot satisfy another's check. The positive half is the count: one
+    /// distinct state per route, so an arm that assigns nothing is red.
     @Test func theStateTheDispatcherSetsIsTheOneASheetIsPresentedFor() throws {
         let placement = try Self.placement()
         let dispatcher = try Self.code("Sources/MacSCPAppKit/ContentView+MenuActions.swift")
@@ -185,16 +217,24 @@ struct ConnectionActionRouteTests {
         let selection = try Self.calledBy(argument: "onSelect", in: placement)
         let body = try Self.body(ofFunction: selection, in: dispatcher)
         let arms = try #require(body.range(of: "switch "))
-        let assigned = body[arms.upperBound...].matches(of: #/(\w+)\s*=\s*\w+\(/#)
-            .map { String($0.output.1) }
-        #expect(!assigned.isEmpty)
-        for state in assigned {
+        let assigned = body[arms.upperBound...].matches(of: #/(\w+)\s*=\s*(\w+)\(/#)
+            .map { (state: String($0.output.1), item: String($0.output.2)) }
+        #expect(assigned.count == ConnectionActionRoute.allCases.count)
+        #expect(Set(assigned.map(\.state)).count == assigned.count)
+        for (state, item) in assigned {
+            #expect(item.hasSuffix("Item"), "\(item)")
+            let sheetName = String(item.dropLast("Item".count))
             let presentation = try #require(
                 sheets.range(of: ".sheet(item: $\(state))"), "no .sheet(item: $\(state))")
-            let built = String(describing: BucketVersioningSheet.self) + "("
             let rest = sheets[presentation.upperBound...]
-            #expect(rest.contains(built), "\(state) is presented, but not as \(built)")
+            let closure = rest[..<(rest.range(of: ".sheet(")?.lowerBound ?? rest.endIndex)]
+            #expect(closure.contains(sheetName + "("), "\(state) is presented, but not as \(sheetName)")
         }
+        // The two sheets of this branch, named through their types, are the
+        // ones the arms construct items for.
+        let named = Set(assigned.map(\.item))
+        #expect(named.contains(String(describing: BucketVersioningSheet.self) + "Item"))
+        #expect(named.contains(String(describing: BucketCORSSheet.self) + "Item"))
     }
 
     /// The availability the menu draws and the action the dispatcher takes are

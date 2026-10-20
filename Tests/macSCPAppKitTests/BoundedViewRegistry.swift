@@ -76,6 +76,19 @@ enum BoundedViewRegistry {
 
     // MARK: - Shared fixtures
 
+    /// Two CORS rules: the first with every field and all five methods, the
+    /// second the plainest rule there is. Ordinary values, not invented long
+    /// ones (see the note on what a state is chosen for, above).
+    static let corsRules: [CORSRule] = [
+        CORSRule(
+            id: "website", allowedOrigins: ["https://app.example.com", "https://www.example.com"],
+            allowedMethods: CORSRule.allowedMethodNames, allowedHeaders: ["*"],
+            exposeHeaders: ["ETag", "x-amz-request-id"], maxAgeSeconds: 3000),
+        CORSRule(
+            id: nil, allowedOrigins: ["*"], allowedMethods: ["GET"], allowedHeaders: [],
+            exposeHeaders: [], maxAgeSeconds: nil),
+    ]
+
     /// A store over the temporary directory: these sheets read it to render,
     /// and none of them is asked to write during a measurement.
     private static var temporaryDirectory: URL { FileManager.default.temporaryDirectory }
@@ -262,6 +275,55 @@ enum BoundedViewRegistry {
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketVersioningModel(
                         loadFailure: BucketVersioningModel.deniedLine.text))
+            },
+
+            // Five states, because the sheet has two panes and the lines that
+            // matter sit in different ones. The form with two rules, one of
+            // them carrying every field, is the tallest realistic form and
+            // the widest row (the five method boxes). The text pane is the
+            // same configuration as the document. A configuration the fields
+            // cannot show puts the longest notice on screen (the reason the
+            // fields are off) beside the red sentence that blocks the save. A
+            // rule with no method is the form with its red sentence. A refused
+            // read is the sentence alone. Every model is handed in already in
+            // its state, so no measurement waits on a read; the capability is
+            // never called.
+            BoundedViewEntry("CORS rules as fields, one rule with every field filled in") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketCORSModel(rules: Self.corsRules))
+            },
+            BoundedViewEntry("CORS rules as text") {
+                let model = BucketCORSModel(rules: Self.corsRules)
+                model.pane = .text
+                return BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(), model: model)
+            },
+            BoundedViewEntry("a CORS configuration the fields cannot show") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketCORSModel(
+                        loaded: BucketCORS(
+                            rules: Self.corsRules,
+                            rawBody: Data(
+                                ("<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
+                                    + "<AllowedMethod>GET</AllowedMethod><Unknown>x</Unknown>"
+                                    + "</CORSRule></CORSConfiguration>").utf8))))
+            },
+            BoundedViewEntry("a CORS rule with no method, as fields") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketCORSModel(rules: [
+                        CORSRule(
+                            id: nil, allowedOrigins: ["https://app.example.com"],
+                            allowedMethods: [], allowedHeaders: [], exposeHeaders: [],
+                            maxAgeSeconds: nil)
+                    ]))
+            },
+            BoundedViewEntry("a bucket whose CORS rules could not be read") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketCORSModel(loadFailure: BucketCORSModel.deniedLine.text))
             },
 
             // The two drafts the deleted `FileActionEditorLayoutGuardTests`

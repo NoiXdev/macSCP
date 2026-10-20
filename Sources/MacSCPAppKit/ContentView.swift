@@ -743,6 +743,19 @@ struct ContentView: View {
     }
 
     @State var versioningSheetItem: BucketVersioningSheetItem?
+
+    // MARK: - Bucket CORS rules (S3 bucket settings, Task 9)
+
+    /// The bucket whose CORS rules the sheet is about, with the capability
+    /// captured at presentation time, for the reason
+    /// `BucketVersioningSheetItem` gives.
+    struct BucketCORSSheetItem: Identifiable {
+        let id = UUID()
+        let bucket: String
+        let settings: any S3BucketSettings
+    }
+
+    @State var corsSheetItem: BucketCORSSheetItem?
     /// Set by `performExport` right before `showExportFileExporter`, and
     /// cleared by the `fileExporter` completion handler — which decides
     /// whether the "exported without password" alert is needed (spec M9a

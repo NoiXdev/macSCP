@@ -455,6 +455,39 @@
 "s3.versioning.error.apply" = "Impossible de modifier la gestion des versions de ce bucket.";
 "s3.versioning.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier la gestion des versions de ce bucket.";
 
+/* Règles CORS du bucket (réglages de bucket S3, Task 9) */
+"s3.cors.title %@" = "Règles CORS du bucket « %@ »";
+"s3.cors.intro" = "Les règles CORS déterminent quels sites web peuvent utiliser les fichiers de ce bucket depuis un navigateur.";
+"s3.cors.reading" = "Vérification des règles CORS du bucket…";
+"s3.cors.none" = "Ce bucket n’a pas encore de règle CORS. Ajoutez-en une pour qu’un site web puisse utiliser ses fichiers.";
+"s3.cors.clearsAll" = "Enregistrer sans aucune règle supprime la configuration CORS de ce bucket.";
+"s3.cors.pane.label" = "Afficher les règles en";
+"s3.cors.pane.form" = "Champs";
+"s3.cors.pane.text" = "Texte";
+"s3.cors.text.label" = "Configuration CORS en texte";
+"s3.cors.formCannotShowThis" = "Le texte contient quelque chose que les champs ne peuvent pas afficher : un élément qui ne fait pas partie d’une règle, une méthode autre que GET, PUT, POST, DELETE ou HEAD, ou une valeur répartie sur plusieurs lignes. Modifiez-le en texte.";
+"s3.cors.formNeedsReadableText" = "Les champs sont désactivés tant que le texte n’est pas de nouveau une configuration CORS lisible.";
+"s3.cors.problem.unreadable" = "Le texte n’est pas encore une configuration CORS lisible ; il ne peut donc pas être enregistré.";
+"s3.cors.problem.dropsSomething" = "Le texte contient quelque chose pour quoi une règle n’a pas de place ; l’enregistrement le perdrait. Supprimez-le pour enregistrer.";
+"s3.cors.problem.noOrigin %lld" = "La règle %lld nécessite au moins une origine autorisée.";
+"s3.cors.problem.noMethod %lld" = "La règle %lld nécessite au moins une méthode autorisée.";
+"s3.cors.problem.method %@" = "« %@ » n’est pas une méthode qui peut être autorisée. Utilisez GET, PUT, POST, DELETE ou HEAD.";
+"s3.cors.rule.title %lld" = "Règle %lld";
+"s3.cors.field.id" = "Nom (facultatif)";
+"s3.cors.field.origins" = "Origines autorisées (* autorise tout site web)";
+"s3.cors.field.methods" = "Méthodes autorisées";
+"s3.cors.field.allowedHeaders" = "En-têtes autorisés";
+"s3.cors.field.exposeHeaders" = "En-têtes exposés";
+"s3.cors.field.maxAge" = "Mettre la réponse en cache pendant (secondes)";
+"s3.cors.action.addRule" = "Ajouter une règle";
+"s3.cors.action.removeRule" = "Supprimer la règle";
+"s3.cors.action.addEntry" = "Ajouter";
+"s3.cors.action.removeEntry" = "Supprimer";
+"s3.cors.action.save" = "Enregistrer";
+"s3.cors.error.read" = "Les règles CORS de ce bucket n’ont pas pu être lues.";
+"s3.cors.error.apply" = "Les règles CORS de ce bucket n’ont pas pu être enregistrées.";
+"s3.cors.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier les règles CORS de ce bucket.";
+
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";
 "common.apply" = "Appliquer";

@@ -452,6 +452,39 @@
 "s3.versioning.error.apply" = "Die Versionierung dieses Buckets konnte nicht geändert werden.";
 "s3.versioning.error.denied" = "Dein Zugangsschlüssel darf die Versionierung dieses Buckets weder lesen noch ändern.";
 
+/* Bucket-CORS-Regeln (S3-Bucket-Einstellungen, Task 9) */
+"s3.cors.title %@" = "CORS-Regeln für „%@“";
+"s3.cors.intro" = "CORS-Regeln legen fest, welche Websites die Dateien dieses Buckets aus einem Browser heraus verwenden dürfen.";
+"s3.cors.reading" = "CORS-Regeln des Buckets werden geprüft…";
+"s3.cors.none" = "Dieser Bucket hat noch keine CORS-Regeln. Füge eine hinzu, damit eine Website seine Dateien verwenden kann.";
+"s3.cors.clearsAll" = "Wenn du ohne Regeln speicherst, wird die CORS-Konfiguration dieses Buckets entfernt.";
+"s3.cors.pane.label" = "Regeln anzeigen als";
+"s3.cors.pane.form" = "Felder";
+"s3.cors.pane.text" = "Text";
+"s3.cors.text.label" = "CORS-Konfiguration als Text";
+"s3.cors.formCannotShowThis" = "Der Text enthält etwas, das die Felder nicht darstellen können: ein Element, das nicht zu einer Regel gehört, eine andere Methode als GET, PUT, POST, DELETE oder HEAD oder einen Wert über mehrere Zeilen. Bearbeite ihn als Text.";
+"s3.cors.formNeedsReadableText" = "Die Felder sind aus, bis der Text wieder eine lesbare CORS-Konfiguration ist.";
+"s3.cors.problem.unreadable" = "Der Text ist noch keine lesbare CORS-Konfiguration und kann deshalb nicht gespeichert werden.";
+"s3.cors.problem.dropsSomething" = "Der Text enthält etwas, wofür eine Regel keinen Platz hat; beim Speichern ginge es verloren. Entferne es, um zu speichern.";
+"s3.cors.problem.noOrigin %lld" = "Regel %lld braucht mindestens einen erlaubten Ursprung.";
+"s3.cors.problem.noMethod %lld" = "Regel %lld braucht mindestens eine erlaubte Methode.";
+"s3.cors.problem.method %@" = "„%@“ ist keine Methode, die erlaubt werden kann. Verwende GET, PUT, POST, DELETE oder HEAD.";
+"s3.cors.rule.title %lld" = "Regel %lld";
+"s3.cors.field.id" = "Name (optional)";
+"s3.cors.field.origins" = "Erlaubte Ursprünge (* erlaubt jede Website)";
+"s3.cors.field.methods" = "Erlaubte Methoden";
+"s3.cors.field.allowedHeaders" = "Erlaubte Header";
+"s3.cors.field.exposeHeaders" = "Freigegebene Header";
+"s3.cors.field.maxAge" = "Antwort zwischenspeichern für (Sekunden)";
+"s3.cors.action.addRule" = "Regel hinzufügen";
+"s3.cors.action.removeRule" = "Regel entfernen";
+"s3.cors.action.addEntry" = "Hinzufügen";
+"s3.cors.action.removeEntry" = "Entfernen";
+"s3.cors.action.save" = "Speichern";
+"s3.cors.error.read" = "Die CORS-Regeln dieses Buckets konnten nicht gelesen werden.";
+"s3.cors.error.apply" = "Die CORS-Regeln dieses Buckets konnten nicht gespeichert werden.";
+"s3.cors.error.denied" = "Dein Zugangsschlüssel darf die CORS-Regeln dieses Buckets weder lesen noch ändern.";
+
 /* Gemeinsam (M7b/T3) */
 "common.close" = "Schließen";
 "common.apply" = "Übernehmen";
