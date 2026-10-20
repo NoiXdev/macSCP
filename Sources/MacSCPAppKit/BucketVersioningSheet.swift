@@ -96,9 +96,16 @@ final class BucketVersioningModel {
     ///
     /// Suspending says what it does and what it does not do: it stops new
     /// versions being kept, it removes none that exist, and what exists keeps
-    /// counting toward the bill. Enabling says it is a one-way door. Both are
-    /// plain words and name nothing of how the store works. Resuming a
-    /// suspended bucket has nothing further to warn about.
+    /// counting toward the bill. Enabling says it is a one-way door. Resuming
+    /// a suspended bucket says what the click starts again: versions are kept
+    /// on every change from then on, and they cost. It must not say the
+    /// one-way thing -- that door is already shut by then. All three are plain
+    /// words and name nothing of how the store works.
+    ///
+    /// **Corrected 2026-10-20 (Task 8 review, Minor 5).** This comment read,
+    /// verbatim: "Resuming a suspended bucket has nothing further to warn
+    /// about." Withdrawn: resuming was the one offered action that said
+    /// nothing about cost, and `.suspended` returned `nil` here.
     var warning: CatalogueLine? {
         switch current {
         case .never:
@@ -109,7 +116,11 @@ final class BucketVersioningModel {
             CatalogueLine(
                 key: "s3.versioning.suspendKeepsVersions",
                 english: "Suspending stops new versions from being kept. It does not remove any version that is already stored: every earlier version stays, and keeps counting toward your storage costs until it is deleted.")
-        case .suspended, nil:
+        case .suspended:
+            CatalogueLine(
+                key: "s3.versioning.resumeKeepsVersions",
+                english: "Turning versioning back on keeps the earlier version again every time a file is changed or deleted, and those versions count toward your storage costs.")
+        case nil:
             nil
         }
     }

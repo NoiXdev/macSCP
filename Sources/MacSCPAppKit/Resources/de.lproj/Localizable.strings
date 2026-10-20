@@ -445,6 +445,7 @@
 "s3.versioning.state.suspended" = "Die Versionierung ist ausgesetzt. Änderungen erzeugen keine neuen Versionen mehr, die bereits gespeicherten Versionen bleiben aber erhalten.";
 "s3.versioning.enableIsOneWay" = "Einmal eingeschaltet, lässt sich die Versionierung nur noch aussetzen, nicht mehr entfernen. Solange sie eingeschaltet ist, wird jede frühere Version einer Datei aufbewahrt und zählt zu deinen Speicherkosten.";
 "s3.versioning.suspendKeepsVersions" = "Das Aussetzen verhindert nur, dass neue Versionen aufbewahrt werden. Bereits gespeicherte Versionen werden nicht entfernt: Jede frühere Version bleibt erhalten und zählt weiter zu deinen Speicherkosten, bis sie gelöscht wird.";
+"s3.versioning.resumeKeepsVersions" = "Wenn du die Versionierung wieder einschaltest, bleibt bei jeder Änderung oder Löschung einer Datei wieder die frühere Version erhalten, und diese Versionen zählen zu deinen Speicherkosten.";
 "s3.versioning.action.enable" = "Versionierung einschalten";
 "s3.versioning.action.suspend" = "Versionierung aussetzen";
 "s3.versioning.error.read" = "Die Versionierung dieses Buckets konnte nicht gelesen werden.";
