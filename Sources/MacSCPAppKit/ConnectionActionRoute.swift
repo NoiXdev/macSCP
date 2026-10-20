@@ -56,6 +56,7 @@ struct ConnectionActionContext {
 /// the descriptors: renaming an id on one side alone is red.
 enum ConnectionActionRoute: String, CaseIterable {
     case versioning = "s3.versioning"
+    case cors = "s3.cors"
 
     init?(action: ConnectionActionContribution) {
         self.init(rawValue: action.id)
@@ -68,6 +69,8 @@ enum ConnectionActionRoute: String, CaseIterable {
     func isAvailable(in context: ConnectionActionContext) -> Bool {
         switch self {
         case .versioning:
+            context.settings != nil && context.bucket != nil
+        case .cors:
             context.settings != nil && context.bucket != nil
         }
     }

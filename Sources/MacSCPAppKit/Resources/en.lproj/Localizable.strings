@@ -458,6 +458,39 @@
 "s3.versioning.error.apply" = "The versioning of this bucket could not be changed.";
 "s3.versioning.error.denied" = "Your access key is not allowed to read or change the versioning of this bucket.";
 
+/* Bucket CORS rules (S3 bucket settings, Task 9) */
+"s3.cors.title %@" = "CORS rules for “%@”";
+"s3.cors.intro" = "CORS rules decide which websites may use this bucket's files from a browser.";
+"s3.cors.reading" = "Checking the bucket's CORS rules…";
+"s3.cors.none" = "This bucket has no CORS rules yet. Add one to let a website use its files.";
+"s3.cors.clearsAll" = "Saving without any rules removes this bucket's CORS configuration.";
+"s3.cors.pane.label" = "Show rules as";
+"s3.cors.pane.form" = "Fields";
+"s3.cors.pane.text" = "Text";
+"s3.cors.text.label" = "CORS configuration as text";
+"s3.cors.formCannotShowThis" = "The text holds something the fields cannot show: an element that is not part of a rule, a method other than GET, PUT, POST, DELETE or HEAD, or a value spread over several lines. Edit it as text.";
+"s3.cors.formNeedsReadableText" = "The fields are off until the text is a readable CORS configuration again.";
+"s3.cors.problem.unreadable" = "The text is not a readable CORS configuration yet, so it cannot be saved.";
+"s3.cors.problem.dropsSomething" = "The text holds something a rule has no place for, and saving would drop it. Remove it to save.";
+"s3.cors.problem.noOrigin %lld" = "Rule %lld needs at least one allowed origin.";
+"s3.cors.problem.noMethod %lld" = "Rule %lld needs at least one allowed method.";
+"s3.cors.problem.method %@" = "“%@” is not a method that can be allowed. Use GET, PUT, POST, DELETE or HEAD.";
+"s3.cors.rule.title %lld" = "Rule %lld";
+"s3.cors.field.id" = "Name (optional)";
+"s3.cors.field.origins" = "Allowed origins (* allows any website)";
+"s3.cors.field.methods" = "Allowed methods";
+"s3.cors.field.allowedHeaders" = "Allowed headers";
+"s3.cors.field.exposeHeaders" = "Exposed headers";
+"s3.cors.field.maxAge" = "Cache the answer for (seconds)";
+"s3.cors.action.addRule" = "Add Rule";
+"s3.cors.action.removeRule" = "Remove Rule";
+"s3.cors.action.addEntry" = "Add";
+"s3.cors.action.removeEntry" = "Remove";
+"s3.cors.action.save" = "Save";
+"s3.cors.error.read" = "The CORS rules of this bucket could not be read.";
+"s3.cors.error.apply" = "The CORS rules of this bucket could not be saved.";
+"s3.cors.error.denied" = "Your access key is not allowed to read or change the CORS rules of this bucket.";
+
 /* Shared (M7b/T3) */
 "common.close" = "Close";
 "common.apply" = "Apply";

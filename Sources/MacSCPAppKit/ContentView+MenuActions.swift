@@ -153,6 +153,10 @@ extension ContentView {
             if let settings = context.settings, let bucket = context.bucket {
                 versioningSheetItem = BucketVersioningSheetItem(bucket: bucket, settings: settings)
             }
+        case .cors:
+            if let settings = context.settings, let bucket = context.bucket {
+                corsSheetItem = BucketCORSSheetItem(bucket: bucket, settings: settings)
+            }
         }
     }
 }

@@ -376,6 +376,14 @@ struct RigidControlScanTests {
     /// `RigidControls.swift:57`, that file's own header prose, which the
     /// blanked view does not see. `theCallSiteScanReadsCodeAndNotProse` is the
     /// check on that.
+    ///
+    /// **Corrected 2026-10-20 (S3 bucket settings, Task 9).** The paragraph
+    /// above read, verbatim: "(12 lines)" for `SegmentedChoice`, "(6)" for
+    /// `CheckboxRow`, "20 lines in all" and "the counts below sum to 19". The CORS
+    /// sheet adds one site of each, so the same three commands, run again and
+    /// under `/usr/bin/grep` alike, print 13, 2 and 7: 22 lines in all, and the
+    /// counts below sum to 21 (the same one line of header prose is the
+    /// difference).
     fileprivate struct Component: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String
@@ -388,6 +396,7 @@ struct RigidControlScanTests {
             name: "SegmentedChoice",
             pattern: #"(?:^|\W)SegmentedChoice\("#,
             sites: [
+                "BucketCORSSheet.swift": 1,
                 "ConnectionFormView.swift": 3,
                 "FileActionEditor.swift": 1,
                 "LoginSetsSheet.swift": 1,
@@ -405,6 +414,7 @@ struct RigidControlScanTests {
             name: "CheckboxRow",
             pattern: #"(?:^|\W)CheckboxRow\("#,
             sites: [
+                "BucketCORSSheet.swift": 1,
                 "FileActionEditor.swift": 2,
                 "SheetSearchField.swift": 1,
                 "SnippetsSheet.swift": 2,
