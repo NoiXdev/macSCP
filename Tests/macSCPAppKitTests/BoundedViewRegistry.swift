@@ -86,15 +86,36 @@ enum BoundedViewRegistry {
         return model
     }
 
-    /// `tag` followed by twenty times the length a sentence will show of a name,
-    /// in the widest letter, so the entry measures what the clip lets through
-    /// and goes red if the clip goes. Twenty and not three: the first version
-    /// used three, and taking the clip off the method left the layout guard
-    /// green, because a sentence three times as long wraps onto a few more lines
-    /// and still fits (`scripts/mutation-probe` G1b, 2026-10-20). Twenty is 800
-    /// characters, longer than the 600 that took the sheet to 653 pt against 620.
+    /// How many characters of the widest letter an overlong name or method has.
+    ///
+    /// **What it must beat.** It exists so that taking the clip off a sentence
+    /// makes the layout guard red. That happens when the unclipped text wraps
+    /// onto enough extra lines to carry the state past the sheet's 620 pt, and
+    /// the room there is is the state's headroom: 620 less 536 for the method
+    /// entry, 84 pt. It
+    /// is a property of the sheet's layout and says nothing about `nameLimit`,
+    /// so the figure is a number of its own and not a multiple of the limit: a
+    /// multiple would shrink if the limit were lowered while the headroom it
+    /// has to overrun did not (decided 2026-10-20, fix round 3; the first
+    /// version was `BucketCORSModel.nameLimit * 20`).
+    ///
+    /// **What was measured.** With the method's clip planted out
+    /// (`scripts/mutation-probe --filter BoundedViewLayoutGuardTests`, the
+    /// `String(format: line.text, Self.clipped(method))` plant of the commit
+    /// message of 9ba2d1d2) the guard is GREEN at 120 characters, GREEN at 200,
+    /// RED at 400 and RED at 800, each run through the probe with the fixture
+    /// changed in the same `perl` (probes F120, F200, F400 and F800 of the
+    /// commit that wrote this comment, which hold the exact commands). So the
+    /// smallest length known to work is 400, and
+    /// 800 is twice that and four times the longest known to fail. It is also
+    /// longer than the 600 that took the sheet to 653 pt in the re-review.
+    /// `theOverlongFixtureIsLongEnoughToCatchTheClip` pins the floor of 400.
+    static let corsOverlongLength = 800
+
+    /// `tag` followed by `corsOverlongLength` of the widest letter, so the entry
+    /// measures what the clip lets through and goes red if the clip goes.
     static func corsOverlong(_ tag: String) -> String {
-        tag + String(repeating: "W", count: BucketCORSModel.nameLimit * 20)
+        tag + String(repeating: "W", count: corsOverlongLength)
     }
 
     /// Two CORS rules: the first with every field and all five methods, the
