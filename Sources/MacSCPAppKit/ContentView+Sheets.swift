@@ -145,6 +145,11 @@ extension ContentView {
             PresignedURLSheet(
                 itemKey: item.itemKey, provider: item.provider, settingsStore: settingsStore)
         }
+        // Bucket versioning sheet (S3 bucket settings, Task 8): opened from the
+        // toolbar's connection-actions menu through `handleConnectionAction`.
+        .sheet(item: $versioningSheetItem) { item in
+            BucketVersioningSheet(bucket: item.bucket, settings: item.settings)
+        }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
         // reads straight from `auditStore`, independent of any tab.

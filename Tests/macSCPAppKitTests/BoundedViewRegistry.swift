@@ -234,6 +234,36 @@ enum BoundedViewRegistry {
                     settingsStore: SettingsStore(directory: temporaryDirectory))
             },
 
+            // Four states, because each carries sentences the others do not:
+            // the never-versioned bucket the one-way-door warning and the
+            // enable button, the enabled one the suspension warning about
+            // cost (the longest text the sheet has) and the suspend button,
+            // the suspended one its own state sentence and no warning, and a
+            // refused read the red sentence alone. Every one is handed a
+            // model already in its state, so no measurement waits on a read;
+            // the capability is never called.
+            BoundedViewEntry("a never-versioned bucket, with the one-way warning") {
+                BucketVersioningSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketVersioningModel(current: .never))
+            },
+            BoundedViewEntry("an enabled bucket, with the suspension warning") {
+                BucketVersioningSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketVersioningModel(current: .enabled))
+            },
+            BoundedViewEntry("a suspended bucket, offered enabling again") {
+                BucketVersioningSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketVersioningModel(current: .suspended))
+            },
+            BoundedViewEntry("a bucket whose versioning could not be read") {
+                BucketVersioningSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: BucketVersioningModel(
+                        loadFailure: BucketVersioningModel.deniedLine.text))
+            },
+
             // The two drafts the deleted `FileActionEditorLayoutGuardTests`
             // measured, unchanged: a new editor, and one whose variable row
             // has a declaration of each kind and each placement on screen.

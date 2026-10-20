@@ -728,6 +728,21 @@ struct ContentView: View {
     }
 
     @State var presignedSheetItem: PresignedSheetItem?
+
+    // MARK: - Bucket versioning (S3 bucket settings, Task 8)
+
+    /// The bucket whose versioning the sheet is about, with the capability
+    /// captured at presentation time -- the same "capture now, not later"
+    /// discipline `PresignedSheetItem` follows, so the sheet keeps talking to
+    /// the file system it was opened against even if the active tab changes
+    /// underneath it.
+    struct BucketVersioningSheetItem: Identifiable {
+        let id = UUID()
+        let bucket: String
+        let settings: any S3BucketSettings
+    }
+
+    @State var versioningSheetItem: BucketVersioningSheetItem?
     /// Set by `performExport` right before `showExportFileExporter`, and
     /// cleared by the `fileExporter` completion handler — which decides
     /// whether the "exported without password" alert is needed (spec M9a

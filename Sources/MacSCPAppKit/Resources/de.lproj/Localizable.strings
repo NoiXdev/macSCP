@@ -438,6 +438,18 @@
 "connection.action.versioning" = "Versionierung…";
 "connection.action.cors" = "CORS-Regeln…";
 "connection.action.objectLock" = "Objektsperre…";
+"s3.versioning.title %@" = "Versionierung für „%@“";
+"s3.versioning.reading" = "Versionierung des Buckets wird geprüft…";
+"s3.versioning.state.never" = "Für diesen Bucket wurde die Versionierung noch nie eingeschaltet. Es wird nur die jeweils aktuelle Version jeder Datei aufbewahrt.";
+"s3.versioning.state.enabled" = "Die Versionierung ist eingeschaltet. Wird eine Datei geändert oder gelöscht, bleibt die frühere Version erhalten.";
+"s3.versioning.state.suspended" = "Die Versionierung ist ausgesetzt. Änderungen erzeugen keine neuen Versionen mehr, die bereits gespeicherten Versionen bleiben aber erhalten.";
+"s3.versioning.enableIsOneWay" = "Einmal eingeschaltet, lässt sich die Versionierung nur noch aussetzen, nicht mehr entfernen. Solange sie eingeschaltet ist, wird jede frühere Version einer Datei aufbewahrt und zählt zu deinen Speicherkosten.";
+"s3.versioning.suspendKeepsVersions" = "Das Aussetzen verhindert nur, dass neue Versionen aufbewahrt werden. Bereits gespeicherte Versionen werden nicht entfernt: Jede frühere Version bleibt erhalten und zählt weiter zu deinen Speicherkosten, bis sie gelöscht wird.";
+"s3.versioning.action.enable" = "Versionierung einschalten";
+"s3.versioning.action.suspend" = "Versionierung aussetzen";
+"s3.versioning.error.read" = "Die Versionierung dieses Buckets konnte nicht gelesen werden.";
+"s3.versioning.error.apply" = "Die Versionierung dieses Buckets konnte nicht geändert werden.";
+"s3.versioning.error.denied" = "Dein Zugangsschlüssel darf die Versionierung dieses Buckets weder lesen noch ändern.";
 
 /* Gemeinsam (M7b/T3) */
 "common.close" = "Schließen";

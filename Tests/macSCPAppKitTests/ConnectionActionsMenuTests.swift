@@ -77,7 +77,7 @@ struct ConnectionActionsMenuTests {
     /// held to the same four languages. The keys are the view's own constants,
     /// not copies. A tooltip that repeats its label verbatim tells the user
     /// nothing, so the two must differ in the source text.
-    @Test func theMenuLabelAndTooltipResolveInAllFourLocalesAndDiffer() {
+    @MainActor @Test func theMenuLabelAndTooltipResolveInAllFourLocalesAndDiffer() {
         let sentinel = "ZZ-UNRESOLVED-ZZ"
         for key in [ConnectionActionsMenu.labelKey, ConnectionActionsMenu.helpKey] {
             for locale in Self.locales {
@@ -171,29 +171,69 @@ struct ConnectionActionsMenuTests {
         }
     }
 
-    /// The one decision a person meets on the commit that introduced the menu:
-    /// with no handler wired, every row is DISABLED rather than enabled and
-    /// inert. The rule is `MacSCPApp.swift`'s ("a menu entry that is enabled
-    /// and does nothing is exactly what `PaneToggleState`'s own doc comment
-    /// rules out"); this holds the menu to it.
+    /// The one decision a person meets on the menu: a row whose own id has no
+    /// arm is DISABLED rather than enabled and inert. The rule is
+    /// `MacSCPApp.swift`'s ("a menu entry that is enabled and does nothing is
+    /// exactly what `PaneToggleState`'s own doc comment rules out"); this
+    /// holds the menu to it.
     ///
-    /// Nothing is spelled that the file could be asked: the handler's name is
-    /// read from the declaration of the file's one optional-closure property,
-    /// and the check is that a `.disabled(...)` inside the `ForEach` that draws
-    /// the rows is conditioned on THAT name being `nil`. A reviewer's probe
-    /// deleted the line and the whole suite stayed green; this is the check
-    /// that probe turns red.
-    @Test func theRowsAreDisabledWhileThereIsNoHandler() throws {
+    /// **Rewritten, not deleted, when the menu got a handler (Task 8).** Its
+    /// first form required a `.disabled(...)` conditioned on the menu's single
+    /// optional handler being `nil`, because one handler served every row. The
+    /// handler is per row now, so that property stopped being the property the
+    /// code has. What the guard exists for did not change: without it the whole
+    /// user-visible behaviour of the menu's first commit was unpinned, and a
+    /// plant deleting the line came back green during review.
+    ///
+    /// Both halves it was built with are kept. Nothing is spelled that the file
+    /// could be asked: the predicate's name is read from the declaration of the
+    /// file's one closure property that takes a contribution and answers
+    /// `Bool`, and the row's variable from the `ForEach` that draws the rows.
+    /// The condition is READ, not merely present: the `.disabled(...)` inside
+    /// that `ForEach` must name the predicate, hand it the row, and negate it,
+    /// so a `.disabled(false)` and a predicate asked with the wrong row or
+    /// with the sense inverted are all red. The positive halves are the
+    /// `#require`s: a file the patterns can no longer read fails them instead
+    /// of satisfying a negative.
+    ///
+    /// What this does NOT pin is that the predicate answers `false` for an id
+    /// with no arm; that is `ConnectionActionRouteTests`, which exercises the
+    /// predicate itself.
+    @Test func aRowIsDisabledUnlessItsOwnIdIsAvailable() throws {
         let menu = try Self.code("Sources/MacSCPAppKit/ConnectionActionsMenu.swift")
-        let declaration = try Regex(#"let\s+(\w+):\s*\(\("#)
-        let handler = try #require(
+        let declaration = try Regex(#"let\s+(\w+):\s*\(ConnectionActionContribution\)\s*->\s*Bool"#)
+        let predicate = try #require(
             menu.firstMatch(of: declaration)?.output[1].substring.map(String.init))
+        let loop = try Regex(#"ForEach\([^)]*\)\s*\{\s*(\w+)\s+in"#)
+        let row = try #require(menu.firstMatch(of: loop)?.output[1].substring.map(String.init))
         let rows = try #require(menu.range(of: "ForEach("))
         let afterRows = menu[rows.upperBound...]
         let disabled = try #require(afterRows.range(of: ".disabled("))
-        let argument = afterRows[disabled.upperBound...].prefix { $0 != ")" }
-        #expect(argument.contains(handler))
-        #expect(argument.contains("nil"))
-        #expect(argument.contains("=="))
+        let argument = String(afterRows[disabled.upperBound...].prefix { $0 != "\n" })
+        #expect(argument.hasPrefix("!"))
+        #expect(Self.names(predicate, in: argument))
+        #expect(Self.names(row, in: argument))
+    }
+
+    /// Whether `name` stands in `text` as a whole identifier. A substring test
+    /// would take `actions` for the row `action` handed in by the `ForEach` of
+    /// the same menu; the edges are spelled out because Swift's `Regex` has no
+    /// lookbehind.
+    private static func names(_ name: String, in text: String) -> Bool {
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        guard
+            let regex = try? NSRegularExpression(
+                pattern: "(?<![A-Za-z0-9_])\(escaped)(?![A-Za-z0-9_])")
+        else { return false }
+        return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    /// The matcher above, on the cases that made it necessary: a positive
+    /// first, so a matcher that always said `false` does not pass the rest.
+    @Test func theIdentifierMatcherTakesWholeNamesOnly() {
+        #expect(Self.names("action", in: "!isAvailable(action)"))
+        #expect(!Self.names("action", in: "!isAvailable(actions)"))
+        #expect(!Self.names("action", in: "!isAvailable(reaction)"))
+        #expect(!Self.names("isAvailable", in: "!isAvailableNow(action)"))
     }
 }

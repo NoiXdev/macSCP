@@ -30,9 +30,17 @@ public struct FileActionContribution: Sendable, Equatable, Identifiable {
 /// -- and `titleKey`/`titleDefault` follow the catalogue convention every
 /// contribution here uses.
 ///
-/// Nothing routes by a connection action's `id` yet: the toolbar menu has no
+/// The window routes by a connection action's `id` through
+/// `ConnectionActionRoute`, which has a case for each id the window carries
+/// out; a row whose id has no case renders disabled. No list of those ids is
+/// kept here -- the enum's `allCases` is the list.
+///
+/// **Corrected 2026-10-20 (Task 8).** This paragraph used to read, verbatim:
+/// "Nothing routes by a connection action's `id` yet: the toolbar menu has no
 /// handler wired (`ConnectionActionsMenu.onSelect`), so the rows render
-/// disabled. An earlier wording of this paragraph said "the window routes by
+/// disabled." That was true when it was written and is withdrawn: the menu
+/// has a per-row availability and an action handler, and `s3.versioning` is
+/// routed. An earlier wording of this paragraph said "the window routes by
 /// it and never by `ConnectionKind`", present tense; that was true of the file
 /// actions and aspirational here, and is withdrawn.
 public struct ConnectionActionContribution: Sendable, Equatable, Identifiable {
