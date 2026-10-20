@@ -769,7 +769,30 @@ git commit -m "feat(app): turn a bucket's versioning on, and say what suspending
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/BucketCORSSheet.swift`
-- Test: `Tests/macSCPAppKitTests/BucketCORSSheetTests.swift`
+- Modify: `Sources/MacSCPAppKit/ConnectionActionRoute.swift`,
+  `ContentView+MenuActions.swift`, `ContentView.swift`,
+  `ContentView+Sheets.swift` (**added 2026-10-20** — see "Wiring" below)
+- Test: `Tests/macSCPAppKitTests/BucketCORSSheetTests.swift`,
+  `Tests/macSCPAppKitTests/BoundedViewRegistry.swift`
+
+**Wiring, added 2026-10-20 — without it this task builds a sheet nothing opens.**
+Task 8 built the dispatcher: `ConnectionActionRoute` is a `String`-raw enum whose
+`switch` in `handleConnectionAction` has **no `default`**, so adding a case
+without an arm does not compile. Add the case, its arm, and the sheet's
+presentation the way Task 8 did for `s3.versioning` —
+`ConnectionActionRoute.swift` (the case), `ContentView+MenuActions.swift` (the
+arm), `ContentView.swift` (the sheet item), `ContentView+Sheets.swift` (the
+presentation) — plus the `BoundedViewRegistry` entries and the
+`BoundedViewCoverageTests` floor, which Task 8 also had to raise. Until the case
+exists the row stays disabled, which is correct but is not this task's
+deliverable.
+
+This is the third and fourth instance of one plan defect: Task 7 shipped a menu
+with no handler (review I2), Task 11's gate had no caller (review I3), and
+Tasks 9 and 11 each listed a sheet and its test and nothing that opens them.
+A rule, a view or a seam with no caller is the same defect wearing different
+clothes, and this plan produced it four times.
+
 
 **Interfaces:**
 - Consumes: `CORSRule`, `CORSValidation`, `S3BucketSettings.cors(ofBucket:)`.
@@ -909,7 +932,31 @@ git commit -m "feat(app): set a retention or a legal hold, and make compliance d
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/CreateBucketSheet.swift`
-- Test: `Tests/macSCPAppKitTests/CreateBucketSheetTests.swift`
+- Modify: `Sources/MacSCPAppKit/ConnectionActionRoute.swift`,
+  `ContentView+MenuActions.swift`, `ContentView.swift`,
+  `ContentView+Sheets.swift`, `ContentView+Lifecycle.swift` (the row's
+  availability — see the gate note below) (**added 2026-10-20**)
+- Test: `Tests/macSCPAppKitTests/CreateBucketSheetTests.swift`,
+  `Tests/macSCPAppKitTests/BoundedViewRegistry.swift`
+
+**Wiring, added 2026-10-20 — without it this task builds a sheet nothing opens.**
+Task 8 built the dispatcher: `ConnectionActionRoute` is a `String`-raw enum whose
+`switch` in `handleConnectionAction` has **no `default`**, so adding a case
+without an arm does not compile. Add the case, its arm, and the sheet's
+presentation the way Task 8 did for `s3.versioning` —
+`ConnectionActionRoute.swift` (the case), `ContentView+MenuActions.swift` (the
+arm), `ContentView.swift` (the sheet item), `ContentView+Sheets.swift` (the
+presentation) — plus the `BoundedViewRegistry` entries and the
+`BoundedViewCoverageTests` floor, which Task 8 also had to raise. Until the case
+exists the row stays disabled, which is correct but is not this task's
+deliverable.
+
+This is the third and fourth instance of one plan defect: Task 7 shipped a menu
+with no handler (review I2), Task 11's gate had no caller (review I3), and
+Tasks 9 and 11 each listed a sheet and its test and nothing that opens them.
+A rule, a view or a seam with no caller is the same defect wearing different
+clothes, and this plan produced it four times.
+
 
 **Interfaces:**
 - Consumes: `S3BucketName.problem(with:)`, `createBucket(_:protection:)`, Task 6's empty-account connect, and Task 8's per-row availability hook in `ContentView+Lifecycle.swift`. (**Corrected 2026-10-19:** first read `createBucket(_:versioning:objectLock:)` — see Task 5. **Extended 2026-10-20:** the availability hook, see below.)
