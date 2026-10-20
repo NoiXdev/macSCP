@@ -16,12 +16,19 @@ import macSCPCore
 struct ConnectionActionsMenu: View {
     let descriptor: BackendDescriptor
 
-    /// What choosing an action does. `nil` while the window has no handler
-    /// for the action ids yet, in which case every row is DISABLED rather than
-    /// enabled and inert -- an entry that looks live and does nothing is the
-    /// worse of the two failures (`PaneToggleState` makes the same choice for
-    /// the pane toggles).
-    let onSelect: ((ConnectionActionContribution) -> Void)?
+    /// Whether THIS row can be carried out now. A row for which it answers
+    /// `false` is DISABLED rather than enabled and inert -- an entry that
+    /// looks live and does nothing is the worse of the two failures
+    /// (`PaneToggleState` makes the same choice for the pane toggles).
+    ///
+    /// Per row, not one flag for the menu: the rows are wired one at a time,
+    /// and a row's availability can depend on the connection. The window
+    /// answers it from `ConnectionActionRoute`.
+    let isAvailable: (ConnectionActionContribution) -> Bool
+
+    /// What choosing an action does. Called only for a row `isAvailable`
+    /// allowed, since a disabled button does not fire.
+    let onSelect: (ConnectionActionContribution) -> Void
 
     /// The catalogue keys of the menu's own label and its tooltip. Named here
     /// so the tests that hold them to all four languages read them rather than
@@ -38,13 +45,13 @@ struct ConnectionActionsMenu: View {
         Menu {
             ForEach(descriptor.connectionActions) { action in
                 Button {
-                    onSelect?(action)
+                    onSelect(action)
                 } label: {
                     Label(
                         L10n.string(action.titleKey, action.titleDefault),
                         systemImage: action.systemImage)
                 }
-                .disabled(onSelect == nil)
+                .disabled(!isAvailable(action))
             }
         } label: {
             Label(

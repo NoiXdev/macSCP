@@ -441,6 +441,18 @@
 "connection.action.versioning" = "Gestion des versions…";
 "connection.action.cors" = "Règles CORS…";
 "connection.action.objectLock" = "Verrouillage d’objet…";
+"s3.versioning.title %@" = "Gestion des versions du bucket « %@ »";
+"s3.versioning.reading" = "Vérification de la gestion des versions…";
+"s3.versioning.state.never" = "La gestion des versions n’a jamais été activée pour ce bucket. Seule la version actuelle de chaque fichier est conservée.";
+"s3.versioning.state.enabled" = "La gestion des versions est activée. Chaque fois qu’un fichier est modifié ou supprimé, la version précédente est conservée.";
+"s3.versioning.state.suspended" = "La gestion des versions est suspendue. Les modifications ne conservent plus de nouvelles versions, mais les versions déjà enregistrées restent.";
+"s3.versioning.enableIsOneWay" = "Une fois activée, la gestion des versions peut seulement être suspendue, jamais retirée. Tant qu’elle est active, chaque version précédente d’un fichier est conservée et compte dans vos coûts de stockage.";
+"s3.versioning.suspendKeepsVersions" = "La suspension empêche seulement la conservation de nouvelles versions. Elle ne supprime aucune version déjà enregistrée : chaque version précédente reste et continue de compter dans vos coûts de stockage, jusqu’à sa suppression.";
+"s3.versioning.action.enable" = "Activer la gestion des versions";
+"s3.versioning.action.suspend" = "Suspendre la gestion des versions";
+"s3.versioning.error.read" = "Impossible de lire la gestion des versions de ce bucket.";
+"s3.versioning.error.apply" = "Impossible de modifier la gestion des versions de ce bucket.";
+"s3.versioning.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier la gestion des versions de ce bucket.";
 
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";

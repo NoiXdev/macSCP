@@ -439,6 +439,18 @@
 "connection.action.versioning" = "Wersjonowanie…";
 "connection.action.cors" = "Reguły CORS…";
 "connection.action.objectLock" = "Blokada obiektów…";
+"s3.versioning.title %@" = "Wersjonowanie bucketa „%@”";
+"s3.versioning.reading" = "Sprawdzanie wersjonowania bucketa…";
+"s3.versioning.state.never" = "Wersjonowanie nigdy nie zostało włączone dla tego bucketa. Przechowywana jest tylko bieżąca wersja każdego pliku.";
+"s3.versioning.state.enabled" = "Wersjonowanie jest włączone. Gdy plik zostanie zmieniony lub usunięty, jego poprzednia wersja zostaje zachowana.";
+"s3.versioning.state.suspended" = "Wersjonowanie jest wstrzymane. Zmiany nie zachowują już kolejnych wersji, ale wersje zapisane wcześniej pozostają.";
+"s3.versioning.enableIsOneWay" = "Po włączeniu wersjonowanie można później tylko wstrzymać, nie można go usunąć. Dopóki jest włączone, każda wcześniejsza wersja pliku jest zachowywana i wlicza się do kosztów przechowywania.";
+"s3.versioning.suspendKeepsVersions" = "Wstrzymanie tylko zatrzymuje zachowywanie nowych wersji. Nie usuwa żadnej już zapisanej wersji: każda wcześniejsza wersja pozostaje i nadal wlicza się do kosztów przechowywania, dopóki nie zostanie usunięta.";
+"s3.versioning.action.enable" = "Włącz wersjonowanie";
+"s3.versioning.action.suspend" = "Wstrzymaj wersjonowanie";
+"s3.versioning.error.read" = "Nie udało się odczytać wersjonowania tego bucketa.";
+"s3.versioning.error.apply" = "Nie udało się zmienić wersjonowania tego bucketa.";
+"s3.versioning.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu ani zmiany wersjonowania tego bucketa.";
 
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";

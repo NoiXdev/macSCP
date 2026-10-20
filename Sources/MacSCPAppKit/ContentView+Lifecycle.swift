@@ -57,13 +57,16 @@ extension ContentView {
                     // 7): FIRST, so the menu lands in the free area left of
                     // the icon group below. The descriptor decides whether
                     // it exists at all -- a backend with no actions draws no
-                    // menu, not an empty one. No handler is wired yet (the
-                    // sheets arrive with the action ids they open), so the
-                    // rows render disabled instead of inert.
+                    // menu, not an empty one. Each row asks the route table
+                    // whether its own id has an arm (`ConnectionActionRoute`)
+                    // and is disabled when it has none, instead of inert.
                     let descriptor = BackendDescriptor.descriptor(
                         for: activeTab.connectionViewModel.kind)
                     if ConnectionActionsMenu.isPresented(for: descriptor) {
-                        ConnectionActionsMenu(descriptor: descriptor, onSelect: nil)
+                        ConnectionActionsMenu(
+                            descriptor: descriptor,
+                            isAvailable: { connectionActionIsAvailable($0, in: activeTab, session: session) },
+                            onSelect: { handleConnectionAction($0, in: activeTab, session: session) })
                     }
                     uploadButton(in: activeTab, session: session)
                     downloadButton(in: activeTab, session: session)
