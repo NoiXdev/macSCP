@@ -212,22 +212,36 @@ final class BucketCORSModel {
         return xml
     }
 
-    /// The first thing in `rules` the fields cannot show, in document order, or
-    /// `nil`: a method without a box, or a value that runs over more than one
-    /// line.
+    /// What the fields cannot show in `rules`, or `nil`: a method without a box,
+    /// or a value that runs over more than one line.
+    ///
+    /// **A method outranks a value, wherever each is.** A method outside the
+    /// five stops the save (`CORSRule.validate()` refuses it) and a value over
+    /// several lines does not, and the form-off sentence is the one place that
+    /// says why Save is off for a method. Reporting whichever came first in the
+    /// document put the value sentence on screen, which is not the reason, and
+    /// left the method unsaid.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 3).** This comment began:
+    /// "The first thing in `rules` the fields cannot show, in document order, or
+    /// `nil`". Withdrawn: it is the first METHOD in document order if there is
+    /// one, else the first value.
     nonisolated static func firstUnshowable(in rules: [CORSRule]) -> FormBlock? {
         func oneLine(_ value: String) -> Bool { value.rangeOfCharacter(from: .newlines) == nil }
+        var firstValue: FormBlock?
         for (index, rule) in rules.enumerated() {
-            let values = (rule.id.map { [$0] } ?? []) + rule.allowedOrigins
-                + rule.allowedHeaders + rule.exposeHeaders
-            if !values.allSatisfy(oneLine) { return .value(rule: index + 1) }
             if let method = rule.allowedMethods.first(where: {
                 !CORSRule.allowedMethodNames.contains($0)
             }) {
                 return .method(method)
             }
+            let values = (rule.id.map { [$0] } ?? []) + rule.allowedOrigins
+                + rule.allowedHeaders + rule.exposeHeaders
+            if firstValue == nil, !values.allSatisfy(oneLine) {
+                firstValue = .value(rule: index + 1)
+            }
         }
-        return nil
+        return firstValue
     }
 
     /// Whether the fields can show `rules`.
@@ -542,10 +556,19 @@ final class BucketCORSModel {
 
     /// Why saving is not possible, as a sentence, or `nil`.
     ///
-    /// Only what `formUnavailableLine` does not already say. A method outside
-    /// the five, and an element a rule has no place for, each have a sentence
-    /// of their own that says the text cannot be saved as it is, so a second
-    /// red sentence would say one cause twice.
+    /// Only what `formUnavailableLine` does not already say. An element a rule
+    /// has no place for has a sentence that says the text cannot be saved as it
+    /// is, and so does an `.unstable` value. A method outside the five has a
+    /// sentence that says the method cannot be allowed, which is the reason
+    /// Save is off, without the word "save" in it; none of the three gets a
+    /// second red sentence that would say one cause twice.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 3).** This paragraph read,
+    /// verbatim: "A method outside the five, and an element a rule has no place
+    /// for, each have a sentence of their own that says the text cannot be saved
+    /// as it is". Withdrawn for the method: its English sentence is "“%@” is not
+    /// a method that can be allowed, so the fields are off. Use GET, PUT, POST,
+    /// DELETE or HEAD in the text." It names the cause and does not say "saved".
     ///
     /// **One sentence whatever the mix, in this order:** unreadable text, then
     /// a value that would change on the way back, then the first rule that
@@ -554,8 +577,16 @@ final class BucketCORSModel {
     /// sentence is about the method and says nothing of the value; a document
     /// with both used to end with a disabled Save and no sentence about the
     /// value at all. An element left out (`.leftOut`) and an `.unstable` value
-    /// carry their own "cannot be saved as it is" in the form-off sentence.
-    /// `blockingSentence` is the one that is always there.
+    /// carry their own sentence in the form-off line.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 3).** This paragraph ended:
+    /// "`blockingSentence` is the one that is always there." False for a value
+    /// over several lines together with a method outside the five: the form-off
+    /// cause was then the value (it came first in the document), the value does
+    /// not block the save, and the method was said nowhere. `firstUnshowable`
+    /// now ranks a method above a value, and
+    /// `BucketCORSSheetTests.everyCombinationOfCausesThatBlocksASaveSaysWhy`
+    /// enumerates the causes instead of listing the pairs that were thought of.
     var blockerLine: CatalogueLine? {
         if !isReadable { return Self.unreadableLine }
         if !isLossless {
@@ -587,10 +618,16 @@ final class BucketCORSModel {
     }
 
     /// The sentence that says why Save is off when it is off for a reason the
-    /// text carries: the blocker, or else the form-off sentence for the causes
-    /// whose sentence says the text cannot be saved as it is. `nil` only when
-    /// nothing blocks a save (or the block is not the text's: nothing changed,
-    /// a write in flight, the store not read).
+    /// text carries: the blocker, or else the form-off sentence of the causes
+    /// that carry their own (an element left out, a method outside the five, an
+    /// unstable value). `nil` only when nothing in the text blocks a save (or
+    /// the block is not the text's: nothing changed, a write in flight, the
+    /// store not read).
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 3).** This comment read,
+    /// verbatim: "the form-off sentence for the causes whose sentence says the
+    /// text cannot be saved as it is". Withdrawn with the same sentence in
+    /// `blockerLine`: the method's does not.
     var blockingSentence: String? {
         if let blocker = blockerSentence { return blocker }
         switch formBlock {

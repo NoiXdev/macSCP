@@ -715,7 +715,7 @@ struct BucketCORSSheetTests {
         #expect(!showsMore)
     }
 
-    // MARK: - A document with several causes always says why (fix round 2)
+    // MARK: - A document that cannot be saved always says why (fix rounds 2 and 3)
 
     private static func ruleXML(origin: String, methods: [String]) -> String {
         "<CORSRule><AllowedOrigin>\(origin)</AllowedOrigin>"
@@ -726,58 +726,158 @@ struct BucketCORSSheetTests {
         "<CORSConfiguration>" + rules.joined() + "</CORSConfiguration>"
     }
 
-    /// Documents with more than one thing wrong, and the singles they are made
-    /// of. Every one cannot be saved, and every one must say why.
-    private static let documentsThatCannotBeSaved: [String] = [
-        // The reviewer's: a method outside the five in rule 1, a carriage return in rule 2.
-        configuration(
-            ruleXML(origin: "*", methods: ["FETCH"]), ruleXML(origin: "a&#13;b", methods: ["GET"])),
-        // An element left out beside a rule with no origin.
-        configuration(
-            "<CORSRule><AllowedMethod>GET</AllowedMethod><Extra>x</Extra></CORSRule>"),
-        // An element left out beside a method outside the five.
-        configuration(
-            "<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>FETCH</AllowedMethod>"
-                + "<Extra>x</Extra></CORSRule>"),
-        // An element left out beside a carriage return.
-        configuration(
-            "<CORSRule><AllowedOrigin>a&#13;b</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
-                + "<Extra>x</Extra></CORSRule>"),
-        // A value over several lines beside a rule with no method.
-        configuration(
-            ruleXML(origin: "a\nb", methods: ["GET"]),
-            "<CORSRule><AllowedOrigin>*</AllowedOrigin></CORSRule>"),
-        // A method outside the five beside a rule with no origin.
-        configuration(
-            "<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>",
-            ruleXML(origin: "*", methods: ["FETCH"])),
-        // A carriage return beside a rule with no origin.
-        configuration(
-            ruleXML(origin: "a&#13;b", methods: ["GET"]),
-            "<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>"),
-        // The singles.
-        configuration(ruleXML(origin: "*", methods: ["FETCH"])),
-        configuration(ruleXML(origin: "a&#13;b", methods: ["GET"])),
-        configuration("<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
-            + "<Extra>x</Extra></CORSRule>"),
-        configuration("<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>"),
-        "<CORSConfiguration><CORSRule>",
-    ]
+    /// Everything that can be wrong with one rule of a document, one case each.
+    ///
+    /// **This is the list the battery is derived from.** Round 2 wrote the
+    /// battery as twelve documents, the pairs its author thought of, and it
+    /// passed while a multi-line value beside a method outside the five ended
+    /// with a disabled Save and no sentence about why. The documents are now
+    /// every combination of these cases, so a case added here is combined with
+    /// every other without anyone remembering to add a row, and a case added
+    /// without saying whether it blocks a save does not compile
+    /// (`blocksSaving` has no default).
+    private enum Cause: CaseIterable {
+        case leftOutElement
+        case methodOutsideTheFive
+        case multiLineOrigin
+        case multiLineID
+        case multiLineHeader
+        case carriageReturnOrigin
+        case noOrigin
+        case noMethod
+        case blankOrigin
 
-    @MainActor @Test(arguments: BucketCORSSheetTests.documentsThatCannotBeSaved)
-    func aDocumentThatCannotBeSavedAlwaysSaysWhy(document: String) {
-        let model = BucketCORSModel(rules: [])
-        model.text = document
-        let sentence = L10n.$localeOverride.withValue("en") { model.blockingSentence ?? "" }
-        let said = !sentence.isEmpty
-        // A sentence with an argument left in it is not a sentence.
-        let unformatted = sentence.contains("%")
-        #expect(!model.canSave)
-        #expect(said)
-        #expect(!unformatted)
+        /// Whether a document with this cause cannot be saved. A value over
+        /// several lines reads back as it went out, so it is the one kind of
+        /// cause that turns the fields off and leaves Save on.
+        var blocksSaving: Bool {
+            switch self {
+            case .multiLineOrigin, .multiLineID, .multiLineHeader: false
+            case .leftOutElement, .methodOutsideTheFive, .carriageReturnOrigin, .noOrigin,
+                .noMethod, .blankOrigin:
+                true
+            }
+        }
     }
 
-    /// The positive beside the battery: a document that can be saved says
+    /// One `<CORSRule>` under construction: a valid rule, with causes applied.
+    private struct RuleParts {
+        var id: String?
+        var origins = ["*"]
+        var methods = ["GET"]
+        var headers: [String] = []
+        var extras = ""
+
+        mutating func apply(_ cause: Cause) {
+            switch cause {
+            case .leftOutElement: extras += "<Extra>x</Extra>"
+            case .methodOutsideTheFive: methods.append("FETCH")
+            case .multiLineOrigin: origins.append("a\nb")
+            case .multiLineID: id = "x\ny"
+            case .multiLineHeader: headers.append("x\ny")
+            case .carriageReturnOrigin: origins.append("a&#13;b")
+            case .noOrigin: origins = []
+            case .noMethod: methods = []
+            case .blankOrigin: origins.append(" ")
+            }
+        }
+
+        var xml: String {
+            "<CORSRule>" + (id.map { "<ID>\($0)</ID>" } ?? "")
+                + origins.map { "<AllowedOrigin>\($0)</AllowedOrigin>" }.joined()
+                + methods.map { "<AllowedMethod>\($0)</AllowedMethod>" }.joined()
+                + headers.map { "<AllowedHeader>\($0)</AllowedHeader>" }.joined()
+                + extras + "</CORSRule>"
+        }
+    }
+
+    /// The documents that have exactly `causes`: each cause in a rule of its
+    /// own in the order given, the same in reverse, and all of them in one rule.
+    /// With no causes, one valid rule.
+    private static func documents(having causes: [Cause]) -> [String] {
+        func rule(_ applied: [Cause]) -> String {
+            var parts = RuleParts()
+            applied.forEach { parts.apply($0) }
+            return parts.xml
+        }
+        guard !causes.isEmpty else { return [configuration(rule([]))] }
+        let apart = causes.map { rule([$0]) }
+        return [
+            "<CORSConfiguration>" + apart.joined() + "</CORSConfiguration>",
+            "<CORSConfiguration>" + apart.reversed().joined() + "</CORSConfiguration>",
+            configuration(rule(causes)),
+        ]
+    }
+
+    /// Every subset of `Cause`, in each of the three arrangements. A document
+    /// with a cause that blocks a save cannot be saved and says why in a
+    /// sentence with nothing left unformatted; a document with none can be
+    /// saved and says nothing. The failures are named by their causes (the
+    /// names are this file's own, not the document's).
+    @MainActor @Test func everyCombinationOfCausesThatBlocksASaveSaysWhy() {
+        let all = Cause.allCases
+        var failures: Set<String> = []
+        var blocked = 0
+        var saveable = 0
+        for mask in 0..<(1 << all.count) {
+            let causes = all.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
+            let shouldBlock = causes.contains { $0.blocksSaving }
+            for document in Self.documents(having: causes) {
+                let model = BucketCORSModel(rules: [])
+                model.text = document
+                let sentence = L10n.$localeOverride.withValue("en") { model.blockingSentence }
+                let says = !(sentence ?? "").isEmpty
+                let unformatted = (sentence ?? "").contains("%")
+                let holds: Bool
+                if shouldBlock {
+                    blocked += 1
+                    holds = !model.canSave && says && !unformatted
+                } else {
+                    saveable += 1
+                    holds = model.canSave && sentence == nil
+                }
+                if !holds {
+                    failures.insert(causes.map { String(describing: $0) }.joined(separator: " + "))
+                }
+            }
+        }
+        #expect(failures.isEmpty, "\(failures.sorted())")
+        // The positives: the sweep reached both kinds, and all of them.
+        #expect(blocked > 0)
+        #expect(saveable > 0)
+        #expect(blocked + saveable == 3 * (1 << all.count) - 2 * 1)
+    }
+
+    /// The pair round 2 missed, named: a value over several lines beside a
+    /// method outside the five. The value reads back as it went out, so it does
+    /// not block the save; the method does, and it is the method that is said.
+    @MainActor @Test func aMethodIsSaidBesideAValueOverSeveralLines() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.configuration(
+            Self.ruleXML(origin: "a\nb", methods: ["GET"]),
+            Self.ruleXML(origin: "*", methods: ["FETCH"]))
+        #expect(!model.canSave)
+        #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowMethodLine.key)
+        let sentence = L10n.$localeOverride.withValue("en") { model.blockingSentence ?? "" }
+        let names = sentence.contains("FETCH")
+        #expect(names)
+        // The control: the value alone neither blocks the save nor is it blocked.
+        let alone = BucketCORSModel(rules: [])
+        alone.text = Self.configuration(Self.ruleXML(origin: "a\nb", methods: ["GET"]))
+        #expect(alone.canSave)
+        #expect(alone.formUnavailableReasonKey == BucketCORSModel.formCannotShowValueLine.key)
+    }
+
+    /// Text that is not a configuration yet says so: the one cause that is not
+    /// a property of a rule, so it is not in `Cause`.
+    @MainActor @Test func unreadableTextSaysWhyItCannotBeSaved() {
+        let model = BucketCORSModel(rules: [])
+        model.text = "<CORSConfiguration><CORSRule>"
+        #expect(!model.canSave)
+        #expect(model.blockingSentence != nil)
+    }
+
+    /// The positive beside the sweep: a document that can be saved says
     /// nothing about why it cannot, so "always says why" is not "always says".
     @MainActor @Test func aDocumentThatCanBeSavedHasNoBlockingSentence() {
         let model = BucketCORSModel(rules: [])
@@ -786,13 +886,24 @@ struct BucketCORSSheetTests {
         #expect(model.blockingSentence == nil)
     }
 
-    /// The reviewer's document: before the round the method sentence stood
-    /// alone and the carriage return was never mentioned.
+    /// The reviewer's document of round 2: before that round the method
+    /// sentence stood alone and the carriage return was never mentioned.
     @MainActor @Test func aMethodAndACarriageReturnAreBothSaid() {
         let model = BucketCORSModel(rules: [])
-        model.text = Self.documentsThatCannotBeSaved[0]
+        model.text = Self.configuration(
+            Self.ruleXML(origin: "*", methods: ["FETCH"]),
+            Self.ruleXML(origin: "a&#13;b", methods: ["GET"]))
         #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowMethodLine.key)
         #expect(model.blockerLine?.key == BucketCORSModel.valueChangesLine.key)
+    }
+
+    /// The registry's overlong fixture has to be long enough that taking the
+    /// clip off a sentence turns the layout guard red. 400 is the shortest
+    /// length measured to do that (the comment on `corsOverlongLength` has the
+    /// measurements); a shorter fixture is a guard that cannot go red.
+    @MainActor @Test func theOverlongFixtureIsLongEnoughToCatchTheClip() {
+        #expect(BoundedViewRegistry.corsOverlongLength >= 400)
+        #expect(BoundedViewRegistry.corsOverlongLength > BucketCORSModel.nameLimit)
     }
 
     // MARK: - A control with nothing to choose is greyed (fix round 1, M7)
