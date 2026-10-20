@@ -1148,13 +1148,42 @@ CI's gate matches **none** of them. Its pattern is
   here` line, which says `note:` and not `warning:`, and begins with a backtick
   and a hyphen rather than a path.
 
-So `MAX_WARNINGS: 0` was never at risk from these — but the reason is that the
-gate cannot see a diagnostic reported against a macro-expansion buffer, and in
-this repository every test assertion is `#expect`. That is the failure mode
-`CLAUDE.md` describes for negative checks: a budget of zero that passes looks
-exactly like a budget that can see nothing. Open the row with the commands
-above; **do not fix the warnings and do not edit `ci.yml` in this plan** — the
-gate's pattern is its own change with its own review.
+**Corrected 2026-10-20 by Task 8's review, which found a second and more general
+cause.** This step first read: "So `MAX_WARNINGS: 0` was never at risk from
+these — but the reason is that the gate cannot see a diagnostic reported against
+a macro-expansion buffer, and in this repository every test assertion is
+`#expect`." That mechanism is real and still stands for this class of warning,
+but it is not the only one, and the one it hid is worse.
+
+**The compiler colours its diagnostics even when stdout is a file or a pipe**, so
+an ordinary warning line reads `…:82:43: <ESC>[1;33mwarning: …` and the gate's
+pattern, which expects `warning:` directly after the location, matches none of
+them. Task 8's review measured four actor-isolation warnings in the AppKit test
+target that way: **0 of 4** matched on the raw log and **4 of 4** only after
+`perl -pe 's/\e\[[0-9;]*m//g'`. CI captures the same way
+(`2>&1 | tee "$RUNNER_TEMP/test.log"`, `.github/workflows/ci.yml:123-124`).
+
+The two causes are independent and hit different classes:
+
+- An **ordinary** diagnostic is invisible because of the colour escape. Stripping
+  ANSI makes it visible.
+- A **macro-expansion** diagnostic is invisible for a second reason on top:
+  its location is `macro expansion #expect:1:46:`, which contains a space, and
+  the line carrying the real file says `note:` rather than `warning:`. Measured
+  on the controller's Core-target log: the gate's pattern matches **0** raw and
+  still **0** after stripping ANSI.
+
+So, locally, the gate cannot see a compiler diagnostic at all. **Whether CI's
+logs are coloured was not measured** — the reviewer says so explicitly — and
+that is the first thing the row's investigation should settle, because it decides
+whether `MAX_WARNINGS: 0` has ever held anything. What does not change either
+way: the branch is pushable, since nothing it adds matches the gate however the
+gate behaves.
+
+Open the row with the commands above and both mechanisms; **do not fix the
+warnings and do not edit `ci.yml` in this plan** — the gate's pattern is its own
+change with its own review, and it is now a larger change than this step first
+implied.
 
 - [ ] **Step 7: Run the full suite and both gated suites**
 
