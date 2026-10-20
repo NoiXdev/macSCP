@@ -358,18 +358,37 @@ final class BucketCORSModel {
         guard let line = formUnavailableLine else { return nil }
         switch formBlock {
         case .leftOut(let names)?: return String(format: line.text, Self.listed(names))
-        case .method(let method)?: return String(format: line.text, method)
+        case .method(let method)?: return String(format: line.text, Self.clipped(method))
         case .value(let rule)?: return String(format: line.text, rule)
         default: return line.text
         }
     }
 
-    /// Up to three names, each clipped, joined for a sentence. The names come
-    /// from the document, and the sheet's height was measured against a
-    /// sentence of bounded length.
+    /// How many names a sentence lists before it says there are more.
+    nonisolated static let namesShown = 3
+    /// How many characters of one name a sentence shows.
+    ///
+    /// A name or a method comes from the document, and a sentence that quoted it
+    /// whole would be as long as the document chooses. 40 is what the bound was
+    /// measured at: the entries "CORS text with three overlong element names
+    /// left out" and "CORS text with an overlong method name" in
+    /// `BoundedViewRegistry` feed the clip text of twenty times this length in
+    /// the widest letter, and the sheet fits its 620 pt with what it lets
+    /// through.
+    nonisolated static let nameLimit = 40
+
+    /// `name` as a sentence shows it: at most `nameLimit` characters.
+    nonisolated static func clipped(_ name: String) -> String {
+        String(name.prefix(nameLimit))
+    }
+
+    /// Up to `namesShown` names, each clipped, joined for a sentence, with a
+    /// marker after them when there are more. The names come from the
+    /// document, and the sheet's height was measured against a sentence of
+    /// bounded length.
     nonisolated static func listed(_ names: [String]) -> String {
-        let shown = names.prefix(3).map { String($0.prefix(40)) }
-        let more = names.count > 3 ? ", …" : ""
+        let shown = names.prefix(namesShown).map(clipped)
+        let more = names.count > namesShown ? ", …" : ""
         return shown.joined(separator: ", ") + more
     }
 
@@ -527,9 +546,24 @@ final class BucketCORSModel {
     /// the five, and an element a rule has no place for, each have a sentence
     /// of their own that says the text cannot be saved as it is, so a second
     /// red sentence would say one cause twice.
+    ///
+    /// **One sentence whatever the mix, in this order:** unreadable text, then
+    /// a value that would change on the way back, then the first rule that
+    /// fails validation. The value sentence is shown for a multi-line value
+    /// AND for a method outside the five, because in the second case the form-off
+    /// sentence is about the method and says nothing of the value; a document
+    /// with both used to end with a disabled Save and no sentence about the
+    /// value at all. An element left out (`.leftOut`) and an `.unstable` value
+    /// carry their own "cannot be saved as it is" in the form-off sentence.
+    /// `blockingSentence` is the one that is always there.
     var blockerLine: CatalogueLine? {
         if !isReadable { return Self.unreadableLine }
-        if !isLossless, case .value? = formBlock { return Self.valueChangesLine }
+        if !isLossless {
+            switch formBlock {
+            case .value?, .method?: return Self.valueChangesLine
+            default: break
+            }
+        }
         switch problem {
         case .noOrigin: return Self.noOriginLine
         case .noMethod: return Self.noMethodLine
@@ -538,14 +572,30 @@ final class BucketCORSModel {
     }
 
     /// `blockerLine`, with the rule's number in it.
+    ///
+    /// **Corrected 2026-10-20 (Task 9, fix round 2).** This property began
+    /// `if !isReadable || !isLossless { return line.text }`. Withdrawn: a rule
+    /// problem can be the blocker while the text is not lossless (an element
+    /// left out beside a rule with no origin), and the line was then returned
+    /// with its `%lld` unformatted.
     var blockerSentence: String? {
         guard let line = blockerLine else { return nil }
-        if !isReadable || !isLossless { return line.text }
-        switch problem {
-        case .noOrigin?, .noMethod?:
+        if line == Self.noOriginLine || line == Self.noMethodLine {
             return String(format: line.text, (problemRuleIndex ?? 0) + 1)
-        default:
-            return line.text
+        }
+        return line.text
+    }
+
+    /// The sentence that says why Save is off when it is off for a reason the
+    /// text carries: the blocker, or else the form-off sentence for the causes
+    /// whose sentence says the text cannot be saved as it is. `nil` only when
+    /// nothing blocks a save (or the block is not the text's: nothing changed,
+    /// a write in flight, the store not read).
+    var blockingSentence: String? {
+        if let blocker = blockerSentence { return blocker }
+        switch formBlock {
+        case .leftOut?, .method?, .unstable?: return formUnavailableSentence
+        default: return nil
         }
     }
 

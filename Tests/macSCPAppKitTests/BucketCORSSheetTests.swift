@@ -625,10 +625,10 @@ struct BucketCORSSheetTests {
         #expect(listed.contains("Extra3"))
         let showsFourth = listed.contains("Extra4")
         #expect(!showsFourth)
-        let long = String(repeating: "x", count: 200)
+        let long = String(repeating: "x", count: BucketCORSModel.nameLimit * 5)
         let clipped = BucketCORSModel.listed([long])
-        #expect(clipped.count < 60)
-        #expect(clipped.hasPrefix("xxxx"))
+        #expect(clipped.count == BucketCORSModel.nameLimit)
+        #expect(clipped == String(long.prefix(BucketCORSModel.nameLimit)))
         #expect(BucketCORSModel.listed([]) == "")
     }
 
@@ -676,6 +676,123 @@ struct BucketCORSSheetTests {
         let noOrigin = BucketCORSModel(rules: [Self.rule(origins: [])])
         #expect(noOrigin.formUnavailableLine == nil)
         #expect(noOrigin.blockerLine != nil)
+    }
+
+    // MARK: - Foreign text is clipped, and the figures are decisions (fix round 2)
+
+    /// The figures the sentences clip at. They are pinned by value because the
+    /// 620 pt bound was measured at them (the registry feeds the clip text twenty
+    /// times as long, and the sheet fits what gets through): a larger figure is a
+    /// different measurement, and nothing derived from the constant itself could
+    /// notice it moved. Raising either is a decision to make with the bound.
+    @Test func theClipFiguresAreTheOnesTheBoundWasMeasuredAt() {
+        #expect(BucketCORSModel.nameLimit == 40)
+        #expect(BucketCORSModel.namesShown == 3)
+    }
+
+    /// A list that is cut says so: four names read differently from three. The
+    /// marker is not spelled; the two lists are compared. The positive is that
+    /// exactly `namesShown` names carry no marker.
+    @Test func aListThatIsCutDiffersFromTheListOfTheNamesShown() {
+        func names(_ count: Int) -> [String] { (1...count).map { "N\($0)" } }
+        let shown = BucketCORSModel.namesShown
+        #expect(BucketCORSModel.listed(names(shown)) == names(shown).joined(separator: ", "))
+        #expect(BucketCORSModel.listed(names(shown + 1)) != BucketCORSModel.listed(names(shown)))
+        #expect(BucketCORSModel.listed(names(shown + 1)).hasPrefix(BucketCORSModel.listed(names(shown))))
+    }
+
+    /// The method comes from the document as the element names do, and its
+    /// sentence is clipped the same way. Unclipped, a 600-character method took
+    /// the sheet to 653 pt against 620.
+    @MainActor @Test func aMethodNameFromTheDocumentIsClippedInItsSentence() {
+        let long = String(repeating: "W", count: BucketCORSModel.nameLimit * 3)
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.ruleDocument(method: long)
+        let sentence = L10n.$localeOverride.withValue("en") { model.formUnavailableSentence ?? "" }
+        let showsTheClip = sentence.contains(String(long.prefix(BucketCORSModel.nameLimit)))
+        let showsMore = sentence.contains(String(long.prefix(BucketCORSModel.nameLimit + 1)))
+        #expect(showsTheClip)
+        #expect(!showsMore)
+    }
+
+    // MARK: - A document with several causes always says why (fix round 2)
+
+    private static func ruleXML(origin: String, methods: [String]) -> String {
+        "<CORSRule><AllowedOrigin>\(origin)</AllowedOrigin>"
+            + methods.map { "<AllowedMethod>\($0)</AllowedMethod>" }.joined() + "</CORSRule>"
+    }
+
+    private static func configuration(_ rules: String...) -> String {
+        "<CORSConfiguration>" + rules.joined() + "</CORSConfiguration>"
+    }
+
+    /// Documents with more than one thing wrong, and the singles they are made
+    /// of. Every one cannot be saved, and every one must say why.
+    private static let documentsThatCannotBeSaved: [String] = [
+        // The reviewer's: a method outside the five in rule 1, a carriage return in rule 2.
+        configuration(
+            ruleXML(origin: "*", methods: ["FETCH"]), ruleXML(origin: "a&#13;b", methods: ["GET"])),
+        // An element left out beside a rule with no origin.
+        configuration(
+            "<CORSRule><AllowedMethod>GET</AllowedMethod><Extra>x</Extra></CORSRule>"),
+        // An element left out beside a method outside the five.
+        configuration(
+            "<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>FETCH</AllowedMethod>"
+                + "<Extra>x</Extra></CORSRule>"),
+        // An element left out beside a carriage return.
+        configuration(
+            "<CORSRule><AllowedOrigin>a&#13;b</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+                + "<Extra>x</Extra></CORSRule>"),
+        // A value over several lines beside a rule with no method.
+        configuration(
+            ruleXML(origin: "a\nb", methods: ["GET"]),
+            "<CORSRule><AllowedOrigin>*</AllowedOrigin></CORSRule>"),
+        // A method outside the five beside a rule with no origin.
+        configuration(
+            "<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>",
+            ruleXML(origin: "*", methods: ["FETCH"])),
+        // A carriage return beside a rule with no origin.
+        configuration(
+            ruleXML(origin: "a&#13;b", methods: ["GET"]),
+            "<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>"),
+        // The singles.
+        configuration(ruleXML(origin: "*", methods: ["FETCH"])),
+        configuration(ruleXML(origin: "a&#13;b", methods: ["GET"])),
+        configuration("<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+            + "<Extra>x</Extra></CORSRule>"),
+        configuration("<CORSRule><AllowedMethod>GET</AllowedMethod></CORSRule>"),
+        "<CORSConfiguration><CORSRule>",
+    ]
+
+    @MainActor @Test(arguments: BucketCORSSheetTests.documentsThatCannotBeSaved)
+    func aDocumentThatCannotBeSavedAlwaysSaysWhy(document: String) {
+        let model = BucketCORSModel(rules: [])
+        model.text = document
+        let sentence = L10n.$localeOverride.withValue("en") { model.blockingSentence ?? "" }
+        let said = !sentence.isEmpty
+        // A sentence with an argument left in it is not a sentence.
+        let unformatted = sentence.contains("%")
+        #expect(!model.canSave)
+        #expect(said)
+        #expect(!unformatted)
+    }
+
+    /// The positive beside the battery: a document that can be saved says
+    /// nothing about why it cannot, so "always says why" is not "always says".
+    @MainActor @Test func aDocumentThatCanBeSavedHasNoBlockingSentence() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.simpleDocument
+        #expect(model.canSave)
+        #expect(model.blockingSentence == nil)
+    }
+
+    /// The reviewer's document: before the round the method sentence stood
+    /// alone and the carriage return was never mentioned.
+    @MainActor @Test func aMethodAndACarriageReturnAreBothSaid() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.documentsThatCannotBeSaved[0]
+        #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowMethodLine.key)
+        #expect(model.blockerLine?.key == BucketCORSModel.valueChangesLine.key)
     }
 
     // MARK: - A control with nothing to choose is greyed (fix round 1, M7)

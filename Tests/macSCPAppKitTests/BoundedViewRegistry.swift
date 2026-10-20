@@ -76,6 +76,27 @@ enum BoundedViewRegistry {
 
     // MARK: - Shared fixtures
 
+    /// A CORS sheet in the text pane over `text`, which the fields cannot all
+    /// show: the form-off states of `BucketCORSSheet`, each a different
+    /// sentence on screen.
+    static func corsModel(text: String) -> BucketCORSModel {
+        let model = BucketCORSModel(rules: [])
+        model.text = text
+        model.pane = .text
+        return model
+    }
+
+    /// `tag` followed by twenty times the length a sentence will show of a name,
+    /// in the widest letter, so the entry measures what the clip lets through
+    /// and goes red if the clip goes. Twenty and not three: the first version
+    /// used three, and taking the clip off the method left the layout guard
+    /// green, because a sentence three times as long wraps onto a few more lines
+    /// and still fits (`scripts/mutation-probe` G1b, 2026-10-20). Twenty is 800
+    /// characters, longer than the 600 that took the sheet to 653 pt against 620.
+    static func corsOverlong(_ tag: String) -> String {
+        tag + String(repeating: "W", count: BucketCORSModel.nameLimit * 20)
+    }
+
     /// Two CORS rules: the first with every field and all five methods, the
     /// second the plainest rule there is. Ordinary values, not invented long
     /// ones (see the note on what a state is chosen for, above).
@@ -319,6 +340,58 @@ enum BoundedViewRegistry {
                             allowedMethods: [], allowedHeaders: [], exposeHeaders: [],
                             maxAgeSeconds: nil)
                     ]))
+            },
+            // The form-off sentences, one entry each, because each is a different
+            // string on screen and two of them quote the document (the element
+            // names and the method). Those two are given text twenty times as
+            // long as the sheet shows of it, see `corsOverlong`: what is measured
+            // is what the clip lets through, and an entry that fed the clip text
+            // it did not need to cut would stay green if the clip were taken out.
+            BoundedViewEntry("CORS text with three overlong element names left out") {
+                let extra = (1...3).map { "<\(Self.corsOverlong("E\($0)"))>x</\(Self.corsOverlong("E\($0)"))>" }
+                    .joined()
+                return BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(
+                        text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
+                            + "<AllowedMethod>GET</AllowedMethod>" + extra
+                            + "</CORSRule></CORSConfiguration>"))
+            },
+            BoundedViewEntry("CORS text with an overlong method name") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(
+                        text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
+                            + "<AllowedMethod>" + Self.corsOverlong("") + "</AllowedMethod>"
+                            + "</CORSRule></CORSConfiguration>"))
+            },
+            BoundedViewEntry("CORS text with a method outside the five") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(
+                        text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
+                            + "<AllowedMethod>FETCH</AllowedMethod>"
+                            + "</CORSRule></CORSConfiguration>"))
+            },
+            BoundedViewEntry("CORS text with a value over several lines") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(
+                        text: "<CORSConfiguration><CORSRule><AllowedOrigin>https://a.example\n"
+                            + "https://b.example</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+                            + "</CORSRule></CORSConfiguration>"))
+            },
+            BoundedViewEntry("CORS text with a carriage return in a value") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(
+                        text: "<CORSConfiguration><CORSRule><AllowedOrigin>a&#13;b</AllowedOrigin>"
+                            + "<AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>"))
+            },
+            BoundedViewEntry("CORS text that is not a readable configuration yet") {
+                BucketCORSSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    model: Self.corsModel(text: "<CORSConfiguration><CORSRule>"))
             },
             BoundedViewEntry("a bucket whose CORS rules could not be read") {
                 BucketCORSSheet(
