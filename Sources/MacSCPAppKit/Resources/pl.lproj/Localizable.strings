@@ -446,6 +446,7 @@
 "s3.versioning.state.suspended" = "Wersjonowanie jest wstrzymane. Zmiany nie zachowują już kolejnych wersji, ale wersje zapisane wcześniej pozostają.";
 "s3.versioning.enableIsOneWay" = "Po włączeniu wersjonowanie można później tylko wstrzymać, nie można go usunąć. Dopóki jest włączone, każda wcześniejsza wersja pliku jest zachowywana i wlicza się do kosztów przechowywania.";
 "s3.versioning.suspendKeepsVersions" = "Wstrzymanie tylko zatrzymuje zachowywanie nowych wersji. Nie usuwa żadnej już zapisanej wersji: każda wcześniejsza wersja pozostaje i nadal wlicza się do kosztów przechowywania, dopóki nie zostanie usunięta.";
+"s3.versioning.resumeKeepsVersions" = "Ponowne włączenie wersjonowania znów zachowuje poprzednią wersję przy każdej zmianie lub usunięciu pliku, a te wersje wliczają się do kosztów przechowywania.";
 "s3.versioning.action.enable" = "Włącz wersjonowanie";
 "s3.versioning.action.suspend" = "Wstrzymaj wersjonowanie";
 "s3.versioning.error.read" = "Nie udało się odczytać wersjonowania tego bucketa.";

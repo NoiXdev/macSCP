@@ -448,6 +448,7 @@
 "s3.versioning.state.suspended" = "La gestion des versions est suspendue. Les modifications ne conservent plus de nouvelles versions, mais les versions déjà enregistrées restent.";
 "s3.versioning.enableIsOneWay" = "Une fois activée, la gestion des versions peut seulement être suspendue, jamais retirée. Tant qu’elle est active, chaque version précédente d’un fichier est conservée et compte dans vos coûts de stockage.";
 "s3.versioning.suspendKeepsVersions" = "La suspension empêche seulement la conservation de nouvelles versions. Elle ne supprime aucune version déjà enregistrée : chaque version précédente reste et continue de compter dans vos coûts de stockage, jusqu’à sa suppression.";
+"s3.versioning.resumeKeepsVersions" = "Réactiver la gestion des versions conserve de nouveau la version précédente à chaque modification ou suppression d’un fichier, et ces versions comptent dans vos coûts de stockage.";
 "s3.versioning.action.enable" = "Activer la gestion des versions";
 "s3.versioning.action.suspend" = "Suspendre la gestion des versions";
 "s3.versioning.error.read" = "Impossible de lire la gestion des versions de ce bucket.";

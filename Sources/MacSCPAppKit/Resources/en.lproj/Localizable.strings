@@ -451,6 +451,7 @@
 "s3.versioning.state.suspended" = "Versioning is suspended. Changes no longer keep earlier versions, but the versions stored before stay.";
 "s3.versioning.enableIsOneWay" = "Once switched on, versioning can be suspended later but not removed. While it is on, every earlier version of a file is kept and counts toward your storage costs.";
 "s3.versioning.suspendKeepsVersions" = "Suspending stops new versions from being kept. It does not remove any version that is already stored: every earlier version stays, and keeps counting toward your storage costs until it is deleted.";
+"s3.versioning.resumeKeepsVersions" = "Turning versioning back on keeps the earlier version again every time a file is changed or deleted, and those versions count toward your storage costs.";
 "s3.versioning.action.enable" = "Turn On Versioning";
 "s3.versioning.action.suspend" = "Suspend Versioning";
 "s3.versioning.error.read" = "The versioning of this bucket could not be read.";

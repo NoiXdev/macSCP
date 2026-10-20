@@ -62,19 +62,42 @@ struct BucketVersioningSheetTests {
         #expect(model.warningKey == "s3.versioning.suspendKeepsVersions")
     }
 
-    /// Turning versioning on is the one-way door (it can be suspended, never
-    /// returned to never-versioned), and the sheet says so before the click.
-    /// A resumed bucket has nothing further to warn about. The answers differ
-    /// from one another, so a model that returned one key for every state would
-    /// not pass.
+    /// Every offered action says something about cost before the click, and
+    /// each says its own thing. Turning versioning on for the first time is
+    /// the one-way door (it can be suspended, never returned to
+    /// never-versioned); resuming a suspended bucket is NOT, because that door
+    /// is already shut, so it must not say so. The three answers differ from
+    /// one another, so a model that returned one key for every state would not
+    /// pass.
+    ///
+    /// **Changed 2026-10-20 (review Minor 5).** This test used to end
+    /// `#expect(suspended == nil)` under the sentence "A resumed bucket has
+    /// nothing further to warn about." Withdrawn: resuming was the one offered
+    /// action that said nothing about cost.
     @MainActor @Test func eachStateSaysItsOwnThingBeforeTheClick() {
         let never = BucketVersioningModel(current: .never).warningKey
         let enabled = BucketVersioningModel(current: .enabled).warningKey
         let suspended = BucketVersioningModel(current: .suspended).warningKey
         #expect(never != nil)
         #expect(enabled != nil)
+        #expect(suspended != nil)
         #expect(never != enabled)
-        #expect(suspended == nil)
+        #expect(never != suspended)
+        #expect(enabled != suspended)
+    }
+
+    /// The resume line is about cost and does not repeat the one-way claim,
+    /// which would be false of a bucket that has already been switched on once.
+    /// Both halves in English: the positive (it names cost) beside the negative
+    /// (it does not say versioning cannot be removed).
+    @MainActor @Test func resumingSaysWhatItStartsAgainAndNotTheOneWayThing() {
+        let english = L10n.$localeOverride.withValue("en") {
+            BucketVersioningModel(current: .suspended).warning?.text.lowercased() ?? ""
+        }
+        let namesCost = english.contains("cost")
+        let claimsOneWay = english.contains("not removed") || english.contains("cannot")
+        #expect(namesCost)
+        #expect(!claimsOneWay)
     }
 
     /// The warning about money says what suspending does AND what it does not
