@@ -64,6 +64,38 @@ import Testing
 /// round 4, and both sat in `connection.lost.*`, which is how a user met
 /// them one after the other.
 ///
+/// **Corrected 2026-10-20 (S3 bucket settings, Task 8 review, Minor 4).** Two
+/// sentences above are in the present tense and read, verbatim,
+/// `**twenty-two** strings in the App catalog carry a` and
+/// `and are two of the twenty-two`; a third reads `The twenty-two,` and is a
+/// count dated 2026-09-10, which was true on its date. The present-tense
+/// ones are withdrawn: the catalogue has grown since, by 29 on the count
+/// below (51 less 22), and four of those 29 are Task 8's German sentences for
+/// the versioning sheet. The same figure stood in this suite's failure message,
+/// verbatim `twenty-two strings in the App catalog carry a du-pronoun and`,
+/// and that message now carries no figure at all, so it cannot go stale.
+///
+/// The old figure is reproducible, which is what makes a new one worth
+/// writing. This pattern run over the catalogue as it stood at `eb0c387f`
+/// (the commit that wrote "The twenty-two,") prints 22, and the 22 keys it
+/// prints are exactly the 22 enumerated above:
+///
+/// ```
+/// git show eb0c387f:Sources/MacSCPAppKit/Resources/de.lproj/Localizable.strings | perl -CSD -ne 'print "$1\n" if /^"([^"]*)" = ".*\b(?:[Dd]u|[Dd]ich|[Dd]ir|[Dd]ein\w*)\b.*";$/' | wc -l
+/// ```
+///
+/// Over the catalogue as it stands, the same pattern prints the figure
+/// below. It counts LINES of the catalogue whose value carries the pronoun
+/// (an entry is one line there, so lines are strings; an entry split over
+/// two lines would be missed), and it is a dated count
+/// like the one it replaces: it was 51 on 2026-10-20, at the commit that
+/// carries this paragraph, and it moves whenever a German sentence with a
+/// du-pronoun is added.
+///
+/// ```
+/// perl -CSD -ne 'print "$1\n" if /^"([^"]*)" = ".*\b(?:[Dd]u|[Dd]ich|[Dd]ir|[Dd]ein\w*)\b.*";$/' Sources/MacSCPAppKit/Resources/de.lproj/Localizable.strings | wc -l
+/// ```
+///
 /// ## Why a scan can decide this at all
 ///
 /// German orthography does the work: the third-person pronouns *sie*,
@@ -231,7 +263,7 @@ struct GermanAddressFormTests {
             German string(s) addressing the user in the polite form:
             \(offenders.joined(separator: "\n"))
 
-            This app says du — twenty-two strings in the App catalog carry a du-pronoun and \
+            This app says du — many strings in the App catalog carry a du-pronoun and \
             more use the du-imperative ("Bearbeite die Verbindung, um die Angaben zu prüfen \
             und erneut zu verbinden."). Two strings in \
             `connection.lost.*` used Sie until the failed-connect surface's own round 4, \
