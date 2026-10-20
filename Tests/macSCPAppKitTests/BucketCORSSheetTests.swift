@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import MacSCPTestSupport
+import SwiftUI
 import Testing
 import macSCPCore
 
@@ -234,7 +236,7 @@ struct BucketCORSSheetTests {
         let model = BucketCORSModel(rules: [])
         model.text = Self.ruleDocument(method: "FETCH")
         #expect(!model.formIsAvailable)
-        #expect(model.formUnavailableReasonKey == "s3.cors.formCannotShowThis")
+        #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowMethodLine.key)
         model.text = Self.ruleDocument(method: "GET")
         #expect(model.formIsAvailable)
     }
@@ -253,7 +255,7 @@ struct BucketCORSSheetTests {
         model.text = Self.originDocument("a\nb")
         #expect(model.isReadable)
         #expect(!model.formIsAvailable)
-        #expect(model.formUnavailableReasonKey == "s3.cors.formCannotShowThis")
+        #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowValueLine.key)
     }
 
     private static func originDocument(_ origin: String) -> String {
@@ -265,8 +267,6 @@ struct BucketCORSSheetTests {
         "<CORSConfiguration>" + ruleXML(origin: "*", method: method) + "</CORSConfiguration>"
     }
 
-    /// A shown pane that is the form while the form is unavailable would be a
-    /// control over a configuration it cannot show.
     /// The fields refuse to edit what they cannot show, and the control does
     /// not switch to them. The positive control: both work while the form is
     /// available, which the tests above rely on.
@@ -287,6 +287,8 @@ struct BucketCORSSheetTests {
         #expect(model.pane == .text)
     }
 
+    /// A shown pane that is the form while the form is unavailable would be a
+    /// control over a configuration it cannot show.
     @MainActor @Test func theFormIsNeverTheVisiblePaneWhileItIsUnavailable() {
         let model = BucketCORSModel(rules: [Self.rule()])
         model.pane = .form
@@ -440,8 +442,8 @@ struct BucketCORSSheetTests {
         model.text = Self.simpleDocument
         await model.save(bucket: "b", via: settings)
         #expect(model.saveFailure == RemoteFSFinding.corsRuleInvalid.message)
-        let unusable = RemoteFSError.protocolError(reason: "x").localizedDescription
-        #expect(model.saveFailure != unusable)
+        // The sentence a store answer that could not be used is shown as.
+        #expect(model.saveFailure != BucketCORSModel.saveFailedLine.text)
     }
 
     /// A raw `reason` can carry the endpoint the user typed, and that field
@@ -474,6 +476,272 @@ struct BucketCORSSheetTests {
         #expect(!denied.isEmpty)
         #expect(!generic.isEmpty)
         #expect(denied != generic)
+    }
+
+    // MARK: - The pane the user chose is theirs (fix round 1, I1)
+
+    /// A configuration the sheet reads from the store, through `read`, so the
+    /// opening pane is chosen the way it is in the app.
+    @MainActor private static func readModel(
+        _ settings: FakeBucketSettings
+    ) async -> BucketCORSModel {
+        let model = BucketCORSModel()
+        await model.read(bucket: "b", from: settings)
+        return model
+    }
+
+    private static func storedSettings(
+        writeError: (any Error)? = nil
+    ) throws -> FakeBucketSettings {
+        let rules = [rule()]
+        return FakeBucketSettings(
+            cors: BucketCORS(rules: rules, rawBody: try S3SettingsXML.corsBody(rules)),
+            corsWriteError: writeError)
+    }
+
+    /// Switching to the text pane, editing and saving leaves the user in the
+    /// text pane. The state the save leaves behind is the store's answer, which
+    /// the fields can show, so nothing but the opening-pane rule would move
+    /// the user. The opposite case, a user in the fields, is the positive
+    /// control: it stays too.
+    @MainActor @Test func aSuccessfulSaveLeavesTheChosenPaneAlone() async throws {
+        for chosen in [BucketCORSModel.Pane.text, .form] {
+            let settings = try Self.storedSettings()
+            let model = await Self.readModel(settings)
+            #expect(model.pane == .form)  // opened on the fields
+            model.selectPane(chosen)
+            model.text = Self.originDocument("https://a.example")
+            #expect(model.canSave)
+            await model.save(bucket: "b", via: settings)
+            #expect(settings.corsWrites.count == 1)
+            #expect(model.saveFailure == nil)
+            #expect(model.pane == chosen)
+            #expect(model.visiblePane == chosen)
+        }
+    }
+
+    /// The other path, a refused save, keeps the pane too, so the two paths
+    /// agree about something the user chose.
+    @MainActor @Test func aRefusedSaveLeavesTheChosenPaneAlone() async throws {
+        let settings = try Self.storedSettings(
+            writeError: RemoteFSError.finding(.operationNotSupported))
+        let model = await Self.readModel(settings)
+        model.selectPane(.text)
+        model.text = Self.originDocument("https://a.example")
+        await model.save(bucket: "b", via: settings)
+        #expect(settings.corsWrites.count == 1)
+        #expect(model.saveFailure != nil)
+        #expect(model.pane == .text)
+    }
+
+    /// A read still chooses the opening pane: the fields when they can show
+    /// the configuration, the text when they cannot. Without this the two
+    /// tests above would pass for a model that never chose at all.
+    @MainActor @Test func aReadOpensOnThePaneThatCanShowTheConfiguration() async {
+        let lossy = FakeBucketSettings(
+            cors: BucketCORS(
+                rules: [Self.rule()], rawBody: Data(Self.documentWithAnUnknownElement.utf8)))
+        let model = await Self.readModel(lossy)
+        #expect(model.pane == .text)
+        let plain = await Self.readModel(FakeBucketSettings())
+        #expect(plain.pane == .form)
+    }
+
+    // MARK: - A value the rules write back differently (fix round 1, M1)
+
+    /// `a&#13;b` holds a carriage return. The rules keep `a\rb`, `corsBody`
+    /// writes it literally, and the next parse reads `a\nb`: the element
+    /// census cannot see that, because every element is still consumed.
+    /// Saving it would store a value the user did not write.
+    @MainActor @Test func aValueThatChangesOnTheWayBackIsNotLossless() throws {
+        let reading = BucketCORSModel.read(Self.originDocument("a&#13;b"))
+        #expect(reading.isReadable)
+        // The census sees nothing wrong: no element is left out.
+        #expect(reading.leftOut.isEmpty)
+        // And the rules do not survive the round trip, which is the point.
+        let canonical = try S3SettingsXML.corsBody(reading.rules)
+        let again = try S3SettingsXML.parseCORS(canonical)
+        #expect(again != reading.rules)
+        #expect(!reading.isLossless)
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.originDocument("a&#13;b")
+        #expect(!model.canSave)
+        #expect(model.blockerLine?.key == BucketCORSModel.valueChangesLine.key)
+    }
+
+    /// The positive beside it: an ordinary value with the characters XML
+    /// escapes survives, so the check is not "no value is ever lossless".
+    @MainActor @Test func aValueThatSurvivesTheRoundTripIsLossless() {
+        let reading = BucketCORSModel.read(Self.originDocument("a&amp;b&#42;"))
+        #expect(reading.isLossless)
+        #expect(reading.rules == [Self.rule(origins: ["a&b*"])])
+    }
+
+    // MARK: - A clear is never silent (fix round 1, M11)
+
+    /// A stored document that parses to no rules at all but says more than its
+    /// rules would clear the configuration when the extra is removed and the
+    /// empty list saved. That is the destructive direction, and it carries the
+    /// sentence like any other clear. Neither "no configuration" nor a plain
+    /// empty list is true of it.
+    @MainActor @Test func aLossyDocumentWithNoRulesStillWarnsThatSavingClears() {
+        let raw = Data("<CORSConfiguration><Unknown>x</Unknown></CORSConfiguration>".utf8)
+        let model = BucketCORSModel(loaded: BucketCORS(rules: [], rawBody: raw))
+        #expect(model.rules.isEmpty)
+        #expect(!model.hasNoConfiguration)
+        #expect(model.clearsTheConfiguration)
+        model.text = "<CORSConfiguration></CORSConfiguration>"
+        #expect(model.canSave)
+        #expect(model.clearsTheConfiguration)
+        #expect(model.lines.contains { $0.key == BucketCORSModel.clearsAllLine.key })
+    }
+
+    // MARK: - The form-off sentences name the offender (fix round 1)
+
+    @MainActor @Test func theLossySentenceNamesTheElementsLeftOut() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.documentWithAnUnknownElement
+        #expect(model.leftOutNames == ["Unknown"])
+        let sentence = L10n.$localeOverride.withValue("en") {
+            model.formUnavailableSentence ?? ""
+        }
+        let names = sentence.contains("Unknown")
+        #expect(names)
+    }
+
+    @MainActor @Test func anAttributeIsNamedWithItsElement() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.wrapped("<AllowedOrigin kind=\"x\">*</AllowedOrigin>" + Self.get)
+        #expect(model.leftOutNames == ["AllowedOrigin@kind"])
+    }
+
+    /// The list is short and each name is clipped: the names come from a
+    /// document, and the sheet's height was measured with a sentence of a
+    /// fixed length.
+    @Test func aListOfNamesIsShortAndEachNameIsClipped() {
+        let many = (1...6).map { "Extra\($0)" }
+        let listed = BucketCORSModel.listed(many)
+        #expect(listed.contains("Extra1"))
+        #expect(listed.contains("Extra3"))
+        let showsFourth = listed.contains("Extra4")
+        #expect(!showsFourth)
+        let long = String(repeating: "x", count: 200)
+        let clipped = BucketCORSModel.listed([long])
+        #expect(clipped.count < 60)
+        #expect(clipped.hasPrefix("xxxx"))
+        #expect(BucketCORSModel.listed([]) == "")
+    }
+
+    @MainActor @Test func theMethodSentenceNamesTheMethod() {
+        let model = BucketCORSModel(rules: [])
+        model.text = Self.ruleDocument(method: "FETCH")
+        let sentence = L10n.$localeOverride.withValue("en") {
+            model.formUnavailableSentence ?? ""
+        }
+        let names = sentence.contains("FETCH")
+        #expect(names)
+    }
+
+    @MainActor @Test func theValueSentenceNamesTheRule() {
+        let model = BucketCORSModel(rules: [])
+        model.text = "<CORSConfiguration>" + Self.ruleXML(origin: "*", method: "GET")
+            + "<CORSRule><AllowedOrigin>a\nb</AllowedOrigin>"
+            + "<AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>"
+        #expect(model.formUnavailableReasonKey == BucketCORSModel.formCannotShowValueLine.key)
+        let sentence = L10n.$localeOverride.withValue("en") {
+            model.formUnavailableSentence ?? ""
+        }
+        #expect(sentence.contains("rule 2"))
+    }
+
+    /// One cause is said once. A method outside the five and an element a rule
+    /// has no place for each have a sentence that already says the save is not
+    /// possible, so no second red sentence repeats it; the positive controls
+    /// are the causes only the second sentence says.
+    @MainActor @Test func aCauseIsNotSaidTwice() {
+        let method = BucketCORSModel(rules: [])
+        method.text = Self.ruleDocument(method: "FETCH")
+        #expect(method.formUnavailableLine != nil)
+        #expect(method.blockerLine == nil)
+        #expect(!method.canSave)
+        let lossy = BucketCORSModel(rules: [])
+        lossy.text = Self.documentWithAnUnknownElement
+        #expect(lossy.formUnavailableLine != nil)
+        #expect(lossy.blockerLine == nil)
+        #expect(!lossy.canSave)
+        let unreadable = BucketCORSModel(rules: [])
+        unreadable.text = "<CORSConfiguration>"
+        #expect(unreadable.formUnavailableLine != nil)
+        #expect(unreadable.blockerLine != nil)
+        let noOrigin = BucketCORSModel(rules: [Self.rule(origins: [])])
+        #expect(noOrigin.formUnavailableLine == nil)
+        #expect(noOrigin.blockerLine != nil)
+    }
+
+    // MARK: - A control with nothing to choose is greyed (fix round 1, M7)
+
+    @MainActor @Test func theFormCanBeChosenExactlyWhenItIsAvailable() {
+        let on = BucketCORSModel(rules: [Self.rule()])
+        #expect(on.canSelect(.form))
+        #expect(on.canSelect(.text))
+        let off = BucketCORSModel(rules: [Self.rule()])
+        off.text = Self.documentWithAnUnknownElement
+        #expect(!off.canSelect(.form))
+        #expect(off.canSelect(.text))
+        // `selectPane` agrees with `canSelect`, so the control and the model
+        // cannot answer differently.
+        off.selectPane(.text)
+        off.selectPane(.form)
+        #expect(off.pane == .text)
+    }
+
+    /// Whether the hosted pane control accepts a click, found by the label of
+    /// its form segment. Plain `Text` is not a view, but a segmented control is
+    /// (BoundedViewStateOnScreenTests says so).
+    @MainActor private static func paneControlIsEnabled(for model: BucketCORSModel) -> Bool? {
+        L10n.$localeOverride.withValue("en") {
+            let host = NSHostingView(
+                rootView: BucketCORSSheet(
+                    bucket: "b", settings: FakeBucketSettings(), model: model))
+            host.frame = CGRect(x: 0, y: 0, width: 700, height: 700)
+            let window = NSWindow(
+                contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: true)
+            window.isReleasedWhenClosed = false
+            defer { window.close() }
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            var result: Bool?
+            @MainActor func walk(_ view: NSView) {
+                if let control = view as? NSSegmentedControl {
+                    for index in 0..<control.segmentCount
+                    where control.label(forSegment: index) == BucketCORSModel.paneFormLine.text {
+                        result = control.isEnabled
+                    }
+                }
+                for child in view.subviews { walk(child) }
+            }
+            walk(host)
+            return result
+        }
+    }
+
+    /// The control is greyed exactly when it has nothing to offer, read off the
+    /// hosted view and not off the model. The positive is the first line: with
+    /// the fields available the same walk finds the control enabled.
+    @MainActor @Test func thePaneControlIsGreyedWhileTheFormIsOff() {
+        let on = BucketCORSModel(rules: [Self.rule()])
+        #expect(on.hasAnotherPaneToChoose)
+        #expect(Self.paneControlIsEnabled(for: on) == true)
+        let off = BucketCORSModel(rules: [Self.rule()])
+        off.text = Self.documentWithAnUnknownElement
+        #expect(!off.hasAnotherPaneToChoose)
+        #expect(Self.paneControlIsEnabled(for: off) == false)
+        // From the text pane with the form available there is still somewhere
+        // to go.
+        let inText = BucketCORSModel(rules: [Self.rule()])
+        inText.selectPane(.text)
+        #expect(inText.hasAnotherPaneToChoose)
+        #expect(Self.paneControlIsEnabled(for: inText) == true)
     }
 
     // MARK: - The catalogue
@@ -577,6 +845,12 @@ struct BucketCORSSheetTests {
         let badMethod = BucketCORSModel(rules: [Self.rule(methods: ["FETCH"])])
         lines += badMethod.lines
         lines += BucketCORSModel(loaded: nil).lines
+        let multiLine = BucketCORSModel(rules: [])
+        multiLine.text = Self.originDocument("a\nb")
+        lines += multiLine.lines
+        let carriageReturn = BucketCORSModel(rules: [])
+        carriageReturn.text = Self.originDocument("a&#13;b")
+        lines += carriageReturn.lines
         let cleared = BucketCORSModel(rules: [Self.rule()])
         cleared.removeRule(at: 0)
         lines += cleared.lines

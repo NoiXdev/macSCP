@@ -463,13 +463,14 @@
 "s3.cors.pane.form" = "Pola";
 "s3.cors.pane.text" = "Tekst";
 "s3.cors.text.label" = "Konfiguracja CORS jako tekst";
-"s3.cors.formCannotShowThis" = "Tekst zawiera coś, czego pola nie mogą pokazać: element, który nie należy do reguły, metodę inną niż GET, PUT, POST, DELETE lub HEAD albo wartość rozciągniętą na kilka wierszy. Edytuj go jako tekst.";
+"s3.cors.formCannotShowThis" = "Tekst zawiera coś, na co reguła nie ma miejsca (%@), więc pola są wyłączone, a tekstu nie można zapisać w tej postaci. Usuń to w tekście, aby zapisać.";
+"s3.cors.formCannotShowMethod %@" = "„%@” nie jest metodą, na którą można zezwolić, więc pola są wyłączone. Użyj w tekście GET, PUT, POST, DELETE lub HEAD.";
+"s3.cors.formCannotShowValue %lld" = "Wartość w regule %lld obejmuje kilka wierszy, a pole nie może jej zawierać. Edytuj reguły jako tekst.";
 "s3.cors.formNeedsReadableText" = "Pola są wyłączone, dopóki tekst nie będzie znowu czytelną konfiguracją CORS.";
 "s3.cors.problem.unreadable" = "Tekst nie jest jeszcze czytelną konfiguracją CORS, więc nie można go zapisać.";
-"s3.cors.problem.dropsSomething" = "Tekst zawiera coś, na co reguła nie ma miejsca, a zapisanie by to pominęło. Usuń to, aby zapisać.";
+"s3.cors.problem.valueChanges" = "Zapisanie zmieniłoby wartość w tekście, więc nie można go zapisać w tej postaci.";
 "s3.cors.problem.noOrigin %lld" = "Reguła %lld wymaga co najmniej jednego dozwolonego źródła.";
 "s3.cors.problem.noMethod %lld" = "Reguła %lld wymaga co najmniej jednej dozwolonej metody.";
-"s3.cors.problem.method %@" = "„%@” nie jest metodą, na którą można zezwolić. Użyj GET, PUT, POST, DELETE lub HEAD.";
 "s3.cors.rule.title %lld" = "Reguła %lld";
 "s3.cors.field.id" = "Nazwa (opcjonalnie)";
 "s3.cors.field.origins" = "Dozwolone źródła (* oznacza dowolną stronę)";
