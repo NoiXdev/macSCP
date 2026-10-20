@@ -105,6 +105,17 @@ extension ContentView {
     /// dials); the file system itself does not expose it. It matters only for
     /// a connection rooted in one bucket -- at the bucket list the path names
     /// the bucket.
+    ///
+    /// **That is a copy, and it is only the live connection's bucket because
+    /// nothing edits a connected tab's form.** Three facts keep it so, each in
+    /// another file: `formTarget()` gives a connected tab's form-filling
+    /// actions a fresh tab instead; the detail pane constructs
+    /// `ConnectionFormView` only in the arm taken while `tab.session` is `nil`;
+    /// and `connect(in:stored:)` tears an existing session down before it
+    /// fills the form. A change that breaks one reintroduces the divergence
+    /// silently, and the end of it is an irreversible write on a bucket the
+    /// person was not looking at. `ConnectedTabFormInvariantTests` reads
+    /// those three places and goes red if any of them moves.
     func connectionActionContext(
         in tab: SessionTab, session: BrowserSession
     ) -> ConnectionActionContext {
