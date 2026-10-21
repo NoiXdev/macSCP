@@ -342,16 +342,27 @@ enum BoundedViewRegistry {
                     settingsStore: SettingsStore(directory: temporaryDirectory))
             },
 
-            // Five states (four until Task 11b added the lock-bearing one,
-            // below the refused read), because each carries sentences the
-            // others do not:
+            // Five states, because each carries sentences the others do not:
             // the never-versioned bucket the one-way-door warning and the
             // enable button, the enabled one the suspension warning about
             // cost (the longest text the sheet has) and the suspend button,
-            // the suspended one its own state sentence and no warning, and a
-            // refused read the red sentence alone. Every one is handed a
-            // model already in its state, so no measurement waits on a read;
-            // the capability is never called.
+            // the suspended one its own state sentence, the warning about what
+            // resuming starts again, and the enable button, a refused read the
+            // red sentence alone, and an enabled bucket under Object Lock the
+            // sentence that stands where the warning and the button otherwise
+            // do. Every one is handed a model already in its state, so no
+            // measurement waits on a read; the capability is never called.
+            //
+            // **Corrected 2026-10-21 (Task 11b, fix round 1, M4).** This
+            // comment read, verbatim: "the suspended one its own state
+            // sentence and no warning". Withdrawn: `.suspended` has had a
+            // warning since the Task 8 review (2026-10-20, Minor 5). Its lead
+            // also read "Five states (four until Task 11b added the
+            // lock-bearing one, below the refused read)" and then listed four;
+            // the fifth is now in the list. Counted: run from the repository
+            // root, `grep -c 'BucketVersioningSheet($'
+            // Tests/macSCPAppKitTests/BoundedViewRegistry.swift` prints 5
+            // (each entry opens its sheet at the end of a line).
             BoundedViewEntry("a never-versioned bucket, with the one-way warning") {
                 BucketVersioningSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),

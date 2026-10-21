@@ -264,6 +264,13 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             }
         }
     }
+    /// Changes what `hasObjectLock` throws from now on (`nil` to answer again),
+    /// for a test in which the same store fails once and then does not. A
+    /// no-op on a fake that was given no Object Lock fixture.
+    func setHasLockError(_ error: (any Error)?) {
+        state.withLock { $0.lock?.hasLockError = error }
+    }
+
     func hasObjectLock(ofBucket bucket: String) async throws -> Bool {
         let gate = try state.withLock { state -> (AsyncSignal?, AsyncSignal?) in
             state.hasLockReads.append(bucket)

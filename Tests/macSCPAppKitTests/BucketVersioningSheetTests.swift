@@ -198,15 +198,95 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func aSuspensionOnALockBearingBucketIsNeverSent() async {
         let settings = FakeBucketSettings(versioning: .enabled)
         let locked = BucketVersioningModel(current: .enabled, bucketHasObjectLock: true)
-        await locked.apply(.suspended, bucket: "b", via: settings)
+        await locked.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes.isEmpty)
         let unread = BucketVersioningModel(current: .enabled, bucketHasObjectLock: nil)
-        await unread.apply(.suspended, bucket: "b", via: settings)
+        await unread.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes.isEmpty)
         // The positive control: the same bucket, known to have no lock.
         let open = BucketVersioningModel(current: .enabled, bucketHasObjectLock: false)
-        await open.apply(.suspended, bucket: "b", via: settings)
+        await open.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes.count == 1)
+    }
+
+    /// **Fix round 1, I1.** A lock that cannot be read changes nothing the sheet
+    /// offers or says for a bucket that is not enabled, so it must not cost the
+    /// sheet its reach there: a never-versioned or suspended bucket still
+    /// settles and still offers enabling. The enabled bucket beside them is the
+    /// positive control -- the same failure there IS a failed load, because the
+    /// lock is the whole decision.
+    @MainActor @Test func aLockThatCannotBeReadDoesNotCostABucketThatIsNotEnabled() async {
+        for state in [BucketVersioning.never, .suspended] {
+            let settings = FakeBucketSettings(
+                versioning: state, lock: .init(hasLockError: RemoteFSError.finding(.operationNotSupported)))
+            let model = BucketVersioningModel()
+            await model.read(
+                bucket: "b", from: settings, locks: ObjectLockStateCache(settings: settings))
+            #expect(model.load == .known(state), "\(state)")
+            #expect(model.offeredStates == [.enabled], "\(state)")
+            #expect(model.bucketHasObjectLock == nil)
+            #expect(model.lockReadFailed)
+            // Nothing is said about a lock the sheet has no use for.
+            #expect(model.blockedReasonKey == nil)
+        }
+        let enabled = FakeBucketSettings(
+            versioning: .enabled, lock: .init(hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = BucketVersioningModel()
+        await model.read(bucket: "b", from: enabled, locks: ObjectLockStateCache(settings: enabled))
+        #expect(model.load == .failed(BucketVersioningModel.lockReadFailedLine.text))
+    }
+
+    /// **Fix round 1, I1, the half that stops the sheet going silent.** A
+    /// bucket that settled without its lock and is then enabled asks again, and
+    /// the cache keeps no failure, so the second ask is a real one: when the
+    /// store answers, the suspend button is there (or the lock sentence, for a
+    /// bucket that has one); when it fails again, the sheet SAYS so instead of
+    /// standing with a state line and nothing else.
+    @MainActor @Test func enablingAfterAFailedLockReadAsksAgainAndNeverGoesSilent() async {
+        let broken = RemoteFSError.finding(.operationNotSupported)
+
+        // The second ask answers: no lock, so the way back OFF is offered.
+        let healed = FakeBucketSettings(versioning: .never, lock: .init(hasLock: false, hasLockError: broken))
+        let cache = ObjectLockStateCache(settings: healed)
+        let model = BucketVersioningModel()
+        await model.read(bucket: "b", from: healed, locks: cache)
+        #expect(model.lockReadFailed)
+        healed.setHasLockError(nil)
+        await model.apply(.enabled, bucket: "b", via: healed, locks: cache)
+        #expect(healed.hasLockReads == ["b", "b"])
+        #expect(model.current == .enabled)
+        #expect(model.bucketHasObjectLock == false)
+        #expect(!model.lockReadFailed)
+        #expect(model.offeredStates == [.suspended])
+        #expect(model.blockedReasonKey == nil)
+
+        // The second ask answers with a lock: nothing offered, and it says why.
+        let locked = FakeBucketSettings(versioning: .never, lock: .init(hasLock: true, hasLockError: broken))
+        let lockedCache = ObjectLockStateCache(settings: locked)
+        let lockedModel = BucketVersioningModel()
+        await lockedModel.read(bucket: "b", from: locked, locks: lockedCache)
+        locked.setHasLockError(nil)
+        await lockedModel.apply(.enabled, bucket: "b", via: locked, locks: lockedCache)
+        #expect(lockedModel.offeredStates == [])
+        #expect(lockedModel.blockedReasonKey == "s3.versioning.objectLockKeepsItOn")
+
+        // The second ask fails too: nothing offered, and the sheet says the
+        // lock could not be read -- not silence.
+        let stuck = FakeBucketSettings(versioning: .never, lock: .init(hasLock: false, hasLockError: broken))
+        let stuckCache = ObjectLockStateCache(settings: stuck)
+        let stuckModel = BucketVersioningModel()
+        await stuckModel.read(bucket: "b", from: stuck, locks: stuckCache)
+        await stuckModel.apply(.enabled, bucket: "b", via: stuck, locks: stuckCache)
+        #expect(stuck.hasLockReads == ["b", "b"])
+        #expect(stuckModel.current == .enabled)
+        #expect(stuckModel.offeredStates == [])
+        #expect(stuckModel.lockReadFailed)
+        #expect(stuckModel.blockedReasonKey == "s3.versioning.error.lockRead")
+        #expect(stuckModel.lines.contains(BucketVersioningModel.lockReadFailedLine))
+        // "Not asked yet" is a different thing and still says nothing.
+        let unread = BucketVersioningModel(current: .enabled, bucketHasObjectLock: nil)
+        #expect(!unread.lockReadFailed)
+        #expect(unread.blockedReasonKey == nil)
     }
 
     /// **The two answers land together.** The lock read is held at the store
@@ -288,7 +368,7 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func enablingWritesOnceToTheNamedBucketAndShowsTheStoresAnswer() async {
         let settings = FakeBucketSettings(versioning: .never)
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "macscp-second", via: settings)
+        await model.apply(.enabled, bucket: "macscp-second", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes == [FakeBucketSettings.Write(state: .enabled, bucket: "macscp-second")])
         #expect(model.current == .enabled)
         #expect(model.offeredStates == [.suspended])
@@ -299,7 +379,7 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func suspendingWritesSuspended() async {
         let settings = FakeBucketSettings(versioning: .enabled)
         let model = BucketVersioningModel(current: .enabled, bucketHasObjectLock: false)
-        await model.apply(.suspended, bucket: "b", via: settings)
+        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes == [FakeBucketSettings.Write(state: .suspended, bucket: "b")])
         #expect(model.current == .suspended)
     }
@@ -310,8 +390,8 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func aStateThatWasNotOfferedIsNeverSent() async {
         let settings = FakeBucketSettings(versioning: .never)
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.never, bucket: "b", via: settings)
-        await model.apply(.suspended, bucket: "b", via: settings)
+        await model.apply(.never, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
+        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes.isEmpty)
         #expect(model.current == .never)
     }
@@ -320,7 +400,7 @@ struct BucketVersioningSheetTests {
         let settings = FakeBucketSettings(
             versioning: .never, writeError: RemoteFSError.finding(.operationNotSupported))
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "b", via: settings)
+        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         #expect(settings.writes.count == 1)
         #expect(model.current == .never)
         #expect(model.applyFailure == RemoteFSFinding.operationNotSupported.message)
@@ -339,7 +419,7 @@ struct BucketVersioningSheetTests {
         let settings = FakeBucketSettings(
             versioning: .never, writeError: RemoteFSError.protocolError(reason: planted))
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "b", via: settings)
+        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings))
         let text = model.applyFailure ?? ""
         let quoted = text.contains("SECRETEXAMPLE") || text.contains("store.invalid")
         #expect(!text.isEmpty)
@@ -477,6 +557,26 @@ struct BucketVersioningSheetTests {
         let closure = Self.flattened(String(sheets[presented.upperBound...].prefix(300)))
         #expect(closure.contains("BucketVersioningSheet("))
         #expect(closure.contains("locks: item.states"))
+    }
+
+    /// **Fix round 1, I2: the sheet's body draws the blocked sentence.** The
+    /// model can be right and the sentence still absent from the screen, which
+    /// is the one user-visible half of Task 11b; deleting the `Text` that draws
+    /// it left the whole suite green (probe P8, measured GREEN on 31c39ec1).
+    /// The `.known` branch of `content` reads `model.blockedReason` and shows
+    /// its text, beside the `model.warning` draw it sits after, which is the
+    /// positive control that the slice is the branch that draws the model's
+    /// lines at all.
+    @Test func theKnownStateDrawsTheReasonNothingIsOffered() throws {
+        let source = try Self.code("MacSCPAppKit/BucketVersioningSheet.swift")
+        let content = try #require(source.range(of: "@ViewBuilder private var content: some View"))
+        let body = Self.flattened(String(source[content.upperBound...]))
+        let known = try #require(body.range(of: "case .known:"))
+        let branch = String(body[known.upperBound...])
+        let warning = try #require(branch.range(of: "if let warning = model.warning { Text(warning.text)"))
+        let blocked = try #require(
+            branch.range(of: "if let blocked = model.blockedReason { Text(blocked.text)"))
+        #expect(warning.lowerBound < blocked.lowerBound)
     }
 
     /// Every line the sheet can show, for every state it can be in.

@@ -51,6 +51,13 @@ final class BucketVersioningModel {
     /// two inits have none, because a sheet that is still reading or whose
     /// read failed has no state to be locked in.
     private(set) var bucketHasObjectLock: Bool?
+    /// The lock was asked for and the ask failed. **Distinct from `nil` with
+    /// this `false`**, which is "not asked yet": an enabled bucket whose lock
+    /// could not be read is offered nothing either way, but only this one has
+    /// something to say about why (`blockedReason`). Set by `read` for a bucket
+    /// that is not enabled (where the failure costs nothing) and by `apply`
+    /// when its second ask fails too.
+    private(set) var lockReadFailed = false
     /// A write is in flight.
     private(set) var isApplying = false
     /// Why the last write was refused, as a sentence; `nil` after a write that
@@ -97,19 +104,30 @@ final class BucketVersioningModel {
         }
     }
 
-    /// Why an enabled bucket is offered nothing, when the reason is that it
-    /// uses Object Lock; `nil` in every other state.
+    /// Why an enabled bucket is offered nothing; `nil` in every other state.
     ///
-    /// **Only for a lock that was READ.** An unread state (`nil`) offers
-    /// nothing and says nothing about locks, because naming Object Lock there
-    /// would assert a fact nobody has read. The sentence says what is true
-    /// (this bucket uses Object Lock, so its versioning cannot be switched
-    /// off) and does not say the store refuses anything: that versioning
-    /// cannot be suspended under a lock is AWS's documentation, not something
-    /// this project observed.
+    /// **Corrected 2026-10-21 (Task 11b, fix round 1, I1).** This comment
+    /// read, verbatim: "Why an enabled bucket is offered nothing, when the
+    /// reason is that it uses Object Lock; `nil` in every other state."
+    /// Withdrawn: there are now two reasons. A lock READ as `true` gives
+    /// `objectLockKeepsItOnLine`; a lock whose read FAILED gives
+    /// `lockReadFailedLine`, because the failure no longer ends the load for
+    /// every state (`read`), so an enabled bucket can stand settled with an
+    /// unreadable lock, and a sheet with one state line and no button must
+    /// say why.
+    ///
+    /// **Only for a lock that was READ or that FAILED to be.** An unread state
+    /// (`nil`, `lockReadFailed == false`) offers nothing and says nothing
+    /// about locks, because naming Object Lock there would assert a fact
+    /// nobody has read. The lock sentence says what is true (this bucket uses
+    /// Object Lock, so its versioning cannot be switched off) and does not say
+    /// the store refuses anything: that versioning cannot be suspended under a
+    /// lock is AWS's documentation, not something this project observed.
     var blockedReason: CatalogueLine? {
-        guard current == .enabled, bucketHasObjectLock == true else { return nil }
-        return Self.objectLockKeepsItOnLine
+        guard current == .enabled else { return nil }
+        if bucketHasObjectLock == true { return Self.objectLockKeepsItOnLine }
+        if bucketHasObjectLock == nil, lockReadFailed { return Self.lockReadFailedLine }
+        return nil
     }
 
     var blockedReasonKey: String? { blockedReason?.key }
@@ -156,6 +174,9 @@ final class BucketVersioningModel {
             CatalogueLine(
                 key: "s3.versioning.enableIsOneWay",
                 english: "Once switched on, versioning can be suspended later but not removed. While it is on, every earlier version of a file is kept and counts toward your storage costs.")
+        // An enabled bucket with no suspension on offer (a lock, or a lock
+        // not known) warns about nothing: the warning describes a click that is
+        // not there, and `blockedReason` stands in its place.
         case .enabled where !offeredStates.contains(.suspended):
             nil
         case .enabled:
@@ -210,7 +231,13 @@ final class BucketVersioningModel {
     ]
 
     /// The lines this model shows in its current state, other than the fixed
-    /// ones: where the bucket stands, the warning, and the offered buttons.
+    /// ones: where the bucket stands, the warning, the reason nothing is
+    /// offered, and the offered buttons.
+    ///
+    /// **Corrected 2026-10-21 (Task 11b, fix round 1, M2).** This comment read,
+    /// verbatim: "where the bucket stands, the warning, and the offered
+    /// buttons". Withdrawn: three sources listed, four in the body
+    /// (`stateLine`, `warning`, `blockedReason` and the buttons).
     var lines: [CatalogueLine] {
         [stateLine, warning, blockedReason].compactMap { $0 }
             + offeredStates.compactMap { Self.actionLine(for: $0) }
@@ -229,15 +256,23 @@ final class BucketVersioningModel {
     /// The lock answer comes from the session's cache, so a second sheet on the
     /// same bucket does not read it again.
     ///
-    /// A failed lock read is a failed load, with its own sentence
-    /// (`lockReadFailedLine`): the alternative, an unread lock beside a known
-    /// state, is a sheet with no button and nothing to say about why. The
-    /// error is never quoted (see `message(for:applying:)`).
+    /// **Corrected 2026-10-21 (Task 11b, fix round 1, I1).** This paragraph
+    /// read, verbatim: "A failed lock read is a failed load, with its own
+    /// sentence (`lockReadFailedLine`): the alternative, an unread lock beside
+    /// a known state, is a sheet with no button and nothing to say about why."
+    /// Withdrawn as stated for every state. The lock answer changes nothing
+    /// the sheet offers or says for a bucket that is not enabled (enabling is
+    /// never gated by it), so a failed ask there settles the load with
+    /// `lockReadFailed` set, and only for an ENABLED bucket, where the answer
+    /// is the whole decision, is it a failed load with its own sentence
+    /// (`lockReadFailedLine`). Either way the sheet says why there is no
+    /// button. The error is never quoted (see `message(for:applying:)`).
     func read(
         bucket: String, from settings: any S3BucketSettings, locks: ObjectLockStateCache
     ) async {
         load = .reading
         bucketHasObjectLock = nil
+        lockReadFailed = false
         let state: BucketVersioning
         do {
             state = try await settings.versioning(ofBucket: bucket)
@@ -245,14 +280,18 @@ final class BucketVersioningModel {
             load = .failed(Self.message(for: error, applying: false))
             return
         }
-        let lock: Bool
+        let lock: Bool?
         do {
             lock = try await locks.hasObjectLock(bucket)
         } catch {
-            load = .failed(Self.lockReadFailedLine.text)
-            return
+            if state == .enabled {
+                load = .failed(Self.lockReadFailedLine.text)
+                return
+            }
+            lock = nil
         }
         bucketHasObjectLock = lock
+        lockReadFailed = lock == nil
         load = .known(state)
     }
 
@@ -262,8 +301,16 @@ final class BucketVersioningModel {
     /// After a write the sheet shows what the store says now, read back, and
     /// not what was sent. If the read-back fails after the write succeeded the
     /// target is shown: the store accepted it.
+    ///
+    /// **A lock that was not read is asked for again here** (`locks`, required
+    /// like `read`'s): `read` lets a bucket that was not enabled settle with an
+    /// unreadable lock, and this write is what turns it into one that is. The
+    /// cache keeps no failure, so this is a real second ask. If that fails
+    /// too, `lockReadFailed` is set and the enabled bucket says so
+    /// (`blockedReason`) instead of standing settled and silent.
     func apply(
-        _ target: BucketVersioning, bucket: String, via settings: any S3BucketSettings
+        _ target: BucketVersioning, bucket: String, via settings: any S3BucketSettings,
+        locks: ObjectLockStateCache
     ) async {
         guard !isApplying, offeredStates.contains(target) else { return }
         isApplying = true
@@ -271,7 +318,16 @@ final class BucketVersioningModel {
         defer { isApplying = false }
         do {
             try await settings.setVersioning(target, ofBucket: bucket)
-            load = .known((try? await settings.versioning(ofBucket: bucket)) ?? target)
+            let now = (try? await settings.versioning(ofBucket: bucket)) ?? target
+            if bucketHasObjectLock == nil {
+                do {
+                    bucketHasObjectLock = try await locks.hasObjectLock(bucket)
+                    lockReadFailed = false
+                } catch {
+                    lockReadFailed = true
+                }
+            }
+            load = .known(now)
         } catch {
             applyFailure = Self.message(for: error, applying: true)
         }
@@ -348,7 +404,7 @@ struct BucketVersioningSheet: BoundedView {
                     let line = BucketVersioningModel.actionLine(for: target)
                 {
                     Button(line.text) {
-                        Task { await model.apply(target, bucket: bucket, via: settings) }
+                        Task { await model.apply(target, bucket: bucket, via: settings, locks: locks) }
                     }
                     .buttonStyle(.polishedProminent)
                     .disabled(model.isApplying)
