@@ -56,12 +56,26 @@ final class CreateBucketModel {
         Listing(names: browser.listedItems.map(\.name), isKnown: browser.state == .loaded)
     }
 
-    /// Whether the action is offered for this connection at all: only when
-    /// the root is the list of buckets. Spec §6.1: a bucket made in a
-    /// connection rooted in one bucket would be invisible afterwards. The
-    /// route's availability reads this (`ConnectionActionRoute.createBucket`).
-    nonisolated static func isOffered(rootIsContainerList: Bool) -> Bool {
-        rootIsContainerList
+    /// Whether the action is offered, which is the whole rule and lives here:
+    /// the connection's root is a list of buckets, AND the pane is showing
+    /// that list right now (`paneBucket` is the bucket the pane is inside, or
+    /// `nil` at the list).
+    ///
+    /// **Both halves are needed and neither implies the other.** The first is
+    /// spec §6.1: a bucket made in a connection rooted in one bucket would be
+    /// invisible afterwards. The second is what makes the taken-name check
+    /// mean anything: on a bucket-list connection the pane can be INSIDE a
+    /// bucket, where `session.remote`'s listing is that bucket's objects, and
+    /// a proposed bucket name checked against object names would let through
+    /// exactly the duplicate create the check exists to stop. The route's
+    /// availability asks this (`ConnectionActionRoute.createBucket`).
+    ///
+    /// **Corrected 2026-10-21 (Task 11, fix round 1).** This function read,
+    /// verbatim: `nonisolated static func isOffered(rootIsContainerList: Bool) -> Bool {
+    /// rootIsContainerList }`, i.e. it returned its own argument and stated no
+    /// rule, while the pane half sat in the route's arm.
+    nonisolated static func isOffered(rootIsContainerList: Bool, paneBucket: String?) -> Bool {
+        rootIsContainerList && paneBucket == nil
     }
 
     private(set) var outcome: Outcome
@@ -91,11 +105,17 @@ final class CreateBucketModel {
         }
     }
 
+    /// **`existingNames` and `listingIsKnown` have no default value**, and are
+    /// spelled at every construction site. A default of `true` is the answer
+    /// that lets a create through, and a caller that forgot the argument would
+    /// get it without a word; the same ruling the plan makes for
+    /// `bucketHasObjectLock` (Task 11b).
+    ///
     /// `name` is set here and not afterwards because a write to `name` clears
     /// a failure (see its observer): a sheet built in a failed state with the
     /// name it failed for has to be built that way.
     init(
-        existingNames: [String] = [], listingIsKnown: Bool = true, outcome: Outcome = .editing,
+        existingNames: [String], listingIsKnown: Bool, outcome: Outcome = .editing,
         name: String = ""
     ) {
         takenNames = Set(existingNames)

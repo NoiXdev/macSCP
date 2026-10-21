@@ -556,21 +556,21 @@ enum BoundedViewRegistry {
             // no measurement waits on a request; the capability is never
             // called.
             BoundedViewEntry("a valid name with Object Lock chosen, over its notes") {
-                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"], listingIsKnown: true)
                 model.name = "macscp-archive-2026"
                 model.objectLock = true
                 return CreateBucketSheet(
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a name already in the list") {
-                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"], listingIsKnown: true)
                 model.name = "macscp-seed"
                 model.versioning = true
                 return CreateBucketSheet(
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a name with a character that is not allowed") {
-                let model = CreateBucketModel(existingNames: ["macscp-seed"])
+                let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
                 model.name = "macscp_archive"
                 return CreateBucketSheet(
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
@@ -583,7 +583,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a bucket made without the versioning that was asked for") {
                 let model = CreateBucketModel(
-                    existingNames: ["macscp-seed"],
+                    existingNames: ["macscp-seed"], listingIsKnown: true,
                     outcome: .failed(
                         sentence: CreateBucketModel.createdIncompletelyLine(
                             bucket: "macscp-archive-2026"),
@@ -595,7 +595,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a create that may have left a bucket behind") {
                 let model = CreateBucketModel(
-                    existingNames: ["macscp-seed"],
+                    existingNames: ["macscp-seed"], listingIsKnown: true,
                     outcome: .failed(
                         sentence: CreateBucketModel.mayExistLine.text, bucketMayExist: true),
                     name: "macscp-archive-2026")
@@ -605,7 +605,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a bucket that was made") {
                 let model = CreateBucketModel(
-                    existingNames: ["macscp-seed"], outcome: .created, name: "macscp-archive-2026")
+                    existingNames: ["macscp-seed"], listingIsKnown: true, outcome: .created, name: "macscp-archive-2026")
                 return CreateBucketSheet(
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },

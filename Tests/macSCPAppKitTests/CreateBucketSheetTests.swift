@@ -20,7 +20,7 @@ struct CreateBucketSheetTests {
     // MARK: - The name
 
     @MainActor @Test func aNameTheStoreWouldRejectBlocksTheButtonAndSaysWhy() {
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "My_Bucket"
         #expect(model.canCreate == false)
         #expect(model.problem == .uppercase)
@@ -29,7 +29,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func aValidNameIsTheCaseTheTestAboveIsTheNegativeOf() {
         // The positive control for the test above, and for every refusal in
         // this file: a model that refuses every name satisfies all of them.
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         #expect(model.problem == nil)
         #expect(model.canCreate == true)
@@ -38,7 +38,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func nothingTypedYetIsNotAnErrorButIsNotCreatable() {
         // An empty field is "too short" to the validator, and a red sentence
         // on a sheet that has just opened tells the person nothing they did.
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(model.canCreate == false)
         #expect(model.problemLine == nil)
         model.name = "ab"
@@ -55,7 +55,7 @@ struct CreateBucketSheetTests {
         ]
         var keys = Set<String>()
         for (name, expected) in samples {
-            let model = CreateBucketModel()
+            let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
             model.name = name
             #expect(model.problem == expected, "\(name)")
             #expect(model.canCreate == false, "\(name)")
@@ -70,7 +70,7 @@ struct CreateBucketSheetTests {
         // bucket the key already owns SUCCEEDS, so only this check stands
         // between the person and a one-way switch on a bucket they did not
         // mean to touch.
-        let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+        let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"], listingIsKnown: true)
         model.name = "macscp-seed"
         #expect(model.canCreate == false)
         #expect(model.problem == nil)  // the NAME is valid; it is taken
@@ -82,7 +82,7 @@ struct CreateBucketSheetTests {
 
     @MainActor @Test func aTakenNameNeverReachesTheStoreEvenIfAskedTo() async {
         let settings = FakeBucketSettings()
-        let model = CreateBucketModel(existingNames: ["macscp-seed"])
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-seed"
         model.versioning = true
         await model.create(via: settings)
@@ -99,7 +99,7 @@ struct CreateBucketSheetTests {
         #expect(model.listingUnknownKey == "s3.createBucket.listingUnknown")
         await model.create(via: settings)
         #expect(settings.creates.isEmpty)
-        let known = CreateBucketModel(existingNames: [])
+        let known = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(known.listingUnknownKey == nil)
     }
 
@@ -110,12 +110,12 @@ struct CreateBucketSheetTests {
         // versioning on with it -- NOT that it can only be set at creation,
         // which spec §6.1 withdrew on 2026-10-19. The honest sentence is "if
         // you say yes, you cannot undo it", not "you must decide now".
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(model.objectLockNoteKey == "s3.createBucket.objectLockIsFinal")
     }
 
     @MainActor @Test func objectLockImpliesVersioning() {
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.objectLock = true
         #expect(model.versioning == true)
         #expect(model.versioningIsLocked == true)
@@ -126,7 +126,7 @@ struct CreateBucketSheetTests {
         // refuses the write planted out, every other test stayed green,
         // because `protection` reads the lock first and so never shows the
         // checkbox's state. What a person sees is `versioning` itself.
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.objectLock = true
         model.versioning = false
         #expect(model.versioning == true)
@@ -138,7 +138,7 @@ struct CreateBucketSheetTests {
 
     @MainActor @Test func versioningIsFreeWhileObjectLockIsOff() {
         // The positive beside the one above.
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(model.versioningIsLocked == false)
         model.versioning = true
         #expect(model.versioning == true)
@@ -152,7 +152,7 @@ struct CreateBucketSheetTests {
         // combination that cannot exist cannot be written. The sheet is where
         // the user's two checkboxes are folded back into the one choice, so
         // that is where it is pinned.
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(model.protection == .none)
         model.versioning = true
         #expect(model.protection == .versioned)
@@ -168,7 +168,7 @@ struct CreateBucketSheetTests {
         var reached = Set<String>()
         for versioning in [false, true] {
             for lock in [false, true] {
-                let model = CreateBucketModel()
+                let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
                 model.versioning = versioning
                 model.objectLock = lock
                 reached.insert("\(model.protection)")
@@ -179,7 +179,7 @@ struct CreateBucketSheetTests {
 
     @MainActor @Test func theSwitchesAreSentToTheNamedBucketAsOneChoice() async {
         let settings = FakeBucketSettings()
-        let model = CreateBucketModel(existingNames: ["macscp-seed"])
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
         await model.create(via: settings)
@@ -194,7 +194,7 @@ struct CreateBucketSheetTests {
 
     @MainActor @Test func aPlainBucketIsSentWithNoProtection() async {
         let settings = FakeBucketSettings()
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings)
         #expect(settings.creates.map(\.protection) == [.none])
@@ -205,8 +205,26 @@ struct CreateBucketSheetTests {
     @MainActor @Test func theActionIsOfferedOnlyInBucketListMode() {
         // Author's call, spec §6.1: a bucket made in single-bucket mode would
         // be invisible afterwards.
-        #expect(CreateBucketModel.isOffered(rootIsContainerList: true) == true)
-        #expect(CreateBucketModel.isOffered(rootIsContainerList: false) == false)
+        //
+        // **Changed 2026-10-21 (Task 11, fix round 1).** The calls read,
+        // verbatim: `CreateBucketModel.isOffered(rootIsContainerList: true) == true`
+        // and `CreateBucketModel.isOffered(rootIsContainerList: false) == false`.
+        // The predicate gained the pane half (below); a single-bucket
+        // connection has a pane bucket too, so both spellings are asked.
+        #expect(CreateBucketModel.isOffered(rootIsContainerList: true, paneBucket: nil) == true)
+        #expect(CreateBucketModel.isOffered(rootIsContainerList: false, paneBucket: nil) == false)
+        #expect(
+            CreateBucketModel.isOffered(rootIsContainerList: false, paneBucket: "macscp-seed")
+                == false)
+    }
+
+    @MainActor @Test func theRowIsLiveOnlyWhileThePaneIsSHOWINGTheBucketList() {
+        // The gate that makes the taken-name check above mean anything: on a
+        // bucket-list connection the pane can be inside a bucket, where the
+        // listing is that bucket's OBJECTS, not the account's buckets.
+        #expect(CreateBucketModel.isOffered(rootIsContainerList: true, paneBucket: nil) == true)
+        #expect(CreateBucketModel.isOffered(rootIsContainerList: true, paneBucket: "macscp-seed") == false)
+        #expect(CreateBucketModel.isOffered(rootIsContainerList: false, paneBucket: nil) == false)
     }
 
     // MARK: - What the sheet says when the store does not do as asked
@@ -214,7 +232,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func aRefusedPlainCreateSaysItWasNotCreatedAndNamesNoCause() async throws {
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.protocolError(reason: "https://KEY:SECRET@host")))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings)
         #expect(model.isCreated == false)
@@ -230,7 +248,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func aFindingSaysItsOwnSentence() async throws {
         for finding in [RemoteFSFinding.bucketNameTaken, .bucketAlreadyOwnedByYou] {
             let settings = FakeBucketSettings(createFailure: .refused(RemoteFSError.finding(finding)))
-            let model = CreateBucketModel()
+            let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
             model.name = "macscp-third"
             await model.create(via: settings)
             #expect(model.failureSentence == finding.message, "\(finding.name)")
@@ -241,7 +259,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func aMissingPermissionOnAPlainCreateHasItsOwnSentence() async {
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.permissionDenied(path: "/macscp-third")))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings)
         #expect(model.failureSentence == CreateBucketModel.deniedLine.text)
@@ -253,7 +271,7 @@ struct CreateBucketSheetTests {
         // call does not delete what it made, so "failed" would be false.
         let settings = FakeBucketSettings(
             createFailure: .afterTheBucketExists(RemoteFSError.permissionDenied(path: "/macscp-third")))
-        let model = CreateBucketModel(existingNames: ["macscp-seed"])
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
         model.versioning = true
         await model.create(via: settings)
@@ -276,7 +294,7 @@ struct CreateBucketSheetTests {
         let settings = FakeBucketSettings(
             readError: RemoteFSError.permissionDenied(path: "/macscp-third"),
             createFailure: .refused(RemoteFSError.permissionDenied(path: "/macscp-third")))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.versioning = true
         await model.create(via: settings)
@@ -291,7 +309,7 @@ struct CreateBucketSheetTests {
         // and that is a plain "not created".
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.protocolError(reason: "x")))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
         await model.create(via: settings)
@@ -305,7 +323,7 @@ struct CreateBucketSheetTests {
         // sentence is the finding's own and no read is spent finding out.
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.finding(.bucketNameTaken)))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
         await model.create(via: settings)
@@ -317,7 +335,7 @@ struct CreateBucketSheetTests {
     @MainActor @Test func editingTheNameClearsAStaleFailure() async {
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.protocolError(reason: "x")))
-        let model = CreateBucketModel()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings)
         #expect(model.failureSentence != nil)
@@ -333,7 +351,7 @@ struct CreateBucketSheetTests {
         // in a failed state with the name it failed for came up with no
         // failure on it.
         let model = CreateBucketModel(
-            existingNames: [],
+            existingNames: [], listingIsKnown: true,
             outcome: .failed(sentence: "it did not work", bucketMayExist: true),
             name: "macscp-third")
         #expect(model.failureSentence == "it did not work")
@@ -489,9 +507,14 @@ struct CreateBucketSheetTests {
         let rest = source[start.upperBound...]
         let arm = rest[..<(rest.range(of: "case .")?.lowerBound ?? rest.endIndex)]
         #expect(arm.contains("CreateBucketModel.isOffered("))
-        // And the arm is the inverse of its neighbours' bucket test: a row
-        // that is live only AT the list.
-        #expect(arm.contains("context.bucket == nil"))
+        // The arm supplies BOTH facts the rule is made of: the connection's
+        // root and the bucket the pane is inside. Handing it only the first
+        // would leave the pane half unasked.
+        #expect(arm.contains("rootIsContainerList: context.rootIsContainerList"))
+        #expect(arm.contains("paneBucket: context.bucket"))
+        // And the arm is not a neighbour's: it never asks for a bucket to
+        // exist (`bucket != nil`), which would make the row unreachable.
+        #expect(!arm.contains("context.bucket != nil"))
     }
 
     /// The dispatcher builds the sheet's list from the pane's listing through
