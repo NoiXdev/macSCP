@@ -219,6 +219,12 @@ final class CreateBucketModel {
         }
     }
 
+    /// Whether the "your list already has this name" line is shown. Not once
+    /// the outcome says the bucket exists (made, or made in part, or the store
+    /// said we own it): that line, "Choose a different name", would sit under
+    /// "was created" and contradict it.
+    var showsNameIsTaken: Bool { nameIsTakenKey != nil && !bucketMayExist }
+
     /// The sentence for a bucket that was made.
     var createdSentence: String { String(format: Self.createdLine.text, name) }
 
@@ -231,11 +237,18 @@ final class CreateBucketModel {
     /// unversioned, and the error thrown is that request's own, so the error
     /// cannot say which request failed. After a failure with a protection
     /// asked for, the bucket is therefore looked up once
-    /// (`versioning(ofBucket:)`, a read, no write): found means the create had
-    /// gone through; the store's own "no such bucket" means it had not; any
-    /// other answer is not a fact, and the sentence says only that the bucket
-    /// may exist. A create with no protection is one request, and its failure
-    /// needs no look.
+    /// (`versioning(ofBucket:)`, a read, no write): found means a bucket of
+    /// this name exists now; the store's own "no such bucket" means it does
+    /// not; any other answer is not a fact, and the sentence says only that
+    /// the bucket may exist. A create with no protection is one request, and
+    /// its failure needs no look; its sentence says the request failed, which
+    /// is all that was measured.
+    ///
+    /// **Corrected 2026-10-21 (Task 11, fix round 1, M2).** This paragraph
+    /// read, verbatim: "found means the create had gone through". Withdrawn:
+    /// the read answers existence, not authorship. The two come apart on a
+    /// stale listing, or on a create refused for a bucket the key can still
+    /// read.
     func create(via settings: any S3BucketSettings) async {
         guard canCreate else { return }
         let bucket = name
@@ -254,11 +267,28 @@ final class CreateBucketModel {
         for error: any Error, bucket: String, protection: BucketProtection,
         via settings: any S3BucketSettings
     ) async -> Outcome {
-        // Only the create request can say the name is taken.
-        if case RemoteFSError.finding(let finding) = error,
-            finding == .bucketNameTaken || finding == .bucketAlreadyOwnedByYou
-        {
-            return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
+        // Only the create request can say the name is taken, so no read is spent.
+        //
+        // "Already owned by you" is the store's own statement that a bucket of
+        // this name exists in THIS account: the name is taken and the pane's
+        // list, which did not hold it, is stale. It is at least as strong as
+        // the "may exist" arm below and does at least as much. "Name taken" is
+        // another account's bucket: not in "your list", and nothing here is
+        // stale.
+        //
+        // **Corrected 2026-10-21 (Task 11, fix round 1, I1).** This arm read,
+        // verbatim: "Only the create request can say the name is taken." and
+        // returned `bucketMayExist: false` for both findings without touching
+        // the taken names, so after `.bucketAlreadyOwnedByYou` the name was
+        // free again and the list was never refreshed.
+        if case RemoteFSError.finding(let finding) = error {
+            if finding == .bucketAlreadyOwnedByYou {
+                takenNames.insert(bucket)
+                return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: true)
+            }
+            if finding == .bucketNameTaken {
+                return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
+            }
         }
         guard protection != .none else {
             return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
@@ -267,7 +297,7 @@ final class CreateBucketModel {
             _ = try await settings.versioning(ofBucket: bucket)
             takenNames.insert(bucket)
             return .failed(
-                sentence: Self.createdIncompletelyLine(bucket: bucket), bucketMayExist: true)
+                sentence: Self.existsIncompletelyLine(bucket: bucket), bucketMayExist: true)
         } catch RemoteFSError.notFound {
             return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
         } catch {
@@ -341,23 +371,37 @@ final class CreateBucketModel {
         key: "s3.createBucket.creating", english: "Creating the bucket…")
     static let createdLine = CatalogueLine(
         key: "s3.createBucket.created %@", english: "The bucket “%@” was created.")
+    /// **Corrected 2026-10-21 (Task 11, fix round 1, M2).** This line read,
+    /// verbatim: "The bucket could not be created." It is said for a create
+    /// with no protection (one request, no follow-up read) and after a read
+    /// that found nothing; the first asserts a non-event nothing checked. What
+    /// was measured is that the request failed.
     static let notCreatedLine = CatalogueLine(
-        key: "s3.createBucket.error.create", english: "The bucket could not be created.")
+        key: "s3.createBucket.error.create", english: "The request to create the bucket failed.")
     static let deniedLine = CatalogueLine(
         key: "s3.createBucket.error.denied",
         english: "Your access key is not allowed to create buckets.")
-    /// The create went through and the versioning request after it did not.
-    static let createdIncompletelyTemplate = CatalogueLine(
-        key: "s3.createBucket.error.createdIncompletely %@",
-        english: "The bucket “%@” was created, but switching on versioning failed. It may not have the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
+    /// A bucket of this name exists and the create with the chosen settings
+    /// did not complete. Says no more than the read found.
+    ///
+    /// **Corrected 2026-10-21 (Task 11, fix round 1, M2).** This line was
+    /// `createdIncompletelyTemplate`, key `s3.createBucket.error.createdIncompletely %@`,
+    /// and read, verbatim: "The bucket “%@” was created, but switching on
+    /// versioning failed. It may not have the settings you chose. Open
+    /// Versioning and Object Lock for it to see what it has, and do not create
+    /// it again." Its first two clauses assert authorship and which request
+    /// failed; the read behind it establishes neither.
+    static let existsIncompletelyTemplate = CatalogueLine(
+        key: "s3.createBucket.error.existsIncompletely %@",
+        english: "A bucket named “%@” exists now, but the request to create it with the settings you chose did not complete. It may not have those settings. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
     /// Neither request can be told from the other, and the look that would
     /// tell them apart was refused too.
     static let mayExistLine = CatalogueLine(
         key: "s3.createBucket.error.mayExist",
         english: "Creating the bucket did not finish, and the bucket may exist now. Refresh the list; if it is there, open Versioning and Object Lock for it to see what it has.")
 
-    static func createdIncompletelyLine(bucket: String) -> String {
-        String(format: createdIncompletelyTemplate.text, bucket)
+    static func existsIncompletelyLine(bucket: String) -> String {
+        String(format: existsIncompletelyTemplate.text, bucket)
     }
 
     /// The sentence for each problem the validator reports. No `default`: a
@@ -402,7 +446,7 @@ final class CreateBucketModel {
             titleLine, nameLabelLine, nameHintLine, actionLine, versioningLabel, objectLockLabel,
             versioningNote, versioningHeldByObjectLockNote, objectLockNote, nameIsTakenLine,
             listingUnknownLine, creatingLine, createdLine, notCreatedLine, deniedLine,
-            createdIncompletelyTemplate, mayExistLine,
+            existsIncompletelyTemplate, mayExistLine,
         ] + everyProblem.map { line(for: $0) }
     }
 }
@@ -453,7 +497,7 @@ struct CreateBucketSheet: BoundedView {
                 if let problem = model.problemSentence {
                     red(problem)
                 }
-                if model.nameIsTakenKey != nil, !model.isCreated {
+                if model.showsNameIsTaken {
                     red(CreateBucketModel.nameIsTakenLine.text)
                 }
                 if model.listingUnknownKey != nil {

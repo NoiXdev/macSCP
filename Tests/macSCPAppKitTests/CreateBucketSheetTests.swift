@@ -252,8 +252,71 @@ struct CreateBucketSheetTests {
             model.name = "macscp-third"
             await model.create(via: settings)
             #expect(model.failureSentence == finding.message, "\(finding.name)")
-            #expect(model.bucketMayExist == false)
         }
+    }
+
+    /// The two findings differ in what they say about THIS account. "Already
+    /// owned by you" is the store's own statement that the bucket exists in
+    /// this account, so the name is taken, the pane's list is stale and the
+    /// same sheet must not send it again. "Name taken" is another account's
+    /// bucket: it is not in "your list", so the taken-name sentence ("Your
+    /// list already has...") would be false, and nothing in this account is
+    /// stale.
+    ///
+    /// Found by review (I1, 2026-10-21): the first version treated both as
+    /// "nothing was made" and freed the name, leaving the sheet more cautious
+    /// about a bucket that MAY exist than about one the store says DOES.
+    @MainActor @Test func aBucketTheStoreSaysYouOwnIsTakenAndTheListIsStale() async {
+        let settings = FakeBucketSettings(
+            createFailure: .refused(RemoteFSError.finding(.bucketAlreadyOwnedByYou)))
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings)
+        #expect(model.bucketMayExist == true)  // the pane refreshes
+        #expect(model.canCreate == false)
+        #expect(model.nameIsTakenKey == "s3.createBucket.nameIsTaken")
+        #expect(model.showsNameIsTaken == false)  // the finding's own sentence says it
+        #expect(model.failureSentence == RemoteFSFinding.bucketAlreadyOwnedByYou.message)
+        #expect(settings.reads.isEmpty)  // the store has said; no read is spent
+    }
+
+    @MainActor @Test func aNameAnotherAccountOwnsIsNotInYourListAndNothingIsStale() async {
+        let settings = FakeBucketSettings(
+            createFailure: .refused(RemoteFSError.finding(.bucketNameTaken)))
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        await model.create(via: settings)
+        #expect(model.bucketMayExist == false)
+        #expect(model.canCreate == true)  // another name, or the same: the store will say
+        #expect(model.nameIsTakenKey == nil)
+    }
+
+    /// The taken-name line and the outcome sentence must not be on screen
+    /// together when the outcome already says the bucket exists: "was created,
+    /// but ..." beside "Your list already has a bucket with this name. Choose
+    /// a different name." contradict each other in tone (M8).
+    @MainActor @Test func theTakenNameLineIsOnScreenOnlyWhenNothingElseSaysTheBucketExists() async {
+        let free = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        free.name = "macscp-third"
+        #expect(free.showsNameIsTaken == false)
+        let taken = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        taken.name = "macscp-seed"
+        #expect(taken.showsNameIsTaken == true)  // the positive control
+
+        let partial = FakeBucketSettings(
+            createFailure: .afterTheBucketExists(RemoteFSError.permissionDenied(path: "/x")))
+        let afterPartial = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        afterPartial.name = "macscp-third"
+        afterPartial.versioning = true
+        await afterPartial.create(via: partial)
+        #expect(afterPartial.nameIsTakenKey != nil)  // it IS taken...
+        #expect(afterPartial.showsNameIsTaken == false)  // ...and the outcome already says so
+
+        let made = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        made.name = "macscp-third"
+        await made.create(via: FakeBucketSettings())
+        #expect(made.showsNameIsTaken == false)
     }
 
     @MainActor @Test func aMissingPermissionOnAPlainCreateHasItsOwnSentence() async {
@@ -278,7 +341,7 @@ struct CreateBucketSheetTests {
         #expect(model.isCreated == false)
         #expect(model.bucketMayExist == true)
         let sentence = try #require(model.failureSentence)
-        #expect(sentence == CreateBucketModel.createdIncompletelyLine(bucket: "macscp-third"))
+        #expect(sentence == CreateBucketModel.existsIncompletelyLine(bucket: "macscp-third"))
         #expect(sentence.contains("macscp-third"))
         #expect(sentence != CreateBucketModel.notCreatedLine.text)
         // The bucket exists now, so the name is taken: a second click would

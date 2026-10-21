@@ -544,9 +544,9 @@
 "s3.createBucket.listingUnknown" = "Lista bucketów nie została wczytana, więc macSCP nie może sprawdzić, czy ta nazwa jest wolna. Odśwież listę i spróbuj ponownie.";
 "s3.createBucket.creating" = "Tworzenie bucketa…";
 "s3.createBucket.created %@" = "Bucket „%@” został utworzony.";
-"s3.createBucket.error.create" = "Nie udało się utworzyć bucketa.";
+"s3.createBucket.error.create" = "Żądanie utworzenia bucketa nie powiodło się.";
 "s3.createBucket.error.denied" = "Twój klucz dostępu nie ma uprawnień do tworzenia bucketów.";
-"s3.createBucket.error.createdIncompletely %@" = "Bucket „%@” został utworzony, ale włączenie wersjonowania się nie powiodło. Może nie mieć wybranych ustawień. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
+"s3.createBucket.error.existsIncompletely %@" = "Bucket o nazwie „%@” istnieje teraz, ale żądanie jego utworzenia z wybranymi ustawieniami nie zostało ukończone. Może nie mieć tych ustawień. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
 "s3.createBucket.error.mayExist" = "Tworzenie bucketa nie zakończyło się i bucket może już istnieć. Odśwież listę; jeśli tam jest, otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma.";
 "s3.createBucket.problem.tooShort" = "Nazwa bucketa musi mieć co najmniej 3 znaki.";
 "s3.createBucket.problem.tooLong" = "Nazwa bucketa może mieć najwyżej 63 znaki.";
