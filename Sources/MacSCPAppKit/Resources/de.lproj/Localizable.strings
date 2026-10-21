@@ -512,7 +512,7 @@
 "s3.objectLock.action.setRetention" = "Aufbewahrung festlegen";
 "s3.objectLock.action.placeHold" = "Legal Hold setzen";
 "s3.objectLock.action.liftHold" = "Legal Hold aufheben";
-"s3.objectLock.blocked.datePast" = "Wähle ein Datum und eine Uhrzeit in der Zukunft.";
+"s3.objectLock.blocked.datePast" = "Das gewählte Datum mit Uhrzeit ist vorbei. Wähle ein Datum und eine Uhrzeit in der Zukunft.";
 "s3.objectLock.blocked.notAcknowledged" = "Setze das Häkchen zur Bestätigung.";
 "s3.objectLock.blocked.holdUnchanged" = "Der Legal Hold ist bereits so eingestellt, es gibt also nichts zu ändern.";
 "s3.objectLock.blocked.complianceInForce" = "Diese Datei hat eine Compliance-Aufbewahrung, die noch läuft. Sie kann erst auf Governance umgestellt werden, wenn sie abgelaufen ist.";

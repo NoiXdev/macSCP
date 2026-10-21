@@ -513,7 +513,7 @@
 "s3.objectLock.action.setRetention" = "Ustaw okres przechowywania";
 "s3.objectLock.action.placeHold" = "Nałóż blokadę prawną";
 "s3.objectLock.action.liftHold" = "Zdejmij blokadę prawną";
-"s3.objectLock.blocked.datePast" = "Wybierz datę i godzinę z przyszłości.";
+"s3.objectLock.blocked.datePast" = "Wybrana data minęła. Wybierz datę i godzinę z przyszłości.";
 "s3.objectLock.blocked.notAcknowledged" = "Zaznacz pole, aby potwierdzić.";
 "s3.objectLock.blocked.holdUnchanged" = "Blokada prawna jest już tak ustawiona, więc nie ma czego zmieniać.";
 "s3.objectLock.blocked.complianceInForce" = "Ten plik ma okres przechowywania w trybie Compliance, który jeszcze obowiązuje. Dopiero po jego upływie można zmienić tryb na Governance.";

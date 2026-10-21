@@ -518,7 +518,7 @@
 "s3.objectLock.action.setRetention" = "Set Retention";
 "s3.objectLock.action.placeHold" = "Place Legal Hold";
 "s3.objectLock.action.liftHold" = "Lift Legal Hold";
-"s3.objectLock.blocked.datePast" = "Choose a date and time that is still ahead.";
+"s3.objectLock.blocked.datePast" = "The date and time you chose have passed. Choose a date and time that is still ahead.";
 "s3.objectLock.blocked.notAcknowledged" = "Tick the box to confirm.";
 "s3.objectLock.blocked.holdUnchanged" = "The legal hold is already set this way, so there is nothing to change.";
 "s3.objectLock.blocked.complianceInForce" = "This file has a Compliance retention that is still in force. It cannot be changed to Governance until it has run out.";

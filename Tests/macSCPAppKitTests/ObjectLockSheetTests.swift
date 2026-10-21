@@ -1,5 +1,6 @@
 import Foundation
 import MacSCPTestSupport
+import Observation
 import Testing
 import macSCPCore
 
@@ -161,6 +162,19 @@ struct ObjectLockSheetTests {
     }
 
     /// The legal-hold sheet has no mode, and says nothing about one.
+    /// The sentence for a date that is not ahead says that it has passed, and
+    /// what to do, in every language (fix round 3, NEW-6): a person who clicked
+    /// a live button is told why it did nothing, not only what to choose.
+    @MainActor @Test func theDateSentenceSaysTheDateHasPassed() {
+        let passed = ["en": "have passed", "de": "ist vorbei", "fr": "est passée", "pl": "minęła"]
+        #expect(passed.count == Self.locales.count)
+        for locale in Self.locales {
+            let text = L10n.$localeOverride.withValue(locale) { ObjectLockModel.datePastLine.text }
+            let says = text.contains(passed[locale] ?? "\u{0}")
+            #expect(says, "\(locale)")
+        }
+    }
+
     @MainActor @Test func theLegalHoldSheetShowsNoModeLine() {
         let hold = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
         hold.mode = .compliance
@@ -216,11 +230,30 @@ struct ObjectLockSheetTests {
     /// Fix round 2: the round-1 wording put the hedge on the rule and so
     /// hedged, two sentences from where it was asserted, one fact. Each language
     /// names the app in the rule, as the governance note does.
+    ///
+    /// **In every language, not in English alone (fix round 3, NEW-5).** The
+    /// first version of this test held the either-or and the flat rule for the
+    /// English only; a de, fr or pl string reverted to hedging the rule would
+    /// have passed. Each language now has its connective and the hedge words
+    /// that language would use for the rule, asserted present and absent, and
+    /// the table is counted against the locales.
     @MainActor @Test func theRefusalKeepsTheRuleFlatAndHedgesTheCause() {
+        let connective = ["en": "either", "de": "entweder", "fr": "soit", "pl": "albo"]
+        let ruleHedges = [
+            "en": ["perhaps", "may not be shortened"], "de": ["möglicherweise", "womöglich", "vielleicht"],
+            "fr": ["peut-être"], "pl": ["być może", "możliwe, że"],
+        ]
+        #expect(connective.count == Self.locales.count)
+        #expect(ruleHedges.count == Self.locales.count)
         for locale in Self.locales {
             let text = L10n.$localeOverride.withValue(locale) { ObjectLockLines.retentionRefused.text }
             let namesTheApp = text.contains("macSCP")
+            let lowered = text.lowercased()
+            let hasConnective = lowered.contains(connective[locale] ?? "\u{0}")
+            let hedgesTheRule = (ruleHedges[locale] ?? []).contains { lowered.contains($0) }
             #expect(namesTheApp, "\(locale)")
+            #expect(hasConnective, "\(locale)")
+            #expect(!hedgesTheRule, "\(locale)")
         }
         let english = L10n.$localeOverride.withValue("en") { ObjectLockLines.retentionRefused.text.lowercased() }
         let eitherOr = english.contains("either") && english.contains(", or your access key")
@@ -328,6 +361,68 @@ struct ObjectLockSheetTests {
         #expect(!model.acknowledged)
         #expect(model.mode == .compliance, "the person's choice of mode is not the read's to change")
         #expect(!model.canRun)
+    }
+
+    /// **The starting mode is not seeded from the file's (ruled twice).** A
+    /// COMPLIANCE file opens on GOVERNANCE, which `complianceInForce` then stops
+    /// with its own sentence; seeding the mode would start the sheet on the
+    /// irreversible one. Until now this rested on nobody having written the line
+    /// (fix round 3).
+    @MainActor @Test func aLoadOverAComplianceFileLeavesTheModeWhereItWas() async {
+        let probe = FakeBucketSettings(
+            lock: .init(retention: ObjectRetention(mode: .compliance, retainUntil: Self.newYear)))
+        let model = ObjectLockModel(now: { Self.now })
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.current?.retention?.mode == .compliance, "the read landed")
+        #expect(model.mode == .governance)
+        #expect(model.activeBlockers == [.complianceInForce])
+    }
+
+    // MARK: - A date that passes while the sheet is open
+
+    private final class Clock: @unchecked Sendable { var date = ObjectLockSheetTests.now }
+
+    private final class RedrawFlag: @unchecked Sendable {
+        private(set) var raised = false
+        func raise() { raised = true }
+    }
+
+    /// **The per-file sheet's twin of the bucket default's stale tick (fix round
+    /// 3, NEW-6).** The date chosen was ahead when the sheet was drawn; it
+    /// passes while the sheet is open. The clock is not observable, so the click
+    /// used to write nothing and change nothing the sheet watches: a live button
+    /// that did nothing. A refused run is counted, the date blocker reads the
+    /// count, and the sentence says the date has passed. The positive is beside
+    /// it: before the date passes the same click writes.
+    @MainActor @Test func aDateThatPassesWhileTheSheetIsOpenIsSaidSoOnTheClick() async {
+        let clock = Clock()
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(bucketHasLock: true, now: { clock.date })
+        model.retainUntil = Self.now.addingTimeInterval(3_600)
+        #expect(model.canRun, "the date is ahead")
+        #expect(model.explanation == nil)
+        let redraw = RedrawFlag()
+        withObservationTracking({ _ = model.canRun }, onChange: { redraw.raise() })
+        clock.date = Self.now.addingTimeInterval(7_200)
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.isEmpty, "a retention was written for a date that had passed")
+        #expect(redraw.raised, "a click on a passed date changed nothing the sheet was watching")
+        #expect(model.explanation?.key == ObjectLockModel.datePastLine.key)
+        model.retainUntil = Self.now.addingTimeInterval(3 * 86_400)
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.count == 1)
+    }
+
+    /// The count is of refused runs and nothing else: a run that is allowed
+    /// does not count.
+    @MainActor @Test func onlyARefusedRunIsCounted() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(model.refusedRuns == 0)
+        model.retainUntil = Self.yesterday
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(model.refusedRuns == 1)
     }
 
     // MARK: - The date is a date for the reader
@@ -1062,6 +1157,23 @@ struct ObjectLockSheetTests {
             }
         }
         #expect(withSpecifiers > 0)
+    }
+
+    /// **No line of the sheet names how the store works (fix round 3).** The
+    /// bucket default scanned every line; this sheet scanned two. Every line, in
+    /// the language the source text is written in, with the lines counted so an
+    /// empty list cannot pass.
+    @MainActor @Test func noLineOfTheSheetNamesStoreMechanics() {
+        let english = L10n.$localeOverride.withValue("en") {
+            Self.everyLine().map { $0.text.lowercased() }
+        }
+        #expect(english.count > 20)
+        for text in english {
+            for jargon in ["bypass", "header", "403", "x-amz", "version id", "delete marker", "xml"] {
+                let leaked = text.contains(jargon)
+                #expect(!leaked, "\(jargon)")
+            }
+        }
     }
 
     /// The acknowledgement and the warning above it are not one sentence said

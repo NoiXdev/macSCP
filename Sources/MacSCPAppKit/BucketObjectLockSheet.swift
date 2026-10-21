@@ -107,7 +107,13 @@ final class BucketObjectLockModel {
         }
     }
 
-    /// How many saves were refused. Only the stale blocker reads it; see there.
+    /// How many saves were refused. In production code only the stale blocker
+    /// reads it; see there. (A test reads it too.)
+    ///
+    /// **Corrected 2026-10-21 (fix round 3, NEW-4).** This comment read,
+    /// verbatim: "How many saves were refused. Only the stale blocker reads it;
+    /// see there." True of `Sources`, and false of the tree: the test that holds
+    /// the click reads it twice.
     private(set) var refusedSaves = 0
 
     /// The day the sentence named when the tick was given. The sentence is
