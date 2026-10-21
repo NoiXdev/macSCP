@@ -500,7 +500,7 @@
 "s3.objectLock.modeLabel" = "Mode";
 "s3.objectLock.mode.governance" = "Gouvernance";
 "s3.objectLock.mode.compliance" = "Conformité";
-"s3.objectLock.mode.governance.detail" = "Une personne disposant de l’autorisation nécessaire peut encore raccourcir ou supprimer une rétention de gouvernance.";
+"s3.objectLock.mode.governance.detail" = "Une personne disposant de l’autorisation nécessaire peut raccourcir ou supprimer une rétention de gouvernance, mais pas depuis macSCP.";
 "s3.objectLock.title.retention %@" = "Rétention de « %@ »";
 "s3.objectLock.title.legalHold %@" = "Conservation légale de « %@ »";
 "s3.objectLock.current.noRetention" = "Ce fichier n’a pas de rétention.";

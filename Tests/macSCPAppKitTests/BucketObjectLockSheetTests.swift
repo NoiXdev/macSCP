@@ -44,22 +44,97 @@ struct BucketObjectLockSheetTests {
         #expect(model.canSave == true)
     }
 
+    // MARK: - The warning is what the person is shown
+
+    /// The default's counterpart of
+    /// `ObjectLockSheetTests.choosingComplianceShowsTheWarningAndGovernanceDoesNot`:
+    /// the line the form reads, by `key`, in both modes (fix round 1, I-1).
+    @MainActor @Test func choosingComplianceShowsTheWarningAndGovernanceDoesNot() {
+        let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
+        model.mode = .compliance
+        let shownForCompliance = model.modeDetailLine.key
+        model.mode = .governance
+        let shownForGovernance = model.modeDetailLine.key
+        #expect(shownForCompliance == BucketObjectLockModel.complianceWarningLine.key)
+        #expect(shownForGovernance == ObjectLockLines.governanceDetail.key)
+        #expect(shownForCompliance != shownForGovernance)
+    }
+
+    @Test func theFormDrawsTheLineUnderTheModeChoice() throws {
+        let url = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit/BucketObjectLockSheet.swift")
+        let source = try SourceCorpus.code(of: url)
+        let form = try #require(source.range(of: "private var form: some View"))
+        let body = String(source[form.upperBound...])
+        #expect(body.contains("model.modeDetailLine"))
+        #expect(body.contains(".text"))
+        let present = try #require(source.range(of: "private var present: some View"))
+        let presentBody = String(source[present.upperBound...].prefix(1500))
+        #expect(presentBody.contains("\n            form\n"))
+    }
+
     @MainActor @Test func aGovernanceDefaultNeedsNoAcknowledgement() {
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
         model.mode = .governance
         #expect(model.canSave == true)
     }
 
-    /// The date in the acknowledgement is the one a file saved NOW would be
-    /// locked until, so it follows the days.
-    @MainActor @Test func theAcknowledgementNamesTheDateAFileAddedNowIsLockedUntil() {
+    /// The day in the acknowledgement is the one a file saved NOW would be
+    /// locked until, so it follows the days. A DAY, not an instant: a file added
+    /// a minute from now is locked until a minute later than that, and a sentence
+    /// that named the minute would be wrong the moment it was read.
+    @MainActor @Test func theAcknowledgementNamesTheDayAFileAddedNowIsLockedUntil() {
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
         model.mode = .compliance
         model.days = 30
-        let expected = Calendar.current.date(byAdding: .day, value: 30, to: Self.now) ?? Self.now
+        let thirtyDays = Calendar.current.date(byAdding: .day, value: 30, to: Self.now) ?? Self.now
+        let expected = Calendar.current.startOfDay(for: thirtyDays)
         #expect(model.acknowledgementKey == "s3.objectLock.default.complianceAcknowledgement %@")
         #expect(model.acknowledgementDate == expected)
-        #expect(model.acknowledgementDateText == ObjectLockDates.text(expected, localeCode: nil))
+        #expect(model.acknowledgementDateText == ObjectLockDates.dayText(expected, localeCode: nil))
+    }
+
+    /// A day is written for the reader and carries no time.
+    @Test func aDayIsWrittenInTheReadersLanguageAndWithoutATime() {
+        let expected = ["en": "January", "de": "Januar", "fr": "janvier", "pl": "stycznia"]
+        for locale in Self.locales {
+            let text = ObjectLockDates.dayText(ObjectLockSheetTests.newYearNoon, localeCode: locale)
+            let month = expected[locale] ?? ""
+            let hasMonth = text.contains(month)
+            let hasTime = text.contains(":")
+            #expect(hasMonth, "\(locale)")
+            #expect(!hasTime, "\(locale)")
+        }
+        #expect(expected.count == Self.locales.count)
+    }
+
+    /// **The tick is for the day it named.** The clock moves while the sheet
+    /// is open; a tick given for one day does not stand for another (fix round
+    /// 1, Minor 2: the date was recomputed from `now()` on every read while the
+    /// tick stood). The same day later is the same day, so the positive is
+    /// beside the negative; the stale tick is taken back on the click, visibly,
+    /// and nothing is sent.
+    @MainActor @Test func aTickGivenForOneDayDoesNotStandForAnother() async {
+        final class Clock: @unchecked Sendable { var date = BucketObjectLockSheetTests.now }
+        let clock = Clock()
+        let probe = FakeBucketSettings(lock: .init())
+        let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { clock.date })
+        model.mode = .compliance
+        model.days = 30
+        model.acknowledged = true
+        let named = model.acknowledgementDate
+        clock.date = Self.now.addingTimeInterval(1)
+        #expect(model.acknowledgementDate == named)
+        #expect(model.canSave, "the same day, a moment later")
+        clock.date = Self.now.addingTimeInterval(2 * 86_400)
+        #expect(model.acknowledgementDate != named)
+        #expect(!model.canSave)
+        await model.save(bucket: "b", via: probe)
+        #expect(probe.defaultWrites.isEmpty, "a tick for another day sent a COMPLIANCE default")
+        #expect(!model.acknowledged, "the stale tick is taken back where the person can see it")
+        model.acknowledged = true
+        #expect(model.canSave)
+        await model.save(bucket: "b", via: probe)
+        #expect(probe.defaultWrites.count == 1)
     }
 
     @MainActor @Test func changingTheDaysOrTheModeTakesTheAcknowledgementBack() {

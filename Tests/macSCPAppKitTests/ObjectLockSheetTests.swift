@@ -140,6 +140,128 @@ struct ObjectLockSheetTests {
         #expect(!model.acknowledged)
     }
 
+    // MARK: - The warning is what the person is shown
+
+    /// **The link between choosing COMPLIANCE and being shown the warning.**
+    /// Every other test that names the warning reads the constant; this one
+    /// reads what the form reads, `modeDetailLine`, by `key` and both ways: the
+    /// GOVERNANCE arm is the positive beside the negative, so a line that
+    /// answered the warning for every mode is red as well. Fix round 1,
+    /// Important I-1: with COMPLIANCE's line replaced by the governance note,
+    /// 79 tests ran green.
+    @MainActor @Test func choosingComplianceShowsTheWarningAndGovernanceDoesNot() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        let shownForCompliance = model.modeDetailLine?.key
+        model.mode = .governance
+        let shownForGovernance = model.modeDetailLine?.key
+        #expect(shownForCompliance == ObjectLockModel.complianceWarningLine.key)
+        #expect(shownForGovernance == ObjectLockLines.governanceDetail.key)
+        #expect(shownForCompliance != shownForGovernance)
+    }
+
+    /// The legal-hold sheet has no mode, and says nothing about one.
+    @MainActor @Test func theLegalHoldSheetShowsNoModeLine() {
+        let hold = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
+        hold.mode = .compliance
+        #expect(hold.modeDetailLine == nil)
+        let retention = ObjectLockModel(focus: .retention, bucketHasLock: true, now: { Self.now })
+        #expect(retention.modeDetailLine != nil)
+    }
+
+    /// And the form puts that line on screen: the retention form reads
+    /// `model.modeDetailLine`, and the sheet shows that form for the retention
+    /// focus. Deleting the `Text` that draws the warning left the model right
+    /// and the screen without it (fix round 1, I-1, the second probe).
+    @Test func theRetentionFormDrawsTheLineUnderTheModeChoice() throws {
+        let source = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
+        let form = try #require(source.range(of: "private var retentionForm: some View"))
+        let rest = source[form.upperBound...]
+        let end = try #require(rest.range(of: "private var legalHoldForm: some View"))
+        let body = String(rest[..<end.lowerBound])
+        #expect(body.contains("model.modeDetailLine"))
+        #expect(body.contains(".text"))
+        let present = try #require(source.range(of: "private var present: some View"))
+        let presentBody = String(source[present.upperBound...].prefix(1500))
+        #expect(presentBody.contains("retentionForm"))
+        #expect(presentBody.contains("legalHoldForm"))
+    }
+
+    // MARK: - What the governance note promises
+
+    /// A governance retention can be lifted by someone holding the bypass
+    /// permission, and macSCP sends no bypass. The note says the first and not
+    /// the second is available here: the fact stays (it is why GOVERNANCE needs
+    /// no acknowledgement), the promise goes. Each language names the app in
+    /// the limit, and the English no longer says "still".
+    @MainActor @Test func theGovernanceNoteSaysItCannotBeLiftedFromHere() {
+        for locale in Self.locales {
+            let text = L10n.$localeOverride.withValue(locale) { ObjectLockLines.governanceDetail.text }
+            let namesTheApp = text.contains("macSCP")
+            #expect(namesTheApp, "\(locale)")
+        }
+        let english = L10n.$localeOverride.withValue("en") { ObjectLockLines.governanceDetail.text.lowercased() }
+        let promises = english.contains("still")
+        let limit = english.contains("not from macscp")
+        let fact = english.contains("right permission")
+        #expect(!promises)
+        #expect(limit)
+        #expect(fact)
+    }
+
+    /// The refusal that follows an attempt is hedged in the source text as it
+    /// is in the translations, because the answer does not say whether the
+    /// retention or the key was the cause.
+    @MainActor @Test func theEnglishRefusalIsHedgedAsTheTranslationsAre() {
+        let english = L10n.$localeOverride.withValue("en") { ObjectLockLines.retentionRefused.text.lowercased() }
+        let hedged = english.contains("perhaps")
+        #expect(hedged)
+        let flat = english.contains("a retention that is already in force may not")
+        #expect(!flat)
+    }
+
+    // MARK: - Where the form starts
+
+    /// A file already locked past the usual starting date is not offered a
+    /// shortening as its default.
+    @MainActor @Test func theFormStartsAtTheRetentionAlreadyInForceWhenThatIsLater() async {
+        let later = Self.now.addingTimeInterval(400 * 86_400 + 17)
+        let probe = FakeBucketSettings(
+            lock: .init(retention: ObjectRetention(mode: .governance, retainUntil: later)))
+        let model = ObjectLockModel(now: { Self.now })
+        let usual = model.retainUntil
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.retainUntil >= later)
+        #expect(model.retainUntil < later.addingTimeInterval(60))
+        #expect(model.retainUntil > usual)
+        #expect(Calendar.current.component(.second, from: model.retainUntil) == 0)
+    }
+
+    @MainActor @Test func aRetentionEarlierThanTheUsualStartLeavesTheUsualStart() async {
+        let sooner = Self.now.addingTimeInterval(86_400)
+        let probe = FakeBucketSettings(
+            lock: .init(retention: ObjectRetention(mode: .governance, retainUntil: sooner)))
+        let model = ObjectLockModel(now: { Self.now })
+        let usual = model.retainUntil
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.retainUntil == usual)
+    }
+
+    /// Seeding the date is itself a change of the date, and a tick does not
+    /// survive a change: whatever was ticked before the read landed is not
+    /// ticked after it. (`ObjectLockModel.load` clears it on purpose, as the
+    /// bucket default's does; fix round 1, Minor 1.)
+    @MainActor @Test func aLoadTakesAnyAcknowledgementBack() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(now: { Self.now })
+        model.mode = .compliance
+        model.acknowledged = true
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(!model.acknowledged)
+        #expect(model.mode == .compliance, "the person's choice of mode is not the read's to change")
+        #expect(!model.canRun)
+    }
+
     // MARK: - The date is a date for the reader
 
     /// "A date in a sentence is formatted for the locale, never interpolated
@@ -470,9 +592,22 @@ struct ObjectLockSheetTests {
 
     // MARK: - Every state the sheet can be in
 
-    /// What the model's facts can be, as data. The cross product is the sheet's
-    /// state space; no combination is written out by hand, so a state nobody
-    /// thought of is still run.
+    /// What the model's decision inputs can be, as data. The cross product is
+    /// every combination of them with the file's own current values held empty
+    /// (`model(for:)` always builds `Current(retention: nil, legalHold: false)`);
+    /// no combination is written out by hand, so a state nobody thought of is
+    /// still run. A file that already carries a retention or a hold is covered
+    /// by the loading tests (`aLoadReadsTheCurrentRetentionOfTheNamedKey`,
+    /// `aLegalHoldLoadReadsTheHoldAndStartsTheToggleWhereTheStoreIs`,
+    /// `aLegalHoldIsPlacedAndLiftedOnTheNamedKey`), not by this sweep.
+    ///
+    /// **Corrected 2026-10-21 (fix round 1, Minor 5).** This comment first read,
+    /// verbatim: "What the model's facts can be, as data. The cross product is
+    /// the sheet's state space; no combination is written out by hand, so a
+    /// state nobody thought of is still run." It was not the sheet's state
+    /// space: the current values were never varied. Widening the sweep was
+    /// weighed and left, since the oracle's legal-hold arm would need a fourth
+    /// input and the loading tests already hold the non-empty cases.
     enum LockFact: CaseIterable { case reading, failed, absent, present }
     enum Currency: CaseIterable { case unread, read }
     enum Day: CaseIterable { case past, future }
@@ -668,13 +803,27 @@ struct ObjectLockSheetTests {
         #expect(ObjectLockFileAction.allCases.count == ObjectLockModel.Focus.allCases.count)
     }
 
+    /// The negative, with its positive in the same body: S3 does contribute
+    /// them, and the loop measured as many pairs as there are other backends
+    /// times actions, so an emptied list or a filtered-away kind is red and not
+    /// a check that is satisfied (fix round 1, Minor 6).
     @Test func noOtherBackendContributesThem() {
+        let s3 = Set(BackendDescriptor.descriptor(for: .s3).fileActions.map(\.id))
+        for action in ObjectLockFileAction.allCases {
+            #expect(s3.contains(action.rawValue), "\(action.rawValue)")
+        }
+        var checked = 0
         for kind in ConnectionKind.allCases where kind != .s3 {
             let ids = Set(BackendDescriptor.descriptor(for: kind).fileActions.map(\.id))
             for action in ObjectLockFileAction.allCases {
                 #expect(!ids.contains(action.rawValue), "\(kind) \(action.rawValue)")
+                checked += 1
             }
         }
+        let others: Int = ConnectionKind.allCases.count - 1
+        let actions: Int = ObjectLockFileAction.allCases.count
+        #expect(checked == others * actions)
+        #expect(checked > 0)
     }
 
     @Test func theTitlesOfTheTwoActionsResolveInEveryLanguage() {

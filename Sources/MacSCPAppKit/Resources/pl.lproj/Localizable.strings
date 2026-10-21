@@ -498,7 +498,7 @@
 "s3.objectLock.modeLabel" = "Tryb";
 "s3.objectLock.mode.governance" = "Governance";
 "s3.objectLock.mode.compliance" = "Compliance";
-"s3.objectLock.mode.governance.detail" = "Osoba z odpowiednimi uprawnieniami może nadal skrócić lub usunąć okres przechowywania w trybie Governance.";
+"s3.objectLock.mode.governance.detail" = "Osoba z odpowiednimi uprawnieniami może skrócić lub usunąć okres przechowywania w trybie Governance, ale nie z poziomu macSCP.";
 "s3.objectLock.title.retention %@" = "Okres przechowywania pliku „%@”";
 "s3.objectLock.title.legalHold %@" = "Blokada prawna pliku „%@”";
 "s3.objectLock.current.noRetention" = "Ten plik nie ma okresu przechowywania.";

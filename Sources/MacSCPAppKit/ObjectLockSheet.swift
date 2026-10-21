@@ -12,6 +12,12 @@ enum ObjectLockDates {
         let locale = localeCode.map(Locale.init(identifier:)) ?? .current
         return date.formatted(Date.FormatStyle(date: .long, time: .shortened, locale: locale))
     }
+
+    /// A day, with no time, written the same way (see `text`).
+    static func dayText(_ date: Date, localeCode: String? = L10n.localeOverride) -> String {
+        let locale = localeCode.map(Locale.init(identifier:)) ?? .current
+        return date.formatted(Date.FormatStyle(date: .long, time: .omitted, locale: locale))
+    }
 }
 
 /// The lines both Object Lock sheets share: the sentences about a bucket that
@@ -42,18 +48,40 @@ enum ObjectLockLines {
     /// may not set retentions, and a retention already in force that may not be
     /// shortened. The sentence says both, as possibilities, because the answer
     /// does not tell them apart.
+    ///
+    /// **Corrected 2026-10-21 (fix round 1, Minor M-1).** The English read,
+    /// verbatim: "The change was refused. A retention that is already in force
+    /// may not be shortened, and your access key may not be allowed to change
+    /// it." Withdrawn: it was the only one of the four that read as a flat rule,
+    /// where de, fr and pl hedged ("möglicherweise", "peut-être", "być może"),
+    /// and a refused `setRetention` has not been measured on the rig. The
+    /// English moved to the three, not the three to the English, because the
+    /// answer does not say which of the two causes it was.
     static let retentionRefused = CatalogueLine(
         key: "s3.objectLock.error.refused",
-        english: "The change was refused. A retention that is already in force may not be shortened, and your access key may not be allowed to change it.")
+        english: "The change was refused. Perhaps a retention that is already in force cannot be shortened, or your access key is not allowed to change it.")
     static let saved = CatalogueLine(key: "s3.objectLock.saved", english: "Saved.")
     static let modeLabel = CatalogueLine(key: "s3.objectLock.modeLabel", english: "Mode")
     static let governance = CatalogueLine(
         key: "s3.objectLock.mode.governance", english: "Governance")
     static let compliance = CatalogueLine(
         key: "s3.objectLock.mode.compliance", english: "Compliance")
+    /// What GOVERNANCE is, as the person is told on choosing it.
+    ///
+    /// The fact stays: someone holding the bypass permission can lift a
+    /// governance retention, and that is why it needs no acknowledgement. The
+    /// promise goes: macSCP sends no bypass (`S3BucketSettings.setRetention`
+    /// says so), so within this app a governance retention can be extended and
+    /// not shortened, and the sheet's own refusal sentence says as much.
+    ///
+    /// **Corrected 2026-10-21 (fix round 1, Important I-2).** The English read,
+    /// verbatim: "Someone with the right permission can still shorten or remove
+    /// a governance retention." Withdrawn: "still", in a sheet that cannot do
+    /// it, read as a promise the refusal sentence below it then broke. The de,
+    /// fr and pl sentences made the same claim and moved with it.
     static let governanceDetail = CatalogueLine(
         key: "s3.objectLock.mode.governance.detail",
-        english: "Someone with the right permission can still shorten or remove a governance retention.")
+        english: "Someone with the right permission can shorten or remove a governance retention, but not from macSCP.")
 
     /// The name of a mode, as the person reads it.
     static func modeName(_ mode: RetentionMode) -> CatalogueLine {
@@ -291,6 +319,12 @@ final class ObjectLockModel {
         return calendar.dateInterval(of: .minute, for: week)?.start ?? week
     }
 
+    private static func roundedUpToTheMinute(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        guard let start = calendar.dateInterval(of: .minute, for: date)?.start else { return date }
+        return start == date ? date : start.addingTimeInterval(60)
+    }
+
     /// The earliest date the picker offers.
     var earliestDate: Date { now() }
 
@@ -473,6 +507,12 @@ final class ObjectLockModel {
         bucketLock = .reading
         current = nil
         currentFailure = nil
+        // A read starts the decision over, as the bucket default's does: a tick
+        // given before the state was known is not a tick for what it turned out
+        // to be (fix round 1, Minor 1; the sheet draws no checkbox until the
+        // read has landed, so nothing reaches this today, and the line keeps
+        // the two models saying the same thing).
+        acknowledged = false
         do {
             bucketLock = try await cache.hasObjectLock(bucket) ? .present : .absent
         } catch {
@@ -486,6 +526,14 @@ final class ObjectLockModel {
                 let retention = try await settings.retention(
                     ofKey: key, inBucket: bucket, versionId: nil)
                 current = Current(retention: retention, legalHold: false)
+                // Start from the retention already in force when that is later
+                // than the usual starting date, so the form's default is not a
+                // shortening the store would refuse (fix round 1, Minor 3).
+                // Rounded UP to the minute, never down: the sentence names
+                // minutes, and a rounding down would be a shortening.
+                if let held = retention {
+                    retainUntil = max(retainUntil, Self.roundedUpToTheMinute(held.retainUntil))
+                }
             case .legalHold:
                 let held = try await settings.legalHold(ofKey: key, inBucket: bucket, versionId: nil)
                 current = Current(retention: nil, legalHold: held)
