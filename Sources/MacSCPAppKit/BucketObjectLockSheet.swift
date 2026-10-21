@@ -44,6 +44,7 @@ final class BucketObjectLockModel {
         case noLockOnBucket
         case currentUnread
         case daysOutOfRange
+        case acknowledgementStale
         case complianceNotAcknowledged
         case unchanged
         case applying
@@ -97,8 +98,17 @@ final class BucketObjectLockModel {
     /// The tick on the COMPLIANCE sentence; valid only for the mode and days it
     /// was given for, and for the DAY it named (`acknowledgedDay`).
     var acknowledged = false {
-        didSet { acknowledgedDay = acknowledged ? acknowledgementDate : nil }
+        didSet {
+            // As `mode` and `days` do: a second write of the same value (a binding
+            // writing back) is not a new tick, and must not stamp a new day onto
+            // an old one (fix round 2, NEW-3).
+            guard acknowledged != oldValue else { return }
+            acknowledgedDay = acknowledged ? acknowledgementDate : nil
+        }
     }
+
+    /// How many saves were refused. Only the stale blocker reads it; see there.
+    private(set) var refusedSaves = 0
 
     /// The day the sentence named when the tick was given. The sentence is
     /// worked out from the clock, and the clock moves while the sheet is open:
@@ -161,13 +171,24 @@ final class BucketObjectLockModel {
             !currentRead
         case .daysOutOfRange:
             !Self.dayRange.contains(days)
+        case .acknowledgementStale:
+            acknowledgementIsStale
         case .complianceNotAcknowledged:
-            mode == .compliance && !(acknowledged && acknowledgedDay == acknowledgementDate)
+            mode == .compliance && !acknowledged
         case .unchanged:
             if let current { current.days == days && current.mode == mode } else { false }
         case .applying:
             isApplying
         }
+    }
+
+    /// Ticked, for a day that is not the day the sentence names now. Reading
+    /// `refusedSaves` is what lets a click on a stale tick redraw the sheet: the
+    /// clock is not observable, so nothing else this reads changes when
+    /// midnight passes.
+    private var acknowledgementIsStale: Bool {
+        _ = refusedSaves
+        return mode == .compliance && acknowledged && acknowledgedDay != acknowledgementDate
     }
 
     var activeBlockers: [SaveBlocker] {
@@ -211,6 +232,12 @@ final class BucketObjectLockModel {
         english: "Enter a number of days from 1 to %lld.")
     static let notAcknowledgedLine = CatalogueLine(
         key: "s3.objectLock.default.blocked.notAcknowledged", english: "Tick the box to confirm.")
+    /// The box is ticked and the day it was ticked for has gone by, so it
+    /// confirms nothing: said as that, and not as "tick the box" beside a box
+    /// that is ticked (fix round 2, NEW-1).
+    static let staleLine = CatalogueLine(
+        key: "s3.objectLock.default.blocked.acknowledgementStale",
+        english: "The day has changed since you ticked the box. Untick it and tick it again to confirm the new day.")
     static let unchangedLine = CatalogueLine(
         key: "s3.objectLock.default.blocked.unchanged",
         english: "The bucket already has this default, so there is nothing to change.")
@@ -261,6 +288,7 @@ final class BucketObjectLockModel {
         switch blocker {
         case .noLockOnBucket: ObjectLockLines.notEnabledOnThisBucket
         case .daysOutOfRange: daysOutOfRangeLine
+        case .acknowledgementStale: staleLine
         case .complianceNotAcknowledged: notAcknowledgedLine
         case .unchanged: unchangedLine
         case .lockUnread, .lockReadFailed, .currentUnread, .applying: nil
@@ -285,7 +313,7 @@ final class BucketObjectLockModel {
         ObjectLockLines.shared + [
             titleLine, currentNoneLine, currentLine, daysLabel, appliesLaterLine,
             complianceWarningLine, complianceAcknowledgementLine, saveLine, daysOutOfRangeLine,
-            notAcknowledgedLine, unchangedLine,
+            notAcknowledgedLine, staleLine, unchangedLine,
         ]
 
     var lines: [CatalogueLine] {
@@ -304,6 +332,10 @@ final class BucketObjectLockModel {
         currentRead = false
         current = nil
         currentFailure = nil
+        // A read starts the decision over, failed or not, as the per-file sheet's
+        // does (fix round 2). This used to happen only at the end of a read that
+        // succeeded, which left a tick from before standing after a failed one.
+        acknowledged = false
         do {
             bucketLock = try await cache.hasObjectLock(bucket) ? .present : .absent
         } catch {
@@ -319,7 +351,6 @@ final class BucketObjectLockModel {
                 days = read.days
                 mode = read.mode
             }
-            acknowledged = false
         } catch {
             currentFailure = ObjectLockLines.message(for: error, during: .reading)
         }
@@ -328,12 +359,20 @@ final class BucketObjectLockModel {
     /// Writes the default if and only if `canSave`. The sheet then shows what
     /// the store says now, read back, and the tick is spent.
     func save(bucket: String, via settings: any S3BucketSettings) async {
-        // A tick for another day is taken back here, where the person sees the
-        // box clear and the sentence name the day it names now.
-        if mode == .compliance, acknowledged, acknowledgedDay != acknowledgementDate {
-            acknowledged = false
+        // A refusal is counted so that the sheet, which cannot see the clock,
+        // redraws and says why (a stale tick), instead of the click doing
+        // nothing the person can see. The tick itself is left standing.
+        //
+        // **Changed 2026-10-21 (fix round 2).** This function first began,
+        // verbatim: "A tick for another day is taken back here, where the person
+        // sees the box clear and the sentence name the day it names now." and
+        // cleared the tick. Withdrawn: the only sentence left to explain it was
+        // the generic "Tick the box to confirm.", an instruction to redo what
+        // they had just done.
+        guard canSave else {
+            refusedSaves += 1
+            return
         }
-        guard canSave else { return }
         isApplying = true
         applyFailure = nil
         isSaved = false

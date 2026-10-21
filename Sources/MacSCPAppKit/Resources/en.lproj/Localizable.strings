@@ -498,7 +498,7 @@
 "s3.objectLock.error.read" = "Object Lock could not be read.";
 "s3.objectLock.error.apply" = "The change could not be saved.";
 "s3.objectLock.error.denied" = "Your access key is not allowed to read or change this.";
-"s3.objectLock.error.refused" = "The change was refused. Perhaps a retention that is already in force cannot be shortened, or your access key is not allowed to change it.";
+"s3.objectLock.error.refused" = "The change was refused. Either a retention that is already in force cannot be shortened from macSCP, or your access key is not allowed to change it.";
 "s3.objectLock.saved" = "Saved.";
 "s3.objectLock.modeLabel" = "Mode";
 "s3.objectLock.mode.governance" = "Governance";
@@ -521,6 +521,7 @@
 "s3.objectLock.blocked.datePast" = "Choose a date and time that is still ahead.";
 "s3.objectLock.blocked.notAcknowledged" = "Tick the box to confirm.";
 "s3.objectLock.blocked.holdUnchanged" = "The legal hold is already set this way, so there is nothing to change.";
+"s3.objectLock.blocked.complianceInForce" = "This file has a Compliance retention that is still in force. It cannot be changed to Governance until it has run out.";
 "s3.objectLock.default.title %@" = "Object Lock default for “%@”";
 "s3.objectLock.default.current.none" = "This bucket has no default retention.";
 "s3.objectLock.default.current %1$@ %2$lld" = "Current default: %1$@ mode, retention period in days: %2$lld.";
@@ -532,6 +533,7 @@
 "s3.objectLock.default.blocked.daysOutOfRange %lld" = "Enter a number of days from 1 to %lld.";
 "s3.objectLock.default.blocked.notAcknowledged" = "Tick the box to confirm.";
 "s3.objectLock.default.blocked.unchanged" = "The bucket already has this default, so there is nothing to change.";
+"s3.objectLock.default.blocked.acknowledgementStale" = "The day has changed since you ticked the box. Untick it and tick it again to confirm the new day.";
 
 /* Shared (M7b/T3) */
 "common.close" = "Close";

@@ -492,7 +492,7 @@
 "s3.objectLock.error.read" = "Die Objektsperre konnte nicht gelesen werden.";
 "s3.objectLock.error.apply" = "Die Änderung konnte nicht gespeichert werden.";
 "s3.objectLock.error.denied" = "Dein Zugangsschlüssel darf das weder lesen noch ändern.";
-"s3.objectLock.error.refused" = "Die Änderung wurde abgelehnt. Eine bereits geltende Aufbewahrung darf möglicherweise nicht verkürzt werden, und dein Zugangsschlüssel darf sie womöglich nicht ändern.";
+"s3.objectLock.error.refused" = "Die Änderung wurde abgelehnt. Entweder lässt sich eine bereits geltende Aufbewahrung in macSCP nicht verkürzen, oder dein Zugangsschlüssel darf sie nicht ändern.";
 "s3.objectLock.saved" = "Gespeichert.";
 "s3.objectLock.modeLabel" = "Modus";
 "s3.objectLock.mode.governance" = "Governance";
@@ -515,6 +515,7 @@
 "s3.objectLock.blocked.datePast" = "Wähle ein Datum und eine Uhrzeit in der Zukunft.";
 "s3.objectLock.blocked.notAcknowledged" = "Setze das Häkchen zur Bestätigung.";
 "s3.objectLock.blocked.holdUnchanged" = "Der Legal Hold ist bereits so eingestellt, es gibt also nichts zu ändern.";
+"s3.objectLock.blocked.complianceInForce" = "Diese Datei hat eine Compliance-Aufbewahrung, die noch läuft. Sie kann erst auf Governance umgestellt werden, wenn sie abgelaufen ist.";
 "s3.objectLock.default.title %@" = "Standard-Objektsperre für „%@“";
 "s3.objectLock.default.current.none" = "Dieser Bucket hat keine Standard-Aufbewahrung.";
 "s3.objectLock.default.current %1$@ %2$lld" = "Aktueller Standard: Modus %1$@, Aufbewahrungsdauer in Tagen: %2$lld.";
@@ -526,6 +527,7 @@
 "s3.objectLock.default.blocked.daysOutOfRange %lld" = "Gib eine Anzahl Tage von 1 bis %lld ein.";
 "s3.objectLock.default.blocked.notAcknowledged" = "Setze das Häkchen zur Bestätigung.";
 "s3.objectLock.default.blocked.unchanged" = "Der Bucket hat diesen Standard bereits, es gibt also nichts zu ändern.";
+"s3.objectLock.default.blocked.acknowledgementStale" = "Seit du das Häkchen gesetzt hast, hat sich der Tag geändert. Nimm es weg und setze es erneut, um den neuen Tag zu bestätigen.";
 
 /* Gemeinsam (M7b/T3) */
 "common.close" = "Schließen";

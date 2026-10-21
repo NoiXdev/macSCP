@@ -57,9 +57,22 @@ enum ObjectLockLines {
     /// and a refused `setRetention` has not been measured on the rig. The
     /// English moved to the three, not the three to the English, because the
     /// answer does not say which of the two causes it was.
+    ///
+    /// **Corrected again 2026-10-21 (fix round 2).** The English then read,
+    /// verbatim: "The change was refused. Perhaps a retention that is already in
+    /// force cannot be shortened, or your access key is not allowed to change
+    /// it." Withdrawn: it hedged the RULE, while the governance note two
+    /// sentences up the same sheet states that rule flat ("but not from
+    /// macSCP"), so the pair asserted and hedged one fact. The rule is flat
+    /// here too, and the uncertainty sits where it actually is, in WHICH cause
+    /// applied: "Either ... or". The de, fr and pl sentences, which hedged the
+    /// rule in the same way ("möglicherweise", "peut-être", "być może"), moved
+    /// with it, so the four agree. A mode change over a COMPLIANCE retention in
+    /// force no longer reaches this sentence: it is stopped before the attempt
+    /// (`RunBlocker.complianceInForce`).
     static let retentionRefused = CatalogueLine(
         key: "s3.objectLock.error.refused",
-        english: "The change was refused. Perhaps a retention that is already in force cannot be shortened, or your access key is not allowed to change it.")
+        english: "The change was refused. Either a retention that is already in force cannot be shortened from macSCP, or your access key is not allowed to change it.")
     static let saved = CatalogueLine(key: "s3.objectLock.saved", english: "Saved.")
     static let modeLabel = CatalogueLine(key: "s3.objectLock.modeLabel", english: "Mode")
     static let governance = CatalogueLine(
@@ -226,6 +239,7 @@ final class ObjectLockModel {
         case noLockOnBucket
         case currentUnread
         case dateNotInFuture
+        case complianceInForce
         case complianceNotAcknowledged
         case holdUnchanged
         case applying
@@ -342,6 +356,8 @@ final class ObjectLockModel {
             current == nil
         case .dateNotInFuture:
             focus == .retention && retainUntil <= now()
+        case .complianceInForce:
+            weakensAComplianceRetentionInForce
         case .complianceNotAcknowledged:
             focus == .retention && mode == .compliance && !acknowledged
         case .holdUnchanged:
@@ -349,6 +365,22 @@ final class ObjectLockModel {
         case .applying:
             isApplying
         }
+    }
+
+    /// GOVERNANCE chosen over a COMPLIANCE retention that has not run out.
+    ///
+    /// A COMPLIANCE retention is lifted by nobody before its date, and a change
+    /// of mode is a weakening of it, so the store refuses the write. Without
+    /// this the sheet started on GOVERNANCE for such a file, `retainUntil` was
+    /// seeded to the held date (so no other blocker applied) and "Set Retention"
+    /// was live on a change that could not be saved; the refusal that followed
+    /// named two other causes, neither of which applied (fix round 2, NEW-2).
+    /// A retention whose date has passed is no longer in force.
+    private var weakensAComplianceRetentionInForce: Bool {
+        guard focus == .retention, mode == .governance, let held = current?.retention else {
+            return false
+        }
+        return held.mode == .compliance && held.retainUntil > now()
     }
 
     var activeBlockers: [RunBlocker] {
@@ -401,6 +433,9 @@ final class ObjectLockModel {
         key: "s3.objectLock.blocked.datePast", english: "Choose a date and time that is still ahead.")
     static let notAcknowledgedLine = CatalogueLine(
         key: "s3.objectLock.blocked.notAcknowledged", english: "Tick the box to confirm.")
+    static let complianceInForceLine = CatalogueLine(
+        key: "s3.objectLock.blocked.complianceInForce",
+        english: "This file has a Compliance retention that is still in force. It cannot be changed to Governance until it has run out.")
     static let holdUnchangedLine = CatalogueLine(
         key: "s3.objectLock.blocked.holdUnchanged",
         english: "The legal hold is already set this way, so there is nothing to change.")
@@ -462,6 +497,7 @@ final class ObjectLockModel {
         switch blocker {
         case .noLockOnBucket: ObjectLockLines.notEnabledOnThisBucket
         case .dateNotInFuture: datePastLine
+        case .complianceInForce: complianceInForceLine
         case .complianceNotAcknowledged: notAcknowledgedLine
         case .holdUnchanged: holdUnchangedLine
         case .lockUnread, .lockReadFailed, .currentUnread, .applying: nil
@@ -488,7 +524,7 @@ final class ObjectLockModel {
             complianceWarningLine, complianceAcknowledgementLine, untilLabel, holdToggleLine,
             holdDetailLine, noRetentionLine, retentionLine, holdOnLine, holdOffLine,
             setRetentionLine, placeHoldLine, liftHoldLine, retentionTitleLine, holdTitleLine,
-            datePastLine, notAcknowledgedLine, holdUnchangedLine,
+            datePastLine, complianceInForceLine, notAcknowledgedLine, holdUnchangedLine,
         ]
 
     /// The lines this model shows in its current state.

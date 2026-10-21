@@ -493,7 +493,7 @@
 "s3.objectLock.error.read" = "Nie udało się odczytać blokady obiektów.";
 "s3.objectLock.error.apply" = "Nie udało się zapisać zmiany.";
 "s3.objectLock.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu ani zmiany tego.";
-"s3.objectLock.error.refused" = "Zmiana została odrzucona. Obowiązującego okresu przechowywania być może nie wolno skracać, a Twój klucz dostępu może nie mieć uprawnień do jego zmiany.";
+"s3.objectLock.error.refused" = "Zmiana została odrzucona. Albo obowiązującego okresu przechowywania nie można skrócić z poziomu macSCP, albo Twój klucz dostępu nie ma uprawnień do jego zmiany.";
 "s3.objectLock.saved" = "Zapisano.";
 "s3.objectLock.modeLabel" = "Tryb";
 "s3.objectLock.mode.governance" = "Governance";
@@ -516,6 +516,7 @@
 "s3.objectLock.blocked.datePast" = "Wybierz datę i godzinę z przyszłości.";
 "s3.objectLock.blocked.notAcknowledged" = "Zaznacz pole, aby potwierdzić.";
 "s3.objectLock.blocked.holdUnchanged" = "Blokada prawna jest już tak ustawiona, więc nie ma czego zmieniać.";
+"s3.objectLock.blocked.complianceInForce" = "Ten plik ma okres przechowywania w trybie Compliance, który jeszcze obowiązuje. Dopiero po jego upływie można zmienić tryb na Governance.";
 "s3.objectLock.default.title %@" = "Domyślna blokada obiektów bucketa „%@”";
 "s3.objectLock.default.current.none" = "Ten bucket nie ma domyślnego okresu przechowywania.";
 "s3.objectLock.default.current %1$@ %2$lld" = "Obecne ustawienie domyślne: tryb %1$@, okres przechowywania w dniach: %2$lld.";
@@ -527,6 +528,7 @@
 "s3.objectLock.default.blocked.daysOutOfRange %lld" = "Wpisz liczbę dni od 1 do %lld.";
 "s3.objectLock.default.blocked.notAcknowledged" = "Zaznacz pole, aby potwierdzić.";
 "s3.objectLock.default.blocked.unchanged" = "Ten bucket ma już to ustawienie domyślne, więc nie ma czego zmieniać.";
+"s3.objectLock.default.blocked.acknowledgementStale" = "Od zaznaczenia pola zmienił się dzień. Odznacz je i zaznacz ponownie, aby potwierdzić nowy dzień.";
 
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";
