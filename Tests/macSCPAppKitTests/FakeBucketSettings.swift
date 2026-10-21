@@ -77,14 +77,23 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         /// a write in flight instead of racing one.
         var writeEntered: AsyncSignal?
         var writeRelease: AsyncSignal?
+        /// The same pair for `hasObjectLock`: raised when the read has reached
+        /// the store, and, with `hasLockRelease` set, held there until it is
+        /// raised, so a test observes the lock read still pending while the
+        /// versioning read has already returned.
+        var hasLockEntered: AsyncSignal?
+        var hasLockRelease: AsyncSignal?
 
         init(
             hasLock: Bool = true, bucketDefault: ObjectLockDefault? = nil,
             retention: ObjectRetention? = nil, legalHold: Bool = false,
             hasLockError: (any Error)? = nil, readError: (any Error)? = nil,
             writeError: (any Error)? = nil, writeEntered: AsyncSignal? = nil,
-            writeRelease: AsyncSignal? = nil
+            writeRelease: AsyncSignal? = nil, hasLockEntered: AsyncSignal? = nil,
+            hasLockRelease: AsyncSignal? = nil
         ) {
+            self.hasLockEntered = hasLockEntered
+            self.hasLockRelease = hasLockRelease
             self.writeEntered = writeEntered
             self.writeRelease = writeRelease
             self.hasLock = hasLock
@@ -256,8 +265,14 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         }
     }
     func hasObjectLock(ofBucket bucket: String) async throws -> Bool {
-        try state.withLock { state in
+        let gate = try state.withLock { state -> (AsyncSignal?, AsyncSignal?) in
             state.hasLockReads.append(bucket)
+            guard let lock = state.lock else { throw Self.unsupported }
+            return (lock.hasLockEntered, lock.hasLockRelease)
+        }
+        gate.0?.signal()
+        if let release = gate.1 { _ = await release.wait() }
+        return try state.withLock { state in
             guard let lock = state.lock else { throw Self.unsupported }
             if let error = lock.hasLockError { throw error }
             return lock.hasLock

@@ -454,6 +454,8 @@
 "s3.versioning.error.read" = "Nie udało się odczytać wersjonowania tego bucketa.";
 "s3.versioning.error.apply" = "Nie udało się zmienić wersjonowania tego bucketa.";
 "s3.versioning.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu ani zmiany wersjonowania tego bucketa.";
+"s3.versioning.objectLockKeepsItOn" = "Ten bucket używa blokady obiektów, więc jego wersjonowania nie można wyłączyć.";
+"s3.versioning.error.lockRead" = "Nie udało się odczytać, czy ten bucket używa blokady obiektów, więc nie można tutaj zmienić jego wersjonowania.";
 
 /* Reguły CORS bucketa (ustawienia bucketów S3, Task 9) */
 "s3.cors.title %@" = "Reguły CORS bucketa „%@”";

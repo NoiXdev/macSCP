@@ -453,6 +453,8 @@
 "s3.versioning.error.read" = "Die Versionierung dieses Buckets konnte nicht gelesen werden.";
 "s3.versioning.error.apply" = "Die Versionierung dieses Buckets konnte nicht geändert werden.";
 "s3.versioning.error.denied" = "Dein Zugangsschlüssel darf die Versionierung dieses Buckets weder lesen noch ändern.";
+"s3.versioning.objectLockKeepsItOn" = "Dieser Bucket verwendet die Objektsperre, deshalb lässt sich seine Versionierung nicht ausschalten.";
+"s3.versioning.error.lockRead" = "Ob dieser Bucket die Objektsperre verwendet, konnte nicht gelesen werden. Seine Versionierung lässt sich deshalb hier nicht ändern.";
 
 /* Bucket-CORS-Regeln (S3-Bucket-Einstellungen, Task 9) */
 "s3.cors.title %@" = "CORS-Regeln für „%@“";

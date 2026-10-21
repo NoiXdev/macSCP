@@ -342,7 +342,9 @@ enum BoundedViewRegistry {
                     settingsStore: SettingsStore(directory: temporaryDirectory))
             },
 
-            // Four states, because each carries sentences the others do not:
+            // Five states (four until Task 11b added the lock-bearing one,
+            // below the refused read), because each carries sentences the
+            // others do not:
             // the never-versioned bucket the one-way-door warning and the
             // enable button, the enabled one the suspension warning about
             // cost (the longest text the sheet has) and the suspend button,
@@ -353,23 +355,36 @@ enum BoundedViewRegistry {
             BoundedViewEntry("a never-versioned bucket, with the one-way warning") {
                 BucketVersioningSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
-                    model: BucketVersioningModel(current: .never))
+                    locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    model: BucketVersioningModel(current: .never, bucketHasObjectLock: false))
             },
             BoundedViewEntry("an enabled bucket, with the suspension warning") {
                 BucketVersioningSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
-                    model: BucketVersioningModel(current: .enabled))
+                    locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a suspended bucket, offered enabling again") {
                 BucketVersioningSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
-                    model: BucketVersioningModel(current: .suspended))
+                    locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    model: BucketVersioningModel(current: .suspended, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a bucket whose versioning could not be read") {
                 BucketVersioningSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(
                         loadFailure: BucketVersioningModel.deniedLine.text))
+            },
+            // The fifth state (Task 11b): an enabled bucket under Object Lock
+            // is offered nothing and says why, so its sentence sits where the
+            // suspension warning and the action button otherwise do.
+            BoundedViewEntry("an enabled bucket under Object Lock, with no action offered") {
+                BucketVersioningSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(),
+                    locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: true))
             },
 
             // Five states, because the sheet has two panes and the lines that

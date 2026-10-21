@@ -456,6 +456,8 @@
 "s3.versioning.error.read" = "Impossible de lire la gestion des versions de ce bucket.";
 "s3.versioning.error.apply" = "Impossible de modifier la gestion des versions de ce bucket.";
 "s3.versioning.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier la gestion des versions de ce bucket.";
+"s3.versioning.objectLockKeepsItOn" = "Ce bucket utilise le verrouillage d’objet ; sa gestion des versions ne peut donc pas être désactivée.";
+"s3.versioning.error.lockRead" = "Impossible de lire si ce bucket utilise le verrouillage d’objet ; sa gestion des versions ne peut donc pas être modifiée ici.";
 
 /* Règles CORS du bucket (réglages de bucket S3, Task 9) */
 "s3.cors.title %@" = "Règles CORS du bucket « %@ »";

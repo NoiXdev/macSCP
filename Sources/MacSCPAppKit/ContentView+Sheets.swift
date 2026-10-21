@@ -148,7 +148,7 @@ extension ContentView {
         // Bucket versioning sheet (S3 bucket settings, Task 8): opened from the
         // toolbar's connection-actions menu through `handleConnectionAction`.
         .sheet(item: $versioningSheetItem) { item in
-            BucketVersioningSheet(bucket: item.bucket, settings: item.settings)
+            BucketVersioningSheet(bucket: item.bucket, settings: item.settings, locks: item.states)
         }
         // Bucket CORS sheet (S3 bucket settings, Task 9): opened from the same
         // menu, through the same dispatcher.
