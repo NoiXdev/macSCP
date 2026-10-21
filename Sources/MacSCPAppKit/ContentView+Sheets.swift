@@ -160,6 +160,12 @@ extension ContentView {
         .sheet(item: $bucketObjectLockSheetItem) { item in
             BucketObjectLockSheet(bucket: item.bucket, settings: item.settings, cache: item.states)
         }
+        // Create bucket (Task 11): the same menu, the same dispatcher, and the
+        // only row that is live at the bucket list.
+        .sheet(item: $createBucketSheetItem) { item in
+            CreateBucketSheet(
+                settings: item.settings, listing: item.listing, onCreated: item.onCreated)
+        }
         // Per-file retention and legal hold (Task 10): opened from the file
         // context menu's two Object Lock entries, see `handleBrowserMenuEntry`.
         .sheet(item: $objectLockSheetItem) { item in

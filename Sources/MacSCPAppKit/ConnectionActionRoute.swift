@@ -58,6 +58,7 @@ enum ConnectionActionRoute: String, CaseIterable {
     case versioning = "s3.versioning"
     case cors = "s3.cors"
     case objectLock = "s3.objectLock"
+    case createBucket = "s3.createBucket"
 
     init?(action: ConnectionActionContribution) {
         self.init(rawValue: action.id)
@@ -75,6 +76,19 @@ enum ConnectionActionRoute: String, CaseIterable {
             context.settings != nil && context.bucket != nil
         case .objectLock:
             context.settings != nil && context.bucket != nil
+        case .createBucket:
+            // **The inverse of the three above.** Those are bucket-level
+            // actions and are live where `bucket` is non-nil; this one makes a
+            // bucket and is live only where there is none, at the list of
+            // them. Copying a neighbour's condition gives a row that can never
+            // be chosen. Two facts are needed and neither implies the other:
+            // the root IS a list of buckets (`isOffered`, spec §6.1: a bucket
+            // made in a connection rooted in one bucket would be invisible
+            // afterwards), and the pane is standing at that list rather than
+            // inside one of its buckets.
+            context.settings != nil
+                && CreateBucketModel.isOffered(rootIsContainerList: context.rootIsContainerList)
+                && context.bucket == nil
         }
     }
 

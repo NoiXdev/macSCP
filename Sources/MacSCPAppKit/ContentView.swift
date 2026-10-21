@@ -771,6 +771,21 @@ struct ContentView: View {
 
     @State var bucketObjectLockSheetItem: BucketObjectLockSheetItem?
 
+    // MARK: - Create bucket (S3 bucket settings, Task 11)
+
+    /// The capability and the bucket list the sheet checks a name against,
+    /// captured at presentation time for the reason
+    /// `BucketVersioningSheetItem` gives, and the refresh to run when the
+    /// sheet made a bucket.
+    struct CreateBucketSheetItem: Identifiable {
+        let id = UUID()
+        let settings: any S3BucketSettings
+        let listing: CreateBucketModel.Listing
+        let onCreated: () -> Void
+    }
+
+    @State var createBucketSheetItem: CreateBucketSheetItem?
+
     /// The file whose retention or legal hold the sheet is about: which of the
     /// two, the bucket and key it was resolved to, and what it talks to.
     struct ObjectLockSheetItem: Identifiable {

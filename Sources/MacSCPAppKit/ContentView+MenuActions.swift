@@ -186,6 +186,21 @@ extension ContentView {
                 bucketObjectLockSheetItem = BucketObjectLockSheetItem(
                     bucket: bucket, settings: settings, states: states)
             }
+        case .createBucket:
+            // The mirror of the three arms above: they need a bucket, this one
+            // is live only where there is none. The sheet is handed the
+            // pane's own listing of the bucket list, which is what the row's
+            // availability guarantees the pane is showing; the listing itself
+            // is read by `CreateBucketModel.listing(of:)`. A made bucket
+            // refreshes that listing, so it appears.
+            if let settings = context.settings {
+                createBucketSheetItem = CreateBucketSheetItem(
+                    settings: settings,
+                    listing: CreateBucketModel.listing(of: session.remote),
+                    onCreated: { [remote = session.remote] in
+                        Task { await remote.refresh() }
+                    })
+            }
         }
     }
 }

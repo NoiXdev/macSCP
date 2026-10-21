@@ -530,6 +530,31 @@
 "s3.objectLock.default.blocked.unchanged" = "Ten bucket ma już to ustawienie domyślne, więc nie ma czego zmieniać.";
 "s3.objectLock.default.blocked.acknowledgementStale" = "Od zaznaczenia pola zmienił się dzień. Odznacz je i zaznacz ponownie, aby potwierdzić nowy dzień.";
 
+/* Create bucket (S3 bucket settings, Task 11) */
+"s3.createBucket.title" = "Utwórz bucket";
+"s3.createBucket.nameLabel" = "Nazwa bucketa";
+"s3.createBucket.nameHint" = "Użyj od 3 do 63 małych liter, cyfr, myślników lub kropek. Nazwy bucketa nie można później zmienić.";
+"s3.createBucket.action" = "Utwórz";
+"s3.createBucket.versioning" = "Wersjonowanie";
+"s3.createBucket.objectLock" = "Blokada obiektów";
+"s3.createBucket.versioningIsOneWay" = "Po włączeniu wersjonowanie można później tylko wstrzymać, nie można go usunąć. Dopóki jest włączone, każda wcześniejsza wersja pliku jest zachowywana i wlicza się do kosztów przechowywania.";
+"s3.createBucket.versioningHeldByObjectLock" = "Blokada obiektów wymaga wersjonowania, więc włącza się je razem z nią i pozostaje włączone.";
+"s3.createBucket.objectLockIsFinal" = "Blokady obiektów nie można nigdy wyłączyć dla tego bucketa, a wersjonowanie pozostaje przy niej włączone na zawsze. Jeśli włączysz ją tutaj, nie cofniesz tego.";
+"s3.createBucket.nameIsTaken" = "Na Twojej liście jest już bucket o tej nazwie. Wybierz inną nazwę.";
+"s3.createBucket.listingUnknown" = "Lista bucketów nie została wczytana, więc macSCP nie może sprawdzić, czy ta nazwa jest wolna. Odśwież listę i spróbuj ponownie.";
+"s3.createBucket.creating" = "Tworzenie bucketa…";
+"s3.createBucket.created %@" = "Bucket „%@” został utworzony.";
+"s3.createBucket.error.create" = "Nie udało się utworzyć bucketa.";
+"s3.createBucket.error.denied" = "Twój klucz dostępu nie ma uprawnień do tworzenia bucketów.";
+"s3.createBucket.error.createdIncompletely %@" = "Bucket „%@” został utworzony, ale włączenie wersjonowania się nie powiodło. Może nie mieć wybranych ustawień. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
+"s3.createBucket.error.mayExist" = "Tworzenie bucketa nie zakończyło się i bucket może już istnieć. Odśwież listę; jeśli tam jest, otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma.";
+"s3.createBucket.problem.tooShort" = "Nazwa bucketa musi mieć co najmniej 3 znaki.";
+"s3.createBucket.problem.tooLong" = "Nazwa bucketa może mieć najwyżej 63 znaki.";
+"s3.createBucket.problem.uppercase" = "Nazwa bucketa nie może zawierać wielkich liter.";
+"s3.createBucket.problem.invalidCharacter %@" = "Znak „%@” jest niedozwolony w nazwie bucketa. Użyj małych liter, cyfr, myślników i kropek.";
+"s3.createBucket.problem.looksLikeAnIPAddress" = "Nazwa bucketa nie może wyglądać jak adres IP.";
+"s3.createBucket.problem.badEdge" = "Nazwa bucketa musi zaczynać się i kończyć małą literą lub cyfrą.";
+
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";
 "common.apply" = "Zastosuj";

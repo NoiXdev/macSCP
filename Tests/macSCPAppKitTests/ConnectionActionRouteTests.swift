@@ -40,16 +40,34 @@ struct ConnectionActionRouteTests {
     /// The positive beside the negative: "disabled" is the state a broken
     /// dispatcher also produces, so a row that SHOULD be live is asserted live
     /// before any row is asserted dead.
+    ///
+    /// **Changed 2026-10-21 (S3 bucket settings, Task 11).** The context was
+    /// one connection, inside a bucket (`let context = Self.inOneBucket()`),
+    /// and every wired row was expected live in it. The fourth row is live only
+    /// at the bucket list, so in that one context it is correctly dead and the
+    /// test was red for the right reason. A wired row is now expected live in
+    /// AT LEAST ONE of the two connections a bucket-list connection passes
+    /// through (inside a bucket, and at the list), and an unwired row in
+    /// neither. Which row is live in which is each row's own test below.
     @Test func aWiredIdIsAvailableAndAnUnwiredOneIsNot() {
-        let context = Self.inOneBucket()
+        let contexts = [
+            Self.inOneBucket(),
+            ConnectionActionContext(
+                settings: FakeBucketSettings(), rootIsContainerList: true, remotePath: "/",
+                configuredBucket: "ignored"),
+        ]
         let wired = Self.everyAction.filter { ConnectionActionRoute(action: $0) != nil }
         let unwired = Self.everyAction.filter { ConnectionActionRoute(action: $0) == nil }
         #expect(!wired.isEmpty)
         for action in wired {
-            #expect(ConnectionActionRoute.isAvailable(action, in: context), "\(action.id)")
+            #expect(
+                contexts.contains { ConnectionActionRoute.isAvailable(action, in: $0) },
+                "\(action.id)")
         }
         for action in unwired {
-            #expect(!ConnectionActionRoute.isAvailable(action, in: context), "\(action.id)")
+            for context in contexts {
+                #expect(!ConnectionActionRoute.isAvailable(action, in: context), "\(action.id)")
+            }
         }
         #expect(wired.count + unwired.count == Self.everyAction.count)
     }
@@ -118,6 +136,40 @@ struct ConnectionActionRouteTests {
             settings: FakeBucketSettings(), rootIsContainerList: true,
             remotePath: "/macscp-seed/x", configuredBucket: "ignored")
         #expect(ConnectionActionRoute.objectLock.isAvailable(in: inABucket))
+    }
+
+    /// The fourth row is the INVERSE of the three above it: it is live only
+    /// where they are dead, at the bucket list. A route whose condition were
+    /// copied from a neighbour would be a row that can never be chosen, so the
+    /// positive half (live at the list) is asserted before any negative.
+    @Test func createBucketIsLiveOnlyAtTheBucketList() {
+        func context(
+            _ path: String, listMode: Bool = true, settings: (any S3BucketSettings)? = FakeBucketSettings(),
+            configured: String = "ignored"
+        ) -> ConnectionActionContext {
+            ConnectionActionContext(
+                settings: settings, rootIsContainerList: listMode, remotePath: path,
+                configuredBucket: configured)
+        }
+        // Live: the capability, a list of buckets, and the pane standing at it.
+        #expect(ConnectionActionRoute.createBucket.isAvailable(in: context("/")))
+        #expect(ConnectionActionRoute.createBucket.isAvailable(in: context("//")))
+        // Dead inside a bucket, where the other three are live.
+        #expect(!ConnectionActionRoute.createBucket.isAvailable(in: context("/macscp-seed")))
+        #expect(!ConnectionActionRoute.createBucket.isAvailable(in: context("/macscp-seed/x/")))
+        // Dead without the capability.
+        #expect(!ConnectionActionRoute.createBucket.isAvailable(in: context("/", settings: nil)))
+        // Dead when the connection is rooted in one bucket: a bucket made there
+        // would be invisible afterwards (spec §6.1). A blank configured bucket
+        // leaves `bucket` nil, which is exactly the case a `bucket == nil` test
+        // alone would let through.
+        #expect(!ConnectionActionRoute.createBucket.isAvailable(in: context("/", listMode: false, configured: "   ")))
+        #expect(!ConnectionActionRoute.createBucket.isAvailable(in: context("/", listMode: false, configured: "macscp-seed")))
+        // And the three neighbours are the mirror image at the list.
+        for route in [ConnectionActionRoute.versioning, .cors, .objectLock] {
+            #expect(!route.isAvailable(in: context("/")), "\(route)")
+            #expect(route.isAvailable(in: context("/macscp-seed")), "\(route)")
+        }
     }
 
     @Test func inOneBucketTheBucketIsTheConfiguredOneNotAPathComponent() {
@@ -254,6 +306,7 @@ struct ConnectionActionRouteTests {
         #expect(named.contains(String(describing: BucketVersioningSheet.self) + "Item"))
         #expect(named.contains(String(describing: BucketCORSSheet.self) + "Item"))
         #expect(named.contains(String(describing: BucketObjectLockSheet.self) + "Item"))
+        #expect(named.contains(String(describing: CreateBucketSheet.self) + "Item"))
     }
 
     /// The availability the menu draws and the action the dispatcher takes are
