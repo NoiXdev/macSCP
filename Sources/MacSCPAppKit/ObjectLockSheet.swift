@@ -254,6 +254,9 @@ final class ObjectLockModel {
     private(set) var isApplying = false
     private(set) var applyFailure: String?
     private(set) var isSaved = false
+    /// How many runs were refused. Only the date blocker reads it, in
+    /// production code: see `dateHasPassed`.
+    private(set) var refusedRuns = 0
 
     /// GOVERNANCE until the person picks otherwise: the reversible choice is
     /// the one the sheet starts on.
@@ -355,7 +358,7 @@ final class ObjectLockModel {
         case .currentUnread:
             current == nil
         case .dateNotInFuture:
-            focus == .retention && retainUntil <= now()
+            dateHasPassed
         case .complianceInForce:
             weakensAComplianceRetentionInForce
         case .complianceNotAcknowledged:
@@ -365,6 +368,19 @@ final class ObjectLockModel {
         case .applying:
             isApplying
         }
+    }
+
+    /// The date chosen is no longer ahead. The clock is not observable, so a
+    /// sheet drawn while the date was still ahead keeps a live button after it
+    /// passes, and a click that changed nothing the sheet watches would be
+    /// invisible: the same state the bucket default's stale tick had (fix round
+    /// 3, NEW-6). A refused run is counted (`run`), and reading the count here,
+    /// ABOVE the condition and never folded into it, registers the dependency
+    /// even on a body drawn while the answer was `false`: in an `&&` it would
+    /// short-circuit and register nothing.
+    private var dateHasPassed: Bool {
+        _ = refusedRuns
+        return focus == .retention && retainUntil <= now()
     }
 
     /// GOVERNANCE chosen over a COMPLIANCE retention that has not run out.
@@ -429,8 +445,15 @@ final class ObjectLockModel {
         key: "s3.objectLock.title.retention %@", english: "Retention for “%@”")
     static let holdTitleLine = CatalogueLine(
         key: "s3.objectLock.title.legalHold %@", english: "Legal Hold for “%@”")
+    /// **Changed 2026-10-21 (fix round 3, NEW-6).** The English read, verbatim:
+    /// "Choose a date and time that is still ahead." Withdrawn as the whole
+    /// sentence: shown to someone whose live button did nothing because the date
+    /// they chose had passed since, it told them what to do and not what had
+    /// happened. It now says the date has passed, then what to do; de, fr and pl
+    /// moved with it.
     static let datePastLine = CatalogueLine(
-        key: "s3.objectLock.blocked.datePast", english: "Choose a date and time that is still ahead.")
+        key: "s3.objectLock.blocked.datePast",
+        english: "The date and time you chose have passed. Choose a date and time that is still ahead.")
     static let notAcknowledgedLine = CatalogueLine(
         key: "s3.objectLock.blocked.notAcknowledged", english: "Tick the box to confirm.")
     static let complianceInForceLine = CatalogueLine(
@@ -587,7 +610,12 @@ final class ObjectLockModel {
     /// reads are the ones whose change clears the tick. After a write the
     /// sheet shows what the store says now, read back, and the tick is spent.
     func run(key: String, bucket: String, via settings: any S3BucketSettings) async {
-        guard canRun else { return }
+        // A refusal is counted so the sheet redraws and says why (a date that has
+        // passed), instead of the click doing nothing the person can see.
+        guard canRun else {
+            refusedRuns += 1
+            return
+        }
         isApplying = true
         applyFailure = nil
         isSaved = false
