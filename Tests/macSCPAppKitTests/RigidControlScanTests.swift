@@ -394,6 +394,15 @@ struct RigidControlScanTests {
     /// 27 lines in all, and the counts below sum to 26 (the same one line of
     /// header prose is the difference). The Task 9 paragraph is left as it
     /// stands: it records what the commands printed when it was written.
+    ///
+    /// **Corrected 2026-10-21 (S3 bucket settings, Task 11).** The Task 10
+    /// paragraph directly above read, verbatim: "print 13, 4 and 10: 27 lines
+    /// in all, and the counts below sum to 26". The create-bucket sheet adds two
+    /// `CheckboxRow` sites (versioning and Object Lock), so the same three
+    /// commands, run again and under `/usr/bin/grep` alike, print 13, 4 and 12:
+    /// 29 lines in all, and the counts below sum to 28 (the same one line of
+    /// header prose is the difference). The Task 10 paragraph is left as it
+    /// stands: it records what the commands printed when it was written.
     fileprivate struct Component: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String
@@ -431,6 +440,7 @@ struct RigidControlScanTests {
             sites: [
                 "BucketCORSSheet.swift": 1,
                 "BucketObjectLockSheet.swift": 1,
+                "CreateBucketSheet.swift": 2,
                 "FileActionEditor.swift": 2,
                 "ObjectLockSheet.swift": 2,
                 "SheetSearchField.swift": 1,

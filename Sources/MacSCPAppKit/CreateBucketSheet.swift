@@ -100,8 +100,12 @@ final class CreateBucketModel {
     ) {
         takenNames = Set(existingNames)
         self.listingIsKnown = listingIsKnown
-        self.outcome = outcome
+        // The name goes in BEFORE the outcome: the observer on `name` clears a
+        // failure, and observers on an `@Observable` class run in `init`, so
+        // assigning the name last would erase the failure just given.
+        self.outcome = .editing
         self.name = name
+        self.outcome = outcome
     }
 
     convenience init(listing: Listing) {
