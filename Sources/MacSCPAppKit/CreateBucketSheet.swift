@@ -394,6 +394,11 @@ final class CreateBucketModel {
     /// A bucket of this name exists and the create with the chosen settings
     /// did not complete. Says no more than the read found.
     ///
+    /// **Corrected 2026-10-21 (Task 11, fix round 1; quoted in round 2).** The
+    /// doc line above this one's first sentence replaced, verbatim: "The create
+    /// went through and the versioning request after it did not." That is the
+    /// authorship claim M2 withdraws.
+    ///
     /// **Corrected 2026-10-21 (Task 11, fix round 1, M2).** This line was
     /// `createdIncompletelyTemplate`, key `s3.createBucket.error.createdIncompletely %@`,
     /// and read, verbatim: "The bucket “%@” was created, but switching on

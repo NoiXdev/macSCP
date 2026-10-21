@@ -148,6 +148,22 @@ enum BoundedViewRegistry {
     static let bucketListing = CreateBucketModel.Listing(
         names: ["macscp-seed", "macscp-second"], isKnown: true)
 
+    /// A create-bucket model whose outcome is the store's own "you already own
+    /// a bucket with that name" (`bucketMayExist`: the pane's list is stale),
+    /// with the name `nameInList` true when it is also among the names the
+    /// sheet was handed. The registry entry is the `true` half; the other half
+    /// is its control, `CreateBucketSheetTests`' height comparison, which reads
+    /// whether the "your list already has this name" line is on screen beside
+    /// the sentence that already says the bucket exists.
+    static func ownedBucketModel(nameInList: Bool) -> CreateBucketModel {
+        CreateBucketModel(
+            existingNames: nameInList ? ["macscp-seed", "macscp-archive-2026"] : ["macscp-seed"],
+            listingIsKnown: true,
+            outcome: .failed(
+                sentence: RemoteFSFinding.bucketAlreadyOwnedByYou.message, bucketMayExist: true),
+            name: "macscp-archive-2026")
+    }
+
     /// The cache an Object Lock sheet is handed. It is never asked: the models
     /// handed in are already in their state.
     static var lockCache: ObjectLockStateCache {
@@ -543,8 +559,14 @@ enum BoundedViewRegistry {
                         loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
             },
 
-            // Seven states, because the sheet's tall and wide content sits in
-            // different ones. Object Lock ticked is the tallest form: its
+            // Eight states (counted 2026-10-21 with
+            // `grep -c 'CreateBucketSheet[(]' Tests/macSCPAppKitTests/BoundedViewRegistry.swift`,
+            // which prints 8: each entry builds the sheet once and nothing else
+            // spells the call). **Corrected 2026-10-21 (Task 11, fix round 2).**
+            // This line read, verbatim: "Seven states, because the sheet's tall
+            // and wide content sits in different ones." The eighth is the
+            // already-ours entry below. The sheet's tall and wide content sits
+            // in different states. Object Lock ticked is the tallest form: its
             // notes (the lock's own, in red, and the one saying versioning is
             // held on) and a valid name. A taken name, a character that is not
             // allowed (the one problem sentence with an argument) and a list
@@ -602,6 +624,18 @@ enum BoundedViewRegistry {
                 model.objectLock = true
                 return CreateBucketSheet(
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            // The one state where a partial outcome and a taken name are both
+            // true, which is the pair that was once on screen together ("exists
+            // now" above "Your list already has a bucket with this name"). No
+            // other entry has both, which is why a regression of that was
+            // invisible to every guard that reads these entries. It differs
+            // from the entries beside it (a finding's sentence, no lock), so
+            // `entriesOfOneTypeMeasureDifferentStates` does not read it as a twin.
+            BoundedViewEntry("a bucket the store says is already ours, whose name is also in the list") {
+                CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing,
+                    model: Self.ownedBucketModel(nameInList: true))
             },
             BoundedViewEntry("a bucket that was made") {
                 let model = CreateBucketModel(

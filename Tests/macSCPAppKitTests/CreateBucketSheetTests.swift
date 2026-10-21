@@ -259,6 +259,11 @@ struct CreateBucketSheetTests {
             model.name = "macscp-third"
             await model.create(via: settings)
             #expect(model.failureSentence == finding.message, "\(finding.name)")
+            // **Corrected 2026-10-21 (Task 11, fix round 1; quoted in round
+            // 2).** This loop ended with `#expect(model.bucketMayExist == false)`
+            // for both findings. Withdrawn: it is false of
+            // `.bucketAlreadyOwnedByYou`, which the store says exists. The
+            // per-finding expectations are the two tests below.
         }
     }
 
@@ -476,9 +481,13 @@ struct CreateBucketSheetTests {
     @MainActor @Test func aListingThatHasNotLoadedIsNotKnown() async throws {
         let (browser, directory) = try Self.bucketListBrowser(["macscp-seed"])
         defer { try? FileManager.default.removeItem(at: directory) }
-        #expect(CreateBucketModel.listing(of: browser).isKnown == false)
+        let before: CreateBucketModel.Listing = CreateBucketModel.listing(of: browser)
+        #expect(before.isKnown == false)
+        #expect(before.names.isEmpty)  // not "no buckets": no answer
         await browser.load()
-        #expect(CreateBucketModel.listing(of: browser).isKnown == true)
+        let after: CreateBucketModel.Listing = CreateBucketModel.listing(of: browser)
+        #expect(after.isKnown == true)
+        #expect(after.names == ["macscp-seed"])
     }
 
     // MARK: - The catalogue
@@ -563,6 +572,66 @@ struct CreateBucketSheetTests {
             #expect(
                 nouns.contains { clause.localizedCaseInsensitiveContains($0) },
                 "\(locale): the last clause \"\(clause)\" names none of \(nouns)")
+            if locale == "en" {
+                // `en` is the source text the other catalogues are measured
+                // against, so its clause's own words are pinned: that the
+                // lock CAN BE CHOSEN when a bucket is CREATED, which is the
+                // promise this sheet makes true. No cross-locale derivation of
+                // those words exists (the French clause says "création", the
+                // action says "Créer"), so this one is spelled, once, in the
+                // source language. Without it a clause rewritten to say
+                // anything else about buckets ("a bucket cannot be changed
+                // afterwards") kept this test green.
+                let words = clause.lowercased()
+                #expect(words.contains("chosen"), "en: the clause no longer says the lock can be chosen: \"\(clause)\"")
+                #expect(words.contains("created"), "en: the clause no longer says when: \"\(clause)\"")
+            }
+        }
+    }
+
+    // MARK: - What is on screen, not what the model computes
+
+    /// The natural height of the sheet over `model`, in `locale`, at the width
+    /// the sheet is granted. A line that is drawn adds height; a line that is
+    /// not drawn adds none. Plain `Text` cannot be found in a hosted view (the
+    /// accessibility tree is empty in a test process, see
+    /// `BoundedViewStateOnScreenTests`), so presence is read from the height.
+    @MainActor private static func height(of model: CreateBucketModel, in locale: String) -> CGFloat {
+        SheetBound.$isSuspendedForMeasurement.withValue(true) {
+            LayoutMeasure.minimumHeight(locale: locale, at: CreateBucketSheet.bound.grantedWidth) {
+                CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: BoundedViewRegistry.bucketListing,
+                    model: model
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// **M8, at the view.** `showsNameIsTaken` is the model's decision, and the
+    /// model-level tests read it. The sheet must also READ it: restoring the
+    /// view's pre-fix condition (`if model.nameIsTakenKey != nil, !model.isCreated`)
+    /// brought the defect back and stayed GREEN over 81 tests, because no
+    /// registry entry had both a partial outcome and a taken name. Here the
+    /// state is built both ways and the heights compared: when the outcome
+    /// already says the bucket exists, a taken name adds no line.
+    ///
+    /// The positive control is the same comparison where the line SHOULD show
+    /// (nothing else says the bucket exists): the taken name is then taller. A
+    /// height that cannot see the line would pass the first half for nothing.
+    @MainActor @Test func aTakenNameAddsNoLineBesideAnOutcomeThatAlreadySaysTheBucketExists() {
+        for locale in LayoutMeasure.shippedLocales {
+            let ours = Self.height(of: BoundedViewRegistry.ownedBucketModel(nameInList: true), in: locale)
+            let control = Self.height(of: BoundedViewRegistry.ownedBucketModel(nameInList: false), in: locale)
+            #expect(abs(ours - control) < 0.01, "\(locale): \(ours) pt with the name in the list, \(control) pt without")
+
+            let taken = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+            taken.name = "macscp-seed"
+            let free = CreateBucketModel(existingNames: [], listingIsKnown: true)
+            free.name = "macscp-seed"
+            let withLine = Self.height(of: taken, in: locale)
+            let withoutLine = Self.height(of: free, in: locale)
+            #expect(withLine > withoutLine, "\(locale): the taken-name line adds no height, so the comparison above proves nothing")
         }
     }
 
@@ -666,6 +735,20 @@ struct CreateBucketSheetTests {
         #expect(shown.count == 9)
     }
 
+    /// The identifiers in `text`: it split on every character that cannot be
+    /// part of one, so a name is a token only when it is a whole word.
+    nonisolated static func identifierTokens(in text: String) -> Set<String> {
+        Set(text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") }).map(String.init))
+    }
+
+    @Test func aPrefixOfAnIdentifierIsNotTheIdentifier() {
+        let tokens = Self.identifierTokens(in: "model.nameIsTakenKey + showsNameIsTaken")
+        #expect(tokens.contains("nameIsTakenKey"))  // the positive control
+        #expect(tokens.contains("showsNameIsTaken"))
+        #expect(!tokens.contains("nameIsTaken"))
+        #expect(!tokens.contains("model.nameIsTakenKey"))
+    }
+
     /// The sweep itself, so it does not have to be remembered: every member of
     /// the model that the VIEW reads (`model.x`, `CreateBucketModel.x` in the
     /// sheet's struct) is named somewhere in this suite. A mention is not an
@@ -679,7 +762,14 @@ struct CreateBucketSheetTests {
             viewCode.matches(of: #/(?:\bmodel|CreateBucketModel)\.(\w+)/#).map { String($0.output.1) })
         #expect(read.count >= 15, "the scan found \(read.count) members")
         let tests = try SourceCorpus.commentFree(of: Self.repoRoot.appendingPathComponent("Tests/macSCPAppKitTests/CreateBucketSheetTests.swift"))
-        let unnamed = read.filter { !tests.contains($0) }.sorted()
+        // Whole tokens, not substrings: a member named `nameIsTaken` would be
+        // "named" by `nameIsTakenKey` under a substring test (measured
+        // 2026-10-21, GREEN where `zzzNothingNamesThis` was RED 3 of 3). The
+        // text is split on every character that cannot be in an identifier,
+        // and a member is named only if it is one of the tokens.
+        let tokens = Self.identifierTokens(in: tests)
+        #expect(!tokens.isEmpty, "the tokeniser found nothing")
+        let unnamed = read.filter { !tokens.contains($0) }.sorted()
         #expect(unnamed.isEmpty, "\(unnamed)")
     }
 
@@ -727,6 +817,13 @@ struct CreateBucketSheetTests {
         // And the arm is not a neighbour's: it never asks for a bucket to
         // exist (`bucket != nil`), which would make the row unreachable.
         #expect(!arm.contains("context.bucket != nil"))
+        // **Corrected 2026-10-21 (Task 11, fix round 1; quoted in round 2).**
+        // The lines above this comment replaced these, verbatim: the comment
+        // "And the arm is the inverse of its neighbours' bucket test: a row that
+        // is live only AT the list." and the expectation
+        // `#expect(arm.contains("context.bucket == nil"))`. Withdrawn because
+        // the pane half of the rule moved into `isOffered`, so the arm no
+        // longer spells `context.bucket == nil`; it hands the model the bucket.
     }
 
     /// The dispatcher builds the sheet's list from the pane's listing through
