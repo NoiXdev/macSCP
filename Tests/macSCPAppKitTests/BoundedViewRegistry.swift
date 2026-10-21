@@ -585,7 +585,7 @@ enum BoundedViewRegistry {
                 let model = CreateBucketModel(
                     existingNames: ["macscp-seed"], listingIsKnown: true,
                     outcome: .failed(
-                        sentence: CreateBucketModel.createdIncompletelyLine(
+                        sentence: CreateBucketModel.existsIncompletelyLine(
                             bucket: "macscp-archive-2026"),
                         bucketMayExist: true),
                     name: "macscp-archive-2026")
