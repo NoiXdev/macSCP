@@ -740,6 +740,9 @@ struct ContentView: View {
         let id = UUID()
         let bucket: String
         let settings: any S3BucketSettings
+        /// Where the sheet reads whether the bucket has Object Lock, captured
+        /// with the capability (Task 11b).
+        let states: ObjectLockStateCache
     }
 
     @State var versioningSheetItem: BucketVersioningSheetItem?

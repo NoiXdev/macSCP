@@ -173,7 +173,17 @@ extension ContentView {
         switch route {
         case .versioning:
             if let settings = context.settings, let bucket = context.bucket {
-                versioningSheetItem = BucketVersioningSheetItem(bucket: bucket, settings: settings)
+                // The session's lock-state cache, so this sheet and the Object
+                // Lock sheet share one read per bucket. The fallback is a
+                // cache of its own over the same capability: the session
+                // always has one when `settings` is non-nil (both come from the
+                // same file system, `BrowserSession.objectLockStates(for:)`),
+                // but a sheet that cannot ask whether the bucket has a lock
+                // has no button and nothing to say, and that is worse than one
+                // extra read.
+                versioningSheetItem = BucketVersioningSheetItem(
+                    bucket: bucket, settings: settings,
+                    states: session.objectLockStates ?? ObjectLockStateCache(settings: settings))
             }
         case .cors:
             if let settings = context.settings, let bucket = context.bucket {

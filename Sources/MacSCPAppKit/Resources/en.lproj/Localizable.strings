@@ -459,6 +459,8 @@
 "s3.versioning.error.read" = "The versioning of this bucket could not be read.";
 "s3.versioning.error.apply" = "The versioning of this bucket could not be changed.";
 "s3.versioning.error.denied" = "Your access key is not allowed to read or change the versioning of this bucket.";
+"s3.versioning.objectLockKeepsItOn" = "This bucket uses Object Lock, so its versioning cannot be switched off.";
+"s3.versioning.error.lockRead" = "Whether this bucket uses Object Lock could not be read, so its versioning cannot be changed here.";
 
 /* Bucket CORS rules (S3 bucket settings, Task 9) */
 "s3.cors.title %@" = "CORS rules for “%@”";
