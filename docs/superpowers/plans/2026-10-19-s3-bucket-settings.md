@@ -1087,7 +1087,60 @@ substitutes for the other.
     model.name = "macscp-third"
     #expect(model.canCreate == true)         // the positive control
 }
+
+@MainActor @Test func theRowIsLiveOnlyWhileThePaneIsSHOWINGTheBucketList() {
+    // **Added 2026-10-21 by the controller, from a pre-dispatch read.** See
+    // "Where `existingNames` comes from" below; this is the gate that makes
+    // the taken-name check above mean anything.
+    #expect(CreateBucketModel.isOffered(rootIsContainerList: true, paneBucket: nil) == true)
+    #expect(CreateBucketModel.isOffered(rootIsContainerList: true, paneBucket: "macscp-seed") == false)
+    #expect(CreateBucketModel.isOffered(rootIsContainerList: false, paneBucket: nil) == false)
+}
 ```
+
+**Where `existingNames` comes from, and the trap in it. Added 2026-10-21 by the
+controller, from a pre-dispatch read of the wiring.** The taken-name test above
+is justified in this plan by the sentence "this sheet is offered only in
+bucket-list mode, so it already holds the list and the check costs no request."
+That conflates two different things, and the difference is a silent defect.
+
+`rootIsContainerList` is a property of the **connection**, not of where the
+remote pane is standing. On such a connection the user can navigate **into** a
+bucket, and `session.remote`'s current listing is then that bucket's **objects**,
+not the account's buckets. Feeding those as `existingNames` would check a
+proposed bucket name against object names: it would let through exactly the
+duplicate `createBucket` this test exists to prevent — measured on the rig as a
+success that silently opens a one-way door on a bucket the user did not mean to
+touch — and would block a valid name that happens to match some object's.
+
+**Ruling: the row is live only while the pane is SHOWING the bucket list**, so
+`existingNames` is always the real one and the claim that the check costs no
+request stays true. The context already answers this and needs no new field:
+`ConnectionActionContext.bucket` returns the first path component when
+`rootIsContainerList`, so `rootIsContainerList && bucket == nil` means "the pane
+is at the bucket list right now". Hence the signature changes to
+`isOffered(rootIsContainerList:paneBucket:)` and the route's arm reads
+`context.settings != nil && context.rootIsContainerList && context.bucket == nil`.
+
+The alternative — offer the row anywhere on a bucket-list connection and fetch
+the bucket list for the check — costs a request and makes this plan's own
+"costs no request" false. It was not taken. Spec §6.1's reason for the gate
+(a bucket made in single-bucket mode would be invisible) is untouched by this:
+it argues about the connection, and narrowing to the pane only narrows further.
+
+**And the arm you will be tempted to copy is the wrong one.** All three existing
+arms in `ConnectionActionRoute.isAvailable(in:)` read
+`context.settings != nil && context.bucket != nil`, because each is a
+**bucket-level** action and `bucket` is `nil` at the list. This row is the
+inverse: it is live exactly where they are dead. Copying a neighbouring arm
+gives a row that can never be chosen — a view with no reachable route, which is
+the defect this plan has already produced seven times. Task 8's implementer saw
+it coming and left the note in that function's own doc comment: "a later row's
+condition (a bucket-list-only gate) is an arm of its own."
+
+The four rows then partition cleanly: versioning, CORS and Object Lock live
+inside a bucket; create-bucket lives at the list. A test that asserts no two of
+the four are live at the same place would say that, and is worth writing.
 
 **A sentence Task 10 already ships depends on this task landing, carried here
 2026-10-21 from Task 10's review (Minor).** `s3.objectLock.notEnabledOnThisBucket`
