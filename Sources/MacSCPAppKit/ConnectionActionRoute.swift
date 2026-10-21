@@ -81,14 +81,12 @@ enum ConnectionActionRoute: String, CaseIterable {
             // actions and are live where `bucket` is non-nil; this one makes a
             // bucket and is live only where there is none, at the list of
             // them. Copying a neighbour's condition gives a row that can never
-            // be chosen. Two facts are needed and neither implies the other:
-            // the root IS a list of buckets (`isOffered`, spec §6.1: a bucket
-            // made in a connection rooted in one bucket would be invisible
-            // afterwards), and the pane is standing at that list rather than
-            // inside one of its buckets.
+            // be chosen. The rule itself is the model's (`isOffered`): the root
+            // is a list of buckets and the pane is standing at that list, not
+            // inside one of its buckets. This arm only supplies the facts.
             context.settings != nil
-                && CreateBucketModel.isOffered(rootIsContainerList: context.rootIsContainerList)
-                && context.bucket == nil
+                && CreateBucketModel.isOffered(
+                    rootIsContainerList: context.rootIsContainerList, paneBucket: context.bucket)
         }
     }
 
