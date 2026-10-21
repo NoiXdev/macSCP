@@ -57,6 +57,7 @@ struct ConnectionActionContext {
 enum ConnectionActionRoute: String, CaseIterable {
     case versioning = "s3.versioning"
     case cors = "s3.cors"
+    case objectLock = "s3.objectLock"
 
     init?(action: ConnectionActionContribution) {
         self.init(rawValue: action.id)
@@ -71,6 +72,8 @@ enum ConnectionActionRoute: String, CaseIterable {
         case .versioning:
             context.settings != nil && context.bucket != nil
         case .cors:
+            context.settings != nil && context.bucket != nil
+        case .objectLock:
             context.settings != nil && context.bucket != nil
         }
     }

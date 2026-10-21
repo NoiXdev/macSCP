@@ -2,7 +2,10 @@ import Foundation
 
 /// A protocol-specific FILE-level action a backend contributes to the context
 /// menu (M12 seam). The list a backend contributes is its descriptor's
-/// `fileActions`; S3's holds `s3.presignedURL`.
+/// `fileActions`; S3's holds `s3.presignedURL`, `s3.retention` and
+/// `s3.legalHold`. (This line used to end, verbatim: "S3's holds
+/// `s3.presignedURL`." The two Object Lock actions were added by the S3 bucket
+/// settings work, Task 10.)
 ///
 /// This comment used to end "(M12 seam; empty for ssh/s3 now — S3 presigned
 /// URL lands in M14)", and both halves are withdrawn: S3's list stopped being

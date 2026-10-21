@@ -101,12 +101,20 @@ struct BoundedViewCoverageTests {
     /// matching anything would leave `declared` empty, which reads exactly
     /// like a scan that is satisfied.
     ///
-    /// The floor is 35 on 2026-10-20, counted by
+    /// The floor is 37 on 2026-10-21, counted by
     /// `grep -rhn -e '^ *struct [A-Za-z]* *: BoundedView {' Sources/MacSCPAppKit | wc -l`
-    /// (which prints 35; the line anchor leaves out the doc comments that
+    /// (which prints 37; the line anchor leaves out the doc comments that
     /// quote the same text). It is a floor, not the expected figure: set
     /// equality above carries the exactness, and the floor moves with the
-    /// tree — raise it when a thirty-sixth view lands.
+    /// tree — raise it when a thirty-eighth view lands.
+    ///
+    /// **Corrected 2026-10-21 (S3 bucket settings, Task 10).** The paragraph
+    /// above read, verbatim: "The floor is 35 on 2026-10-20" and "(which prints
+    /// 35;" and "raise it when a thirty-sixth view lands". `ObjectLockSheet` and
+    /// `BucketObjectLockSheet` are the thirty-sixth and thirty-seventh, so all
+    /// three moved by two; the same command run under the session's `grep` and
+    /// under `/usr/bin/grep` prints 37. The paragraphs below are left as they
+    /// stand: each records what the command printed when it was written.
     ///
     /// **Corrected 2026-10-20 (S3 bucket settings, Task 8).** This paragraph
     /// read, verbatim: "The floor is 33 on 2026-10-18" and "(which prints 33;"
@@ -122,7 +130,7 @@ struct BoundedViewCoverageTests {
     /// the command printed when it was written.
     @Test func theScanFindsTheConformancesAtAll() throws {
         let declared = try Self.boundedViewTypeNamesInSources()
-        #expect(declared.count >= 35, "the scan found \(declared.count) names")
+        #expect(declared.count >= 37, "the scan found \(declared.count) names")
         #expect(declared.contains(String(describing: FileActionEditor.self)))
     }
 

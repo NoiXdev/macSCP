@@ -64,10 +64,14 @@ extension ContentView {
         case .userFileAction:
             break   // handled inside BrowserPane (BrowserPane+FileActions.swift), never forwarded
         case .backendFileAction(let action):
-            // Currently the only backend-contributed action is S3's presigned
-            // URL (M14/T5) — keyed off `action.id` so a future second
+            // Backend-contributed actions are keyed off `action.id` so a new
             // contribution doesn't need a new `BrowserMenuEntry` case, just
-            // another `if` here. `selection.count == 1` mirrors the menu-model
+            // another `if` here: S3's presigned URL (M14/T5) first, and the two
+            // Object Lock actions after it (S3 bucket settings, Task 10).
+            // (This comment used to open, verbatim: "Currently the only
+            // backend-contributed action is S3's presigned URL (M14/T5)" and to
+            // say "a future second contribution"; the second has arrived.)
+            // `selection.count == 1` mirrors the menu-model
             // gate (`BrowserContextMenu.entries`) that only ever offers
             // `backendFileAction` for a single selected file, and `side` is
             // asked because the local pane contributes none (its
@@ -83,6 +87,24 @@ extension ContentView {
                 let normalizedPath = RemotePath.normalizedAbsolute(file.path)
                 let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
                 presignedSheetItem = PresignedSheetItem(itemKey: key, provider: provider)
+            }
+            // The two Object Lock actions (S3 bucket settings, Task 10), keyed
+            // off `action.id` through `ObjectLockFileAction` like the one above
+            // is keyed off its string, and under the same gates. The target is
+            // worked out from the connection's own facts, so at a bucket list
+            // the bucket is the path's first component. Without all four of
+            // the file, the capability, the session's cache and a target
+            // nothing opens: a COMPLIANCE write is never reachable from a
+            // half-resolved path.
+            if side == .remote, selection.count == 1, let file = selection.first,
+                let lockAction = ObjectLockFileAction(action: action),
+                let target = ObjectLockTarget.resolve(
+                    path: file.path, in: connectionActionContext(in: tab, session: session)),
+                let settings = session.remoteFS as? any S3BucketSettings,
+                let states = session.objectLockStates
+            {
+                objectLockSheetItem = ObjectLockSheetItem(
+                    focus: lockAction.focus, target: target, settings: settings, states: states)
             }
         }
     }
@@ -156,6 +178,13 @@ extension ContentView {
         case .cors:
             if let settings = context.settings, let bucket = context.bucket {
                 corsSheetItem = BucketCORSSheetItem(bucket: bucket, settings: settings)
+            }
+        case .objectLock:
+            if let settings = context.settings, let bucket = context.bucket,
+                let states = session.objectLockStates
+            {
+                bucketObjectLockSheetItem = BucketObjectLockSheetItem(
+                    bucket: bucket, settings: settings, states: states)
             }
         }
     }

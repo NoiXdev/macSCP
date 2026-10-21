@@ -61,6 +61,29 @@ struct BrowserSession {
     /// digest of a remote file of the same size and date.
     var localChecksums = ChecksumLedger()
     var remoteChecksums = ChecksumLedger()
+    /// Which of this connection's buckets have Object Lock, read once each and
+    /// kept (`ObjectLockStateCache`), or `nil` when the connection is not one
+    /// that has bucket settings at all.
+    ///
+    /// It lives on the SESSION for the reason `localChecksums` does: what it
+    /// holds is true of the connection it was read over and of no other, so it
+    /// dies with that connection and a reconnect starts from nothing. Set once
+    /// by `ContentView.startSession`.
+    var objectLockStates: ObjectLockStateCache?
+
+    /// The cache for a connection over `fileSystem`: one when it has the
+    /// bucket-settings capability (queried with `as?`, like every optional
+    /// capability), `nil` when it does not.
+    ///
+    /// Its own function so that the question "does this connection get one"
+    /// has a test, and so that `startSession` carries one call and not a
+    /// condition of its own. Without the cache the "Object Lock…" row and the
+    /// two file actions are live and open nothing, which is the failure the
+    /// connection menu's guards exist to rule out.
+    @MainActor
+    static func objectLockStates(for fileSystem: Any) -> ObjectLockStateCache? {
+        (fileSystem as? any S3BucketSettings).map(ObjectLockStateCache.init(settings:))
+    }
 }
 
 /// One window tab (M8a): bundles what used to be window-wide state, per

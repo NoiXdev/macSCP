@@ -436,6 +436,8 @@
 "menu.copyPath" = "Copy Path";
 "menu.delete" = "Delete…";
 "browser.action.presignedURL" = "Share Link…";
+"browser.action.retention" = "Retention…";
+"browser.action.legalHold" = "Legal Hold…";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Connection Actions";
@@ -491,6 +493,45 @@
 "s3.cors.error.read" = "The CORS rules of this bucket could not be read.";
 "s3.cors.error.apply" = "The CORS rules of this bucket could not be saved.";
 "s3.cors.error.denied" = "Your access key is not allowed to read or change the CORS rules of this bucket.";
+"s3.objectLock.reading" = "Checking Object Lock…";
+"s3.objectLock.notEnabledOnThisBucket" = "Object Lock is not switched on for this bucket, so nothing in it can be locked. macSCP does not switch it on for a bucket that already exists; it can be chosen when a bucket is created.";
+"s3.objectLock.error.read" = "Object Lock could not be read.";
+"s3.objectLock.error.apply" = "The change could not be saved.";
+"s3.objectLock.error.denied" = "Your access key is not allowed to read or change this.";
+"s3.objectLock.error.refused" = "The change was refused. A retention that is already in force may not be shortened, and your access key may not be allowed to change it.";
+"s3.objectLock.saved" = "Saved.";
+"s3.objectLock.modeLabel" = "Mode";
+"s3.objectLock.mode.governance" = "Governance";
+"s3.objectLock.mode.compliance" = "Compliance";
+"s3.objectLock.mode.governance.detail" = "Someone with the right permission can still shorten or remove a governance retention.";
+"s3.objectLock.title.retention %@" = "Retention for “%@”";
+"s3.objectLock.title.legalHold %@" = "Legal Hold for “%@”";
+"s3.objectLock.current.noRetention" = "This file has no retention.";
+"s3.objectLock.current.retention %1$@ %2$@" = "Current retention: %1$@, until %2$@.";
+"s3.objectLock.current.legalHoldOn" = "This file is under a legal hold.";
+"s3.objectLock.current.legalHoldOff" = "This file is not under a legal hold.";
+"s3.objectLock.untilLabel" = "Keep until";
+"s3.objectLock.complianceWarning" = "Compliance cannot be undone. Once it is saved, nobody can erase this file's stored data or shorten the retention until the date below has passed — not you, not the account owner, not an administrator.";
+"s3.objectLock.complianceAcknowledgement %@" = "I understand that nobody, including me, can erase this file's stored data or shorten this retention before %@, and that this cannot be undone.";
+"s3.objectLock.legalHold.toggle" = "Keep this file under a legal hold";
+"s3.objectLock.legalHold.detail" = "A legal hold keeps the file's stored data from being erased until the hold is lifted. It has no end date and can be lifted at any time.";
+"s3.objectLock.action.setRetention" = "Set Retention";
+"s3.objectLock.action.placeHold" = "Place Legal Hold";
+"s3.objectLock.action.liftHold" = "Lift Legal Hold";
+"s3.objectLock.blocked.datePast" = "Choose a date and time that is still ahead.";
+"s3.objectLock.blocked.notAcknowledged" = "Tick the box to confirm.";
+"s3.objectLock.blocked.holdUnchanged" = "The legal hold is already set this way, so there is nothing to change.";
+"s3.objectLock.default.title %@" = "Object Lock default for “%@”";
+"s3.objectLock.default.current.none" = "This bucket has no default retention.";
+"s3.objectLock.default.current %1$@ %2$lld" = "Current default: %1$@ mode, retention period in days: %2$lld.";
+"s3.objectLock.default.daysLabel" = "Retention period in days";
+"s3.objectLock.default.appliesLater" = "The default applies to files added after it is set. Files already in the bucket are not changed.";
+"s3.objectLock.default.complianceWarning" = "Compliance cannot be undone. Every file added to this bucket from now on is locked for the number of days above, counted from the moment it is saved. Nobody can erase a locked file's stored data or shorten its retention before then — not you, not the account owner, not an administrator.";
+"s3.objectLock.default.complianceAcknowledgement %@" = "I understand that nobody, including me, can erase the stored data of any file added to this bucket from now on for the number of days set above, and that this cannot be undone. A file added now stays locked until %@.";
+"s3.objectLock.default.action.save" = "Save Default";
+"s3.objectLock.default.blocked.daysOutOfRange %lld" = "Enter a number of days from 1 to %lld.";
+"s3.objectLock.default.blocked.notAcknowledged" = "Tick the box to confirm.";
+"s3.objectLock.default.blocked.unchanged" = "The bucket already has this default, so there is nothing to change.";
 
 /* Shared (M7b/T3) */
 "common.close" = "Close";
