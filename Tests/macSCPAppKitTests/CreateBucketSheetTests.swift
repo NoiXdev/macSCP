@@ -121,6 +121,21 @@ struct CreateBucketSheetTests {
         #expect(model.versioningIsLocked == true)
     }
 
+    @MainActor @Test func theLockRefusesToLetVersioningBeUntickedAndShowsItTicked() {
+        // Found by a mutation probe (P9, 2026-10-21): with the observer that
+        // refuses the write planted out, every other test stayed green,
+        // because `protection` reads the lock first and so never shows the
+        // checkbox's state. What a person sees is `versioning` itself.
+        let model = CreateBucketModel()
+        model.objectLock = true
+        model.versioning = false
+        #expect(model.versioning == true)
+        // And once the lock is off again, versioning is free to be unticked.
+        model.objectLock = false
+        model.versioning = false
+        #expect(model.versioning == false)
+    }
+
     @MainActor @Test func versioningIsFreeWhileObjectLockIsOff() {
         // The positive beside the one above.
         let model = CreateBucketModel()
@@ -478,5 +493,23 @@ struct CreateBucketSheetTests {
         let closure = after[..<(after.range(of: ".sheet(")?.lowerBound ?? after.endIndex)]
         #expect(closure.contains("listing: item.listing"))
         #expect(closure.contains("onCreated: item.onCreated"))
+    }
+
+    /// The pane shows the bucket list, so a bucket that was made does not
+    /// appear in it until the list is read again. Two links make that happen
+    /// and neither is exercised by a model test: the dispatcher's closure
+    /// refreshes the remote pane, and the sheet calls it when the bucket may
+    /// exist (also after a partial failure, when the bucket is there).
+    @Test func aMadeBucketRefreshesThePaneThatListsIt() throws {
+        let dispatcher = try Self.code("Sources/MacSCPAppKit/ContentView+MenuActions.swift")
+        let start = try #require(dispatcher.range(of: "case .createBucket:"))
+        let rest = dispatcher[start.upperBound...]
+        let arm = rest[..<(rest.range(of: "case .")?.lowerBound ?? rest.endIndex)]
+        #expect(arm.contains("onCreated:"))
+        #expect(arm.contains("remote.refresh()"))
+        let sheet = try Self.code("Sources/MacSCPAppKit/CreateBucketSheet.swift")
+        let guarded = try #require(sheet.range(of: "if model.bucketMayExist { onCreated() }"))
+        let create = try #require(sheet.range(of: "await model.create(via: settings)"))
+        #expect(create.upperBound <= guarded.lowerBound)
     }
 }
