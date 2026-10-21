@@ -1089,6 +1089,23 @@ substitutes for the other.
 }
 ```
 
+**A sentence Task 10 already ships depends on this task landing, carried here
+2026-10-21 from Task 10's review (Minor).** `s3.objectLock.notEnabledOnThisBucket`
+reads, in `en`:
+
+> "Object Lock is not switched on for this bucket, so nothing in it can be
+> locked. macSCP does not switch it on for a bucket that already exists; it can
+> be chosen when a bucket is created."
+
+Its last clause is a promise about a choice that does not exist yet. It becomes
+true when this task's Object Lock checkbox lands, and it is wrong in every build
+until then — Task 10's reviewer raised it as a Minor and I deferred it to here
+rather than hedging a sentence that is about to be correct. So: when the checkbox
+exists, check that clause against what the sheet actually offers, in all four
+catalogues, and say in your report that you did. If this task's checkbox ends up
+spelled differently from what that sentence describes, the sentence is the thing
+that moves.
+
 - [ ] **Step 2–5: Red, implement, catalogue entries, commit**
 
 Run: `swift test --filter CreateBucketSheetTests`
