@@ -741,6 +741,43 @@ struct CreateBucketSheetTests {
         Set(text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") }).map(String.init))
     }
 
+    /// `text` with every string literal removed (a `\` escapes the next
+    /// character). A member's name inside a catalogue KEY such as
+    /// `"s3.createBucket.<name>"` is a token of the file and named nothing: that
+    /// is what kept a probe naming a member exactly like the key's last
+    /// component GREEN (RP2, 2026-10-21). Interpolations inside a string go
+    /// with it, which only makes the sweep stricter.
+    nonisolated static func withoutStringLiterals(_ text: String) -> String {
+        var out = ""
+        var inString = false
+        var escaped = false
+        for character in text {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+            } else if character == "\"" {
+                inString = true
+            } else {
+                out.append(character)
+            }
+        }
+        return out
+    }
+
+    @Test func aStringLiteralNamesNothingToTheSweep() {
+        let stripped = Self.withoutStringLiterals("keep(\"zzzInside \\\" still\") + zzzOutside")
+        let tokens = Self.identifierTokens(in: stripped)
+        #expect(tokens.contains("zzzOutside"))  // the positive control
+        #expect(tokens.contains("keep"))
+        #expect(!tokens.contains("zzzInside"))
+        #expect(!tokens.contains("still"))
+    }
+
     @Test func aPrefixOfAnIdentifierIsNotTheIdentifier() {
         let text = "model.nameIsTakenKey + showsNameIsTaken"
         let tokens = Self.identifierTokens(in: text)
@@ -772,8 +809,9 @@ struct CreateBucketSheetTests {
         // 2026-10-21, GREEN where `zzzNothingNamesThis` was RED 3 of 3). The
         // text is split on every character that cannot be in an identifier,
         // and a member is named only if it is one of the tokens.
-        let tokens = Self.identifierTokens(in: tests)
+        let tokens = Self.identifierTokens(in: Self.withoutStringLiterals(tests))
         #expect(!tokens.isEmpty, "the tokeniser found nothing")
+        #expect(tokens.contains("canCreate"), "the tokeniser lost the code")
         let unnamed = read.filter { !tokens.contains($0) }.sorted()
         #expect(unnamed.isEmpty, "\(unnamed)")
     }
