@@ -43,6 +43,25 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         let bucket: String
     }
 
+    /// One `createBucket` call, as it arrived.
+    struct CreateCall: Equatable, Sendable {
+        let bucket: String
+        let protection: BucketProtection
+    }
+
+    /// How `createBucket` fails, when it does: the two places Core's own call
+    /// can fail. A call that makes two requests (the create, then the
+    /// versioning) can fail at the first, leaving nothing behind, or at the
+    /// second, leaving the bucket created and unversioned
+    /// (`S3BucketSettings.createBucket`).
+    enum CreateFailure: Sendable {
+        /// The create itself is refused; no bucket exists afterwards.
+        case refused(any Error)
+        /// The create succeeded and the versioning request after it failed;
+        /// the bucket exists. The call records that it was made.
+        case afterTheBucketExists(any Error)
+    }
+
     /// What the fake answers for the Object Lock calls. Its absence keeps the
     /// six calls unsupported.
     struct ObjectLockFixture: Sendable {
@@ -119,6 +138,8 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         var corsReads: [String] = []
         var corsWrites: [CORSWrite] = []
         var lock: ObjectLockFixture?
+        var createFailure: CreateFailure?
+        var creates: [CreateCall] = []
         var hasLockReads: [String] = []
         var defaultReads: [String] = []
         var defaultWrites: [DefaultWrite] = []
@@ -134,13 +155,17 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         versioning: BucketVersioning = .never, readError: (any Error)? = nil,
         writeError: (any Error)? = nil, cors: BucketCORS? = nil,
         corsReadError: (any Error)? = nil, corsWriteError: (any Error)? = nil,
-        lock: ObjectLockFixture? = nil
+        lock: ObjectLockFixture? = nil, createFailure: CreateFailure? = nil
     ) {
         state = Mutex(
             State(
                 versioning: versioning, readError: readError, writeError: writeError, cors: cors,
-                corsReadError: corsReadError, corsWriteError: corsWriteError, lock: lock))
+                corsReadError: corsReadError, corsWriteError: corsWriteError, lock: lock,
+                createFailure: createFailure))
     }
+
+    /// The `createBucket` calls, in order, whether or not they then failed.
+    var creates: [CreateCall] { state.withLock { $0.creates } }
 
     /// The buckets `versioning(ofBucket:)` was asked about, in order.
     var reads: [String] { state.withLock { $0.reads } }
@@ -179,6 +204,14 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         try state.withLock { state in
             state.reads.append(bucket)
             if let error = state.readError { throw error }
+            // A create the store refused left nothing to read, as a real one
+            // answers `NoSuchBucket`; one that failed AFTER the bucket was made
+            // (`CreateFailure.afterTheBucketExists`) left a bucket that reads.
+            if case .refused = state.createFailure,
+                state.creates.contains(where: { $0.bucket == bucket })
+            {
+                throw RemoteFSError.notFound(path: "/" + bucket)
+            }
             return state.versioning
         }
     }
@@ -213,7 +246,14 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
     }
 
     func createBucket(_ bucket: String, protection: BucketProtection) async throws {
-        throw Self.unsupported
+        try state.withLock { state in
+            state.creates.append(CreateCall(bucket: bucket, protection: protection))
+            switch state.createFailure {
+            case .refused(let error): throw error
+            case .afterTheBucketExists(let error): throw error
+            case nil: break
+            }
+        }
     }
     func hasObjectLock(ofBucket bucket: String) async throws -> Bool {
         try state.withLock { state in

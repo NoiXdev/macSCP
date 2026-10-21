@@ -535,6 +535,31 @@
 "s3.objectLock.default.blocked.unchanged" = "The bucket already has this default, so there is nothing to change.";
 "s3.objectLock.default.blocked.acknowledgementStale" = "The day has changed since you ticked the box. Untick it and tick it again to confirm the new day.";
 
+/* Create bucket (S3 bucket settings, Task 11) */
+"s3.createBucket.title" = "Create Bucket";
+"s3.createBucket.nameLabel" = "Bucket name";
+"s3.createBucket.nameHint" = "Use 3 to 63 lowercase letters, digits, hyphens or dots. A bucket cannot be renamed later.";
+"s3.createBucket.action" = "Create";
+"s3.createBucket.versioning" = "Versioning";
+"s3.createBucket.objectLock" = "Object Lock";
+"s3.createBucket.versioningIsOneWay" = "Once switched on, versioning can be suspended later but not removed. While it is on, every earlier version of a file is kept and counts toward your storage costs.";
+"s3.createBucket.versioningHeldByObjectLock" = "Object Lock needs versioning, so versioning is switched on with it and stays on.";
+"s3.createBucket.objectLockIsFinal" = "Object Lock can never be switched off for this bucket, and it keeps versioning on for good. If you switch it on here, you cannot undo it.";
+"s3.createBucket.nameIsTaken" = "Your list already has a bucket with this name. Choose a different name.";
+"s3.createBucket.listingUnknown" = "The list of buckets has not been loaded, so macSCP cannot check that this name is free. Refresh the list, then try again.";
+"s3.createBucket.creating" = "Creating the bucket…";
+"s3.createBucket.created %@" = "The bucket “%@” was created.";
+"s3.createBucket.error.create" = "The bucket could not be created.";
+"s3.createBucket.error.denied" = "Your access key is not allowed to create buckets.";
+"s3.createBucket.error.createdIncompletely %@" = "The bucket “%@” was created, but switching on versioning failed. It may not have the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.";
+"s3.createBucket.error.mayExist" = "Creating the bucket did not finish, and the bucket may exist now. Refresh the list; if it is there, open Versioning and Object Lock for it to see what it has.";
+"s3.createBucket.problem.tooShort" = "A bucket name needs at least 3 characters.";
+"s3.createBucket.problem.tooLong" = "A bucket name can have at most 63 characters.";
+"s3.createBucket.problem.uppercase" = "A bucket name cannot contain uppercase letters.";
+"s3.createBucket.problem.invalidCharacter %@" = "“%@” cannot be used in a bucket name. Use lowercase letters, digits, hyphens and dots.";
+"s3.createBucket.problem.looksLikeAnIPAddress" = "A bucket name cannot look like an IP address.";
+"s3.createBucket.problem.badEdge" = "A bucket name has to start and end with a lowercase letter or a digit.";
+
 /* Shared (M7b/T3) */
 "common.close" = "Close";
 "common.apply" = "Apply";

@@ -532,6 +532,31 @@
 "s3.objectLock.default.blocked.unchanged" = "Le bucket a déjà cette valeur par défaut ; il n’y a rien à modifier.";
 "s3.objectLock.default.blocked.acknowledgementStale" = "Le jour a changé depuis que vous avez coché la case. Décochez-la puis cochez-la de nouveau pour confirmer le nouveau jour.";
 
+/* Create bucket (S3 bucket settings, Task 11) */
+"s3.createBucket.title" = "Créer un bucket";
+"s3.createBucket.nameLabel" = "Nom du bucket";
+"s3.createBucket.nameHint" = "Utilisez de 3 à 63 lettres minuscules, chiffres, traits d’union ou points. Un bucket ne peut pas être renommé par la suite.";
+"s3.createBucket.action" = "Créer";
+"s3.createBucket.versioning" = "Gestion des versions";
+"s3.createBucket.objectLock" = "Verrouillage d’objet";
+"s3.createBucket.versioningIsOneWay" = "Une fois activée, la gestion des versions peut seulement être suspendue, jamais retirée. Tant qu’elle est active, chaque version précédente d’un fichier est conservée et compte dans vos coûts de stockage.";
+"s3.createBucket.versioningHeldByObjectLock" = "Le verrouillage d’objet exige la gestion des versions : elle est activée avec lui et le reste.";
+"s3.createBucket.objectLockIsFinal" = "Le verrouillage d’objet ne pourra jamais être désactivé pour ce bucket, et il maintient la gestion des versions activée pour toujours. Si vous l’activez ici, vous ne pourrez pas revenir en arrière.";
+"s3.createBucket.nameIsTaken" = "Votre liste contient déjà un bucket portant ce nom. Choisissez un autre nom.";
+"s3.createBucket.listingUnknown" = "La liste des buckets n’a pas été chargée : macSCP ne peut donc pas vérifier que ce nom est libre. Actualisez la liste, puis réessayez.";
+"s3.createBucket.creating" = "Création du bucket…";
+"s3.createBucket.created %@" = "Le bucket « %@ » a été créé.";
+"s3.createBucket.error.create" = "Le bucket n’a pas pu être créé.";
+"s3.createBucket.error.denied" = "Votre clé d’accès n’est pas autorisée à créer des buckets.";
+"s3.createBucket.error.createdIncompletely %@" = "Le bucket « %@ » a été créé, mais l’activation de la gestion des versions a échoué. Il se peut qu’il n’ait pas les réglages choisis. Ouvrez Gestion des versions et Verrouillage d’objet pour ce bucket afin de voir ce qu’il a, et ne le recréez pas.";
+"s3.createBucket.error.mayExist" = "La création du bucket ne s’est pas terminée, et le bucket existe peut-être maintenant. Actualisez la liste ; s’il y figure, ouvrez Gestion des versions et Verrouillage d’objet pour voir ce qu’il a.";
+"s3.createBucket.problem.tooShort" = "Un nom de bucket doit comporter au moins 3 caractères.";
+"s3.createBucket.problem.tooLong" = "Un nom de bucket ne peut pas dépasser 63 caractères.";
+"s3.createBucket.problem.uppercase" = "Un nom de bucket ne peut pas contenir de lettres majuscules.";
+"s3.createBucket.problem.invalidCharacter %@" = "« %@ » ne peut pas figurer dans un nom de bucket. Utilisez des lettres minuscules, des chiffres, des traits d’union et des points.";
+"s3.createBucket.problem.looksLikeAnIPAddress" = "Un nom de bucket ne peut pas ressembler à une adresse IP.";
+"s3.createBucket.problem.badEdge" = "Un nom de bucket doit commencer et se terminer par une lettre minuscule ou un chiffre.";
+
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";
 "common.apply" = "Appliquer";

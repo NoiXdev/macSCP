@@ -529,6 +529,31 @@
 "s3.objectLock.default.blocked.unchanged" = "Der Bucket hat diesen Standard bereits, es gibt also nichts zu ändern.";
 "s3.objectLock.default.blocked.acknowledgementStale" = "Seit du das Häkchen gesetzt hast, hat sich der Tag geändert. Nimm es weg und setze es erneut, um den neuen Tag zu bestätigen.";
 
+/* Create bucket (S3 bucket settings, Task 11) */
+"s3.createBucket.title" = "Bucket erstellen";
+"s3.createBucket.nameLabel" = "Name des Buckets";
+"s3.createBucket.nameHint" = "Nimm 3 bis 63 Kleinbuchstaben, Ziffern, Bindestriche oder Punkte. Ein Bucket lässt sich später nicht umbenennen.";
+"s3.createBucket.action" = "Erstellen";
+"s3.createBucket.versioning" = "Versionierung";
+"s3.createBucket.objectLock" = "Objektsperre";
+"s3.createBucket.versioningIsOneWay" = "Einmal eingeschaltet, lässt sich die Versionierung nur noch aussetzen, nicht mehr entfernen. Solange sie eingeschaltet ist, wird jede frühere Version einer Datei aufbewahrt und zählt zu deinen Speicherkosten.";
+"s3.createBucket.versioningHeldByObjectLock" = "Die Objektsperre braucht die Versionierung, deshalb wird sie mit eingeschaltet und bleibt eingeschaltet.";
+"s3.createBucket.objectLockIsFinal" = "Die Objektsperre lässt sich für diesen Bucket nie wieder ausschalten, und sie hält die Versionierung dauerhaft eingeschaltet. Wenn du sie hier einschaltest, kannst du das nicht rückgängig machen.";
+"s3.createBucket.nameIsTaken" = "In deiner Liste gibt es bereits einen Bucket mit diesem Namen. Wähle einen anderen Namen.";
+"s3.createBucket.listingUnknown" = "Die Bucket-Liste wurde noch nicht geladen, daher kann macSCP nicht prüfen, ob dieser Name frei ist. Aktualisiere die Liste und versuche es dann erneut.";
+"s3.createBucket.creating" = "Bucket wird erstellt…";
+"s3.createBucket.created %@" = "Der Bucket „%@“ wurde erstellt.";
+"s3.createBucket.error.create" = "Der Bucket konnte nicht erstellt werden.";
+"s3.createBucket.error.denied" = "Dein Zugangsschlüssel darf keine Buckets erstellen.";
+"s3.createBucket.error.createdIncompletely %@" = "Der Bucket „%@“ wurde erstellt, aber das Einschalten der Versionierung ist fehlgeschlagen. Er hat womöglich nicht die gewählten Einstellungen. Öffne für ihn Versionierung und Objektsperre, um zu sehen, was er hat, und erstelle ihn nicht noch einmal.";
+"s3.createBucket.error.mayExist" = "Das Erstellen des Buckets wurde nicht abgeschlossen, und der Bucket existiert womöglich jetzt. Aktualisiere die Liste; wenn er dort steht, öffne für ihn Versionierung und Objektsperre, um zu sehen, was er hat.";
+"s3.createBucket.problem.tooShort" = "Ein Bucket-Name braucht mindestens 3 Zeichen.";
+"s3.createBucket.problem.tooLong" = "Ein Bucket-Name darf höchstens 63 Zeichen haben.";
+"s3.createBucket.problem.uppercase" = "Ein Bucket-Name darf keine Großbuchstaben enthalten.";
+"s3.createBucket.problem.invalidCharacter %@" = "„%@“ darf in einem Bucket-Namen nicht vorkommen. Nimm Kleinbuchstaben, Ziffern, Bindestriche und Punkte.";
+"s3.createBucket.problem.looksLikeAnIPAddress" = "Ein Bucket-Name darf nicht wie eine IP-Adresse aussehen.";
+"s3.createBucket.problem.badEdge" = "Ein Bucket-Name muss mit einem Kleinbuchstaben oder einer Ziffer beginnen und enden.";
+
 /* Gemeinsam (M7b/T3) */
 "common.close" = "Schließen";
 "common.apply" = "Übernehmen";

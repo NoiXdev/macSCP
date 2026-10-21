@@ -142,6 +142,12 @@ enum BoundedViewRegistry {
 
     static let lockTarget = ObjectLockTarget(bucket: "macscp-seed", key: "photos/2026/holiday.jpg")
 
+    /// The bucket list a create-bucket sheet is handed. It is never read by
+    /// the entries: each passes a model already in its state, and the listing
+    /// is the argument the initialiser needs beside it.
+    static let bucketListing = CreateBucketModel.Listing(
+        names: ["macscp-seed", "macscp-second"], isKnown: true)
+
     /// The cache an Object Lock sheet is handed. It is never asked: the models
     /// handed in are already in their state.
     static var lockCache: ObjectLockStateCache {
@@ -535,6 +541,73 @@ enum BoundedViewRegistry {
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: BucketObjectLockModel(
                         loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
+            },
+
+            // Seven states, because the sheet's tall and wide content sits in
+            // different ones. Object Lock ticked is the tallest form: its
+            // notes (the lock's own, in red, and the one saying versioning is
+            // held on) and a valid name. A taken name, a character that is not
+            // allowed (the one problem sentence with an argument) and a list
+            // that was never read are the three red sentences under the name
+            // field, one each because each is a different string on screen.
+            // The two failures after a protected create are the longest
+            // sentences the sheet has, and a made bucket is the plain
+            // confirmation. Every model is handed in already in its state, so
+            // no measurement waits on a request; the capability is never
+            // called.
+            BoundedViewEntry("a valid name with Object Lock chosen, over its notes") {
+                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+                model.name = "macscp-archive-2026"
+                model.objectLock = true
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a name already in the list") {
+                let model = CreateBucketModel(existingNames: ["macscp-seed", "macscp-second"])
+                model.name = "macscp-seed"
+                model.versioning = true
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a name with a character that is not allowed") {
+                let model = CreateBucketModel(existingNames: ["macscp-seed"])
+                model.name = "macscp_archive"
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a list of buckets that was never read") {
+                let model = CreateBucketModel(existingNames: [], listingIsKnown: false)
+                model.name = "macscp-archive-2026"
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a bucket made without the versioning that was asked for") {
+                let model = CreateBucketModel(
+                    existingNames: ["macscp-seed"],
+                    outcome: .failed(
+                        sentence: CreateBucketModel.createdIncompletelyLine(
+                            bucket: "macscp-archive-2026"),
+                        bucketMayExist: true),
+                    name: "macscp-archive-2026")
+                model.objectLock = true
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a create that may have left a bucket behind") {
+                let model = CreateBucketModel(
+                    existingNames: ["macscp-seed"],
+                    outcome: .failed(
+                        sentence: CreateBucketModel.mayExistLine.text, bucketMayExist: true),
+                    name: "macscp-archive-2026")
+                model.objectLock = true
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
+            },
+            BoundedViewEntry("a bucket that was made") {
+                let model = CreateBucketModel(
+                    existingNames: ["macscp-seed"], outcome: .created, name: "macscp-archive-2026")
+                return CreateBucketSheet(
+                    settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
 
             // The two drafts the deleted `FileActionEditorLayoutGuardTests`
