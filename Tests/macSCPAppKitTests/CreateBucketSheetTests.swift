@@ -741,41 +741,25 @@ struct CreateBucketSheetTests {
         Set(text.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "_") }).map(String.init))
     }
 
-    /// `text` with every string literal removed (a `\` escapes the next
-    /// character). A member's name inside a catalogue KEY such as
-    /// `"s3.createBucket.<name>"` is a token of the file and named nothing: that
-    /// is what kept a probe naming a member exactly like the key's last
-    /// component GREEN (RP2, 2026-10-21). Interpolations inside a string go
-    /// with it, which only makes the sweep stricter.
-    nonisolated static func withoutStringLiterals(_ text: String) -> String {
-        var out = ""
-        var inString = false
-        var escaped = false
-        for character in text {
-            if inString {
-                if escaped {
-                    escaped = false
-                } else if character == "\\" {
-                    escaped = true
-                } else if character == "\"" {
-                    inString = false
-                }
-            } else if character == "\"" {
-                inString = true
-            } else {
-                out.append(character)
-            }
-        }
-        return out
-    }
-
-    @Test func aStringLiteralNamesNothingToTheSweep() {
-        let stripped = Self.withoutStringLiterals("keep(\"zzzInside \\\" still\") + zzzOutside")
-        let tokens = Self.identifierTokens(in: stripped)
-        #expect(tokens.contains("zzzOutside"))  // the positive control
-        #expect(tokens.contains("keep"))
-        #expect(!tokens.contains("zzzInside"))
-        #expect(!tokens.contains("still"))
+    /// **Corrected 2026-10-21 (Task 11, fix round 3, N5).** There was a
+    /// `withoutStringLiterals(_:)` here: a hand-rolled quote toggler that did
+    /// not understand regex literals. `#/"(s3\.createBucket\.[^"]+)"/#` in
+    /// this file carries three quotes and inverted its in/out state from there
+    /// to the end of the file, where it dropped code and kept string contents
+    /// as tokens. Measured before it was removed (against 0ef4e3f5): a view
+    /// member named only inside a string literal at the end of this file was
+    /// GREEN (named without being tested), and one named only in code there
+    /// was RED. `SourceCorpus.code(of:)` blanks comments and string literals
+    /// correctly and is used by `Self.code` in this same file.
+    ///
+    /// Held by two fixtures at the END of this file, after the regex literal:
+    /// a name inside a string (must not be a token of the blanked code) and a
+    /// name in code (must be).
+    @Test func theSweepSeesCodeAndNotStringsAtTheEndOfThisFile() throws {
+        let code = try Self.code("Tests/macSCPAppKitTests/CreateBucketSheetTests.swift")
+        let tokens = Self.identifierTokens(in: code)
+        #expect(tokens.contains("sweepFixtureInCode"))  // the positive control
+        #expect(!tokens.contains("sweepFixtureInsideAString"))
     }
 
     @Test func aPrefixOfAnIdentifierIsNotTheIdentifier() {
@@ -803,13 +787,13 @@ struct CreateBucketSheetTests {
         let read = Set(
             viewCode.matches(of: #/(?:\bmodel|CreateBucketModel)\.(\w+)/#).map { String($0.output.1) })
         #expect(read.count >= 15, "the scan found \(read.count) members")
-        let tests = try SourceCorpus.commentFree(of: Self.repoRoot.appendingPathComponent("Tests/macSCPAppKitTests/CreateBucketSheetTests.swift"))
+        let tests = try Self.code("Tests/macSCPAppKitTests/CreateBucketSheetTests.swift")
         // Whole tokens, not substrings: a member named `nameIsTaken` would be
         // "named" by `nameIsTakenKey` under a substring test (measured
         // 2026-10-21, GREEN where `zzzNothingNamesThis` was RED 3 of 3). The
         // text is split on every character that cannot be in an identifier,
         // and a member is named only if it is one of the tokens.
-        let tokens = Self.identifierTokens(in: Self.withoutStringLiterals(tests))
+        let tokens = Self.identifierTokens(in: tests)
         #expect(!tokens.isEmpty, "the tokeniser found nothing")
         #expect(tokens.contains("canCreate"), "the tokeniser lost the code")
         let unnamed = read.filter { !tokens.contains($0) }.sorted()
@@ -906,3 +890,9 @@ struct CreateBucketSheetTests {
         #expect(create.upperBound <= guarded.lowerBound)
     }
 }
+
+// The fixtures `theSweepSeesCodeAndNotStringsAtTheEndOfThisFile` reads. They sit
+// at the end of the file on purpose: after the regex literal in
+// `everyKeyTheSheetUsesIsOneTheCatalogueChecksCover`, which inverted the old
+// hand-rolled blanker from there on.
+private let sweepFixtureInCode = "sweepFixtureInsideAString"
