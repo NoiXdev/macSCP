@@ -495,7 +495,7 @@
 "s3.objectLock.error.read" = "Le verrouillage d’objet n’a pas pu être lu.";
 "s3.objectLock.error.apply" = "La modification n’a pas pu être enregistrée.";
 "s3.objectLock.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier ceci.";
-"s3.objectLock.error.refused" = "La modification a été refusée. Une rétention déjà en vigueur ne peut peut-être pas être raccourcie, et votre clé d’accès n’est peut-être pas autorisée à la modifier.";
+"s3.objectLock.error.refused" = "La modification a été refusée. Soit une rétention déjà en vigueur ne peut pas être raccourcie depuis macSCP, soit votre clé d’accès n’est pas autorisée à la modifier.";
 "s3.objectLock.saved" = "Enregistré.";
 "s3.objectLock.modeLabel" = "Mode";
 "s3.objectLock.mode.governance" = "Gouvernance";
@@ -518,6 +518,7 @@
 "s3.objectLock.blocked.datePast" = "Choisissez une date et une heure à venir.";
 "s3.objectLock.blocked.notAcknowledged" = "Cochez la case pour confirmer.";
 "s3.objectLock.blocked.holdUnchanged" = "La conservation légale est déjà réglée ainsi ; il n’y a rien à modifier.";
+"s3.objectLock.blocked.complianceInForce" = "Ce fichier a une rétention en mode Conformité encore en vigueur. Elle ne peut passer en mode Gouvernance qu’une fois échue.";
 "s3.objectLock.default.title %@" = "Verrouillage d’objet par défaut de « %@ »";
 "s3.objectLock.default.current.none" = "Ce bucket n’a pas de rétention par défaut.";
 "s3.objectLock.default.current %1$@ %2$lld" = "Valeur par défaut actuelle : mode %1$@, durée de rétention en jours : %2$lld.";
@@ -529,6 +530,7 @@
 "s3.objectLock.default.blocked.daysOutOfRange %lld" = "Saisissez un nombre de jours de 1 à %lld.";
 "s3.objectLock.default.blocked.notAcknowledged" = "Cochez la case pour confirmer.";
 "s3.objectLock.default.blocked.unchanged" = "Le bucket a déjà cette valeur par défaut ; il n’y a rien à modifier.";
+"s3.objectLock.default.blocked.acknowledgementStale" = "Le jour a changé depuis que vous avez coché la case. Décochez-la puis cochez-la de nouveau pour confirmer le nouveau jour.";
 
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";

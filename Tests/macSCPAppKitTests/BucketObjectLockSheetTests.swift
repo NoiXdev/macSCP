@@ -1,5 +1,6 @@
 import Foundation
 import MacSCPTestSupport
+import Observation
 import Testing
 import macSCPCore
 
@@ -107,14 +108,21 @@ struct BucketObjectLockSheetTests {
         #expect(expected.count == Self.locales.count)
     }
 
+    private final class Clock: @unchecked Sendable { var date = BucketObjectLockSheetTests.now }
+
     /// **The tick is for the day it named.** The clock moves while the sheet
     /// is open; a tick given for one day does not stand for another (fix round
     /// 1, Minor 2: the date was recomputed from `now()` on every read while the
     /// tick stood). The same day later is the same day, so the positive is
-    /// beside the negative; the stale tick is taken back on the click, visibly,
-    /// and nothing is sent.
+    /// beside the negative.
+    ///
+    /// **And it says so (fix round 2, NEW-1).** A stale tick has its own blocker
+    /// and its own sentence, not "Tick the box to confirm" beside a box that is
+    /// ticked. The round-1 `save()` cleared a stale tick on the click, which
+    /// left that generic sentence as the only explanation; the tick now stands,
+    /// the reason is the stale one in either ordering (a redraw before the
+    /// click, or none), and re-ticking is what clears it.
     @MainActor @Test func aTickGivenForOneDayDoesNotStandForAnother() async {
-        final class Clock: @unchecked Sendable { var date = BucketObjectLockSheetTests.now }
         let clock = Clock()
         let probe = FakeBucketSettings(lock: .init())
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { clock.date })
@@ -125,16 +133,86 @@ struct BucketObjectLockSheetTests {
         clock.date = Self.now.addingTimeInterval(1)
         #expect(model.acknowledgementDate == named)
         #expect(model.canSave, "the same day, a moment later")
+        #expect(model.explanation == nil)
         clock.date = Self.now.addingTimeInterval(2 * 86_400)
         #expect(model.acknowledgementDate != named)
-        #expect(!model.canSave)
+        #expect(model.activeBlockers == [.acknowledgementStale])
+        #expect(model.explanation?.key == BucketObjectLockModel.staleLine.key)
         await model.save(bucket: "b", via: probe)
         #expect(probe.defaultWrites.isEmpty, "a tick for another day sent a COMPLIANCE default")
-        #expect(!model.acknowledged, "the stale tick is taken back where the person can see it")
+        #expect(model.acknowledged, "the tick stands: it is not taken away unexplained")
+        #expect(model.explanation?.key == BucketObjectLockModel.staleLine.key)
+        model.acknowledged = false
+        #expect(model.explanation?.key == BucketObjectLockModel.notAcknowledgedLine.key)
         model.acknowledged = true
         #expect(model.canSave)
         await model.save(bucket: "b", via: probe)
         #expect(probe.defaultWrites.count == 1)
+    }
+
+    /// A click on a stale tick changes something the sheet watches, so the
+    /// sentence appears even when nothing redrew since midnight: the model
+    /// counts the refusal, and the stale blocker reads the count (fix round 2).
+    @MainActor @Test func aClickOnAStaleTickIsSomethingTheSheetCanSee() async {
+        let clock = Clock()
+        let probe = FakeBucketSettings(lock: .init())
+        let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { clock.date })
+        model.mode = .compliance
+        model.acknowledged = true
+        clock.date = Self.now.addingTimeInterval(2 * 86_400)
+        let before = model.refusedSaves
+        // What the view does: reads `canSave` while drawing. The click must
+        // invalidate what that read depended on.
+        let redraw = RedrawFlag()
+        withObservationTracking({ _ = model.canSave }, onChange: { redraw.raise() })
+        await model.save(bucket: "b", via: probe)
+        #expect(model.refusedSaves == before + 1)
+        #expect(redraw.raised, "a click on a stale tick changed nothing the sheet was watching")
+    }
+
+    private final class RedrawFlag: @unchecked Sendable {
+        private(set) var raised = false
+        func raise() { raised = true }
+    }
+
+    /// **A second write of the same value is not a new tick.** `acknowledged`
+    /// stamps the day it was given for; without the guard that `mode` and `days`
+    /// have, a binding writing `true` back after midnight would turn a stale tick
+    /// fresh (fix round 2, NEW-3).
+    @MainActor @Test func tickingAnAlreadyTickedBoxDoesNotRefreshTheDay() {
+        let clock = Clock()
+        let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { clock.date })
+        model.mode = .compliance
+        model.acknowledged = true
+        clock.date = Self.now.addingTimeInterval(2 * 86_400)
+        model.acknowledged = true
+        #expect(!model.canSave, "a repeated write of true made a stale tick fresh")
+        #expect(model.activeBlockers == [.acknowledgementStale])
+        model.acknowledged = false
+        model.acknowledged = true
+        #expect(model.canSave, "a real re-tick is a new decision")
+    }
+
+    /// **A read starts the decision over, on both models, failed or not (fix
+    /// round 2).** The bucket default used to clear the tick only at the end of
+    /// a read that succeeded, so a failed read left a tick standing from before.
+    /// Nothing could be written on it (the read's own blockers hold), but the
+    /// two models said different things; now both clear at the start.
+    @MainActor @Test func aFailedReadTakesAnyAcknowledgementBack() async {
+        let failing = FakeBucketSettings(
+            lock: .init(hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
+        model.mode = .compliance
+        model.acknowledged = true
+        await model.load(bucket: "b", via: failing, cache: ObjectLockStateCache(settings: failing))
+        #expect(!model.acknowledged)
+        #expect(!model.canSave)
+
+        let perFile = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        perFile.mode = .compliance
+        perFile.acknowledged = true
+        await perFile.load(key: "a", bucket: "b", via: failing, cache: ObjectLockStateCache(settings: failing))
+        #expect(!perFile.acknowledged)
     }
 
     @MainActor @Test func changingTheDaysOrTheModeTakesTheAcknowledgementBack() {
@@ -443,7 +521,12 @@ struct BucketObjectLockSheetTests {
                 aloneIn.insert("\(only)")
             }
         }
-        let expected = Set(BucketObjectLockModel.SaveBlocker.allCases.filter { $0 != .applying }.map { "\($0)" })
+        // `applying` needs a write in flight and `acknowledgementStale` a clock that
+        // moves; `aSecondSaveWhileOneIsInFlightSendsNothing` and
+        // `aTickGivenForOneDayDoesNotStandForAnother` are where each is held.
+        let expected = Set(
+            BucketObjectLockModel.SaveBlocker.allCases
+                .filter { $0 != .applying && $0 != .acknowledgementStale }.map { "\($0)" })
         #expect(aloneIn == expected)
         #expect(!expected.isEmpty)
     }

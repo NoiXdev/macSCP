@@ -209,15 +209,83 @@ struct ObjectLockSheetTests {
         #expect(fact)
     }
 
-    /// The refusal that follows an attempt is hedged in the source text as it
-    /// is in the translations, because the answer does not say whether the
-    /// retention or the key was the cause.
-    @MainActor @Test func theEnglishRefusalIsHedgedAsTheTranslationsAre() {
+    /// **The refusal keeps the rule flat and hedges which cause applied.** The
+    /// governance note states the rule ("not from macSCP"); the refusal that
+    /// follows an attempt cannot know whether the retention or the key was the
+    /// cause, so the uncertainty sits in the "either ... or" and not in the rule.
+    /// Fix round 2: the round-1 wording put the hedge on the rule and so
+    /// hedged, two sentences from where it was asserted, one fact. Each language
+    /// names the app in the rule, as the governance note does.
+    @MainActor @Test func theRefusalKeepsTheRuleFlatAndHedgesTheCause() {
+        for locale in Self.locales {
+            let text = L10n.$localeOverride.withValue(locale) { ObjectLockLines.retentionRefused.text }
+            let namesTheApp = text.contains("macSCP")
+            #expect(namesTheApp, "\(locale)")
+        }
         let english = L10n.$localeOverride.withValue("en") { ObjectLockLines.retentionRefused.text.lowercased() }
-        let hedged = english.contains("perhaps")
-        #expect(hedged)
-        let flat = english.contains("a retention that is already in force may not")
-        #expect(!flat)
+        let eitherOr = english.contains("either") && english.contains(", or your access key")
+        let flatRule = english.contains("cannot be shortened from macscp")
+        let hedgedRule = english.contains("perhaps") || english.contains("may not be shortened")
+        #expect(eitherOr)
+        #expect(flatRule)
+        #expect(!hedgedRule)
+    }
+
+    // MARK: - A COMPLIANCE retention in force cannot be weakened
+
+    @MainActor private static func complianceHeld(until date: Date) -> ObjectLockModel {
+        let model = ObjectLockModel(
+            focus: .retention, bucketLock: .present,
+            current: ObjectLockModel.Current(
+                retention: ObjectRetention(mode: .compliance, retainUntil: date), legalHold: false),
+            now: { Self.now })
+        model.retainUntil = Self.newYear
+        return model
+    }
+
+    /// The attempt is stopped, with a sentence, instead of being sent and
+    /// explained afterwards by a refusal that names two other causes (fix
+    /// round 2, NEW-2). GOVERNANCE over a COMPLIANCE retention still in force is
+    /// the sheet's own starting state for such a file.
+    @MainActor @Test func governanceOverAComplianceRetentionInForceIsStoppedAndSaysWhy() async {
+        let model = Self.complianceHeld(until: Self.newYear)
+        #expect(model.mode == .governance)
+        #expect(model.activeBlockers == [.complianceInForce])
+        #expect(!model.canRun)
+        #expect(model.explanation?.key == ObjectLockModel.complianceInForceLine.key)
+        let probe = FakeBucketSettings(lock: .init())
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.isEmpty)
+    }
+
+    /// The positives beside it: COMPLIANCE over COMPLIANCE is the ordinary
+    /// acknowledged write; GOVERNANCE over a GOVERNANCE one is unaffected; and
+    /// a COMPLIANCE retention whose date has passed is no longer in force.
+    @MainActor @Test func onlyAComplianceRetentionStillInForceStopsGovernance() {
+        let extend = Self.complianceHeld(until: Self.newYear)
+        extend.mode = .compliance
+        extend.acknowledged = true
+        #expect(extend.canRun)
+
+        let expired = Self.complianceHeld(until: Self.yesterday)
+        #expect(expired.mode == .governance)
+        #expect(!expired.activeBlockers.contains(.complianceInForce))
+        #expect(expired.canRun)
+
+        let governanceHeld = ObjectLockModel(
+            focus: .retention, bucketLock: .present,
+            current: ObjectLockModel.Current(
+                retention: ObjectRetention(mode: .governance, retainUntil: Self.newYear), legalHold: false),
+            now: { Self.now })
+        #expect(governanceHeld.canRun)
+
+        let hold = ObjectLockModel(
+            focus: .legalHold, bucketLock: .present,
+            current: ObjectLockModel.Current(
+                retention: ObjectRetention(mode: .compliance, retainUntil: Self.newYear), legalHold: false),
+            now: { Self.now })
+        hold.legalHold = true
+        #expect(hold.canRun, "a legal hold is not a retention and is not stopped by one")
     }
 
     // MARK: - Where the form starts
@@ -593,13 +661,22 @@ struct ObjectLockSheetTests {
     // MARK: - Every state the sheet can be in
 
     /// What the model's decision inputs can be, as data. The cross product is
-    /// every combination of them with the file's own current values held empty
-    /// (`model(for:)` always builds `Current(retention: nil, legalHold: false)`);
-    /// no combination is written out by hand, so a state nobody thought of is
-    /// still run. A file that already carries a retention or a hold is covered
-    /// by the loading tests (`aLoadReadsTheCurrentRetentionOfTheNamedKey`,
+    /// every combination of them with the file's own current HOLD held empty
+    /// (`model(for:)` always builds `legalHold: false`) and its current
+    /// RETENTION either absent or a COMPLIANCE one still in force (`Held`); no
+    /// combination is written out by hand, so a state nobody thought of is
+    /// still run. A file that already carries a hold, or a GOVERNANCE retention,
+    /// is covered by the loading tests (`aLoadReadsTheCurrentRetentionOfTheNamedKey`,
     /// `aLegalHoldLoadReadsTheHoldAndStartsTheToggleWhereTheStoreIs`,
     /// `aLegalHoldIsPlacedAndLiftedOnTheNamedKey`), not by this sweep.
+    ///
+    /// **Corrected 2026-10-21 (fix round 2).** The paragraph above read, in
+    /// part, verbatim: "every combination of them with the file's own
+    /// current values held empty (`model(for:)` always builds `Current(retention: nil, legalHold: false)`)".
+    /// The retention is varied now, because a COMPLIANCE retention in force is
+    /// the one input that makes a mode the sheet starts on unsaveable
+    /// (`RunBlocker.complianceInForce`), and a blocker the sweep cannot reach is
+    /// one `everyBlockerCanBeTheOnlyReasonRunIsOff` cannot hold.
     ///
     /// **Corrected 2026-10-21 (fix round 1, Minor 5).** This comment first read,
     /// verbatim: "What the model's facts can be, as data. The cross product is
@@ -611,6 +688,7 @@ struct ObjectLockSheetTests {
     enum LockFact: CaseIterable { case reading, failed, absent, present }
     enum Currency: CaseIterable { case unread, read }
     enum Day: CaseIterable { case past, future }
+    enum Held: CaseIterable { case nothing, complianceInForce }
 
     struct Scenario: CustomStringConvertible {
         var focus: ObjectLockModel.Focus
@@ -620,9 +698,10 @@ struct ObjectLockSheetTests {
         var acknowledged: Bool
         var day: Day
         var holdWanted: Bool
+        var held: Held
 
         var description: String {
-            "\(focus) lock=\(lock) current=\(current) \(mode) ack=\(acknowledged) day=\(day) hold=\(holdWanted)"
+            "\(focus) lock=\(lock) current=\(current) \(mode) ack=\(acknowledged) day=\(day) hold=\(holdWanted) held=\(held)"
         }
 
         /// The rule, stated a second time and from the other end: what must be
@@ -632,7 +711,10 @@ struct ObjectLockSheetTests {
             guard lock == .present, current == .read else { return false }
             switch focus {
             case .retention:
-                return day == .future && (mode == .governance || acknowledged)
+                // A COMPLIANCE retention in force cannot be weakened, so GOVERNANCE
+                // over it is not a change the sheet will send.
+                let weakens = held == .complianceInForce && mode == .governance
+                return day == .future && (mode == .governance || acknowledged) && !weakens
             case .legalHold:
                 return holdWanted  // the store starts without a hold, so wanting one is the change
             }
@@ -648,10 +730,13 @@ struct ObjectLockSheetTests {
                         for acknowledged in [false, true] {
                             for day in Day.allCases {
                                 for holdWanted in [false, true] {
-                                    all.append(
-                                        Scenario(
-                                            focus: focus, lock: lock, current: current, mode: mode,
-                                            acknowledged: acknowledged, day: day, holdWanted: holdWanted))
+                                    for held in Held.allCases {
+                                        all.append(
+                                            Scenario(
+                                                focus: focus, lock: lock, current: current, mode: mode,
+                                                acknowledged: acknowledged, day: day,
+                                                holdWanted: holdWanted, held: held))
+                                    }
                                 }
                             }
                         }
@@ -670,8 +755,11 @@ struct ObjectLockSheetTests {
             case .absent: .absent
             case .present: .present
             }
+        let held: ObjectRetention? =
+            scenario.held == .complianceInForce
+            ? ObjectRetention(mode: .compliance, retainUntil: Self.newYear) : nil
         let current: ObjectLockModel.Current? =
-            scenario.current == .read ? ObjectLockModel.Current(retention: nil, legalHold: false) : nil
+            scenario.current == .read ? ObjectLockModel.Current(retention: held, legalHold: false) : nil
         let model = ObjectLockModel(
             focus: scenario.focus, bucketLock: lock, current: current, now: { Self.now })
         model.mode = scenario.mode
@@ -693,7 +781,8 @@ struct ObjectLockSheetTests {
         let modes: Int = RetentionMode.allCases.count
         let days: Int = Day.allCases.count
         let tickAndHold: Int = 2 * 2
-        let expectedCount: Int = focuses * locks * currencies * modes * days * tickAndHold
+        let heldStates: Int = Held.allCases.count
+        let expectedCount: Int = focuses * locks * currencies * modes * days * tickAndHold * heldStates
         #expect(scenarios.count == expectedCount)
         var wrote = 0
         var refused = 0
@@ -710,6 +799,10 @@ struct ObjectLockSheetTests {
             switch scenario.focus {
             case .retention: #expect(probe.legalHoldWrites.isEmpty, "\(scenario)")
             case .legalHold: #expect(probe.retentionWrites.isEmpty, "\(scenario)")
+            }
+            // A COMPLIANCE retention in force is never written over with GOVERNANCE.
+            for write in probe.retentionWrites where write.retention.mode == .governance {
+                #expect(scenario.held == .nothing, "\(scenario)")
             }
             // The irreversible path, from the written side.
             for write in probe.retentionWrites where write.retention.mode == .compliance {
