@@ -742,10 +742,15 @@ struct CreateBucketSheetTests {
     }
 
     @Test func aPrefixOfAnIdentifierIsNotTheIdentifier() {
-        let tokens = Self.identifierTokens(in: "model.nameIsTakenKey + showsNameIsTaken")
+        let text = "model.nameIsTakenKey + showsNameIsTaken"
+        let tokens = Self.identifierTokens(in: text)
         #expect(tokens.contains("nameIsTakenKey"))  // the positive control
         #expect(tokens.contains("showsNameIsTaken"))
-        #expect(!tokens.contains("nameIsTaken"))
+        // The prefix is computed, not written: a literal spelling it would be
+        // a token of THIS file, and the sweep above reads this file's strings
+        // (it did: that made a probe naming a member exactly this GREEN, 2026-10-21).
+        let prefix = String("nameIsTakenKey".dropLast(3))
+        #expect(!tokens.contains(prefix))
         #expect(!tokens.contains("model.nameIsTakenKey"))
     }
 
