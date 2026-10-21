@@ -325,6 +325,24 @@ struct CreateBucketSheetTests {
         #expect(model.failureSentence == nil)
     }
 
+    @MainActor @Test func aSheetBuiltInAFailedStateShowsTheFailureForItsName() {
+        // Found by the layout guard (`entriesOfOneTypeMeasureDifferentStates`,
+        // 2026-10-21): the observer on `name`, which clears a stale failure,
+        // ALSO ran for the name the initialiser assigned, because observers
+        // on an `@Observable` class's properties run in `init`. A sheet built
+        // in a failed state with the name it failed for came up with no
+        // failure on it.
+        let model = CreateBucketModel(
+            existingNames: [],
+            outcome: .failed(sentence: "it did not work", bucketMayExist: true),
+            name: "macscp-third")
+        #expect(model.failureSentence == "it did not work")
+        #expect(model.bucketMayExist)
+        // The observer still does its job afterwards.
+        model.name = "macscp-fourth"
+        #expect(model.failureSentence == nil)
+    }
+
     @MainActor @Test func aCreateInFlightIsNotStartedASecondTime() async {
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true, outcome: .creating)
         model.name = "macscp-third"
