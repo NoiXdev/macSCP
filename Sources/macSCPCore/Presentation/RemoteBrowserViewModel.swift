@@ -126,6 +126,15 @@ public final class RemoteBrowserViewModel {
     /// server round-trips — see the M11k design doc).
     private var displayedAll: [RemoteFileItem] = []
 
+    /// What the current directory holds, whatever the search is hiding: the
+    /// listing before the search filter, after the hidden-files filter and
+    /// the sort. `items` is this narrowed by `searchQuery`.
+    ///
+    /// For a caller that must know whether a NAME exists here (the
+    /// create-bucket sheet checking that a name is free): a check made
+    /// against `items` passes for a name the filter merely hid.
+    public var listedItems: [RemoteFileItem] { displayedAll }
+
     /// Match paths from the last successful derivation, in listing order.
     /// Used by `focusNextMatch()`/`focusPreviousMatch()` to find the
     /// selection's position among matches; not exposed publicly since T2

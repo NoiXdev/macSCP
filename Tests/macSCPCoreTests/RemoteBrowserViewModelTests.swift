@@ -1214,6 +1214,21 @@ struct RemoteBrowserViewModelTests {
         ])
     }
 
+    /// A caller that needs to know what the directory HOLDS (not what is
+    /// showing) reads `listedItems`: a filter hides rows from `items`, and a
+    /// check made against `items` would pass for a name the filter merely
+    /// hid. The positive half is the last line: with no filter, the two agree.
+    @Test func listedItemsIgnoreTheSearchFilter() async {
+        let vm = RemoteBrowserViewModel(fs: makeSearchFS())
+        await vm.load()
+        vm.searchMode = .filter
+        vm.searchQuery = "log"
+        #expect(vm.items.map(\.name) == ["Access.log", "error.log"])
+        #expect(vm.listedItems.map(\.name) == ["Access.log", "error.log", "readme.md"])
+        vm.searchQuery = ""
+        #expect(vm.listedItems == vm.items)
+    }
+
     @Test func filterModeReducesItemsAndReportsCounts() async {
         let vm = RemoteBrowserViewModel(fs: makeSearchFS())
         await vm.load()
