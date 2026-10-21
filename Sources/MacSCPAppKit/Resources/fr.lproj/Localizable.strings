@@ -433,6 +433,8 @@
 "menu.copyPath" = "Copier le chemin";
 "menu.delete" = "Supprimer…";
 "browser.action.presignedURL" = "Lien de partage…";
+"browser.action.retention" = "Rétention…";
+"browser.action.legalHold" = "Conservation légale…";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Actions de connexion";
@@ -488,6 +490,45 @@
 "s3.cors.error.read" = "Les règles CORS de ce bucket n’ont pas pu être lues.";
 "s3.cors.error.apply" = "Les règles CORS de ce bucket n’ont pas pu être enregistrées.";
 "s3.cors.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier les règles CORS de ce bucket.";
+"s3.objectLock.reading" = "Vérification du verrouillage d’objet…";
+"s3.objectLock.notEnabledOnThisBucket" = "Le verrouillage d’objet n’est pas activé pour ce bucket, donc rien ne peut y être verrouillé. macSCP ne l’active pas pour un bucket existant ; il peut être choisi lors de la création d’un bucket.";
+"s3.objectLock.error.read" = "Le verrouillage d’objet n’a pas pu être lu.";
+"s3.objectLock.error.apply" = "La modification n’a pas pu être enregistrée.";
+"s3.objectLock.error.denied" = "Votre clé d’accès n’est pas autorisée à lire ni à modifier ceci.";
+"s3.objectLock.error.refused" = "La modification a été refusée. Une rétention déjà en vigueur ne peut peut-être pas être raccourcie, et votre clé d’accès n’est peut-être pas autorisée à la modifier.";
+"s3.objectLock.saved" = "Enregistré.";
+"s3.objectLock.modeLabel" = "Mode";
+"s3.objectLock.mode.governance" = "Gouvernance";
+"s3.objectLock.mode.compliance" = "Conformité";
+"s3.objectLock.mode.governance.detail" = "Une personne disposant de l’autorisation nécessaire peut encore raccourcir ou supprimer une rétention de gouvernance.";
+"s3.objectLock.title.retention %@" = "Rétention de « %@ »";
+"s3.objectLock.title.legalHold %@" = "Conservation légale de « %@ »";
+"s3.objectLock.current.noRetention" = "Ce fichier n’a pas de rétention.";
+"s3.objectLock.current.retention %1$@ %2$@" = "Rétention actuelle : %1$@, jusqu’au %2$@.";
+"s3.objectLock.current.legalHoldOn" = "Ce fichier est sous conservation légale.";
+"s3.objectLock.current.legalHoldOff" = "Ce fichier n’est pas sous conservation légale.";
+"s3.objectLock.untilLabel" = "Conserver jusqu’au";
+"s3.objectLock.complianceWarning" = "Le mode Conformité est irréversible. Une fois enregistré, personne ne peut effacer les données stockées de ce fichier ni raccourcir la rétention avant que la date ci-dessous soit passée — ni vous, ni le titulaire du compte, ni un administrateur.";
+"s3.objectLock.complianceAcknowledgement %@" = "Je comprends que personne, moi y compris, ne peut effacer les données stockées de ce fichier ni raccourcir cette rétention avant le %@, et que cela est irréversible.";
+"s3.objectLock.legalHold.toggle" = "Maintenir ce fichier sous conservation légale (legal hold)";
+"s3.objectLock.legalHold.detail" = "Une conservation légale empêche l’effacement des données stockées du fichier tant qu’elle n’est pas levée. Elle n’a pas de date de fin et peut être levée à tout moment.";
+"s3.objectLock.action.setRetention" = "Définir la rétention";
+"s3.objectLock.action.placeHold" = "Placer sous conservation légale";
+"s3.objectLock.action.liftHold" = "Lever la conservation légale";
+"s3.objectLock.blocked.datePast" = "Choisissez une date et une heure à venir.";
+"s3.objectLock.blocked.notAcknowledged" = "Cochez la case pour confirmer.";
+"s3.objectLock.blocked.holdUnchanged" = "La conservation légale est déjà réglée ainsi ; il n’y a rien à modifier.";
+"s3.objectLock.default.title %@" = "Verrouillage d’objet par défaut de « %@ »";
+"s3.objectLock.default.current.none" = "Ce bucket n’a pas de rétention par défaut.";
+"s3.objectLock.default.current %1$@ %2$lld" = "Valeur par défaut actuelle : mode %1$@, durée de rétention en jours : %2$lld.";
+"s3.objectLock.default.daysLabel" = "Durée de rétention en jours";
+"s3.objectLock.default.appliesLater" = "La valeur par défaut s’applique aux fichiers ajoutés après son réglage. Les fichiers déjà présents dans le bucket ne sont pas modifiés.";
+"s3.objectLock.default.complianceWarning" = "Le mode Conformité est irréversible. Chaque fichier ajouté à ce bucket à partir de maintenant est verrouillé pendant le nombre de jours indiqué ci-dessus, à compter de son enregistrement. Personne ne peut effacer les données stockées d’un fichier verrouillé ni raccourcir sa rétention avant ce terme — ni vous, ni le titulaire du compte, ni un administrateur.";
+"s3.objectLock.default.complianceAcknowledgement %@" = "Je comprends que personne, moi y compris, ne peut effacer les données stockées d’un fichier ajouté à ce bucket à partir de maintenant pendant le nombre de jours indiqué ci-dessus, et que cela est irréversible. Un fichier ajouté maintenant reste verrouillé jusqu’au %@.";
+"s3.objectLock.default.action.save" = "Enregistrer la valeur par défaut";
+"s3.objectLock.default.blocked.daysOutOfRange %lld" = "Saisissez un nombre de jours de 1 à %lld.";
+"s3.objectLock.default.blocked.notAcknowledged" = "Cochez la case pour confirmer.";
+"s3.objectLock.default.blocked.unchanged" = "Le bucket a déjà cette valeur par défaut ; il n’y a rien à modifier.";
 
 /* Commun (M7b/T3) */
 "common.close" = "Fermer";

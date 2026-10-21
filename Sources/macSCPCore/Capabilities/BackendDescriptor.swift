@@ -514,6 +514,8 @@ public struct BackendDescriptor: Sendable {
         secretEnvironmentVariable: "AWS_SECRET_ACCESS_KEY", requiresSecret: { _ in true },
         fileActions: [
             FileActionContribution(id: "s3.presignedURL", titleKey: "browser.action.presignedURL", titleDefault: "Share Link…"),
+            FileActionContribution(id: "s3.retention", titleKey: "browser.action.retention", titleDefault: "Retention…"),
+            FileActionContribution(id: "s3.legalHold", titleKey: "browser.action.legalHold", titleDefault: "Legal Hold…"),
         ],
         connectionActions: [
             ConnectionActionContribution(

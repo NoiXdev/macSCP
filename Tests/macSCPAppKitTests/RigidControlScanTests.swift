@@ -384,6 +384,16 @@ struct RigidControlScanTests {
     /// under `/usr/bin/grep` alike, print 13, 2 and 7: 22 lines in all, and the
     /// counts below sum to 21 (the same one line of header prose is the
     /// difference).
+    ///
+    /// **Corrected 2026-10-21 (S3 bucket settings, Task 10).** The Task 9
+    /// paragraph directly above read, verbatim: "print 13, 2 and 7: 22 lines in
+    /// all, and the counts below sum to 21". The two Object Lock sheets add two
+    /// `RadioChoice` sites (one each) and three `CheckboxRow` sites
+    /// (`ObjectLockSheet` two, `BucketObjectLockSheet` one), so the same three
+    /// commands, run again and under `/usr/bin/grep` alike, print 13, 4 and 10:
+    /// 27 lines in all, and the counts below sum to 26 (the same one line of
+    /// header prose is the difference). The Task 9 paragraph is left as it
+    /// stands: it records what the commands printed when it was written.
     fileprivate struct Component: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String
@@ -409,13 +419,20 @@ struct RigidControlScanTests {
         Component(
             name: "RadioChoice",
             pattern: #"(?:^|\W)RadioChoice\("#,
-            sites: ["ExtractDestinationSheet.swift": 1, "FileActionEditor.swift": 1]),
+            sites: [
+                "BucketObjectLockSheet.swift": 1,
+                "ExtractDestinationSheet.swift": 1,
+                "FileActionEditor.swift": 1,
+                "ObjectLockSheet.swift": 1,
+            ]),
         Component(
             name: "CheckboxRow",
             pattern: #"(?:^|\W)CheckboxRow\("#,
             sites: [
                 "BucketCORSSheet.swift": 1,
+                "BucketObjectLockSheet.swift": 1,
                 "FileActionEditor.swift": 2,
+                "ObjectLockSheet.swift": 2,
                 "SheetSearchField.swift": 1,
                 "SnippetsSheet.swift": 2,
             ]),
@@ -777,11 +794,22 @@ struct RigidControlScanTests {
     /// `RigidControls.swift` two comments, the stored property and the
     /// initializer (all excluded here), and in `SnippetsSheet.swift` the one
     /// site that opts in.
+    ///
+    /// **Corrected 2026-10-21 (S3 bucket settings, Task 10).** The paragraph
+    /// above read, verbatim: "which prints 5 lines" and "the one site that opts
+    /// in". The same command now prints 7 (`grep -rn 'wraps:' Sources/MacSCPAppKit | wc -l`,
+    /// under the session's `grep` and `/usr/bin/grep` alike): the five, plus the
+    /// COMPLIANCE acknowledgement in each of the two Object Lock sheets
+    /// (`ObjectLockSheet.swift`, `BucketObjectLockSheet.swift`), one site each.
+    /// Each is a sentence too long for one line, and it is the line that must
+    /// not be cut.
     @Test func onlyTheListedSitesOptIntoWrapping() throws {
         let sources = try Self.blankedSources().filter { $0.key != Self.componentFile }
         let labelled = Self.counts(#"(?:^|\W)wraps\s*:"#, in: sources)
         let wrapping = Self.counts(#"(?:^|\W)wraps\s*:\s*true(?!\w)"#, in: sources)
-        let expected = ["SnippetsSheet.swift": 1]
+        let expected = [
+            "BucketObjectLockSheet.swift": 1, "ObjectLockSheet.swift": 1, "SnippetsSheet.swift": 1,
+        ]
         #expect(wrapping == expected, "wraps: true at [\(Self.describe(wrapping))]")
         // Every use of the label is the literal `true`; a variable or a `false`
         // is a site this list does not know.

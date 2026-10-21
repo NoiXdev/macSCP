@@ -1,0 +1,867 @@
+import Foundation
+import MacSCPTestSupport
+import Testing
+import macSCPCore
+
+@testable import MacSCPAppKit
+
+/// The per-file Object Lock sheet's decisions, and the cache that tells it
+/// whether a bucket has Object Lock at all.
+///
+/// **This sheet carries the one operation on this branch that cannot be taken
+/// back.** A COMPLIANCE retention is lifted by nobody until its date, not by
+/// the account owner and not with a bypass (measured on the rig 2026-10-19:
+/// `403` even with the bypass header). The maintainer asked for COMPLIANCE
+/// with a clear warning, so what these tests hold the model to is that no path
+/// to a COMPLIANCE write goes around the acknowledgement of the date being
+/// written -- not that the sheet looks right, which no test here can see.
+///
+/// No test in this project draws a SwiftUI view. These are the decisions the
+/// view reads, the catalogue entries it looks its text up in, and scans of
+/// the view's own source.
+@Suite("Object Lock sheet")
+struct ObjectLockSheetTests {
+    /// The four locales the app ships in; `en` is the source text.
+    private static let locales = ["en", "de", "fr", "pl"]
+
+    /// A fixed "now", so no test depends on the day it runs: 2026-09-21.
+    static let now = Date(timeIntervalSince1970: 1_790_000_000)
+    /// 2027-01-01 00:00 UTC: after `now`, as the brief's four cases use it.
+    static let newYear = Date(timeIntervalSince1970: 1_798_761_600)
+    /// 2027-01-01 12:00 UTC: January in every time zone there is, for the
+    /// tests that look at the month's name.
+    static let newYearNoon = Date(timeIntervalSince1970: 1_798_804_800)
+    /// A day before `now`.
+    static let yesterday = Date(timeIntervalSince1970: 1_789_913_600)
+
+    // MARK: - The brief's four cases
+
+    @MainActor @Test func complianceCannotBeRunUntilItIsAcknowledged() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        #expect(model.canRun == false)
+        model.acknowledged = true
+        #expect(model.canRun == true)
+    }
+
+    @MainActor @Test func governanceNeedsNoAcknowledgement() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .governance
+        #expect(model.canRun == true)
+    }
+
+    @MainActor @Test func theAcknowledgementNamesTheDate() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        #expect(model.acknowledgementKey == "s3.objectLock.complianceAcknowledgement %@")
+        #expect(model.acknowledgementDateText.isEmpty == false)
+    }
+
+    @MainActor @Test func aBucketWithoutObjectLockOffersNoLockAtAll() {
+        // Review Focus 5: the rig would accept the enabling call, so the refusal
+        // is macSCP's own.
+        let model = ObjectLockModel(bucketHasLock: false, now: { Self.now })
+        #expect(model.canRun == false)
+        #expect(model.unavailableReasonKey == "s3.objectLock.notEnabledOnThisBucket")
+    }
+
+    // MARK: - The acknowledgement belongs to the date it was given for
+
+    /// A tick is a statement about one date. Changing the date, or the mode and
+    /// back, must not leave the statement standing for a date nobody read.
+    @MainActor @Test func changingTheDateTakesTheAcknowledgementBack() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        model.acknowledged = true
+        #expect(model.canRun)
+        model.retainUntil = Self.newYear.addingTimeInterval(86_400)
+        #expect(!model.acknowledged)
+        #expect(!model.canRun)
+    }
+
+    @MainActor @Test func leavingComplianceAndComingBackTakesTheAcknowledgementBack() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        model.acknowledged = true
+        model.mode = .governance
+        model.mode = .compliance
+        #expect(!model.acknowledged)
+        #expect(!model.canRun)
+    }
+
+    /// A binding that writes back the value it already holds (a redraw does) is
+    /// not a change and does not take the tick away.
+    @MainActor @Test func writingBackTheSameValueKeepsTheAcknowledgement() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        model.acknowledged = true
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        #expect(model.acknowledged)
+        #expect(model.canRun)
+    }
+
+    /// The positive beside the two above: a re-tick after a change works.
+    @MainActor @Test func tickingAgainAfterAChangeRunsIt() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        model.acknowledged = true
+        model.retainUntil = Self.newYear.addingTimeInterval(86_400)
+        model.acknowledged = true
+        #expect(model.canRun)
+    }
+
+    @MainActor @Test func aDateThatHasPassedCannotBeRunInEitherMode() {
+        for mode in RetentionMode.allCases {
+            let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+            model.mode = mode
+            model.retainUntil = Self.yesterday
+            model.acknowledged = true
+            #expect(!model.canRun, "\(mode)")
+            #expect(model.activeBlockers.contains(.dateNotInFuture), "\(mode)")
+        }
+    }
+
+    /// The sentence names hours and minutes, and the picker edits hours and
+    /// minutes: a start date with seconds would be a lock that ends later than
+    /// the sentence says.
+    @MainActor @Test func theStartingDateIsAWholeMinuteAWeekAhead() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        #expect(Calendar.current.component(.second, from: model.retainUntil) == 0)
+        #expect(model.retainUntil > Self.now.addingTimeInterval(6 * 86_400))
+        #expect(model.retainUntil < Self.now.addingTimeInterval(8 * 86_400))
+        #expect(model.mode == .governance, "the sheet starts on the reversible choice")
+        #expect(!model.acknowledged)
+    }
+
+    // MARK: - The date is a date for the reader
+
+    /// "A date in a sentence is formatted for the locale, never interpolated
+    /// raw." The month's name is the visible difference between four locales,
+    /// and the raw forms must not appear. Noon UTC, so it is January wherever
+    /// the test runs.
+    @Test func theDateIsWrittenInTheReadersLanguage() {
+        let expected = ["en": "January", "de": "Januar", "fr": "janvier", "pl": "stycznia"]
+        for locale in Self.locales {
+            let text = ObjectLockDates.text(Self.newYearNoon, localeCode: locale)
+            let month = expected[locale] ?? ""
+            let hasMonth = text.contains(month)
+            #expect(hasMonth, "\(locale)")
+            let raw = text.contains("1798804800") || text.contains("2027-01-01") || text.contains("T12:")
+            #expect(!raw, "\(locale)")
+        }
+        #expect(expected.count == Self.locales.count)
+    }
+
+    @MainActor @Test func theAcknowledgementSentenceCarriesTheFormattedDate() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYearNoon
+        for locale in Self.locales {
+            let sentence = L10n.$localeOverride.withValue(locale) { model.acknowledgementSentence }
+            let date = ObjectLockDates.text(Self.newYearNoon, localeCode: locale)
+            let carries = sentence.contains(date)
+            let unfilled = sentence.contains("%@")
+            #expect(carries, "\(locale)")
+            #expect(!unfilled, "\(locale)")
+        }
+    }
+
+    // MARK: - The words about something permanent
+
+    /// Plain words, naming what cannot be undone and until when. The negative
+    /// half (no store mechanics) is beside the positive (it does say it).
+    @MainActor @Test func theComplianceWordsSayWhatCannotBeUndoneInPlainEnglish() {
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYearNoon
+        let texts = L10n.$localeOverride.withValue("en") {
+            [model.acknowledgementSentence, ObjectLockModel.complianceWarningLine.text]
+        }
+        for text in texts {
+            let lowered = text.lowercased()
+            #expect(lowered.contains("nobody") || lowered.contains("not you"), "\(text)")
+            for jargon in ["bypass", "header", "403", "s3", "x-amz", "version id", "delete marker"] {
+                let leaked = lowered.contains(jargon)
+                #expect(!leaked, "\(jargon)")
+            }
+        }
+        let acknowledgement = texts[0].lowercased()
+        #expect(acknowledgement.contains("undone"))
+        #expect(acknowledgement.contains("before"))
+    }
+
+    // MARK: - The bucket's lock, read once per bucket
+
+    @MainActor @Test func theLockStateIsReadOncePerBucket() async throws {
+        let probe = FakeBucketSettings(lock: .init(hasLock: true))
+        let cache = ObjectLockStateCache(settings: probe)
+        _ = try await cache.hasObjectLock("b")
+        _ = try await cache.hasObjectLock("b")
+        #expect(probe.hasLockReads == ["b"])
+        _ = try await cache.hasObjectLock("other")
+        #expect(probe.hasLockReads == ["b", "other"])
+    }
+
+    /// The correction to Step 4, dated 2026-10-21: the cache asks the question
+    /// Core answers for exactly this purpose, and never the one that cannot
+    /// tell "no Object Lock" from "Object Lock with no default yet".
+    @MainActor @Test func theCacheAsksWhetherThereIsALockAndNotWhetherThereIsADefault() async throws {
+        let probe = FakeBucketSettings(lock: .init(hasLock: true, bucketDefault: nil))
+        let cache = ObjectLockStateCache(settings: probe)
+        let answer = try await cache.hasObjectLock("b")
+        #expect(answer == true)
+        #expect(probe.hasLockReads == ["b"])
+        #expect(probe.defaultReads.isEmpty)
+    }
+
+    /// The main case the correction exists for: a lock-enabled bucket with no
+    /// default, which is exactly where a first retention is set, is offered.
+    @MainActor @Test func aLockedBucketWithNoDefaultIsOfferedTheLock() async {
+        let probe = FakeBucketSettings(lock: .init(hasLock: true, bucketDefault: nil))
+        let cache = ObjectLockStateCache(settings: probe)
+        let model = ObjectLockModel(now: { Self.now })
+        await model.load(key: "a.txt", bucket: "b", via: probe, cache: cache)
+        #expect(model.bucketLock == .present)
+        #expect(model.unavailableReasonKey == nil)
+        #expect(model.canRun == true)
+    }
+
+    /// The store's "no lock" answer is an answer, kept: it is not retried like
+    /// a failure.
+    @MainActor @Test func aBucketWithNoLockIsRememberedAsSuch() async throws {
+        let probe = FakeBucketSettings(lock: .init(hasLock: false))
+        let cache = ObjectLockStateCache(settings: probe)
+        let first = try await cache.hasObjectLock("b")
+        let second = try await cache.hasObjectLock("b")
+        #expect(first == false)
+        #expect(second == false)
+        #expect(probe.hasLockReads.count == 1)
+    }
+
+    /// A failure is not an answer. The next ask reads again, and the failed
+    /// read left nothing behind that reads as "no lock".
+    @MainActor @Test func aFailedReadIsNotRememberedAsAnAnswer() async throws {
+        let failing = FakeBucketSettings(
+            lock: .init(hasLock: true, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let cache = ObjectLockStateCache(settings: failing)
+        await #expect(throws: RemoteFSError.self) { _ = try await cache.hasObjectLock("b") }
+        await #expect(throws: RemoteFSError.self) { _ = try await cache.hasObjectLock("b") }
+        #expect(failing.hasLockReads == ["b", "b"])
+    }
+
+    /// Two surfaces opening on one bucket together share one read.
+    @MainActor @Test func twoAsksAtOnceShareOneRead() async throws {
+        let probe = FakeBucketSettings(lock: .init(hasLock: true))
+        let cache = ObjectLockStateCache(settings: probe)
+        async let first = cache.hasObjectLock("b")
+        async let second = cache.hasObjectLock("b")
+        let answers = try await [first, second]
+        #expect(answers == [true, true])
+        #expect(probe.hasLockReads == ["b"])
+    }
+
+    // MARK: - Loading
+
+    @MainActor @Test func aLoadReadsTheCurrentRetentionOfTheNamedKey() async {
+        let held = ObjectRetention(mode: .governance, retainUntil: Self.newYear)
+        let probe = FakeBucketSettings(lock: .init(retention: held))
+        let model = ObjectLockModel(focus: .retention, now: { Self.now })
+        await model.load(
+            key: "photos/a.txt", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.current?.retention == held)
+        #expect(probe.retentionReads == ["photos/a.txt"])
+        #expect(probe.legalHoldReads.isEmpty)
+    }
+
+    @MainActor @Test func aLegalHoldLoadReadsTheHoldAndStartsTheToggleWhereTheStoreIs() async {
+        let probe = FakeBucketSettings(lock: .init(legalHold: true))
+        let model = ObjectLockModel(focus: .legalHold, now: { Self.now })
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.current?.legalHold == true)
+        #expect(model.legalHold == true)
+        #expect(probe.retentionReads.isEmpty)
+        #expect(model.canRun == false)  // nothing to change yet
+    }
+
+    @MainActor @Test func aBucketWithNoLockIsNotAskedAboutTheFile() async {
+        let probe = FakeBucketSettings(lock: .init(hasLock: false))
+        let model = ObjectLockModel(now: { Self.now })
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.bucketLock == .absent)
+        #expect(model.unavailableReasonKey == "s3.objectLock.notEnabledOnThisBucket")
+        #expect(probe.retentionReads.isEmpty)
+        #expect(model.canRun == false)
+    }
+
+    @MainActor @Test func aFailedLockReadSaysSoAndOffersNothing() async {
+        let probe = FakeBucketSettings(
+            lock: .init(hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = ObjectLockModel(now: { Self.now })
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.bucketLock == .failed(RemoteFSFinding.operationNotSupported.message))
+        #expect(model.unavailableReasonKey == nil)
+        #expect(model.canRun == false)
+    }
+
+    @MainActor @Test func aFailedFileReadBlocksRunning() async {
+        let probe = FakeBucketSettings(
+            lock: .init(readError: RemoteFSError.finding(.operationNotSupported)))
+        let model = ObjectLockModel(now: { Self.now })
+        await model.load(key: "a", bucket: "b", via: probe, cache: ObjectLockStateCache(settings: probe))
+        #expect(model.bucketLock == .present)
+        #expect(model.current == nil)
+        #expect(model.currentFailure == RemoteFSFinding.operationNotSupported.message)
+        #expect(model.canRun == false)
+    }
+
+    // MARK: - Running
+
+    @MainActor @Test func aGovernanceRetentionIsWrittenOnceToTheNamedKeyAndShownAsTheStoreHasIt() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .governance
+        model.retainUntil = Self.newYear
+        await model.run(key: "photos/a.txt", bucket: "macscp-seed", via: probe)
+        #expect(
+            probe.retentionWrites == [
+                FakeBucketSettings.RetentionWrite(
+                    retention: ObjectRetention(mode: .governance, retainUntil: Self.newYear),
+                    key: "photos/a.txt", bucket: "macscp-seed", versionId: nil)
+            ])
+        #expect(model.current?.retention == ObjectRetention(mode: .governance, retainUntil: Self.newYear))
+        #expect(model.applyFailure == nil)
+        #expect(model.isSaved)
+        #expect(!model.isApplying)
+        #expect(probe.legalHoldWrites.isEmpty)
+    }
+
+    /// The acknowledged date is the written date, and the tick is spent: a
+    /// second COMPLIANCE write needs a second tick.
+    @MainActor @Test func aComplianceRetentionIsWrittenOnlyForTheDateAcknowledgedAndSpendsTheTick() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.isEmpty, "sent without an acknowledgement")
+        model.acknowledged = true
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.map(\.retention.retainUntil) == [Self.newYear])
+        #expect(probe.retentionWrites.map(\.retention.mode) == [.compliance])
+        #expect(!model.acknowledged)
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.count == 1, "a spent acknowledgement ran a second write")
+    }
+
+    @MainActor @Test func aRefusedWriteKeepsTheStateAndSaysWhyInAFixedSentence() async {
+        let probe = FakeBucketSettings(
+            lock: .init(writeError: RemoteFSError.permissionDenied(path: "/b/a")))
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.retainUntil = Self.newYear
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.count == 1)
+        #expect(model.current?.retention == nil)
+        #expect(model.applyFailure == ObjectLockLines.retentionRefused.text)
+        #expect(!model.isSaved)
+        #expect(!model.isApplying)
+    }
+
+    /// The same two exits as everywhere else: the code under test and the test.
+    /// The planted value is a named constant and the `Bool` is computed before
+    /// the expectation, so a failure cannot print it.
+    @MainActor @Test func aFailureNeverQuotesTheReasonItWasGiven() async {
+        let planted = "https://AKIDEXAMPLE:SECRETEXAMPLE@store.invalid"
+        let probe = FakeBucketSettings(lock: .init(writeError: RemoteFSError.protocolError(reason: planted)))
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.retainUntil = Self.newYear
+        await model.run(key: "a", bucket: "b", via: probe)
+        let text = model.applyFailure ?? ""
+        let quoted = text.contains("SECRETEXAMPLE") || text.contains("store.invalid")
+        #expect(!text.isEmpty)
+        #expect(!quoted)
+    }
+
+    @MainActor @Test func aLegalHoldIsPlacedAndLiftedOnTheNamedKey() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let model = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
+        model.legalHold = true
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(
+            probe.legalHoldWrites == [
+                FakeBucketSettings.LegalHoldWrite(on: true, key: "a", bucket: "b", versionId: nil)
+            ])
+        #expect(model.current?.legalHold == true)
+        // Placed; the toggle now equals the store, so there is nothing to run.
+        #expect(!model.canRun)
+        model.legalHold = false
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.legalHoldWrites.map(\.on) == [true, false])
+    }
+
+    /// A refused hold is not a refused retention: the sentence about a
+    /// retention that may not be shortened would be false of it.
+    @MainActor @Test func aRefusedHoldDoesNotTalkAboutRetentions() async {
+        let probe = FakeBucketSettings(
+            lock: .init(writeError: RemoteFSError.permissionDenied(path: "/b/a")))
+        let model = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
+        model.legalHold = true
+        await model.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.legalHoldWrites.count == 1)
+        #expect(model.applyFailure == ObjectLockLines.denied.text)
+        #expect(model.applyFailure != ObjectLockLines.retentionRefused.text)
+    }
+
+    /// The sheet that opened for a legal hold has no way to place a retention,
+    /// whatever its other fields hold. The positive half: the same model with
+    /// the retention focus does write.
+    @MainActor @Test func theLegalHoldSheetNeverWritesARetention() async {
+        let probe = FakeBucketSettings(lock: .init())
+        let holdSheet = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
+        holdSheet.mode = .compliance
+        holdSheet.retainUntil = Self.newYear
+        holdSheet.acknowledged = true
+        holdSheet.legalHold = true
+        await holdSheet.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.isEmpty)
+        #expect(probe.legalHoldWrites.count == 1)
+
+        let retentionSheet = ObjectLockModel(focus: .retention, bucketHasLock: true, now: { Self.now })
+        retentionSheet.legalHold = true
+        await retentionSheet.run(key: "a", bucket: "b", via: probe)
+        #expect(probe.retentionWrites.count == 1)
+        #expect(probe.legalHoldWrites.count == 1, "the retention sheet placed a hold")
+    }
+
+    /// A write in flight blocks a second one. The fake holds the write until
+    /// released, so the state is observed rather than raced.
+    ///
+    /// **A hang bound, and why this test needs one.** With the in-flight guard
+    /// gone the second `run` reaches the fake, which holds it until `release`,
+    /// and the test never gets to the line that raises it: measured on
+    /// 2026-10-21 by planting out `guard canRun` in `run`, which left the run
+    /// parked for ten minutes with no verdict. The limit turns that into a red;
+    /// the `defer` lets go of anything still held when the test ends either way.
+    @MainActor @Test(.timeLimit(.minutes(1))) func aSecondRunWhileOneIsInFlightSendsNothing() async {
+        let entered = AsyncSignal()
+        let release = AsyncSignal()
+        defer { release.signal() }
+        let probe = FakeBucketSettings(lock: .init(writeEntered: entered, writeRelease: release))
+        let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
+        model.mode = .compliance
+        model.retainUntil = Self.newYear
+        model.acknowledged = true
+        let first = Task { @MainActor in await model.run(key: "a", bucket: "b", via: probe) }
+        _ = await entered.wait()
+        #expect(model.isApplying)
+        #expect(model.activeBlockers.contains(.applying))
+        #expect(!model.canRun)
+        await model.run(key: "a", bucket: "b", via: probe)
+        release.signal()
+        await first.value
+        #expect(probe.retentionWrites.count == 1)
+    }
+
+    // MARK: - Every state the sheet can be in
+
+    /// What the model's facts can be, as data. The cross product is the sheet's
+    /// state space; no combination is written out by hand, so a state nobody
+    /// thought of is still run.
+    enum LockFact: CaseIterable { case reading, failed, absent, present }
+    enum Currency: CaseIterable { case unread, read }
+    enum Day: CaseIterable { case past, future }
+
+    struct Scenario: CustomStringConvertible {
+        var focus: ObjectLockModel.Focus
+        var lock: LockFact
+        var current: Currency
+        var mode: RetentionMode
+        var acknowledged: Bool
+        var day: Day
+        var holdWanted: Bool
+
+        var description: String {
+            "\(focus) lock=\(lock) current=\(current) \(mode) ack=\(acknowledged) day=\(day) hold=\(holdWanted)"
+        }
+
+        /// The rule, stated a second time and from the other end: what must be
+        /// true for a write to be allowed at all. `ObjectLockModel` states it
+        /// as a list of blockers; this is the conjunction.
+        var mayWrite: Bool {
+            guard lock == .present, current == .read else { return false }
+            switch focus {
+            case .retention:
+                return day == .future && (mode == .governance || acknowledged)
+            case .legalHold:
+                return holdWanted  // the store starts without a hold, so wanting one is the change
+            }
+        }
+    }
+
+    static var scenarios: [Scenario] {
+        var all: [Scenario] = []
+        for focus in ObjectLockModel.Focus.allCases {
+            for lock in LockFact.allCases {
+                for current in Currency.allCases {
+                    for mode in RetentionMode.allCases {
+                        for acknowledged in [false, true] {
+                            for day in Day.allCases {
+                                for holdWanted in [false, true] {
+                                    all.append(
+                                        Scenario(
+                                            focus: focus, lock: lock, current: current, mode: mode,
+                                            acknowledged: acknowledged, day: day, holdWanted: holdWanted))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return all
+    }
+
+    @MainActor static func model(for scenario: Scenario) -> ObjectLockModel {
+        let lock: ObjectLockModel.BucketLock =
+            switch scenario.lock {
+            case .reading: .reading
+            case .failed: .failed("x")
+            case .absent: .absent
+            case .present: .present
+            }
+        let current: ObjectLockModel.Current? =
+            scenario.current == .read ? ObjectLockModel.Current(retention: nil, legalHold: false) : nil
+        let model = ObjectLockModel(
+            focus: scenario.focus, bucketLock: lock, current: current, now: { Self.now })
+        model.mode = scenario.mode
+        model.retainUntil = scenario.day == .future ? Self.newYear : Self.yesterday
+        model.acknowledged = scenario.acknowledged
+        model.legalHold = scenario.holdWanted
+        return model
+    }
+
+    /// The rule holds in every one of the states, and `run` agrees with
+    /// `canRun`: it writes exactly when the model said it could, and what it
+    /// writes in COMPLIANCE is the date that was acknowledged, in a bucket that
+    /// has the lock, for a date still ahead.
+    @MainActor @Test func inNoStateDoesRunWriteWhatCanRunRefused() async {
+        let scenarios = Self.scenarios
+        let focuses: Int = ObjectLockModel.Focus.allCases.count
+        let locks: Int = LockFact.allCases.count
+        let currencies: Int = Currency.allCases.count
+        let modes: Int = RetentionMode.allCases.count
+        let days: Int = Day.allCases.count
+        let tickAndHold: Int = 2 * 2
+        let expectedCount: Int = focuses * locks * currencies * modes * days * tickAndHold
+        #expect(scenarios.count == expectedCount)
+        var wrote = 0
+        var refused = 0
+        for scenario in scenarios {
+            let model = Self.model(for: scenario)
+            let probe = FakeBucketSettings(lock: .init())
+            let allowed = model.canRun
+            #expect(allowed == scenario.mayWrite, "\(scenario)")
+            await model.run(key: "k", bucket: "b", via: probe)
+            let writes = probe.retentionWrites.count + probe.legalHoldWrites.count
+            #expect(writes == (allowed ? 1 : 0), "\(scenario)")
+            if allowed { wrote += 1 } else { refused += 1 }
+            // The sheet of one kind cannot write the other kind.
+            switch scenario.focus {
+            case .retention: #expect(probe.legalHoldWrites.isEmpty, "\(scenario)")
+            case .legalHold: #expect(probe.retentionWrites.isEmpty, "\(scenario)")
+            }
+            // The irreversible path, from the written side.
+            for write in probe.retentionWrites where write.retention.mode == .compliance {
+                #expect(scenario.acknowledged, "\(scenario)")
+                #expect(scenario.lock == .present, "\(scenario)")
+                #expect(write.retention.retainUntil == Self.newYear, "\(scenario)")
+                #expect(write.retention.retainUntil > Self.now, "\(scenario)")
+            }
+        }
+        // Both outcomes occur: neither half of the equality above is vacuous.
+        #expect(wrote > 0)
+        #expect(refused > 0)
+    }
+
+    /// Every blocker is reachable alone: a blocker no state can show by itself
+    /// is one nothing is holding the sheet to. And every blocker that the
+    /// sheet explains has an explanation in every language.
+    @MainActor @Test func everyBlockerCanBeTheOnlyReasonRunIsOff() {
+        var aloneIn = Set<String>()
+        for scenario in Self.scenarios {
+            let model = Self.model(for: scenario)
+            if model.activeBlockers.count == 1, let only = model.activeBlockers.first {
+                aloneIn.insert("\(only)")
+            }
+        }
+        // `applying` needs a write in flight; `aSecondRunWhileOneIsInFlightSendsNothing`
+        // is where it is held.
+        let expected = Set(ObjectLockModel.RunBlocker.allCases.filter { $0 != .applying }.map { "\($0)" })
+        #expect(aloneIn == expected)
+        #expect(!expected.isEmpty)
+    }
+
+    // MARK: - Where a file is
+
+    private static func context(
+        listRoot: Bool, path: String = "/", bucket: String = "macscp-seed"
+    ) -> ConnectionActionContext {
+        ConnectionActionContext(
+            settings: FakeBucketSettings(), rootIsContainerList: listRoot, remotePath: path,
+            configuredBucket: bucket)
+    }
+
+    @Test func inOneBucketTheKeyIsThePathAndTheBucketIsTheConfiguredOne() {
+        let target = ObjectLockTarget.resolve(
+            path: "/photos//2026/a b.jpg", in: Self.context(listRoot: false, bucket: " macscp-seed "))
+        #expect(target == ObjectLockTarget(bucket: "macscp-seed", key: "photos/2026/a b.jpg"))
+    }
+
+    @Test func atTheBucketListTheFirstComponentIsTheBucket() {
+        let context = Self.context(listRoot: true)
+        #expect(
+            ObjectLockTarget.resolve(path: "/macscp-second/photos/a.jpg", in: context)
+                == ObjectLockTarget(bucket: "macscp-second", key: "photos/a.jpg"))
+        // The bucket itself is not a file.
+        #expect(ObjectLockTarget.resolve(path: "/macscp-second", in: context) == nil)
+        #expect(ObjectLockTarget.resolve(path: "/", in: context) == nil)
+    }
+
+    @Test func aPathWithNoKeyOrNoBucketIsNoTarget() {
+        #expect(ObjectLockTarget.resolve(path: "/", in: Self.context(listRoot: false)) == nil)
+        #expect(ObjectLockTarget.resolve(path: "/a", in: Self.context(listRoot: false, bucket: "  ")) == nil)
+    }
+
+    @Test func theTitleNamesTheFileAndNotItsFolder() {
+        let target = ObjectLockTarget(bucket: "b", key: "photos/2026/a.jpg")
+        #expect(target.fileName == "a.jpg")
+    }
+
+    // MARK: - The two file actions
+
+    @Test func eachFileActionIsAnIdTheS3DescriptorContributesAndMapsToItsOwnFocus() {
+        let contributed = BackendDescriptor.descriptor(for: .s3).fileActions
+        let ids = Set(contributed.map(\.id))
+        #expect(ids.contains("s3.presignedURL"))
+        #expect(!ObjectLockFileAction.allCases.isEmpty)
+        for action in ObjectLockFileAction.allCases {
+            #expect(ids.contains(action.rawValue), "\(action.rawValue)")
+        }
+        let focuses = ObjectLockFileAction.allCases.map(\.focus)
+        #expect(Set(focuses.map { "\($0)" }).count == ObjectLockFileAction.allCases.count)
+        #expect(Set(focuses.map { "\($0)" }).count == ObjectLockModel.Focus.allCases.count)
+    }
+
+    /// Each action opens the sheet for its own thing. The two enums name their
+    /// cases alike, so the mapping is read rather than spelled: a swapped
+    /// mapping would open the retention sheet from "Legal Hold…".
+    @Test func eachActionOpensTheFocusThatSharesItsName() {
+        for action in ObjectLockFileAction.allCases {
+            #expect(String(describing: action.focus) == String(describing: action), "\(action)")
+        }
+        #expect(ObjectLockFileAction.allCases.count == ObjectLockModel.Focus.allCases.count)
+    }
+
+    @Test func noOtherBackendContributesThem() {
+        for kind in ConnectionKind.allCases where kind != .s3 {
+            let ids = Set(BackendDescriptor.descriptor(for: kind).fileActions.map(\.id))
+            for action in ObjectLockFileAction.allCases {
+                #expect(!ids.contains(action.rawValue), "\(kind) \(action.rawValue)")
+            }
+        }
+    }
+
+    @Test func theTitlesOfTheTwoActionsResolveInEveryLanguage() {
+        let sentinel = "ZZ-UNRESOLVED-ZZ"
+        let contributed = BackendDescriptor.descriptor(for: .s3).fileActions
+        var checked = 0
+        for action in ObjectLockFileAction.allCases {
+            let contribution = contributed.first { $0.id == action.rawValue }
+            let title = contribution?.titleKey ?? ""
+            for locale in Self.locales {
+                let resolved = L10n.$localeOverride.withValue(locale) { L10n.string(title, sentinel) }
+                #expect(resolved != sentinel, "\(action.rawValue) in \(locale)")
+                checked += 1
+            }
+        }
+        #expect(checked == ObjectLockFileAction.allCases.count * Self.locales.count)
+    }
+
+    // MARK: - The session's cache
+
+    /// Only a connection with the bucket-settings capability gets a cache; the
+    /// positive (it gets one) is beside the negative (a file system without the
+    /// capability does not).
+    @MainActor @Test func aConnectionWithTheCapabilityGetsACacheAndOneWithoutDoesNot() {
+        #expect(BrowserSession.objectLockStates(for: FakeBucketSettings()) != nil)
+        #expect(BrowserSession.objectLockStates(for: LocalFileSystem()) == nil)
+    }
+
+    // MARK: - Wiring (source scans)
+
+    private static func code(_ relativePath: String) throws -> String {
+        try SourceCorpus.code(of: SourceCorpus.url(of: .sources).appendingPathComponent(relativePath))
+    }
+
+    /// The file-action arm reaches the sheet through the id-keyed enum and the
+    /// path resolver, and the window presents the item it assigns. Without the
+    /// presentation the menu row would be live and inert, which is the failure
+    /// the connection menu's guard exists for.
+    @Test func theFileActionArmAssignsAnItemTheWindowPresents() throws {
+        let dispatcher = try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
+        let sheets = try Self.code("MacSCPAppKit/ContentView+Sheets.swift")
+        let router = try #require(dispatcher.range(of: "func handleBrowserMenuEntry("))
+        let rest = dispatcher[router.upperBound...]
+        let end = rest.range(of: "\n    func ")?.lowerBound ?? rest.endIndex
+        let body = String(rest[..<end])
+        #expect(body.contains(String(describing: ObjectLockFileAction.self) + "("))
+        #expect(body.contains(String(describing: ObjectLockTarget.self) + ".resolve("))
+        let assigned = try #require(
+            body.firstMatch(of: #/(\w+)\s*=\s*ObjectLockSheetItem\(/#), "no ObjectLockSheetItem assignment")
+        let state = String(assigned.output.1)
+        let presentation = try #require(sheets.range(of: ".sheet(item: $\(state))"), "\(state) is never presented")
+        let closure = sheets[presentation.upperBound...].prefix(400)
+        #expect(closure.contains(String(describing: ObjectLockSheet.self) + "("))
+    }
+
+    /// `startSession` is where a session is built, and it is where the cache is
+    /// put on it. A session without one makes the menu row and both file
+    /// actions live and inert, and no other check here would see it.
+    @Test func startSessionPutsTheCacheOnTheSessionItBuilds() throws {
+        let source = try Self.code("MacSCPAppKit/ContentView.swift")
+        let call = "BrowserSession.objectLockStates(for:"
+        #expect(source.matches(of: Regex<Substring>(verbatim: call)).count == 1)
+        let built = try #require(source.range(of: "tab.session = BrowserSession("))
+        let placed = try #require(source.range(of: call))
+        #expect(built.lowerBound < placed.lowerBound)
+    }
+
+    /// The arm hands the sheet the focus its action maps to and the path it was
+    /// asked about, and the sheet writes to the bucket and key it was opened
+    /// for. Each is a way to put a COMPLIANCE retention on the wrong thing, and
+    /// none would turn another check here red.
+    @Test func theSheetIsOpenedAndRunForTheFileThatWasChosen() throws {
+        let dispatcher = try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
+        let arm = try #require(dispatcher.range(of: "ObjectLockTarget.resolve("))
+        let around = String(dispatcher[arm.lowerBound...].prefix(900))
+        #expect(around.contains("path: file.path"))
+        #expect(around.contains("focus: lockAction.focus"))
+        let sheet = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
+        let runs = sheet.matches(of: #/model\.run\(([^)]*)\)/#).map { String($0.output.1) }
+        #expect(runs == ["key: target.key, bucket: target.bucket, via: settings"])
+        let loads = sheet.matches(of: #/model\.load\(([^)]*)\)/#).map { String($0.output.1) }
+        #expect(loads.count == 1)
+        let loadArguments = loads.first.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        #expect(loadArguments == "key: target.key, bucket: target.bucket, via: settings, cache: cache")
+    }
+
+    /// The acknowledgement is the wrapping checkbox, not a hand-written
+    /// `Toggle`, so the long sentence wraps and the scan table that counts the
+    /// component's sites sees it. The positive: the sheet source has both
+    /// components' call.
+    @Test func theAcknowledgementIsAWrappingCheckboxRow() throws {
+        let source = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
+        let calls = source.matches(of: #/CheckboxRow\(/#).count
+        #expect(calls == 2, "the acknowledgement and the legal-hold toggle")
+        let wraps = source.matches(of: #/wraps:\s*true/#).count
+        #expect(wraps >= 1)
+        #expect(!source.contains("Toggle("))
+    }
+
+    // MARK: - The catalogue
+
+    /// Every line the sheet can show resolves in every shipped language: a key
+    /// missing from one catalogue silently shows the English default there.
+    @MainActor @Test func everyLineResolvesInAllFourLocales() {
+        let sentinel = "ZZ-UNRESOLVED-ZZ"
+        let lines = Self.everyLine()
+        for line in lines {
+            for locale in Self.locales {
+                let resolved = L10n.$localeOverride.withValue(locale) {
+                    L10n.string(line.key, sentinel)
+                }
+                #expect(resolved != sentinel, "\(line.key) in \(locale)")
+                #expect(!resolved.isEmpty)
+            }
+        }
+        #expect(lines.count > 0)
+    }
+
+    @MainActor @Test func theEnglishCatalogueSaysTheDefault() {
+        let lines = Self.everyLine()
+        for line in lines {
+            let english = L10n.$localeOverride.withValue("en") {
+                L10n.string(line.key, "ZZ-UNRESOLVED-ZZ")
+            }
+            #expect(english == line.english, "\(line.key)")
+        }
+        #expect(lines.count > 0)
+    }
+
+    /// The format specifiers of a line are the same in every language: a
+    /// translation that dropped the date, or added a second argument, would
+    /// crash or silently lose it.
+    @MainActor @Test func everyTranslationKeepsTheSpecifiersOfTheEnglish() {
+        let specifier = #/%(\d+\$)?(lld|@|d)/#
+        var withSpecifiers = 0
+        for line in Self.everyLine() {
+            let english = line.english.matches(of: specifier).map { String($0.output.0) }.sorted()
+            if !english.isEmpty { withSpecifiers += 1 }
+            for locale in Self.locales {
+                let resolved = L10n.$localeOverride.withValue(locale) { L10n.string(line.key, "") }
+                let found = resolved.matches(of: specifier).map { String($0.output.0) }.sorted()
+                #expect(found == english, "\(line.key) in \(locale)")
+            }
+        }
+        #expect(withSpecifiers > 0)
+    }
+
+    /// The acknowledgement and the warning above it are not one sentence said
+    /// twice, and the German one is not the English one.
+    @MainActor @Test func theWarningAndTheAcknowledgementAreDistinctInEveryLanguage() {
+        for locale in Self.locales {
+            let texts = L10n.$localeOverride.withValue(locale) {
+                (
+                    ObjectLockModel.complianceWarningLine.text,
+                    ObjectLockModel.complianceAcknowledgementLine.text
+                )
+            }
+            #expect(texts.0 != texts.1, "\(locale)")
+        }
+        let german = L10n.$localeOverride.withValue("de") { ObjectLockModel.complianceWarningLine.text }
+        let english = L10n.$localeOverride.withValue("en") { ObjectLockModel.complianceWarningLine.text }
+        #expect(german != english)
+    }
+
+    /// The sheets' sources are read for the keys they use, so a key used in a
+    /// view and absent from the lists above (and therefore from the checks
+    /// above) is a red here. The comment-free view keeps the string literals.
+    @MainActor @Test func everyKeyTheSheetUsesIsOneTheCatalogueChecksCover() throws {
+        let covered = Set(Self.everyLine().map(\.key))
+        let url = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit/ObjectLockSheet.swift")
+        let source = try SourceCorpus.commentFree(of: url)
+        // The bucket default's keys are `s3.objectLock.default.*` and belong to
+        // `BucketObjectLockSheetTests`; the descriptor's titles are not lines of
+        // a sheet. What is left is this sheet's and the shared lines.
+        let used = Set(source.matches(of: #/"(s3\.objectLock\.[^"]+)"/#).map { String($0.output.1) })
+        #expect(used.count > 0)
+        let uncovered = used.subtracting(covered).sorted()
+        #expect(uncovered.isEmpty, "\(uncovered)")
+    }
+
+    /// Every line the sheet can show, for every state it can be in.
+    @MainActor static func everyLine() -> [CatalogueLine] {
+        var lines = ObjectLockModel.fixedLines
+        for scenario in scenarios {
+            lines += model(for: scenario).lines
+        }
+        var seen = Set<String>()
+        return lines.filter { seen.insert($0.key).inserted }
+    }
+}

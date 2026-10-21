@@ -431,6 +431,8 @@
 "menu.copyPath" = "Kopiuj ścieżkę";
 "menu.delete" = "Usuń…";
 "browser.action.presignedURL" = "Link udostępniania…";
+"browser.action.retention" = "Okres przechowywania…";
+"browser.action.legalHold" = "Blokada prawna…";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Akcje połączenia";
@@ -486,6 +488,45 @@
 "s3.cors.error.read" = "Nie udało się odczytać reguł CORS tego bucketa.";
 "s3.cors.error.apply" = "Nie udało się zapisać reguł CORS tego bucketa.";
 "s3.cors.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu ani zmiany reguł CORS tego bucketa.";
+"s3.objectLock.reading" = "Sprawdzanie blokady obiektów…";
+"s3.objectLock.notEnabledOnThisBucket" = "Blokada obiektów nie jest włączona dla tego bucketa, więc nic w nim nie można zablokować. macSCP nie włącza jej dla istniejącego bucketa; można ją wybrać podczas tworzenia bucketa.";
+"s3.objectLock.error.read" = "Nie udało się odczytać blokady obiektów.";
+"s3.objectLock.error.apply" = "Nie udało się zapisać zmiany.";
+"s3.objectLock.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu ani zmiany tego.";
+"s3.objectLock.error.refused" = "Zmiana została odrzucona. Obowiązującego okresu przechowywania być może nie wolno skracać, a Twój klucz dostępu może nie mieć uprawnień do jego zmiany.";
+"s3.objectLock.saved" = "Zapisano.";
+"s3.objectLock.modeLabel" = "Tryb";
+"s3.objectLock.mode.governance" = "Governance";
+"s3.objectLock.mode.compliance" = "Compliance";
+"s3.objectLock.mode.governance.detail" = "Osoba z odpowiednimi uprawnieniami może nadal skrócić lub usunąć okres przechowywania w trybie Governance.";
+"s3.objectLock.title.retention %@" = "Okres przechowywania pliku „%@”";
+"s3.objectLock.title.legalHold %@" = "Blokada prawna pliku „%@”";
+"s3.objectLock.current.noRetention" = "Ten plik nie ma okresu przechowywania.";
+"s3.objectLock.current.retention %1$@ %2$@" = "Obecny okres przechowywania: %1$@, do %2$@.";
+"s3.objectLock.current.legalHoldOn" = "Ten plik jest objęty blokadą prawną.";
+"s3.objectLock.current.legalHoldOff" = "Ten plik nie jest objęty blokadą prawną.";
+"s3.objectLock.untilLabel" = "Przechowuj do";
+"s3.objectLock.complianceWarning" = "Trybu Compliance nie można cofnąć. Po zapisaniu nikt nie może usunąć zapisanych danych tego pliku ani skrócić okresu przechowywania, dopóki nie minie poniższa data — ani Ty, ani właściciel konta, ani administrator.";
+"s3.objectLock.complianceAcknowledgement %@" = "Rozumiem, że nikt, łącznie ze mną, nie może usunąć zapisanych danych tego pliku ani skrócić tego okresu przechowywania przed %@ i że nie można tego cofnąć.";
+"s3.objectLock.legalHold.toggle" = "Utrzymuj ten plik pod blokadą prawną (legal hold)";
+"s3.objectLock.legalHold.detail" = "Blokada prawna zapobiega usunięciu zapisanych danych pliku, dopóki nie zostanie zdjęta. Nie ma daty końcowej i można ją zdjąć w dowolnym momencie.";
+"s3.objectLock.action.setRetention" = "Ustaw okres przechowywania";
+"s3.objectLock.action.placeHold" = "Nałóż blokadę prawną";
+"s3.objectLock.action.liftHold" = "Zdejmij blokadę prawną";
+"s3.objectLock.blocked.datePast" = "Wybierz datę i godzinę z przyszłości.";
+"s3.objectLock.blocked.notAcknowledged" = "Zaznacz pole, aby potwierdzić.";
+"s3.objectLock.blocked.holdUnchanged" = "Blokada prawna jest już tak ustawiona, więc nie ma czego zmieniać.";
+"s3.objectLock.default.title %@" = "Domyślna blokada obiektów bucketa „%@”";
+"s3.objectLock.default.current.none" = "Ten bucket nie ma domyślnego okresu przechowywania.";
+"s3.objectLock.default.current %1$@ %2$lld" = "Obecne ustawienie domyślne: tryb %1$@, okres przechowywania w dniach: %2$lld.";
+"s3.objectLock.default.daysLabel" = "Okres przechowywania w dniach";
+"s3.objectLock.default.appliesLater" = "Ustawienie domyślne dotyczy plików dodanych po jego zapisaniu. Pliki, które już są w bucketcie, nie zmieniają się.";
+"s3.objectLock.default.complianceWarning" = "Trybu Compliance nie można cofnąć. Każdy plik dodany do tego bucketa od teraz jest blokowany na podaną powyżej liczbę dni, liczoną od chwili zapisania. Do tego czasu nikt nie może usunąć zapisanych danych zablokowanego pliku ani skrócić jego okresu przechowywania — ani Ty, ani właściciel konta, ani administrator.";
+"s3.objectLock.default.complianceAcknowledgement %@" = "Rozumiem, że nikt, łącznie ze mną, nie może usunąć zapisanych danych żadnego pliku dodanego do tego bucketa od teraz przez ustaloną powyżej liczbę dni i że nie można tego cofnąć. Plik dodany teraz pozostaje zablokowany do %@.";
+"s3.objectLock.default.action.save" = "Zapisz ustawienie domyślne";
+"s3.objectLock.default.blocked.daysOutOfRange %lld" = "Wpisz liczbę dni od 1 do %lld.";
+"s3.objectLock.default.blocked.notAcknowledged" = "Zaznacz pole, aby potwierdzić.";
+"s3.objectLock.default.blocked.unchanged" = "Ten bucket ma już to ustawienie domyślne, więc nie ma czego zmieniać.";
 
 /* Wspólne (M7b/T3) */
 "common.close" = "Zamknij";

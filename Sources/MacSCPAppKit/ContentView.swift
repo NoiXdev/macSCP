@@ -756,6 +756,32 @@ struct ContentView: View {
     }
 
     @State var corsSheetItem: BucketCORSSheetItem?
+
+    // MARK: - Object Lock (S3 bucket settings, Task 10)
+
+    /// The bucket whose default retention the sheet is about, with the
+    /// capability and the session's lock-state cache captured at presentation
+    /// time, for the reason `BucketVersioningSheetItem` gives.
+    struct BucketObjectLockSheetItem: Identifiable {
+        let id = UUID()
+        let bucket: String
+        let settings: any S3BucketSettings
+        let states: ObjectLockStateCache
+    }
+
+    @State var bucketObjectLockSheetItem: BucketObjectLockSheetItem?
+
+    /// The file whose retention or legal hold the sheet is about: which of the
+    /// two, the bucket and key it was resolved to, and what it talks to.
+    struct ObjectLockSheetItem: Identifiable {
+        let id = UUID()
+        let focus: ObjectLockModel.Focus
+        let target: ObjectLockTarget
+        let settings: any S3BucketSettings
+        let states: ObjectLockStateCache
+    }
+
+    @State var objectLockSheetItem: ObjectLockSheetItem?
     /// Set by `performExport` right before `showExportFileExporter`, and
     /// cleared by the `fileExporter` completion handler — which decides
     /// whether the "exported without password" alert is needed (spec M9a
@@ -2014,6 +2040,12 @@ struct ContentView: View {
             // the liveness probe, see `BrowserSession.homePath`'s doc comment.
             homePath: startPath
         )
+        // Which buckets of this connection have Object Lock, read lazily and
+        // kept for the session (S3 bucket settings, Task 10). Only a
+        // connection that has the bucket-settings capability gets one; it is
+        // set here, once, so it dies with the session and a reconnect starts
+        // from nothing (`BrowserSession.objectLockStates`).
+        tab.session?.objectLockStates = BrowserSession.objectLockStates(for: fs)
         // Fresh liveness for a fresh session (Task 4, fix round 1):
         // `SessionTab.liveness` lives on the tab, not the session (see that
         // property's own doc comment for why), so it needs its own reset

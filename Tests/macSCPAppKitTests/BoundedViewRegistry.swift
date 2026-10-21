@@ -131,6 +131,37 @@ enum BoundedViewRegistry {
             exposeHeaders: [], maxAgeSeconds: nil),
     ]
 
+    /// The clock of the Object Lock entries: 2026-09-21.
+    static let lockNow = Date(timeIntervalSince1970: 1_790_000_000)
+
+    /// A date whose month is long in the languages that spell it out
+    /// (28 September 2027, 23:59 in the time zone the test runs in).
+    static let lockDate: Date =
+        Calendar(identifier: .gregorian).date(
+            from: DateComponents(year: 2027, month: 9, day: 28, hour: 23, minute: 59)) ?? lockNow
+
+    static let lockTarget = ObjectLockTarget(bucket: "macscp-seed", key: "photos/2026/holiday.jpg")
+
+    /// The cache an Object Lock sheet is handed. It is never asked: the models
+    /// handed in are already in their state.
+    static var lockCache: ObjectLockStateCache {
+        ObjectLockStateCache(settings: FakeBucketSettings())
+    }
+
+    /// A retention sheet in `mode`, over a file whose current retention is
+    /// `current`, with the date far enough ahead to be a valid choice.
+    static func lockModel(
+        mode: RetentionMode, current: ObjectRetention? = nil
+    ) -> ObjectLockModel {
+        let model = ObjectLockModel(
+            focus: .retention, bucketLock: .present,
+            current: ObjectLockModel.Current(retention: current, legalHold: false),
+            now: { lockNow })
+        model.mode = mode
+        model.retainUntil = lockDate
+        return model
+    }
+
     /// A store over the temporary directory: these sheets read it to render,
     /// and none of them is asked to write during a measurement.
     private static var temporaryDirectory: URL { FileManager.default.temporaryDirectory }
@@ -418,6 +449,92 @@ enum BoundedViewRegistry {
                 BucketCORSSheet(
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketCORSModel(loadFailure: BucketCORSModel.deniedLine.text))
+            },
+
+            // Object Lock (Task 10). The states are chosen for the longest text
+            // on screen, because the sheets are bounded in width and their
+            // sentences wrap: COMPLIANCE is where the warning and the
+            // acknowledgement sit together under the date, in a language whose
+            // month is long; the bucket default's acknowledgement is the
+            // longest sentence of all. A long file name is the title's limit,
+            // and a bucket with no lock, a refused read and a legal hold are
+            // the sentences that stand alone. Every model is handed in already
+            // in its state, so no measurement waits on a read; the capability
+            // is never called.
+            BoundedViewEntry("a retention over a file with none, GOVERNANCE") {
+                ObjectLockSheet(
+                    focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache, model: Self.lockModel(mode: .governance))
+            },
+            BoundedViewEntry("a retention, COMPLIANCE chosen, with its warning and acknowledgement") {
+                ObjectLockSheet(
+                    focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache, model: Self.lockModel(mode: .compliance))
+            },
+            BoundedViewEntry("a retention, COMPLIANCE chosen, over a file that already has one") {
+                ObjectLockSheet(
+                    focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache,
+                    model: Self.lockModel(
+                        mode: .compliance,
+                        current: ObjectRetention(mode: .compliance, retainUntil: Self.lockDate)))
+            },
+            BoundedViewEntry("a retention over a file whose name is very long") {
+                ObjectLockSheet(
+                    focus: .retention,
+                    target: ObjectLockTarget(
+                        bucket: "macscp-seed",
+                        key: "photos/" + String(repeating: "W", count: 400) + ".jpg"),
+                    settings: FakeBucketSettings(), cache: Self.lockCache,
+                    model: Self.lockModel(mode: .governance))
+            },
+            BoundedViewEntry("a legal hold, offered to be placed") {
+                let model = ObjectLockModel(
+                    focus: .legalHold, bucketHasLock: true, now: { Self.lockNow })
+                model.legalHold = true
+                return ObjectLockSheet(
+                    focus: .legalHold, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache, model: model)
+            },
+            BoundedViewEntry("a file in a bucket with no Object Lock") {
+                ObjectLockSheet(
+                    focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache,
+                    model: ObjectLockModel(bucketHasLock: false, now: { Self.lockNow }))
+            },
+            BoundedViewEntry("an Object Lock read the store refused") {
+                ObjectLockSheet(
+                    focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
+                    cache: Self.lockCache,
+                    model: ObjectLockModel(
+                        loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
+            },
+            BoundedViewEntry("a bucket default over a bucket with none, GOVERNANCE") {
+                BucketObjectLockSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
+                    model: BucketObjectLockModel(
+                        bucketHasLock: true, current: nil, now: { Self.lockNow }))
+            },
+            BoundedViewEntry("a bucket default, COMPLIANCE chosen, over a COMPLIANCE default") {
+                let model = BucketObjectLockModel(
+                    bucketHasLock: true, current: (days: 365, mode: .compliance),
+                    now: { Self.lockNow })
+                model.days = 3650
+                return BucketObjectLockSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
+                    model: model)
+            },
+            BoundedViewEntry("a bucket default over a bucket with no Object Lock") {
+                BucketObjectLockSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
+                    model: BucketObjectLockModel(
+                        bucketHasLock: false, current: nil, now: { Self.lockNow }))
+            },
+            BoundedViewEntry("a bucket default whose lock could not be read") {
+                BucketObjectLockSheet(
+                    bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
+                    model: BucketObjectLockModel(
+                        loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
             },
 
             // The two drafts the deleted `FileActionEditorLayoutGuardTests`

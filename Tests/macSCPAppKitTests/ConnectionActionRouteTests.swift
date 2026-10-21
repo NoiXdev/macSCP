@@ -102,6 +102,24 @@ struct ConnectionActionRouteTests {
         #expect(ConnectionActionRoute.cors.isAvailable(in: inABucket))
     }
 
+    /// The third sheet row, asked of its own case like the two above it.
+    @Test func objectLockNeedsTheCapabilityAndABucket() {
+        let withIt = Self.inOneBucket()
+        let without = Self.inOneBucket(settings: nil)
+        let blank = Self.inOneBucket("   ")
+        #expect(ConnectionActionRoute.objectLock.isAvailable(in: withIt))
+        #expect(!ConnectionActionRoute.objectLock.isAvailable(in: without))
+        #expect(!ConnectionActionRoute.objectLock.isAvailable(in: blank))
+        let atTheList = ConnectionActionContext(
+            settings: FakeBucketSettings(), rootIsContainerList: true, remotePath: "/",
+            configuredBucket: "ignored")
+        #expect(!ConnectionActionRoute.objectLock.isAvailable(in: atTheList))
+        let inABucket = ConnectionActionContext(
+            settings: FakeBucketSettings(), rootIsContainerList: true,
+            remotePath: "/macscp-seed/x", configuredBucket: "ignored")
+        #expect(ConnectionActionRoute.objectLock.isAvailable(in: inABucket))
+    }
+
     @Test func inOneBucketTheBucketIsTheConfiguredOneNotAPathComponent() {
         let context = Self.inOneBucket("  macscp-seed \n")
         #expect(context.bucket == "macscp-seed")
@@ -235,6 +253,7 @@ struct ConnectionActionRouteTests {
         let named = Set(assigned.map(\.item))
         #expect(named.contains(String(describing: BucketVersioningSheet.self) + "Item"))
         #expect(named.contains(String(describing: BucketCORSSheet.self) + "Item"))
+        #expect(named.contains(String(describing: BucketObjectLockSheet.self) + "Item"))
     }
 
     /// The availability the menu draws and the action the dispatcher takes are
