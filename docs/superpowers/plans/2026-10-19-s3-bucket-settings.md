@@ -1037,6 +1037,30 @@ substitutes for the other.
     #expect(model.versioningIsLocked == true)
 }
 
+@MainActor @Test func theModelHandsCoreTheOneChoiceCoreAccepts() {
+    // **Added 2026-10-21 by the controller, from a pre-dispatch read.** Core
+    // deliberately has no pair of `Bool`s here:
+    // `createBucket(_:protection:)` takes `BucketProtection`, and its doc
+    // comment says why — "two independent `Bool`s would let a caller write
+    // the combination that cannot exist", and an earlier shape that took two
+    // and refused `objectLock: true, versioning: false` with
+    // `.protocolError` was replaced by the enum so the contradiction cannot
+    // be written at all.
+    //
+    // The two tests above reintroduce that pair in the App, which is right
+    // — two checkboxes is what the user sees — but nothing above checks
+    // which `BucketProtection` reaches Core. The sheet is where the pair is
+    // folded back into the one choice, so that is where it is pinned.
+    let model = CreateBucketModel()
+    #expect(model.protection == .none)
+    model.versioning = true
+    #expect(model.protection == .versioned)
+    model.objectLock = true
+    #expect(model.protection == .lockedAndVersioned)
+    model.versioning = false          // refused: the lock holds it on
+    #expect(model.protection == .lockedAndVersioned)
+}
+
 @MainActor @Test func theActionIsOfferedOnlyInBucketListMode() {
     // Author's call, spec §6.1: a bucket made in single-bucket mode would be
     // invisible afterwards.
