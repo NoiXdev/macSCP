@@ -161,7 +161,6 @@ struct ObjectLockSheetTests {
         #expect(shownForCompliance != shownForGovernance)
     }
 
-    /// The legal-hold sheet has no mode, and says nothing about one.
     /// The sentence for a date that is not ahead says that it has passed, and
     /// what to do, in every language (fix round 3, NEW-6): a person who clicked
     /// a live button is told why it did nothing, not only what to choose.
@@ -175,6 +174,7 @@ struct ObjectLockSheetTests {
         }
     }
 
+    /// The legal-hold sheet has no mode, and says nothing about one.
     @MainActor @Test func theLegalHoldSheetShowsNoModeLine() {
         let hold = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
         hold.mode = .compliance
