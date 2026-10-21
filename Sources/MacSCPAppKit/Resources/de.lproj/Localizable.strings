@@ -497,7 +497,7 @@
 "s3.objectLock.modeLabel" = "Modus";
 "s3.objectLock.mode.governance" = "Governance";
 "s3.objectLock.mode.compliance" = "Compliance";
-"s3.objectLock.mode.governance.detail" = "Jemand mit der passenden Berechtigung kann eine Governance-Aufbewahrung weiterhin verkürzen oder aufheben.";
+"s3.objectLock.mode.governance.detail" = "Jemand mit der passenden Berechtigung kann eine Governance-Aufbewahrung verkürzen oder aufheben, aber nicht in macSCP.";
 "s3.objectLock.title.retention %@" = "Aufbewahrung für „%@“";
 "s3.objectLock.title.legalHold %@" = "Legal Hold für „%@“";
 "s3.objectLock.current.noRetention" = "Diese Datei hat keine Aufbewahrung.";

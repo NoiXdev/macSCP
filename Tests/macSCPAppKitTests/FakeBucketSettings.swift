@@ -155,7 +155,16 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
     var hasLockReads: [String] { state.withLock { $0.hasLockReads } }
     /// The buckets `objectLockDefault(ofBucket:)` was asked about, in order.
     var defaultReads: [String] { state.withLock { $0.defaultReads } }
-    /// The `setObjectLockDefault` calls that were not refused, in order.
+    /// The `setObjectLockDefault` calls that reached the store, in order,
+    /// whether or not the store then refused them (a `writeError` still records
+    /// the call). Only the two refusals made before the store is asked record
+    /// nothing: fewer than one day, and a bucket with no Object Lock.
+    ///
+    /// **Corrected 2026-10-21 (fix round 1, Minor 4).** This comment read,
+    /// verbatim: "The `setObjectLockDefault` calls that were not refused, in
+    /// order." `BucketObjectLockSheetTests.aRefusedWriteKeepsTheStateAndSaysWhyInAFixedSentence`
+    /// asserts `defaultWrites.count == 1` with a `writeError` set, so a call the
+    /// store refused is recorded.
     var defaultWrites: [DefaultWrite] { state.withLock { $0.defaultWrites } }
     /// The keys `retention(ofKey:...)` was asked about, in order.
     var retentionReads: [String] { state.withLock { $0.retentionReads } }

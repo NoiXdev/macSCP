@@ -52,9 +52,18 @@ final class BucketObjectLockModel {
     /// The periods macSCP will set a default for: from one day to a hundred
     /// years' worth. The floor is Core's (`setObjectLockDefault` refuses fewer
     /// than one day); the ceiling is macSCP's own and not a claim about any
-    /// store. It exists because the acknowledgement names the day a file added
-    /// now stays locked until, and a period too long for the calendar to
-    /// count would leave that sentence naming the wrong day.
+    /// store. Some ceiling is needed so the date arithmetic behind the
+    /// acknowledgement cannot fail: for an absurd count `Calendar.date(byAdding:)`
+    /// answers `nil`, and the sentence would then name the wrong day. That
+    /// reason is for having one, not for this figure; 36,500 days is the choice
+    /// macSCP made, and it is a policy figure, not the calendar's limit.
+    ///
+    /// **Corrected 2026-10-21 (fix round 1, Minor 7).** The second half of this
+    /// comment read, verbatim: "It exists because the acknowledgement names the
+    /// day a file added now stays locked until, and a period too long for the
+    /// calendar to count would leave that sentence naming the wrong day."
+    /// Withdrawn as an account of 36,500: a hundred years is well inside what
+    /// the calendar counts; the sentence is true of a count near `Int.max`.
     static let dayRange = 1...36_500
 
     private let now: () -> Date
@@ -86,8 +95,19 @@ final class BucketObjectLockModel {
     }
 
     /// The tick on the COMPLIANCE sentence; valid only for the mode and days it
-    /// was given for.
-    var acknowledged = false
+    /// was given for, and for the DAY it named (`acknowledgedDay`).
+    var acknowledged = false {
+        didSet { acknowledgedDay = acknowledged ? acknowledgementDate : nil }
+    }
+
+    /// The day the sentence named when the tick was given. The sentence is
+    /// worked out from the clock, and the clock moves while the sheet is open:
+    /// a tick for one day does not stand for another (fix round 1, Minor 2;
+    /// `acknowledgementDate` used to be recomputed on every read while the tick
+    /// stood). Compared on a DAY, not an instant, because a file added a
+    /// minute from now is locked until a minute later than that, and a
+    /// sentence that named the minute would be stale the moment it was read.
+    private var acknowledgedDay: Date?
 
     /// A sheet that has not read the bucket yet.
     init(now: @escaping () -> Date = { Date() }) {
@@ -142,7 +162,7 @@ final class BucketObjectLockModel {
         case .daysOutOfRange:
             !Self.dayRange.contains(days)
         case .complianceNotAcknowledged:
-            mode == .compliance && !acknowledged
+            mode == .compliance && !(acknowledged && acknowledgedDay == acknowledgementDate)
         case .unchanged:
             if let current { current.days == days && current.mode == mode } else { false }
         case .applying:
@@ -201,16 +221,18 @@ final class BucketObjectLockModel {
 
     var acknowledgementKey: String { Self.complianceAcknowledgementLine.key }
 
-    /// The day a file saved right now would stay locked until.
+    /// The day a file saved right now would stay locked until: a day, with no
+    /// time of day (see `acknowledgedDay`).
     ///
     /// Only meaningful while `days` is in `dayRange`, which saving requires; out
     /// of it, the date is the clock's and nothing can be saved on it.
     var acknowledgementDate: Date {
-        Calendar.current.date(
-            byAdding: .day, value: min(max(days, Self.dayRange.lowerBound), Self.dayRange.upperBound),
-            to: now()) ?? now()
+        let calendar = Calendar.current
+        let counted = min(max(days, Self.dayRange.lowerBound), Self.dayRange.upperBound)
+        let later = calendar.date(byAdding: .day, value: counted, to: now()) ?? now()
+        return calendar.startOfDay(for: later)
     }
-    var acknowledgementDateText: String { ObjectLockDates.text(acknowledgementDate) }
+    var acknowledgementDateText: String { ObjectLockDates.dayText(acknowledgementDate) }
     var acknowledgementSentence: String {
         String(format: Self.complianceAcknowledgementLine.text, acknowledgementDateText)
     }
@@ -306,6 +328,11 @@ final class BucketObjectLockModel {
     /// Writes the default if and only if `canSave`. The sheet then shows what
     /// the store says now, read back, and the tick is spent.
     func save(bucket: String, via settings: any S3BucketSettings) async {
+        // A tick for another day is taken back here, where the person sees the
+        // box clear and the sentence name the day it names now.
+        if mode == .compliance, acknowledged, acknowledgedDay != acknowledgementDate {
+            acknowledged = false
+        }
         guard canSave else { return }
         isApplying = true
         applyFailure = nil

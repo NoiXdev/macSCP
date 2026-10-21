@@ -498,12 +498,12 @@
 "s3.objectLock.error.read" = "Object Lock could not be read.";
 "s3.objectLock.error.apply" = "The change could not be saved.";
 "s3.objectLock.error.denied" = "Your access key is not allowed to read or change this.";
-"s3.objectLock.error.refused" = "The change was refused. A retention that is already in force may not be shortened, and your access key may not be allowed to change it.";
+"s3.objectLock.error.refused" = "The change was refused. Perhaps a retention that is already in force cannot be shortened, or your access key is not allowed to change it.";
 "s3.objectLock.saved" = "Saved.";
 "s3.objectLock.modeLabel" = "Mode";
 "s3.objectLock.mode.governance" = "Governance";
 "s3.objectLock.mode.compliance" = "Compliance";
-"s3.objectLock.mode.governance.detail" = "Someone with the right permission can still shorten or remove a governance retention.";
+"s3.objectLock.mode.governance.detail" = "Someone with the right permission can shorten or remove a governance retention, but not from macSCP.";
 "s3.objectLock.title.retention %@" = "Retention for “%@”";
 "s3.objectLock.title.legalHold %@" = "Legal Hold for “%@”";
 "s3.objectLock.current.noRetention" = "This file has no retention.";
