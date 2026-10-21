@@ -137,6 +137,16 @@ final class CreateBucketModel {
     /// Versioning cannot be unticked while Object Lock is ticked.
     var versioningIsLocked: Bool { objectLock }
 
+    /// Whether the versioning checkbox can be changed at all: the fields are
+    /// editable and Object Lock is not holding it on.
+    var versioningCanBeChanged: Bool { isEditable && !versioningIsLocked }
+
+    /// The note under the versioning checkbox: the lock's reason while it
+    /// holds versioning on, the one-way warning otherwise.
+    var versioningNoteLine: CatalogueLine {
+        versioningIsLocked ? Self.versioningHeldByObjectLockNote : Self.versioningNote
+    }
+
     /// The one choice Core takes, folded from the two switches.
     var protection: BucketProtection {
         if objectLock { return .lockedAndVersioned }
@@ -507,12 +517,8 @@ struct CreateBucketSheet: BoundedView {
 
             VStack(alignment: .leading, spacing: 6) {
                 CheckboxRow(CreateBucketModel.versioningLabel.text, isOn: $model.versioning)
-                    .disabled(!model.isEditable || model.versioningIsLocked)
-                Text(
-                    model.versioningIsLocked
-                        ? CreateBucketModel.versioningHeldByObjectLockNote.text
-                        : CreateBucketModel.versioningNote.text
-                )
+                    .disabled(!model.versioningCanBeChanged)
+                Text(model.versioningNoteLine.text)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

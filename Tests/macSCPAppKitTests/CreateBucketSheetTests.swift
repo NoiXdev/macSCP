@@ -230,17 +230,24 @@ struct CreateBucketSheetTests {
     // MARK: - What the sheet says when the store does not do as asked
 
     @MainActor @Test func aRefusedPlainCreateSaysItWasNotCreatedAndNamesNoCause() async throws {
+        // A reason can carry the endpoint the user typed
+        // (`scheme://KEY:SECRET@host`). The planted value is a named constant
+        // and the `Bool` is computed before the expectation, so a failure
+        // cannot print it (CLAUDE.md, "A value a test must not leak has two
+        // exits, not one"); both halves are checked, the credential and the
+        // host, as the sibling suites do.
+        let planted = "https://AKIDEXAMPLE:SECRETEXAMPLE@store.invalid"
         let settings = FakeBucketSettings(
-            createFailure: .refused(RemoteFSError.protocolError(reason: "https://KEY:SECRET@host")))
+            createFailure: .refused(RemoteFSError.protocolError(reason: planted)))
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings)
         #expect(model.isCreated == false)
         #expect(model.bucketMayExist == false)
         let sentence = try #require(model.failureSentence)
+        let quoted = sentence.contains("SECRETEXAMPLE") || sentence.contains("store.invalid")
         #expect(sentence == CreateBucketModel.notCreatedLine.text)
-        // A reason can carry the endpoint the user typed (`scheme://KEY:SECRET@host`).
-        #expect(!sentence.contains("SECRET"))
+        #expect(!quoted)
         // The failure frees the name again: nothing was made.
         #expect(model.canCreate == true)
     }
@@ -523,15 +530,157 @@ struct CreateBucketSheetTests {
     /// sentence calls it, in every language. The sentence is read from the
     /// catalogue and the checkbox's label from the model, so renaming one
     /// without the other is red here.
+    ///
+    /// **Corrected 2026-10-21 (Task 11, fix round 1, M4).** This test pinned
+    /// only that the sentence contains the label, so deleting the clause the
+    /// sentence exists to keep ("...it can be chosen when a bucket is
+    /// created") from all four catalogues left it green: the sentence still
+    /// opens with the label. It now also requires the clause itself, in the
+    /// shape all four catalogues share: a last part after a semicolon, naming
+    /// the thing this sheet creates. That noun is DERIVED, not spelled: the
+    /// words of the sheet's title that also occur in its name field's label.
+    /// What this pins is that the clause exists and talks about buckets, not
+    /// that it says "creation"; the label equality above carries the rest.
     @MainActor @Test func theObjectLockSentenceNamesWhatTheCheckboxIsCalled() {
         for locale in Self.locales {
-            let (sentence, label) = L10n.$localeOverride.withValue(locale) {
-                (ObjectLockLines.notEnabledOnThisBucket.text, CreateBucketModel.objectLockLabel.text)
+            let (sentence, label, title, nameLabel) = L10n.$localeOverride.withValue(locale) {
+                (
+                    ObjectLockLines.notEnabledOnThisBucket.text, CreateBucketModel.objectLockLabel.text,
+                    CreateBucketModel.titleLine.text, CreateBucketModel.nameLabelLine.text
+                )
             }
             #expect(
                 sentence.localizedCaseInsensitiveContains(label),
                 "\(locale): \"\(sentence)\" does not name \"\(label)\"")
+
+            let nouns = title.split(separator: " ").map(String.init).filter {
+                $0.count >= 4 && nameLabel.localizedCaseInsensitiveContains($0)
+            }
+            #expect(!nouns.isEmpty, "\(locale): no noun shared by the title and the name label")
+            let parts = sentence.split(separator: ";", omittingEmptySubsequences: false)
+            #expect(parts.count >= 2, "\(locale): the clause after the semicolon is gone: \"\(sentence)\"")
+            let clause = parts.last.map(String.init) ?? ""
+            #expect(
+                nouns.contains { clause.localizedCaseInsensitiveContains($0) },
+                "\(locale): the last clause \"\(clause)\" names none of \(nouns)")
         }
+    }
+
+    // MARK: - Every sentence a person reads is read by a test
+
+    /// Found by review (I2, 2026-10-21) with a probe that came back GREEN over
+    /// 47 tests: `problemSentence` and `createdSentence` substitute an argument,
+    /// nothing read either, and a literal `%@` on screen would have shipped in
+    /// four languages. The sibling of the `versioning` observer hole (P9).
+    @MainActor @Test func aSubstitutedSentenceNeverShowsItsPlaceholder() async {
+        for locale in Self.locales {
+            L10n.$localeOverride.withValue(locale) {
+                let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+                model.name = "macscp_archive"
+                let problem = model.problemSentence ?? ""
+                #expect(problem.contains("_"), "\(locale): the character is not in \"\(problem)\"")
+                #expect(!problem.contains("%"), "\(locale): \"\(problem)\"")
+
+                let made = CreateBucketModel(
+                    existingNames: [], listingIsKnown: true, outcome: .created, name: "macscp-archive")
+                #expect(made.createdSentence.contains("macscp-archive"), "\(locale)")
+                #expect(!made.createdSentence.contains("%"), "\(locale)")
+
+                let partial = CreateBucketModel.existsIncompletelyLine(bucket: "macscp-archive")
+                #expect(partial.contains("macscp-archive"), "\(locale)")
+                #expect(!partial.contains("%"), "\(locale)")
+            }
+        }
+    }
+
+    @MainActor @Test func everyProblemSentenceIsPlainTextOnceFilledIn() {
+        for name in ["ab", String(repeating: "a", count: 64), "Abc", "a_b", "192.168.0.1", "-ab"] {
+            let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+            model.name = name
+            let sentence = model.problemSentence
+            #expect(sentence != nil, "\(name.prefix(8))")
+            #expect(sentence?.contains("%") == false, "\(name.prefix(8))")
+        }
+        // The positive: a valid name has no problem to say.
+        let fine = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        fine.name = "macscp-third"
+        #expect(fine.problemSentence == nil)
+    }
+
+    @MainActor @Test func theFieldsAreEditableExceptWhileCreatingAndOnceCreated() {
+        func editable(_ outcome: CreateBucketModel.Outcome) -> Bool {
+            CreateBucketModel(existingNames: [], listingIsKnown: true, outcome: outcome).isEditable
+        }
+        #expect(editable(.editing) == true)  // the positive control
+        #expect(editable(.failed(sentence: "x", bucketMayExist: false)) == true)
+        #expect(editable(.creating) == false)
+        #expect(editable(.created) == false)
+    }
+
+    @MainActor @Test func theStateFlagsTheViewShowsAreTheOutcomeAndNothingElse() {
+        func model(_ outcome: CreateBucketModel.Outcome) -> CreateBucketModel {
+            CreateBucketModel(existingNames: [], listingIsKnown: true, outcome: outcome)
+        }
+        #expect(model(.creating).isCreating == true)
+        #expect(model(.creating).isCreated == false)
+        #expect(model(.created).isCreated == true)
+        #expect(model(.created).isCreating == false)
+        #expect(model(.editing).isCreating == false)
+        #expect(model(.editing).isCreated == false)
+        #expect(model(.failed(sentence: "x", bucketMayExist: true)).isCreated == false)
+    }
+
+    @MainActor @Test func theVersioningCheckboxAndItsNoteFollowTheLock() {
+        let free = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        #expect(free.versioningCanBeChanged == true)
+        #expect(free.versioningNoteLine == CreateBucketModel.versioningNote)
+        free.objectLock = true
+        #expect(free.versioningCanBeChanged == false)
+        #expect(free.versioningNoteLine == CreateBucketModel.versioningHeldByObjectLockNote)
+        let busy = CreateBucketModel(existingNames: [], listingIsKnown: true, outcome: .creating)
+        #expect(busy.versioningCanBeChanged == false)
+    }
+
+    /// The lines the view shows as they stand, with no argument to fill in:
+    /// each is among the lines the catalogue checks sweep, and none carries a
+    /// placeholder in any language (a `%@` in a line nobody fills in would be
+    /// shown as it is).
+    @MainActor @Test func theLinesTheViewShowsAsTheyStandCarryNoPlaceholder() {
+        let shown: [CatalogueLine] = [
+            CreateBucketModel.titleLine, CreateBucketModel.nameLabelLine,
+            CreateBucketModel.nameHintLine, CreateBucketModel.actionLine,
+            CreateBucketModel.versioningLabel, CreateBucketModel.objectLockLabel,
+            CreateBucketModel.nameIsTakenLine, CreateBucketModel.listingUnknownLine,
+            CreateBucketModel.creatingLine,
+        ]
+        let swept = CreateBucketModel.allLines
+        for line in shown {
+            #expect(swept.contains(line), "\(line.key) is shown and not swept")
+            #expect(!line.key.hasSuffix("%@"), "\(line.key)")
+            for locale in Self.locales {
+                let text = L10n.$localeOverride.withValue(locale) { line.text }
+                #expect(!text.contains("%"), "\(line.key) in \(locale)")
+                #expect(!text.isEmpty, "\(line.key) in \(locale)")
+            }
+        }
+        #expect(shown.count == 9)
+    }
+
+    /// The sweep itself, so it does not have to be remembered: every member of
+    /// the model that the VIEW reads (`model.x`, `CreateBucketModel.x` in the
+    /// sheet's struct) is named somewhere in this suite. A mention is not an
+    /// assertion, but a member nobody mentions is exactly the shape that hid
+    /// `problemSentence`, and the positive half is that the scan found some.
+    @MainActor @Test func everyMemberTheViewReadsIsNamedByATest() throws {
+        let sheet = try Self.code("Sources/MacSCPAppKit/CreateBucketSheet.swift")
+        let view = try #require(sheet.range(of: "struct CreateBucketSheet"))
+        let viewCode = String(sheet[view.lowerBound...])
+        let read = Set(
+            viewCode.matches(of: #/(?:\bmodel|CreateBucketModel)\.(\w+)/#).map { String($0.output.1) })
+        #expect(read.count >= 15, "the scan found \(read.count) members")
+        let tests = try SourceCorpus.commentFree(of: Self.repoRoot.appendingPathComponent("Tests/macSCPAppKitTests/CreateBucketSheetTests.swift"))
+        let unnamed = read.filter { !tests.contains($0) }.sorted()
+        #expect(unnamed.isEmpty, "\(unnamed)")
     }
 
     @MainActor @Test func everyKeyTheSheetUsesIsOneTheCatalogueChecksCover() throws {
