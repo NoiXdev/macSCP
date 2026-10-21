@@ -909,11 +909,29 @@ bucket when a surface that needs it opens and kept for the session.
     let cache = ObjectLockStateCache(settings: probe)
     _ = try await cache.hasObjectLock("b")
     _ = try await cache.hasObjectLock("b")
-    #expect(probe.objectLockDefaultCalls == 1)
+    #expect(probe.hasObjectLockCalls == 1)
     _ = try await cache.hasObjectLock("other")
-    #expect(probe.objectLockDefaultCalls == 2)
+    #expect(probe.hasObjectLockCalls == 2)
 }
 ```
+
+**Corrected 2026-10-21, before dispatch.** These two expectations first read
+`#expect(probe.objectLockDefaultCalls == 1)` and
+`#expect(probe.objectLockDefaultCalls == 2)`, which would have had the cache
+call the wrong method and would have broken the feature this task exists for.
+Core distinguishes the two deliberately, and says so at
+`S3BucketSettings.swift:142-152`: `objectLockDefault` is `nil` for **two
+different bucket states** — a bucket with no Object Lock at all, and a bucket
+that has Object Lock but no default retention yet — while `hasObjectLock`
+answers the first question alone, `false` only on the store's `404`
+`ObjectLockConfigurationNotFoundError` and never on any other failure.
+
+The doc comment names the consequence of confusing them: "a lock-enabled bucket
+with no default is exactly where a first retention is set, and reading it as
+'no Object Lock' would hide that." A cache built on `objectLockDefault` would
+therefore show `notEnabledOnThisBucket` on precisely the bucket where the user
+is about to set their first retention. Build the cache on
+`hasObjectLock(ofBucket:)`.
 
 `ObjectLockStateCache` is owned by the session, so it dies with it. A `404` is
 cached as "no lock", not as a failure to retry.
