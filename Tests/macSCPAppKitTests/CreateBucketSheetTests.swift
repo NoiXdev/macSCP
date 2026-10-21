@@ -335,7 +335,7 @@ struct CreateBucketSheetTests {
         #expect(model.failureSentence == CreateBucketModel.deniedLine.text)
     }
 
-    @MainActor @Test func aFailureOfTheSecondRequestSaysTheBucketWasCreated() async throws {
+    @MainActor @Test func aFailureOfTheSecondRequestSaysTheBucketExists() async throws {
         // `createBucket` makes two requests when versioning is on, and a
         // failure of the SECOND leaves the bucket created and unversioned. The
         // call does not delete what it made, so "failed" would be false.
