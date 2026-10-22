@@ -104,28 +104,73 @@ struct AuditLogFilterTests {
     }
 
     /// The structural half: the classification is a `switch` over
-    /// `AuditEvent.Kind` with no `default`, so a kind added later does not
-    /// compile until it is placed. A `default` arm would let it through.
-    /// The negative check ("no `default`") has its positive beside it: the
-    /// body found is the one that names the last kind.
-    @Test func theClassificationHasNoDefaultArm() throws {
+    /// `AuditEvent.Kind` whose every arm names a kind, so a kind added later
+    /// does not compile until it is placed. A catch-all arm would let it
+    /// through, and a catch-all has more than one spelling (`default:`,
+    /// `case _:`, `case let other:`), so the property is stated once, about
+    /// the arms rather than about the spellings: **every pattern of every arm
+    /// is a leading-dot case name, and together they are exactly the cases of
+    /// `AuditEvent.Kind`, each once.** Nothing else is an arm. The kinds are
+    /// read off the enum, not typed here, and the raw value of each is its
+    /// case name.
+    ///
+    /// The scan reads the blanked view that drops comments AND string
+    /// literals (`code(of:)`), so neither can satisfy or defeat it. The
+    /// negative check has its positive beside it: the body found has more
+    /// than a handful of arms, and they name every kind.
+    @Test func everyArmOfTheClassificationNamesAKindAndTogetherTheyAreAllOfThem() throws {
         let url = SourceCorpus.packageRoot
             .appendingPathComponent("Sources/MacSCPAppKit/AuditLogSheet.swift")
-        let source = try SourceCorpus.commentFree(of: url)
+        let source = try SourceCorpus.code(of: url)
         let lines = source.components(separatedBy: "\n")
         let start = try #require(lines.firstIndex { $0.contains("func segment(of") })
         let indent = String(lines[start].prefix { $0 == " " })
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix(indent + "}") })
         let body = lines[start...end].joined(separator: "\n")
         #expect(body.contains("switch kind"))
+
+        // `default:` is not a `case`, so it is looked for as what it is.
         let hasDefault = body.contains("default:")
         #expect(!hasDefault)
-        // A wildcard arm (`case _:`) is a catch-all that spells no `default`,
-        // and it is not found by looking for one. What it cannot do is leave
-        // every kind named: the kinds are read off the enum, not typed here,
-        // and the raw value of each is its case name.
-        let unnamed = AuditEvent.Kind.allCases.filter { !body.contains(".\($0.rawValue)") }
-        #expect(unnamed.isEmpty, "kinds the switch does not name: \(unnamed)")
-        #expect(AuditEvent.Kind.allCases.count > 15)
+
+        // Every arm's patterns: the text between `case ` and the colon that
+        // ends the arm head, split on commas. An enum-case pattern has no
+        // colon of its own, so the first colon after `case` ends the head.
+        let arms = try NSRegularExpression(pattern: "\\bcase\\s+([^:]+):")
+        let range = NSRange(body.startIndex..., in: body)
+        let patterns: [String] = arms.matches(in: body, range: range).flatMap { match -> [String] in
+            guard let head = Range(match.range(at: 1), in: body) else { return [] }
+            return body[head].split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        let allKinds = AuditEvent.Kind.allCases.map { ".\($0.rawValue)" }
+        // The positive half: the scan sees the arms at all.
+        #expect(allKinds.count > 15)
+        #expect(patterns.count > 15)
+
+        // Not a name: `_`, `let x`, `var x`, `x`, `.a(let b)` -- anything but
+        // a leading-dot case name.
+        let notACaseName = patterns.filter {
+            $0.range(of: "^\\.[A-Za-z]+$", options: .regularExpression) == nil
+        }
+        #expect(notACaseName.isEmpty, "arm patterns that are not a case name: \(notACaseName)")
+        // Every kind exactly once.
+        #expect(patterns.sorted() == allKinds.sorted())
+    }
+
+    /// Errors lists by outcome and nothing else: a kind's own events that did
+    /// not fail are not in it. Without the negative half, `.errors` returning
+    /// `true` for everything passes every test above (they only ever ask it
+    /// about one failed event), and Errors becomes All. The positive half is
+    /// beside it: the same kind, failed, IS in it.
+    @Test(arguments: AuditEvent.Kind.allCases)
+    func theErrorsSegmentListsAFailedEventAndNotASuccessfulOne(kind: AuditEvent.Kind) {
+        let failed = AuditEvent(kind: kind, detail: "x", isError: true)
+        let succeeded = AuditEvent(kind: kind, detail: "x", isError: false)
+        let listsTheFailure = Filter.errors.includes(failed)
+        let listsTheSuccess = Filter.errors.includes(succeeded)
+        #expect(listsTheFailure)
+        #expect(!listsTheSuccess)
     }
 }
