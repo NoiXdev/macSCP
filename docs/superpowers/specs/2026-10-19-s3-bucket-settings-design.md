@@ -1,6 +1,13 @@
 # S3 bucket settings — design
 
-**Status:** awaiting maintainer approval. Not planned, not started.
+**Status:** approved by the maintainer on 2026-10-19, planned, and implemented, as its FIRST half only,
+on the branch `s3-bucket-settings` (plan: `docs/superpowers/plans/2026-10-19-s3-bucket-settings.md`).
+The second half, the version history, is not started and stays out of scope (§10).
+**Corrected 2026-10-22, by Task 13 of that plan.** This line first read, verbatim:
+"**Status:** awaiting maintainer approval. Not planned, not started." It was true when the design was
+written and untrue of everything after it. The approval is recorded here on the coordinator's word of
+2026-10-22; neither this file nor the ledger holds the approval itself, only that the design and the
+plan were committed together on 2026-10-19 (`1dac7bd3`) and that the decisions below are dated that day.
 **Backlog row:** `docs/BACKLOG.md`, "S3: the tools of s3Manager (maintainer
 wishlist)" — line 273 at `3934e2b3`; cited by title because row numbers move.
 **Sequencing:** the maintainer split the wishlist in two on 2026-10-19. This
