@@ -417,8 +417,12 @@ struct BucketSettingsAuditTests {
     ///
     /// What is NOT pinned, and cannot be by a text scan: that the refusal's
     /// record is unconditional, the shape the fix for Ruling 20 gave it (it
-    /// is made straight from the catch, like the other four recording sites,
-    /// and the type that carries the refusal can only be a refusal). An
+    /// is made straight from the catch, like each of the other four apply
+    /// methods, and the type that carries the refusal can only be a refusal).
+    /// (Corrected: that clause read "like the other four recording sites".
+    /// Four is the number of apply methods; the recording calls outside
+    /// `create` are more numerous, because several of those methods record on
+    /// more than one arm.) An
     /// earlier version of this test tried, by forbidding control-flow
     /// keywords between the catch and the call. It was withdrawn after two
     /// ways round it were measured, neither of which contains a keyword: the
