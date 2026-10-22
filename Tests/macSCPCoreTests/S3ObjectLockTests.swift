@@ -9,9 +9,16 @@ import Testing
 /// the rig half is `S3ObjectLockGatedTests`.
 ///
 /// What the rig will NOT show, and so what is pinned here: that macSCP sends
-/// a signed `Content-MD5` on `PUT ?object-lock` (the rig does not require
+/// a signed `Content-MD5` on `PUT ?object-lock` (every request in
+/// `S3ObjectLockGatedTests` sends it, so a green gated run is silent on
+/// whether the rig requires it, and no run of the request without it is on
+/// record; the header of that file names the observation that would settle
 /// it), and that there is no way to switch Object Lock on for an existing
 /// bucket (the rig allows it).
+///
+/// **Corrected 2026-10-22 (Task 13).** The parenthesis after "`Content-MD5`
+/// on `PUT ?object-lock`" read, verbatim: "(the rig does not require it)".
+/// That was stated as a fact and was not measured.
 @Suite("S3 Object Lock")
 struct S3ObjectLockTests {
     // MARK: - Fixtures
@@ -372,7 +379,10 @@ struct S3ObjectLockTests {
 
     private static let lockEnabledNoDefault = lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>")
 
-    /// Ruling A, and the rig does not check it: the request carries a
+    /// Ruling A. Whether the rig checks the header is not known (see the
+    /// header of `S3ObjectLockGatedTests`); this test pins what macSCP SENDS.
+    /// (Withdrawn, verbatim: "and the rig does not check it", stated as a fact
+    /// and never measured.) The request carries a
     /// `Content-MD5` of its body, and the header is SIGNED. The digest is a
     /// literal, the base64 MD5 of the exact body, not a call to the code that
     /// computes it. The first request is the read that precedes every write.

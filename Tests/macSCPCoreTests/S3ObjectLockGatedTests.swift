@@ -17,10 +17,38 @@ import Testing
 /// and the cleanup lifts the hold and deletes with the governance bypass.
 ///
 /// What the rig CANNOT show: that macSCP sends a `Content-MD5` on
-/// `PUT ?object-lock` (the rig does not require it; `S3ObjectLockTests`
-/// pins the request), and that macSCP does not switch Object Lock on for an
+/// `PUT ?object-lock` (`S3ObjectLockTests` pins the request; every request
+/// below sends the header, so a green run here is silent on whether the rig
+/// requires it), and that macSCP does not switch Object Lock on for an
 /// existing bucket (the rig allows it; the first test below shows macSCP
 /// declining anyway).
+///
+/// **Corrected 2026-10-22 (Task 13).** The first sentence's parenthesis read,
+/// verbatim: "(the rig does not require it; `S3ObjectLockTests` pins the
+/// request)". "The rig does not require it" was stated as a fact and was not
+/// measured: no run of `PUT ?object-lock` without `Content-MD5` against any
+/// store is on record. Only `PUT ?versioning` was measured to be accepted
+/// without it, and that is a different call. macSCP sends the header, signed,
+/// on both.
+///
+/// **The observation that would settle it, and has not been made.** On a
+/// throwaway bucket created with `x-amz-bucket-object-lock-enabled` (so the
+/// call is otherwise valid; never one of the three buckets named above), send
+/// ONE signed `PUT ?object-lock` carrying a GOVERNANCE default of one day and
+/// NO `Content-MD5` -- `S3FileSystem.signedRequest` and `perform`, as the
+/// first test below does for its raw read, with no `extraHeaders` -- record
+/// the status, and delete the bucket. Decided in advance, so that a result is
+/// read and not interpreted afterwards:
+/// - Accepted (2xx): "the rig does not require it" can be written as
+///   MEASURED, for this rig version only. It says nothing about AWS: that AWS
+///   answers 400 without the header is a reading of AWS's reference (see the
+///   comment in `setObjectLockDefault`) and the rig cannot measure it.
+/// - Refused: the reason this file and `S3ObjectLockTests` give for leaving
+///   the header to a request-shape test is wrong, because the rig can tell
+///   the difference. The gated suite should then assert the refusal, and
+///   the test-design claim in both headers is withdrawn.
+/// Not added as a test here: it needs the rig, which could not be run when
+/// this was written, and a test nobody has run is a claim.
 @Suite(
     "S3 Object Lock against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
