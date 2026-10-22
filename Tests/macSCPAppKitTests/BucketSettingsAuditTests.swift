@@ -366,6 +366,35 @@ struct BucketSettingsAuditTests {
         }
     }
 
+    // MARK: - Create's record is not behind a gate
+
+    /// The other four recording sites record from a bare `catch`: whatever
+    /// the store refused, the refusal leaves a line. `create` once recorded
+    /// only `if case .failed = outcome`, which was total ONLY because every
+    /// arm of the function building the outcome happened to return
+    /// `.failed` -- a gate whose correctness lived in another function, and
+    /// the one site that would have recorded NOTHING, rather than failed to
+    /// compile, had an arm returned anything else. (Withdrawn wording, verbatim:
+    /// `if case .failed(let sentence, _) = outcome { recorder?.recordBucketCreated(...) }`.)
+    /// The refusal is now a type that cannot be anything but a refusal, so
+    /// there is nothing to gate on. This pins that the gate does not come
+    /// back; the behaviour itself is pinned above.
+    ///
+    /// The negative check ("no `if case`") has its positive beside it: the
+    /// body found is `create`'s, and it holds both recording calls.
+    @Test func createRecordsItsRefusalWithoutAnOutcomeGate() throws {
+        let source = try Self.code("MacSCPAppKit/CreateBucketSheet.swift")
+        let lines = source.components(separatedBy: "\n")
+        let start = try #require(lines.firstIndex { $0.contains("func create(via") })
+        let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix("    }") })
+        let body = lines[start...end].joined(separator: "\n")
+
+        let recordingCalls = body.components(separatedBy: "recordBucketCreated(").count - 1
+        #expect(recordingCalls == 2, "the success line and the refusal line")
+        let hasGate = body.contains("if case")
+        #expect(!hasGate)
+    }
+
     // MARK: - A missing recorder
 
     /// A KNOWN ABSENCE, measured. With no recorder the write goes through,
