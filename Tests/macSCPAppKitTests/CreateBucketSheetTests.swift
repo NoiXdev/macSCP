@@ -453,9 +453,17 @@ struct CreateBucketSheetTests {
         #expect(settings.reads == ["macscp-third"])
     }
 
-    /// The versioning half of the same read-back, and the proof that the lock
-    /// is read only where it was asked for: a `.versioned` create claims
-    /// nothing about Object Lock, so nothing is spent asking.
+    /// The versioning half of the same read-back.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 2).** The doc comment read,
+    /// verbatim: "The versioning half of the same read-back, and the proof
+    /// that the lock is read only where it was asked for: a `.versioned`
+    /// create claims nothing about Object Lock, so nothing is spent asking."
+    /// and the body asserted `#expect(settings.hasLockReads.isEmpty)`. Both
+    /// were withdrawn: the lock is read on EVERY create that asks for any
+    /// protection, because a `.versioned` create landing on a bucket that
+    /// already has Object Lock is the mirror harm -- see
+    /// `aCreateOntoABucketThatAlreadyHasObjectLockIsNotSaidToBeAsAsked`.
     @MainActor @Test func aCreateWhoseVersioningDidNotTakeIsNotSaidToBeDone() async throws {
         let settings = FakeBucketSettings(createEffect: .ignoresTheVersioningRequest)
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
@@ -463,11 +471,46 @@ struct CreateBucketSheetTests {
         model.versioning = true
         await model.create(via: settings, recorder: nil)
         #expect(settings.reads == ["macscp-third"])
-        #expect(settings.hasLockReads.isEmpty)
+        #expect(settings.hasLockReads == ["macscp-third"])
         #expect(model.isCreated == false)
         let sentence = try #require(model.failureSentence)
         #expect(sentence == CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
         #expect(model.bucketMayExist == true)
+    }
+
+    /// **The mirror of the finding, and the heavier half.** A create that
+    /// asks for versioning only, answered with success, on a bucket that
+    /// already HAS Object Lock -- the stale-listing re-create again, with the
+    /// switches the other way round. Reporting it as asked leaves a person
+    /// owning a bucket with Object Lock they never chose and **can never
+    /// remove**, with an audit line saying "with versioning" and nothing
+    /// else. The property is not "what was asked for arrived" but "what the
+    /// bucket now has is what the sheet and the audit line say it has".
+    ///
+    /// The sentence is `settingsDidNotTake`, and it is true of this case:
+    /// the sheet offers two switches and "the settings you chose" is the
+    /// PAIR, so a lock the person unticked and got anyway is a setting the
+    /// bucket does not match. Its second half, "Open Versioning and Object
+    /// Lock for it to see what it has", points at the one place that shows
+    /// the lock.
+    @MainActor @Test func aCreateOntoABucketThatAlreadyHasObjectLockIsNotSaidToBeAsAsked() async throws {
+        // A bucket that already carries a lock. The create asks for
+        // versioning and no lock, and the store accepts it: a create does not
+        // take a lock off a bucket that has one.
+        let settings = FakeBucketSettings(lock: .init(hasLock: true))
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.versioning = true
+        #expect(model.protection == .versioned)  // no lock was asked for
+        await model.create(via: settings, recorder: nil)
+        // The lock is read even though no lock was asked for: that is the
+        // whole of this case.
+        #expect(settings.hasLockReads == ["macscp-third"])
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(model.bucketMayExist == true)
+        #expect(model.canCreate == false)
     }
 
     /// **The third outcome.** The create was accepted and the read-back

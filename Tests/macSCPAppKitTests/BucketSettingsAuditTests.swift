@@ -350,6 +350,35 @@ struct BucketSettingsAuditTests {
         #expect(took.events.first?.isError == false)
     }
 
+    /// **The mirror, and what the line must say about it.** The create asked
+    /// for versioning only and landed on a bucket that already has Object
+    /// Lock. "created bucket X with versioning" would be a record of what was
+    /// asked for, beside a bucket that enforces something nobody chose and
+    /// nobody can remove. The line names what was READ BACK, so it says
+    /// Object Lock -- and carries the failure sentence, so it does not read
+    /// as a clean write either.
+    ///
+    /// Together with the test above, this is the property stated both ways:
+    /// no line claims a protection that is not there, and no line omits one
+    /// that is.
+    @MainActor @Test func aCreateOntoAnAlreadyLockedBucketRecordsTheLockItFound() async {
+        let trail = Trail()
+        defer { trail.remove() }
+        let locked = FakeBucketSettings(lock: .init(hasLock: true))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.versioning = true
+        await model.create(via: locked, recorder: trail.recorder)
+
+        let events = trail.events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .bucketCreated)
+        let detail = events.first?.detail ?? ""
+        #expect(detail == "created bucket macscp-third with versioning and Object Lock")
+        #expect(events.first?.isError == true)
+        #expect((events.first?.errorMessage ?? "").isEmpty == false)
+    }
+
     // MARK: - The three Object Lock operations
 
     @MainActor @Test func anObjectLockLineNamesWhichOfTheThreeOperationsItWas() async {

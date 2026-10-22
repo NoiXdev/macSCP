@@ -384,21 +384,38 @@ final class CreateBucketModel {
     /// answers the question that matters -- what does the bucket have now --
     /// whichever way the name got there.
     ///
-    /// **What is read is what was CLAIMED.** `.none` claims no setting, so
-    /// nothing is read and no request is spent: the failure path makes the
-    /// same cut (`failure(for:...)`'s `protection != .none` guard).
-    /// `.versioned` sends no lock header and so claims nothing about Object
-    /// Lock; only `.lockedAndVersioned` does, and only there is the lock read.
-    /// The lock goes first, so a lock read that fails stops the pair without
-    /// spending the second request.
+    /// **What is read is what the BUCKET now has, not only what was asked
+    /// for.** Every create that asks for any protection reads both
+    /// properties. `.none` claims no setting, so nothing is read and no
+    /// request is spent: the failure path makes the same cut
+    /// (`failure(for:...)`'s `protection != .none` guard). The lock goes
+    /// first, so a lock read that fails stops the pair without spending the
+    /// second request.
+    ///
+    /// **The mirror is the heavier half, which is why `.versioned` reads the
+    /// lock too.** A create asking for versioning only, answered with
+    /// success, can land on a bucket that ALREADY has Object Lock — the
+    /// stale-listing re-create with the switches the other way round. Object
+    /// Lock cannot be switched off once a bucket has it, so reporting that
+    /// create as asked leaves a person owning a protection they never chose
+    /// and can never remove, with an audit line that does not mention it.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 2).** This paragraph read,
+    /// verbatim: "**What is read is what was CLAIMED.** `.none` claims no
+    /// setting, so nothing is read and no request is spent: the failure path
+    /// makes the same cut (`failure(for:...)`'s `protection != .none`
+    /// guard). `.versioned` sends no lock header and so claims nothing about
+    /// Object Lock; only `.lockedAndVersioned` does, and only there is the
+    /// lock read." The reach of that reasoning was wrong, not its logic: it
+    /// assumed the only harm runs one way, a protection asked for and not
+    /// applied. The property is "what the bucket now has is what the sheet
+    /// and the audit line say it has".
     private static func readBack(
         _ choice: BucketProtection, ofBucket bucket: String, via settings: any S3BucketSettings
     ) async -> ReadBack {
         guard choice != .none else { return .asAsked }
         do {
-            let hasLock =
-                choice == .lockedAndVersioned
-                ? try await settings.hasObjectLock(ofBucket: bucket) : false
+            let hasLock = try await settings.hasObjectLock(ofBucket: bucket)
             let versioning = try await settings.versioning(ofBucket: bucket)
             let actual = protection(hasObjectLock: hasLock, versioning: versioning)
             return actual == choice ? .asAsked : .notAsAsked(actual)
