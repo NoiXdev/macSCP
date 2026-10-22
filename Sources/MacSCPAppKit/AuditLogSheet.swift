@@ -85,8 +85,11 @@ struct AuditLogSheet: BoundedView {
             // cost: the user documentation (the audit log page in the
             // user-docs repository) says the four kinds are listed under
             // File Ops, so reversing this also costs a change to that page.
-            // (That page is not read from this repository; the statement is
-            // the coordinator's, 2026-10-22.)
+            // (The page was read by the coordinator on 2026-10-22: its
+            // sentence says the entries appear "under **File Ops** and under
+            // **All**", and it lists File Ops among the filter menu's
+            // entries. Earlier this comment marked the statement as
+            // unverified; verified, the hedge is dropped.)
             case .rename, .delete, .permissions, .newFolder, .newFile,
                 .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
                 return .fileOps
