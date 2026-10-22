@@ -806,6 +806,10 @@
 "audit.kind.editUpload" = "Editor-Upload";
 "audit.kind.plaintextConfirmed" = "Unverschlüsselt verbunden";
 "audit.kind.snippetExecuted" = "Snippet ausgeführt";
+"audit.kind.bucketCreated" = "Bucket erstellt";
+"audit.kind.versioningChanged" = "Versionierung geändert";
+"audit.kind.corsChanged" = "CORS-Regeln geändert";
+"audit.kind.objectLockChanged" = "Objektsperre geändert";
 
 /* Sessions-Menü (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";

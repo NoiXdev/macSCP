@@ -812,6 +812,10 @@
 "audit.kind.editUpload" = "Editor upload";
 "audit.kind.plaintextConfirmed" = "Connected without encryption";
 "audit.kind.snippetExecuted" = "Snippet run";
+"audit.kind.bucketCreated" = "Bucket created";
+"audit.kind.versioningChanged" = "Versioning changed";
+"audit.kind.corsChanged" = "CORS rules changed";
+"audit.kind.objectLockChanged" = "Object Lock changed";
 
 /* Sessions menu (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";
