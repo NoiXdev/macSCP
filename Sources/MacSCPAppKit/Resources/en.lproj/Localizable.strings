@@ -263,6 +263,8 @@
 "browser.pane.goUpHelp" = "Parent directory";
 "browser.pane.refreshHelp" = "Refresh";
 "browser.pane.retry" = "Try again";
+"browser.pane.noContainers.title" = "No buckets yet";
+"browser.pane.noContainers.body" = "This account has no buckets. Create one to start keeping files here.";
 "browser.pathBar.copied" = "Copied!";
 "browser.pathBar.listingFailed %@" = "Couldn't list the directory: %@";
 "browser.pathBar.candidateCount %lld" = "%lld matches";

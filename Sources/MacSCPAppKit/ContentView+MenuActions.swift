@@ -149,6 +149,29 @@ extension ContentView {
             configuredBucket: tab.connectionViewModel.values[S3Field.bucket])
     }
 
+    /// Opens the create-bucket sheet from somewhere other than the toolbar
+    /// menu -- the empty bucket list's own button (F3 of the final
+    /// whole-branch review).
+    ///
+    /// **It goes THROUGH the route, not beside it.** The contribution is
+    /// looked up in the backend's own descriptor and handed to
+    /// `handleConnectionAction`, which re-asks availability and builds the
+    /// sheet. So the rule that decides whether the action is possible, and
+    /// the construction of the sheet, are each spelled exactly once; a second
+    /// copy here is how the two would come to disagree about a bucket nobody
+    /// is looking at. A backend that contributes no such action gets nothing,
+    /// which is also why this cannot be reached on the local pane.
+    func openCreateContainerSheet(in tab: SessionTab, session: BrowserSession) {
+        let actions = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
+            .connectionActions
+        guard
+            let action = actions.first(where: {
+                ConnectionActionRoute(action: $0) == .createBucket
+            })
+        else { return }
+        handleConnectionAction(action, in: tab, session: session)
+    }
+
     /// Whether the menu row for `action` can be carried out now; what the
     /// menu's `.disabled` reads for every row.
     func connectionActionIsAvailable(

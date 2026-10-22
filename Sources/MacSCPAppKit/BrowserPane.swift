@@ -49,6 +49,17 @@ struct BrowserPane: View {
     /// while both panes act on the other one's file system. Handed over, the
     /// defect cannot be written.
     var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem], BrowserPaneSide) -> Void)? = nil
+    /// What the empty container-list notice's button does: hands this pane's
+    /// owner the request to open "Create Bucket…" (F3 of the final
+    /// whole-branch review).
+    ///
+    /// A callback and not a sheet built here, for the reason
+    /// `EmptyContainerListView` gives: the owner routes it through
+    /// `ContentView.handleConnectionAction`, the same door the toolbar row
+    /// uses, so the availability rule and the sheet are spelled once. `nil`
+    /// wherever nothing routes it — the local pane, and every call site that
+    /// predates this — and the notice is then its sentences without a button.
+    var onCreateContainer: (() -> Void)? = nil
     /// Cross-session transfer targets for the context menu (M8b/T4) —
     /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
     var crossSessionTargets: (() -> [CrossSessionTarget])? = nil
@@ -416,6 +427,19 @@ struct BrowserPane: View {
                     }
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+
+                // The third state this ZStack draws over the table, beside
+                // the two above: a list of containers that loaded and holds
+                // nothing. The rule is the view's own and is asked, not
+                // re-decided here; the count is the UNFILTERED listing's,
+                // because a search matching no bucket is not an account
+                // without any. See `EmptyContainerListView`.
+                if EmptyContainerListView.isShown(
+                    scope: scope, state: viewModel.state,
+                    listedItemCount: viewModel.listedItems.count)
+                {
+                    EmptyContainerListView(onCreate: onCreateContainer)
                 }
             }
             .overlay(

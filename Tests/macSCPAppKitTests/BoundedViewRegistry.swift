@@ -1036,6 +1036,12 @@ enum BoundedViewRegistry {
     /// (`SheetBoundTests.aCapIsMeasuredAgainstItsMaximum`).
     private static var cappedViews: [BoundedViewEntry] {
         [
+            // The widest state: the notice with its button offered. Without
+            // `onCreate` the view is the two sentences alone, which cannot be
+            // wider (F3 of the final whole-branch review).
+            BoundedViewEntry("an account with no buckets yet, the create action offered") {
+                EmptyContainerListView(onCreate: {})
+            },
             BoundedViewEntry("a server's own refusal text, selectable") {
                 ConnectFailureDetailsSheet(
                     title: failureContentWithEveryAction.detailsTitle,

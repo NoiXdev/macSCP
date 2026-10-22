@@ -265,6 +265,8 @@
 "browser.pane.goUpHelp" = "Répertoire parent";
 "browser.pane.refreshHelp" = "Actualiser";
 "browser.pane.retry" = "Réessayer";
+"browser.pane.noContainers.title" = "Aucun bucket pour l’instant";
+"browser.pane.noContainers.body" = "Ce compte n’a aucun bucket. Créez-en un pour commencer à y conserver des fichiers.";
 "browser.pathBar.copied" = "Copié !";
 "browser.pathBar.listingFailed %@" = "Impossible de lister le répertoire : %@";
 "browser.pathBar.candidateCount %lld" = "%lld résultats";

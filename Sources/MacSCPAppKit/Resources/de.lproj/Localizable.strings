@@ -263,6 +263,8 @@
 "browser.pane.goUpHelp" = "Übergeordnetes Verzeichnis";
 "browser.pane.refreshHelp" = "Aktualisieren";
 "browser.pane.retry" = "Erneut versuchen";
+"browser.pane.noContainers.title" = "Noch keine Buckets";
+"browser.pane.noContainers.body" = "Dieses Konto hat keine Buckets. Erstelle einen, um hier Dateien abzulegen.";
 "browser.pathBar.copied" = "Kopiert!";
 "browser.pathBar.listingFailed %@" = "Das Verzeichnis konnte nicht aufgelistet werden: %@";
 "browser.pathBar.candidateCount %lld" = "%lld Treffer";
