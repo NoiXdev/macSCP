@@ -334,3 +334,35 @@ Full `swift test` (no build-system flag) at `70a2921d`: Core `✔ Test run with 
 Gated suites still not run (rig down). Sources touched in round 2: three comment-only edits (`S3FileSystem.swift` in `63e6233f`, `AuditLogSheet.swift` in `9483bc0b`; tests comment in `9483bc0b`). The ledger's closing section said "Only `c6dda748` touches `Sources/`"; that sentence is now corrected in the ledger.
 Not done in round 2 / not verified: the user-docs audit log page (the coordinator's statement that it names File Ops is repeated in a comment and a row, marked as unread by me); the design's approval (recorded on the coordinator's word); whether any test goes red after a Core fix for the carriage-return value (read, not run);
 the sweep for unsupported attributions was by grep over added lines. Nothing pushed; no amend in round 2.
+
+## Round 3 — coordinator's rulings on the three test comments (a section is appended as each item starts)
+
+Order: (A) correct the three "the rig does not require/check it" test comments, quoting each; (B) write into `S3ObjectLockGatedTests.swift`'s header and into the Content-MD5 row the observation a gated run would settle and what each outcome means
+(the gated test itself only if the file's pattern makes it a one-liner); (C) drop the "coordinator's statement" hedge on the audit-log docs page (verified by the coordinator, 2026-10-22), citing the page by its sentence;
+(D) the ledger's closing section records the approval: chat words `plan passt, umsetzen`, the ledger as sole record, no date finer than the plan file's. The design document must not claim an artifact for it.
+
+### A and B — the three comments and the observation. VERDICT PENDING
+Result (A, B): `e6b94cc6` corrects the three comments (`S3ObjectLockTests.swift` header, `S3ObjectLockGatedTests.swift` header, doc comment of `settingTheDefaultIsAPutWithASignedContentMD5OfItsBody`), each quoting its withdrawn wording verbatim
+(anchors asserted unique), and writes into the gated header the observation that would settle it: one signed `PUT ?object-lock`, GOVERNANCE default of one day, NO `Content-MD5`, on a throwaway lock-enabled bucket, status recorded; both outcomes decided in advance.
+`4aedf6ae` carries the same into the Content-MD5 row (its "prints three lines" sentence and "were not edited" are withdrawn, quoted; the same search now prints 5 lines, each inside a quotation of the withdrawn wording or the decided outcome).
+The test itself was NOT added: the file's pattern is a raw signed request through `S3FileSystem.signedRequest` and `perform`, plus bucket create and delete helpers, about two dozen lines, not a one-liner, and nobody can run it; an unrun test is a claim.
+Tests: `swift test --filter S3ObjectLockTests --filter S3ObjectLockGatedTests`: 52 tests in 2 suites passed (the gated suite is disabled without `MACSCP_ITEST`).
+**UNEXPECTED, from writing the outcomes down:** the favourable outcome does not do what the ruling hoped. If the rig ACCEPTS the request without the header, "the rig does not require it" becomes measured, for RustFS 1.0.0 only, but the ORIGINAL comment's claim was about AWS ("a `PutObjectLockConfiguration`
+without it fails 400"), which the rig cannot measure either way. So even the best result leaves the AWS half a reading; the header and the row say so. The refused outcome is the more informative one: it would show the reason both test headers give for a shape-only test is wrong.
+Second unexpected thing: the existing gated tests send the header on every request, so a green gated run was never silent-proof of anything about it, as the versioning row already said for its call; this is why the observation has to be a new, header-less request.
+VERDICT: DONE.
+
+### C — the docs-page hedge. VERDICT: DONE
+`2a1f571a`: the Ruling 19 arm's comment in `AuditLogSheet.swift` now says the page was read by the coordinator on 2026-10-22 and cites its sentence ("under **File Ops** and under **All**", and File Ops in the filter menu's list), with the hedge dropped and its withdrawal stated; the `plaintextConfirmed` row got a "Verified" paragraph quoting the withdrawn hedge sentence.
+I did not read the page myself (noix-docs untouched), so the provenance is stated as the coordinator's reading. `swift test --filter AuditLogFilterTests --filter AuditLogSortWiringGuardTests`: 17 tests in 2 suites passed.
+
+### D — the approval. VERDICT: DONE
+`7eb24262`: the ledger's closing section has an "Approval" paragraph: the chat words `plan passt, umsetzen`, received from the coordinator (I did not see the chat), the ledger as sole record because chat is not an artifact, no date finer than the plan file's own, 2026-10-19 (also the ledger's header and first entry);
+the design's status correction was edited so it claims no artifact (its sentence "neither this file nor the ledger holds the approval itself" is quoted as withdrawn, since the ledger now holds it) and its status line no longer asserts "on 2026-10-19" as the approval's date but "no earlier than the plan, which is dated 2026-10-19".
+Also a ledger "Round 3" paragraph; it quotes verbatim the round-2 sentence "Found and not edited: three test comments ..." as untrue since `e6b94cc6` (the quotation was asserted to occur twice in the file: original and quotation).
+A third unexpected thing: the words approve "plan", not "design"; the coordinator told me they approved the design too, and the ledger paragraph says "this plan and the design under it" on his word, not on the words' own scope.
+
+### Round 3 — summary
+Commits: `e6b94cc6` three test comments and the gated header's observation; `4aedf6ae` Content-MD5 row; `2a1f571a` docs-page hedge dropped; `7eb24262` approval, design status line and round-3 ledger paragraph; plus the commit that copies this report.
+Full `swift test` (no build-system flag) after `7eb24262`: Core `✔ Test run with 5085 tests in 408 suites passed`; AppKit `✘ Test run with 2848 tests in 240 suites failed ... with 1 issue` (the known `ViewTestabilitySpike.swift:202`). Gated suites still not run; nothing pushed; no amend this round.
+Not verified: the gated observation (rig down); the docs page (read by the coordinator, not me); the chat words (received from the coordinator).
