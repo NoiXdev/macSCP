@@ -379,6 +379,30 @@ struct BucketSettingsAuditTests {
         #expect((events.first?.errorMessage ?? "").isEmpty == false)
     }
 
+    /// The same, for a create that chose NOTHING. The person asked for a
+    /// plain bucket; the line names the versioning and the Object Lock the
+    /// read-back found, because they are what the bucket has and what a
+    /// reader of the trail will be deciding from -- and under a COMPLIANCE
+    /// default the objects written into it afterwards cannot be deleted by
+    /// anyone until their dates pass.
+    @MainActor @Test func aPlainCreateOntoAnAlreadyProtectedBucketRecordsWhatItFound() async {
+        let trail = Trail()
+        defer { trail.remove() }
+        let protected = FakeBucketSettings(versioning: .enabled, lock: .init(hasLock: true))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        await model.create(via: protected, recorder: trail.recorder)
+
+        let events = trail.events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .bucketCreated)
+        let detail = events.first?.detail ?? ""
+        #expect(detail == "created bucket macscp-third with versioning and Object Lock")
+        #expect(detail != "created bucket macscp-third")
+        #expect(events.first?.isError == true)
+        #expect((events.first?.errorMessage ?? "").isEmpty == false)
+    }
+
     // MARK: - The three Object Lock operations
 
     @MainActor @Test func anObjectLockLineNamesWhichOfTheThreeOperationsItWas() async {
@@ -487,9 +511,19 @@ struct BucketSettingsAuditTests {
 
     /// `create` makes exactly one recording call per arm it can take: the
     /// store accepted the request and the read-back confirmed the settings;
-    /// it accepted and the read-back found something else; it accepted and
-    /// the read-back did not answer; it refused. Four. That is what is
-    /// pinned, and it is the half that notices a record somebody deleted.
+    /// it accepted and the bucket turned out to have LESS protection than was
+    /// asked for; it accepted and the bucket turned out to have MORE; it
+    /// accepted and the read-back did not answer; it refused. Five. That is
+    /// what is pinned, and it is the half that notices a record somebody
+    /// deleted.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 3).** The sentence above read,
+    /// verbatim: "it accepted and the read-back found something else; it
+    /// accepted and the read-back did not answer; it refused. Four.", and the
+    /// check was `recordingCalls == 4` with the message "confirmed, not as
+    /// asked, unconfirmed, refused". "Something else" split in two, because
+    /// the two directions of a mismatch are two different things to tell a
+    /// person and two different lines to write.
     ///
     /// **Corrected 2026-10-22 (F1 of the final whole-branch review).** This
     /// test was named `createMakesExactlyTwoRecordingCalls`, asserted
@@ -526,7 +560,9 @@ struct BucketSettingsAuditTests {
         let start = try #require(lines.firstIndex { $0.contains("func create(via") })
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix("    }") })
         let recordingCalls = lines[start...end].filter { $0.contains("recordBucketCreated(") }.count
-        #expect(recordingCalls == 4, "confirmed, not as asked, unconfirmed, refused")
+        #expect(
+            recordingCalls == 5,
+            "confirmed, less than asked, more than asked, unconfirmed, refused")
     }
 
     // MARK: - A missing recorder

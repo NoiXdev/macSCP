@@ -323,15 +323,20 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             // the code was `if protection == .lockedAndVersioned { ...
             // lock.hasLock = state.createEffect != .ignoresTheObjectLockHeader }`,
             // which also switched an existing lock OFF for an ignored header.
-            if protection != .none {
-                var lock = state.lock ?? ObjectLockFixture(hasLock: false)
-                if protection == .lockedAndVersioned,
-                    state.createEffect != .ignoresTheObjectLockHeader
-                {
-                    lock.hasLock = true
-                }
-                state.lock = lock
+            // **Corrected again 2026-10-22 (F1, fix round 3).** The guard was
+            // `if protection != .none`, which left a PLAIN create with no
+            // fixture -- and the read-back now runs for a plain create too,
+            // so `hasObjectLock` would have answered `.operationNotSupported`
+            // where a store answers a `Bool`. Every accepted create
+            // establishes it; which protection was asked for decides only
+            // whether the lock is switched ON.
+            var lock = state.lock ?? ObjectLockFixture(hasLock: false)
+            if protection == .lockedAndVersioned,
+                state.createEffect != .ignoresTheObjectLockHeader
+            {
+                lock.hasLock = true
             }
+            state.lock = lock
             if protection != .none, state.createEffect != .ignoresTheVersioningRequest {
                 state.versioning = .enabled
             }
