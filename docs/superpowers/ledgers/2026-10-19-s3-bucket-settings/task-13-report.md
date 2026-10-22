@@ -278,3 +278,59 @@ Nothing pushed. No `git checkout -- <file>`, no bare stash. Two `git commit --am
 - **Two comment-line-level sweeps** (for other comments naming the plan as future work) were by `grep` on a few phrases and may have missed a differently-worded one.
 - **Mutation-probe harness:** not used; no tracked file was planted. The throwaway test files were untracked and removed with `rm`; `git status --porcelain` was empty after each.
 
+
+## Coordinator rulings, round 2 (a section is appended as each item starts)
+
+Order ruled: (1) the Content-MD5 comment in `S3FileSystem.swift` and a sweep for other unsupported "(maintainer ruling ...)" or "measured" attributions;
+(2) the design document's status line; (3) the two comments that disagree with Ruling 21; (4) the census paragraph of 2026-10-15/16, pinned; (5) the trap in the Step 7 rows.
+My concerns 1 and 6: no work, ruled. Unchanged constraints: no push, `git log -1` before any amend, targeted test filters for comment-only work.
+
+### Item 1 — the Content-MD5 comment, and a sweep for the same attribution elsewhere. VERDICT PENDING
+Method: replace the parenthesis "(maintainer ruling A, measured)" above the signed request in `setObjectLockDefault` with what is known and where it comes from, quoting the withdrawn text verbatim;
+assert the anchor is unique before writing; then sweep Sources and Tests for `maintainer ruling`, `(measured`, `measured 20` attributions and judge each against the ledger.
+Result: comment corrected in `63e6233f` (anchor asserted unique; withdrawn wording quoted verbatim; says: sent and signed; a READING of AWS's reference from a search summary, not a measurement;
+no run of the request without the header on record; rig measured to accept `PUT ?versioning` without it, nothing about this call; the test pins the request's shape). `swift test --filter S3ObjectLockTests`: 49 tests, 1 suite, passed.
+The Content-MD5 row's search `'maintainer ruling A, measured'` printed one line and now prints nothing, so the row got a "Resolved 2026-10-22" paragraph quoting that sentence (`d7526a60`), with a replacement command (2 lines).
+**Sweep for other attributions** (what I did and found; nothing edited beyond the one comment):
+ - Method: `git diff eec041f5..HEAD -- Sources Tests`, added lines only, awk-labelled by file, filtered for `maintainer` and for `measured` and `Ruling [A-Z]`. (The whole-tree `maintainer decision/ruling` grep is ~80 lines of pre-branch comments; not this branch's.)
+ - `maintainer`: 5 added lines. 4 are supported by the design: "the maintainer asked for the lock to [be at creation]" (`S3BucketSettings.swift`, and `S3ObjectLockTests.swift`: design 2.2/6.1), "The maintainer asked for COMPLIANCE" (`ObjectLockSheetTests.swift`: design 6.5), "maintainer's visual check" (`BucketCORSSheet.swift`, a pointer to a check, not a claim). The fifth was the one fixed.
+ - `measured`: about 60 added lines. Those dated "measured 2026-10-19 (the rig)" match the design's section 4 table, as far as I compared (versioning, CORS order, `FETCH` accepted, object-lock 404, delete refusals, default applies to later writes). `CreateBucketSheetTests.aNameAlreadyInTheListBlocksTheButton` says "MEASURED on the rig (Task 5's review)": the measurement is in `task-5-report.md` ("On the rig, a second `createBucket` of a bucket the key already owns ...") and the ledger's Finding 11, so the claim holds and the attribution to "review" is loose (report/ledger). Not edited.
+ - **NOT supported, found, NOT edited (for you to rule on):** three test comments say of `PUT ?object-lock` that "the rig does not require it" (`S3ObjectLockTests.swift` header; `S3ObjectLockGatedTests.swift` header) and "the rig does not check it" (doc comment of `settingTheDefaultIsAPutWithASignedContentMD5OfItsBody`). I find no run that sent that request without the header to the rig; the Content-MD5 row says only `PUT ?versioning` was measured. Same claim as the comment I fixed, in a test comment, without the borrowed authority.
+ - Also looked at: `S3FileSystem.swift` doc on `deleteTree` ("which S3 requires for this call", DeleteObjects): older than this branch and not an attribution; untouched. `Ruling A/B/C` in `S3ObjectLockTests.swift` are Task 4's dispatch labels, not claimed as the maintainer's; their content for B and C is measured/ledgered.
+VERDICT: DONE (sweep is by grep over added lines; a differently worded attribution could be missed).
+
+### Item 2 — the design document's status line. VERDICT PENDING
+Result: status line corrected in place (anchor asserted unique), withdrawn wording quoted verbatim; now: approved 2026-10-19, planned, implemented as the first half on `s3-bucket-settings`, second half out of scope (section 10).
+No commit count restated. **The approval is recorded on the coordinator's word**: neither the design nor the ledger holds it (I grepped the ledger for "approv": only review verdicts); the correction says so.
+`1dac7bd3` resolves. Commit: see item list at the end. VERDICT: DONE.
+
+### Item 3 — the two comments and Ruling 21. VERDICT PENDING
+Result: `AuditLogFilterTests.everyKindIsInAtMostOneKindSegmentAndTheUnplacedAreNamed`'s doc comment corrected (withdrawn sentence quoted verbatim; names Ruling 21, the ledger, the backlog row, and that the last
+expectation changes on a reversal) and the Ruling 19 arm in `AuditLogSheet.swift` gained the docs-page cost, marked as the coordinator's statement and unread by me (`9483bc0b`; anchors asserted unique; comments only;
+`swift test --filter AuditLogFilterTests --filter AuditLogSortWiringGuardTests --filter BucketSettingsAuditTests`: 28 tests in 3 suites passed). The "All and Errors only" comment is left, as ruled; the A1 row got an "Updated"
+paragraph, with the withdrawn clause's status stated, and the recorder observation labelled as an observation. VERDICT: DONE.
+
+### Item 4 — the census paragraph, pinned. VERDICT PENDING
+Result (`census` commit below): found by `git log -S` and `census.py`: the live-file command of the 2026-10-15 paragraph read 117/74/43 at `693db7c0` and (2026-10-16) 119/76/43 at `ea330ada`; the 111/68/43 it withdrew was `177c9ef3`.
+Edits: (a) the fence's second line is now `git show 693db7c0 | awk ... -v LABEL=693db7c0`; (b) the sentence after it names that label (first occurrence only; the 2026-10-16 paragraph's verbatim quotation of the old sentence is left, being history);
+(c) a correction paragraph and a fence at the end of the file: quotes the withdrawn fence line and sentence verbatim, pins 119 to `ea330ada`, and pins the two clauses I had previously left unpinned (the longer-labelled census command and the labelled listing: both assert figures)
+to `493bc256`, where each reproduces; at `b1537a05` they print 137/92/45 and `candidates=92 removed=45 opens-Open=137`. Row-number sentences left alone (assert positions, forbidden sweep). All five pinned lines run from the committed text print the stated figures
+(`run_pinned.py`; /tmp copies removed). Hex-token check clean. VERDICT: DONE.
+
+### Item 5 — the trap in Step 7's rows. VERDICT PENDING
+Result (`70a2921d`): two Step 7 rows got an "Updated 2026-10-22" paragraph each. (corsBody) names `aValueThatChangesOnTheWayBackIsNotLossless` in `BucketCORSSheetTests.swift` as the test a Core fix turns red by design, says the fixer must rewrite it
+to the new truth and not weaken it, lists the other users of the same value (`aMethodAndACarriageReturnAreBothSaid`, sweep cause `carriageReturnOrigin`, the lines helper, the registry entry "CORS text with a carriage return in a value"; `grep -rn -F -e '&#13;' Tests Sources`
+prints 8 lines) and says what to do if no other value changes on the round trip (the state becomes unreachable: reserve or retire, as the `bucketListEmpty` row says). Which tests go red is READ, not measured (Core not changed).
+(validate) the review's "with the sheet inheriting it for free" is quoted and withdrawn: `blockerLine`'s exhaustive switch over `problem` is a compile error for a new case; plus a four-language sentence, the model's line list, a sweep cause. `grep -rn -F -e 'CORSValidation'` prints
+4 lines and does NOT find the switch (it never names the type); the row says so. (My first version of that sentence said six lines and test files; the count was wrong and was corrected before the commit.) Both rows' searches run from the committed text. VERDICT: DONE.
+
+## Round 2 — summary
+
+Commits (hashes final unless a later amend is stated): `63e6233f` Content-MD5 comment; `d7526a60` Content-MD5 row resolved; `2c69f1e1` design status line; `9483bc0b` Ruling 21 comments; `9ea5ca9f` plaintextConfirmed row updated;
+`ac0ee57e` census pin; `70a2921d` Step 7 trap. Tests: filters per item (49 tests / S3ObjectLockTests; 28 tests in 3 suites / audit filters, sort wiring, audit recorder), then the full `swift test` below.
+Found while sweeping for the second "(maintainer ruling ...)" attribution: none with that authority borrowed; but three test comments (`S3ObjectLockTests.swift` header, `S3ObjectLockGatedTests.swift` header, and the doc comment on
+`settingTheDefaultIsAPutWithASignedContentMD5OfItsBody`) say "the rig does not require/check it" of `PUT ?object-lock` without Content-MD5, which I can find no run to support (only `PUT ?versioning` was measured). Not edited; recorded in the Content-MD5 row.
+Full `swift test` (no build-system flag) at `70a2921d`: Core `✔ Test run with 5085 tests in 408 suites passed`; AppKit `✘ Test run with 2848 tests in 240 suites failed ... with 1 issue`, the known `ViewTestabilitySpike.swift:202`. Same figures as before round 2.
+Gated suites still not run (rig down). Sources touched in round 2: three comment-only edits (`S3FileSystem.swift` in `63e6233f`, `AuditLogSheet.swift` in `9483bc0b`; tests comment in `9483bc0b`). The ledger's closing section said "Only `c6dda748` touches `Sources/`"; that sentence is now corrected in the ledger.
+Not done in round 2 / not verified: the user-docs audit log page (the coordinator's statement that it names File Ops is repeated in a comment and a row, marked as unread by me); the design's approval (recorded on the coordinator's word); whether any test goes red after a Core fix for the carriage-return value (read, not run);
+the sweep for unsupported attributions was by grep over added lines. Nothing pushed; no amend in round 2.
