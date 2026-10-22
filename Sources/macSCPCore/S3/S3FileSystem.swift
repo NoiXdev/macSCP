@@ -181,18 +181,26 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 // `connect` threw `bucketListEmpty` for it. That held while
                 // an empty browser offered nothing to do.
                 //
-                // What would resolve an empty browser is creating a bucket,
-                // and `createBucket(_:protection:)` exists in Core. NO
-                // browser surface calls it yet: the create-bucket action in
-                // the bucket browser is planned (the s3-bucket-settings
-                // plan) and is not in this tree, so until it lands an
-                // account with no buckets opens on a blank browser. The
-                // refusal is lifted ahead of that action because keeping it
-                // would make the action unreachable for exactly the account
-                // it is for. The first version of this comment, in
-                // `612f1ece`, said "The browser now carries the action that
+                // What resolves an empty browser is creating a bucket, and
+                // that action exists: `createBucket(_:protection:)` in Core is
+                // called by `CreateBucketSheet`, which the connection menu's
+                // create-bucket row opens at the bucket list
+                // (`ConnectionActionRoute.createBucket`). The refusal is
+                // lifted because keeping it would make that action
+                // unreachable for exactly the account it is for.
+                //
+                // This paragraph has been corrected twice, and both earlier
+                // wordings are kept here. The first version of this comment,
+                // in `612f1ece`, said "The browser now carries the action that
                 // resolves the empty state"; that was not true of the tree
-                // and is withdrawn.
+                // and is withdrawn. Its replacement said "NO browser surface
+                // calls it yet: the create-bucket action in the bucket browser
+                // is planned (the s3-bucket-settings plan) and is not in this
+                // tree, so until it lands an account with no buckets opens on
+                // a blank browser." That was true of the tree when it was
+                // written and is withdrawn too: the action landed in
+                // `75fe0553`, on the branch that carried that plan. So the
+                // first version had the destination right and the date wrong.
                 //
                 // This applies to `.bucketList` only; the `.bucket` arm
                 // above still fails the connect for a named bucket that does
