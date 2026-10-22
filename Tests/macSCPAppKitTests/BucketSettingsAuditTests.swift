@@ -107,6 +107,28 @@ struct BucketSettingsAuditTests {
                 modelShowsAFailure: model.applyFailure != nil)
         },
         Operation(
+            // The other value of the enum the row above leaves at its default.
+            // A sheet starts on GOVERNANCE, so a refused retention whose
+            // recorded mode is forced to GOVERNANCE equals the attempt of the
+            // row above and nothing could notice; it differs from this one.
+            // The clock is injected, so the line is exact.
+            name: "set a file's COMPLIANCE retention", kind: .objectLockChanged,
+            detailPrefix: "retention of b1/reports/q3.pdf set to COMPLIANCE until 2027-01-15T08:00:00Z"
+        ) { recorder, refuse in
+            let clock = Date(timeIntervalSince1970: 1_700_000_000)
+            let until = Date(timeIntervalSince1970: 1_800_000_000)
+            let settings = FakeBucketSettings(lock: .init(writeError: refuse ? Self.refusal : nil))
+            let model = ObjectLockModel(focus: .retention, bucketHasLock: true, now: { clock })
+            // Each of these takes the acknowledgement back, so the tick is last.
+            model.mode = .compliance
+            model.retainUntil = until
+            model.acknowledged = true
+            await model.run(key: "reports/q3.pdf", bucket: "b1", via: settings, recorder: recorder)
+            return Outcome(
+                storeWasAskedToWrite: settings.retentionWrites.count == 1,
+                modelShowsAFailure: model.applyFailure != nil)
+        },
+        Operation(
             name: "place a file's legal hold", kind: .objectLockChanged,
             detailPrefix: "legal hold on b1/reports/q3.pdf placed") { recorder, refuse in
             let settings = FakeBucketSettings(lock: .init(writeError: refuse ? Self.refusal : nil))
@@ -157,15 +179,28 @@ struct BucketSettingsAuditTests {
     @Test func theTableCoversEveryNewKind() {
         let covered = Set(Self.operations.map(\.kind))
         #expect(covered == [.bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged])
-        // Three of the rows share a kind on purpose: it is the one kind that
-        // covers three operations.
+        // Four of the rows share a kind on purpose: it is the one kind that
+        // covers three operations, and the retention is in it twice, once per
+        // mode. (Corrected: this comment read "Three of the rows share a kind
+        // on purpose: it is the one kind that covers three operations", and the
+        // check beneath it was `lockRows.count == 3`.)
         let lockRows = Self.operations.filter { $0.kind == .objectLockChanged }
-        #expect(lockRows.count == 3)
-        // Six rows for the five apply methods (`ObjectLockModel.run` serves
-        // the retention and the legal hold). Pinned because a duplicated row
-        // would pass the two checks above while the parameterised tests ran a
-        // bogus case as a seventh operation.
-        #expect(Self.operations.count == 6)
+        #expect(lockRows.count == 4)
+        // Seven rows for the five apply methods (`ObjectLockModel.run` serves
+        // the retention and the legal hold, and the retention has one row per
+        // mode). Pinned because a duplicated row would pass the two checks
+        // above while the parameterised tests ran a bogus case as an eighth
+        // operation. (Corrected: this comment read "Six rows for the five apply
+        // methods (`ObjectLockModel.run` serves the retention and the legal
+        // hold)", and the check was `Self.operations.count == 6`.)
+        #expect(Self.operations.count == 7)
+        // The positive control for the refused-write check below: both modes
+        // are in the table, so a recorded mode forced to either one differs
+        // from the attempt of the other row.
+        let modes = ["GOVERNANCE", "COMPLIANCE"].filter { mode in
+            Self.operations.contains { $0.detailPrefix.contains("set to \(mode) until") }
+        }
+        #expect(modes == ["GOVERNANCE", "COMPLIANCE"])
     }
 
     // MARK: - One line, of the operation's own kind
@@ -210,6 +245,12 @@ struct BucketSettingsAuditTests {
         // this, a refused COMPLIANCE retention could be recorded as an attempt
         // at GOVERNANCE, or a refused hold as its opposite, and nothing would
         // notice (probes N3 and N4 of the Task 12 review ended GREEN).
+        //
+        // **Corrected (Task 12, fix round 2).** That sentence was true of the
+        // legal hold and false of the retention: the table's only retention row
+        // left the mode at the sheet's default, GOVERNANCE, so a recorded mode
+        // forced to GOVERNANCE was the attempt itself and N3 stayed GREEN. The
+        // table now has a retention row per mode.
         let detail = events.first?.detail ?? ""
         let describesTheAttempt = detail.hasPrefix(operation.detailPrefix)
         #expect(describesTheAttempt, "\(operation.name)")
