@@ -834,12 +834,36 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         /// The bucket has none, so no key in it can be under a lock and no
         /// per-key read could establish one.
         case absent
-        /// The read did not answer. Nothing is established either way, so the
-        /// per-key reads stay the only way to find out -- the same rule
-        /// `lockFinding` follows for its own failed probes: a probe's failure
-        /// never replaces the answer it was asked about.
+        /// The read did not answer. Nothing is established either way, so a
+        /// per-key read is still worth making -- the same rule `lockFinding`
+        /// follows for its own failed probes: a probe's failure never
+        /// replaces the answer it was asked about. **One, for the whole
+        /// call**, and the refusal walk in `deleteTree` says why and what
+        /// that trades away.
+        ///
+        /// **Corrected 2026-10-22 (F2, fix round 2).** This read, verbatim:
+        /// "Nothing is established either way, so the per-key reads stay the
+        /// only way to find out". True, and it left the cost unbounded in
+        /// exactly the configuration where the hoist buys nothing.
         case unknown
     }
+
+    /// The `reason` of the `.protocolError` `deleteTree` throws when a batch
+    /// came back with refusals that nothing named.
+    ///
+    /// Named rather than written at the throw so a test can read it instead
+    /// of spelling a second copy, and so the two spellings below sit beside
+    /// each other where the difference between them can be seen. Neither
+    /// carries anything the store wrote.
+    static let deleteTreeRefusedReason =
+        "S3 deleteTree: one or more objects could not be deleted"
+    /// The same, when the bucket's own Object Lock state could not be read
+    /// either -- so the one probe an unreadable state buys came back
+    /// uninformative and the walk stopped there. The record has to say that,
+    /// or it reads exactly like a bucket that simply has no lock, which is a
+    /// different fact established by a read that worked.
+    static let deleteTreeRefusedWithUnreadableLockStateReason =
+        deleteTreeRefusedReason + "; the bucket's Object Lock state could not be read"
 
     /// `hasObjectLock(ofBucket:)` once, as the three answers above.
     private func bucketLockState(ofBucket bucket: String) async -> BucketLockState {
@@ -866,8 +890,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// **Two callers, and one of them gates this on the bucket first.**
     /// `refusalOfDelete` asks it for the single key a `DELETE` was refused
     /// for. `deleteTree` walks up to 1000 refusals in one answer, so it asks
-    /// `bucketLockState(ofBucket:)` once per call and does not come here at
-    /// all for a bucket that has no Object Lock -- see its own comment.
+    /// `bucketLockState(ofBucket:)` once per call, does not come here at all
+    /// for a bucket that has no Object Lock, and comes here at most once when
+    /// the bucket's own state could not be read -- see its own comment.
     private func lockFinding(forRefusedDeleteOf key: String, inBucket bucket: String) async -> RemoteFSError? {
         let path = reportedPath(bucket: bucket, key: key)
         if (try? await legalHold(ofKey: key, inBucket: bucket, versionId: nil)) == true {
@@ -1038,6 +1063,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         // appeared, so a delete that goes through costs nothing extra. See
         // `BucketLockState`.
         var bucketLock = BucketLockState.notAsked
+        // How many keys have been probed while the bucket's own lock state is
+        // unreadable. Per CALL, like `bucketLock` itself, and the bound is
+        // one — see the refusal walk below for why.
+        var probesWhileUnknown = 0
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
             let body = try Self.deleteObjectsXML(keys: batch)
@@ -1083,16 +1112,47 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                         if bucketLock == .notAsked {
                             bucketLock = await bucketLockState(ofBucket: bucket)
                         }
-                        if bucketLock != .absent,
-                            let locked = await lockFinding(
+                        // **The user sees ONE message, so the walk is bounded
+                        // by what can still change it.** An informative
+                        // probe throws, which ends the walk at the first
+                        // answer. `.absent` means no probe can be
+                        // informative. `.unknown` means a probe still can —
+                        // nothing was established, and a probe's failure must
+                        // not replace the answer it was asked about — but it
+                        // buys exactly ONE for the whole call: with the
+                        // bucket's configuration unreadable and the first
+                        // object's lock state uninformative, nothing
+                        // distinguishes the five-hundredth key from the
+                        // first, and the alternative is paying for 999 more
+                        // answers that cannot improve the message.
+                        //
+                        // What that trades away, said plainly: a key further
+                        // down the batch could carry a legal hold the first
+                        // one does not, and in that configuration the user
+                        // gets the generic message instead of the hold. The
+                        // `reason` thrown below says the bucket's lock state
+                        // could not be read, so the record shows which case
+                        // this was.
+                        let mayProbe: Bool
+                        switch bucketLock {
+                        case .notAsked, .absent: mayProbe = false
+                        case .inForce: mayProbe = true
+                        case .unknown: mayProbe = probesWhileUnknown == 0
+                        }
+                        if mayProbe {
+                            if bucketLock == .unknown { probesWhileUnknown += 1 }
+                            if let locked = await lockFinding(
                                 forRefusedDeleteOf: key, inBucket: bucket)
-                        {
-                            throw locked
+                            {
+                                throw locked
+                            }
                         }
                     }
                 }
                 throw RemoteFSError.protocolError(
-                    reason: "S3 deleteTree: one or more objects could not be deleted")
+                    reason: bucketLock == .unknown
+                        ? Self.deleteTreeRefusedWithUnreadableLockStateReason
+                        : Self.deleteTreeRefusedReason)
             }
         }
         if lookup == .both {
