@@ -533,6 +533,15 @@ extension ContentView {
                                     // other's. See
                                     // `handleBrowserMenuEntry(_:selection:side:in:session:)`.
                                     onMenuAction: { entry, selection, side in handleBrowserMenuEntry(entry, selection: selection, side: side, in: tab, session: session) },
+                                    // The button on the empty bucket list
+                                    // (F3). Only the remote pane carries it:
+                                    // the local one's file system takes
+                                    // `rootIsContainerList == false`, so it
+                                    // never shows the notice, and there is no
+                                    // connection action to route for it.
+                                    onCreateContainer: {
+                                        openCreateContainerSheet(in: tab, session: session)
+                                    },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
                                     fileActions: {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)

@@ -265,6 +265,8 @@
 "browser.pane.goUpHelp" = "Katalog nadrzędny";
 "browser.pane.refreshHelp" = "Odśwież";
 "browser.pane.retry" = "Spróbuj ponownie";
+"browser.pane.noContainers.title" = "Nie ma jeszcze bucketów";
+"browser.pane.noContainers.body" = "To konto nie ma bucketów. Utwórz jeden, aby zacząć tu przechowywać pliki.";
 "browser.pathBar.copied" = "Skopiowano!";
 "browser.pathBar.listingFailed %@" = "Nie udało się wyświetlić zawartości katalogu: %@";
 "browser.pathBar.candidateCount %lld" = "%lld dopasowań";

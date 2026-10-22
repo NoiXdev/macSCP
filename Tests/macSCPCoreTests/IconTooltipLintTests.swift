@@ -145,6 +145,9 @@ struct IconTooltipLintTests {
         DecorativeIcon(
             file: "ComparisonWindow.swift", symbol: "exclamationmark.triangle",
             reason: "Heads the sentence saying the comparison was stopped or could not be completed; it takes no click and a tooltip could only repeat that sentence."),
+        DecorativeIcon(
+            file: "EmptyContainerListView.swift", symbol: "tray",
+            reason: "Heads the empty bucket list's notice, directly above its own headline (\"No buckets yet\") and a sentence saying what resolves it, exactly as the lost-connection icon does; it takes no click, and the action is the button underneath."),
     ]
 
     /// How far below an icon a hover hint still counts as belonging to it.
