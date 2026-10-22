@@ -279,9 +279,13 @@ final class CreateBucketModel {
             outcome = .failed(sentence: refusal.sentence, bucketMayExist: refusal.bucketMayExist)
             // The sentence the sheet now shows, which is a fixed one and never
             // the store's own words (`failure(for:...)`). Recorded from a bare
-            // `catch`, like the other four recording sites: `failure(for:...)`
-            // returns a `Refusal`, a type that can only be a refusal, so there
-            // is no outcome to test and nothing for a later arm to slip past.
+            // `catch`, like each of the other four apply methods:
+            // `failure(for:...)` returns a `Refusal`, a type that can only be a
+            // refusal, so there is no outcome to test and nothing for a later
+            // arm to slip past. (Corrected: this read "like the other four
+            // recording sites". Four is the number of apply methods; the
+            // recording calls outside this one are more numerous than that,
+            // because several of those methods record on more than one arm.)
             // (Withdrawn, verbatim: "if case .failed(let sentence, _) = outcome"
             // guarded this call, total only while every arm of `failure(for:...)`
             // returned `.failed`.)
