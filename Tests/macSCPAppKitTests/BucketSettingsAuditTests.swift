@@ -192,7 +192,9 @@ struct BucketSettingsAuditTests {
         // above while the parameterised tests ran a bogus case as an eighth
         // operation. (Corrected: this comment read "Six rows for the five apply
         // methods (`ObjectLockModel.run` serves the retention and the legal
-        // hold)", and the check was `Self.operations.count == 6`.)
+        // hold). Pinned because a duplicated row would pass the two checks
+        // above while the parameterised tests ran a bogus case as a seventh
+        // operation", and the check was `Self.operations.count == 6`.)
         #expect(Self.operations.count == 7)
         // The positive control for the refused-write check below: both modes
         // are in the table, so a recorded mode forced to either one differs
@@ -407,71 +409,35 @@ struct BucketSettingsAuditTests {
         }
     }
 
-    // MARK: - Create's record is unconditional
+    // MARK: - Create's two records
 
-    /// The other four recording sites record from a bare `catch`: whatever
-    /// the store refused, the refusal leaves a line. `create` once recorded
-    /// only `if case .failed = outcome`, which was total ONLY because every
-    /// arm of the function building the outcome happened to return
-    /// `.failed` -- a gate whose correctness lived in another function, and
-    /// the one site that would have recorded NOTHING, rather than failed to
-    /// compile, had an arm returned anything else. (Withdrawn wording, verbatim:
-    /// `if case .failed(let sentence, _) = outcome { recorder?.recordBucketCreated(...) }`.)
-    /// The refusal is now a type that cannot be anything but a refusal, so
-    /// there is nothing to gate on.
+    /// `create` makes exactly two recording calls: one when the store
+    /// accepted the request, one when it refused it. That is what is pinned,
+    /// and it is the half that notices a record somebody deleted.
     ///
-    /// What is pinned is the property, not a phrasing of the gate: **between
-    /// the `catch {` and the refusal's `recordBucketCreated(` call there is no
-    /// branching at all.** A first version looked for the text `if case`, and
-    /// `guard case ... else { return }`, `if failureSentence != nil { ... }`
-    /// and a `switch outcome` with a `default: break` all passed it. This
-    /// version names the language's closed set of control-flow keywords rather
-    /// than the ways to spell one gate; a ternary or `??` is branching too.
-    /// Whatever sits there is straight-line.
+    /// What is NOT pinned, and cannot be by a text scan: that the refusal's
+    /// record is unconditional, the shape the fix for Ruling 20 gave it (it
+    /// is made straight from the catch, like the other four recording sites,
+    /// and the type that carries the refusal can only be a refusal). An
+    /// earlier version of this test tried, by forbidding control-flow
+    /// keywords between the catch and the call. It was withdrawn after two
+    /// ways round it were measured, neither of which contains a keyword: the
+    /// call placed inside a helper that decides, and the call placed inside a
+    /// closure handed to an optional's map. Short-circuit operators branch
+    /// without a keyword too. The ways to branch are an open set, so any list
+    /// of them is a chase, and the next reader finds the next spelling.
     ///
-    /// The negative check has its positive beside it: the region found starts
-    /// at the one `catch {`, ends at the line of the last of exactly two
-    /// recording calls, and is not empty -- it holds the call that produces
-    /// the refusal.
-    @Test func createRecordsItsRefusalWithoutBranching() throws {
+    /// Reinstating a gate changes no behaviour: a refusal is recorded either
+    /// way, because the refusal type has no arm that is not a refusal. That is
+    /// why no behavioural test can see the difference, and why the shape is a
+    /// readability property of the code, not an invariant of the program.
+    @Test func createMakesExactlyTwoRecordingCalls() throws {
         let source = try Self.code("MacSCPAppKit/CreateBucketSheet.swift")
         let lines = source.components(separatedBy: "\n")
         let start = try #require(lines.firstIndex { $0.contains("func create(via") })
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix("    }") })
-        let body = lines[start...end]
-
-        let recordingCalls = body.filter { $0.contains("recordBucketCreated(") }.count
+        let recordingCalls = lines[start...end].filter { $0.contains("recordBucketCreated(") }.count
         #expect(recordingCalls == 2, "the success line and the refusal line")
-        let catches = body.indices.filter { body[$0].contains("catch {") }
-        #expect(catches.count == 1, "one `catch {`")
-        let catchLine = try #require(catches.first)
-        let lastRecord = try #require(body.indices.last { body[$0].contains("recordBucketCreated(") })
-        // A record that is not after the `catch {` (the refusal's was deleted,
-        // leaving only the success line) must be a failure, not a range that
-        // cannot be formed: that crashed the whole run once (probe C6, RUN
-        // INCOMPLETE), which is neither red nor green.
-        guard lastRecord > catchLine else {
-            Issue.record("the refusal's record is not inside the catch")
-            return
-        }
-
-        // The text from the line after the `catch {` THROUGH the call's own
-        // line. The call line is in it on purpose: a gate written on that line
-        // (`if ... { recorder?.record...(...) }`, `switch ... { case ...: call
-        // default: break }`) is still a gate, and a region that stopped short
-        // of the line let exactly those two through (probes C2 and C3 of the
-        // fix round, GREEN against the first version of this test). The call's
-        // own text holds no control-flow keyword.
-        let between = body[(catchLine + 1)...lastRecord].joined(separator: "\n")
-        #expect(between.contains("failure(for:"), "the region holds the call that makes the refusal")
-
-        let branching = try NSRegularExpression(
-            pattern: "\\b(if|guard|switch|for|while|repeat|return|break|continue|throw|do|catch)\\b(?!\\s*:)")
-        let found = branching.matches(in: between, range: NSRange(between.startIndex..., in: between))
-            .compactMap { Range($0.range, in: between).map { String(between[$0]) } }
-        #expect(found.isEmpty, "branching between the catch and the record: \(found)")
-        let ternary = between.contains(" ? ") || between.contains("??")
-        #expect(!ternary)
     }
 
     // MARK: - A missing recorder
