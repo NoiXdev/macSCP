@@ -22,7 +22,9 @@ import macSCPCore
 ///
 /// **A write changes what the next read returns**, the way a store does, so a
 /// sheet that re-reads after writing is exercised against the store's own
-/// answer and not against the value it just sent.
+/// answer and not against the value it just sent. `createBucket` is a write
+/// like the others in this respect, and `CreateEffect` is how a create that
+/// the store ACCEPTED but did not fully carry out is written down.
 ///
 /// **`setCORS` keeps the asymmetry of the real store.** Rules written read back
 /// as a configuration whose `rawBody` is the document `S3SettingsXML.corsBody`
@@ -60,6 +62,33 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         /// The create succeeded and the versioning request after it failed;
         /// the bucket exists. The call records that it was made.
         case afterTheBucketExists(any Error)
+    }
+
+    /// What the store actually DOES with a create it accepts, as opposed to
+    /// what the create asked for.
+    ///
+    /// It exists because the two can differ, which is the whole of F1: a
+    /// store can answer a create with success and not carry out part of it,
+    /// and only a read-back can tell. Without this the fake could express a
+    /// create that THREW (`CreateFailure`) and a create that did everything,
+    /// and nothing in between -- so the case the rig measured could not be
+    /// written down.
+    enum CreateEffect: Sendable, Equatable {
+        /// The protection reaches the bucket: versioning enabled, and Object
+        /// Lock too where the create carried its header.
+        case asAsked
+        /// The create succeeds, the versioning request after it is taken, and
+        /// the Object Lock header does NOTHING. What the Docker rig answers
+        /// to a re-create of a bucket the key already owns (measured
+        /// 2026-10-19, `S3CreateBucketGatedTests`
+        /// `.recreatingABucketTheKeyOwnsDoesNotEnableObjectLockButDoesEnableVersioning`,
+        /// which asserts `after?.hasLock == false` and
+        /// `after?.versioning == .enabled` for exactly this).
+        case ignoresTheObjectLockHeader
+        /// The create succeeds and the versioning does not take. The mirror
+        /// of the case above, for the half of the read-back that watches
+        /// versioning rather than the lock.
+        case ignoresTheVersioningRequest
     }
 
     /// What the fake answers for the Object Lock calls. Its absence keeps the
@@ -148,6 +177,7 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         var corsWrites: [CORSWrite] = []
         var lock: ObjectLockFixture?
         var createFailure: CreateFailure?
+        var createEffect: CreateEffect = .asAsked
         var creates: [CreateCall] = []
         var hasLockReads: [String] = []
         var defaultReads: [String] = []
@@ -164,13 +194,14 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         versioning: BucketVersioning = .never, readError: (any Error)? = nil,
         writeError: (any Error)? = nil, cors: BucketCORS? = nil,
         corsReadError: (any Error)? = nil, corsWriteError: (any Error)? = nil,
-        lock: ObjectLockFixture? = nil, createFailure: CreateFailure? = nil
+        lock: ObjectLockFixture? = nil, createFailure: CreateFailure? = nil,
+        createEffect: CreateEffect = .asAsked
     ) {
         state = Mutex(
             State(
                 versioning: versioning, readError: readError, writeError: writeError, cors: cors,
                 corsReadError: corsReadError, corsWriteError: corsWriteError, lock: lock,
-                createFailure: createFailure))
+                createFailure: createFailure, createEffect: createEffect))
     }
 
     /// The `createBucket` calls, in order, whether or not they then failed.
@@ -261,6 +292,29 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             case .refused(let error): throw error
             case .afterTheBucketExists(let error): throw error
             case nil: break
+            }
+            // **A create the store ACCEPTED changes what the next read
+            // returns**, the way the writes above already do, so a caller
+            // that reads back after creating is exercised against the store's
+            // own answer and not against the value it sent. Before the F1 fix
+            // nothing read back, so the fake left its state untouched here
+            // and a create was invisible to every read.
+            //
+            // `state.createEffect` is where the two come apart. The lock
+            // fixture is ESTABLISHED when the create carried the lock header,
+            // whichever way the effect goes, because the question
+            // "does this bucket have Object Lock" has an answer for a bucket
+            // that was just created with the header and must not be
+            // `.operationNotSupported` -- that is the fake saying it was
+            // never given a fixture, which is a different outcome
+            // (the read-back FAILING) and would hide this one.
+            if protection == .lockedAndVersioned {
+                var lock = state.lock ?? ObjectLockFixture(hasLock: false)
+                lock.hasLock = state.createEffect != .ignoresTheObjectLockHeader
+                state.lock = lock
+            }
+            if protection != .none, state.createEffect != .ignoresTheVersioningRequest {
+                state.versioning = .enabled
             }
         }
     }

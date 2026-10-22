@@ -550,6 +550,8 @@
 "s3.createBucket.error.denied" = "Twój klucz dostępu nie ma uprawnień do tworzenia bucketów.";
 "s3.createBucket.error.existsIncompletely %@" = "Bucket o nazwie „%@” istnieje teraz, ale żądanie jego utworzenia z wybranymi ustawieniami nie zostało ukończone. Może nie mieć tych ustawień. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
 "s3.createBucket.error.mayExist" = "Tworzenie bucketa nie zakończyło się i bucket może już istnieć. Odśwież listę; jeśli tam jest, otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma.";
+"s3.createBucket.error.settingsDidNotTake %@" = "Bucket o nazwie „%@” istnieje teraz i nie ma wybranych ustawień. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
+"s3.createBucket.error.settingsUnconfirmed %@" = "Bucket o nazwie „%@” istnieje teraz, ale macSCP nie mógł sprawdzić, czy ma wybrane ustawienia. Otwórz dla niego Wersjonowanie i Blokadę obiektów, aby zobaczyć, co ma, i nie twórz go ponownie.";
 "s3.createBucket.problem.tooShort" = "Nazwa bucketa musi mieć co najmniej 3 znaki.";
 "s3.createBucket.problem.tooLong" = "Nazwa bucketa może mieć najwyżej 63 znaki.";
 "s3.createBucket.problem.uppercase" = "Nazwa bucketa nie może zawierać wielkich liter.";

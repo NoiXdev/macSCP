@@ -12,14 +12,21 @@ import macSCPCore
 /// choice, and it is read from the lock first: whatever state the two
 /// booleans were driven into, a lock reaches Core as `.lockedAndVersioned`.
 ///
-/// **The taken-name check is the only thing between a person and a silent
-/// one-way door.** Core does not refuse a name the key already owns: the rig
-/// answers a re-create with success, does not let the lock header retrofit,
-/// and takes the versioning request that follows. So creating "again" could
-/// switch versioning on for a bucket nobody meant to touch, and report
-/// "created". The check is local, against the listing the pane already holds
-/// (`listing(of:)`), and a list that was never read is not an empty list
-/// (`listingIsKnown`).
+/// **Two things stand between a person and a silent one-way door, and the
+/// taken-name check is the first.** Core does not refuse a name the key
+/// already owns: the rig answers a re-create with success, does not let the
+/// lock header retrofit, and takes the versioning request that follows. So
+/// creating "again" could switch versioning on for a bucket nobody meant to
+/// touch, and report "created". The check is local, against the listing the
+/// pane already holds (`listing(of:)`), and a list that was never read is not
+/// an empty list (`listingIsKnown`).
+///
+/// **Corrected 2026-10-22 (F1 of the final whole-branch review).** The
+/// paragraph above opened, verbatim: "**The taken-name check is the only
+/// thing between a person and a silent one-way door.**" It stopped being the
+/// only thing when `create` began reading back what it wrote (`readBack`):
+/// the check looks at a listing that can be minutes old, and the read-back is
+/// what catches the door the stale half lets through.
 ///
 /// **A bucket that may exist is a name that is taken.** After a create that
 /// failed when the bucket may have been made (`bucketMayExist`), the name is
@@ -153,6 +160,24 @@ final class CreateBucketModel {
         return versioning ? .versioned : .none
     }
 
+    /// The same fold, over what the store ANSWERED rather than over what the
+    /// two switches say: the protection a bucket read back has.
+    ///
+    /// **The lock is read first here too**, for the reason the property above
+    /// gives: `BucketProtection` has no case that asks for the lock without
+    /// versioning, so a store that answered a lock beside versioning which is
+    /// not `.enabled` has no case of its own, and the lock is the fact that
+    /// cannot be dropped -- naming the bucket `.none` there would say it
+    /// enforces nothing when it enforces a lock nobody can switch off. A
+    /// versioning that is `.suspended` or `.never` is not the versioning this
+    /// sheet asks for, so it is not `.versioned`.
+    nonisolated static func protection(
+        hasObjectLock: Bool, versioning: BucketVersioning
+    ) -> BucketProtection {
+        if hasObjectLock { return .lockedAndVersioned }
+        return versioning == .enabled ? .versioned : .none
+    }
+
     // MARK: - The name
 
     /// The first rule the name breaks, as Core's validator reports it. An
@@ -260,6 +285,16 @@ final class CreateBucketModel {
     /// stale listing, or on a create refused for a bucket the key can still
     /// read.
     ///
+    /// **A create the store ACCEPTED is read back before it is called done**
+    /// (`readBack`, added for F1 of the final whole-branch review). Three
+    /// outcomes follow from it: the settings are there (`.created`, the line
+    /// as before); they are not (`settingsDidNotTakeTemplate`, and the audit
+    /// line names what was read, not what was asked); or the read did not
+    /// answer (`settingsUnconfirmedTemplate`, which claims neither). The last
+    /// two are `.failed` with `bucketMayExist: true`, so the pane refreshes
+    /// and the taken-name check holds the same sheet back from sending the
+    /// re-create again.
+    ///
     /// `recorder` is where the outcome is written (Task 12): a line when the
     /// request went through, a line with the sheet's own sentence when it did
     /// not, and nothing when the sheet refused before any request existed.
@@ -272,8 +307,30 @@ final class CreateBucketModel {
         do {
             try await settings.createBucket(bucket, protection: choice)
             takenNames.insert(bucket)
-            outcome = .created
-            recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
+            switch await Self.readBack(choice, ofBucket: bucket, via: settings) {
+            case .asAsked:
+                outcome = .created
+                recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
+            case .notAsAsked(let actual):
+                let sentence = Self.settingsDidNotTakeLine(bucket: bucket)
+                outcome = .failed(sentence: sentence, bucketMayExist: true)
+                // **`actual`, not `choice`.** The line records what was read
+                // back. A trail claiming Object Lock on a bucket without it is
+                // worse than a sheet claiming it, because it is the record
+                // someone relies on afterwards, when the sheet is gone.
+                recorder?.recordBucketCreated(
+                    bucket: bucket, protection: actual, failure: sentence)
+            case .unconfirmed:
+                let sentence = Self.settingsUnconfirmedLine(bucket: bucket)
+                outcome = .failed(sentence: sentence, bucketMayExist: true)
+                // `choice` here, and it is not the exception to the rule
+                // above: nothing was read back, so there is no answer to
+                // record, and the line is the ATTEMPT with the sentence that
+                // says it was not confirmed beside it. The same shape the
+                // four other paths use for a write whose read-back failed.
+                recorder?.recordBucketCreated(
+                    bucket: bucket, protection: choice, failure: sentence)
+            }
         } catch {
             let refusal = await failure(for: error, bucket: bucket, protection: choice, via: settings)
             outcome = .failed(sentence: refusal.sentence, bucketMayExist: refusal.bucketMayExist)
@@ -290,6 +347,63 @@ final class CreateBucketModel {
             // guarded this call, total only while every arm of `failure(for:...)`
             // returned `.failed`.)
             recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: refusal.sentence)
+        }
+    }
+
+    /// What the bucket turned out to have, against what the create asked for.
+    ///
+    /// A type of its own rather than a `Bool`, because the question has three
+    /// answers and the third is not a shade of the other two: a read that did
+    /// not answer establishes nothing, and reporting it as either "as asked"
+    /// or "not as asked" would be a claim nobody measured.
+    private enum ReadBack {
+        /// Everything the request claimed is there.
+        case asAsked
+        /// The bucket carries something else; `actual` is what was read.
+        case notAsAsked(BucketProtection)
+        /// The read itself did not answer.
+        case unconfirmed
+    }
+
+    /// Reads back the settings `choice` asked for, through the same capability
+    /// the write used.
+    ///
+    /// **Why at all.** The spec's anti-goal (§3) is "A setting that silently
+    /// did nothing. Every write is read back from the store, never assumed
+    /// from a 200." `createBucket` is the one call where a 200 is measured NOT
+    /// to mean the request was carried out: the rig answers a re-create of a
+    /// bucket the key owns with success, does not let the Object Lock header
+    /// retrofit a lock, and takes the versioning request that follows
+    /// (`S3BucketSettings.createBucket`, measured 2026-10-19). So a success
+    /// asserted from the absence of a throw can be a bucket with versioning
+    /// switched on for good and no lock, reported as protected.
+    ///
+    /// **No pre-flight existence check.** Asking first whether the name is
+    /// free is a time-of-check race, and it leaves the stale listing the
+    /// taken-name check reads exactly as stale as it was. Reading AFTERWARDS
+    /// answers the question that matters -- what does the bucket have now --
+    /// whichever way the name got there.
+    ///
+    /// **What is read is what was CLAIMED.** `.none` claims no setting, so
+    /// nothing is read and no request is spent: the failure path makes the
+    /// same cut (`failure(for:...)`'s `protection != .none` guard).
+    /// `.versioned` sends no lock header and so claims nothing about Object
+    /// Lock; only `.lockedAndVersioned` does, and only there is the lock read.
+    /// The lock goes first, so a lock read that fails stops the pair without
+    /// spending the second request.
+    private static func readBack(
+        _ choice: BucketProtection, ofBucket bucket: String, via settings: any S3BucketSettings
+    ) async -> ReadBack {
+        guard choice != .none else { return .asAsked }
+        do {
+            let hasLock =
+                choice == .lockedAndVersioned
+                ? try await settings.hasObjectLock(ofBucket: bucket) : false
+            let versioning = try await settings.versioning(ofBucket: bucket)
+            let actual = protection(hasObjectLock: hasLock, versioning: versioning)
+            return actual == choice ? .asAsked : .notAsAsked(actual)
+        } catch {
+            return .unconfirmed
         }
     }
 
@@ -444,8 +558,39 @@ final class CreateBucketModel {
         key: "s3.createBucket.error.mayExist",
         english: "Creating the bucket did not finish, and the bucket may exist now. Refresh the list; if it is there, open Versioning and Object Lock for it to see what it has.")
 
+    /// The create was accepted and the READ-BACK found something else: a
+    /// bucket of this name is there and does not carry what was asked for.
+    ///
+    /// A variant of `existsIncompletelyTemplate` rather than a new sentence
+    /// (maintainer ruling, F1 of the final review): the second half is that
+    /// line's, word for word, because it already says the one useful thing
+    /// here. The first half differs because what was measured differs -- the
+    /// request DID complete, so "did not complete" would be false, and the
+    /// read establishes that the settings are absent, so the hedge "It may
+    /// not have those settings" would be weaker than the evidence. It does
+    /// not say the bucket "was created": the read answers existence, not
+    /// authorship, which is the withdrawal `failure(for:...)` already carries.
+    static let settingsDidNotTakeTemplate = CatalogueLine(
+        key: "s3.createBucket.error.settingsDidNotTake %@",
+        english: "A bucket named \u{201C}%@\u{201D} exists now, and it does not have the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
+    /// The create was accepted and the read-back itself did not answer. Says
+    /// no more than that: a bucket of this name is there and nothing is known
+    /// about its settings. Neither "was created" (which would claim the
+    /// settings) nor "the request failed" (the create was accepted).
+    static let settingsUnconfirmedTemplate = CatalogueLine(
+        key: "s3.createBucket.error.settingsUnconfirmed %@",
+        english: "A bucket named \u{201C}%@\u{201D} exists now, but macSCP could not check whether it has the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
+
     static func existsIncompletelyLine(bucket: String) -> String {
         String(format: existsIncompletelyTemplate.text, bucket)
+    }
+
+    static func settingsDidNotTakeLine(bucket: String) -> String {
+        String(format: settingsDidNotTakeTemplate.text, bucket)
+    }
+
+    static func settingsUnconfirmedLine(bucket: String) -> String {
+        String(format: settingsUnconfirmedTemplate.text, bucket)
     }
 
     /// The sentence for each problem the validator reports. No `default`: a
@@ -490,7 +635,8 @@ final class CreateBucketModel {
             titleLine, nameLabelLine, nameHintLine, actionLine, versioningLabel, objectLockLabel,
             versioningNote, versioningHeldByObjectLockNote, objectLockNote, nameIsTakenLine,
             listingUnknownLine, creatingLine, createdLine, notCreatedLine, deniedLine,
-            existsIncompletelyTemplate, mayExistLine,
+            existsIncompletelyTemplate, mayExistLine, settingsDidNotTakeTemplate,
+            settingsUnconfirmedTemplate,
         ] + everyProblem.map { line(for: $0) }
     }
 }

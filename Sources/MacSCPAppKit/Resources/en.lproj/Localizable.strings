@@ -555,6 +555,8 @@
 "s3.createBucket.error.denied" = "Your access key is not allowed to create buckets.";
 "s3.createBucket.error.existsIncompletely %@" = "A bucket named “%@” exists now, but the request to create it with the settings you chose did not complete. It may not have those settings. Open Versioning and Object Lock for it to see what it has, and do not create it again.";
 "s3.createBucket.error.mayExist" = "Creating the bucket did not finish, and the bucket may exist now. Refresh the list; if it is there, open Versioning and Object Lock for it to see what it has.";
+"s3.createBucket.error.settingsDidNotTake %@" = "A bucket named “%@” exists now, and it does not have the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.";
+"s3.createBucket.error.settingsUnconfirmed %@" = "A bucket named “%@” exists now, but macSCP could not check whether it has the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.";
 "s3.createBucket.problem.tooShort" = "A bucket name needs at least 3 characters.";
 "s3.createBucket.problem.tooLong" = "A bucket name can have at most 63 characters.";
 "s3.createBucket.problem.uppercase" = "A bucket name cannot contain uppercase letters.";

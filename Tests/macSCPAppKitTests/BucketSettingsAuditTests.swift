@@ -305,6 +305,51 @@ struct BucketSettingsAuditTests {
         #expect(trail.events.count == 1)
     }
 
+    // MARK: - What the create's line claims (F1)
+
+    /// **The audit line records what was READ BACK, not what was requested.**
+    /// The store answers the create with success and does not apply the
+    /// Object Lock header, so a line saying the bucket has Object Lock is a
+    /// record someone would later rely on for a protection that is not there
+    /// -- which is worse than a sheet saying it, because the sheet is read
+    /// once and the trail is read afterwards.
+    ///
+    /// The positive control is the second half: the same create against a
+    /// store that does apply it DOES say Object Lock, so this is not a test
+    /// that passes because the words never appear.
+    @MainActor @Test func aCreateWhoseObjectLockDidNotTakeIsNotRecordedAsHavingIt() async {
+        let didNotTake = Trail()
+        defer { didNotTake.remove() }
+        let ignoring = FakeBucketSettings(createEffect: .ignoresTheObjectLockHeader)
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: ignoring, recorder: didNotTake.recorder)
+
+        let events = didNotTake.events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .bucketCreated)
+        let detail = events.first?.detail ?? ""
+        // What was read back: versioning took, the lock did not.
+        #expect(detail == "created bucket macscp-third with versioning")
+        #expect(detail.contains("Object Lock") == false)
+        // And it is not recorded as a clean write: a line with no failure
+        // beside it reads as done.
+        #expect(events.first?.isError == true)
+        #expect((events.first?.errorMessage ?? "").isEmpty == false)
+
+        let took = Trail()
+        defer { took.remove() }
+        let applying = FakeBucketSettings()
+        let confirmed = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        confirmed.name = "macscp-third"
+        confirmed.objectLock = true
+        await confirmed.create(via: applying, recorder: took.recorder)
+        let confirmedDetail = took.events.first?.detail ?? ""
+        #expect(confirmedDetail == "created bucket macscp-third with versioning and Object Lock")
+        #expect(took.events.first?.isError == false)
+    }
+
     // MARK: - The three Object Lock operations
 
     @MainActor @Test func anObjectLockLineNamesWhichOfTheThreeOperationsItWas() async {
@@ -409,11 +454,22 @@ struct BucketSettingsAuditTests {
         }
     }
 
-    // MARK: - Create's two records
+    // MARK: - Create's records, one per arm
 
-    /// `create` makes exactly two recording calls: one when the store
-    /// accepted the request, one when it refused it. That is what is pinned,
-    /// and it is the half that notices a record somebody deleted.
+    /// `create` makes exactly one recording call per arm it can take: the
+    /// store accepted the request and the read-back confirmed the settings;
+    /// it accepted and the read-back found something else; it accepted and
+    /// the read-back did not answer; it refused. Four. That is what is
+    /// pinned, and it is the half that notices a record somebody deleted.
+    ///
+    /// **Corrected 2026-10-22 (F1 of the final whole-branch review).** This
+    /// test was named `createMakesExactlyTwoRecordingCalls`, asserted
+    /// `recordingCalls == 2` with the message "the success line and the
+    /// refusal line", and its first paragraph read, verbatim: "`create` makes
+    /// exactly two recording calls: one when the store accepted the request,
+    /// one when it refused it." The success side is now three arms, because a
+    /// create the store accepted is read back before it is called done, and
+    /// each arm records a different protection or a different sentence.
     ///
     /// What is NOT pinned, and cannot be by a text scan: that the refusal's
     /// record is unconditional, the shape the fix for Ruling 20 gave it (it
@@ -435,13 +491,13 @@ struct BucketSettingsAuditTests {
     /// way, because the refusal type has no arm that is not a refusal. That is
     /// why no behavioural test can see the difference, and why the shape is a
     /// readability property of the code, not an invariant of the program.
-    @Test func createMakesExactlyTwoRecordingCalls() throws {
+    @Test func createMakesOneRecordingCallPerArmItCanTake() throws {
         let source = try Self.code("MacSCPAppKit/CreateBucketSheet.swift")
         let lines = source.components(separatedBy: "\n")
         let start = try #require(lines.firstIndex { $0.contains("func create(via") })
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix("    }") })
         let recordingCalls = lines[start...end].filter { $0.contains("recordBucketCreated(") }.count
-        #expect(recordingCalls == 2, "the success line and the refusal line")
+        #expect(recordingCalls == 4, "confirmed, not as asked, unconfirmed, refused")
     }
 
     // MARK: - A missing recorder
