@@ -738,6 +738,10 @@ struct ContentView: View {
     /// underneath it.
     struct BucketVersioningSheetItem: Identifiable {
         let id = UUID()
+        /// The tab's audit recorder, captured with the capability, as
+        /// every bucket-settings item here does. `nil` when the tab has none (its stored
+        /// session was deleted under it); an ad-hoc connect has one.
+        let recorder: AuditRecorder?
         let bucket: String
         let settings: any S3BucketSettings
         /// Where the sheet reads whether the bucket has Object Lock, captured
@@ -754,6 +758,7 @@ struct ContentView: View {
     /// `BucketVersioningSheetItem` gives.
     struct BucketCORSSheetItem: Identifiable {
         let id = UUID()
+        let recorder: AuditRecorder?
         let bucket: String
         let settings: any S3BucketSettings
     }
@@ -767,6 +772,7 @@ struct ContentView: View {
     /// time, for the reason `BucketVersioningSheetItem` gives.
     struct BucketObjectLockSheetItem: Identifiable {
         let id = UUID()
+        let recorder: AuditRecorder?
         let bucket: String
         let settings: any S3BucketSettings
         let states: ObjectLockStateCache
@@ -782,6 +788,7 @@ struct ContentView: View {
     /// sheet made a bucket.
     struct CreateBucketSheetItem: Identifiable {
         let id = UUID()
+        let recorder: AuditRecorder?
         let settings: any S3BucketSettings
         let listing: CreateBucketModel.Listing
         let onCreated: () -> Void
@@ -793,6 +800,7 @@ struct ContentView: View {
     /// two, the bucket and key it was resolved to, and what it talks to.
     struct ObjectLockSheetItem: Identifiable {
         let id = UUID()
+        let recorder: AuditRecorder?
         let focus: ObjectLockModel.Focus
         let target: ObjectLockTarget
         let settings: any S3BucketSettings

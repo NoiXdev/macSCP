@@ -248,10 +248,12 @@ final class SessionTab: Identifiable {
     /// the sidebar reports a new selection, which is the user pointing
     /// this window's front tab somewhere else.
     var restoredSessionID: UUID?
-    /// Per-session audit recorder (M9b) — set only when this tab connects to
-    /// a STORED session (never for an ad-hoc connect), alongside
-    /// `activeStoredSessionID`; nilled in `teardown(_:)` after the final
-    /// `recordDisconnected()` call. See `ContentView.attachAuditRecorder`.
+    /// Per-session audit recorder (M9b) — set when this tab connects, to the
+    /// stored session's log or, for an unsaved connection, to the fixed ad-hoc
+    /// log (`AdHocAudit`, M31); nilled in `teardown(_:)` after the final
+    /// `recordDisconnected()` call, and when the sidebar deletes the stored
+    /// session under an open tab (`ContentView+Detail.swift`). See
+    /// `ContentView.attachAuditRecorder`.
     var auditRecorder: AuditRecorder?
     var isReconnecting = false
     /// Identifies the current reconnect attempt for THIS tab (connection-

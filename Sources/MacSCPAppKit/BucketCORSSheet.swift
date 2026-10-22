@@ -513,7 +513,11 @@ final class BucketCORSModel {
     /// After a write the sheet shows what the store says now, read back, and
     /// not what was sent. If the read-back fails after the write succeeded the
     /// rules sent are taken as stored: the store accepted them.
-    func save(bucket: String, via settings: any S3BucketSettings) async {
+    ///
+    /// `recorder` is where the outcome is written (Task 12): the COUNT of the
+    /// rules sent, one line either way. **No default value**: see
+    /// `BucketSettingsAuditTests`.
+    func save(bucket: String, via settings: any S3BucketSettings, recorder: AuditRecorder?) async {
         guard canSave else { return }
         isSaving = true
         saveFailure = nil
@@ -523,8 +527,11 @@ final class BucketCORSModel {
             try await settings.setCORS(sent, ofBucket: bucket)
         } catch {
             saveFailure = Self.message(for: error, applying: true)
+            recorder?.recordCORSChanged(bucket: bucket, ruleCount: sent.count, failure: saveFailure)
             return
         }
+        // At the moment the store accepted it, before the read-back below.
+        recorder?.recordCORSChanged(bucket: bucket, ruleCount: sent.count, failure: nil)
         do {
             adopt(try await settings.cors(ofBucket: bucket))
         } catch {
@@ -791,6 +798,14 @@ struct BucketCORSSheet: BoundedView {
     /// measured at the height of every rule it holds.
     static let paneHeight: CGFloat = 320
 
+    /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
+    /// captured when the sheet opens. **Required, with no default, and
+    /// optional in its type.** `nil` is a real answer -- a tab whose stored
+    /// session was deleted under it has none, see `BucketSettingsAuditTests`
+    /// -- but it has to be given at the call site, not inherited from a
+    /// default nobody read.
+    let recorder: AuditRecorder?
+
     let bucket: String
     let settings: any S3BucketSettings
 
@@ -801,9 +816,10 @@ struct BucketCORSSheet: BoundedView {
     /// layout registry passes one already in a state, so a measurement does
     /// not wait for a read.
     init(
-        bucket: String, settings: any S3BucketSettings,
+        recorder: AuditRecorder?, bucket: String, settings: any S3BucketSettings,
         model: BucketCORSModel = BucketCORSModel()
     ) {
+        self.recorder = recorder
         self.bucket = bucket
         self.settings = settings
         _model = State(initialValue: model)
@@ -824,7 +840,7 @@ struct BucketCORSSheet: BoundedView {
                     .buttonStyle(.polished)
                 if case .ready = model.load {
                     Button(BucketCORSModel.saveLine.text) {
-                        Task { await model.save(bucket: bucket, via: settings) }
+                        Task { await model.save(bucket: bucket, via: settings, recorder: recorder) }
                     }
                     .buttonStyle(.polishedProminent)
                     .disabled(!model.canSave)

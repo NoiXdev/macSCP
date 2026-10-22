@@ -365,24 +365,28 @@ enum BoundedViewRegistry {
             // (each entry opens its sheet at the end of a line).
             BoundedViewEntry("a never-versioned bucket, with the one-way warning") {
                 BucketVersioningSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .never, bucketHasObjectLock: false))
             },
             BoundedViewEntry("an enabled bucket, with the suspension warning") {
                 BucketVersioningSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a suspended bucket, offered enabling again") {
                 BucketVersioningSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .suspended, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a bucket whose versioning could not be read") {
                 BucketVersioningSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(
@@ -393,6 +397,7 @@ enum BoundedViewRegistry {
             // suspension warning and the action button otherwise do.
             BoundedViewEntry("an enabled bucket under Object Lock, with no action offered") {
                 BucketVersioningSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: true))
@@ -411,6 +416,7 @@ enum BoundedViewRegistry {
             // never called.
             BoundedViewEntry("CORS rules as fields, one rule with every field filled in") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketCORSModel(rules: Self.corsRules))
             },
@@ -418,10 +424,12 @@ enum BoundedViewRegistry {
                 let model = BucketCORSModel(rules: Self.corsRules)
                 model.pane = .text
                 return BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(), model: model)
             },
             BoundedViewEntry("a CORS configuration the fields cannot show") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketCORSModel(
                         loaded: BucketCORS(
@@ -433,6 +441,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a CORS rule with no method, as fields") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketCORSModel(rules: [
                         CORSRule(
@@ -451,6 +460,7 @@ enum BoundedViewRegistry {
                 let extra = (1...3).map { "<\(Self.corsOverlong("E\($0)"))>x</\(Self.corsOverlong("E\($0)"))>" }
                     .joined()
                 return BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(
                         text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
@@ -459,6 +469,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("CORS text with an overlong method name") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(
                         text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
@@ -467,6 +478,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("CORS text with a method outside the five") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(
                         text: "<CORSConfiguration><CORSRule><AllowedOrigin>*</AllowedOrigin>"
@@ -475,6 +487,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("CORS text with a value over several lines") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(
                         text: "<CORSConfiguration><CORSRule><AllowedOrigin>https://a.example\n"
@@ -483,6 +496,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("CORS text with a carriage return in a value") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(
                         text: "<CORSConfiguration><CORSRule><AllowedOrigin>a&#13;b</AllowedOrigin>"
@@ -490,11 +504,13 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("CORS text that is not a readable configuration yet") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: Self.corsModel(text: "<CORSConfiguration><CORSRule>"))
             },
             BoundedViewEntry("a bucket whose CORS rules could not be read") {
                 BucketCORSSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     model: BucketCORSModel(loadFailure: BucketCORSModel.deniedLine.text))
             },
@@ -511,16 +527,19 @@ enum BoundedViewRegistry {
             // is never called.
             BoundedViewEntry("a retention over a file with none, GOVERNANCE") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache, model: Self.lockModel(mode: .governance))
             },
             BoundedViewEntry("a retention, COMPLIANCE chosen, with its warning and acknowledgement") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache, model: Self.lockModel(mode: .compliance))
             },
             BoundedViewEntry("a retention, COMPLIANCE chosen, over a file that already has one") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache,
                     model: Self.lockModel(
@@ -529,6 +548,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a retention over a file whose name is very long") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention,
                     target: ObjectLockTarget(
                         bucket: "macscp-seed",
@@ -541,17 +561,20 @@ enum BoundedViewRegistry {
                     focus: .legalHold, bucketHasLock: true, now: { Self.lockNow })
                 model.legalHold = true
                 return ObjectLockSheet(
+                    recorder: nil,
                     focus: .legalHold, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache, model: model)
             },
             BoundedViewEntry("a file in a bucket with no Object Lock") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache,
                     model: ObjectLockModel(bucketHasLock: false, now: { Self.lockNow }))
             },
             BoundedViewEntry("an Object Lock read the store refused") {
                 ObjectLockSheet(
+                    recorder: nil,
                     focus: .retention, target: Self.lockTarget, settings: FakeBucketSettings(),
                     cache: Self.lockCache,
                     model: ObjectLockModel(
@@ -559,6 +582,7 @@ enum BoundedViewRegistry {
             },
             BoundedViewEntry("a bucket default over a bucket with none, GOVERNANCE") {
                 BucketObjectLockSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: BucketObjectLockModel(
                         bucketHasLock: true, current: nil, now: { Self.lockNow }))
@@ -569,17 +593,20 @@ enum BoundedViewRegistry {
                     now: { Self.lockNow })
                 model.days = 3650
                 return BucketObjectLockSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: model)
             },
             BoundedViewEntry("a bucket default over a bucket with no Object Lock") {
                 BucketObjectLockSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: BucketObjectLockModel(
                         bucketHasLock: false, current: nil, now: { Self.lockNow }))
             },
             BoundedViewEntry("a bucket default whose lock could not be read") {
                 BucketObjectLockSheet(
+                    recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: BucketObjectLockModel(
                         loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
@@ -608,6 +635,7 @@ enum BoundedViewRegistry {
                 model.name = "macscp-archive-2026"
                 model.objectLock = true
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a name already in the list") {
@@ -615,18 +643,21 @@ enum BoundedViewRegistry {
                 model.name = "macscp-seed"
                 model.versioning = true
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a name with a character that is not allowed") {
                 let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
                 model.name = "macscp_archive"
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a list of buckets that was never read") {
                 let model = CreateBucketModel(existingNames: [], listingIsKnown: false)
                 model.name = "macscp-archive-2026"
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a bucket made without the versioning that was asked for") {
@@ -639,6 +670,7 @@ enum BoundedViewRegistry {
                     name: "macscp-archive-2026")
                 model.objectLock = true
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             BoundedViewEntry("a create that may have left a bucket behind") {
@@ -649,6 +681,7 @@ enum BoundedViewRegistry {
                     name: "macscp-archive-2026")
                 model.objectLock = true
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
             // The one state where a partial outcome and a taken name are both
@@ -660,6 +693,7 @@ enum BoundedViewRegistry {
             // `entriesOfOneTypeMeasureDifferentStates` does not read it as a twin.
             BoundedViewEntry("a bucket the store says is already ours, whose name is also in the list") {
                 CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing,
                     model: Self.ownedBucketModel(nameInList: true))
             },
@@ -667,6 +701,7 @@ enum BoundedViewRegistry {
                 let model = CreateBucketModel(
                     existingNames: ["macscp-seed"], listingIsKnown: true, outcome: .created, name: "macscp-archive-2026")
                 return CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: Self.bucketListing, model: model)
             },
 

@@ -364,7 +364,11 @@ final class BucketObjectLockModel {
 
     /// Writes the default if and only if `canSave`. The sheet then shows what
     /// the store says now, read back, and the tick is spent.
-    func save(bucket: String, via settings: any S3BucketSettings) async {
+    ///
+    /// `recorder` is where the outcome is written (Task 12): one line either
+    /// way, none for a click the sheet refused. **No default value**: see
+    /// `BucketSettingsAuditTests`.
+    func save(bucket: String, via settings: any S3BucketSettings, recorder: AuditRecorder?) async {
         // A refusal is counted so that the sheet, which cannot see the clock,
         // redraws and says why (a stale tick), instead of the click doing
         // nothing the person can see. The tick itself is left standing.
@@ -387,6 +391,8 @@ final class BucketObjectLockModel {
         do {
             try await settings.setObjectLockDefault(
                 days: written.days, mode: written.mode, ofBucket: bucket)
+            recorder?.recordObjectLockChanged(
+                .bucketDefault(days: written.days, mode: written.mode, bucket: bucket), failure: nil)
             let readBack = (try? await settings.objectLockDefault(ofBucket: bucket)) ?? written
             current = readBack
             currentRead = true
@@ -394,6 +400,9 @@ final class BucketObjectLockModel {
             isSaved = true
         } catch {
             applyFailure = ObjectLockLines.message(for: error, during: .applyingDefault)
+            recorder?.recordObjectLockChanged(
+                .bucketDefault(days: written.days, mode: written.mode, bucket: bucket),
+                failure: applyFailure)
         }
     }
 }
@@ -408,6 +417,14 @@ struct BucketObjectLockSheet: BoundedView {
     /// `.sheetBound(Self.bound)`.
     static let bound: SheetBound = .width(460)
 
+    /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
+    /// captured when the sheet opens. **Required, with no default, and
+    /// optional in its type.** `nil` is a real answer -- a tab whose stored
+    /// session was deleted under it has none, see `BucketSettingsAuditTests`
+    /// -- but it has to be given at the call site, not inherited from a
+    /// default nobody read.
+    let recorder: AuditRecorder?
+
     let bucket: String
     let settings: any S3BucketSettings
     let cache: ObjectLockStateCache
@@ -416,9 +433,10 @@ struct BucketObjectLockSheet: BoundedView {
     @State private var model: BucketObjectLockModel
 
     init(
-        bucket: String, settings: any S3BucketSettings, cache: ObjectLockStateCache,
-        model: BucketObjectLockModel = BucketObjectLockModel()
+        recorder: AuditRecorder?, bucket: String, settings: any S3BucketSettings,
+        cache: ObjectLockStateCache, model: BucketObjectLockModel = BucketObjectLockModel()
     ) {
+        self.recorder = recorder
         self.bucket = bucket
         self.settings = settings
         self.cache = cache
@@ -437,7 +455,7 @@ struct BucketObjectLockSheet: BoundedView {
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polished)
                 Button(BucketObjectLockModel.saveLine.text) {
-                    Task { await model.save(bucket: bucket, via: settings) }
+                    Task { await model.save(bucket: bucket, via: settings, recorder: recorder) }
                 }
                 .buttonStyle(.polishedProminent)
                 .disabled(!model.canSave)

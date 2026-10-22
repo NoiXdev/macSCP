@@ -287,7 +287,7 @@ struct ObjectLockSheetTests {
         #expect(!model.canRun)
         #expect(model.explanation?.key == ObjectLockModel.complianceInForceLine.key)
         let probe = FakeBucketSettings(lock: .init())
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.isEmpty)
     }
 
@@ -404,12 +404,12 @@ struct ObjectLockSheetTests {
         let redraw = RedrawFlag()
         withObservationTracking({ _ = model.canRun }, onChange: { redraw.raise() })
         clock.date = Self.now.addingTimeInterval(7_200)
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.isEmpty, "a retention was written for a date that had passed")
         #expect(redraw.raised, "a click on a passed date changed nothing the sheet was watching")
         #expect(model.explanation?.key == ObjectLockModel.datePastLine.key)
         model.retainUntil = Self.now.addingTimeInterval(3 * 86_400)
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.count == 1)
     }
 
@@ -418,10 +418,10 @@ struct ObjectLockSheetTests {
     @MainActor @Test func onlyARefusedRunIsCounted() async {
         let probe = FakeBucketSettings(lock: .init())
         let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(model.refusedRuns == 0)
         model.retainUntil = Self.yesterday
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(model.refusedRuns == 1)
     }
 
@@ -613,7 +613,7 @@ struct ObjectLockSheetTests {
         let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
         model.mode = .governance
         model.retainUntil = Self.newYear
-        await model.run(key: "photos/a.txt", bucket: "macscp-seed", via: probe)
+        await model.run(key: "photos/a.txt", bucket: "macscp-seed", via: probe, recorder: nil)
         #expect(
             probe.retentionWrites == [
                 FakeBucketSettings.RetentionWrite(
@@ -634,14 +634,14 @@ struct ObjectLockSheetTests {
         let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
         model.mode = .compliance
         model.retainUntil = Self.newYear
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.isEmpty, "sent without an acknowledgement")
         model.acknowledged = true
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.map(\.retention.retainUntil) == [Self.newYear])
         #expect(probe.retentionWrites.map(\.retention.mode) == [.compliance])
         #expect(!model.acknowledged)
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.count == 1, "a spent acknowledgement ran a second write")
     }
 
@@ -650,7 +650,7 @@ struct ObjectLockSheetTests {
             lock: .init(writeError: RemoteFSError.permissionDenied(path: "/b/a")))
         let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
         model.retainUntil = Self.newYear
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.count == 1)
         #expect(model.current?.retention == nil)
         #expect(model.applyFailure == ObjectLockLines.retentionRefused.text)
@@ -666,7 +666,7 @@ struct ObjectLockSheetTests {
         let probe = FakeBucketSettings(lock: .init(writeError: RemoteFSError.protocolError(reason: planted)))
         let model = ObjectLockModel(bucketHasLock: true, now: { Self.now })
         model.retainUntil = Self.newYear
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         let text = model.applyFailure ?? ""
         let quoted = text.contains("SECRETEXAMPLE") || text.contains("store.invalid")
         #expect(!text.isEmpty)
@@ -677,7 +677,7 @@ struct ObjectLockSheetTests {
         let probe = FakeBucketSettings(lock: .init())
         let model = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
         model.legalHold = true
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(
             probe.legalHoldWrites == [
                 FakeBucketSettings.LegalHoldWrite(on: true, key: "a", bucket: "b", versionId: nil)
@@ -686,7 +686,7 @@ struct ObjectLockSheetTests {
         // Placed; the toggle now equals the store, so there is nothing to run.
         #expect(!model.canRun)
         model.legalHold = false
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.legalHoldWrites.map(\.on) == [true, false])
     }
 
@@ -697,7 +697,7 @@ struct ObjectLockSheetTests {
             lock: .init(writeError: RemoteFSError.permissionDenied(path: "/b/a")))
         let model = ObjectLockModel(focus: .legalHold, bucketHasLock: true, now: { Self.now })
         model.legalHold = true
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.legalHoldWrites.count == 1)
         #expect(model.applyFailure == ObjectLockLines.denied.text)
         #expect(model.applyFailure != ObjectLockLines.retentionRefused.text)
@@ -713,13 +713,13 @@ struct ObjectLockSheetTests {
         holdSheet.retainUntil = Self.newYear
         holdSheet.acknowledged = true
         holdSheet.legalHold = true
-        await holdSheet.run(key: "a", bucket: "b", via: probe)
+        await holdSheet.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.isEmpty)
         #expect(probe.legalHoldWrites.count == 1)
 
         let retentionSheet = ObjectLockModel(focus: .retention, bucketHasLock: true, now: { Self.now })
         retentionSheet.legalHold = true
-        await retentionSheet.run(key: "a", bucket: "b", via: probe)
+        await retentionSheet.run(key: "a", bucket: "b", via: probe, recorder: nil)
         #expect(probe.retentionWrites.count == 1)
         #expect(probe.legalHoldWrites.count == 1, "the retention sheet placed a hold")
     }
@@ -742,12 +742,12 @@ struct ObjectLockSheetTests {
         model.mode = .compliance
         model.retainUntil = Self.newYear
         model.acknowledged = true
-        let first = Task { @MainActor in await model.run(key: "a", bucket: "b", via: probe) }
+        let first = Task { @MainActor in await model.run(key: "a", bucket: "b", via: probe, recorder: nil) }
         _ = await entered.wait()
         #expect(model.isApplying)
         #expect(model.activeBlockers.contains(.applying))
         #expect(!model.canRun)
-        await model.run(key: "a", bucket: "b", via: probe)
+        await model.run(key: "a", bucket: "b", via: probe, recorder: nil)
         release.signal()
         await first.value
         #expect(probe.retentionWrites.count == 1)
@@ -886,7 +886,7 @@ struct ObjectLockSheetTests {
             let probe = FakeBucketSettings(lock: .init())
             let allowed = model.canRun
             #expect(allowed == scenario.mayWrite, "\(scenario)")
-            await model.run(key: "k", bucket: "b", via: probe)
+            await model.run(key: "k", bucket: "b", via: probe, recorder: nil)
             let writes = probe.retentionWrites.count + probe.legalHoldWrites.count
             #expect(writes == (allowed ? 1 : 0), "\(scenario)")
             if allowed { wrote += 1 } else { refused += 1 }
@@ -1090,8 +1090,10 @@ struct ObjectLockSheetTests {
         #expect(around.contains("path: file.path"))
         #expect(around.contains("focus: lockAction.focus"))
         let sheet = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
-        let runs = sheet.matches(of: #/model\.run\(([^)]*)\)/#).map { String($0.output.1) }
-        #expect(runs == ["key: target.key, bucket: target.bucket, via: settings"])
+        let runs = sheet.matches(of: #/model\.run\(([^)]*)\)/#).map {
+            String($0.output.1).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        #expect(runs == ["key: target.key, bucket: target.bucket, via: settings, recorder: recorder"])
         let loads = sheet.matches(of: #/model\.load\(([^)]*)\)/#).map { String($0.output.1) }
         #expect(loads.count == 1)
         let loadArguments = loads.first.map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }

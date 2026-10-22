@@ -148,29 +148,35 @@ extension ContentView {
         // Bucket versioning sheet (S3 bucket settings, Task 8): opened from the
         // toolbar's connection-actions menu through `handleConnectionAction`.
         .sheet(item: $versioningSheetItem) { item in
-            BucketVersioningSheet(bucket: item.bucket, settings: item.settings, locks: item.states)
+            BucketVersioningSheet(
+                recorder: item.recorder, bucket: item.bucket, settings: item.settings,
+                locks: item.states)
         }
         // Bucket CORS sheet (S3 bucket settings, Task 9): opened from the same
         // menu, through the same dispatcher.
         .sheet(item: $corsSheetItem) { item in
-            BucketCORSSheet(bucket: item.bucket, settings: item.settings)
+            BucketCORSSheet(recorder: item.recorder, bucket: item.bucket, settings: item.settings)
         }
         // Bucket Object Lock default (Task 10): the same menu, the same
         // dispatcher.
         .sheet(item: $bucketObjectLockSheetItem) { item in
-            BucketObjectLockSheet(bucket: item.bucket, settings: item.settings, cache: item.states)
+            BucketObjectLockSheet(
+                recorder: item.recorder, bucket: item.bucket, settings: item.settings,
+                cache: item.states)
         }
         // Create bucket (Task 11): the same menu, the same dispatcher, and the
         // only row that is live at the bucket list.
         .sheet(item: $createBucketSheetItem) { item in
             CreateBucketSheet(
-                settings: item.settings, listing: item.listing, onCreated: item.onCreated)
+                recorder: item.recorder, settings: item.settings, listing: item.listing,
+                onCreated: item.onCreated)
         }
         // Per-file retention and legal hold (Task 10): opened from the file
         // context menu's two Object Lock entries, see `handleBrowserMenuEntry`.
         .sheet(item: $objectLockSheetItem) { item in
             ObjectLockSheet(
-                focus: item.focus, target: item.target, settings: item.settings, cache: item.states)
+                recorder: item.recorder, focus: item.focus, target: item.target,
+                settings: item.settings, cache: item.states)
         }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it

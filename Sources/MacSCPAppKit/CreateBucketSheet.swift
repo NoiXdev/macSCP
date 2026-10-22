@@ -259,7 +259,12 @@ final class CreateBucketModel {
     /// the read answers existence, not authorship. The two come apart on a
     /// stale listing, or on a create refused for a bucket the key can still
     /// read.
-    func create(via settings: any S3BucketSettings) async {
+    ///
+    /// `recorder` is where the outcome is written (Task 12): a line when the
+    /// request went through, a line with the sheet's own sentence when it did
+    /// not, and nothing when the sheet refused before any request existed.
+    /// **No default value**: see `BucketSettingsAuditTests`.
+    func create(via settings: any S3BucketSettings, recorder: AuditRecorder?) async {
         guard canCreate else { return }
         let bucket = name
         let choice = protection
@@ -268,8 +273,14 @@ final class CreateBucketModel {
             try await settings.createBucket(bucket, protection: choice)
             takenNames.insert(bucket)
             outcome = .created
+            recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
         } catch {
             outcome = await failure(for: error, bucket: bucket, protection: choice, via: settings)
+            // The sentence the sheet now shows, which is a fixed one and never
+            // the store's own words (`failure(for:...)`).
+            if case .failed(let sentence, _) = outcome {
+                recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: sentence)
+            }
         }
     }
 
@@ -476,6 +487,14 @@ struct CreateBucketSheet: BoundedView {
     /// `.sheetBound(Self.bound)`.
     static let bound: SheetBound = .width(480)
 
+    /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
+    /// captured when the sheet opens. **Required, with no default, and
+    /// optional in its type.** `nil` is a real answer -- a tab whose stored
+    /// session was deleted under it has none, see `BucketSettingsAuditTests`
+    /// -- but it has to be given at the call site, not inherited from a
+    /// default nobody read.
+    let recorder: AuditRecorder?
+
     let settings: any S3BucketSettings
     let onCreated: () -> Void
 
@@ -486,9 +505,11 @@ struct CreateBucketSheet: BoundedView {
     /// passes one already in a state, so a measurement does not wait on a
     /// request.
     init(
-        settings: any S3BucketSettings, listing: CreateBucketModel.Listing,
-        onCreated: @escaping () -> Void = {}, model: CreateBucketModel? = nil
+        recorder: AuditRecorder?, settings: any S3BucketSettings,
+        listing: CreateBucketModel.Listing, onCreated: @escaping () -> Void = {},
+        model: CreateBucketModel? = nil
     ) {
+        self.recorder = recorder
         self.settings = settings
         self.onCreated = onCreated
         _model = State(initialValue: model ?? CreateBucketModel(listing: listing))
@@ -546,7 +567,7 @@ struct CreateBucketSheet: BoundedView {
                     .buttonStyle(.polished)
                 Button(CreateBucketModel.actionLine.text) {
                     Task {
-                        await model.create(via: settings)
+                        await model.create(via: settings, recorder: recorder)
                         if model.bucketMayExist { onCreated() }
                     }
                 }

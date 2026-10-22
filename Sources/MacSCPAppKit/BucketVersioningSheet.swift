@@ -313,9 +313,13 @@ final class BucketVersioningModel {
     /// cache keeps no failure, so this is a real second ask. If that fails
     /// too, `lockReadFailed` is set and the enabled bucket says so
     /// (`blockedReason`) instead of standing settled and silent.
+    ///
+    /// `recorder` is where the outcome is written (Task 12), one line either
+    /// way and none for a target that was dropped. **No default value**: see
+    /// `BucketSettingsAuditTests`.
     func apply(
         _ target: BucketVersioning, bucket: String, via settings: any S3BucketSettings,
-        locks: ObjectLockStateCache
+        locks: ObjectLockStateCache, recorder: AuditRecorder?
     ) async {
         guard !isApplying, offeredStates.contains(target) else { return }
         isApplying = true
@@ -323,6 +327,9 @@ final class BucketVersioningModel {
         defer { isApplying = false }
         do {
             try await settings.setVersioning(target, ofBucket: bucket)
+            // At the moment the store accepted it, before the read-back that
+            // follows: nothing after this line can lose the record.
+            recorder?.recordVersioningChanged(bucket: bucket, to: target, failure: nil)
             let now = (try? await settings.versioning(ofBucket: bucket)) ?? target
             if bucketHasObjectLock == nil {
                 do {
@@ -335,6 +342,7 @@ final class BucketVersioningModel {
             load = .known(now)
         } catch {
             applyFailure = Self.message(for: error, applying: true)
+            recorder?.recordVersioningChanged(bucket: bucket, to: target, failure: applyFailure)
         }
     }
 
@@ -368,6 +376,14 @@ struct BucketVersioningSheet: BoundedView {
     /// `.sheetBound(Self.bound)`.
     static let bound: SheetBound = .width(420)
 
+    /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
+    /// captured when the sheet opens. **Required, with no default, and
+    /// optional in its type.** `nil` is a real answer -- a tab whose stored
+    /// session was deleted under it has none, see `BucketSettingsAuditTests`
+    /// -- but it has to be given at the call site, not inherited from a
+    /// default nobody read.
+    let recorder: AuditRecorder?
+
     let bucket: String
     let settings: any S3BucketSettings
     /// The session's lock-state cache (`BrowserSession.objectLockStates`),
@@ -385,9 +401,10 @@ struct BucketVersioningSheet: BoundedView {
     /// answer from `locks`, which has no default. The layout registry passes
     /// one already in a state, so a measurement does not wait for a read.
     init(
-        bucket: String, settings: any S3BucketSettings, locks: ObjectLockStateCache,
-        model: BucketVersioningModel = BucketVersioningModel()
+        recorder: AuditRecorder?, bucket: String, settings: any S3BucketSettings,
+        locks: ObjectLockStateCache, model: BucketVersioningModel = BucketVersioningModel()
     ) {
+        self.recorder = recorder
         self.bucket = bucket
         self.settings = settings
         self.locks = locks
@@ -409,7 +426,11 @@ struct BucketVersioningSheet: BoundedView {
                     let line = BucketVersioningModel.actionLine(for: target)
                 {
                     Button(line.text) {
-                        Task { await model.apply(target, bucket: bucket, via: settings, locks: locks) }
+                        Task {
+                            await model.apply(
+                                target, bucket: bucket, via: settings, locks: locks,
+                                recorder: recorder)
+                        }
                     }
                     .buttonStyle(.polishedProminent)
                     .disabled(model.isApplying)

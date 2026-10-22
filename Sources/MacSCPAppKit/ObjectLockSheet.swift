@@ -609,7 +609,14 @@ final class ObjectLockModel {
     /// The COMPLIANCE write is the date that was acknowledged: the fields it
     /// reads are the ones whose change clears the tick. After a write the
     /// sheet shows what the store says now, read back, and the tick is spent.
-    func run(key: String, bucket: String, via settings: any S3BucketSettings) async {
+    ///
+    /// `recorder` is where the outcome is written (Task 12): one line either
+    /// way, none for a click the sheet refused, and the line names which of
+    /// the two writes it was (`AuditRecorder.ObjectLockChange`). **No default
+    /// value**: see `BucketSettingsAuditTests`.
+    func run(
+        key: String, bucket: String, via settings: any S3BucketSettings, recorder: AuditRecorder?
+    ) async {
         // A refusal is counted so the sheet redraws and says why (a date that has
         // passed), instead of the click doing nothing the person can see.
         guard canRun else {
@@ -626,6 +633,11 @@ final class ObjectLockModel {
             do {
                 try await settings.setRetention(
                     written, ofKey: key, inBucket: bucket, versionId: nil)
+                // At the moment the store accepted it, before the read-back: a
+                // COMPLIANCE retention cannot be taken back, and nothing after
+                // this line may lose the trace of it.
+                recorder?.recordObjectLockChanged(
+                    .retention(written, key: key, bucket: bucket), failure: nil)
                 let readBack =
                     (try? await settings.retention(ofKey: key, inBucket: bucket, versionId: nil))
                     ?? written
@@ -634,11 +646,15 @@ final class ObjectLockModel {
                 isSaved = true
             } catch {
                 applyFailure = ObjectLockLines.message(for: error, during: .applyingRetention)
+                recorder?.recordObjectLockChanged(
+                    .retention(written, key: key, bucket: bucket), failure: applyFailure)
             }
         case .legalHold:
             let wanted = legalHold
             do {
                 try await settings.setLegalHold(wanted, ofKey: key, inBucket: bucket, versionId: nil)
+                recorder?.recordObjectLockChanged(
+                    .legalHold(wanted, key: key, bucket: bucket), failure: nil)
                 let readBack =
                     (try? await settings.legalHold(ofKey: key, inBucket: bucket, versionId: nil))
                     ?? wanted
@@ -647,6 +663,8 @@ final class ObjectLockModel {
                 isSaved = true
             } catch {
                 applyFailure = ObjectLockLines.message(for: error, during: .applyingHold)
+                recorder?.recordObjectLockChanged(
+                    .legalHold(wanted, key: key, bucket: bucket), failure: applyFailure)
             }
         }
     }
@@ -663,6 +681,14 @@ struct ObjectLockSheet: BoundedView {
     /// `.sheetBound(Self.bound)`.
     static let bound: SheetBound = .width(460)
 
+    /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
+    /// captured when the sheet opens. **Required, with no default, and
+    /// optional in its type.** `nil` is a real answer -- a tab whose stored
+    /// session was deleted under it has none, see `BucketSettingsAuditTests`
+    /// -- but it has to be given at the call site, not inherited from a
+    /// default nobody read.
+    let recorder: AuditRecorder?
+
     let target: ObjectLockTarget
     let settings: any S3BucketSettings
     let cache: ObjectLockStateCache
@@ -674,9 +700,11 @@ struct ObjectLockSheet: BoundedView {
     /// registry passes one already in a state, so a measurement does not wait
     /// for a read.
     init(
-        focus: ObjectLockModel.Focus, target: ObjectLockTarget, settings: any S3BucketSettings,
-        cache: ObjectLockStateCache, model: ObjectLockModel? = nil
+        recorder: AuditRecorder?, focus: ObjectLockModel.Focus, target: ObjectLockTarget,
+        settings: any S3BucketSettings, cache: ObjectLockStateCache,
+        model: ObjectLockModel? = nil
     ) {
+        self.recorder = recorder
         self.target = target
         self.settings = settings
         self.cache = cache
@@ -696,7 +724,11 @@ struct ObjectLockSheet: BoundedView {
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polished)
                 Button(model.actionLine.text) {
-                    Task { await model.run(key: target.key, bucket: target.bucket, via: settings) }
+                    Task {
+                        await model.run(
+                            key: target.key, bucket: target.bucket, via: settings,
+                            recorder: recorder)
+                    }
                 }
                 .buttonStyle(.polishedProminent)
                 .disabled(!model.canRun)
