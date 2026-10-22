@@ -389,10 +389,10 @@ extension ContentView {
             tab, to: tabsModel, in: TabRegistry.shared, window: windowID, after: sourceTab.id)
     }
 
-    /// Attaches this tab's audit recorder once it connects to a STORED
-    /// session (M9b/T3) — called from both places `activeStoredSessionID`
-    /// gets assigned: `connect(in:stored:)` and `startSession`'s "Save &
-    /// connect" path. Never called for an ad-hoc connect. Must run AFTER
+    /// Attaches this tab's audit recorder once it connects (M9b/T3) — called
+    /// from `startSession` for every connect, stored or not (an unsaved one
+    /// logs under `AdHocAudit.sessionID`, M31), and again from the
+    /// stored-session connect path. Must run AFTER
     /// `tab.session` is populated (`startSession` always sets it first), so
     /// `tab.session?.remote.auditSink` below has something to wire.
     ///

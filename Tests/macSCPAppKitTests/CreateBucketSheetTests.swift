@@ -85,7 +85,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-seed"
         model.versioning = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(settings.creates.isEmpty)
     }
 
@@ -97,7 +97,7 @@ struct CreateBucketSheetTests {
         model.name = "macscp-third"
         #expect(model.canCreate == false)
         #expect(model.listingUnknownKey == "s3.createBucket.listingUnknown")
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(settings.creates.isEmpty)
         let known = CreateBucketModel(existingNames: [], listingIsKnown: true)
         #expect(known.listingUnknownKey == nil)
@@ -182,7 +182,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(
             settings.creates == [
                 FakeBucketSettings.CreateCall(
@@ -196,7 +196,7 @@ struct CreateBucketSheetTests {
         let settings = FakeBucketSettings()
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(settings.creates.map(\.protection) == [.none])
     }
 
@@ -241,7 +241,7 @@ struct CreateBucketSheetTests {
             createFailure: .refused(RemoteFSError.protocolError(reason: planted)))
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.isCreated == false)
         #expect(model.bucketMayExist == false)
         let sentence = try #require(model.failureSentence)
@@ -257,7 +257,7 @@ struct CreateBucketSheetTests {
             let settings = FakeBucketSettings(createFailure: .refused(RemoteFSError.finding(finding)))
             let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
             model.name = "macscp-third"
-            await model.create(via: settings)
+            await model.create(via: settings, recorder: nil)
             #expect(model.failureSentence == finding.message, "\(finding.name)")
             // **Corrected 2026-10-21 (Task 11, fix round 1; quoted in round
             // 2).** This loop ended with `#expect(model.bucketMayExist == false)`
@@ -284,7 +284,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.bucketMayExist == true)  // the pane refreshes
         #expect(model.canCreate == false)
         #expect(model.nameIsTakenKey == "s3.createBucket.nameIsTaken")
@@ -298,7 +298,7 @@ struct CreateBucketSheetTests {
             createFailure: .refused(RemoteFSError.finding(.bucketNameTaken)))
         let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.bucketMayExist == false)
         #expect(model.canCreate == true)  // another name, or the same: the store will say
         #expect(model.nameIsTakenKey == nil)
@@ -321,13 +321,13 @@ struct CreateBucketSheetTests {
         let afterPartial = CreateBucketModel(existingNames: [], listingIsKnown: true)
         afterPartial.name = "macscp-third"
         afterPartial.versioning = true
-        await afterPartial.create(via: partial)
+        await afterPartial.create(via: partial, recorder: nil)
         #expect(afterPartial.nameIsTakenKey != nil)  // it IS taken...
         #expect(afterPartial.showsNameIsTaken == false)  // ...and the outcome already says so
 
         let made = CreateBucketModel(existingNames: [], listingIsKnown: true)
         made.name = "macscp-third"
-        await made.create(via: FakeBucketSettings())
+        await made.create(via: FakeBucketSettings(), recorder: nil)
         #expect(made.showsNameIsTaken == false)
     }
 
@@ -336,7 +336,7 @@ struct CreateBucketSheetTests {
             createFailure: .refused(RemoteFSError.permissionDenied(path: "/macscp-third")))
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.failureSentence == CreateBucketModel.deniedLine.text)
     }
 
@@ -349,7 +349,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
         model.name = "macscp-third"
         model.versioning = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.isCreated == false)
         #expect(model.bucketMayExist == true)
         let sentence = try #require(model.failureSentence)
@@ -372,7 +372,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.versioning = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.failureSentence == CreateBucketModel.mayExistLine.text)
         #expect(model.bucketMayExist == true)
         #expect(model.canCreate == false)
@@ -387,7 +387,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.failureSentence == CreateBucketModel.notCreatedLine.text)
         #expect(model.bucketMayExist == false)
         #expect(settings.reads == ["macscp-third"])  // the read was made, once
@@ -401,7 +401,7 @@ struct CreateBucketSheetTests {
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         model.objectLock = true
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.failureSentence == RemoteFSFinding.bucketNameTaken.message)
         #expect(model.bucketMayExist == false)
         #expect(settings.reads.isEmpty)
@@ -412,7 +412,7 @@ struct CreateBucketSheetTests {
             createFailure: .refused(RemoteFSError.protocolError(reason: "x")))
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(model.failureSentence != nil)
         model.name = "macscp-fourth"
         #expect(model.failureSentence == nil)
@@ -441,7 +441,7 @@ struct CreateBucketSheetTests {
         model.name = "macscp-third"
         #expect(model.canCreate == false)
         let settings = FakeBucketSettings()
-        await model.create(via: settings)
+        await model.create(via: settings, recorder: nil)
         #expect(settings.creates.isEmpty)
     }
 
@@ -600,6 +600,7 @@ struct CreateBucketSheetTests {
         SheetBound.$isSuspendedForMeasurement.withValue(true) {
             LayoutMeasure.minimumHeight(locale: locale, at: CreateBucketSheet.bound.grantedWidth) {
                 CreateBucketSheet(
+                    recorder: nil,
                     settings: FakeBucketSettings(), listing: BoundedViewRegistry.bucketListing,
                     model: model
                 )
@@ -886,7 +887,7 @@ struct CreateBucketSheetTests {
         #expect(arm.contains("remote.refresh()"))
         let sheet = try Self.code("Sources/MacSCPAppKit/CreateBucketSheet.swift")
         let guarded = try #require(sheet.range(of: "if model.bucketMayExist { onCreated() }"))
-        let create = try #require(sheet.range(of: "await model.create(via: settings)"))
+        let create = try #require(sheet.range(of: "await model.create(via: settings, recorder: recorder)"))
         #expect(create.upperBound <= guarded.lowerBound)
     }
 }

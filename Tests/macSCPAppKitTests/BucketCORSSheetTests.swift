@@ -379,7 +379,7 @@ struct BucketCORSSheetTests {
         let model = BucketCORSModel(loaded: nil)
         model.text = Self.simpleDocument
         #expect(model.canSave)
-        await model.save(bucket: "macscp-second", via: settings)
+        await model.save(bucket: "macscp-second", via: settings, recorder: nil)
         #expect(
             settings.corsWrites
                 == [FakeBucketSettings.CORSWrite(rules: [Self.rule()], bucket: "macscp-second")])
@@ -400,7 +400,7 @@ struct BucketCORSSheetTests {
         model.removeRule(at: 0)
         #expect(model.clearsTheConfiguration)
         #expect(model.canSave)
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         #expect(settings.corsWrites == [FakeBucketSettings.CORSWrite(rules: [], bucket: "b")])
         #expect(model.hasNoConfiguration)
         #expect(!model.canSave)
@@ -412,11 +412,11 @@ struct BucketCORSSheetTests {
         let settings = FakeBucketSettings()
         let model = BucketCORSModel(loaded: nil)
         model.text = Self.ruleDocument(method: "FETCH")
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         model.text = Self.documentWithAnUnknownElement
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         model.text = "<CORSConfiguration>"
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         #expect(settings.corsWrites.isEmpty)
     }
 
@@ -425,7 +425,7 @@ struct BucketCORSSheetTests {
             corsWriteError: RemoteFSError.finding(.operationNotSupported))
         let model = BucketCORSModel(loaded: nil)
         model.text = Self.simpleDocument
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         #expect(settings.corsWrites.count == 1)
         #expect(model.saveFailure == RemoteFSFinding.operationNotSupported.message)
         #expect(model.text == Self.simpleDocument)
@@ -440,7 +440,7 @@ struct BucketCORSSheetTests {
         let settings = FakeBucketSettings(corsWriteError: RemoteFSError.finding(.corsRuleInvalid))
         let model = BucketCORSModel(loaded: nil)
         model.text = Self.simpleDocument
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         #expect(model.saveFailure == RemoteFSFinding.corsRuleInvalid.message)
         // The sentence a store answer that could not be used is shown as.
         #expect(model.saveFailure != BucketCORSModel.saveFailedLine.text)
@@ -459,7 +459,7 @@ struct BucketCORSSheetTests {
         await reading.read(bucket: "b", from: settings)
         let writing = BucketCORSModel(loaded: nil)
         writing.text = Self.simpleDocument
-        await writing.save(bucket: "b", via: settings)
+        await writing.save(bucket: "b", via: settings, recorder: nil)
         var shown = ""
         if case .failed(let sentence) = reading.load { shown += sentence }
         shown += writing.saveFailure ?? ""
@@ -512,7 +512,7 @@ struct BucketCORSSheetTests {
             model.selectPane(chosen)
             model.text = Self.originDocument("https://a.example")
             #expect(model.canSave)
-            await model.save(bucket: "b", via: settings)
+            await model.save(bucket: "b", via: settings, recorder: nil)
             #expect(settings.corsWrites.count == 1)
             #expect(model.saveFailure == nil)
             #expect(model.pane == chosen)
@@ -528,7 +528,7 @@ struct BucketCORSSheetTests {
         let model = await Self.readModel(settings)
         model.selectPane(.text)
         model.text = Self.originDocument("https://a.example")
-        await model.save(bucket: "b", via: settings)
+        await model.save(bucket: "b", via: settings, recorder: nil)
         #expect(settings.corsWrites.count == 1)
         #expect(model.saveFailure != nil)
         #expect(model.pane == .text)
@@ -930,6 +930,7 @@ struct BucketCORSSheetTests {
         L10n.$localeOverride.withValue("en") {
             let host = NSHostingView(
                 rootView: BucketCORSSheet(
+                    recorder: nil,
                     bucket: "b", settings: FakeBucketSettings(), model: model))
             host.frame = CGRect(x: 0, y: 0, width: 700, height: 700)
             let window = NSWindow(

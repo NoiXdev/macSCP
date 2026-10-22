@@ -104,7 +104,8 @@ extension ContentView {
                 let states = session.objectLockStates
             {
                 objectLockSheetItem = ObjectLockSheetItem(
-                    focus: lockAction.focus, target: target, settings: settings, states: states)
+                    recorder: tab.auditRecorder, focus: lockAction.focus, target: target,
+                    settings: settings, states: states)
             }
         }
     }
@@ -182,19 +183,21 @@ extension ContentView {
                 // has no button and nothing to say, and that is worse than one
                 // extra read.
                 versioningSheetItem = BucketVersioningSheetItem(
-                    bucket: bucket, settings: settings,
+                    recorder: tab.auditRecorder, bucket: bucket, settings: settings,
                     states: session.objectLockStates ?? ObjectLockStateCache(settings: settings))
             }
         case .cors:
             if let settings = context.settings, let bucket = context.bucket {
-                corsSheetItem = BucketCORSSheetItem(bucket: bucket, settings: settings)
+                corsSheetItem = BucketCORSSheetItem(
+                    recorder: tab.auditRecorder, bucket: bucket, settings: settings)
             }
         case .objectLock:
             if let settings = context.settings, let bucket = context.bucket,
                 let states = session.objectLockStates
             {
                 bucketObjectLockSheetItem = BucketObjectLockSheetItem(
-                    bucket: bucket, settings: settings, states: states)
+                    recorder: tab.auditRecorder, bucket: bucket, settings: settings,
+                    states: states)
             }
         case .createBucket:
             // The mirror of the three arms above: they need a bucket, this one
@@ -205,7 +208,7 @@ extension ContentView {
             // refreshes that listing, so it appears.
             if let settings = context.settings {
                 createBucketSheetItem = CreateBucketSheetItem(
-                    settings: settings,
+                    recorder: tab.auditRecorder, settings: settings,
                     listing: CreateBucketModel.listing(of: session.remote),
                     onCreated: { [remote = session.remote] in
                         Task { await remote.refresh() }

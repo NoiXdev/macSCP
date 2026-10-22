@@ -138,7 +138,7 @@ struct BucketObjectLockSheetTests {
         #expect(model.acknowledgementDate != named)
         #expect(model.activeBlockers == [.acknowledgementStale])
         #expect(model.explanation?.key == BucketObjectLockModel.staleLine.key)
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         #expect(probe.defaultWrites.isEmpty, "a tick for another day sent a COMPLIANCE default")
         #expect(model.acknowledged, "the tick stands: it is not taken away unexplained")
         #expect(model.explanation?.key == BucketObjectLockModel.staleLine.key)
@@ -146,7 +146,7 @@ struct BucketObjectLockSheetTests {
         #expect(model.explanation?.key == BucketObjectLockModel.notAcknowledgedLine.key)
         model.acknowledged = true
         #expect(model.canSave)
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         #expect(probe.defaultWrites.count == 1)
     }
 
@@ -165,7 +165,7 @@ struct BucketObjectLockSheetTests {
         // invalidate what that read depended on.
         let redraw = RedrawFlag()
         withObservationTracking({ _ = model.canSave }, onChange: { redraw.raise() })
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         #expect(model.refusedSaves == before + 1)
         #expect(redraw.raised, "a click on a stale tick changed nothing the sheet was watching")
     }
@@ -330,7 +330,7 @@ struct BucketObjectLockSheetTests {
         let probe = FakeBucketSettings(lock: .init())
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
         model.days = 45
-        await model.save(bucket: "macscp-second", via: probe)
+        await model.save(bucket: "macscp-second", via: probe, recorder: nil)
         #expect(
             probe.defaultWrites == [
                 FakeBucketSettings.DefaultWrite(days: 45, mode: .governance, bucket: "macscp-second")
@@ -346,10 +346,10 @@ struct BucketObjectLockSheetTests {
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
         model.mode = .compliance
         model.days = 10
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         #expect(probe.defaultWrites.isEmpty, "sent without an acknowledgement")
         model.acknowledged = true
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         #expect(probe.defaultWrites.map(\.mode) == [.compliance])
         #expect(probe.defaultWrites.map(\.days) == [10])
         #expect(!model.acknowledged)
@@ -359,7 +359,7 @@ struct BucketObjectLockSheetTests {
         let planted = "https://AKIDEXAMPLE:SECRETEXAMPLE@store.invalid"
         let probe = FakeBucketSettings(lock: .init(writeError: RemoteFSError.protocolError(reason: planted)))
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         let text = model.applyFailure ?? ""
         let quoted = text.contains("SECRETEXAMPLE") || text.contains("store.invalid")
         #expect(probe.defaultWrites.count == 1)
@@ -379,11 +379,11 @@ struct BucketObjectLockSheetTests {
         let model = BucketObjectLockModel(bucketHasLock: true, current: nil, now: { Self.now })
         model.mode = .compliance
         model.acknowledged = true
-        let first = Task { @MainActor in await model.save(bucket: "b", via: probe) }
+        let first = Task { @MainActor in await model.save(bucket: "b", via: probe, recorder: nil) }
         _ = await entered.wait()
         #expect(model.isApplying)
         #expect(model.activeBlockers.contains(.applying))
-        await model.save(bucket: "b", via: probe)
+        await model.save(bucket: "b", via: probe, recorder: nil)
         release.signal()
         await first.value
         #expect(probe.defaultWrites.count == 1)
@@ -500,7 +500,7 @@ struct BucketObjectLockSheetTests {
             // oracle is asked about the state the model is actually in.
             let expected = scenario.maySave
             #expect(allowed == expected, "\(scenario)")
-            await model.save(bucket: "b", via: probe)
+            await model.save(bucket: "b", via: probe, recorder: nil)
             #expect(probe.defaultWrites.count == (allowed ? 1 : 0), "\(scenario)")
             if allowed { wrote += 1 } else { refused += 1 }
             for write in probe.defaultWrites where write.mode == .compliance {
@@ -622,7 +622,7 @@ struct BucketObjectLockSheetTests {
         let url = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit/BucketObjectLockSheet.swift")
         let source = try SourceCorpus.code(of: url)
         let saves = source.matches(of: #/model\.save\(([^)]*)\)/#).map { String($0.output.1) }
-        #expect(saves == ["bucket: bucket, via: settings"])
+        #expect(saves == ["bucket: bucket, via: settings, recorder: recorder"])
         let loads = source.matches(of: #/model\.load\(([^)]*)\)/#).map { String($0.output.1) }
         #expect(loads == ["bucket: bucket, via: settings, cache: cache"])
     }
