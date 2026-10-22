@@ -118,8 +118,14 @@ struct AuditLogFilterTests {
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix(indent + "}") })
         let body = lines[start...end].joined(separator: "\n")
         #expect(body.contains("switch kind"))
-        #expect(body.contains(".objectLockChanged"))
         let hasDefault = body.contains("default:")
         #expect(!hasDefault)
+        // A wildcard arm (`case _:`) is a catch-all that spells no `default`,
+        // and it is not found by looking for one. What it cannot do is leave
+        // every kind named: the kinds are read off the enum, not typed here,
+        // and the raw value of each is its case name.
+        let unnamed = AuditEvent.Kind.allCases.filter { !body.contains(".\($0.rawValue)") }
+        #expect(unnamed.isEmpty, "kinds the switch does not name: \(unnamed)")
+        #expect(AuditEvent.Kind.allCases.count > 15)
     }
 }
