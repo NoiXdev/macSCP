@@ -96,12 +96,18 @@ public final class RemoteBrowserViewModel {
     /// actually passes.
     public let logCategory: String
 
-    /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
-    /// ad-hoc/unstored sessions). Each of the four actions below fires it
+    /// Optional audit-log sink (M9b/T2), default nil (no logging; a
+    /// construction site that wires none, such as a test or a preview, logs
+    /// nothing). Each of the four actions below fires it
     /// exactly once, AFTER the action completes: success and failure both
     /// report (failure with `isError: true` and the localized message the
     /// action already returns to its caller). The App layer wires this to an
-    /// `AuditRecorder.recordAction` closure for stored sessions.
+    /// `AuditRecorder.recordAction` closure for every connect, stored or not
+    /// (`ContentView.attachAuditRecorder`). (Corrected: this comment used to
+    /// read "default nil (no logging — matches ad-hoc/unstored sessions)" and
+    /// "wires this to an `AuditRecorder.recordAction` closure for stored
+    /// sessions". An unsaved connection is wired too, under
+    /// `AdHocAudit.sessionID`, M31.)
     public var auditSink: ((AuditEvent) -> Void)?
 
     public init(
