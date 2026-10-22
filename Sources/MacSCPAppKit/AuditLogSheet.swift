@@ -57,8 +57,55 @@ struct AuditLogSheet: BoundedView {
     /// Filter segments (spec M9b §1/§5): a single-selection dimension, not a
     /// cross-cut — "Errors" and "Transfers" are mutually exclusive choices
     /// here even though a failed transfer is both.
-    private enum Filter: CaseIterable {
+    /// Internal (not private) so the classification can be tested without
+    /// drawing the sheet.
+    enum Filter: CaseIterable {
         case all, transfers, fileOps, terminal, connection, errors
+
+        /// The segment that lists `kind` besides All and Errors, or `nil`
+        /// when no segment does.
+        ///
+        /// A `switch` over EVERY kind, with no catch-all arm: a kind added to
+        /// `AuditEvent.Kind` does not compile until it is placed here, which is
+        /// what `ConnectionHistory.rows` already demands of it. The segment
+        /// filter used to end each of its four inner switches in a catch-all
+        /// arm, and the four S3 bucket-settings kinds fell through them -- a
+        /// COMPLIANCE retention, the one write macSCP makes that cannot be
+        /// undone, was absent from the segment a user would open to find it.
+        static func segment(of kind: AuditEvent.Kind) -> Filter? {
+            switch kind {
+            case .transferFinished, .transferFailed, .transferCancelled, .editUpload,
+                .crossSessionTransfer:
+                return .transfers
+            // COORDINATOR RULING 19 (fix round 1b of Task 12), not a
+            // requirement of the brief or a finding of the review: the four
+            // S3 bucket-settings kinds are listed under File Ops. Reversible
+            // in this one arm -- move the four names to another `return`.
+            case .rename, .delete, .permissions, .newFolder, .newFile,
+                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
+                return .fileOps
+            case .snippetExecuted:
+                return .terminal
+            case .connected, .disconnected, .connectFailed:
+                return .connection
+            // Listed under no segment, as before: it shows under All and
+            // Errors only. Spelled out here, not left to a catch-all, so that
+            // this is a visible gap and not an accident of the switch.
+            case .plaintextConfirmed:
+                return nil
+            }
+        }
+
+        func includes(_ event: AuditEvent) -> Bool {
+            switch self {
+            case .all:
+                return true
+            case .errors:
+                return event.isError
+            case .transfers, .fileOps, .terminal, .connection:
+                return Self.segment(of: event.kind) == self
+            }
+        }
     }
 
     /// `dd.MM. HH:mm:ss`, local time zone (spec M9b §5) — `en_US_POSIX`
@@ -248,41 +295,7 @@ struct AuditLogSheet: BoundedView {
     }
 
     private func matchesFilter(_ event: AuditEvent) -> Bool {
-        switch filter {
-        case .all:
-            return true
-        case .transfers:
-            switch event.kind {
-            case .transferFinished, .transferFailed, .transferCancelled, .editUpload,
-                 .crossSessionTransfer:
-                return true
-            default:
-                return false
-            }
-        case .fileOps:
-            switch event.kind {
-            case .rename, .delete, .permissions, .newFolder, .newFile:
-                return true
-            default:
-                return false
-            }
-        case .terminal:
-            switch event.kind {
-            case .snippetExecuted:
-                return true
-            default:
-                return false
-            }
-        case .connection:
-            switch event.kind {
-            case .connected, .disconnected, .connectFailed:
-                return true
-            default:
-                return false
-            }
-        case .errors:
-            return event.isError
-        }
+        filter.includes(event)
     }
 
     /// Mirrors exactly what the row renders (time + event kind + detail,
