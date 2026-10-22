@@ -487,12 +487,22 @@ struct CreateBucketSheetTests {
     /// else. The property is not "what was asked for arrived" but "what the
     /// bucket now has is what the sheet and the audit line say it has".
     ///
-    /// The sentence is `settingsDidNotTake`, and it is true of this case:
-    /// the sheet offers two switches and "the settings you chose" is the
-    /// PAIR, so a lock the person unticked and got anyway is a setting the
-    /// bucket does not match. Its second half, "Open Versioning and Object
-    /// Lock for it to see what it has", points at the one place that shows
-    /// the lock.
+    /// The sentence is `protectionNotChosen`, the inverse line: the bucket was
+    /// already there and carries protection nobody chose, and it names the
+    /// permanence rather than leaving it to `objectLockNote` on the sheet the
+    /// person has just dismissed.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 3).** This doc paragraph read,
+    /// verbatim: "The sentence is `settingsDidNotTake`, and it is true of
+    /// this case: the sheet offers two switches and "the settings you chose"
+    /// is the PAIR, so a lock the person unticked and got anyway is a setting
+    /// the bucket does not match. Its second half, "Open Versioning and
+    /// Object Lock for it to see what it has", points at the one place that
+    /// shows the lock." The reading was accepted and then dropped, because
+    /// the same sentence had to cover a PLAIN create, where the person chose
+    /// nothing and a sentence about settings they chose is false of them.
+    /// `settingsDidNotTake` now means only what its name says: a setting that
+    /// was chosen and did not take.
     @MainActor @Test func aCreateOntoABucketThatAlreadyHasObjectLockIsNotSaidToBeAsAsked() async throws {
         // A bucket that already carries a lock. The create asks for
         // versioning and no lock, and the store accepts it: a create does not
@@ -508,9 +518,66 @@ struct CreateBucketSheetTests {
         #expect(settings.hasLockReads == ["macscp-third"])
         #expect(model.isCreated == false)
         let sentence = try #require(model.failureSentence)
-        #expect(sentence == CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(sentence == CreateBucketModel.protectionNotChosenLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
         #expect(model.bucketMayExist == true)
         #expect(model.canCreate == false)
+    }
+
+    /// **The heaviest of the three, and the one that looks lightest.** A
+    /// PLAIN create -- both switches off -- answered with success, on a name
+    /// the person already owns, whose bucket has Object Lock and versioning.
+    ///
+    /// Walked to the end: they believe the bucket is new and ordinary and
+    /// start writing files into it. Every object inherits the bucket's
+    /// default retention, and under COMPLIANCE nobody can delete those
+    /// objects until their dates pass -- not the person, not the account
+    /// owner. This branch ships the feature that sets such a default. They
+    /// chose nothing and, before this, were told nothing: the sheet said
+    /// "was created" and the audit line said `created bucket macscp-third`,
+    /// naming no protection, so nothing CLAIMED a protection that was not
+    /// there and nothing mentioned the two that were.
+    @MainActor @Test func aPlainCreateOntoAnAlreadyProtectedBucketIsNotSaidToBeDone() async throws {
+        let settings = FakeBucketSettings(versioning: .enabled, lock: .init(hasLock: true))
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        #expect(model.protection == .none)  // nothing was chosen
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.hasLockReads == ["macscp-third"])
+        #expect(settings.reads == ["macscp-third"])
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.protectionNotChosenLine(bucket: "macscp-third"))
+        // The sentence names the permanence here, not on the sheet the person
+        // has already dismissed, and it does not talk about settings they
+        // chose, because they chose none.
+        #expect(sentence.contains("macscp-third"))
+        #expect(sentence != CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(model.bucketMayExist == true)
+        #expect(model.canCreate == false)
+    }
+
+    /// Which of the two sentences a mismatch gets, over every pair the two
+    /// reads can produce: LESS protection than was asked for is a setting
+    /// that did not take, MORE is protection nobody chose. The chain is
+    /// total, so there is no pair both sentences or neither could claim.
+    @MainActor @Test func theDirectionOfAMismatchDecidesWhichSentenceIsShown() {
+        let ranks = BucketProtection.allCases.map { CreateBucketModel.protectionRank($0) }
+        #expect(ranks == [0, 1, 2])  // the chain, in the enum's own order
+        #expect(BucketProtection.allCases.count == 3)
+        // Every ordered pair of distinct protections, and which way it runs.
+        var less = 0
+        var more = 0
+        for asked in BucketProtection.allCases {
+            for found in BucketProtection.allCases where found != asked {
+                let askedRank = CreateBucketModel.protectionRank(asked)
+                let foundRank = CreateBucketModel.protectionRank(found)
+                #expect(askedRank != foundRank, "\(asked) vs \(found)")
+                if foundRank > askedRank { more += 1 } else { less += 1 }
+            }
+        }
+        #expect(more == 3)
+        #expect(less == 3)
     }
 
     /// **The third outcome.** The create was accepted and the read-back
@@ -540,17 +607,29 @@ struct CreateBucketSheetTests {
         #expect(!quoted)
     }
 
-    /// A create with no protection claims no setting, so there is nothing to
+    /// A create with no protection reads back too, and a bucket that turned
+    /// out to carry nothing is said to be done. The positive control for the
+    /// plain-create case above: the plain path is not simply always a
+    /// failure now.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 3).** This test was named
+    /// `aCreateWithNoProtectionSpendsNoReadBack`, its doc read, verbatim: "A
+    /// create with no protection claims no setting, so there is nothing to
     /// read back and no request is spent on one. The guard against a
-    /// read-back that quietly became unconditional.
-    @MainActor @Test func aCreateWithNoProtectionSpendsNoReadBack() async {
+    /// read-back that quietly became unconditional.", and it asserted
+    /// `settings.reads.isEmpty` and `settings.hasLockReads.isEmpty`. All of
+    /// it is withdrawn. Saving the two requests cost the one case that
+    /// matters most: a plain create landing on a bucket that already has
+    /// Object Lock and a COMPLIANCE default.
+    @MainActor @Test func aPlainCreateOntoAnEmptyNameIsStillSaidToBeDone() async {
         let settings = FakeBucketSettings()
         let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
         model.name = "macscp-third"
         await model.create(via: settings, recorder: nil)
         #expect(model.isCreated)
-        #expect(settings.reads.isEmpty)
-        #expect(settings.hasLockReads.isEmpty)
+        #expect(model.failureSentence == nil)
+        #expect(settings.reads == ["macscp-third"])
+        #expect(settings.hasLockReads == ["macscp-third"])
     }
 
     /// What a bucket READ BACK has, as the one choice Core takes, over every

@@ -556,6 +556,7 @@
 "s3.createBucket.error.mayExist" = "La création du bucket ne s’est pas terminée, et le bucket existe peut-être maintenant. Actualisez la liste ; s’il y figure, ouvrez Gestion des versions et Verrouillage d’objet pour voir ce qu’il a.";
 "s3.createBucket.error.settingsDidNotTake %@" = "Un bucket nommé « %@ » existe maintenant, et il n’a pas les réglages choisis. Ouvrez Gestion des versions et Verrouillage d’objet pour ce bucket afin de voir ce qu’il a, et ne le recréez pas.";
 "s3.createBucket.error.settingsUnconfirmed %@" = "Un bucket nommé « %@ » existe maintenant, mais macSCP n’a pas pu vérifier s’il a les réglages choisis. Ouvrez Gestion des versions et Verrouillage d’objet pour ce bucket afin de voir ce qu’il a, et ne le recréez pas.";
+"s3.createBucket.error.protectionNotChosen %@" = "Un bucket nommé « %@ » existait déjà, et il a des protections que vous n’avez pas choisies. Le verrouillage d’objet, dès qu’un bucket en a un, ne peut plus jamais être désactivé. Ouvrez Gestion des versions et Verrouillage d’objet pour ce bucket afin de voir ce qu’il a, et ne le recréez pas.";
 "s3.createBucket.problem.tooShort" = "Un nom de bucket doit comporter au moins 3 caractères.";
 "s3.createBucket.problem.tooLong" = "Un nom de bucket ne peut pas dépasser 63 caractères.";
 "s3.createBucket.problem.uppercase" = "Un nom de bucket ne peut pas contenir de lettres majuscules.";

@@ -178,6 +178,27 @@ final class CreateBucketModel {
         return versioning == .enabled ? .versioned : .none
     }
 
+    /// How much protection a choice is, for telling the two DIRECTIONS of a
+    /// mismatch apart.
+    ///
+    /// The three cases are a chain: `.none` is inside `.versioned` is inside
+    /// `.lockedAndVersioned`, because Object Lock needs versioning and so
+    /// cannot be had without it. That is what makes the comparison total --
+    /// a read-back that does not match the request is either LESS than was
+    /// asked for (a setting that was chosen and did not take) or MORE (the
+    /// bucket carries protection nobody chose), and never something
+    /// incomparable with two sentences competing for it.
+    ///
+    /// No `default`: a fourth `BucketProtection` case would have to be
+    /// placed in the chain here rather than silently rank as something.
+    nonisolated static func protectionRank(_ protection: BucketProtection) -> Int {
+        switch protection {
+        case .none: 0
+        case .versioned: 1
+        case .lockedAndVersioned: 2
+        }
+    }
+
     // MARK: - The name
 
     /// The first rule the name breaks, as Core's validator reports it. An
@@ -311,13 +332,23 @@ final class CreateBucketModel {
             case .asAsked:
                 outcome = .created
                 recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
-            case .notAsAsked(let actual):
+            case .lessThanAsked(let actual):
                 let sentence = Self.settingsDidNotTakeLine(bucket: bucket)
                 outcome = .failed(sentence: sentence, bucketMayExist: true)
                 // **`actual`, not `choice`.** The line records what was read
                 // back. A trail claiming Object Lock on a bucket without it is
                 // worse than a sheet claiming it, because it is the record
                 // someone relies on afterwards, when the sheet is gone.
+                recorder?.recordBucketCreated(
+                    bucket: bucket, protection: actual, failure: sentence)
+            case .moreThanAsked(let actual):
+                // The inverse, and `actual` for the same reason read the other
+                // way: a line that named only what was ASKED for would omit a
+                // protection the bucket really enforces, which is the half of
+                // "no line claims what is not there" that says nothing may be
+                // left out either.
+                let sentence = Self.protectionNotChosenLine(bucket: bucket)
+                outcome = .failed(sentence: sentence, bucketMayExist: true)
                 recorder?.recordBucketCreated(
                     bucket: bucket, protection: actual, failure: sentence)
             case .unconfirmed:
@@ -357,10 +388,14 @@ final class CreateBucketModel {
     /// not answer establishes nothing, and reporting it as either "as asked"
     /// or "not as asked" would be a claim nobody measured.
     private enum ReadBack {
-        /// Everything the request claimed is there.
+        /// The bucket has exactly what the request asked for.
         case asAsked
-        /// The bucket carries something else; `actual` is what was read.
-        case notAsAsked(BucketProtection)
+        /// LESS than was asked for: a setting that was chosen did not take.
+        /// `actual` is what was read.
+        case lessThanAsked(BucketProtection)
+        /// MORE than was asked for: the bucket was already there and carries
+        /// protection nobody chose. `actual` is what was read.
+        case moreThanAsked(BucketProtection)
         /// The read itself did not answer.
         case unconfirmed
     }
@@ -384,13 +419,29 @@ final class CreateBucketModel {
     /// answers the question that matters -- what does the bucket have now --
     /// whichever way the name got there.
     ///
-    /// **What is read is what the BUCKET now has, not only what was asked
-    /// for.** Every create that asks for any protection reads both
-    /// properties. `.none` claims no setting, so nothing is read and no
-    /// request is spent: the failure path makes the same cut
-    /// (`failure(for:...)`'s `protection != .none` guard). The lock goes
+    /// **What is read is what the BUCKET now has, and EVERY create reads
+    /// it** — including a plain one, which asked for nothing. The lock goes
     /// first, so a lock read that fails stops the pair without spending the
     /// second request.
+    ///
+    /// **The plain create is the heaviest case, which is why it costs two
+    /// requests it used to save.** A person creates `reports`, already owns
+    /// that name, and its bucket has Object Lock and — because this branch
+    /// ships the feature that sets them — perhaps a COMPLIANCE default
+    /// retention. The create answers 200. They believe the bucket is new and
+    /// ordinary, start writing files into it, and every object inherits that
+    /// default: under COMPLIANCE nobody can delete those objects until their
+    /// dates pass, not them and not the account owner. They chose nothing, so
+    /// nothing warned them.
+    ///
+    /// **Corrected 2026-10-22 (F1, fix round 3).** This paragraph said,
+    /// verbatim: "`.none` claims no setting, so nothing is read and no
+    /// request is spent: the failure path makes the same cut
+    /// (`failure(for:...)`'s `protection != .none` guard)." The cut was
+    /// wrong here and stays right there: the failure path is asking whether a
+    /// bucket EXISTS, which a one-request create's own refusal already
+    /// answered; this path is asking what the bucket HAS, and a plain create
+    /// is exactly where nobody is watching for the answer.
     ///
     /// **The mirror is the heavier half, which is why `.versioned` reads the
     /// lock too.** A create asking for versioning only, answered with
@@ -413,12 +464,15 @@ final class CreateBucketModel {
     private static func readBack(
         _ choice: BucketProtection, ofBucket bucket: String, via settings: any S3BucketSettings
     ) async -> ReadBack {
-        guard choice != .none else { return .asAsked }
         do {
             let hasLock = try await settings.hasObjectLock(ofBucket: bucket)
             let versioning = try await settings.versioning(ofBucket: bucket)
             let actual = protection(hasObjectLock: hasLock, versioning: versioning)
-            return actual == choice ? .asAsked : .notAsAsked(actual)
+            guard actual != choice else { return .asAsked }
+            // The direction decides which sentence is true of this person:
+            // see `protectionRank`, and the two catalogue lines.
+            return protectionRank(actual) > protectionRank(choice)
+                ? .moreThanAsked(actual) : .lessThanAsked(actual)
         } catch {
             return .unconfirmed
         }
@@ -597,6 +651,34 @@ final class CreateBucketModel {
     static let settingsUnconfirmedTemplate = CatalogueLine(
         key: "s3.createBucket.error.settingsUnconfirmed %@",
         english: "A bucket named \u{201C}%@\u{201D} exists now, but macSCP could not check whether it has the settings you chose. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
+    /// The INVERSE of `settingsDidNotTakeTemplate`: the create was accepted
+    /// and the read-back found MORE protection than was asked for, so a
+    /// bucket of this name was already there and carries something nobody
+    /// chose.
+    ///
+    /// **One sentence for both directions of "more" was the ruling**, and it
+    /// covers a plain create as well as a versioned one, which is why it says
+    /// nothing about "the settings you chose": on a plain create the person
+    /// chose nothing, and `settingsDidNotTakeTemplate` stretched over that
+    /// would be false of them.
+    ///
+    /// **It names the permanence here rather than leaving it to be
+    /// inferred.** `objectLockNote` says the lock can never be switched off,
+    /// but it is on the sheet the person has just dismissed, and someone who
+    /// ticked nothing had no reason to read it. The clause is a property of
+    /// Object Lock and not a claim about THIS bucket ("once a bucket has
+    /// it"), so the one sentence stays true where what was found is
+    /// versioning alone.
+    ///
+    /// Why it matters most on a plain create, which is the case that looks
+    /// lightest: the person believes the bucket is new and ordinary and
+    /// starts writing files into it. Every object inherits the bucket's
+    /// default retention, and under COMPLIANCE no one can delete those
+    /// objects until their dates pass -- not the person, not the account
+    /// owner. This branch ships the feature that sets such a default.
+    static let protectionNotChosenTemplate = CatalogueLine(
+        key: "s3.createBucket.error.protectionNotChosen %@",
+        english: "A bucket named \u{201C}%@\u{201D} already existed, and it carries protection you did not choose. Object Lock, once a bucket has it, can never be switched off. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
 
     static func existsIncompletelyLine(bucket: String) -> String {
         String(format: existsIncompletelyTemplate.text, bucket)
@@ -608,6 +690,10 @@ final class CreateBucketModel {
 
     static func settingsUnconfirmedLine(bucket: String) -> String {
         String(format: settingsUnconfirmedTemplate.text, bucket)
+    }
+
+    static func protectionNotChosenLine(bucket: String) -> String {
+        String(format: protectionNotChosenTemplate.text, bucket)
     }
 
     /// The sentence for each problem the validator reports. No `default`: a
@@ -653,7 +739,7 @@ final class CreateBucketModel {
             versioningNote, versioningHeldByObjectLockNote, objectLockNote, nameIsTakenLine,
             listingUnknownLine, creatingLine, createdLine, notCreatedLine, deniedLine,
             existsIncompletelyTemplate, mayExistLine, settingsDidNotTakeTemplate,
-            settingsUnconfirmedTemplate,
+            settingsUnconfirmedTemplate, protectionNotChosenTemplate,
         ] + everyProblem.map { line(for: $0) }
     }
 }
