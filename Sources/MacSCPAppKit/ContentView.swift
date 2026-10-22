@@ -179,8 +179,9 @@ struct ContentView: View {
     let bandwidthLimiter: BandwidthLimiter
     /// App-wide per-session audit log store (M9b), created once in
     /// `MacSCPApp` (no singleton) — shared by `sessionListViewModel` (log
-    /// cleanup on delete) and every stored-session tab's `AuditRecorder`
-    /// (see `attachAuditRecorder`).
+    /// cleanup on delete) and every tab's `AuditRecorder` (see
+    /// `attachAuditRecorder`). (Corrected: "every stored-session tab's
+    /// `AuditRecorder`" -- an unsaved connection's tab has one too, M31.)
     let auditStore: AuditLogStore
     /// THIS window's menu bridge (M8a/T4), published as a focused scene
     /// value in `windowChrome(_:)` and read back by `MacSCPCommands`

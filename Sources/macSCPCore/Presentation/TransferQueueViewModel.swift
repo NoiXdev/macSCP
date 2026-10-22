@@ -377,12 +377,18 @@ public final class TransferQueueViewModel {
     /// non-terminal → `.failed` transition as `totalFailureCount`.
     public private(set) var failureCountExcludingConnectionLoss = 0
 
-    /// Optional audit-log sink (M9b/T2), default nil (no logging — matches
-    /// ad-hoc/unstored sessions). Called EXACTLY once per item, at the same
+    /// Optional audit-log sink (M9b/T2), default nil (no logging; a
+    /// construction site that wires none, such as a test or a preview, logs
+    /// nothing). Called EXACTLY once per item, at the same
     /// `wasTerminal` choke point in `setStatus` where `totalFailureCount`
     /// increments — never on a progress update (`.running` → `.running`)
     /// and never again once an item is already terminal. The App layer wires
-    /// this to an `AuditRecorder.recordTransfer` closure for stored sessions.
+    /// this to an `AuditRecorder.recordTransfer` closure for every connect,
+    /// stored or not (`ContentView.attachAuditRecorder`). (Corrected: this
+    /// comment used to read "default nil (no logging — matches
+    /// ad-hoc/unstored sessions)" and "wires this to an
+    /// `AuditRecorder.recordTransfer` closure for stored sessions". An unsaved
+    /// connection is wired too, under `AdHocAudit.sessionID`, M31.)
     public var auditSink: ((Item) -> Void)?
 
     // MARK: - Private state
