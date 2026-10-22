@@ -407,6 +407,127 @@ struct CreateBucketSheetTests {
         #expect(settings.reads.isEmpty)
     }
 
+    // MARK: - What the store turned out to have (F1)
+
+    /// **The one the finding is about.** The create is answered with success
+    /// and the bucket has no Object Lock -- what the rig does to a re-create
+    /// of a bucket the key already owns (`S3CreateBucketGatedTests`
+    /// `.recreatingABucketTheKeyOwnsDoesNotEnableObjectLockButDoesEnableVersioning`:
+    /// `second == nil`, `after?.hasLock == false`, `after?.versioning == .enabled`).
+    /// A flat "was created" over that is the belief the whole Object Lock half
+    /// of this work exists to make trustworthy, asserted from the absence of a
+    /// throw.
+    @MainActor @Test func aCreateWhoseObjectLockDidNotTakeIsNotSaidToBeDone() async throws {
+        let settings = FakeBucketSettings(createEffect: .ignoresTheObjectLockHeader)
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        // The read-back was made, through the capability the other four
+        // paths use, and after the create rather than before it.
+        #expect(settings.hasLockReads == ["macscp-third"])
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(sentence != model.createdSentence)
+        // The bucket is there, so the list is stale and the name is taken:
+        // a second click would be the re-create the check exists to stop.
+        #expect(model.bucketMayExist == true)
+        #expect(model.canCreate == false)
+        #expect(model.nameIsTakenKey == "s3.createBucket.nameIsTaken")
+        #expect(model.showsNameIsTaken == false)
+    }
+
+    /// The positive control for the test above: with the same two switches and
+    /// a store that does what it was asked, the sheet still says the bucket
+    /// was created -- and the read-back is what said so.
+    @MainActor @Test func aCreateWhoseSettingsTookIsStillSaidToBeDone() async {
+        let settings = FakeBucketSettings()
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated)
+        #expect(model.failureSentence == nil)
+        #expect(settings.hasLockReads == ["macscp-third"])
+        #expect(settings.reads == ["macscp-third"])
+    }
+
+    /// The versioning half of the same read-back, and the proof that the lock
+    /// is read only where it was asked for: a `.versioned` create claims
+    /// nothing about Object Lock, so nothing is spent asking.
+    @MainActor @Test func aCreateWhoseVersioningDidNotTakeIsNotSaidToBeDone() async throws {
+        let settings = FakeBucketSettings(createEffect: .ignoresTheVersioningRequest)
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.versioning = true
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.reads == ["macscp-third"])
+        #expect(settings.hasLockReads.isEmpty)
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(model.bucketMayExist == true)
+    }
+
+    /// **The third outcome.** The create was accepted and the read-back
+    /// itself was refused, so nothing is known about the settings. That is
+    /// neither a success nor a failed create, and the sentence says exactly
+    /// that -- it is not `settingsDidNotTake`, which asserts their absence.
+    @MainActor @Test func aReadBackThatIsRefusedSaysTheSettingsCouldNotBeConfirmed() async throws {
+        let planted = "https://AKIDEXAMPLE:SECRETEXAMPLE@store.invalid"
+        let settings = FakeBucketSettings(
+            lock: .init(hasLock: true, hasLockError: RemoteFSError.protocolError(reason: planted)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.notCreatedLine.text)
+        // The create itself went through, so the bucket is there.
+        #expect(model.bucketMayExist == true)
+        #expect(settings.creates.count == 1)
+        // The refusal's own words never reach the sentence. A named constant
+        // and the `Bool` first, so a failure here cannot print either half
+        // (CLAUDE.md, "A value a test must not leak has two exits, not one").
+        let quoted = sentence.contains("SECRETEXAMPLE") || sentence.contains("store.invalid")
+        #expect(!quoted)
+    }
+
+    /// A create with no protection claims no setting, so there is nothing to
+    /// read back and no request is spent on one. The guard against a
+    /// read-back that quietly became unconditional.
+    @MainActor @Test func aCreateWithNoProtectionSpendsNoReadBack() async {
+        let settings = FakeBucketSettings()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated)
+        #expect(settings.reads.isEmpty)
+        #expect(settings.hasLockReads.isEmpty)
+    }
+
+    /// What a bucket READ BACK has, as the one choice Core takes, over every
+    /// combination the two reads can answer. The lock is the stronger fact:
+    /// `BucketProtection` has no case for a lock without enabled versioning,
+    /// and a line that dropped the lock would under-state what the bucket
+    /// enforces.
+    @MainActor @Test func theProtectionReadBackIsNamedFromTheLockFirst() {
+        #expect(
+            CreateBucketModel.protection(hasObjectLock: true, versioning: .enabled)
+                == .lockedAndVersioned)
+        #expect(
+            CreateBucketModel.protection(hasObjectLock: true, versioning: .never)
+                == .lockedAndVersioned)
+        #expect(
+            CreateBucketModel.protection(hasObjectLock: false, versioning: .enabled) == .versioned)
+        #expect(CreateBucketModel.protection(hasObjectLock: false, versioning: .never) == .none)
+        #expect(CreateBucketModel.protection(hasObjectLock: false, versioning: .suspended) == .none)
+    }
+
     @MainActor @Test func editingTheNameClearsAStaleFailure() async {
         let settings = FakeBucketSettings(
             createFailure: .refused(RemoteFSError.protocolError(reason: "x")))
