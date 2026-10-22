@@ -1881,11 +1881,24 @@ extension S3FileSystem: S3BucketSettings {
         guard case .enabled = try await objectLockState(ofBucket: bucket) else {
             throw RemoteFSError.finding(.objectLockNotConfigured)
         }
-        // Content-MD5 is required in practice for a caller that signs its
-        // own requests: against AWS's reference, a `PutObjectLockConfiguration`
-        // without it fails 400 (maintainer ruling A, measured). The rig does
-        // not insist, so only a test of the request itself pins this
-        // (`S3ObjectLockTests`). Signed, as in `setVersioning` and `setCORS`.
+        // macSCP sends a Content-MD5 on this request, signed, as
+        // `setVersioning` and `setCORS` do. The reason is a READING of AWS's
+        // published reference for `PutObjectLockConfiguration`, made from a
+        // search summary of that page while this work was planned, and not
+        // a measurement: the reading is that a caller that signs its own
+        // requests needs the header and that a request without it fails 400.
+        // No AWS endpoint was reachable, and this tree records no run of this
+        // request without the header against any store, the rig included (for
+        // `PUT ?versioning` the rig was measured to accept one without it, which
+        // says nothing about this call). What is pinned is the request's SHAPE,
+        // not a store's answer: `S3ObjectLockTests` asserts the header is sent
+        // and signed. (Withdrawn, verbatim: "Content-MD5 is required in practice
+        // for a caller that signs its own requests: against AWS's reference, a
+        // `PutObjectLockConfiguration` without it fails 400 (maintainer ruling A,
+        // measured). The rig does not insist". "Measured" was untrue of AWS
+        // behaviour, and "maintainer ruling A" put a reading under the
+        // maintainer's name; the plan's own record, in the ledger under
+        // "Refinement of Finding 6", says search summary.)
         let put = try Self.signedRequest(
             .bucketRoot(bucket: bucket), method: "PUT",
             query: [(name: "object-lock", value: "")],
