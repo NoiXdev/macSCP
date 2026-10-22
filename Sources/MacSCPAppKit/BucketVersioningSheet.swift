@@ -45,11 +45,16 @@ final class BucketVersioningModel {
     /// that nobody has asked yet, and a model that read one as the other would
     /// offer a suspension on a bucket it knows nothing about.
     ///
-    /// Set together with `load` going to `.known` (`read`), never after it, so
-    /// a settled sheet is never waiting on a second answer. A model built for
-    /// a state (`init(current:bucketHasObjectLock:)`) is handed it; the other
-    /// two inits have none, because a sheet that is still reading or whose
-    /// read failed has no state to be locked in.
+    /// **Two writers, and a settled sheet CAN still be waiting on a second
+    /// answer.** `read` sets it together with `load` going to `.known`, and
+    /// `apply` asks again for the one bucket `read` is allowed to leave
+    /// unread: a bucket that was not enabled, whose lock could not be read,
+    /// is a bucket the answer did not matter for until the write made it
+    /// matter. This doc comment said "never after it, so a settled sheet is
+    /// never waiting on a second answer" until `d0bafd4f` added that second
+    /// ask. A model built for a state (`init(current:bucketHasObjectLock:)`)
+    /// is handed it; the other two inits have none, because a sheet that is
+    /// still reading or whose read failed has no state to be locked in.
     private(set) var bucketHasObjectLock: Bool?
     /// The lock was asked for and the ask failed. **Distinct from `nil` with
     /// this `false`**, which is "not asked yet": an enabled bucket whose lock
