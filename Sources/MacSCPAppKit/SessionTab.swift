@@ -141,9 +141,14 @@ final class SessionTab: Identifiable {
     /// transport is plaintext AND the user just confirmed the risk dialog;
     /// reset to `false` at the START of every connect attempt (before the
     /// gate is even consulted), so a previous connect's confirmation — even
-    /// an ad-hoc one, which has no audit trail to write it into (see
-    /// `attachAuditRecorder`'s own doc comment) — can never leak into a
-    /// later, unrelated connect's audit record. Consumed (read and reset) by
+    /// an ad-hoc one — can never leak into a later, unrelated connect's
+    /// audit record. (Corrected: this clause used to read "an ad-hoc one,
+    /// which has no audit trail to write it into (see
+    /// `attachAuditRecorder`'s own doc comment)". An ad-hoc connect does have
+    /// one: `startSession` calls `attachAuditRecorder` for every connect, and
+    /// an unsaved one logs under `AdHocAudit.sessionID`, M31. The doc comment
+    /// the withdrawn clause cited had been rewritten to say so.) Consumed
+    /// (read and reset) by
     /// `ContentView.attachAuditRecorder`, the one place a `sessionID` (and
     /// with it, an `AuditRecorder` to write to) exists.
     var pendingPlaintextConfirmation = false

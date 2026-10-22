@@ -190,10 +190,15 @@ enum TabTeardown {
             // would name a tab whose session is gone. Observation only:
             // nothing here owns or closes anything.
             (session.remoteFS as? TransportCloseReporting)?.stopReportingTransportClose()
-            // Audit recorder teardown (M9b/T3): only present for a stored
-            // session (`attachAuditRecorder` never runs for an ad-hoc
-            // connect), so this is a no-op otherwise. `recordDisconnected()`
-            // FIRST, then release the recorder and BOTH sinks it wired.
+            // Audit recorder teardown (M9b/T3): present for every connect
+            // (`startSession` attaches one for an unsaved connection too,
+            // under `AdHocAudit.sessionID`, M31), absent only when the
+            // stored session was deleted under the open tab, so this is a
+            // no-op in that case. (Corrected: this comment used to read
+            // "only present for a stored session (`attachAuditRecorder`
+            // never runs for an ad-hoc connect), so this is a no-op
+            // otherwise".) `recordDisconnected()` FIRST, then release the
+            // recorder and BOTH sinks it wired.
             //
             // This is the `disconnected` row the app's quit exists to
             // reach (`docs/BACKLOG.md`, "Quit tears down nothing"): before
