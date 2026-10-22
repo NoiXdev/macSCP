@@ -4548,7 +4548,7 @@ pinned to a commit; `1714ac39` the warning gate's two blind spots; `9305b4d8` th
 Core rows from Task 9's review; `c9542893` eleven rows for the closeout debts and one
 the ledger owed; `bf5cb4d5` the Content-MD5 row; `b0d9153e` the sight-check row;
 `de54058f` a hash in the dead-case row that an amend had replaced. Only `c6dda748` touches
-`Sources/`, and it changes a comment.
+`Sources/`, and it changes a comment. (**Corrected 2026-10-22, round 2:** that sentence read, verbatim, "Only `c6dda748` touches `Sources/`, and it changes a comment." It was true of those commits; round 2 added two more comment-only edits to `Sources/`, `63e6233f` and `9483bc0b`, listed below.)
 
 **Test run.** `swift test`, no build-system flag, at `b0d9153e`: Core "5085 tests in 408
 suites passed"; AppKit "2848 tests in 240 suites failed ... with 1 issue", the one issue
@@ -4584,3 +4584,17 @@ two comments (`AuditLogSheet.swift` and `AuditLogFilterTests.swift`) disagree wi
 measured)" where the ledger says a search summary; the census section's later paragraph
 records a live-file figure with no commit, as the third output did; and the plan's
 Step 4 cited the spec row as `:44` where it is line 45.
+
+**Round 2 (coordinator's rulings on the Task 13 report, 2026-10-22).** `63e6233f` the
+`setObjectLockDefault` comment that said "(maintainer ruling A, measured)" of a claim that was
+a reading of AWS's reference, quoted and withdrawn; `d7526a60` the Content-MD5 row records it;
+`2c69f1e1` the design's status line ("awaiting maintainer approval. Not planned, not started."),
+quoted and corrected, the approval recorded on the coordinator's word; `9483bc0b` the test
+comment that called the unplaced `plaintextConfirmed` "not a decision anyone made for it", and
+the Ruling 19 arm's added docs-page cost; `9ea5ca9f` the row for it; `ac0ee57e` the census
+section's other live-file readings pinned to `693db7c0`, `ea330ada` and `493bc256`; `70a2921d`
+the two Core rows now name the tests a fix will turn red. Full `swift test` at `70a2921d`: Core
+5085 passed in 408 suites; AppKit 2848 tests, 1 issue, the known `ViewTestabilitySpike.swift:202`.
+The gated suites still did not run. Found and not edited: three test comments say "the rig does
+not require/check" a Content-MD5 on `PUT ?object-lock`, which no recorded run supports (only
+`PUT ?versioning` was measured).
