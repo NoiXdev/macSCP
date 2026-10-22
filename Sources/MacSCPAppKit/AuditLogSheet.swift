@@ -123,7 +123,7 @@ struct AuditLogSheet: BoundedView {
 
     private var filteredEvents: [AuditEvent] {
         let (predicate, _) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
-        return events.filter { matchesFilter($0) && predicate.matches(searchString(for: $0)) }
+        return events.filter { filter.includes($0) && predicate.matches(searchString(for: $0)) }
     }
 
     /// What the table draws: the filter/search result in the user's chosen
@@ -292,10 +292,6 @@ struct AuditLogSheet: BoundedView {
         return String(
             format: L10n.string("audit.countFiltered %lld %lld", "%lld of %lld"),
             filteredEvents.count, total)
-    }
-
-    private func matchesFilter(_ event: AuditEvent) -> Bool {
-        filter.includes(event)
     }
 
     /// Mirrors exactly what the row renders (time + event kind + detail,

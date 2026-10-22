@@ -276,7 +276,7 @@ struct AuditLogSortWiringGuardTests {
             Issue.record("`\(sorted)` is what gets sorted, and this file declares no such property.")
             return
         }
-        #expect(filteredBody.contains("matchesFilter("), """
+        #expect(filteredBody.contains("filter.includes("), """
             `\(sorted)` is what gets sorted and it does not apply the segment filter — the \
             table would be ordering rows it is not showing.
             """)
