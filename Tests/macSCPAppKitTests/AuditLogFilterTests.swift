@@ -88,8 +88,18 @@ struct AuditLogFilterTests {
 
     /// Every kind is in AT MOST one kind segment, and the kinds in none are a
     /// short, named list. `plaintextConfirmed` is in none and always was: it
-    /// shows under All and Errors only. That is a recorded gap in the
-    /// classification, not a decision anyone made for it.
+    /// shows under All and Errors only. Since Ruling 21 that is a decision:
+    /// leave it unplaced on this branch (ledger
+    /// `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings.md`, "Ruling 21"),
+    /// reversible by moving one name into one arm of `Filter.segment(of:)`,
+    /// at which point the last expectation below changes with it. The
+    /// `docs/BACKLOG.md` row "`AuditEvent.Kind.plaintextConfirmed` is in no
+    /// audit-log filter segment" holds the decision and its cost.
+    ///
+    /// **Corrected 2026-10-22 (Task 13).** The comment ended, verbatim: "That
+    /// is a recorded gap in the classification, not a decision anyone made for
+    /// it." True when it was written, and false since Ruling 21 made the
+    /// decision.
     @Test func everyKindIsInAtMostOneKindSegmentAndTheUnplacedAreNamed() {
         let all = AuditEvent.Kind.allCases
         // The positive half: the scan sees the kinds at all.

@@ -81,6 +81,12 @@ struct AuditLogSheet: BoundedView {
             // requirement of the brief or a finding of the review: the four
             // S3 bucket-settings kinds are listed under File Ops. Reversible
             // in this one arm -- move the four names to another `return`.
+            // That is the whole cost in the CODE; it is no longer the whole
+            // cost: the user documentation (the audit log page in the
+            // user-docs repository) says the four kinds are listed under
+            // File Ops, so reversing this also costs a change to that page.
+            // (That page is not read from this repository; the statement is
+            // the coordinator's, 2026-10-22.)
             case .rename, .delete, .permissions, .newFolder, .newFile,
                 .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
                 return .fileOps
