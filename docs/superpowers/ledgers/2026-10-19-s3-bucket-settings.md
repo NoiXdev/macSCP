@@ -4598,3 +4598,26 @@ the two Core rows now name the tests a fix will turn red. Full `swift test` at `
 The gated suites still did not run. Found and not edited: three test comments say "the rig does
 not require/check" a Content-MD5 on `PUT ?object-lock`, which no recorded run supports (only
 `PUT ?versioning` was measured).
+
+**Approval.** Added 2026-10-22 at the coordinator's ruling. The maintainer approved this plan
+and the design under it in chat, in the words `plan passt, umsetzen` ("the plan fits, carry it
+out"). The coordinator gave the Task 13 implementer those words on 2026-10-22; the
+implementer did not see the chat. Under this project's rule that the conversation is not an
+artifact, **this paragraph is the only record of the approval**: the design document
+(`docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md`) claims no artifact for it, and the plan
+file records none. **The ledger cannot date the approval more precisely than the plan file's own
+date, 2026-10-19**, which is also the date of this ledger's header and its first entry; the
+approval came after the plan was written and before the work began, and no finer date or
+time is claimed here.
+
+**Round 3 (2026-10-22).** `e6b94cc6` corrects the three test comments that the round-2 paragraph
+above says were "Found and not edited" (that sentence read, verbatim: "Found and not edited: three
+test comments say "the rig does not require/check" a Content-MD5 on `PUT ?object-lock`, which no
+recorded run supports (only `PUT ?versioning` was measured)."; it is untrue of the tree since
+that commit). Each comment now says what is known and quotes its withdrawn wording, and the header
+of `S3ObjectLockGatedTests.swift` names the observation that would settle the question: one signed
+`PUT ?object-lock` without the header on a throwaway lock-enabled bucket, with both outcomes decided in
+advance. The observation has not been made; the rig could not be run. `4aedf6ae` carries the same into the
+Content-MD5 row; `2a1f571a` drops the hedge on the audit log page, which the coordinator read.
+Nothing the gated observation could show about AWS follows from the rig: the favourable outcome
+leaves the claim that AWS answers 400 without the header a reading of its reference.
