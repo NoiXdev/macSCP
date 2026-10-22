@@ -61,6 +61,16 @@ struct AuditLogSortWiringGuardTests {
         try SourceCorpus.text(of: sheetFile)
     }
 
+    /// The same file with comments and string literals blanked (length and
+    /// lines kept, so the position parsing below works on it unchanged).
+    /// Used by the guard whose anchors are CALLS, which a comment can quote:
+    /// a raw-text scan is satisfied by `true /* the call */ && predicate`.
+    /// Not used by the guards that read column titles and the search
+    /// spelling, which live in string literals and need the raw text.
+    private static func sheetCode() throws -> String {
+        try SourceCorpus.code(of: sheetFile)
+    }
+
     private static func occurrences(of needle: String, in haystack: String) -> Int {
         haystack.components(separatedBy: needle).count - 1
     }
@@ -264,7 +274,7 @@ struct AuditLogSortWiringGuardTests {
     /// filter and the search predicate. Moving the sort back in front of
     /// the filter breaks the chain here.
     @Test func theSortIsAppliedToTheFilterResult() throws {
-        let source = try Self.sheetSource()
+        let source = try Self.sheetCode()
         guard let drawn = Self.firstArgument(of: "Table(", in: source),
             let drawnBody = Self.propertyBody(drawn, in: source),
             let sorted = Self.firstArgument(of: "AuditLogSorting.sorted(", in: drawnBody)
