@@ -46,6 +46,11 @@ struct BucketSettingsAuditTests {
     struct Operation: Sendable, CustomTestStringConvertible {
         let name: String
         let kind: AuditEvent.Kind
+        /// What the line of a write that went through starts with. The values
+        /// that reach the recorder are the sheet's, and only a test through
+        /// the sheet's own apply path can see them: the Core tests hand the
+        /// recorder whatever they like.
+        let detailPrefix: String
         let run: @MainActor @Sendable (_ recorder: AuditRecorder?, _ refuse: Bool) async -> Outcome
         var testDescription: String { name }
     }
@@ -55,7 +60,9 @@ struct BucketSettingsAuditTests {
         + "<AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>"
 
     static let operations: [Operation] = [
-        Operation(name: "create a bucket", kind: .bucketCreated) { recorder, refuse in
+        Operation(
+            name: "create a bucket", kind: .bucketCreated,
+            detailPrefix: "created bucket macscp-third") { recorder, refuse in
             let settings = FakeBucketSettings(createFailure: refuse ? .refused(Self.refusal) : nil)
             let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
             model.name = "macscp-third"
@@ -65,7 +72,9 @@ struct BucketSettingsAuditTests {
             return Outcome(
                 storeWasAskedToWrite: settings.creates.count == 1, modelShowsAFailure: failed)
         },
-        Operation(name: "change versioning", kind: .versioningChanged) { recorder, refuse in
+        Operation(
+            name: "change versioning", kind: .versioningChanged,
+            detailPrefix: "versioning of bucket b1 set to enabled") { recorder, refuse in
             let settings = FakeBucketSettings(
                 versioning: .never, writeError: refuse ? Self.refusal : nil)
             let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
@@ -76,7 +85,9 @@ struct BucketSettingsAuditTests {
                 storeWasAskedToWrite: settings.writes.count == 1,
                 modelShowsAFailure: model.applyFailure != nil)
         },
-        Operation(name: "save CORS rules", kind: .corsChanged) { recorder, refuse in
+        Operation(
+            name: "save CORS rules", kind: .corsChanged,
+            detailPrefix: "CORS rules of bucket b1 set to 1 rule") { recorder, refuse in
             let settings = FakeBucketSettings(corsWriteError: refuse ? Self.refusal : nil)
             let model = BucketCORSModel(loaded: nil)
             model.text = Self.corsDocument
@@ -85,7 +96,9 @@ struct BucketSettingsAuditTests {
                 storeWasAskedToWrite: settings.corsWrites.count == 1,
                 modelShowsAFailure: model.saveFailure != nil)
         },
-        Operation(name: "set a file's retention", kind: .objectLockChanged) { recorder, refuse in
+        Operation(
+            name: "set a file's retention", kind: .objectLockChanged,
+            detailPrefix: "retention of b1/reports/q3.pdf set to GOVERNANCE until ") { recorder, refuse in
             let settings = FakeBucketSettings(lock: .init(writeError: refuse ? Self.refusal : nil))
             let model = ObjectLockModel(focus: .retention, bucketHasLock: true)
             await model.run(key: "reports/q3.pdf", bucket: "b1", via: settings, recorder: recorder)
@@ -93,7 +106,9 @@ struct BucketSettingsAuditTests {
                 storeWasAskedToWrite: settings.retentionWrites.count == 1,
                 modelShowsAFailure: model.applyFailure != nil)
         },
-        Operation(name: "place a file's legal hold", kind: .objectLockChanged) { recorder, refuse in
+        Operation(
+            name: "place a file's legal hold", kind: .objectLockChanged,
+            detailPrefix: "legal hold on b1/reports/q3.pdf placed") { recorder, refuse in
             let settings = FakeBucketSettings(lock: .init(writeError: refuse ? Self.refusal : nil))
             let model = ObjectLockModel(focus: .legalHold, bucketHasLock: true)
             model.legalHold = true
@@ -102,8 +117,10 @@ struct BucketSettingsAuditTests {
                 storeWasAskedToWrite: settings.legalHoldWrites.count == 1,
                 modelShowsAFailure: model.applyFailure != nil)
         },
-        Operation(name: "set a bucket's Object Lock default", kind: .objectLockChanged) {
-            recorder, refuse in
+        Operation(
+            name: "set a bucket's Object Lock default", kind: .objectLockChanged,
+            detailPrefix: "default retention of bucket b1 set to GOVERNANCE for 30 days"
+        ) { recorder, refuse in
             let settings = FakeBucketSettings(lock: .init(writeError: refuse ? Self.refusal : nil))
             let model = BucketObjectLockModel(bucketHasLock: true, current: nil)
             await model.save(bucket: "b1", via: settings, recorder: recorder)
@@ -160,11 +177,12 @@ struct BucketSettingsAuditTests {
         #expect(events.first?.kind == operation.kind)
         #expect(events.first?.isError == false)
         #expect(events.first?.errorMessage == nil)
-        // The detail names the bucket the write was about. Every operation in
-        // the table uses one of these two, so a line that lost it fails here.
+        // The detail carries the values the sheet wrote: the bucket, the key,
+        // the state or mode, the count. A wrong value, not only a missing line,
+        // fails here.
         let detail = events.first?.detail ?? ""
-        let namesABucket = detail.contains("b1") || detail.contains("macscp-third")
-        #expect(namesABucket)
+        let startsAsExpected = detail.hasPrefix(operation.detailPrefix)
+        #expect(startsAsExpected, "\(operation.name)")
     }
 
     // MARK: - A refusal
@@ -279,6 +297,21 @@ struct BucketSettingsAuditTests {
             of: SourceCorpus.url(of: .sources).appendingPathComponent(relativePath))
     }
 
+    /// The first place `name` is called, as a whole identifier: `ObjectLockSheet(`
+    /// is also the tail of `BucketObjectLockSheet(`, and a plain substring search
+    /// for the one finds the other's call site first (measured by probe P9, which
+    /// planted `recorder: nil` in the one this scan then never looked at).
+    private static func firstUse(of name: String, in source: String) -> Range<String.Index>? {
+        var from = source.startIndex
+        while let found = source.range(of: "\(name)(", range: from..<source.endIndex) {
+            let before = found.lowerBound > source.startIndex
+                ? source[source.index(before: found.lowerBound)] : " "
+            if !(before.isLetter || before.isNumber || before == "_") { return found }
+            from = found.upperBound
+        }
+        return nil
+    }
+
     /// The compiler makes every call site DECIDE about a recorder; it cannot
     /// say the decision was the tab's. A `recorder: nil` in the dispatcher
     /// compiles, passes every model test above, and silently drops the trail
@@ -295,7 +328,7 @@ struct BucketSettingsAuditTests {
             String(describing: ContentView.ObjectLockSheetItem.self),
         ]
         for item in items {
-            let at = try #require(dispatchers.range(of: "\(item)("), "\(item) is built nowhere")
+            let at = try #require(Self.firstUse(of: item, in: dispatchers), "\(item) is built nowhere")
             let around = String(dispatchers[at.upperBound...].prefix(120))
             let passesTheTabs = around.contains("recorder: tab.auditRecorder")
             #expect(passesTheTabs, "\(item)")
@@ -313,7 +346,7 @@ struct BucketSettingsAuditTests {
             String(describing: ObjectLockSheet.self),
         ]
         for name in names {
-            let at = try #require(sheets.range(of: "\(name)("), "\(name) is built nowhere")
+            let at = try #require(Self.firstUse(of: name, in: sheets), "\(name) is built nowhere")
             let around = String(sheets[at.upperBound...].prefix(120))
             let passesItems = around.contains("recorder: item.recorder")
             #expect(passesItems, "\(name)")
