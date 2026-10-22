@@ -42,9 +42,28 @@ error case with its own catalog string:
 | result | meaning | message |
 |---|---|---|
 | 200 with buckets | works | none — the browser opens on the list |
-| 200 with zero buckets | key may list, account has none | "This key can list buckets, but the account has none." |
+| 200 with zero buckets | key may list, account has none **(superseded 2026-10-22, see the correction below the table)** | "This key can list buckets, but the account has none." |
 | 403 `AccessDenied` | key lacks `s3:ListAllMyBuckets` (AWS is documented to answer 403 here — not measured by this project, no AWS key in the rig; **MinIO does not** — measured 2026-09-02, it returns the filtered list instead, see the rig README) | "This key may not list buckets. Turn off 'Start at the bucket list' and enter the bucket." |
 | anything else | provider does not implement `ListBuckets`, or an endpoint/region problem | today's `connectionFailed` path |
+
+**Corrected 2026-10-22, by Task 13 of the s3-bucket-settings plan**
+(`docs/superpowers/plans/2026-10-19-s3-bucket-settings.md`). Row 2 of the table
+above, `200 with zero buckets` with the meaning "key may list, account has none"
+and the message "This key can list buckets, but the account has none.",
+describes an outcome that no longer occurs. `612f1ece` removed the only `throw`
+of `RemoteFSError.bucketListEmpty` from `S3FileSystem.connect`, so an account
+with no buckets now connects and the browser opens on an empty bucket list; the
+connection menu's create-bucket row is available there, so that the first
+bucket can be made. Nothing in the table was deleted; the row's cells stand
+as written on 2026-09-02, with a pointer added to its meaning cell.
+
+What stays in the tree for that row: its message is still the catalogue key
+`core.connect.s3BucketListEmpty`, in all four languages, because the enum case
+`RemoteFSError.bucketListEmpty` still has consumers and the localization parity
+checks read every key a case declares. Deleting the case, and with it the
+strings, is a separate decision with its own review; the row of `docs/BACKLOG.md`
+titled "`RemoteFSError.bucketListEmpty` has no producer since `612f1ece`, and six
+comments still describe it or its sibling as they were" carries it.
 
 The check happens **once, on connect**, so the failure is where the user
 is looking — the form — not deep in the browser.
