@@ -740,6 +740,50 @@ struct S3ObjectLockTests {
         #expect(keys.count == 4)
     }
 
+    /// **The bucket's own lock state could not be read, and that does not buy
+    /// an unbounded walk.** A read that failed establishes nothing, so a
+    /// refused key is still worth asking about — but only the FIRST one. With
+    /// the bucket's configuration unreadable and the first object's lock state
+    /// uninformative, nothing distinguishes the five-hundredth key from the
+    /// first, and the alternative is paying for 999 more answers that cannot
+    /// improve the one message the user sees.
+    ///
+    /// One bucket read that fails, then one key probed (its hold and its
+    /// retention, both uninformative): 3 requests for a batch of four
+    /// refusals, not 9. And the reason says the lock state could not be read,
+    /// so the record does not look like a bucket that simply has no lock.
+    @Test func anUnreadableBucketLockStateProbesOnlyTheFirstRefusedKey() async throws {
+        let keys = ["d/", "d/a", "d/b", "d/c"]
+        let outcome = try await deleteTree(
+            sending: keys, refused: keys,
+            probes: [answer(Self.accessDenied, status: 403)]
+                + Array(repeating: answer(Self.error("InvalidRequest"), status: 400), count: 12))
+        guard case .protocolError(let reason)? = outcome.error else {
+            Issue.record("expected the generic failure, got \(String(describing: outcome.error))")
+            return
+        }
+        #expect(reason == S3FileSystem.deleteTreeRefusedWithUnreadableLockStateReason)
+        #expect(reason != S3FileSystem.deleteTreeRefusedReason)
+        #expect(outcome.probeRequests == 3)
+        #expect(keys.count == 4)
+    }
+
+    /// The reason of a refused batch on a bucket the call COULD read: the
+    /// plain one. The positive control for the test above, so that neither
+    /// reason is the answer to every refusal.
+    @Test func aBucketWhoseLockStateReadsGivesThePlainReason() async throws {
+        let keys = ["d/", "d/a"]
+        let outcome = try await deleteTree(
+            sending: keys, refused: keys,
+            probes: [answer(Self.error("ObjectLockConfigurationNotFoundError"), status: 404)])
+        guard case .protocolError(let reason)? = outcome.error else {
+            Issue.record("expected the generic failure, got \(String(describing: outcome.error))")
+            return
+        }
+        #expect(reason == S3FileSystem.deleteTreeRefusedReason)
+        #expect(outcome.probeRequests == 1)
+    }
+
     /// The other half of the hoist: a bucket that DOES have Object Lock still
     /// gets its keys probed, and the first key under a hold settles the
     /// answer. One bucket read plus one `?legal-hold` — three requests fewer
