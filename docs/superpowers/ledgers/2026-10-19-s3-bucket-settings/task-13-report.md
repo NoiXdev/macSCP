@@ -235,6 +235,9 @@ VERDICT: ungated half DONE; gated half NOT DONE.
 Two commits were amended after they were made (their messages needed correcting), which changes their hashes. A BACKLOG row written between the commit and the amend named the old hash (`61e30f7c`), a hash no longer in history.
 Found by extracting every 7-12-hex token this closeout added to `docs/BACKLOG.md`, the 2026-09-02 spec and `S3FileSystem.swift` and checking each is a commit reachable from HEAD (`hashcheck.py`): 48 tokens, one bad. Fixed in
 `de54058f` (first made as `3f45c250`, amended once after `git log -1`); re-run: 48 tokens, none bad. The report text above was corrected the same way.
+The same check over the two ledger files as committed in `ec369781` (114 tokens) reports eight that are not ancestors of HEAD, none of them an error: this report names three superseded hashes on purpose, each
+labelled "first made as" (`3f45c250`, `61e30f7c`, `dba875f5`); the copied ledger, whose text is not mine, names three pre-squash hashes with its own words "squashed from" (`51ac79b9`, `ffa4fe9a`, `f83e0db8`)
+and two hashes from the user-docs repository (`4a10178`, `d7c87bb`).
 
 ## Commits (BASE `b1537a05`; `git log --reverse --format='%h %s' b1537a05..HEAD` lists them)
 
