@@ -160,7 +160,8 @@ public struct ConnectionHistory: Sendable, Equatable {
             case .transferFailed:
                 open?.failedTransfers += 1
             case .transferCancelled, .editUpload, .crossSessionTransfer, .rename, .delete,
-                .permissions, .newFolder, .newFile, .snippetExecuted, .plaintextConfirmed:
+                .permissions, .newFolder, .newFile, .snippetExecuted, .plaintextConfirmed,
+                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
                 // Not a connection boundary and not a transfer this list
                 // counts. Spelled out rather than left to a `default`, so a
                 // kind added later has to be classified here instead of

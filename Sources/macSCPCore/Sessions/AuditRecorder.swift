@@ -154,4 +154,94 @@ public struct AuditRecorder: Sendable {
     public func recordAction(_ event: AuditEvent) {
         store.append(event, for: sessionID)
     }
+
+    // MARK: - S3 bucket settings (Task 12)
+
+    /// What an Object Lock write was. `AuditEvent.Kind.objectLockChanged`
+    /// covers all three, and only one of them -- a COMPLIANCE retention -- is
+    /// irreversible, so a trail in which the three read alike would not do
+    /// the job the kind exists for. The kind cannot separate them; the
+    /// `detail` composed from this does.
+    public enum ObjectLockChange: Sendable, Equatable {
+        /// A file's retention: the mode and the date it was written with.
+        case retention(ObjectRetention, key: String, bucket: String)
+        /// A file's legal hold: placed (`true`) or released (`false`).
+        case legalHold(Bool, key: String, bucket: String)
+        /// A bucket's default retention, which applies to files added after.
+        case bucketDefault(days: Int, mode: RetentionMode, bucket: String)
+    }
+
+    /// Logs a bucket the user created from the bucket list.
+    ///
+    /// `failure` is the FIXED sentence the sheet already shows for a create
+    /// the store did not do -- never the error's own text, which can carry the
+    /// endpoint the user typed. `nil` is a create that went through. **No
+    /// default value**, for the reason `BucketVersioningModel.init(current:
+    /// bucketHasObjectLock:)` gives: a default is what lets a caller leave a
+    /// refusal reading as done without saying so. The same goes for the three
+    /// methods after this one.
+    ///
+    /// A create that failed after the bucket existed (the versioning request
+    /// that follows it) is recorded as a failure too, and its sentence says
+    /// the bucket exists. The detail is the attempt, whichever way it went.
+    public func recordBucketCreated(bucket: String, protection: BucketProtection, failure: String?) {
+        var detail = "created bucket \(bucket)"
+        switch protection {
+        case .none: break
+        case .versioned: detail += " with versioning"
+        case .lockedAndVersioned: detail += " with versioning and Object Lock"
+        }
+        appendBucketSetting(.bucketCreated, detail: detail, failure: failure)
+    }
+
+    /// Logs a bucket's versioning moved to `state`, or refused.
+    public func recordVersioningChanged(bucket: String, to state: BucketVersioning, failure: String?) {
+        appendBucketSetting(
+            .versioningChanged, detail: "versioning of bucket \(bucket) set to \(state.rawValue)",
+            failure: failure)
+    }
+
+    /// Logs a bucket's CORS rules saved, or refused. Only the COUNT is
+    /// written: a rule's origins and headers are the user's configuration,
+    /// not an audit fact, and the count is what tells a save from a clear.
+    /// An empty save is worded as a clear because that is what the store
+    /// makes of it (`S3BucketSettings.setCORS`).
+    public func recordCORSChanged(bucket: String, ruleCount: Int, failure: String?) {
+        let detail =
+            ruleCount == 0
+            ? "CORS configuration of bucket \(bucket) cleared"
+            : "CORS rules of bucket \(bucket) set to \(ruleCount) \(ruleCount == 1 ? "rule" : "rules")"
+        appendBucketSetting(.corsChanged, detail: detail, failure: failure)
+    }
+
+    /// Logs an Object Lock write, or its refusal. A retention's line names the
+    /// mode and the date (UTC, the internet date-time form), which is the one
+    /// fact a COMPLIANCE write cannot be reconstructed from afterwards.
+    public func recordObjectLockChanged(_ change: ObjectLockChange, failure: String?) {
+        let detail: String
+        switch change {
+        case .retention(let retention, let key, let bucket):
+            detail =
+                "retention of \(bucket)/\(key) set to \(retention.mode.rawValue) until "
+                + Self.utcText(retention.retainUntil)
+        case .legalHold(let on, let key, let bucket):
+            detail = "legal hold on \(bucket)/\(key) \(on ? "placed" : "released")"
+        case .bucketDefault(let days, let mode, let bucket):
+            detail = "default retention of bucket \(bucket) set to \(mode.rawValue) for \(days) days"
+        }
+        appendBucketSetting(.objectLockChanged, detail: detail, failure: failure)
+    }
+
+    private func appendBucketSetting(_ kind: AuditEvent.Kind, detail: String, failure: String?) {
+        store.append(
+            AuditEvent(kind: kind, detail: detail, isError: failure != nil, errorMessage: failure),
+            for: sessionID)
+    }
+
+    /// `2027-01-15T08:00:00Z`: UTC and fixed, so a line reads the same
+    /// whichever zone or locale reads it back. A formatter per call, not a
+    /// shared one: `ISO8601DateFormatter` is not `Sendable`.
+    private static func utcText(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
+    }
 }

@@ -86,6 +86,24 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// `.connected` is recorded, so the audit trail shows exactly when a
         /// session ran with credentials in the clear.
         case plaintextConfirmed
+        /// A bucket the user created from the bucket list (S3 bucket
+        /// settings). The four kinds from here on are recorded by the sheets
+        /// that apply them, through `AuditRecorder.recordBucketCreated`,
+        /// `recordVersioningChanged`, `recordCORSChanged` and
+        /// `recordObjectLockChanged`: those sheets do not go through
+        /// `RemoteBrowserViewModel`, so its `auditSink` never carries them.
+        case bucketCreated
+        /// A bucket's versioning moved to another state.
+        case versioningChanged
+        /// A bucket's CORS rules were saved, or cleared.
+        case corsChanged
+        /// An Object Lock write: a file's retention, a file's legal hold, or
+        /// a bucket's default retention. ONE kind for the three, so the
+        /// `detail` is what tells them apart -- see
+        /// `AuditRecorder.recordObjectLockChanged`. A COMPLIANCE retention is
+        /// the only write macSCP makes that cannot be undone, and this is its
+        /// trace.
+        case objectLockChanged
     }
 }
 

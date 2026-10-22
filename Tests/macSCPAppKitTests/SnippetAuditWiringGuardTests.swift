@@ -4,11 +4,12 @@ import macSCPCore
 @testable import MacSCPAppKit
 
 /// The audit sheet looks a kind's label up as `audit.kind.<rawValue>`; a
-/// missing entry silently renders the raw case name to the user. Catalog
-/// key-set parity across languages is already covered by
-/// `LocalizableStringsTests`, so this only checks the English catalog, but
-/// it checks it for every `AuditEvent.Kind` case, present or future. It
-/// also pins the Terminal filter's label, which no `Kind` case covers.
+/// missing entry silently renders the raw case name to the user. This checks
+/// every shipped language for every `AuditEvent.Kind` case, present or
+/// future, so the guard names the kind and the language that lacks a label
+/// itself rather than relying on the key-set parity tests to notice a
+/// catalogue that is short of one. It also pins the Terminal filter's label,
+/// which no `Kind` case covers.
 @Suite("Snippet audit wiring")
 struct SnippetAuditWiringGuardTests {
     private static let languages = ["en", "de", "fr", "pl"]
@@ -27,8 +28,16 @@ struct SnippetAuditWiringGuardTests {
     /// phase added, so the next kind that forgets its label fails here.
     @Test(arguments: AuditEvent.Kind.allCases)
     func everyKindHasACatalogLabel(kind: AuditEvent.Kind) throws {
-        let text = try catalog("en")
-        #expect(text.contains("\"audit.kind.\(kind.rawValue)\""), "missing for \(kind.rawValue)")
+        // Every shipped language, not English alone: a label present only in
+        // `en` passes a check of `en` while the other three render the raw
+        // case name. This is a positive `contains` check, so a catalogue that
+        // loses the entry fails here instead of passing in silence.
+        for language in Self.languages {
+            let text = try catalog(language)
+            #expect(
+                text.contains("\"audit.kind.\(kind.rawValue)\""),
+                "missing for \(kind.rawValue) in \(language)")
+        }
     }
 
     @Test func everyCatalogLabelsTheTerminalFilter() throws {
