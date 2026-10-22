@@ -161,6 +161,11 @@ struct BucketSettingsAuditTests {
         // covers three operations.
         let lockRows = Self.operations.filter { $0.kind == .objectLockChanged }
         #expect(lockRows.count == 3)
+        // Six rows for the five apply methods (`ObjectLockModel.run` serves
+        // the retention and the legal hold). Pinned because a duplicated row
+        // would pass the two checks above while the parameterised tests ran a
+        // bogus case as a seventh operation.
+        #expect(Self.operations.count == 6)
     }
 
     // MARK: - One line, of the operation's own kind
@@ -200,6 +205,14 @@ struct BucketSettingsAuditTests {
         #expect(events.first?.isError == true)
         let message = events.first?.errorMessage ?? ""
         #expect(message.isEmpty == false)
+        // The line of a refused write says what was ATTEMPTED, with the same
+        // values a success would have carried (Core pins the shape). Without
+        // this, a refused COMPLIANCE retention could be recorded as an attempt
+        // at GOVERNANCE, or a refused hold as its opposite, and nothing would
+        // notice (probes N3 and N4 of the Task 12 review ended GREEN).
+        let detail = events.first?.detail ?? ""
+        let describesTheAttempt = detail.hasPrefix(operation.detailPrefix)
+        #expect(describesTheAttempt, "\(operation.name)")
     }
 
     /// The store's own words never reach the trail: a `reason` can carry the
