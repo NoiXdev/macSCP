@@ -275,19 +275,33 @@ final class CreateBucketModel {
             outcome = .created
             recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
         } catch {
-            outcome = await failure(for: error, bucket: bucket, protection: choice, via: settings)
+            let refusal = await failure(for: error, bucket: bucket, protection: choice, via: settings)
+            outcome = .failed(sentence: refusal.sentence, bucketMayExist: refusal.bucketMayExist)
             // The sentence the sheet now shows, which is a fixed one and never
-            // the store's own words (`failure(for:...)`).
-            if case .failed(let sentence, _) = outcome {
-                recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: sentence)
-            }
+            // the store's own words (`failure(for:...)`). Recorded from a bare
+            // `catch`, like the other four recording sites: `failure(for:...)`
+            // returns a `Refusal`, a type that can only be a refusal, so there
+            // is no outcome to test and nothing for a later arm to slip past.
+            // (Withdrawn, verbatim: "if case .failed(let sentence, _) = outcome"
+            // guarded this call, total only while every arm of `failure(for:...)`
+            // returned `.failed`.)
+            recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: refusal.sentence)
         }
+    }
+
+    /// What a refused create comes to: the sentence the sheet shows and whether
+    /// a bucket of this name may exist now. A type of its own, not an
+    /// `Outcome`, so that `failure(for:...)` cannot return anything that is not
+    /// a refusal and `create` can record its result without asking which.
+    private struct Refusal {
+        let sentence: String
+        let bucketMayExist: Bool
     }
 
     private func failure(
         for error: any Error, bucket: String, protection: BucketProtection,
         via settings: any S3BucketSettings
-    ) async -> Outcome {
+    ) async -> Refusal {
         // Only the create request can say the name is taken, so no read is spent.
         //
         // "Already owned by you" is the store's own statement that a bucket of
@@ -305,25 +319,25 @@ final class CreateBucketModel {
         if case RemoteFSError.finding(let finding) = error {
             if finding == .bucketAlreadyOwnedByYou {
                 takenNames.insert(bucket)
-                return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: true)
+                return Refusal(sentence: Self.refusalSentence(for: error), bucketMayExist: true)
             }
             if finding == .bucketNameTaken {
-                return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
+                return Refusal(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
             }
         }
         guard protection != .none else {
-            return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
+            return Refusal(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
         }
         do {
             _ = try await settings.versioning(ofBucket: bucket)
             takenNames.insert(bucket)
-            return .failed(
+            return Refusal(
                 sentence: Self.existsIncompletelyLine(bucket: bucket), bucketMayExist: true)
         } catch RemoteFSError.notFound {
-            return .failed(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
+            return Refusal(sentence: Self.refusalSentence(for: error), bucketMayExist: false)
         } catch {
             takenNames.insert(bucket)
-            return .failed(sentence: Self.mayExistLine.text, bucketMayExist: true)
+            return Refusal(sentence: Self.mayExistLine.text, bucketMayExist: true)
         }
     }
 
