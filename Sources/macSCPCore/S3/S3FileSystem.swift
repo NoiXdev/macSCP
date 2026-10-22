@@ -816,6 +816,40 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
             status, body: body, path: reportedPath(bucket: bucket, key: key))
     }
 
+    /// What one call has established about a bucket's Object Lock, so that
+    /// the question is asked at most once per call rather than once per
+    /// refused key (F2 of the final whole-branch review).
+    ///
+    /// The lock state is a property of the BUCKET: a key can only be under a
+    /// hold or a retention if the bucket it is in has Object Lock enabled. So
+    /// `.absent` settles every refusal in that call at once, and the `nil`
+    /// `lockFinding` would have answered after two signed GETs per key is
+    /// known in advance, for one read.
+    private enum BucketLockState: Equatable {
+        /// Not asked. A call with no refusal in it never leaves this, which
+        /// is what keeps a clean delete at its old cost.
+        case notAsked
+        /// The bucket has Object Lock, so a refused key is worth asking about.
+        case inForce
+        /// The bucket has none, so no key in it can be under a lock and no
+        /// per-key read could establish one.
+        case absent
+        /// The read did not answer. Nothing is established either way, so the
+        /// per-key reads stay the only way to find out -- the same rule
+        /// `lockFinding` follows for its own failed probes: a probe's failure
+        /// never replaces the answer it was asked about.
+        case unknown
+    }
+
+    /// `hasObjectLock(ofBucket:)` once, as the three answers above.
+    private func bucketLockState(ofBucket bucket: String) async -> BucketLockState {
+        do {
+            return try await hasObjectLock(ofBucket: bucket) ? .inForce : .absent
+        } catch {
+            return .unknown
+        }
+    }
+
     /// `.objectUnderLegalHold` when `key` is under a legal hold,
     /// `.objectUnderRetention` when it has a retention whose date has not
     /// passed, `nil` when neither is established.
@@ -828,6 +862,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// refusal; a probe's failure never replaces the answer it was asked
     /// about. The current version is the one read (`versionId: nil`), which is
     /// the only version this half deletes.
+    ///
+    /// **Two callers, and one of them gates this on the bucket first.**
+    /// `refusalOfDelete` asks it for the single key a `DELETE` was refused
+    /// for. `deleteTree` walks up to 1000 refusals in one answer, so it asks
+    /// `bucketLockState(ofBucket:)` once per call and does not come here at
+    /// all for a bucket that has no Object Lock -- see its own comment.
     private func lockFinding(forRefusedDeleteOf key: String, inBucket bucket: String) async -> RemoteFSError? {
         let path = reportedPath(bucket: bucket, key: key)
         if (try? await legalHold(ofKey: key, inBucket: bucket, versionId: nil)) == true {
@@ -932,10 +972,18 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// the same header, because AWS marks `Content-MD5` required for
     /// `PutBucketVersioning` too.
     ///
-    /// `Task.checkCancellation()` runs once per batch, not per key — a batch
-    /// already in flight always completes. Like `rename`'s directory re-key
-    /// loop, this is deliberately NOT transactional: a cancellation or
-    /// mid-tree failure leaves a PARTIALLY deleted tree, with no rollback.
+    /// `Task.checkCancellation()` runs once per batch, before the delete, and
+    /// again per entry of the per-key refusal walk below — a batch already in
+    /// flight always completes, but a walk over up to 1000 refusals, each of
+    /// which may cost signed reads, is not something a cancel should have to
+    /// sit through. Like `rename`'s directory re-key loop, this is
+    /// deliberately NOT transactional: a cancellation or mid-tree failure
+    /// leaves a PARTIALLY deleted tree, with no rollback.
+    ///
+    /// **Corrected 2026-10-22 (F2 of the final whole-branch review).** The
+    /// paragraph above began, verbatim: "`Task.checkCancellation()` runs once
+    /// per batch, not per key — a batch already in flight always completes."
+    /// It was true of the code and is no longer: the refusal walk checks too.
     ///
     /// S3's `DeleteObjects` can answer HTTP 200 with a `<DeleteResult>` body
     /// that lists per-key `<Error>` entries for objects it failed to delete
@@ -986,6 +1034,10 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         }
         let (_, treePrefix) = try resolvePrefix(path: path)
         let keys = try await allObjectKeys(bucket: bucket, underPrefix: treePrefix)
+        // Asked at most once per CALL, and only once a refusal has actually
+        // appeared, so a delete that goes through costs nothing extra. See
+        // `BucketLockState`.
+        var bucketLock = BucketLockState.notAsked
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
             let body = try Self.deleteObjectsXML(keys: batch)
@@ -1008,6 +1060,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                 // `<Message>` is never read.
                 let sent = Dictionary(batch.map { ($0, $0) }, uniquingKeysWith: { first, _ in first })
                 for refusal in S3ErrorCode.perKeyRefusals(in: data) {
+                    // A batch already sent always completes, but this walk is
+                    // up to 1000 entries and each can cost signed reads.
+                    try Task.checkCancellation()
                     guard let key = sent[refusal.key] else { continue }
                     if let named = S3ErrorCode.finding(
                         forCode: refusal.code, status: response.statusCode,
@@ -1016,11 +1071,24 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                         throw named
                     }
                     // `AccessDenied` is the code a lock and a missing
-                    // permission share; the object says which.
-                    if refusal.code == "AccessDenied",
-                        let locked = await lockFinding(forRefusedDeleteOf: key, inBucket: bucket)
-                    {
-                        throw locked
+                    // permission share; the object says which — but only a
+                    // bucket with Object Lock can have an object under one,
+                    // so the BUCKET is asked first, once per call. Without
+                    // that, an access key with list but not delete permission
+                    // gets `AccessDenied` for every key of the batch and pays
+                    // two signed GETs each to establish nothing: about 2000
+                    // requests on a full batch, which is what F2 of the final
+                    // whole-branch review measured.
+                    if refusal.code == "AccessDenied" {
+                        if bucketLock == .notAsked {
+                            bucketLock = await bucketLockState(ofBucket: bucket)
+                        }
+                        if bucketLock != .absent,
+                            let locked = await lockFinding(
+                                forRefusedDeleteOf: key, inBucket: bucket)
+                        {
+                            throw locked
+                        }
                     }
                 }
                 throw RemoteFSError.protocolError(

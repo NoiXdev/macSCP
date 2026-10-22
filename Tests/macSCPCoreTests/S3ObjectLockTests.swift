@@ -634,12 +634,21 @@ struct S3ObjectLockTests {
             + "<IsTruncated>false</IsTruncated><CommonPrefixes><Prefix>d/</Prefix></CommonPrefixes>"
             + "</ListBucketResult>").utf8)
 
+    /// One `deleteTree` over `keys`, whose `DeleteObjects` answer is a 200
+    /// listing `echoed` as `AccessDenied`, followed by `probes`.
+    ///
+    /// **`echoed` is a LIST** (F2 of the final whole-branch review): every
+    /// case here used a batch with exactly one refused key, which is why none
+    /// of them could see that the lock probe ran per key. The volume is the
+    /// property, so the fixture has to be able to express it.
     private func deleteTree(
-        sending keys: [String], refused echoed: String, probes: [(Data, HTTPURLResponse)]
+        sending keys: [String], refused echoed: [String], probes: [(Data, HTTPURLResponse)]
     ) async throws -> (error: RemoteFSError?, probeRequests: Int) {
-        let result = Data(
-            ("<DeleteResult><Error><Key>\(echoed)</Key><Code>AccessDenied</Code>"
-                + "<Message>text the store wrote</Message></Error></DeleteResult>").utf8)
+        let entries = echoed.map {
+            "<Error><Key>\($0)</Key><Code>AccessDenied</Code>"
+                + "<Message>text the store wrote</Message></Error>"
+        }.joined()
+        let result = Data("<DeleteResult>\(entries)</DeleteResult>".utf8)
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
             answer(Data(), status: 404), answer(directoryListing), answer(listing(keys)),
             answer(result),
@@ -653,19 +662,29 @@ struct S3ObjectLockTests {
         }
     }
 
+    /// The probe list begins with the BUCKET's lock state (F2): `deleteTree`
+    /// asks `GET ?object-lock` once per call before it asks about any key, so
+    /// a case that wants a key probed has to let the bucket answer first.
     @Test func aKeyRefusedUnderALockIsNamedAtTheCallersOwnKey() async throws {
         let outcome = try await deleteTree(
-            sending: ["d/", "d/a"], refused: "d/a", probes: [answer(Self.holdDocument("ON"))])
+            sending: ["d/", "d/a"], refused: ["d/a"],
+            probes: [
+                answer(Self.lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>")),
+                answer(Self.holdDocument("ON")),
+            ])
         #expect(outcome.error == .finding(.objectUnderLegalHold(path: "/d/a")))
     }
 
     /// Ruling B. The store echoes a key this batch never held, and a finding
     /// must not carry a value the store chose: the entry is skipped, and with
     /// nothing named the failure is the generic one. No lock is looked up for
-    /// it either.
+    /// it either — and since F2 that `probeRequests == 0` says something more:
+    /// a skipped entry does not even make the call ask the bucket's lock
+    /// state, because the skip happens before the `AccessDenied` arm.
     @Test func aKeyTheBatchNeverHeldIsNeverShownAsAPath() async throws {
         let outcome = try await deleteTree(
-            sending: ["d/", "d/a"], refused: "somewhere/else", probes: [answer(Self.holdDocument("ON"))])
+            sending: ["d/", "d/a"], refused: ["somewhere/else"],
+            probes: [answer(Self.holdDocument("ON"))])
         guard case .protocolError? = outcome.error else {
             Issue.record("expected the generic failure, got \(String(describing: outcome.error))")
             return
@@ -681,12 +700,60 @@ struct S3ObjectLockTests {
         let precomposed = "d/caf\u{E9}"
         let decomposed = "d/cafe\u{301}"
         let outcome = try await deleteTree(
-            sending: ["d/", precomposed], refused: decomposed, probes: [answer(Self.holdDocument("ON"))])
+            sending: ["d/", precomposed], refused: [decomposed],
+            probes: [
+                answer(Self.lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>")),
+                answer(Self.holdDocument("ON")),
+            ])
         guard case .finding(.objectUnderLegalHold(let path))? = outcome.error else {
             Issue.record("expected a legal hold finding, got \(String(describing: outcome.error))")
             return
         }
         #expect(Array(path.unicodeScalars) == Array("/\(precomposed)".unicodeScalars))
+    }
+
+    /// **F2.** Four refused keys in ONE batch, on a bucket with no Object
+    /// Lock. The lock state is a property of the bucket, not of the key, so
+    /// it is asked at most once per `deleteTree` call: one probe request for
+    /// the whole batch, not two per refused key.
+    ///
+    /// What the eight requests this replaces would have bought: nothing. A
+    /// bucket without Object Lock has no key under a hold or a retention, and
+    /// the rig answers `400 InvalidRequest` to both reads
+    /// (`noLockInForceMeansTheOrdinaryRefusal`'s third argument measures that).
+    /// `AccessDenied` is what EVERY key gets from an access key that lacks
+    /// `s3:DeleteObject`, so the batch that pays most is the ordinary one.
+    @Test func aBatchOfRefusedKeysAsksTheBucketsLockStateOnlyOnce() async throws {
+        let keys = ["d/", "d/a", "d/b", "d/c"]
+        let outcome = try await deleteTree(
+            sending: keys, refused: keys,
+            probes: [answer(Self.error("ObjectLockConfigurationNotFoundError"), status: 404)]
+                + Array(repeating: answer(Self.error("InvalidRequest"), status: 400), count: 12))
+        // The answer is the ordinary refusal: nothing established a lock.
+        guard case .protocolError? = outcome.error else {
+            Issue.record("expected the generic failure, got \(String(describing: outcome.error))")
+            return
+        }
+        #expect(outcome.probeRequests == 1)
+        // The positive control for the count: the batch really did carry four
+        // refusals, so a one-key batch is not what was measured.
+        #expect(keys.count == 4)
+    }
+
+    /// The other half of the hoist: a bucket that DOES have Object Lock still
+    /// gets its keys probed, and the first key under a hold settles the
+    /// answer. One bucket read plus one `?legal-hold` — three requests fewer
+    /// than the per-key shape spent reaching the same finding, and the
+    /// finding is the same one.
+    @Test func aBucketWithObjectLockStillNamesTheKeyUnderAHold() async throws {
+        let outcome = try await deleteTree(
+            sending: ["d/", "d/a", "d/b"], refused: ["d/a", "d/b"],
+            probes: [
+                answer(Self.lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>")),
+                answer(Self.holdDocument("ON")),
+            ])
+        #expect(outcome.error == .finding(.objectUnderLegalHold(path: "/d/a")))
+        #expect(outcome.probeRequests == 2)
     }
 
     // MARK: - No way to switch Object Lock on
