@@ -301,16 +301,35 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             // and a create was invisible to every read.
             //
             // `state.createEffect` is where the two come apart. The lock
-            // fixture is ESTABLISHED when the create carried the lock header,
-            // whichever way the effect goes, because the question
-            // "does this bucket have Object Lock" has an answer for a bucket
-            // that was just created with the header and must not be
-            // `.operationNotSupported` -- that is the fake saying it was
-            // never given a fixture, which is a different outcome
-            // (the read-back FAILING) and would hide this one.
-            if protection == .lockedAndVersioned {
+            // fixture is ESTABLISHED for every create that asks for any
+            // protection, because that is every create whose read-back asks
+            // `hasObjectLock` -- and the answer for such a bucket must be a
+            // `Bool`, not `.operationNotSupported`, which is the fake saying
+            // it was never given a fixture: a DIFFERENT outcome (the
+            // read-back FAILING) that would hide the one under test.
+            //
+            // **A create never REMOVES a lock.** The header can be honoured
+            // or ignored; neither takes a lock off a bucket that already had
+            // one. So an existing fixture keeps its `hasLock` unless the
+            // header is both sent and honoured, and a fake with no fixture
+            // starts at `false`, the way a bucket made without the header
+            // has none. That is what lets a test say "the create asked for
+            // versioning only and landed on a bucket that already has Object
+            // Lock" -- the mirror case, and the one the F1 fix round missed.
+            //
+            // **Corrected 2026-10-22 (F1, fix round 2).** This paragraph read,
+            // verbatim: "The lock fixture is ESTABLISHED when the create
+            // carried the lock header, whichever way the effect goes", and
+            // the code was `if protection == .lockedAndVersioned { ...
+            // lock.hasLock = state.createEffect != .ignoresTheObjectLockHeader }`,
+            // which also switched an existing lock OFF for an ignored header.
+            if protection != .none {
                 var lock = state.lock ?? ObjectLockFixture(hasLock: false)
-                lock.hasLock = state.createEffect != .ignoresTheObjectLockHeader
+                if protection == .lockedAndVersioned,
+                    state.createEffect != .ignoresTheObjectLockHeader
+                {
+                    lock.hasLock = true
+                }
                 state.lock = lock
             }
             if protection != .none, state.createEffect != .ignoresTheVersioningRequest {
