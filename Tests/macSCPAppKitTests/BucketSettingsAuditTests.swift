@@ -272,6 +272,54 @@ struct BucketSettingsAuditTests {
         #expect(borrowed == false)
     }
 
+    // MARK: - The recorder reaches the sheet
+
+    private static func code(_ relativePath: String) throws -> String {
+        try SourceCorpus.code(
+            of: SourceCorpus.url(of: .sources).appendingPathComponent(relativePath))
+    }
+
+    /// The compiler makes every call site DECIDE about a recorder; it cannot
+    /// say the decision was the tab's. A `recorder: nil` in the dispatcher
+    /// compiles, passes every model test above, and silently drops the trail
+    /// of the one write that cannot be undone. The type names are read from
+    /// the types, not spelled.
+    @Test func everySheetItemIsBuiltWithTheTabsRecorder() throws {
+        let dispatchers =
+            try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
+        let items = [
+            String(describing: ContentView.BucketVersioningSheetItem.self),
+            String(describing: ContentView.BucketCORSSheetItem.self),
+            String(describing: ContentView.BucketObjectLockSheetItem.self),
+            String(describing: ContentView.CreateBucketSheetItem.self),
+            String(describing: ContentView.ObjectLockSheetItem.self),
+        ]
+        for item in items {
+            let at = try #require(dispatchers.range(of: "\(item)("), "\(item) is built nowhere")
+            let around = String(dispatchers[at.upperBound...].prefix(120))
+            let passesTheTabs = around.contains("recorder: tab.auditRecorder")
+            #expect(passesTheTabs, "\(item)")
+        }
+    }
+
+    /// The second hop: the item's recorder reaches the sheet that applies.
+    @Test func everySheetIsBuiltWithItsItemsRecorder() throws {
+        let sheets = try Self.code("MacSCPAppKit/ContentView+Sheets.swift")
+        let names = [
+            String(describing: BucketVersioningSheet.self),
+            String(describing: BucketCORSSheet.self),
+            String(describing: BucketObjectLockSheet.self),
+            String(describing: CreateBucketSheet.self),
+            String(describing: ObjectLockSheet.self),
+        ]
+        for name in names {
+            let at = try #require(sheets.range(of: "\(name)("), "\(name) is built nowhere")
+            let around = String(sheets[at.upperBound...].prefix(120))
+            let passesItems = around.contains("recorder: item.recorder")
+            #expect(passesItems, "\(name)")
+        }
+    }
+
     // MARK: - A missing recorder
 
     /// A KNOWN ABSENCE, measured. With no recorder the write goes through,
