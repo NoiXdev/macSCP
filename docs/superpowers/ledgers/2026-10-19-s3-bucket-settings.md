@@ -4526,3 +4526,61 @@ step reaches a file it does not name, stop and report rather than widening. The
 in-repo dispatch adds the rule for a brief whose figure does not reproduce — the
 command's verdict wins, the old figure is quoted beside the new one, and neither is
 quietly corrected into the other.
+
+## Task 13 — closed (in-repository half)
+
+Appended 2026-10-22 by the Task 13 implementer when this ledger was committed into
+`docs/`; everything above it is the coordinator's text, copied byte for byte from the
+gitignored workspace by `49a93ec7`. The implementer's own report is `task-13-report.md`
+in the directory beside this file (it is committed with this section). **Layout:** this
+file is `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings.md`; the task briefs,
+reports, reviews and re-reviews it cites by file name (for example
+`task-12-fix-3-report.md`) are in `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/`,
+under the same names. The 32 `review-*.diff` files were not copied; each is
+reconstructible from the commit range in its own name.
+
+**Commits** (BASE `b1537a05`, in order): `49a93ec7` this ledger and its records;
+`0bdfbcee` the s3Manager wishlist row; `c6dda748` the `S3FileSystem.connect` comment that
+said the create-bucket action was not in the tree; `f3277b1c` the `macscp-probe-lock` row;
+`280eff4b` the 2026-09-02 bucket browser design's "200 with zero buckets" row; `35df439e`
+the dead `bucketListEmpty` row, re-checked; `6118e6ed` the census section's third output
+pinned to a commit; `1714ac39` the warning gate's two blind spots; `9305b4d8` the three
+Core rows from Task 9's review; `c9542893` eleven rows for the closeout debts and one
+the ledger owed; `bf5cb4d5` the Content-MD5 row; `b0d9153e` the sight-check row;
+`de54058f` a hash in the dead-case row that an amend had replaced. Only `c6dda748` touches
+`Sources/`, and it changes a comment.
+
+**Test run.** `swift test`, no build-system flag, at `b0d9153e`: Core "5085 tests in 408
+suites passed"; AppKit "2848 tests in 240 suites failed ... with 1 issue", the one issue
+the known `ViewTestabilitySpike.swift:202`. The same two figures as at `83ffa661`, which is
+what a comment-only change to Sources predicts. **The gated suites were not run:**
+`MACSCP_ITEST=1 swift test` needs the Docker rig, the rig was not running on 2026-10-22
+(no SSH on 2222, no store on 19000), and it may only be started from the main checkout,
+which the worktree-isolated session cannot reach. So the plan's Step 8 is NOT done, and
+nothing in this ledger says it is.
+
+**What the closeout measured rather than copied** (each in its BACKLOG row, with its
+command): the branch is not bisectable across Task 11 -- `75fe0553` and `b7371a8f` each
+fail 3 issues in the two scan suites, `d7c6631c` and the head pass (first time anyone ran
+it); CI's warning gate is blind to macro-expansion diagnostics in CI itself (a CI log of
+2026-10-12 prints one such warning 24 times and the gate reports 0), while the colour
+blind spot reproduces locally on Swift 6.4 and was absent in the two CI logs read; the
+census section's third output reproduces as 137 / 92 / 45 at the branch's base commit
+and 95 / 52 / 43 at `493bc256`; Task 9's carriage-return and negative-`MaxAgeSeconds` findings
+reproduce, and Task 3's deferred minor does too (a CORS leaf with surrounding whitespace is
+parsed with it).
+
+**Not done, by instruction or by reach.** Step 1 (the user documentation, another
+dispatch in `/Users/noidee/_dev/noix-docs`); Step 8's gated half; the rig's volume (the
+reset decision about `macscp-probe-lock` is the maintainer's and the row records it, it
+does not resolve it); `ci.yml` and the warnings; any push. Not verified by Task 13: that
+`MACSCP_ITEST` suites tolerate the leftover bucket (read from source, not run), what a
+store answers to a negative `MaxAgeSeconds`, and anything on screen.
+
+**Raised to the coordinator, not acted on:** the design `2026-10-19-s3-bucket-settings-
+design.md` still opens "Status: awaiting maintainer approval. Not planned, not started.";
+two comments (`AuditLogSheet.swift` and `AuditLogFilterTests.swift`) disagree with Ruling
+21; the comment above `setObjectLockDefault`'s signed request says "(maintainer ruling A,
+measured)" where the ledger says a search summary; the census section's later paragraph
+records a live-file figure with no commit, as the third output did; and the plan's
+Step 4 cited the spec row as `:44` where it is line 45.
