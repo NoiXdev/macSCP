@@ -6,10 +6,14 @@ on the branch `s3-bucket-settings` (plan: `docs/superpowers/plans/2026-10-19-s3-
 The second half, the version history, is not started and stays out of scope (§10).
 **Corrected 2026-10-22, by Task 13 of that plan.** This line first read, verbatim:
 "**Status:** awaiting maintainer approval. Not planned, not started." It was true when the design was
-written and untrue of everything after it. The approval was given in chat, and chat is not an artifact:
-this file holds no record of it and claims none. The only record is a paragraph of the closing section of
-the ledger (`docs/superpowers/ledgers/2026-10-19-s3-bucket-settings.md`, "Approval"), which gives the words
-and dates it no more precisely than the plan file's own date. (Withdrawn, verbatim: "The approval is
+written and untrue of everything after it. Approval was given in chat, and chat is not an artifact: this
+file holds no record of it and claims none. The ledger's closing section
+(`docs/superpowers/ledgers/2026-10-19-s3-bucket-settings.md`, "Approval") separates what is attested: the
+maintainer's own words approve the PLAN; the design's approval is recorded there only as the coordinator's
+contemporaneous note and by the maintainer's conduct, not in the maintainer's words. It dates nothing more
+precisely than the plan file's own date. (Corrected again 2026-10-22: this sentence first said the ledger
+"gives the words and dates it no more precisely than the plan file's own date", as if the words covered the
+design. Withdrawn, verbatim: "The approval is
 recorded here on the coordinator's word of 2026-10-22; neither this file nor the ledger holds the approval
 itself, only that the design and the plan were committed together on 2026-10-19 (`1dac7bd3`) and that the
 decisions below are dated that day." The ledger now holds it, so "nor the ledger" stopped being true.)

@@ -4599,16 +4599,30 @@ The gated suites still did not run. Found and not edited: three test comments sa
 not require/check" a Content-MD5 on `PUT ?object-lock`, which no recorded run supports (only
 `PUT ?versioning` was measured).
 
-**Approval.** Added 2026-10-22 at the coordinator's ruling. The maintainer approved this plan
+**Approval.** Added 2026-10-22 at the coordinator's ruling, and rewritten the same day to separate three
+kinds of evidence, because one sentence had let a quote about the plan stand in for the design.
+Under this project's rule that the conversation is not an artifact, this ledger is the only place that can hold
+any of it, and none of it is an artifact of the maintainer's.
+(1) **A verbatim quote, of the PLAN's approval only.** The maintainer wrote `plan passt, umsetzen` ("the plan
+fits, carry it out"). The coordinator gave the Task 13 implementer those words on 2026-10-22; the implementer did
+not see the chat. The words are about the plan.
+(2) **A controller's contemporaneous record, of the DESIGN's approval, one level removed.** The `writing-plans`
+invocation for this work carried, in its arguments, "Implementation plan for
+`docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md` (approved by the maintainer 2026-10-19,
+uncommitted)". That is the coordinator asserting the approval at the time, not the maintainer saying it, and
+the maintainer's own words approving the design document are not attested anywhere this ledger can reach.
+(3) **Approval by conduct, the strongest thing in the record and a different kind of evidence.** The
+maintainer drove the implementation across the plan's tasks, repeatedly saying to continue and choosing between
+options when asked. That is not a quotation approving the design document and is not dressed as one.
+**What this means for the gate** that nothing is built until the design document is approved: the work was
+approved, which the conduct makes plain, but approval of the design document in the maintainer's own words is
+not attested here, and a reader checking whether the gate was honoured should read it that way.
+**Dating.** The ledger cannot date any of it more precisely than the plan file's own date, 2026-10-19, which is
+also the date of this ledger's header and first entry; the only date in (2) is the coordinator's. No finer date
+or time is claimed. The design document claims no artifact for the approval.
+(Withdrawn, verbatim, from the first version of this paragraph: "The maintainer approved this plan
 and the design under it in chat, in the words `plan passt, umsetzen` ("the plan fits, carry it
-out"). The coordinator gave the Task 13 implementer those words on 2026-10-22; the
-implementer did not see the chat. Under this project's rule that the conversation is not an
-artifact, **this paragraph is the only record of the approval**: the design document
-(`docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md`) claims no artifact for it, and the plan
-file records none. **The ledger cannot date the approval more precisely than the plan file's own
-date, 2026-10-19**, which is also the date of this ledger's header and its first entry; the
-approval came after the plan was written and before the work began, and no finer date or
-time is claimed here.
+out")." It rested on the coordinator's word, not on the scope of the words, which are about the plan.)
 
 **Round 3 (2026-10-22).** `e6b94cc6` corrects the three test comments that the round-2 paragraph
 above says were "Found and not edited" (that sentence read, verbatim: "Found and not edited: three
