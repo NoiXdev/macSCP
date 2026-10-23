@@ -465,6 +465,21 @@ final class CreateBucketModel {
     /// dates pass, not them and not the account owner. They chose nothing, so
     /// nothing warned them.
     ///
+    /// **The price of forgiving an unanswerable lock read, written down.** On
+    /// a store that does not implement Object Lock, `protectionNotChosen`
+    /// ("this bucket already carries protection you did not choose") can no
+    /// longer fire for the LOCK half, and neither can
+    /// `defaultRetentionNotSetHere`. That is acceptable where it is the
+    /// reason for the change -- such a store has no lock to carry. Where it
+    /// is a real loss is narrower and is the honest cost: a store that DOES
+    /// implement Object Lock, on a bucket that has one, whose
+    /// `GET ?object-lock` is refused rather than answered. Before this, that
+    /// gave `.unconfirmed`, which at least said the settings could not be
+    /// checked; now it is a clean success. The versioning half of
+    /// `protectionNotChosen` still fires, because `versioning(ofBucket:)` is
+    /// an ordinary S3 call: a plain create onto a versioned bucket is still
+    /// reported.
+    ///
     /// **Corrected 2026-10-22 (F1, fix round 3).** This paragraph said,
     /// verbatim: "`.none` claims no setting, so nothing is read and no
     /// request is spent: the failure path makes the same cut
@@ -495,14 +510,53 @@ final class CreateBucketModel {
     private static func readBack(
         _ choice: BucketProtection, ofBucket bucket: String, via settings: any S3BucketSettings
     ) async -> ReadBack {
-        let actual: BucketProtection
+        // **"The store says there is no lock" and "we could not find out" are
+        // different answers, and only one of them is a `Bool`.**
+        // `hasObjectLock` returns `false` for exactly one store answer, the
+        // code `ObjectLockConfigurationNotFoundError`
+        // (`S3SettingsXML.parseObjectLockState` maps that to `.notConfigured`
+        // and throws on everything else), so a store that does not implement
+        // Object Lock at all answers something that throws. `nil` here is
+        // that: not found out.
+        let hasLock: Bool?
         do {
-            let hasLock = try await settings.hasObjectLock(ofBucket: bucket)
-            let versioning = try await settings.versioning(ofBucket: bucket)
-            actual = protection(hasObjectLock: hasLock, versioning: versioning)
+            hasLock = try await settings.hasObjectLock(ofBucket: bucket)
+        } catch {
+            hasLock = nil
+        }
+        // **A read that could not find out costs the create its success only
+        // when the create PROMISED a lock.** Asked for and unconfirmable is
+        // the case this whole wave exists for. Not asked for and
+        // unconfirmable is a read that was never about anything this create
+        // promised, and failing a correct create over it is a regression:
+        // on a store with no Object Lock, every plain create would end in a
+        // red sentence saying "do not create it again".
+        //
+        // The sibling sheet decided the same question the same way in its own
+        // fix round -- `BucketVersioningSheetTests`
+        // `.aLockThatCannotBeReadDoesNotCostABucketThatIsNotEnabled` holds
+        // that a lock which cannot be read changes nothing the sheet offers
+        // or says for a bucket that is not enabled. Two sheets of one branch
+        // agreeing is the point of citing it here.
+        if hasLock == nil, choice == .lockedAndVersioned { return .unconfirmed }
+        // The versioning read is what the outcome is then decided on, so a
+        // failure of THIS one is unconfirmed whatever was asked for: with
+        // neither property established there is nothing left to report. The
+        // asymmetry with the lock read above is deliberate -- that one can be
+        // irrelevant to what was promised, this one is what remains.
+        let versioning: BucketVersioning
+        do {
+            versioning = try await settings.versioning(ofBucket: bucket)
         } catch {
             return .unconfirmed
         }
+        // `hasLock ?? false` claims nothing about a lock: the protections
+        // below name only what is positively there, so an unknown lock is
+        // left out of the comparison and out of the audit line rather than
+        // reported absent. It also keeps the default-retention read below
+        // unreachable on an unknown lock, since `protection(hasObjectLock:
+        // false, …)` never answers `.lockedAndVersioned`.
+        let actual = protection(hasObjectLock: hasLock ?? false, versioning: versioning)
         // The direction decides which sentence is true of this person: see
         // `protectionRank`, and the two catalogue lines. `nil` is no
         // mismatch, which is not the same as nothing left to report.

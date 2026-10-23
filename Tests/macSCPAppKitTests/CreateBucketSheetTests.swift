@@ -636,6 +636,90 @@ struct CreateBucketSheetTests {
         #expect(settings.defaultReads.isEmpty)
     }
 
+    // MARK: - A lock read that cannot find out (D1)
+
+    /// **A store that does not implement Object Lock must not turn a correct
+    /// create into a reported failure.** `hasObjectLock` answers `false` ONLY
+    /// for the store's own `ObjectLockConfigurationNotFoundError`
+    /// (`S3SettingsXML.parseObjectLockState` maps that one code to
+    /// `.notConfigured` and throws on everything else), so a store with no
+    /// Object Lock at all answers something that throws. A plain create that
+    /// fully succeeded was then reported `.unconfirmed`: a red sentence
+    /// ending "do not create it again", an error-flagged audit row, and the
+    /// name blocked in the sheet. macSCP exists for non-AWS stores, so this
+    /// is not an exotic path.
+    ///
+    /// **The sibling sheet decided this question the same way in its own fix
+    /// round**: `BucketVersioningSheetTests`
+    /// `.aLockThatCannotBeReadDoesNotCostABucketThatIsNotEnabled` holds that a
+    /// lock which cannot be read changes nothing the sheet offers or says for
+    /// a bucket that is not enabled. Two sheets of one branch must not
+    /// disagree about it.
+    ///
+    /// The versioning read is what the outcome is decided on, and nothing at
+    /// all is claimed about a lock.
+    @MainActor @Test func aLockReadTheStoreCannotAnswerDoesNotFailAPlainCreate() async {
+        let settings = FakeBucketSettings(
+            lock: .init(hasLock: false, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.hasLockReads == ["macscp-third"])  // it was asked
+        #expect(settings.reads == ["macscp-third"])  // and the versioning answered
+        #expect(model.isCreated)
+        #expect(model.failureSentence == nil)
+        #expect(model.canCreate == false)  // created: the name is taken now
+    }
+
+    /// The same for a create that asked for versioning and not a lock: the
+    /// lock read was never about anything this create promised.
+    @MainActor @Test func aLockReadTheStoreCannotAnswerDoesNotFailAVersionedCreate() async {
+        let settings = FakeBucketSettings(
+            lock: .init(hasLock: false, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.versioning = true
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated)
+        #expect(model.failureSentence == nil)
+        #expect(settings.reads == ["macscp-third"])
+    }
+
+    /// **The negative control, and the half the wave exists for.** A create
+    /// that ASKED for Object Lock and cannot find out whether it got it is
+    /// still `.unconfirmed`: we promised something we cannot confirm.
+    /// `aReadBackThatIsRefusedSaysTheSettingsCouldNotBeConfirmed` above is the
+    /// same property through a different failure; this one is the store that
+    /// has no Object Lock at all.
+    @MainActor @Test func aLockedCreateWhoseLockReadCannotAnswerIsStillUnconfirmed() async throws {
+        let settings = FakeBucketSettings(
+            lock: .init(hasLock: false, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+        // The lock read failed, so the versioning read is not spent.
+        #expect(settings.reads.isEmpty)
+    }
+
+    /// The versioning read is the one the outcome is decided on, so a plain
+    /// create whose versioning read fails IS unconfirmed: nothing was
+    /// established at all. The asymmetry is deliberate -- see `readBack`.
+    @MainActor @Test func aPlainCreateWhoseVersioningReadFailsIsUnconfirmed() async throws {
+        let settings = FakeBucketSettings(
+            readError: RemoteFSError.permissionDenied(path: "/x"),
+            lock: .init(hasLock: false, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+    }
+
     /// **A failed default read claims nothing either way.** The protection
     /// matched, so a success sentence would imply the absence this read did
     /// not establish; the outcome is the unconfirmed one instead, and it is
