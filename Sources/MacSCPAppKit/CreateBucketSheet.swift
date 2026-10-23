@@ -331,7 +331,8 @@ final class CreateBucketModel {
             switch await Self.readBack(choice, ofBucket: bucket, via: settings) {
             case .asAsked:
                 outcome = .created
-                recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: nil)
+                recorder?.recordBucketCreated(
+                    bucket: bucket, protection: choice, bucketDefault: nil, failure: nil)
             case .lessThanAsked(let actual):
                 let sentence = Self.settingsDidNotTakeLine(bucket: bucket)
                 outcome = .failed(sentence: sentence, bucketMayExist: true)
@@ -340,7 +341,7 @@ final class CreateBucketModel {
                 // worse than a sheet claiming it, because it is the record
                 // someone relies on afterwards, when the sheet is gone.
                 recorder?.recordBucketCreated(
-                    bucket: bucket, protection: actual, failure: sentence)
+                    bucket: bucket, protection: actual, bucketDefault: nil, failure: sentence)
             case .moreThanAsked(let actual):
                 // The inverse, and `actual` for the same reason read the other
                 // way: a line that named only what was ASKED for would omit a
@@ -350,7 +351,22 @@ final class CreateBucketModel {
                 let sentence = Self.protectionNotChosenLine(bucket: bucket)
                 outcome = .failed(sentence: sentence, bucketMayExist: true)
                 recorder?.recordBucketCreated(
-                    bucket: bucket, protection: actual, failure: sentence)
+                    bucket: bucket, protection: actual, bucketDefault: nil, failure: sentence)
+            case .defaultRetentionNotSetHere(let actual, let days, let mode):
+                // The bucket has a default retention, and this call cannot
+                // have set it (`createBucket` takes a `BucketProtection` and
+                // nothing else), so the bucket was already there and files
+                // added to it will be held. The one arm whose sentence is
+                // about what happens NEXT rather than about what differs.
+                let sentence = Self.defaultRetentionNotSetHereLine(bucket: bucket)
+                outcome = .failed(sentence: sentence, bucketMayExist: true)
+                // The mode and the day count go in the line because they are
+                // what a reader of the trail decides from -- how long, and
+                // whether anyone can lift it -- and the sheet's sentence
+                // carries neither.
+                recorder?.recordBucketCreated(
+                    bucket: bucket, protection: actual,
+                    bucketDefault: (days: days, mode: mode), failure: sentence)
             case .unconfirmed:
                 let sentence = Self.settingsUnconfirmedLine(bucket: bucket)
                 outcome = .failed(sentence: sentence, bucketMayExist: true)
@@ -359,8 +375,11 @@ final class CreateBucketModel {
                 // record, and the line is the ATTEMPT with the sentence that
                 // says it was not confirmed beside it. The same shape the
                 // four other paths use for a write whose read-back failed.
+                // `bucketDefault: nil` for the same reason, and the sentence
+                // beside it is what keeps that `nil` from reading as "there
+                // is none": nothing here was established.
                 recorder?.recordBucketCreated(
-                    bucket: bucket, protection: choice, failure: sentence)
+                    bucket: bucket, protection: choice, bucketDefault: nil, failure: sentence)
             }
         } catch {
             let refusal = await failure(for: error, bucket: bucket, protection: choice, via: settings)
@@ -377,7 +396,9 @@ final class CreateBucketModel {
             // (Withdrawn, verbatim: "if case .failed(let sentence, _) = outcome"
             // guarded this call, total only while every arm of `failure(for:...)`
             // returned `.failed`.)
-            recorder?.recordBucketCreated(bucket: bucket, protection: choice, failure: refusal.sentence)
+            recorder?.recordBucketCreated(
+                bucket: bucket, protection: choice, bucketDefault: nil,
+                failure: refusal.sentence)
         }
     }
 
@@ -396,6 +417,16 @@ final class CreateBucketModel {
         /// MORE than was asked for: the bucket was already there and carries
         /// protection nobody chose. `actual` is what was read.
         case moreThanAsked(BucketProtection)
+        /// The bucket has a DEFAULT RETENTION, which this call cannot have
+        /// set, so the bucket was already there whatever its protection
+        /// looks like. Carries what was read: the protection, and the
+        /// default's days and mode for the audit line.
+        ///
+        /// It outranks the three cases above rather than sitting beside
+        /// them, because it is strictly more than any of them establishes --
+        /// `.asAsked` would be a success, and the two mismatches say the
+        /// settings differ without saying that files added here will be held.
+        case defaultRetentionNotSetHere(BucketProtection, days: Int, mode: RetentionMode)
         /// The read itself did not answer.
         case unconfirmed
     }
@@ -464,17 +495,42 @@ final class CreateBucketModel {
     private static func readBack(
         _ choice: BucketProtection, ofBucket bucket: String, via settings: any S3BucketSettings
     ) async -> ReadBack {
+        let actual: BucketProtection
         do {
             let hasLock = try await settings.hasObjectLock(ofBucket: bucket)
             let versioning = try await settings.versioning(ofBucket: bucket)
-            let actual = protection(hasObjectLock: hasLock, versioning: versioning)
-            guard actual != choice else { return .asAsked }
-            // The direction decides which sentence is true of this person:
-            // see `protectionRank`, and the two catalogue lines.
-            return protectionRank(actual) > protectionRank(choice)
-                ? .moreThanAsked(actual) : .lessThanAsked(actual)
+            actual = protection(hasObjectLock: hasLock, versioning: versioning)
         } catch {
             return .unconfirmed
+        }
+        // The direction decides which sentence is true of this person: see
+        // `protectionRank`, and the two catalogue lines. `nil` is no
+        // mismatch, which is not the same as nothing left to report.
+        let mismatch: ReadBack? =
+            actual == choice
+            ? nil
+            : (protectionRank(actual) > protectionRank(choice)
+                ? .moreThanAsked(actual) : .lessThanAsked(actual))
+        // **Only a bucket with Object Lock can carry a default retention**,
+        // so what is read here is decided by the BUCKET's own state and not
+        // by what the request asked for. A plain create onto a locked bucket
+        // asks this too.
+        guard actual == .lockedAndVersioned else { return mismatch ?? .asAsked }
+        do {
+            guard let found = try await settings.objectLockDefault(ofBucket: bucket) else {
+                return mismatch ?? .asAsked
+            }
+            return .defaultRetentionNotSetHere(actual, days: found.days, mode: found.mode)
+        } catch {
+            // **Claim nothing either way.** A failed read establishes neither
+            // a default nor its absence, so this arm must not report one.
+            // Where the protection comparison already found a mismatch, that
+            // finding stands -- its sentence says the settings differ and
+            // points at the sheet, and says nothing about a default. Where
+            // the protection MATCHED, `.asAsked` would be a success sentence,
+            // and a success implies the absence this read did not establish,
+            // so it becomes `.unconfirmed` instead.
+            return mismatch ?? .unconfirmed
         }
     }
 
@@ -679,6 +735,30 @@ final class CreateBucketModel {
     static let protectionNotChosenTemplate = CatalogueLine(
         key: "s3.createBucket.error.protectionNotChosen %@",
         english: "A bucket named \u{201C}%@\u{201D} already existed, and it carries protection you did not choose. Object Lock, once a bucket has it, can never be switched off. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
+    /// The bucket has a DEFAULT RETENTION, and this call cannot have set it.
+    ///
+    /// **Why a default is evidence and the lock alone is not.**
+    /// `S3BucketSettings.createBucket(_:protection:)` takes a
+    /// `BucketProtection` and nothing else, so it has no way to set a default
+    /// retention. A default that is there was therefore set by somebody else
+    /// at some other time -- which makes it the one piece of authorship
+    /// evidence available without looking before the create, and looking
+    /// before is the time-of-check race the design ruled out.
+    ///
+    /// **It states the harm rather than hinting at it**, because this
+    /// sentence is what stands between a person and undeletable data: files
+    /// added to the bucket inherit the retention, and a COMPLIANCE retention
+    /// cannot be lifted by anyone until its date, the account owner included.
+    /// Both clauses are true of either mode -- a GOVERNANCE retention also
+    /// refuses the delete, since the bypass header is one nothing here sends
+    /// (`S3BucketSettings.setRetention`) -- so the one sentence needs no
+    /// hedge about which mode was found. The mode and the day count are in
+    /// the audit line instead of this sentence: naming them here would be a
+    /// second placeholder and a plural rule per language, and the sentence
+    /// already points at the sheet that shows both.
+    static let defaultRetentionNotSetHereTemplate = CatalogueLine(
+        key: "s3.createBucket.error.defaultRetentionNotSetHere %@",
+        english: "A bucket named \u{201C}%@\u{201D} already existed, and it has a default retention that was not set here. Every file you add to it is kept under that retention and cannot be deleted until its date passes; a COMPLIANCE retention cannot be lifted by anyone, not even the account owner. Open Versioning and Object Lock for it to see what it has, and do not create it again.")
 
     static func existsIncompletelyLine(bucket: String) -> String {
         String(format: existsIncompletelyTemplate.text, bucket)
@@ -694,6 +774,10 @@ final class CreateBucketModel {
 
     static func protectionNotChosenLine(bucket: String) -> String {
         String(format: protectionNotChosenTemplate.text, bucket)
+    }
+
+    static func defaultRetentionNotSetHereLine(bucket: String) -> String {
+        String(format: defaultRetentionNotSetHereTemplate.text, bucket)
     }
 
     /// The sentence for each problem the validator reports. No `default`: a
@@ -740,6 +824,7 @@ final class CreateBucketModel {
             listingUnknownLine, creatingLine, createdLine, notCreatedLine, deniedLine,
             existsIncompletelyTemplate, mayExistLine, settingsDidNotTakeTemplate,
             settingsUnconfirmedTemplate, protectionNotChosenTemplate,
+            defaultRetentionNotSetHereTemplate,
         ] + everyProblem.map { line(for: $0) }
     }
 }

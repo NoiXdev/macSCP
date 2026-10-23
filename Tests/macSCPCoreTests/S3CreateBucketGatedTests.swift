@@ -121,4 +121,54 @@ struct S3CreateBucketGatedTests {
         #expect(after?.versioning == .enabled)
         #expect(deleted.map { (200..<300).contains($0) } == true)
     }
+
+    /// **NEVER RUN. This case is a claim, not a measurement.** It was written
+    /// on 2026-10-23 with the F1 fourth-notch fix; the rig was not started by
+    /// the session that wrote it and `MACSCP_ITEST=1` was never invoked here,
+    /// so nothing below has been observed. Whoever runs the gated suite next
+    /// is making its first measurement, and if the rig disagrees with it the
+    /// test is wrong, not the rig.
+    ///
+    /// What it is for: `CreateBucketModel.create` now reads
+    /// `objectLockDefault(ofBucket:)` whenever the read-back shows a lock,
+    /// and treats a default it finds as evidence that the bucket is not new,
+    /// on the reasoning that `createBucket(_:protection:)` has no parameter
+    /// that could set one. That reasoning is about macSCP's own surface and
+    /// is pinned by `S3ObjectLockTests`. What it does NOT establish is what
+    /// the STORE does: whether a re-create of a bucket that already carries a
+    /// default retention leaves that default in place. If a store cleared it,
+    /// the evidence would be gone exactly when it is needed.
+    ///
+    /// The sequence: make a locked bucket, set a default retention on it
+    /// through the capability, re-create the same name plainly, then read the
+    /// default back. The expectation is that it is unchanged -- 1 day,
+    /// GOVERNANCE, the mildest default there is, so nothing here needs a
+    /// COMPLIANCE write and the bucket stays deletable (no object is ever
+    /// written into it).
+    @Test func recreatingABucketLeavesItsDefaultRetentionInPlace() async throws {
+        let fs = try await S3FileSystem.connect(S3SettingsRig.config)
+        defer { Task { await fs.disconnect() } }
+        let bucket = S3SettingsRig.throwawayBucketName(purpose: "create-default")
+        var second: (any Error)?
+        var after: (days: Int, mode: RetentionMode)?
+        var failure: (any Error)?
+        do {
+            try await fs.createBucket(bucket, protection: .lockedAndVersioned)
+            try await fs.setObjectLockDefault(days: 1, mode: .governance, ofBucket: bucket)
+            do {
+                try await fs.createBucket(bucket, protection: .none)
+            } catch {
+                second = error
+            }
+            after = try await fs.objectLockDefault(ofBucket: bucket)
+        } catch {
+            failure = error
+        }
+        let deleted = try? await S3SettingsRig.bucketRequest("DELETE", bucket, in: fs)
+        #expect(failure == nil)
+        #expect(second == nil)
+        #expect(after?.days == 1, "the re-create changed the bucket's default retention")
+        #expect(after?.mode == .governance)
+        #expect(deleted.map { (200..<300).contains($0) } == true)
+    }
 }

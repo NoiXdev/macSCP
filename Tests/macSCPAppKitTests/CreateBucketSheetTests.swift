@@ -557,6 +557,126 @@ struct CreateBucketSheetTests {
         #expect(model.canCreate == false)
     }
 
+    /// **The fourth notch, narrowed.** The bucket has Object Lock and a
+    /// DEFAULT RETENTION, and the create asked for exactly the lock, so the
+    /// protection comparison matches and would have said "was created".
+    ///
+    /// `createBucket(_:protection:)` takes a `BucketProtection` and nothing
+    /// else, so it cannot set a default. A default that is there was set by
+    /// somebody else at some other time, which is the one piece of evidence
+    /// that the bucket is not new available without looking before the create
+    /// -- and looking before is the time-of-check race the design ruled out.
+    @MainActor @Test func aBucketWithADefaultRetentionIsNotReportedAsFreshlyCreated() async throws {
+        let settings = FakeBucketSettings(
+            versioning: .enabled,
+            lock: .init(hasLock: true, bucketDefault: .init(days: 30, mode: .compliance)))
+        let model = CreateBucketModel(existingNames: ["macscp-seed"], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        #expect(model.protection == .lockedAndVersioned)  // exactly what the bucket has
+        await model.create(via: settings, recorder: nil)
+        // The default was read, and only because the bucket turned out to
+        // have a lock.
+        #expect(settings.defaultReads == ["macscp-third"])
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.defaultRetentionNotSetHereLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.protectionNotChosenLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.settingsDidNotTakeLine(bucket: "macscp-third"))
+        #expect(model.bucketMayExist == true)
+        #expect(model.canCreate == false)
+    }
+
+    /// The positive control for the test above: the same locked bucket with
+    /// NO default reads exactly like a freshly created one, and is reported
+    /// as created. That is the residual ambiguity this narrowing leaves --
+    /// recorded as a row in `docs/BACKLOG.md`, because no read closes it: the
+    /// two states differ only in what was true BEFORE the call.
+    @MainActor @Test func aLockedBucketWithNoDefaultIsStillReportedAsCreated() async {
+        let settings = FakeBucketSettings()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.defaultReads == ["macscp-third"])  // asked, and answered nothing
+        #expect(model.isCreated)
+        #expect(model.failureSentence == nil)
+    }
+
+    /// The default is read because the BUCKET has a lock, not because the
+    /// request asked for one: a plain create onto a locked bucket with a
+    /// default gets the retention sentence, which outranks
+    /// `protectionNotChosen` -- it says what will happen to the files they
+    /// add, where that one says only that the settings differ.
+    @MainActor @Test func aPlainCreateOntoABucketWithADefaultGetsTheRetentionSentence() async throws {
+        let settings = FakeBucketSettings(
+            versioning: .enabled,
+            lock: .init(hasLock: true, bucketDefault: .init(days: 1, mode: .governance)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        #expect(model.protection == .none)
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.defaultReads == ["macscp-third"])
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.defaultRetentionNotSetHereLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.protectionNotChosenLine(bucket: "macscp-third"))
+    }
+
+    /// A bucket with no lock cannot carry a default, so nothing is spent
+    /// asking for one. The guard against a read that quietly became
+    /// unconditional.
+    @MainActor @Test func aBucketWithNoLockIsNotAskedForADefault() async {
+        let settings = FakeBucketSettings()
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.versioning = true
+        await model.create(via: settings, recorder: nil)
+        #expect(model.isCreated)
+        #expect(settings.hasLockReads == ["macscp-third"])
+        #expect(settings.defaultReads.isEmpty)
+    }
+
+    /// **A failed default read claims nothing either way.** The protection
+    /// matched, so a success sentence would imply the absence this read did
+    /// not establish; the outcome is the unconfirmed one instead, and it is
+    /// not the retention sentence, which would assert a default nobody saw.
+    @MainActor @Test func aDefaultReadThatIsRefusedClaimsNeitherADefaultNorItsAbsence() async throws {
+        let planted = "https://AKIDEXAMPLE:SECRETEXAMPLE@store.invalid"
+        let settings = FakeBucketSettings(
+            versioning: .enabled,
+            lock: .init(
+                hasLock: true, bucketDefault: .init(days: 30, mode: .compliance),
+                readError: RemoteFSError.protocolError(reason: planted)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: settings, recorder: nil)
+        #expect(settings.defaultReads == ["macscp-third"])
+        #expect(model.isCreated == false)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+        #expect(
+            sentence != CreateBucketModel.defaultRetentionNotSetHereLine(bucket: "macscp-third"))
+        let quoted = sentence.contains("SECRETEXAMPLE") || sentence.contains("store.invalid")
+        #expect(!quoted)
+    }
+
+    /// The same failed read where the protection did NOT match: the mismatch
+    /// was established and stands, because its sentence says the settings
+    /// differ and claims nothing about a default.
+    @MainActor @Test func aFailedDefaultReadDoesNotDiscardAnEstablishedMismatch() async throws {
+        let settings = FakeBucketSettings(
+            versioning: .enabled,
+            lock: .init(hasLock: true, readError: RemoteFSError.permissionDenied(path: "/x")))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        // Nothing chosen, a locked bucket found: `moreThanAsked`.
+        await model.create(via: settings, recorder: nil)
+        let sentence = try #require(model.failureSentence)
+        #expect(sentence == CreateBucketModel.protectionNotChosenLine(bucket: "macscp-third"))
+        #expect(sentence != CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+    }
+
     /// Which of the two sentences a mismatch gets, over every pair the two
     /// reads can produce: LESS protection than was asked for is a setting
     /// that did not take, MORE is protection nobody chose. The chain is

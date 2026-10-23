@@ -36,12 +36,17 @@ struct AuditRecorderBucketSettingsTests {
     // MARK: - One kind per operation
 
     @Test func aCreatedBucketIsRecordedAsBucketCreatedWithItsProtection() {
-        let plain = recorded { $0.recordBucketCreated(bucket: "macscp-third", protection: .none, failure: nil) }
+        let plain = recorded { $0.recordBucketCreated(
+            bucket: "macscp-third", protection: .none, bucketDefault: nil, failure: nil)
+        }
         let versioned = recorded {
-            $0.recordBucketCreated(bucket: "macscp-third", protection: .versioned, failure: nil)
+            $0.recordBucketCreated(
+                bucket: "macscp-third", protection: .versioned, bucketDefault: nil, failure: nil)
         }
         let locked = recorded {
-            $0.recordBucketCreated(bucket: "macscp-third", protection: .lockedAndVersioned, failure: nil)
+            $0.recordBucketCreated(
+                bucket: "macscp-third", protection: .lockedAndVersioned, bucketDefault: nil,
+                failure: nil)
         }
         #expect(plain.map(\.kind) == [.bucketCreated])
         #expect(plain.first?.detail == "created bucket macscp-third")
@@ -145,7 +150,8 @@ struct AuditRecorderBucketSettingsTests {
     @Test func aRefusedOperationRecordsTheFailureAndNotASuccess() {
         let sentence = "The store refused the change."
         let events = recorded {
-            $0.recordBucketCreated(bucket: "b1", protection: .none, failure: sentence)
+            $0.recordBucketCreated(
+                bucket: "b1", protection: .none, bucketDefault: nil, failure: sentence)
             $0.recordVersioningChanged(bucket: "b1", to: .enabled, failure: sentence)
             $0.recordCORSChanged(bucket: "b1", ruleCount: 1, failure: sentence)
             $0.recordObjectLockChanged(.bucketDefault(days: 1, mode: .governance, bucket: "b1"), failure: sentence)
