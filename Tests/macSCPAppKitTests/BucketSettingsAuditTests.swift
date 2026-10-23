@@ -443,6 +443,49 @@ struct BucketSettingsAuditTests {
         #expect(plain.events.first?.isError == false)
     }
 
+    /// **M1 of the scoped re-review: which attempt the unconfirmed arm
+    /// records.** When the read-back cannot answer, the line is the ATTEMPT
+    /// with "could not be confirmed" beside it -- that is the ruling, and it
+    /// is right. What nothing pinned was WHICH attempt, because
+    /// `createMakesOneRecordingCallPerArmItCanTake` counts calls and reads no
+    /// arguments, and no behavioural case drove `create` to `.unconfirmed`
+    /// with a recorder at all.
+    ///
+    /// Measured with `scripts/mutation-probe` against `4dc3aebc`: changing
+    /// that arm's `bucketDefault: nil` to `(days: 7, mode: .compliance)` ran
+    /// 84 tests and `RESULT: GREEN -- NONE of them noticed the plant`. With
+    /// the plant in, a create whose read-back was refused wrote a flat claim
+    /// that the bucket already had a COMPLIANCE default retention of 7 days,
+    /// about a bucket where nothing whatever was established.
+    ///
+    /// So this asserts the detail: the protection ASKED for, and no default
+    /// clause, since no default was read. The failure sentence is what keeps
+    /// the absent clause from reading as "there is none".
+    @MainActor @Test func anUnconfirmedCreateRecordsTheAttemptAndNoDefault() async {
+        let trail = Trail()
+        defer { trail.remove() }
+        // A lock asked for and a lock read that cannot answer: the one way to
+        // reach `.unconfirmed` without the store refusing the create itself.
+        let unreadable = FakeBucketSettings(
+            lock: .init(hasLock: false, hasLockError: RemoteFSError.finding(.operationNotSupported)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: unreadable, recorder: trail.recorder)
+
+        let events = trail.events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .bucketCreated)
+        let detail = events.first?.detail ?? ""
+        // The attempt, exactly: what was asked for, and nothing about a
+        // default nobody read.
+        #expect(detail == "created bucket macscp-third with versioning and Object Lock")
+        #expect(detail.contains("default retention") == false)
+        // And it does not read as done.
+        #expect(events.first?.isError == true)
+        #expect(events.first?.errorMessage == CreateBucketModel.settingsUnconfirmedLine(bucket: "macscp-third"))
+    }
+
     // MARK: - The three Object Lock operations
 
     @MainActor @Test func anObjectLockLineNamesWhichOfTheThreeOperationsItWas() async {
