@@ -4527,111 +4527,716 @@ in-repo dispatch adds the rule for a brief whose figure does not reproduce — t
 command's verdict wins, the old figure is quoted beside the new one, and neither is
 quietly corrected into the other.
 
-## Task 13 — closed (in-repository half)
+## Task 13, Step 1 — user documentation done (`a83c2c6a7f0494c46`)
 
-Appended 2026-10-22 by the Task 13 implementer when this ledger was committed into
-`docs/`; everything above it is the coordinator's text, copied byte for byte from the
-gitignored workspace by `49a93ec7`. The implementer's own report is `task-13-report.md`
-in the directory beside this file (it is committed with this section). **Layout:** this
-file is `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings.md`; the task briefs,
-reports, reviews and re-reviews it cites by file name (for example
-`task-12-fix-3-report.md`) are in `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/`,
-under the same names. The 32 `review-*.diff` files were not copied; each is
-reconstructible from the commit range in its own name.
+Committed as `69662c6` in `/Users/noidee/_dev/noix-docs-s3-bucket-settings` on
+`docs/macscp-s3-bucket-settings`. **Not pushed, not merged.** `npm run build` ("All
+internal links are valid", 165 pages, no warnings) and `npm run check` (0 errors,
+0 warnings, 0 hints) both pass; `npm ci` was needed first because the fresh
+worktree had no `node_modules`.
 
-**Commits** (BASE `b1537a05`, in order): `49a93ec7` this ledger and its records;
-`0bdfbcee` the s3Manager wishlist row; `c6dda748` the `S3FileSystem.connect` comment that
-said the create-bucket action was not in the tree; `f3277b1c` the `macscp-probe-lock` row;
-`280eff4b` the 2026-09-02 bucket browser design's "200 with zero buckets" row; `35df439e`
-the dead `bucketListEmpty` row, re-checked; `6118e6ed` the census section's third output
-pinned to a commit; `1714ac39` the warning gate's two blind spots; `9305b4d8` the three
-Core rows from Task 9's review; `c9542893` eleven rows for the closeout debts and one
-the ledger owed; `bf5cb4d5` the Content-MD5 row; `b0d9153e` the sight-check row;
-`de54058f` a hash in the dead-case row that an amend had replaced. Only `c6dda748` touches
-`Sources/`, and it changes a comment. (**Corrected 2026-10-22, round 2:** that sentence read, verbatim, "Only `c6dda748` touches `Sources/`, and it changes a comment." It was true of those commits; round 2 added two more comment-only edits to `Sources/`, `63e6233f` and `9483bc0b`, listed below.)
+Five new `guide/` pages — `s3-bucket-settings`, `s3-versioning`, `s3-cors`,
+`s3-object-lock`, `audit-log` — plus one sentence in
+`getting-started/first-connection.md` and a link from `reference/security.md`.
+Every new passage is marked "Coming in the next release" in the existing
+phrasing. **Task 11b's I3 is paid**: the Object Lock note is on the versioning
+page, in a section of its own.
 
-**Test run.** `swift test`, no build-system flag, at `b0d9153e`: Core "5085 tests in 408
-suites passed"; AppKit "2848 tests in 240 suites failed ... with 1 issue", the one issue
-the known `ViewTestabilitySpike.swift:202`. The same two figures as at `83ffa661`, which is
-what a comment-only change to Sources predicts. **The gated suites were not run:**
-`MACSCP_ITEST=1 swift test` needs the Docker rig, the rig was not running on 2026-10-22
-(no SSH on 2222, no store on 19000), and it may only be started from the main checkout,
-which the worktree-isolated session cannot reach. So the plan's Step 8 is NOT done, and
-nothing in this ledger says it is.
+The COMPLIANCE warning is where a reader meets it, not only once: a danger aside
+at the top of the Object Lock page, and again at the retention sheet and the
+bucket-default sheet. The four audit labels are quoted from the `en` catalogue
+rather than invented — Bucket created, Versioning changed, CORS rules changed,
+Object Lock changed.
 
-**What the closeout measured rather than copied** (each in its BACKLOG row, with its
-command): the branch is not bisectable across Task 11 -- `75fe0553` and `b7371a8f` each
-fail 3 issues in the two scan suites, `d7c6631c` and the head pass (first time anyone ran
-it); CI's warning gate is blind to macro-expansion diagnostics in CI itself (a CI log of
-2026-10-12 prints one such warning 24 times and the gate reports 0), while the colour
-blind spot reproduces locally on Swift 6.4 and was absent in the two CI logs read; the
-census section's third output reproduces as 137 / 92 / 45 at the branch's base commit
-and 95 / 52 / 43 at `493bc256`; Task 9's carriage-return and negative-`MaxAgeSeconds` findings
-reproduce, and Task 3's deferred minor does too (a CORS leaf with surrounding whitespace is
-parsed with it).
+### CORRECTION — two false claims in MY dispatch, both caught by the implementer
 
-**Not done, by instruction or by reach.** Step 1 (the user documentation, another
-dispatch in `/Users/noidee/_dev/noix-docs`); Step 8's gated half; the rig's volume (the
-reset decision about `macscp-probe-lock` is the maintainer's and the row records it, it
-does not resolve it); `ci.yml` and the warnings; any push. Not verified by Task 13: that
-`MACSCP_ITEST` suites tolerate the leftover bucket (read from source, not run), what a
-store answers to a negative `MaxAgeSeconds`, and anything on screen.
+**1. The menu.** I wrote that it "lists only what this connection can actually do
+right now", and in the same sentence that "a row is unavailable rather than hidden"
+— a contradiction I shipped without noticing. The implementer read the source and
+documented the source: all four rows always show, greyed when they cannot run.
+**The source half of my own sentence was the true half**, and I had verified it
+myself earlier in this session (`ConnectionActionRoute.isAvailable` answers `false`
+for a row with no arm, so the row is DISABLED rather than enabled and inert).
 
-**Raised to the coordinator, not acted on:** the design `2026-10-19-s3-bucket-settings-
-design.md` still opens "Status: awaiting maintainer approval. Not planned, not started.";
-two comments (`AuditLogSheet.swift` and `AuditLogFilterTests.swift`) disagree with Ruling
-21; the comment above `setObjectLockDefault`'s signed request says "(maintainer ruling A,
-measured)" where the ledger says a search summary; the census section's later paragraph
-records a live-file figure with no commit, as the third output did; and the plan's
-Step 4 cited the spec row as `:44` where it is line 45.
+**2. The ad-hoc audit log.** I wrote "the log now covers a connection you did not
+save, not only saved ones." That is not new. It is M31, `ea1338e9`, shipped in
+v1.2.0 — a fact THIS LEDGER already records, because an earlier task review turned
+on it. What is new is only that the four new entry kinds are written for unsaved
+connections too. I restated a known fact as a novelty, in a dispatch whose sibling
+I had just warned against copying measurements from memory.
 
-**Round 2 (coordinator's rulings on the Task 13 report, 2026-10-22).** `63e6233f` the
-`setObjectLockDefault` comment that said "(maintainer ruling A, measured)" of a claim that was
-a reading of AWS's reference, quoted and withdrawn; `d7526a60` the Content-MD5 row records it;
-`2c69f1e1` the design's status line ("awaiting maintainer approval. Not planned, not started."),
-quoted and corrected, the approval recorded on the coordinator's word; `9483bc0b` the test
-comment that called the unplaced `plaintextConfirmed` "not a decision anyone made for it", and
-the Ruling 19 arm's added docs-page cost; `9ea5ca9f` the row for it; `ac0ee57e` the census
-section's other live-file readings pinned to `693db7c0`, `ea330ada` and `493bc256`; `70a2921d`
-the two Core rows now name the tests a fix will turn red. Full `swift test` at `70a2921d`: Core
-5085 passed in 408 suites; AppKit 2848 tests, 1 issue, the known `ViewTestabilitySpike.swift:202`.
-The gated suites still did not run. Found and not edited: three test comments say "the rig does
-not require/check" a Content-MD5 on `PUT ?object-lock`, which no recorded run supports (only
-`PUT ?versioning` was measured).
+Both errors have the same shape and it is the branch's own: **I wrote from
+recollection into a hand-off instead of from the tree.** The debts file I wrote an
+hour earlier states the rule I then broke twice in the next dispatch.
 
-**Approval.** Added 2026-10-22 at the coordinator's ruling, and rewritten the same day to separate three
-kinds of evidence, because one sentence had let a quote about the plan stand in for the design.
-Under this project's rule that the conversation is not an artifact, this ledger is the only place that can hold
-any of it, and none of it is an artifact of the maintainer's.
-(1) **A verbatim quote, of the PLAN's approval only.** The maintainer wrote `plan passt, umsetzen` ("the plan
-fits, carry it out"). The coordinator gave the Task 13 implementer those words on 2026-10-22; the implementer did
-not see the chat. The words are about the plan.
-(2) **A controller's contemporaneous record, of the DESIGN's approval, one level removed.** The `writing-plans`
-invocation for this work carried, in its arguments, "Implementation plan for
-`docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md` (approved by the maintainer 2026-10-19,
-uncommitted)". That is the coordinator asserting the approval at the time, not the maintainer saying it, and
-the maintainer's own words approving the design document are not attested anywhere this ledger can reach.
-(3) **Approval by conduct, the strongest thing in the record and a different kind of evidence.** The
-maintainer drove the implementation across the plan's tasks, repeatedly saying to continue and choosing between
-options when asked. That is not a quotation approving the design document and is not dressed as one.
-**What this means for the gate** that nothing is built until the design document is approved: the work was
-approved, which the conduct makes plain, but approval of the design document in the maintainer's own words is
-not attested here, and a reader checking whether the gate was honoured should read it that way.
-**Dating.** The ledger cannot date any of it more precisely than the plan file's own date, 2026-10-19, which is
-also the date of this ledger's header and first entry; the only date in (2) is the coordinator's. No finer date
-or time is claimed. The design document claims no artifact for the approval.
-(Withdrawn, verbatim, from the first version of this paragraph: "The maintainer approved this plan
-and the design under it in chat, in the words `plan passt, umsetzen` ("the plan fits, carry it
-out")." It rested on the coordinator's word, not on the scope of the words, which are about the plan.)
+### Verified for the implementer, who had hedged correctly but unnecessarily
 
-**Round 3 (2026-10-22).** `e6b94cc6` corrects the three test comments that the round-2 paragraph
-above says were "Found and not edited" (that sentence read, verbatim: "Found and not edited: three
-test comments say "the rig does not require/check" a Content-MD5 on `PUT ?object-lock`, which no
-recorded run supports (only `PUT ?versioning` was measured)."; it is untrue of the tree since
-that commit). Each comment now says what is known and quotes its withdrawn wording, and the header
-of `S3ObjectLockGatedTests.swift` names the observation that would settle the question: one signed
-`PUT ?object-lock` without the header on a throwaway lock-enabled bucket, with both outcomes decided in
-advance. The observation has not been made; the rig could not be run. `4aedf6ae` carries the same into the
-Content-MD5 row; `2a1f571a` drops the hedge on the audit log page, which the coordinator read.
-Nothing the gated observation could show about AWS follows from the rig: the favourable outcome
-leaves the claim that AWS answers 400 without the header a reading of its reference.
+It flagged four things it could not explain from the source. One was an assertion
+already in the published-bound page, so I checked it myself:
+
+- **A Governance retention can be extended in macSCP, and the source says so
+  outright**, contrary to the report's "The source never says so outright".
+  `ObjectLockSheet.swift`'s doc comment on `governanceDetail`: "macSCP sends no
+  bypass (`S3BucketSettings.setRetention` says so), so within this app a governance
+  retention can be extended and not shortened". The sheet enforces it with
+  `retainUntil = max(retainUntil, Self.roundedUpToTheMinute(held.retainUntil))`,
+  rounded UP because rounding down would be a shortening. The page's wording is
+  right, and it quotes the corrected catalogue line verbatim, including the nuance
+  that someone with the permission can shorten or remove one but not from macSCP.
+
+The other three (multi-line CORS values, which version a retention applies to, the
+empty browser's lack of explanatory text) are correctly left out of the docs rather
+than guessed at. The version question is a real user-facing gap and belongs in the
+closeout rows.
+
+### Ruling 19's reversal cost has gone up, and the ledger should say so
+
+Ruling 19 put the four new kinds under File Ops and its arm's comment calls it
+"reversible in one arm — move four names to another `return`". That is still true
+of the code. But the audit-log page now says "under File Ops" in a second
+repository, so reversing the ruling costs **one arm plus one docs page in
+noix-docs**. Recorded here because a cost stated smaller than it is, is the same
+defect as a figure without its command.
+
+### The stale comment the docs dispatch found — real, and a second-generation one
+
+Sent to the in-repo implementer with both quotes it owes. Verified myself at
+`Sources/macSCPCore/S3/S3FileSystem.swift`, above `connect`'s empty-list handling:
+"NO browser surface calls it yet: the create-bucket action in the bucket browser is
+planned (the s3-bucket-settings plan) and is not in this tree". The plan it names
+as future is THIS BRANCH and the action has landed.
+
+What makes it the most interesting stale comment on the branch: **the same sentence
+was already corrected once, and the correction is inside it.** `612f1ece`'s first
+version said "The browser now carries the action that resolves the empty state",
+which was false then and is withdrawn in the comment. The correction was true when
+written. This branch's own work has now falsified the correction, so the comment
+means roughly what `612f1ece` meant, by a different route — the first version was
+right about the destination and wrong only about the date.
+
+My first grep for it returned nothing, because I searched the docs agent's
+PARAPHRASE ("NO browser surface calls it yet") rather than the wrapped source
+wording. A paraphrase in a bug report is a search term that does not match, which
+is a small cousin of the spliced-quote defect the last re-review found.
+
+### Noted, not acted on
+
+- No `reference/changelog.md` entry: that section says "Finished and merged", which
+  is not true of this branch. The implementer wrote a row and removed it again.
+  Correct call — it is a merge-time decision for the maintainer.
+- The introduction's feature table is untouched, because that page has no way to
+  mark a row as coming later.
+- `DiffEligibility.swift` near line 377 carries a correction record quoting the same
+  "calls it yet" sentence pattern. **Nobody edits it until I have read whether it is
+  a live claim or a quotation** — the 2026-10-05 measurement on `docs/BACKLOG.md` is
+  exactly this: a line whose head is a quotation can still carry a live claim in its
+  tail, and a sweep that reads the head and moves on misses it.
+
+## Task 13, Steps 2–7 done (`abf81220929ff0926`), Step 8 half done by necessity
+
+DONE_WITH_CONCERNS. 15 commits on `b1537a05`, tree clean, nothing pushed. Two were
+amended once each with `git log -1` run first. `swift test` at `b0d9153e`: Core
+5085 passed in 408 suites; AppKit 2848 with 1 issue, the known
+`ViewTestabilitySpike.swift:202`. **`MACSCP_ITEST=1` did not run and Step 8 is NOT
+reported done** — the rig is down and may only be started from the main checkout.
+The ledger and the commit both say so.
+
+**The ledger is in `docs/`**: `49a93ec7` put `progress.md` plus 66 task records
+into `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/`. The existing
+convention (`3934e2b3`) covered one ledger and one report, so the layout was the
+implementer's choice and its commit message says so. The 32 `review-*.diff`
+packages were deliberately not copied.
+
+### Measured for the first time, not copied
+
+- **C8, bisectability — nobody had ever run it.** `75fe0553` and `b7371a8f` each
+  fail 3 issues (`RigidControlScanTests`, `entriesOfOneTypeMeasureDifferentStates`);
+  `d7c6631c` and HEAD pass. Task 11's M7 is now a measured fact rather than a
+  claim carried from a review.
+- **The warning gate, with new CI evidence that settles what the plan left open.**
+  My local figures reproduce, taken twice (14 `warning:` lines, 7 macro-expansion
+  locations, gate pattern 0 raw and 0 after stripping ANSI). New: **CI run
+  38225383495 (Xcode 16.4) printed the `ArchiveRunnerTests.swift:82:76`
+  macro-expansion warning 24 times and the gate reported `Unique warning
+  locations: 0`.** So the macro-expansion blind spot is real in CI today. The
+  COLOUR blind spot reproduces locally on Swift 6.4 and was **absent from both CI
+  logs read** — the two mechanisms now have different CI status, which the row
+  says rather than averaging.
+- **The census pin.** My three figures reproduce: 137/92/45 at `b1537a05`,
+  134/89/45 at `eec041f5`, 95/52/43 at `493bc256`.
+- `de54058f` — **a row cited the comment edit by a hash an amend had replaced**,
+  found by checking every hex token added in the round. Nobody asked for that
+  check; it is the one that catches the class of error this branch keeps making.
+
+### Three disagreements with the brief, reported and not resolved away
+
+All three handled correctly, and one of them is mine:
+
+- The plan cites the spec row as `:44`; it is line 45 and always was — the
+  symbol-over-line-number rule's whole point.
+- **My hand-off was imprecise**: "one figure whose derivation is recorded in the
+  ledger" named nothing checkable. The implementer read it as the 36,500-day
+  ceiling and said so in the row, which is the right repair for my vagueness.
+- `acknowledged =` prints 11 lines today against the ledger's 10. The row gives
+  BOTH with their commands and reconciles neither into the other.
+
+### Rulings on the six concerns
+
+**Four need work, dispatched as a fix round to the same agent.**
+
+1. **The Content-MD5 comment, the most serious residual on this branch.**
+   `S3FileSystem.swift`, above the signed `setObjectLockDefault` request, claims a
+   `PutObjectLockConfiguration` without Content-MD5 fails 400 against AWS
+   **"(maintainer ruling A, measured)"** — and the comment's own next sentence says
+   the rig does not insist. Verified by me. "measured" cannot be true of AWS
+   behaviour from this environment, and "maintainer ruling A" borrows the
+   maintainer's authority for a claim the ledger records as a search summary.
+   Commit `bf5cb4d5` corrected the ROW and left the COMMENT — the split that leaves
+   the false claim in the place a developer actually reads. A comment that borrows
+   authority for an unmeasured claim is worse than a wrong number, because the next
+   reader has no standing to doubt it. Fix round also sweeps for a second such
+   attribution.
+2. **The design document still opens "Status: awaiting maintainer approval. Not
+   planned, not started."** Verified. Approved 2026-10-19, planned, 88 commits
+   implementing it. Corrected in place with the withdrawal quoted.
+3. **Two comments disagree with Ruling 21**, one saying the unsegmented
+   `plaintextConfirmed` is "not a decision anyone made for it" — true when written,
+   false since Ruling 21 made exactly that decision. Corrected, with Ruling 19's
+   raised reversal cost (one arm **plus** a noix-docs page) recorded beside it.
+4. **The census section's later paragraph carries the same unpinned live figure**
+   as the output just pinned two paragraphs above. Pinned too: Step 5's ban on
+   re-sweeping ROW NUMBERS stands, but one pinned figure beside an unpinned twin is
+   worse than either state. The 2026-10-05 lesson in its own habitat.
+5. **A landmine in Step 7's row.** `aValueThatChangesOnTheWayBackIsNotLossless`
+   pins the carriage-return defect, so whoever fixes Core turns that App test red.
+   The row now names the test and what its fixer must do. The review's claim that
+   "the sheet inherits a new `CORSValidation` case for free" is withdrawn with a
+   quote: `blockerLine` switches exhaustively, so a new case is a compile error
+   until handled.
+
+**Two need none.**
+
+6. **Concern 1 stays exactly as written.** "Pushable however the gate behaves" IS
+   an inference, CI has not run this branch, and whether Xcode 16.4 emits the three
+   new `S3CreateBucketTests.swift` warnings is unmeasured. An inference labelled as
+   one is not a defect, and the question answers itself the first time CI runs.
+7. **Concern 6: the implementer's reading is right.** A loopback test-rig port is
+   not the endpoint the rule protects. That rule exists because a USER's endpoint
+   field takes `scheme://KEY:SECRET@host` as ordinary input, so a user's endpoint
+   can carry their secret into a log or an audit line. The rig's ports are fixtures
+   on 127.0.0.1 and the project's own committed `CLAUDE.md` names them along with
+   the rig's test credentials. Nothing to remove — and asking rather than assuming
+   either way was the right move.
+
+### Still outstanding after this fix round
+
+- **Step 8's gated half needs the maintainer**: the rig must be started from
+  `/Users/noidee/macSCP`, which this session cannot reach.
+- The final whole-branch review, on the most capable model, then
+  `superpowers:finishing-a-development-branch`.
+- Ten of the 19 Task 12 probes (C1–C5 among them), Task 8's sixteen probes, and
+  Task 8's AppKit warning figures were not re-run by a second party.
+- For B7, the other six raw-text guards were not examined for movability.
+
+## Task 13: complete
+
+Three fix rounds after the first pass, HEAD `97dfc236`, 117 commits on the branch,
+tree clean, nothing pushed in either repository.
+
+### What the rounds produced that nobody asked for
+
+Three times a round falsified its own earlier report and handled it by quoting
+rather than editing away — the closing section's "Only `c6dda748` touches
+`Sources/`", round 2's "Found and not edited: three test comments…", and round 1's
+Content-MD5 search sentence that stopped printing its own line. That habit is now
+the most reliable thing in this record.
+
+And `de54058f`: a row cited a commit by a hash an amend had replaced, found by
+checking every hex token the round added. Nobody specified that check. It catches
+exactly the class of error this branch keeps making.
+
+### CORRECTION — the implementer disproved a premise of my own ruling
+
+I ruled that the three unmeasured rig comments should "name what a gated rig run
+would settle". The implementer wrote it down and found the instruction was wrong
+about its own payoff:
+
+- If the rig ACCEPTS a header-less `PUT ?object-lock`, that measures **RustFS
+  1.0.0**. The claim in dispute was about **AWS** ("a `PutObjectLockConfiguration`
+  without it fails 400"), which the rig cannot measure in either direction. So the
+  favourable outcome leaves the AWS half a reading of a published reference.
+- The REFUSED outcome is the informative one: it would show that the reason both
+  test headers give for a shape-only test is wrong.
+- And every existing gated request sends the header, so **no green gated run was
+  ever evidence on this question.** The observation has to be a new, header-less
+  request.
+
+Both outcomes are now decided in advance, in the gated file's header and the row.
+It declined to write the gated test itself, correctly: the file's pattern is about
+two dozen lines of raw signed request plus bucket create and delete, and an unrun
+test is a claim.
+
+### The approval record now says what kind of evidence each part is
+
+The implementer's sharpest find, and it lands on MY record rather than its own:
+**`plan passt, umsetzen` approves the plan, not the design.** The ledger must not
+let one stand for the other. The three kinds, now labelled as such:
+
+1. **A verbatim quote** — of the plan's approval only.
+2. **A controller's contemporaneous record** — the `writing-plans` invocation's
+   arguments say "approved by the maintainer 2026-10-19, uncommitted". That is me
+   asserting the approval at the time, one level removed, and the paragraph says
+   the maintainer's own words approving the design are not attested anywhere this
+   ledger can reach.
+3. **Approval by conduct** — thirteen tasks driven to completion with decisions
+   made where asked. The strongest thing in the record for a later reader, and not
+   a quotation, so it is not dressed as one.
+
+Why the care: this project's process has a gate saying nothing is built until the
+design is approved. A record that cannot attest that in the maintainer's words
+should say so, so a later reader checking the gate gets the truth rather than a
+reassurance. **The work was approved — "obvious" and "attested" are simply
+different claims**, and this branch has spent three fix rounds learning to keep
+them apart.
+
+No date finer than 2026-10-19, no artifact claimed. The design's own status
+correction had said the ledger "gives the words", as though they covered the
+design; corrected with the fragment quoted.
+
+## Final whole-branch review dispatched (`ae5fe2b11c282dd1d`, opus — the most capable model, per the loop)
+
+117 commits, 152 files, 35,934 insertions. The `-U10` diff is **2.7 MB**, so it is
+split **by kind rather than by size**: `final-sources.diff` (37 files, 8,296
+lines — the shipped surface, and where the reviewer starts), `final-tests.diff`
+(43 files, 10,504 lines), plus the commit list and the diffstat as a map. The
+remaining 72 files are `docs/`, the measurement record.
+
+**The brief says what the review is NOT.** Thirteen tasks had their own reviewers
+and several had three or four fix rounds with scoped re-reviews on top;
+line-by-line correctness is worked over. The seat's value is what a task-scoped
+reviewer structurally could not see, and the first item names the place this
+branch's defects actually lived: **five write paths built by different
+implementers in different shapes, and a seam no single task owned.**
+
+Eleven things are listed as explicitly NOT findings, each with its reason — the
+gated suite never run, nothing ever verified visually, the two red commits,
+Rulings 21 and 26, the deliberately raw-text guards, the thrower-less error case,
+the CI warning gate. A review seat spent re-litigating decided questions finds
+nothing new.
+
+Two instructions beyond the usual: **spot-check three or four committed commands
+by extracting them unrepaired and running them** (a command that needs repair
+before it runs is itself a finding), and **if a ruling's stated cost is smaller
+than what can be measured, that is a finding** — because that defect has already
+happened twice on this branch and both times I was the one who wrote the cost.
+
+### Housekeeping debt, not to be forgotten
+
+The ledger now exists **twice**: the live copy under `.superpowers/` (gitignored)
+and the committed copy in `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/`.
+This entry and the ones after it go only into the live copy, because while anything
+may run `mutation-probe` — whose revert is a global `git checkout -- .` — an
+uncommitted edit to the TRACKED copy is exactly the loss this project has a rule
+about. **Sync and commit the `docs/` copy once the final review is done**, before
+the branch is finished.
+
+## PAUSED 2026-10-23 at the maintainer's request — resume here
+
+**State, verified at the pause:** HEAD `b6534374`, 123 commits on `s3-bucket-settings`,
+tracked tree clean, nothing staged. noix-docs worktree
+`/Users/noidee/_dev/noix-docs-s3-bucket-settings` on `docs/macscp-s3-bucket-settings`
+at `69662c6`, clean. **Nothing pushed in either repository.** No agent is running.
+
+Tasks 1–13 complete. Final whole-branch review complete (`ae5fe2b11c282dd1d`, opus):
+verdict "ship with F1 and F2 fixed, F3 at your discretion". Report:
+`final-review.md`, 411 lines.
+
+### The fix wave: three findings, six commits, over BASE `97dfc236`
+
+Each with an observed red quoted in its commit message. Report:
+`final-fix-report.md`, 706 lines.
+
+| commit | what |
+|---|---|
+| `0537fdc3` | F1 — create reads back; the audit records what was READ, not what was asked |
+| `a9a24a13` | F2 — lock state once per `deleteTree`, not twice per refused key |
+| `6d0c87c8` | F3 — the empty state for an account with no buckets is drawn |
+| `a89e7ed9` | F1b — read the lock even where none was asked for |
+| `df948f90` | F2b — bound the probing when the bucket's lock state is unreadable |
+| `b6534374` | F1c — a plain create reads back too; a new sentence for protection nobody chose |
+
+Six rather than three because **each fix exposed the next notch of the same
+defect**, and three of my own rulings were the wrong shape. The implementer found
+all three by implementing them literally and then saying where literal stopped
+being honest — which is the behaviour to keep asking for.
+
+Tests at the pause: Core **5089 passed**, AppKit **2870 with 1 issue**, that issue
+the known pre-existing `ViewTestabilitySpike.swift:202`. Catalogues: five keys added
+in total, `grep -c '^"'` prints 1555 in all four, and the `en`-vs-`de`/`fr`/`pl`
+key-set diffs are empty.
+
+### OPEN DECISION — the maintainer's, asked and not yet answered
+
+**The fourth notch.** `readBack` compares the bucket's protection against the
+request's; when they are EQUAL it cannot tell a bucket this create made from one
+that already existed carrying exactly what was asked. The harmful instance: a
+`.lockedAndVersioned` create onto an existing bucket that has Object Lock **and a
+COMPLIANCE default retention**. Every word of the success message is true of the
+bucket; what is not said is that the bucket is not new and carries a default
+nobody set. Files written into it afterwards are undeletable by anyone until their
+dates pass.
+
+**No read closes it**, because the states differ only in what was true BEFORE the
+call, and establishing that is the pre-flight existence check I forbade as a
+time-of-check race. Verified by me: `objectLockDefault(ofBucket:)` IS on the
+capability, and `createBucket(_:protection:)` takes only a `BucketProtection`, so
+it cannot set a default — which is what makes a present default positive evidence
+the bucket is not new.
+
+The three ways put to the maintainer, who paused before answering:
+
+1. **Read `objectLockDefault` on the Object Lock arm** plus one sentence in four
+   languages. Closes the harmful half without touching the success message. The
+   remaining ambiguity (a pre-existing locked bucket with NO default) stays and
+   takes a backlog row.
+2. **Ship as is**, with the measured scenario as a backlog row. Cheapest; leaves a
+   path to permanent data loss unannounced.
+3. **Stop claiming authorship.** "The bucket was created" asserts something that
+   is not establishable across providers; report what the bucket now has instead.
+   Cleanest, and it changes the success message on every path including the common
+   one.
+
+My recommendation was 1. **Do not implement any of them without the maintainer's
+answer** — this is the one question on this branch that is genuinely theirs.
+
+### Then, in order, and none of it started
+
+1. A scoped re-review of the fix wave (BASE `97dfc236`, HEAD whatever the decision
+   above leaves). Its governing checks: F1's read-back arms, F2b's bound and the
+   cost it trades away, and F3's rule tests — F3 has **never been seen on screen**,
+   as nothing on this branch has.
+2. **The paragraph F1 and F3 owe `noix-docs`.** F1 changed a user-visible sentence
+   and F3 added a screen; the house rule is that user docs ship with the feature.
+   The docs agent (`a83c2c6a7f0494c46`) and its worktree are both still in place.
+3. **Sync the ledger's committed copy.** This file is the live one; the tracked copy
+   in `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/` is behind by every
+   entry from the final review onward. Commit it before the branch is finished.
+4. `superpowers:finishing-a-development-branch` — merge or PR, the maintainer's call.
+
+### Needs the maintainer, independent of the above
+
+- **Step 8's gated half.** `MACSCP_ITEST=1 swift test` has never run on this branch.
+  The rig is down and may only be started from the main checkout
+  `/Users/noidee/macSCP`, which this session cannot reach. A concrete, pre-decided
+  observation hangs on it: one signed `PUT ?object-lock`, GOVERNANCE default of one
+  day, **no `Content-MD5`**, on a throwaway lock-enabled bucket. Accepted → "the rig
+  does not require it" becomes measured, for RustFS 1.0.0 only, never for AWS.
+  Refused → the stated reason for a shape-only test is wrong and two test headers
+  need a different one.
+- **Whether the rig's volume is reset** to clear `macscp-probe-lock` (COMPLIANCE
+  until 2026-12-31). Never touch `macscp-seed`, `macscp-second` or
+  `macscp-probe-lock`.
+
+## RESUMED 2026-10-23 — four maintainer decisions, all answered
+
+The pause is over and the open questions are settled. These are the maintainer's
+own answers, chosen from options put to them, not inferences from conduct — which
+matters on a branch whose approval record had to be split into three kinds of
+evidence precisely because that distinction had blurred.
+
+1. **The fourth notch: read the default retention** (the narrowing, not the
+   redesign). Chosen over shipping as is with a row, and over dropping the
+   authorship claim from the success message.
+2. **Start the rig and run the gated suite** before the branch is finished. So
+   `MACSCP_ITEST=1` runs on this branch for the first time in its 123 commits.
+3. **Integration: merge locally into `develop`** — not a push and PR. So nothing
+   goes to a remote from here, and CI will first see this work after the merge.
+4. **The user docs wait for the feature.** The noix-docs branch stays local until
+   `s3-bucket-settings` is in `develop`, then both move together.
+
+### Dispatched: F1d, the narrowing (`a360a3936a7a398d0` resumed), BASE `b6534374`
+
+Read `objectLockDefault(ofBucket:)` whenever the READ-BACK shows the bucket has
+Object Lock — the bucket's actual state is the trigger, not the request's
+protection, since only a locked bucket can carry a default.
+
+The whole argument rests on a signature I verified: `createBucket(_:protection:)`
+takes only a `BucketProtection`, so this call **cannot** set a default. A default
+that is present was therefore set elsewhere, which makes it the one piece of
+authorship evidence obtainable without the pre-flight check that was ruled out as
+a time-of-check race.
+
+Four requirements beyond the read: the new sentence carries the harm plainly
+(files written in inherit the retention; under COMPLIANCE nobody can delete them,
+not the account owner) rather than hinting at it; the arm is not a success; the
+audit line records the default that was found, like every other arm on this path;
+and a failed default read claims nothing either way.
+
+**The `docs/BACKLOG.md` exception was lifted for exactly one row** — the residual
+ambiguity, written by the agent that holds the measurement rather than transcribed
+by me. It must say why no read closes it, and record that the maintainer chose
+this narrowing over the two alternatives on 2026-10-23.
+
+### Order of the rest
+
+1. F1d lands.
+2. **The gated suite, run by me, not by the implementer** — including the
+   pre-decided Content-MD5 observation. The implementer is told not to start the
+   rig, not to run the suite, and not to touch `macscp-seed`, `macscp-second` or
+   `macscp-probe-lock`.
+3. Scoped re-review of the whole fix wave (BASE `97dfc236`).
+4. The `noix-docs` paragraph F1, F1d and F3 owe — F1 and F1d change user-visible
+   sentences, F3 adds a screen.
+5. Sync and commit the ledger's tracked copy in
+   `docs/superpowers/ledgers/2026-10-19-s3-bucket-settings/`, which is behind by
+   every entry from the final review onward.
+6. `superpowers:finishing-a-development-branch` → merge into `develop` locally,
+   tests on the merged result, then the worktree and branch cleaned up.
+
+## 2026-10-23 — the two measurements that stood open for 123 commits
+
+### The gated suite ran, and it measured the PROJECT, not the branch
+
+The maintainer started the rig from the main checkout. `MACSCP_ITEST=1 swift test`
+at `baf75c19`, twice, no `--build-system` flag. **The failing set moves between
+runs** — Core 5 issues in 4 tests, then 3 in 3; `windowChangeReachesTheRemotePTY`
+was GREEN in run 1 and red in run 2, while `s3ToSSHCopyIsByteIdentical` and
+`aFinishedRunLeavesNoFileAndSweepsOnlyAnEarlierRunsFile` were red in run 1 and
+absent from run 2's failures. All four pass alone, three in under a second.
+
+**No gated failure is attributable to this branch.** The one case in territory the
+branch touched — `s3ToSSHCopyIsByteIdentical`, running over `S3FileSystem.swift`,
+`S3Uploader.swift` and `TransferQueueViewModel.swift` — did not reproduce.
+`aLocalForwardCarriesABulkTransferPastTheHighWaterMark` is the sharpest case at
+2 of 2 red under load and 2 of 2 green alone, and tunnel source is untouched:
+`git diff --name-only eec041f5..HEAD -- Sources` prints 40 lines, none in the
+tunnel, throughput-rig or shell areas. Re-measured after writing the sentence:
+still 40.
+
+Committed as `d1e0efa0`. Two things the row refuses to claim: **the mechanism**
+(two candidates named, neither tested — the cooperative pool, and contention on
+the shared rig containers), and **"pre-existing" as a measurement** (the same two
+runs at base `eec041f5` were not made, so the word is marked an inference).
+
+The row's isolation command uses **four repeated `--filter` flags rather than one
+alternation pattern**, because a cell takes no pipe at all — and the form was run
+BEFORE it was written down. The finished line holds exactly three pipes, counted.
+
+### The Content-MD5 observation landed on its favourable outcome
+
+Pre-decided before running, so the result could not be interpreted afterwards.
+curl's own SigV4, the way the design's §4 table was measured, on a throwaway
+bucket; GOVERNANCE, one day, no object written; `macscp-seed`, `macscp-second` and
+`macscp-probe-lock` untouched.
+
+Create with the lock header 200 → **`PUT ?object-lock` with no `Content-MD5`:
+200** → control `GET ?object-lock` 200, reading back `GOVERNANCE`/`1` → DELETE 204
+→ HEAD 404, nothing left behind.
+
+**The control carries the measurement.** A bare 200 is consistent with "accepted
+and ignored"; the read-back shows the configuration took. That is this branch's
+own anti-goal — every write read back, never assumed from a 200 — applied to my
+own observation, and without it I would have handed the implementer the defect F1
+was about.
+
+Recorded at four sites and the row (`fbc62ae8`). The scope stays narrow on
+purpose: **RustFS 1.0.0 only, never AWS**, whose half remains a reading of a
+published reference with no measurement anywhere in this project.
+
+**No gated test was added for it, deliberately.** A test asserting a store's
+tolerance would convert that store's current behaviour into our requirement, and
+the next version tightening it would surface as macSCP's regression — the inverse
+of what the suite is for. The implementer was asked to object if it disagreed and
+did not.
+
+### CORRECTION — I misattributed three corrections, and the implementer caught it
+
+I wrote to the implementer, of the three "unmeasured" comment corrections: **"each
+quotes verbatim the 'unmeasured' wording it replaces, as you did when you put it
+there."** It did not put them there. **Task 13 did, on 2026-10-22**, before this
+fix wave began — and it corrected the neighbouring `maintainer ruling A` comment in
+no round of its own either.
+
+In a measurement record attribution is part of the data, not a courtesy. This is
+the same defect as a figure copied from memory into a second place, with a name in
+the place of the figure, and it is the second time on this branch that I have
+written from recollection into a hand-off instead of from the tree.
+
+### A limit on MY measurement, which the implementer named and I had not
+
+The pre-decided method was `S3FileSystem.signedRequest`/`perform`; I used curl.
+For the question asked — does this store care? — the substitution is sound, and
+the 200 plus the read-back show the signature was accepted. But what was exercised
+is **the store's tolerance of a validly signed request lacking the header, not
+macSCP's own code path without it** — which cannot be run at all, because
+`setObjectLockDefault` takes no argument for it. The implementer wrote that
+distinction into all four sites rather than let "the rig does not require it"
+stand as though our request had been the one sent. The stronger claim would need a
+seam in `setObjectLockDefault` that nothing else would use, and it declined to add
+one for this. Correctly.
+
+### A fourth site, found by the right method
+
+`S3FileSystem.setObjectLockDefault`'s passage said "this tree records no run of
+this request without the header against any store, the rig included" — which the
+measurement falsified, and which would have been the last sentence in the tree
+claiming the run did not exist. **Found by searching for what the observation
+falsified rather than by working my list** — the same lesson as the Important 2
+sweep: search the subject, not the claim.
+
+### Two self-reported process failures worth keeping
+
+1. A sweep command used `-c` with `-r` and claimed it "prints one COUNT PER
+   MATCHING FILE"; run, it prints a count for every file scanned, almost all
+   zeros. Replaced with `-o` after running it. The `grep -c` family again.
+2. A scripted row edit asserted its anchor and then replaced a DIFFERENT string,
+   so the script printed `ok` and changed nothing — caught only because
+   `git diff --stat` showed the file absent. That is CLAUDE.md's "A report says
+   what the diff shows" reproduced in miniature, and reading the diff is the only
+   thing that stopped it reaching a report.
+
+### Dispatched: scoped re-review of the whole fix wave (`a3b4239edd4d67661`, opus)
+
+`97dfc236..fbc62ae8`, 9 commits, 22 files, 1858 insertions. Nine checks. Four are
+not "did it close the finding":
+
+- the read-back switch is TOTAL and its six arms do not overlap — a mismatch with
+  two sentences competing for it, or a combination with none, is the defect the
+  whole wave exists to prevent;
+- **the audit trail never claims a protection the bucket lacks, and never omits one
+  it has** — the property I care about most here, checked on every arm including
+  the two failed-read ones;
+- F2b's trade-off is written where a reader meets it, not only implemented — a cost
+  implemented but unrecorded is half a fix;
+- **both of my own measurements checked with no deference**, the row's command
+  extracted unrepaired and run, and the Content-MD5 record checked for overstating
+  what curl could show.
+
+## The fix wave, closed — seven rounds from three findings
+
+The final whole-branch review passed the branch with three findings and the
+verdict "ship with F1 and F2 fixed". Fourteen commits followed, because **each
+fix exposed the next notch of the same defect**, and the scoped re-review then
+found a regression the wave itself had introduced.
+
+`0537fdc3` F1 · `a9a24a13` F2 · `6d0c87c8` F3 · `a89e7ed9` F1b · `df948f90` F2b ·
+`b6534374` F1c · `baf75c19` F1d · `d1e0efa0` (mine, the gated row) · `fbc62ae8`
+the Content-MD5 record · `4dc3aebc` D1 · `001baac8` M1 · `bb43ed49` M2 ·
+`a148e162` M3 + the IPv6 row · `eac54709` the tension row · `20c72c11` (mine, the
+connect comment).
+
+### D1 — the wave's own regression, and the project had already decided it
+
+`readBack` read the lock first and unconditionally, and
+`S3SettingsXML.parseObjectLockState` maps a non-2xx to `.notConfigured` for
+exactly one error code and throws for everything else. So on any store that does
+not implement Object Lock, **a plain create that fully succeeded** ended
+`.unconfirmed`: a red sentence ending "do not create it again", an error-flagged
+audit row, the name blocked. macSCP exists for non-AWS stores.
+
+Both facts verified by me before I ruled. And the decisive one needed no store at
+all: the sibling sheet had already settled the same question the other way in its
+own fix round — `aLockThatCannotBeReadDoesNotCostABucketThatIsNotEnabled` holds
+that a lock which cannot be read "changes nothing the sheet offers or says for a
+bucket that is not enabled". **Two sheets of one branch contradicted each other**,
+which is checkable in the tree.
+
+Ruling: tell "the store says there is no lock" from "we could not find out", and
+let the request decide whether not finding out matters. Nothing asked for and
+unreadable → the create keeps its success and claims nothing about a lock. A lock
+asked for and unreadable → `.unconfirmed` stays right, because we promised
+something we cannot confirm. `hasLock` became `Bool?`; `hasLock ?? false` enters
+only the comparison, so an unknown lock is left out of the audit line rather than
+reported absent.
+
+### The tension the fix created, and why it is a row rather than a seventh round
+
+The implementer asked the fifth time and earned it: **D1's forgiveness keys on
+what the request promised, while F1c's and F1d's harm keys on what the bucket
+has.** So the fix gives up the warning exactly where it was most wanted — a store
+that implements Object Lock, a bucket that has one, and the lock read refused
+rather than answered. That was `.unconfirmed` and is now a clean success.
+
+RULED: row it, do not build the fourth outcome. The weighing, written down so the
+next reader need not re-derive it: **D1's case is one condition** (any store
+without Object Lock, any plain create), the re-opened case is a **conjunction of
+three** (lock implemented, lock config unreadable by that key, a default retention
+present for the harm to land). One condition beats three. And a
+success-carrying-a-caveat is new sheet semantics at the end of a branch where
+nothing has ever been seen on screen — trading a measured narrow risk for an
+unmeasured UI shape is the wrong direction this late. The maintainer had already
+chosen this disposition for this class of question on 2026-10-23; following their
+precedent beats a coordinator inventing a different one two days later.
+
+### M1, M2, M3 — and M2 is the one that mattered
+
+**M1**: a plant putting `(days: 7, mode: .compliance)` on the `.unconfirmed` arm
+was GREEN at two filter widths — a flat claim of an irreversible retention about a
+bucket where nothing was established. The arm's behaviour was as ruled; what was
+missing was a test pinning WHICH attempt it records. The implementer reproduced my
+green first, then showed the red after. Measured from both sides.
+
+**M2**: F2's own harm survived on a bucket that really is locked — list-but-no-delete
+key, every probe refused, every finding uninformative, the ~2000 requests still
+paid in full — and the comment cited the measurement as what the hoist prevents
+without saying it survived there. Bounded at four, with the derivation in the
+constant's doc rather than a bare number, and the test reads the constant instead
+of spelling it. **The bound is a judgement with a written derivation, not a
+measurement**, and the implementer said so plus what measuring it would need.
+
+**M3**: `BrowserScope.isContainerListRoot`'s doc said "FOUR readers, five reads"
+with a committed command claiming 4; F3 added a fifth reader and the command prints
+6. Recounted: five readers, six reads, classified per match — and the old claim
+that the exclusion "leaves only reads" withdrawn too, since one match is prose.
+
+### My own correction, two deep
+
+The documentation dispatch found `S3FileSystem.connect`'s paragraph naming one
+opener of the create sheet where F3 had made two. I corrected it, and then had to
+correct myself twice inside that one edit:
+
+1. A first draft said "TWO places open" the sheet — which would have contradicted
+   `openCreateContainerSheet`'s own doc two files away, about the construction
+   being spelled once. Read back from the file: the **triggers** are two
+   (`handleConnectionAction`'s arm, reached from the menu row and from the empty
+   notice's button), the **construction** is one (`ContentView+Sheets.swift`).
+   Fixed before committing.
+2. The next paragraph read "This paragraph has been corrected twice, and both
+   earlier wordings are kept here" — which my correction falsified **in the act of
+   being written.** A count in a comment is a claim about the rest of the file;
+   this one was a claim about itself, which is the shortest possible distance
+   between writing a number and getting it wrong.
+
+One thing is now true that was not: `612f1ece`'s withdrawn first version claimed
+"The browser now carries the action that resolves the empty state". False of the
+tree then, true of it now, because F3 put the button on the empty notice. The
+first version had the destination right and only the date wrong.
+
+### The user documentation is paid, including what the wave changed under it
+
+`41a47d7` on `docs/macscp-s3-bucket-settings`, local only. `npm run build` ("All
+internal links are valid", 165 pages, no warnings) and `npm run check` (0/0/0)
+both pass. The create page now carries the read-back and an outcome table with the
+catalogue's own sentences; the two consequential cases have their own subsections,
+and the default-retention one ends by telling the reader to look **before**
+uploading anything. The empty-account passage is corrected from "an empty list" to
+the screen that now exists. The audit page says the entries name what was read
+back rather than what was asked.
+
+It also replaced the Governance hedge with the fact I had verified myself, which
+is the second time that dispatch's honest "I could not explain this from the
+source" turned into a correct sentence rather than a guess.
+
+### Not verified, and it goes to the maintainer as-is
+
+- **Nothing on this branch has ever been seen on screen.** No GUI, no screenshot,
+  app and binary never launched. F3 added a screen under that condition; its rule
+  is tested, its layout bound measured (66 pt needed against 260 granted in all
+  four languages), its text is catalogue lookups with zero literals — and none of
+  that is the same as having looked.
+- **"Green" is a statement about particular runs on this machine**, not a property
+  of the suite. The IPv6 row records a unit-suite case red in one full run and 3 of
+  3 green alone, with a two-second wall-clock timeout in the very file CLAUDE.md's
+  ceiling section cites twice.
+- The AWS half of the Content-MD5 question has no measurement anywhere in this
+  project and cannot get one here.
