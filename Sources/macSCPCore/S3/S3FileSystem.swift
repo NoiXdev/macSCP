@@ -848,6 +848,36 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         case unknown
     }
 
+    /// How many refused keys one `deleteTree` call probes for a lock before
+    /// it stops, once the probes keep establishing nothing.
+    ///
+    /// **Why there is a bound at all.** The user sees ONE message. An
+    /// informative probe throws and ends the walk at the first answer, so the
+    /// only walk that runs long is the one where every answer is
+    /// uninformative — and that is exactly F2's failure configuration: an
+    /// access key with `s3:ListBucket` and not `s3:DeleteObject` gets
+    /// `AccessDenied` for every key of the batch. Hoisting the bucket's lock
+    /// state settles that for a bucket with no Object Lock, and settles
+    /// nothing for a bucket that has one, where the ~2000 requests F2
+    /// measured were still paid in full.
+    ///
+    /// **Why FOUR, derived rather than picked.** N uninformative answers in a
+    /// row against one bucket is evidence that the refusals are
+    /// permission-based rather than lock-based: a locked bucket may hold
+    /// unlocked objects, so ONE uninformative probe proves nothing, and a
+    /// pair is a cheap coincidence. Four is the smallest N past that which is
+    /// still a sample, and it costs at most eight signed GETs — under half a
+    /// percent of the 2000 an unbounded walk pays on a full 1000-key batch.
+    ///
+    /// **What it trades away.** The walk gives up a real
+    /// `.objectUnderLegalHold` only when NONE of the first four refused keys
+    /// is locked while a later one is; the order is the batch's, which is the
+    /// listing's, so nothing adversarial chooses it. In that configuration
+    /// the user gets the generic refusal instead of the hold. The same trade
+    /// the `.unknown` arm makes at one probe, for the same reason, and both
+    /// are written at the walk.
+    static let uninformativeProbeBound = 4
+
     /// The `reason` of the `.protocolError` `deleteTree` throws when a batch
     /// came back with refusals that nothing named.
     ///
@@ -1063,10 +1093,17 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
         // appeared, so a delete that goes through costs nothing extra. See
         // `BucketLockState`.
         var bucketLock = BucketLockState.notAsked
-        // How many keys have been probed while the bucket's own lock state is
-        // unreadable. Per CALL, like `bucketLock` itself, and the bound is
-        // one — see the refusal walk below for why.
-        var probesWhileUnknown = 0
+        // How many probes this CALL has made that came back uninformative.
+        // Per call, like `bucketLock` itself; the bound depends on what the
+        // bucket's own lock state turned out to be — see the refusal walk
+        // below, and `uninformativeProbeBound`.
+        //
+        // (Corrected 2026-10-23, M2. This read, verbatim: "How many keys have
+        // been probed while the bucket's own lock state is unreadable. Per
+        // CALL, like `bucketLock` itself, and the bound is one — see the
+        // refusal walk below for why." It counted only the `.unknown` arm,
+        // which was the only arm that had a bound.)
+        var uninformativeProbes = 0
         for batch in keys.chunked(into: 1000) {
             try Task.checkCancellation()
             let body = try Self.deleteObjectsXML(keys: batch)
@@ -1113,34 +1150,59 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
                             bucketLock = await bucketLockState(ofBucket: bucket)
                         }
                         // **The user sees ONE message, so the walk is bounded
-                        // by what can still change it.** An informative
-                        // probe throws, which ends the walk at the first
-                        // answer. `.absent` means no probe can be
-                        // informative. `.unknown` means a probe still can —
-                        // nothing was established, and a probe's failure must
-                        // not replace the answer it was asked about — but it
-                        // buys exactly ONE for the whole call: with the
-                        // bucket's configuration unreadable and the first
-                        // object's lock state uninformative, nothing
-                        // distinguishes the five-hundredth key from the
-                        // first, and the alternative is paying for 999 more
-                        // answers that cannot improve the message.
+                        // by what can still change it.** An informative probe
+                        // throws, which ends the walk at the first answer, so
+                        // every bound below is a bound on UNINFORMATIVE
+                        // answers only.
                         //
-                        // What that trades away, said plainly: a key further
-                        // down the batch could carry a legal hold the first
-                        // one does not, and in that configuration the user
-                        // gets the generic message instead of the hold. The
-                        // `reason` thrown below says the bucket's lock state
-                        // could not be read, so the record shows which case
-                        // this was.
+                        // `.absent`: no probe can be informative, nothing is
+                        // asked. `.unknown`: a probe still can — nothing was
+                        // established, and a probe's failure must not replace
+                        // the answer it was asked about — but it buys exactly
+                        // ONE for the whole call, because with the bucket's
+                        // configuration unreadable and the first object's
+                        // lock state uninformative, nothing distinguishes the
+                        // five-hundredth key from the first. `.inForce`:
+                        // `uninformativeProbeBound`, which has its own
+                        // derivation; a locked bucket may hold unlocked
+                        // objects, so one uninformative answer proves
+                        // nothing, while four in a row are evidence that the
+                        // refusals are permission-based rather than
+                        // lock-based.
+                        //
+                        // What the two bounds trade away, said plainly: a key
+                        // further down the batch could carry a legal hold the
+                        // probed ones do not, and in that configuration the
+                        // user gets the generic message instead of the hold.
+                        // Under `.unknown` the `reason` thrown below also says
+                        // the bucket's lock state could not be read, so the
+                        // record shows which case it was.
+                        //
+                        // **Corrected 2026-10-23 (M2 of the scoped
+                        // re-review).** This comment read, verbatim: "An
+                        // informative probe throws, which ends the walk at the
+                        // first answer. `.absent` means no probe can be
+                        // informative. `.unknown` means a probe still can …
+                        // but it buys exactly ONE for the whole call", and
+                        // `.inForce` answered `true` with no bound at all. It
+                        // then cited F2's ~2000-request measurement as what
+                        // the hoist prevents without saying that on a bucket
+                        // which really is locked the walk still paid it in
+                        // full — F2's own failure configuration, unfixed on
+                        // the one bucket state the hoist cannot settle.
                         let mayProbe: Bool
                         switch bucketLock {
                         case .notAsked, .absent: mayProbe = false
-                        case .inForce: mayProbe = true
-                        case .unknown: mayProbe = probesWhileUnknown == 0
+                        case .inForce: mayProbe = uninformativeProbes < Self.uninformativeProbeBound
+                        case .unknown: mayProbe = uninformativeProbes == 0
                         }
                         if mayProbe {
-                            if bucketLock == .unknown { probesWhileUnknown += 1 }
+                            // Counted BEFORE the probe, because a probe that
+                            // comes back informative throws out of the loop
+                            // and never reaches a line after it: what this
+                            // counts is probes MADE, and every one that
+                            // returns is one that established nothing.
+                            uninformativeProbes += 1
                             if let locked = await lockFinding(
                                 forRefusedDeleteOf: key, inBucket: bucket)
                             {

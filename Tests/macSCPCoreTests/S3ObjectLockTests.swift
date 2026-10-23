@@ -822,6 +822,37 @@ struct S3ObjectLockTests {
         #expect(outcome.probeRequests == 1)
     }
 
+    /// **M2 of the scoped re-review: F2's own harm survived on a bucket that
+    /// really is locked.** `.inForce` had no bound, so in F2's exact failure
+    /// configuration — an access key that can list but not delete, every key
+    /// of the batch refused, no key under a hold or a retention — the walk
+    /// paid two signed GETs per refused key all the way to the end. On a
+    /// 1000-key batch that is the ~2000 requests F2 measured, in full, on the
+    /// one bucket state the hoist does not already settle.
+    ///
+    /// The bound is `S3FileSystem.uninformativeProbeBound`, read from the
+    /// code rather than spelled here, so changing it there moves this case
+    /// with it. Six refused keys against a bound of 4 gives 1 bucket read +
+    /// 4 probed keys x 2 reads = 9 requests, and the two keys after the bound
+    /// are not probed at all.
+    @Test func aLockedBucketStopsProbingAfterEnoughUninformativeAnswers() async throws {
+        let keys = ["d/", "d/a", "d/b", "d/c", "d/e", "d/f"]
+        let bound = S3FileSystem.uninformativeProbeBound
+        let probes =
+            [answer(Self.lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>"))]
+            + Array(repeating: answer(Self.holdDocument("OFF")), count: 2 * keys.count + 2)
+        let outcome = try await deleteTree(sending: keys, refused: keys, probes: probes)
+        guard case .protocolError? = outcome.error else {
+            Issue.record("expected the generic failure, got \(String(describing: outcome.error))")
+            return
+        }
+        #expect(outcome.probeRequests == 1 + 2 * bound)
+        // The positive controls for the figure: more refused keys than the
+        // bound allows, and a bound that actually bounds something.
+        #expect(keys.count > bound)
+        #expect(bound >= 1)
+    }
+
     /// The other half of the hoist: a bucket that DOES have Object Lock still
     /// gets its keys probed, and the first key under a hold settles the
     /// answer. One bucket read plus one `?legal-hold` — three requests fewer
