@@ -11,14 +11,38 @@ import Testing
 /// What the rig will NOT show, and so what is pinned here: that macSCP sends
 /// a signed `Content-MD5` on `PUT ?object-lock` (every request in
 /// `S3ObjectLockGatedTests` sends it, so a green gated run is silent on
-/// whether the rig requires it, and no run of the request without it is on
-/// record; the header of that file names the observation that would settle
-/// it), and that there is no way to switch Object Lock on for an existing
-/// bucket (the rig allows it).
+/// whether the rig requires it), and that there is no way to switch Object
+/// Lock on for an existing bucket (the rig allows it).
 ///
-/// **Corrected 2026-10-22 (Task 13).** The parenthesis after "`Content-MD5`
-/// on `PUT ?object-lock`" read, verbatim: "(the rig does not require it)".
-/// That was stated as a fact and was not measured.
+/// **The rig does not require the header. MEASURED 2026-10-23, and only of
+/// RustFS 1.0.0.** On a throwaway bucket created with
+/// `x-amz-bucket-object-lock-enabled`, one `PUT ?object-lock` carrying a
+/// GOVERNANCE default of one day and NO `Content-MD5` was answered
+/// `HTTP 200` with an empty body; the CONTROL, a `GET ?object-lock`
+/// afterwards, read back `<Mode>GOVERNANCE</Mode><Days>1</Days>`, so the
+/// configuration took and the 200 is not the "accepted and ignored" answer a
+/// status alone would also fit. The bucket was deleted (204) and its absence
+/// confirmed (404). Sent with curl's own SigV4, the instrument the design's
+/// §4 table was measured with -- **not** through `S3FileSystem`, so what is
+/// measured is that this store accepts a validly signed request without the
+/// header, not that macSCP's own code path was exercised without it.
+///
+/// **The AWS half is still a reading, not a measurement.** That AWS answers
+/// `400` without the header comes from a search summary of its published
+/// reference for `PutObjectLockConfiguration` (see the comment in
+/// `S3FileSystem.setObjectLockDefault`), and this rig cannot speak for AWS in
+/// either direction. macSCP sends the header, signed, on both. The two halves
+/// stay separate: measured of RustFS 1.0.0, read of AWS.
+///
+/// **Corrected 2026-10-23.** The parenthesis above read, verbatim: "and no
+/// run of the request without it is on record; the header of that file names
+/// the observation that would settle it", and the paragraph that followed it
+/// read, verbatim: "**Corrected 2026-10-22 (Task 13).** The parenthesis
+/// after "`Content-MD5` on `PUT ?object-lock`" read, verbatim: "(the rig does
+/// not require it)". That was stated as a fact and was not measured." Both
+/// described a question nobody had put to a store. The run above is that
+/// observation, made on the outcome the gated file had decided for in
+/// advance.
 @Suite("S3 Object Lock")
 struct S3ObjectLockTests {
     // MARK: - Fixtures
@@ -379,10 +403,24 @@ struct S3ObjectLockTests {
 
     private static let lockEnabledNoDefault = lockDocument("<ObjectLockEnabled>Enabled</ObjectLockEnabled>")
 
-    /// Ruling A. Whether the rig checks the header is not known (see the
-    /// header of `S3ObjectLockGatedTests`); this test pins what macSCP SENDS.
+    /// Ruling A. The rig does NOT check the header -- measured 2026-10-23, of
+    /// RustFS 1.0.0 only: a `PUT ?object-lock` without `Content-MD5` was
+    /// answered 200 and the configuration read back, see this file's header
+    /// for the method and the control. This test pins what macSCP SENDS,
+    /// which is what no store's tolerance can settle: the header is required
+    /// by a READING of AWS's reference, and no AWS endpoint has ever been
+    /// reached from this project.
+    ///
+    /// **Corrected 2026-10-23.** This paragraph read, verbatim: "Ruling A.
+    /// Whether the rig checks the header is not known (see the header of
+    /// `S3ObjectLockGatedTests`); this test pins what macSCP SENDS.
     /// (Withdrawn, verbatim: "and the rig does not check it", stated as a fact
-    /// and never measured.) The request carries a
+    /// and never measured.)" The question has now been put to the rig. What
+    /// the correction it quotes was right about stands: a shape-only test is
+    /// what pins macSCP's own request, and a tolerant store is a reason to
+    /// send the header rather than a reason not to.
+    ///
+    /// The request carries a
     /// `Content-MD5` of its body, and the header is SIGNED. The digest is a
     /// literal, the base64 MD5 of the exact body, not a call to the code that
     /// computes it. The first request is the read that precedes every write.
