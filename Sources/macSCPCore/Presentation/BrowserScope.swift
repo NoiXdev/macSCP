@@ -46,10 +46,23 @@ public struct BrowserScope: Equatable, Sendable {
     /// row to point at; `.compareWithOtherPane`, which asks it of the OTHER
     /// pane, where the counterpart it would measure against has to be an
     /// entry of a directory and not a bucket; `acceptsIncomingFiles` below;
-    /// and `ComparisonRequest.panesAreComparable(local:remote:)`, which asks
+    /// `ComparisonRequest.panesAreComparable(local:remote:)`, which asks
     /// it of BOTH panes before the menu bar's "Compare Both Panes" is
-    /// enabled, and therefore spells it twice on one line. FOUR readers,
-    /// five reads.
+    /// enabled, and therefore spells it twice on one line; and
+    /// `EmptyContainerListView.isShown(scope:state:listedItemCount:)`, which
+    /// asks it of the pane it is about to draw a notice over. FIVE readers,
+    /// six reads.
+    ///
+    /// **Corrected 2026-10-23 (M3 of the scoped re-review).** The enumeration
+    /// above ended, verbatim: "and
+    /// `ComparisonRequest.panesAreComparable(local:remote:)`, which asks it
+    /// of BOTH panes before the menu bar's "Compare Both Panes" is enabled,
+    /// and therefore spells it twice on one line. FOUR readers, five reads."
+    /// `EmptyContainerListView.isShown` landed in `6d0c87c8` (F3 of the
+    /// bucket-settings fix wave, the empty bucket list), which never touched
+    /// this file -- which is exactly where CLAUDE.md's "Comments that
+    /// describe other code" says the damage happens: the comment became
+    /// wrong without appearing in any diff.
     ///
     /// **Corrected 2026-10-16, and this is what it replaces, verbatim:** "and
     /// `acceptsIncomingFiles` below. Three readers in `Sources`, counted
@@ -66,16 +79,33 @@ public struct BrowserScope: Equatable, Sendable {
     /// and false two tasks later, in a number and in an enumeration of call
     /// sites, which is what `CLAUDE.md`'s rule about them is for.
     ///
-    /// **The figure is now counted by a command this comment cannot change.**
+    /// **The figure is counted by a command this comment cannot change.**
     /// A total over `Sources/` counts the pattern wherever this file spells
-    /// it, including inside the quotation above, so the number moved whenever
-    /// the prose did. Excluding the declaring file leaves only reads, and
+    /// it, including inside the quotations above, so the number moved whenever
+    /// the prose did. Excluding the declaring file leaves what other files
+    /// say, and
     /// `git grep -no isContainerListRoot -- Sources ':!*BrowserScope.swift' | wc -l`
-    /// prints 4 — `BrowserContextMenu.swift` twice (the background menu and
+    /// prints **6** on 2026-10-23. Classified per MATCH and not per line,
+    /// because two of them share a line and one is not a read at all:
+    /// `BrowserContextMenu.swift` twice (the background menu and
+    /// `.compareWithOtherPane`), `ComparisonRequest.swift` twice on its one
+    /// line, `EmptyContainerListView.swift` twice -- once in that view's own
+    /// doc comment, which is prose and not a read, and once in `isShown`. So
+    /// FIVE reads outside this file; the sixth is `acceptsIncomingFiles`,
+    /// here, below. Re-run after this paragraph was written and unchanged by
+    /// it, which is the property the exclusion buys.
+    ///
+    /// **Corrected 2026-10-23 (M3).** This paragraph said, verbatim: "prints
+    /// 4 — `BrowserContextMenu.swift` twice (the background menu and
     /// `.compareWithOtherPane`) and `ComparisonRequest.swift` twice on its one
     /// line. The fifth read is `acceptsIncomingFiles`, in this file, below.
     /// Re-run after this paragraph was written, on 2026-10-16, and unchanged
-    /// by it, which is the property the exclusion buys.
+    /// by it, which is the property the exclusion buys." Run unrepaired on
+    /// 2026-10-23 that command prints 6, not 4. It also claimed the exclusion
+    /// "leaves only reads", which the prose match in
+    /// `EmptyContainerListView.swift` now falsifies: the exclusion keeps this
+    /// file's own spellings out of the count, and nothing stops another file
+    /// from naming the symbol in a comment.
     public var isContainerListRoot: Bool {
         rootIsContainerList && RemotePath.normalizedAbsolute(currentPath) == "/"
     }
