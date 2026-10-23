@@ -184,12 +184,77 @@ public struct AuditRecorder: Sendable {
     /// A create that failed after the bucket existed (the versioning request
     /// that follows it) is recorded as a failure too, and its sentence says
     /// the bucket exists. The detail is the attempt, whichever way it went.
-    public func recordBucketCreated(bucket: String, protection: BucketProtection, failure: String?) {
+    ///
+    /// `bucketDefault` is the bucket's DEFAULT RETENTION as the caller read
+    /// it back, or `nil` when there is none to report -- which covers both a
+    /// bucket that has none and a read that did not answer, so the caller's
+    /// own `failure` sentence is what tells those apart. `createBucket` takes
+    /// only a `BucketProtection` and so cannot set a default, which is why a
+    /// default that is present is worth a line of its own: it was set by
+    /// somebody else at some other time, and it is the one piece of evidence
+    /// available that the bucket is not new. The mode and the day count go in
+    /// because they are what a reader of the trail decides from, and neither
+    /// is a secret.
+    ///
+    /// **No default value**, on this parameter as on the others, and for the
+    /// same reason: `nil` is a real answer about an irreversible setting, and
+    /// a call site that had not thought about it would get that answer
+    /// without saying so. **Ten call sites spell it**, counted 2026-10-23
+    /// with this command, which prints one line per OCCURRENCE (`grep -o`,
+    /// not `grep -c`, which counts lines -- several of these share a line
+    /// with nothing and one shares a file with another):
+    ///
+    ///     /usr/bin/grep -rn -o -e 'recordBucketCreated(' Sources Tests --include='*.swift'
+    ///
+    /// It prints **14**, and the four that are not call sites are named one
+    /// by one: the declaration below, the copy of the pattern in the command
+    /// above, the copy inside the withdrawal at the end of this paragraph,
+    /// and a string literal in the source-scanning guard
+    /// `BucketSettingsAuditTests.createMakesOneRecordingCallPerArmItCanTake`.
+    /// 14 - 4 = 10: six calls in `CreateBucketSheet.swift`, one per arm of
+    /// `create`, and four in `AuditRecorderBucketSettingsTests.swift`.
+    ///
+    /// **Two of those four are this paragraph's own**, which is why the
+    /// figure moves whenever the prose does -- and it did: the corrected
+    /// version first said 13, counted before the withdrawal below was
+    /// written, and re-running the command AFTER writing it returned 14. That
+    /// is not a corner case here; it is the second time in two attempts that
+    /// this one figure was changed by the sentence reporting it.
+    ///
+    /// **The quotes around `'*.swift'` are load-bearing.** Written bare, the
+    /// shell expands `--include=*.swift` against the working directory before
+    /// `grep` sees it: in zsh that is `no matches found` and a count of 0,
+    /// which is how the first version of this paragraph shipped a figure
+    /// whose command could not reproduce it. Measured 2026-10-23, both forms,
+    /// in this repository.
+    ///
+    /// **Corrected 2026-10-23, same day, before the push.** This paragraph
+    /// read, verbatim: "Four call sites in the sheet and four in
+    /// `AuditRecorderBucketSettingsTests` spell it; counted 2026-10-23 with
+    /// `/usr/bin/grep -rn -o -e 'recordBucketCreated(' Sources Tests --include=*.swift`,
+    /// which prints 11 OCCURRENCES (`grep -o`, one per occurrence, not
+    /// `grep -c`, which counts lines): this declaration, five calls in
+    /// `CreateBucketSheet.swift` -- one per arm of `create` -- four in that
+    /// Core test file, and one inside the source-scanning guard
+    /// `BucketSettingsAuditTests.createMakesOneRecordingCallPerArmItCanTake`,
+    /// which is a string literal rather than a call." Three things were wrong
+    /// with it: the total (11, not 13), the sheet's share (five, where
+    /// `create` has six arms and six calls), and a command that does not run
+    /// in the form it was committed.
+    public func recordBucketCreated(
+        bucket: String, protection: BucketProtection,
+        bucketDefault: (days: Int, mode: RetentionMode)?, failure: String?
+    ) {
         var detail = "created bucket \(bucket)"
         switch protection {
         case .none: break
         case .versioned: detail += " with versioning"
         case .lockedAndVersioned: detail += " with versioning and Object Lock"
+        }
+        if let bucketDefault {
+            detail +=
+                "; the bucket already had a \(bucketDefault.mode.rawValue) default retention of "
+                + "\(bucketDefault.days) \(bucketDefault.days == 1 ? "day" : "days")"
         }
         appendBucketSetting(.bucketCreated, detail: detail, failure: failure)
     }

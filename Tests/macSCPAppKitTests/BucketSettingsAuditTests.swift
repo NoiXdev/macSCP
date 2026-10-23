@@ -403,6 +403,46 @@ struct BucketSettingsAuditTests {
         #expect((events.first?.errorMessage ?? "").isEmpty == false)
     }
 
+    /// **The default retention reaches the trail with its mode and its day
+    /// count.** Those two are what a reader of the trail decides from -- how
+    /// long the files they added are held, and whether anyone can lift it --
+    /// and the sheet's sentence carries neither, by design. Neither is a
+    /// secret: no store text, no endpoint, no key.
+    @MainActor @Test func aBucketDefaultFoundOnACreateIsRecordedWithItsModeAndDays() async {
+        let trail = Trail()
+        defer { trail.remove() }
+        let withDefault = FakeBucketSettings(
+            versioning: .enabled,
+            lock: .init(hasLock: true, bucketDefault: .init(days: 30, mode: .compliance)))
+        let model = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        model.name = "macscp-third"
+        model.objectLock = true
+        await model.create(via: withDefault, recorder: trail.recorder)
+
+        let events = trail.events
+        #expect(events.count == 1)
+        #expect(events.first?.kind == .bucketCreated)
+        let detail = events.first?.detail ?? ""
+        #expect(
+            detail == "created bucket macscp-third with versioning and Object Lock; "
+                + "the bucket already had a COMPLIANCE default retention of 30 days")
+        #expect(events.first?.isError == true)
+        #expect((events.first?.errorMessage ?? "").isEmpty == false)
+
+        // The positive control: the same create on a bucket with no default
+        // records the line without the clause, and as a clean write.
+        let plain = Trail()
+        defer { plain.remove() }
+        let noDefault = CreateBucketModel(existingNames: [], listingIsKnown: true)
+        noDefault.name = "macscp-third"
+        noDefault.objectLock = true
+        await noDefault.create(via: FakeBucketSettings(), recorder: plain.recorder)
+        let plainDetail = plain.events.first?.detail ?? ""
+        #expect(plainDetail == "created bucket macscp-third with versioning and Object Lock")
+        #expect(plainDetail.contains("default retention") == false)
+        #expect(plain.events.first?.isError == false)
+    }
+
     // MARK: - The three Object Lock operations
 
     @MainActor @Test func anObjectLockLineNamesWhichOfTheThreeOperationsItWas() async {
@@ -513,9 +553,17 @@ struct BucketSettingsAuditTests {
     /// store accepted the request and the read-back confirmed the settings;
     /// it accepted and the bucket turned out to have LESS protection than was
     /// asked for; it accepted and the bucket turned out to have MORE; it
-    /// accepted and the read-back did not answer; it refused. Five. That is
-    /// what is pinned, and it is the half that notices a record somebody
-    /// deleted.
+    /// accepted and the bucket turned out to carry a DEFAULT RETENTION this
+    /// call cannot have set; it accepted and the read-back did not answer; it
+    /// refused. Six. That is what is pinned, and it is the half that notices
+    /// a record somebody deleted.
+    ///
+    /// **Corrected 2026-10-23 (F1, fix round 4).** The sentence above read,
+    /// verbatim: "it accepted and the bucket turned out to have MORE; it
+    /// accepted and the read-back did not answer; it refused. Five.", and the
+    /// check was `recordingCalls == 5` with the message "confirmed, less than
+    /// asked, more than asked, unconfirmed, refused". A sixth arm landed: the
+    /// bucket has a DEFAULT RETENTION, which this call cannot have set.
     ///
     /// **Corrected 2026-10-22 (F1, fix round 3).** The sentence above read,
     /// verbatim: "it accepted and the read-back found something else; it
@@ -561,8 +609,8 @@ struct BucketSettingsAuditTests {
         let end = try #require(lines[(start + 1)...].firstIndex { $0.hasPrefix("    }") })
         let recordingCalls = lines[start...end].filter { $0.contains("recordBucketCreated(") }.count
         #expect(
-            recordingCalls == 5,
-            "confirmed, less than asked, more than asked, unconfirmed, refused")
+            recordingCalls == 6,
+            "confirmed, less, more, a default nobody set here, unconfirmed, refused")
     }
 
     // MARK: - A missing recorder
