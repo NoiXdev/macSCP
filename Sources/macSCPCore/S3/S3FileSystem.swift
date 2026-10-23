@@ -2015,12 +2015,24 @@ extension S3FileSystem: S3BucketSettings {
         // search summary of that page while this work was planned, and not
         // a measurement: the reading is that a caller that signs its own
         // requests needs the header and that a request without it fails 400.
-        // No AWS endpoint was reachable, and this tree records no run of this
+        // No AWS endpoint was reachable, and none has ever been reached from
+        // this project. The RIG half is measured: on 2026-10-23 a
+        // `PUT ?object-lock` without the header was answered 200 by RustFS
+        // 1.0.0 and the configuration read back afterwards, so that store
+        // does not require it (the record, with its control and its
+        // instrument, is in the header of `S3ObjectLockGatedTests`). A
+        // tolerant store is a reason to keep sending the header, not to stop:
+        // the requirement this comment rests on is AWS's, and it is a reading.
+        // What is pinned here is the request's SHAPE, not a store's answer:
+        // `S3ObjectLockTests` asserts the header is sent and signed.
+        //
+        // (Corrected 2026-10-23. This passage read, verbatim: "No AWS
+        // endpoint was reachable, and this tree records no run of this
         // request without the header against any store, the rig included (for
-        // `PUT ?versioning` the rig was measured to accept one without it, which
-        // says nothing about this call). What is pinned is the request's SHAPE,
-        // not a store's answer: `S3ObjectLockTests` asserts the header is sent
-        // and signed. (Withdrawn, verbatim: "Content-MD5 is required in practice
+        // `PUT ?versioning` the rig was measured to accept one without it,
+        // which says nothing about this call)." The clause about `?versioning`
+        // is dropped because this call itself has now been measured; the
+        // sentence it supported -- that no run existed -- had become false.) (Withdrawn, verbatim: "Content-MD5 is required in practice
         // for a caller that signs its own requests: against AWS's reference, a
         // `PutObjectLockConfiguration` without it fails 400 (maintainer ruling A,
         // measured). The rig does not insist". "Measured" was untrue of AWS

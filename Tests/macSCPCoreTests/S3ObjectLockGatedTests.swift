@@ -23,32 +23,62 @@ import Testing
 /// existing bucket (the rig allows it; the first test below shows macSCP
 /// declining anyway).
 ///
-/// **Corrected 2026-10-22 (Task 13).** The first sentence's parenthesis read,
-/// verbatim: "(the rig does not require it; `S3ObjectLockTests` pins the
-/// request)". "The rig does not require it" was stated as a fact and was not
-/// measured: no run of `PUT ?object-lock` without `Content-MD5` against any
-/// store is on record. Only `PUT ?versioning` was measured to be accepted
-/// without it, and that is a different call. macSCP sends the header, signed,
-/// on both.
+/// **The observation was MADE on 2026-10-23, and it landed on the accepted
+/// branch.** The record, not a plan: on a throwaway bucket created with
+/// `x-amz-bucket-object-lock-enabled`, one `PUT ?object-lock` carrying a
+/// GOVERNANCE default of one day and NO `Content-MD5` was answered
+/// `HTTP 200` with an empty body. The CONTROL that makes it a measurement
+/// rather than a status: a `GET ?object-lock` afterwards read back
+/// `<Mode>GOVERNANCE</Mode><Days>1</Days>`, so the configuration took -- a
+/// 200 on its own would fit "accepted and ignored" just as well. The bucket
+/// was then deleted (204) and its absence confirmed (404), so the rig was
+/// left as it was found; none of `macscp-seed`, `macscp-second` or
+/// `macscp-probe-lock` was named, and no object was written.
 ///
-/// **The observation that would settle it, and has not been made.** On a
-/// throwaway bucket created with `x-amz-bucket-object-lock-enabled` (so the
-/// call is otherwise valid; never one of the three buckets named above), send
-/// ONE signed `PUT ?object-lock` carrying a GOVERNANCE default of one day and
-/// NO `Content-MD5` -- `S3FileSystem.signedRequest` and `perform`, as the
-/// first test below does for its raw read, with no `extraHeaders` -- record
-/// the status, and delete the bucket. Decided in advance, so that a result is
-/// read and not interpreted afterwards:
-/// - Accepted (2xx): "the rig does not require it" can be written as
-///   MEASURED, for this rig version only. It says nothing about AWS: that AWS
-///   answers 400 without the header is a reading of AWS's reference (see the
-///   comment in `setObjectLockDefault`) and the rig cannot measure it.
-/// - Refused: the reason this file and `S3ObjectLockTests` give for leaving
-///   the header to a request-shape test is wrong, because the rig can tell
-///   the difference. The gated suite should then assert the refusal, and
-///   the test-design claim in both headers is withdrawn.
-/// Not added as a test here: it needs the rig, which could not be run when
-/// this was written, and a test nobody has run is a claim.
+/// Two things the record has to keep straight.
+/// - **It measures RustFS 1.0.0 and nothing else.** "The rig does not
+///   require the header" is now MEASURED, of that store at that version. That
+///   AWS answers 400 without it remains a READING of AWS's published
+///   reference, from a search summary (see the comment in
+///   `setObjectLockDefault`), with no measurement anywhere in this project
+///   and no AWS endpoint ever reached from it. The rig cannot speak for AWS
+///   in either direction, and a favourable rig result was decided in advance
+///   not to be allowed to.
+/// - **The instrument was curl's own SigV4**, as the design's §4 table was
+///   measured, and NOT `S3FileSystem.signedRequest`/`perform` as the plan
+///   below had named. So what is measured is that the store accepts a
+///   validly signed request lacking the header; macSCP's own code path was
+///   not run without it, and cannot be without an argument this call does not
+///   take.
+///
+/// **The other branch, still unmeasured and still the informative one.** A
+/// store that REFUSED such a request could tell a request with the header
+/// from one without, and the reason this file and `S3ObjectLockTests` give
+/// for leaving the header to a request-shape test would be wrong for that
+/// store. No store has been seen refusing it. That is a statement about what
+/// a different store, or a later version of this one, might do -- not an open
+/// question about this rig, which has now been asked.
+///
+/// **No test asserts any of this, deliberately** (maintainer-side decision,
+/// 2026-10-23). A test that asserted the store's tolerance would pin the
+/// rig's current behaviour as a requirement, and the next version changing it
+/// would read as macSCP's regression. The observation is the record; the
+/// tests pin what macSCP SENDS.
+///
+/// **Corrected 2026-10-23.** Two paragraphs stood here. The first read,
+/// verbatim: "**Corrected 2026-10-22 (Task 13).** The first sentence's
+/// parenthesis read, verbatim: "(the rig does not require it;
+/// `S3ObjectLockTests` pins the request)". "The rig does not require it" was
+/// stated as a fact and was not measured: no run of `PUT ?object-lock`
+/// without `Content-MD5` against any store is on record. Only
+/// `PUT ?versioning` was measured to be accepted without it, and that is a
+/// different call. macSCP sends the header, signed, on both." The second
+/// opened, verbatim: "**The observation that would settle it, and has not
+/// been made.**" and closed, verbatim: "Not added as a test here: it needs
+/// the rig, which could not be run when this was written, and a test nobody
+/// has run is a claim." The run above is that observation; what the two
+/// paragraphs said about the SCOPE of a favourable result is kept above,
+/// unweakened, because it is the half a measurement cannot improve.
 @Suite(
     "S3 Object Lock against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
