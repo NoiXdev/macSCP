@@ -790,12 +790,24 @@ struct BucketCORSSheet: BoundedView {
     /// `.sheetBound(Self.bound)`.
     static let bound: SheetBound = .size(width: 620, height: 620)
 
-    /// The height of the pane under the control, in both panes. Fixed, and not
-    /// left to grow, for two reasons: a sheet that grew with its rules would
-    /// have no height to bound (the fields scroll, and so does the text), and
-    /// `BoundedViewLayoutGuardTests` measures a bounded view as if nothing
-    /// scrolled, so a pane that asked for its content's height would be
-    /// measured at the height of every rule it holds.
+    /// The least height the pane under the control takes, in both panes.
+    ///
+    /// A floor, and not a fixed height, since 2026-10-26: pinned to this
+    /// figure exactly, the pane stopped short of the 620 pt bound and left the
+    /// difference as dead space under it. It now takes what the sheet has over.
+    /// `BucketCORSSheetLayoutTests.thePaneKeepsItsFloorAndTakesWhatItIsOffered`
+    /// holds it to both ends.
+    ///
+    /// The figure itself stays, and so does the reason for it: a pane that
+    /// asked for its CONTENT's height would be measured at the height of every
+    /// rule it holds, because `BoundedViewLayoutGuardTests` measures a bounded
+    /// view as if nothing scrolled -- `.fixedSize(horizontal: false, vertical:
+    /// true)` at its line 117, which makes every view report its IDEAL height.
+    /// So the pane's frame carries this number as its own `idealHeight`: a
+    /// flexible frame without one reports the ideal of whatever it holds, and
+    /// a scroller's ideal is its content. Measured on 2026-10-26, with the
+    /// ideal left out: 1081.15966796875 pt for one rule with every field
+    /// filled in, against the 620 pt the bound grants, in all four languages.
     static let paneHeight: CGFloat = 320
 
     /// Where this sheet's writes are recorded: the tab's `auditRecorder`,
@@ -891,19 +903,8 @@ struct BucketCORSSheet: BoundedView {
         )
         .disabled(!model.hasAnotherPaneToChoose)
 
-        Group {
-            switch model.visiblePane {
-            case .form:
-                CORSFormPane(model: model)
-            case .text:
-                CORSTextEditor(
-                    text: Binding(get: { model.text }, set: { model.text = $0 }),
-                    accessibilityLabel: BucketCORSModel.textLabelLine.text)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-        .frame(height: Self.paneHeight)
-        .disabled(model.isSaving)
+        CORSPane(model: model)
+            .disabled(model.isSaving)
 
         VStack(alignment: .leading, spacing: 4) {
             if let reason = model.formUnavailableSentence {
@@ -932,21 +933,50 @@ struct BucketCORSSheet: BoundedView {
     }
 }
 
-/// The fields pane: one card per rule, and the button that adds another.
-private struct CORSFormPane: View {
+/// The pane under the Felder/Text control, in both panes.
+///
+/// Named rather than inlined so its height can be measured on its own:
+/// `BucketCORSSheetTests.thePaneKeepsItsFloorAndTakesWhatItIsOffered`
+/// offers it both ends and reads back what it takes.
+struct CORSPane: View {
     let model: BucketCORSModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(model.rules.indices, id: \.self) { index in
-                    CORSRuleCard(model: model, index: index)
-                }
-                Button(BucketCORSModel.addRuleLine.text) { model.addRule() }
-                    .buttonStyle(.polished)
+        Group {
+            switch model.visiblePane {
+            case .form:
+                CORSFormPane(model: model)
+            case .text:
+                CORSTextEditor(
+                    text: Binding(get: { model.text }, set: { model.text = $0 }),
+                    accessibilityLabel: BucketCORSModel.textLabelLine.text)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.trailing, 8)
+        }
+        .frame(
+            minHeight: BucketCORSSheet.paneHeight,
+            idealHeight: BucketCORSSheet.paneHeight,
+            maxHeight: .infinity)
+    }
+}
+
+/// The fields pane: one card per rule, and the button that adds another.
+struct CORSFormPane: View {
+    let model: BucketCORSModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(model.rules.indices, id: \.self) { index in
+                        CORSRuleCard(model: model, index: index)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 8)
+            }
+            Button(BucketCORSModel.addRuleLine.text) { model.addRule() }
+                .buttonStyle(.polished)
         }
     }
 }
