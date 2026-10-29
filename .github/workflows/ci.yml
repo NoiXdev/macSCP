@@ -36,11 +36,22 @@ jobs:
     runs-on: macos-latest
     # The test runner has hung intermittently since M20: the process sits at
     # 0% CPU and never finishes, so the job would burn the runner's default
-    # six-hour budget instead of failing. Green runs take three to four
-    # minutes, so 20 leaves ample room for a slow runner while turning a hang
-    # into a red build. This is the net, not the fix -- the cause is still
-    # open.
-    timeout-minutes: 20
+    # six-hour budget instead of failing. This is the net, not the fix --
+    # the cause is still open.
+    #
+    # 35, raised from 20 on 2026-10-29 together with the Unit-Tests step
+    # budget below; the derivation is there. This comment also read "Green
+    # runs take three to four minutes, so 20 leaves ample room for a slow
+    # runner", which had stopped being true of the job long before the image
+    # moved: the last green run on `macos-15` (38225383495, 2026-10-12,
+    # `c0762fac`) took 9 m 52 s end to end (08:44:12Z to 08:54:04Z),
+    # measured with
+    #
+    #     gh run view 38225383495 --repo NoiXdev/macSCP --json jobs
+    #
+    # reading the job's own startedAt and completedAt. Three to four minutes
+    # was the figure for the TEST STEP in September, not for the job.
+    timeout-minutes: 35
     env:
       # ---------------------------------------------------------------------
       # Compiler-warning budget. Raising it accepts a warning forever; read
@@ -151,20 +162,57 @@ jobs:
         # by name (run 33698102652 lost 60 suite verdicts the same way). The
         # step below reads the file back; the artifact keeps it.
         #
-        # `timeout-minutes: 8` (docs/BACKLOG.md, "A test parked on a bare
+        # `timeout-minutes: 16` (docs/BACKLOG.md, "A test parked on a bare
         # continuation outlives its time limit"): a test parked on a bare
         # continuation ignores Swift Testing's own `.timeLimit` cancellation
-        # and would otherwise run on to the JOB's 20-minute budget above
-        # instead of failing near its own stated limit. Measured from the
-        # last three green `develop` runs before this step timeout was
-        # added (`gh run list --branch develop --limit 5 --json
-        # databaseId,conclusion`, then `gh run view <id> --json jobs --jq
-        # '.jobs[].steps[] | select(.name|test("Unit-Tests")) |
-        # "\(.startedAt) \(.completedAt)"'`): runs 33972030162, 33959532085
-        # and 33955366191 took 181 s, 230 s and 184 s — a measured maximum
-        # of 230 s (3 m 50 s). 8 minutes (480 s) is 2.09x that maximum,
-        # comfortably above the "at least 2x" floor.
-        timeout-minutes: 8
+        # and would otherwise run on to the JOB's budget above instead of
+        # failing near its own stated limit.
+        #
+        # It read `timeout-minutes: 8` until 2026-10-29, derived -- the
+        # withdrawn wording -- from "the last three green `develop` runs
+        # before this step timeout was added ... runs 33972030162,
+        # 33959532085 and 33955366191 took 181 s, 230 s and 184 s — a
+        # measured maximum of 230 s (3 m 50 s). 8 minutes (480 s) is 2.09x
+        # that maximum". That derivation was correct on 2026-09-05 and is
+        # correct arithmetic still; what expired is the maximum it rests on.
+        # Two runs measure it, each read with
+        #
+        #     gh run view <id> --repo NoiXdev/macSCP --log
+        #
+        # which prints the two `Build complete! (<n>s)` lines (the Build
+        # step's, then `swift test`'s own compile of the test targets) and,
+        # on a run that reaches the end, the `Test run with <n> tests passed
+        # after <t> seconds` line -- which the killed run below never
+        # printed, hence its missing run figure:
+        #
+        #   38225383495, 2026-10-12, `c0762fac`, macos-15, GREEN:
+        #     240.40s build, 244.42s test-target compile,
+        #     6821 tests in 78.397 s -- whole step 329 s, i.e. 1.46x inside
+        #     the 480 s budget, not the 2.09x above.
+        #   40933631584, 2026-10-29, `9c8d3673`, macos-latest, KILLED here:
+        #     230.46s build, 392.46s test-target compile. The first test did
+        #     not start until 397 s (6 m 37 s) into the step, leaving 83 s
+        #     of the 480 s for the whole suite; the kill landed 96 s after
+        #     the first test started. How many tests the current tree has is
+        #     not measured -- the run never reached a total.
+        #
+        # The two compile figures are NOT a toolchain comparison and must
+        # not be read as one. 28,721 lines of test code and 17,144 lines of
+        # source landed between those two commits:
+        #
+        #     git diff --shortstat c0762fac..dcb5a414 -- Tests/
+        #     git diff --shortstat c0762fac..dcb5a414 -- Sources/
+        #
+        # Note which way that cuts on the build half: Sources grew by those
+        # 17,144 lines and the Build step still came back 240.40s -> 230.46s.
+        #
+        # 16 minutes (960 s) is 2.04x of 392 s + 78 s = 470 s -- this
+        # image's measured compile plus the OTHER image's measured run,
+        # because this image's run figure does not exist yet: the step was
+        # killed before the suite finished. The first green run on this
+        # image replaces that addend and this number with its own
+        # measurement.
+        timeout-minutes: 16
         run: |
           set -o pipefail
           swift test --event-stream-output-path "$RUNNER_TEMP/test-events.jsonl" \
