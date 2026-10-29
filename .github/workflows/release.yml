@@ -126,6 +126,11 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -version
+          # Printed because inferring it from the Xcode version is what went
+          # wrong: Xcode 16.4 ships Swift 6.1.2, Xcode 27.1 ships 6.4, and a
+          # comment claiming one while the runner had the other cost two red
+          # runs on 2026-10-29.
+          swift --version
           if xcrun metal --version; then
             echo "Metal toolchain already present."
             exit 0
