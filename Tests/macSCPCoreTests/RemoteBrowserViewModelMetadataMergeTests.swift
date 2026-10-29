@@ -12,14 +12,38 @@ import Testing
 /// mirroring `LocalFileSystemTests`' own `metadataAbandonsAStuckEntry…`
 /// tests, but one layer up, at the view model.
 ///
-/// `.timeLimit(.minutes(1))` in its own suite rather than added to the much
+/// `.timeLimit(.minutes(5))` in its own suite rather than added to the much
 /// larger `RemoteBrowserViewModelTests` suite: only these tests poll via
 /// `pollUntil` for a background merge Task to catch up, so only they need a
 /// stated ceiling on how long that poll may run before the harness itself
 /// calls it a hang (CLAUDE.md: "Tests never block the cooperative pool" —
 /// every wait here is `pollUntil`'s `await Task.sleep`, never a blocking
 /// wait, and the `.timeLimit` is the only clock any assertion reads).
-@Suite("RemoteBrowserViewModel metadata merge", .timeLimit(.minutes(1)))
+///
+/// The bound read `.minutes(1)` until 2026-10-29 — the paragraph above
+/// opened "`.timeLimit(.minutes(1))` in its own suite" — when all seven
+/// polling cases here came back `Time limit was exceeded: 60.000 seconds`
+/// on CI run 40933631584, the first run of the gate on `macos-latest`. One
+/// minute was not a hang bound for them; it was a wall-clock ceiling, which
+/// is the thing CLAUDE.md has a rule against. On the development machine
+///
+///     swift test --filter RemoteBrowserViewModelMetadataMergeTests
+///
+/// reports the whole suite in 0.087 s, the slowest of the seven
+/// (`twoHundredEntriesArrivingInReverseOrderMergeUnderSizeSort`) in that
+/// same 0.087 s, and the other six in 0.011 s to 0.013 s. Sixty seconds is
+/// 690x the slowest case measured here and still lost to a loaded
+/// three-core runner. Five minutes is 3448x it, and turns a poll that
+/// never completes into a red just as well, which is all this bound is
+/// for. `ConnectionDiagnostics` carries `.minutes(5)` for the same reason.
+///
+/// One cross-reference checked while changing this, since it is a claim
+/// about other code: `twoHundredEntries…`'s own comment below cites
+/// `mergePathIndex`'s doc comment for a hang. Read 2026-10-29, that doc
+/// comment records the cost of the `firstIndex(where:)` scan it replaced
+/// — O(n) per arrival, O(n²) over a listing, "roughly 12.5 million
+/// compares" for 5000 entries — and does not mention a hang.
+@Suite("RemoteBrowserViewModel metadata merge", .timeLimit(.minutes(5)))
 @MainActor
 struct RemoteBrowserViewModelMetadataMergeTests {
     /// A `RemoteFileSystem` that ALSO conforms to `LocalMetadataSource`,
