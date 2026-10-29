@@ -7,7 +7,33 @@ on:
 
 jobs:
   test:
-    runs-on: macos-15
+    # `macos-latest`, not a pinned older image. Measured 2026-10-29: that
+    # label is macOS 26 Arm64 with Xcode 26.6 (17F113) as its default, and it
+    # is what release.yml's build job has used since that workflow was
+    # written (`c2453cf7`, 2026-07-27). It was never pinned to the older
+    # image; from the repository root, this prints nothing:
+    #
+    #     git log -S'macos-15' -- .github/workflows/release.yml
+    #
+    # So the app that
+    # ships is already compiled there, tests and all. Pinned to `macos-15`
+    # this gate compiled with Xcode 16.4 (16F6) / Swift 6.1.2, a toolchain
+    # that neither the release builder nor the development machine (Xcode
+    # 27.1 / Swift 6.4) uses. That is how run 40913494898 came to fail the
+    # build on a file which had been green locally for weeks, and run
+    # 40928759131 to fail the test target on five more sites in both test
+    # targets: the only gate on the project was reading a compiler nobody
+    # here builds with.
+    #
+    # A moving label can move under us. The trade taken knowingly: both
+    # workflows now move together, so this gate meets a new image before a
+    # release does, which is the ordering that catches the move instead of
+    # shipping it. The toolchain step below prints `xcodebuild -version` AND
+    # `swift --version`, so from now on the figures travel with the run
+    # rather than with a comment. That is how the wrong figure survived
+    # from 2026-09-16, the date on the toolchain step's own measurement
+    # below, to 2026-10-29.
+    runs-on: macos-latest
     # The test runner has hung intermittently since M20: the process sits at
     # 0% CPU and never finishes, so the job would burn the runner's default
     # six-hour budget instead of failing. Green runs take three to four
@@ -72,6 +98,11 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -version
+          # Printed because inferring it from the Xcode version is what went
+          # wrong: Xcode 16.4 ships Swift 6.1.2, Xcode 27.1 ships 6.4, and a
+          # comment claiming one while the runner had the other cost two red
+          # runs on 2026-10-29.
+          swift --version
           if xcrun metal --version; then
             echo "Metal toolchain already present."
             exit 0
