@@ -487,8 +487,29 @@ extension Comparison {
     /// read, throws whatever the backend or the file system throws, and
     /// "the session is closed" is the true account of every one of them.
     /// `fetch` does the same for its own window.
+    ///
+    /// `body` is `@MainActor` because this type is, and that annotation is
+    /// what keeps the call on the actor instead of hopping off it. Without
+    /// it the closure type is nonisolated, so `body()` suspends off the main
+    /// actor and a non-`Sendable` `T` has to be sent back across that
+    /// boundary -- which the runner's toolchain rejects and the newer local
+    /// one accepts. CI run 40913494898 (2026-10-29) failed the build with
+    /// exactly one distinct error, printed as:
+    ///
+    ///     Sources/MacSCPAppKit/Comparison.swift:494:30: error: non-sendable
+    ///     result type 'T' cannot be sent from nonisolated context in call
+    ///     to parameter 'body'
+    ///
+    /// while `swift build` on the same commit was green here from a clean
+    /// scratch path, so no incremental cache was hiding it. That run's own
+    /// first step printed `Xcode 16.4` and `Build version 16F6` for the
+    /// runner; this machine's `swift --version` printed `Apple Swift version
+    /// 6.4 (swiftlang-6.4.0.34.1)`. It is the same split the warning budget
+    /// in `.github/workflows/ci.yml` already records for
+    /// `asyncParseAsRoot()`, in the same words -- a diagnostic the runner
+    /// prints and the newer local toolchain does not.
     private func mappingReleaseToSessionClosed<T>(
-        _ body: () async throws -> T
+        _ body: @MainActor () async throws -> T
     ) async throws -> T {
         do {
             return try await body()
