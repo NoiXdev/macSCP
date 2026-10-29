@@ -52,6 +52,22 @@ jobs:
         # calls scripts/package-app, which pins `--build-system native`
         # (commit 3522be3c, so both architecture slices land in one
         # directory) and does not invoke `metal`.
+        #
+        # The `Xcode 27 (27A266a) / Swift 6.4` measured at the top of this
+        # comment is a local machine -- NOT this runner.
+        # In run 40913494898 (2026-10-29) the runner printed `Xcode 16.4`,
+        # `Build version 16F6` and `Apple metal version 32023.620
+        # (metalfe-32023.620)` out of `/Applications/Xcode_16.4.app`, and
+        # took the "already present" branch. Xcode 16.4 ships Swift 6.1.2;
+        # that run printed the Xcode version and not `swift --version`, so
+        # the Swift figure is the one already recorded for the runner and
+        # not one measured that day. The consequence belongs where someone
+        # reads it: a strict-concurrency diagnostic this runner emits need
+        # not appear on a newer local toolchain, and code a newer toolchain
+        # accepts can still fail the build here. Run 40913494898 was red
+        # for exactly that, on one line of
+        # Sources/MacSCPAppKit/Comparison.swift, with a clean local build
+        # of the same commit green on Swift 6.4.
         shell: bash
         run: |
           set -euo pipefail
