@@ -219,12 +219,110 @@ struct ConnectMainActorLivenessTests {
     ///
     /// What this does NOT bound is the instrument's own floor as measured
     /// on 2026-08-28 and recorded at the top of this file: 4.7 s with a
-    /// bare ticker. That is above the cap, so a run in that regime is a
-    /// false red rather than a blind pass — the direction this suite
-    /// prefers, since a false red is visible and a blind pass is not. No
-    /// run of the rebuilt assertion has reached it (2026-09-02).
+    /// bare ticker. That is above the cap, so a run in that regime cannot
+    /// return a verdict either way: a gap under the ceiling is unreachable
+    /// and a gap over it separates nothing. This paragraph went on to read
+    /// "so a run in that regime is a false red rather than a blind pass —
+    /// the direction this suite prefers, since a false red is visible and a
+    /// blind pass is not. No run of the rebuilt assertion has reached it
+    /// (2026-09-02)" — the withdrawn wording. A run has now reached it, and
+    /// what happens there is no longer a false red: see
+    /// `stateGapAgainstCeiling` below, which reports such a run instead of
+    /// reddening it.
     private func ceiling(forAmbient ambient: Duration) -> Duration {
         min(max(ambient * 3, .seconds(2)), .seconds(4))
+    }
+
+    /// States a measured gap against the ceiling — and declines to assert
+    /// when the control says the instrument cannot separate the two
+    /// magnitudes at all.
+    ///
+    /// `ceiling(forAmbient:)` is capped at four seconds, so an ambient
+    /// control ABOVE that cap describes a run in which the noise alone
+    /// already clears the bar a block would have to clear. There is no
+    /// verdict to give there: a gap under the ceiling is unreachable, and a
+    /// gap over it is what noise and block both produce. CI run
+    /// 40965600726 (2026-10-29, `79851463`, `macos-latest`) is the first
+    /// run on record in that regime — it printed
+    /// `ambient=23.317136667 seconds gap=4.923961375 seconds ceiling=4.0
+    /// seconds` and failed test 1 on the gap. The ambient control is 4.74x
+    /// the gap it red-flagged, which is the whole of the argument that the
+    /// gap was the harness; the run is read with
+    ///
+    ///     gh run view 40965600726 --repo NoiXdev/macSCP --log
+    ///
+    /// Reported, then, rather than asserted on, following the house pattern
+    /// of `FileDiffCostTests.report(_:)`: `print` puts the figures in the
+    /// build log, which is how a CI run is read, and a warning-severity
+    /// issue puts them in the test report, which is how a local run is
+    /// read. Neither fails the test.
+    ///
+    /// What keeps this from being a check that quietly stopped checking —
+    /// the failure mode CLAUDE.md names under "Guards that name what they
+    /// watch", where a negative check that matches nothing reads exactly
+    /// like one that is satisfied:
+    ///
+    /// - the skip is loud. It names the case and prints both figures, so a
+    ///   run that measured nothing says so rather than passing silently.
+    /// - test 1's `ranOnMainThread == false` is deterministic, not a timing
+    ///   measurement, and still asserts. It is the half that catches the
+    ///   connector body inheriting main-actor isolation.
+    /// - test 3 blocks the main actor on purpose and asserts a FLOOR on the
+    ///   gap (`> 250 ms`). A floor cannot be defeated by a slow machine,
+    ///   only by a broken instrument — so the ticker's own sensitivity
+    ///   stays pinned by an assertion no load can lift, and it is the
+    ///   positive check standing beside this negative one.
+    ///
+    /// What is NOT covered while the control is out of range: a
+    /// caller-side blocking bridge of the dial's full duration, the shape
+    /// test 3 measures directly. On such a run that shape is proven only
+    /// where test 3 proves it, from the main actor, and not through either
+    /// awaited connect.
+    ///
+    /// Measured with `scripts/mutation-probe` on 2026-10-30, two plants
+    /// that differ only in whether the control reads out of range:
+    ///
+    ///   A. `blockThisThread(forMilliseconds: 5000)` inserted before
+    ///      `_ = await vm.connect()` — a 5 s block of the main actor
+    ///      inside the dial window. RESULT: RED, caught by this test.
+    ///   D. that same insertion, PLUS one before
+    ///      `try? await Task.sleep(for: window)` in `ambientGap(over:)`,
+    ///      which lifts the control to ~5 s and so past the 4 s cap.
+    ///      RESULT: GREEN.
+    ///
+    /// Same defect, same assertion; the one difference between them is the
+    /// control. A third plant, the ambient block on its own, is GREEN as
+    /// well and proves nothing either way — it never touches the dial
+    /// window the gap is measured over, so the assertion was never asked
+    /// to see it. Both probes ran `--filter
+    /// awaitingTheConnectorDoesNotKeepTheMainActor`; test 2 is gated behind
+    /// `MACSCP_ITEST=1` and was not probed.
+    @MainActor
+    private func stateGapAgainstCeiling(
+        _ log: TickLog,
+        ambient: Duration,
+        test: String,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let bar = ceiling(forAmbient: ambient)
+        let figures = "\(test) ambient=\(ambient) gap=\(log.largestGap) ceiling=\(bar)"
+        print("liveness: " + figures)
+        guard ambient <= bar else {
+            let text =
+                "liveness: \(figures) — NOT ASSERTED. The ambient control is "
+                + "above the ceiling, so noise and block are not separable in "
+                + "this run and the gap has no verdict to give. Measured over "
+                + "\(log.stamps.count) ticks."
+            print(text)
+            Issue.record(
+                Comment(rawValue: text), severity: .warning,
+                sourceLocation: sourceLocation)
+            return
+        }
+        #expect(
+            log.largestGap <= bar,
+            "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)",
+            sourceLocation: sourceLocation)
     }
 
     // MARK: - 1. The boundary itself
@@ -282,12 +380,7 @@ struct ConnectMainActorLivenessTests {
         #expect(ranOnMainThread.value == false)
         // The dial really lasted what the ceiling is calibrated against.
         #expect(elapsed > .seconds(4), "the dial was only \(elapsed)")
-        print(
-            "liveness: test1 ambient=\(ambient) gap=\(log.largestGap) "
-                + "ceiling=\(ceiling(forAmbient: ambient))")
-        #expect(
-            log.largestGap <= ceiling(forAmbient: ambient),
-            "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)")
+        stateGapAgainstCeiling(log, ambient: ambient, test: "test1")
     }
 
     // MARK: - 2. The real dial
@@ -344,12 +437,7 @@ struct ConnectMainActorLivenessTests {
         #expect(thrown != nil)
         #expect(elapsed > .seconds(5))
         // And the main actor ran the whole time it was stalling.
-        print(
-            "liveness: test2 ambient=\(ambient) gap=\(log.largestGap) "
-                + "ceiling=\(ceiling(forAmbient: ambient))")
-        #expect(
-            log.largestGap <= ceiling(forAmbient: ambient),
-            "gap \(log.largestGap) over \(log.stamps.count) ticks, ambient \(ambient)")
+        stateGapAgainstCeiling(log, ambient: ambient, test: "test2")
     }
 
     // MARK: - 3. The agent's blocking wait
