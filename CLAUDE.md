@@ -483,6 +483,29 @@ own:
    the thing it scans is there at all. Without one it is not a guard, it is
    a comment that runs.
 
+   **This binds a check run once at a keyboard exactly as it binds one in
+   the suite**, measured 2026-10-30 on the CI warning gate. The gate's own
+   pattern was run against a saved `gh run view --log` to predict whether
+   `MAX_WARNINGS=0` would pass, which needs the log's
+   `<step>\t<stream>\t<timestamp> ` prefix stripped first, and the strip was
+   written `sed -E 's/^[a-z]*\t[^\t]*\t[0-9T:.Z-]+ //'`. Outside a bracket
+   expression `\t` is a tab; INSIDE one it is a backslash and the letter
+   `t`, so `[^\t]*` excluded `t` and could not cross a step named
+   `Unit-Tests`. Nothing was stripped, the following `^`-anchored grep
+   matched nothing, and nothing-matched was reported as no-warnings. The
+   log held the warning 25 times. One line separates the two readings, and
+   it is the positive control this rule asks for:
+
+       printf 'x\tUnit\tY\n' | sed -E 's/^x\t[^\t]*\tY$/STRIPPED/'
+       printf 'x\tUnit\tY\n' | sed -E 's/^x\t[^[:space:]]*\tY$/STRIPPED/'
+
+   The first prints the line unchanged, the second prints `STRIPPED`. Same
+   family as the `grep`/ugrep `$` case under point 3 below — a pattern that
+   silently matches nothing turns a check into an attestation — and the
+   same remedy: before believing a zero, feed the pattern something it MUST
+   match and watch it match. The corrected strip reproduces the figure the
+   gate itself printed, 1 unique location, where the original reported 0.
+
 2. **A guard that spells a symbol it could read instead is waiting for a
    rename.** Walk the name back from a call site, derive a catalogue key
    from the type that owns it. A literal is a second copy of a name, and
