@@ -233,23 +233,65 @@ struct ConnectMainActorLivenessTests {
         min(max(ambient * 3, .seconds(2)), .seconds(4))
     }
 
+    /// The ambient control a run must come in under before its gap is
+    /// asserted on at all. Not a tuning knob: the figure is the gap between
+    /// two measured populations. On this development machine the control
+    /// reads 0.030269209 s, 0.030088625 s and 0.0310155 s (three runs,
+    /// 2026-10-30); across
+    /// three CI runs on `macos-latest` its six samples are 23.317136667,
+    /// 13.706875625, 5.95172925, 0.909875959, 5.696799124999999 and
+    /// 1.004113042 s. Half a second sits an order of magnitude above the
+    /// first population and below all of the second, and leaves a 5 s block
+    /// — the smallest this suite plants — ten times the control it would
+    /// have to be distinguished from.
+    static let resolutionFloor = Duration.milliseconds(500)
+
     /// States a measured gap against the ceiling — and declines to assert
-    /// when the control says the instrument cannot separate the two
-    /// magnitudes at all.
+    /// unless the run has shown the instrument has the resolution to
+    /// separate a block from its own scheduling noise.
     ///
-    /// `ceiling(forAmbient:)` is capped at four seconds, so an ambient
+    /// This gate read `ambient <= bar` until 2026-10-30, explained as
+    /// "`ceiling(forAmbient:)` is capped at four seconds, so an ambient
     /// control ABOVE that cap describes a run in which the noise alone
-    /// already clears the bar a block would have to clear. There is no
-    /// verdict to give there: a gap under the ceiling is unreachable, and a
-    /// gap over it is what noise and block both produce. CI run
-    /// 40965600726 (2026-10-29, `79851463`, `macos-latest`) is the first
-    /// run on record in that regime — it printed
-    /// `ambient=23.317136667 seconds gap=4.923961375 seconds ceiling=4.0
-    /// seconds` and failed test 1 on the gap. The ambient control is 4.74x
-    /// the gap it red-flagged, which is the whole of the argument that the
-    /// gap was the harness; the run is read with
+    /// already clears the bar a block would have to clear" — the withdrawn
+    /// wording and the withdrawn condition. `bar` is derived FROM `ambient`,
+    /// so that test reduced to `ambient > 4 s`, and it let a control of one
+    /// second stand as adequate resolution for a three-second ceiling.
+    /// Run 41040277938 (2026-10-30, `c8041d19`) is where that broke: test 2
+    /// printed `ambient=1.004113042 seconds gap=21.006908125 seconds
+    /// ceiling=3.012339126 seconds` and FAILED on the gap. Nothing was
+    /// blocking — the run's other 7974 tests passed. One sample of 1 s does
+    /// not bound the next six seconds of a runner whose noise arrives in
+    /// bursts, and the control and the gap are drawn at different times, so
+    /// a low control is not evidence of a quiet window.
     ///
-    ///     gh run view 40965600726 --repo NoiXdev/macSCP --log
+    /// Six healthy samples over three runs, every one of them with no block
+    /// present, read with
+    ///
+    ///     gh run view <id> --repo NoiXdev/macSCP --log
+    ///
+    ///   40965600726  test 1  ambient 23.317  gap  4.924  ceiling 4.0
+    ///   40965600726  test 2  ambient 13.707  gap  0.449  ceiling 4.0
+    ///   41030496532  test 1  ambient  5.952  gap 17.047  ceiling 4.0
+    ///   41030496532  test 2  ambient  0.910  gap  0.180  ceiling 2.730
+    ///   41040277938  test 1  ambient  5.697  gap  8.925  ceiling 4.0
+    ///   41040277938  test 2  ambient  1.004  gap 21.007  ceiling 3.012
+    ///
+    /// The gaps span 0.180 s to 21.007 s with nothing under test — a factor
+    /// of 117 — against a signal of 5 s in test 1 and 6 s in test 2. Test
+    /// 1's control was over the 4 s cap in all three runs, so its timing
+    /// half has never once been in a position to give a verdict on this
+    /// image; the one time the old gate did assert, it was wrong. A bound
+    /// that both detects a 6 s block and survives 21 s of noise does not
+    /// exist, which is why this is a resolution gate and not a wider
+    /// ceiling.
+    ///
+    /// One alternative was considered and rejected for want of evidence:
+    /// bracketing the window with a second ambient sample afterwards and
+    /// taking the larger. It would have to be shown that the trailing
+    /// sample catches a burst the leading one missed, and run 41040277938
+    /// measured no trailing sample, so adopting it would be a guess wearing
+    /// a measurement's clothes.
     ///
     /// Reported, then, rather than asserted on, following the house pattern
     /// of `FileDiffCostTests.report(_:)`: `print` puts the figures in the
@@ -295,8 +337,26 @@ struct ConnectMainActorLivenessTests {
     /// well and proves nothing either way — it never touches the dial
     /// window the gap is measured over, so the assertion was never asked
     /// to see it. Both probes ran `--filter
-    /// awaitingTheConnectorDoesNotKeepTheMainActor`; test 2 is gated behind
-    /// `MACSCP_ITEST=1` and was not probed.
+    /// awaitingTheConnectorDoesNotKeepTheMainActor`; test 2 was not probed.
+    /// Both probes ran on this development machine, where the control reads
+    /// 0.03 s and so clears `resolutionFloor`, so the gate change above is
+    /// not expected to move either outcome, and plant A was re-run against
+    /// the new gate to check that rather than assume it. Measured
+    /// 2026-10-30, with
+    ///
+    ///     scripts/mutation-probe --filter \
+    ///       awaitingTheConnectorDoesNotKeepTheMainActor --apply <plant A>
+    ///
+    /// RESULT: RED — 1 test ran and the plant was caught by
+    /// `awaitingTheConnectorDoesNotKeepTheMainActor()`. Plant D was not
+    /// re-run: its control of ~5 s is above the old 4 s cap and the new
+    /// 500 ms floor alike, so nothing measured there would tell the two
+    /// gates apart.
+    ///
+    /// Corrected 2026-10-30: this paragraph said "test 2 is gated behind
+    /// `MACSCP_ITEST=1`". It is not — it carries
+    /// `.enabled(if: StalledLoopbackEndpoint.isAvailable)`, which is why it
+    /// is skipped here and runs on CI.
     @MainActor
     private func stateGapAgainstCeiling(
         _ log: TickLog,
@@ -307,12 +367,13 @@ struct ConnectMainActorLivenessTests {
         let bar = ceiling(forAmbient: ambient)
         let figures = "\(test) ambient=\(ambient) gap=\(log.largestGap) ceiling=\(bar)"
         print("liveness: " + figures)
-        guard ambient <= bar else {
+        guard ambient <= Self.resolutionFloor else {
             let text =
                 "liveness: \(figures) — NOT ASSERTED. The ambient control is "
-                + "above the ceiling, so noise and block are not separable in "
-                + "this run and the gap has no verdict to give. Measured over "
-                + "\(log.stamps.count) ticks."
+                + "above \(Self.resolutionFloor), so this run has not shown "
+                + "that the instrument can tell a block from its own "
+                + "scheduling noise, and the gap has no verdict to give. "
+                + "Measured over \(log.stamps.count) ticks."
             print(text)
             Issue.record(
                 Comment(rawValue: text), severity: .warning,
