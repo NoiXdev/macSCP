@@ -3,7 +3,7 @@ import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("EmbeddedKeyPorter", .timeLimit(.minutes(1)))
+@Suite("EmbeddedKeyPorter", .timeLimit(.minutes(5)))
 struct EmbeddedKeyPorterTests {
     private func tempDir() -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())

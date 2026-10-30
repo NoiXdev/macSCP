@@ -17,7 +17,7 @@ import Testing
 /// Every listener binds port 0 and every wait is an `await`; nothing here
 /// holds a fixed port or a wall-clock bound of its own (the suite's
 /// `.timeLimit` is the only deadline).
-@Suite("LocalForwardListener", .timeLimit(.minutes(1)))
+@Suite("LocalForwardListener", .timeLimit(.minutes(5)))
 struct LocalForwardListenerTests {
 
     @Test func bytesTravelToTheFactorysChannelAndBack() async throws {

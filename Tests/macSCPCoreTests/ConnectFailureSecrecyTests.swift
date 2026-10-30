@@ -22,7 +22,7 @@ import Testing
 /// `jumpAwareFailedState` and adds nothing to the text. Driving `connect()`
 /// itself would additionally require a resolved form, and resolving a form
 /// means a secret store; these tests deliberately touch none.
-@Suite("Connect failure secrecy", .timeLimit(.minutes(1)))
+@Suite("Connect failure secrecy", .timeLimit(.minutes(5)))
 struct ConnectFailureSecrecyTests {
     /// Values that must never appear in a failure text. Each one is handed
     /// to the code that throws, in the field that really carries it.

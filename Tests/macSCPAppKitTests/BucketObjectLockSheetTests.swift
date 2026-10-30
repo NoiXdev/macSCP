@@ -371,7 +371,7 @@ struct BucketObjectLockSheetTests {
 
     /// With a hang bound, for the reason given on the per-file sheet's twin of
     /// this test (`ObjectLockSheetTests.aSecondRunWhileOneIsInFlightSendsNothing`).
-    @MainActor @Test(.timeLimit(.minutes(1))) func aSecondSaveWhileOneIsInFlightSendsNothing() async {
+    @MainActor @Test(.timeLimit(.minutes(5))) func aSecondSaveWhileOneIsInFlightSendsNothing() async {
         let entered = AsyncSignal()
         let release = AsyncSignal()
         defer { release.signal() }

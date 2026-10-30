@@ -90,7 +90,7 @@ struct LivenessProbeRaceTests {
     // whole suite, not this race. Raising the number would only move the
     // hostage line; `.timeLimit` states the actual claim — this must not
     // hang — and lets the harness enforce it independently of contention.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aStatThatNeverRespondsStillReportsFailureWithinTheDeadline() async {
         let fs = NeverRespondingFileSystem()
         let start = ContinuousClock.now

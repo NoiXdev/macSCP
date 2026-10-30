@@ -13,7 +13,7 @@ import Testing
 /// The negative direction (the message contains the label) is paired with
 /// positive checks that the label is non-empty and that the message is longer
 /// than the label, so the test cannot pass by matching an empty string.
-@Suite("Host-key mismatch hint names real menu items", .timeLimit(.minutes(1)))
+@Suite("Host-key mismatch hint names real menu items", .timeLimit(.minutes(5)))
 struct HostKeyMismatchHintGuardTests {
     private static let repoRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

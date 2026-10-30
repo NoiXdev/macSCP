@@ -36,7 +36,7 @@ import Testing
 /// is not a call of the delayed release, so the spy sees nothing for it; the
 /// source guard `DialGroupReleaseGuardTests` pins that no such shutdown is
 /// written in the dial's files at all.
-@Suite("Dial failure group release", .timeLimit(.minutes(1)))
+@Suite("Dial failure group release", .timeLimit(.minutes(5)))
 struct DialFailureGroupReleaseTests {
     enum Path: String, CaseIterable, Sendable, CustomTestStringConvertible {
         case forwarding

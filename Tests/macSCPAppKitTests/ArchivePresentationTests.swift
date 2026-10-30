@@ -6,7 +6,7 @@ import Testing
 
 /// What the pane SAYS about an archive operation: one sentence per ending,
 /// one per refusal, and none of them built from a tool's output.
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct ArchivePresentationTests {
     @Test func aCancelAndASuccessSayNothing() {
         #expect(ArchivePresentation.message(for: ArchiveActivity.Ending.finished) == nil)

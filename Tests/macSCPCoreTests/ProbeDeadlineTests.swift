@@ -30,7 +30,7 @@ import Testing
 /// `ProbeDeadlineSaturationTests` holds it to the same contract with the
 /// pool full, and is gated, because a test that fills the pool ends every
 /// other test sharing the process.
-@Suite("Probe deadlines", .timeLimit(.minutes(1)))
+@Suite("Probe deadlines", .timeLimit(.minutes(5)))
 struct ProbeDeadlineTests {
     /// A scheduled deadline fires; a cancelled one does not, even when its
     /// own moment has passed.
@@ -210,7 +210,7 @@ struct ProbeDeadlineTests {
 /// at all — the probe never returns while the pool is parked, and the suite's
 /// time limit is what ends the test. Measured 2026-09-25, both cases red
 /// that way before the timer was written.
-@Suite("Probe deadlines under a saturated Dispatch pool", .serialized, .timeLimit(.minutes(1)))
+@Suite("Probe deadlines under a saturated Dispatch pool", .serialized, .timeLimit(.minutes(5)))
 struct ProbeDeadlineSaturationTests {
     private static let gate = ProcessInfo.processInfo.environment["MACSCP_SATURATION"] == "1"
     private static let gateReason: Comment =

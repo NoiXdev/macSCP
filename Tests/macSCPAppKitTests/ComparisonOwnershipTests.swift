@@ -25,7 +25,7 @@ import Testing
 /// No test here asserts how long anything took. A walk parked on a peer is
 /// modelled by a call that waits until it is cancelled; the suite's hang
 /// bound is `.timeLimit`.
-@Suite("Comparison ownership", .timeLimit(.minutes(1)))
+@Suite("Comparison ownership", .timeLimit(.minutes(5)))
 @MainActor
 struct ComparisonOwnershipTests {
 

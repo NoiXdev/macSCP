@@ -26,7 +26,7 @@ import Testing
 /// raises the text is `FormFailureAlertPlanTests`' claim; that the view
 /// switches on this answer and on nothing else is
 /// `DetailSurfaceWiringGuardTests`'.
-@Suite("Detail surface plan", .timeLimit(.minutes(1)))
+@Suite("Detail surface plan", .timeLimit(.minutes(5)))
 @MainActor
 struct DetailSurfacePlanTests {
     private static let selected = StoredSession(

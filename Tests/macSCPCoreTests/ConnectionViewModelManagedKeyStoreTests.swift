@@ -21,7 +21,7 @@ import Testing
 /// "the key loaded with the passphrase the form held". The key is generated
 /// at run time by `ssh-keygen`; the store is a temporary directory
 /// (`CorruptManagedKeyStoreRig`).
-@Suite("ConnectionViewModel over an unreadable managed key store", .timeLimit(.minutes(1)))
+@Suite("ConnectionViewModel over an unreadable managed key store", .timeLimit(.minutes(5)))
 @MainActor
 struct ConnectionViewModelManagedKeyStoreTests {
     private static let loadingConnector: ConnectionViewModel.Connector = { config, _ in

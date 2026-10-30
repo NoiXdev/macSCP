@@ -16,7 +16,7 @@ import Testing
 ///
 /// Every listener binds port 0 and every wait is an `await`; nothing here
 /// holds a fixed port or a wall-clock bound of its own.
-@Suite("SOCKS5Listener", .timeLimit(.minutes(1)))
+@Suite("SOCKS5Listener", .timeLimit(.minutes(5)))
 struct SOCKS5ListenerTests {
 
     /// Greeting, CONNECT, the two replies, then ordinary bytes through the
@@ -399,7 +399,7 @@ private struct FactoryRefusedTheChannel: Error {}
 /// The handover box on its own: a waiter whose task is cancelled is released
 /// with the cancellation, and the box stays resolved exactly once — a later
 /// resolve is dropped.
-@Suite("SOCKS5RequestBox", .timeLimit(.minutes(1)))
+@Suite("SOCKS5RequestBox", .timeLimit(.minutes(5)))
 struct SOCKS5RequestBoxTests {
     @Test func cancellingTheWaitingTaskResolvesTheBoxOnce() async throws {
         let box = SOCKS5RequestBox()

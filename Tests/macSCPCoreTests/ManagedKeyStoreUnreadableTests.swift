@@ -21,7 +21,7 @@ import Testing
 /// named constant that no expectation spells (CLAUDE.md, "A value a test
 /// must not leak has two exits"): every check that the content does not
 /// leak computes its `Bool` first.
-@Suite("An unreadable managed key store", .timeLimit(.minutes(1)))
+@Suite("An unreadable managed key store", .timeLimit(.minutes(5)))
 struct ManagedKeyStoreUnreadableTests {
     // MARK: - The link remembers what it saw
 

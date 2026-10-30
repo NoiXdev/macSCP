@@ -55,7 +55,7 @@ import Testing
 /// That case makes a real loopback TCP dial on purpose, and the port is
 /// asked for rather than spelled so that no listener of the machine's can
 /// change its verdict.
-@Suite("Two tabs through one jump", .timeLimit(.minutes(1)))
+@Suite("Two tabs through one jump", .timeLimit(.minutes(5)))
 @MainActor
 struct JumpTwoTabsTests {
     // MARK: - Fixtures

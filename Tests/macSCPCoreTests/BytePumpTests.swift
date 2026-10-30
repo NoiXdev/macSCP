@@ -24,7 +24,7 @@ import Testing
 ///    gets its own test, and that test asserts the two channels really are
 ///    on different loops before it asserts anything else — without that a
 ///    same-loop run would pass while proving nothing.
-@Suite("BytePump", .timeLimit(.minutes(1)))
+@Suite("BytePump", .timeLimit(.minutes(5)))
 struct BytePumpTests {
 
     // MARK: - Same loop: EmbeddedChannel pairs

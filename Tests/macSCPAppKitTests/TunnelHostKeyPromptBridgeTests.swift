@@ -28,7 +28,7 @@ import Testing
 /// of these tests hang until the probe was killed by hand, with no verdict
 /// at all. Polling for the recorded answer is cancellable, so the same plant
 /// is red instead.
-@Suite("Tunnel host-key prompt bridge", .timeLimit(.minutes(1)))
+@Suite("Tunnel host-key prompt bridge", .timeLimit(.minutes(5)))
 @MainActor
 struct TunnelHostKeyPromptBridgeTests {
 

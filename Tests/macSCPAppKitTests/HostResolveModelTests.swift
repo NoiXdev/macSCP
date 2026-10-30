@@ -22,7 +22,7 @@ import Testing
 /// that nothing on this path writes a known host, is
 /// `HostResolveWiringGuardTests`' claim, read from source.
 @MainActor
-@Suite("Resolving the host field", .timeLimit(.minutes(1)))
+@Suite("Resolving the host field", .timeLimit(.minutes(5)))
 struct HostResolveModelTests {
     private static func makeForm() -> ConnectionViewModel {
         ConnectionViewModel(connector: { _, _ in

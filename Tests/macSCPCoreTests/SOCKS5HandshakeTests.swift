@@ -22,7 +22,7 @@ import Testing
 /// `BytePumpTests` gives: `EmbeddedEventLoop.checkCorrectThread` only
 /// tolerates the thread it was created on, and an `await` in a Swift
 /// Testing body can resume elsewhere.
-@Suite("SOCKS5 handshake", .timeLimit(.minutes(1)))
+@Suite("SOCKS5 handshake", .timeLimit(.minutes(5)))
 struct SOCKS5HandshakeTests {
 
     // MARK: - Turning reading on

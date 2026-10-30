@@ -4,7 +4,7 @@ import Synchronization
 import Testing
 @testable import macSCPCore
 
-@Suite("TransferQueueViewModel", .timeLimit(.minutes(1)))
+@Suite("TransferQueueViewModel", .timeLimit(.minutes(5)))
 @MainActor
 struct TransferQueueViewModelTests {
 

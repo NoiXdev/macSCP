@@ -14,7 +14,7 @@ import Testing
 /// block the cooperative pool"), and no assertion carries a wall-clock
 /// ceiling: the backoff is measured by what the injected sleeper was ASKED
 /// for, not by how long anything took.
-@Suite("Tunnel runner", .timeLimit(.minutes(1)))
+@Suite("Tunnel runner", .timeLimit(.minutes(5)))
 struct TunnelRunnerTests {
 
     // MARK: - The clean sequence

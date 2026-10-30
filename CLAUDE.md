@@ -200,10 +200,58 @@ cooperative pool never gave the probe's body a thread, and a body that
 never began did not overrun anything. The case asserts that the deadline
 settled the row, which is the property it always existed for.
 
+**2026-10-30 update: `.timeLimit` is a wall-clock ceiling too, and on a
+saturated runner it fires at random.** Two runs of the gate on
+`macos-latest`, two commits apart, same image, the suites these three
+cases live in still bounded at `.minutes(1)`:
+
+| case, bound 60 s | run 40965600726 | run 41030496532 |
+|---|---|---|
+| `cancelAllWithParallelRunners()` | passed after 70.097 s | failed after 100.325 s |
+| `cancelAllCancelsQueuedAndRunning()` | passed after 72.676 s | failed after 100.335 s |
+| `sendPreservesFIFOOrderUnderVaryingLatency()` | passed after 89.332 s | failed after 100.360 s |
+
+All three ran past their own 60 s bound in BOTH runs and reddened only in
+the second. Run 41030496532 recorded 148 `Time limit was exceeded: 60.000
+seconds` issues across 73 tests in 11 suites; run 40965600726, which
+reached the end of the suite, recorded none. Of the 74 tests that recorded
+any issue in the later run, 73 recorded that one, so there was no second
+cause — the one that did not is `ConnectMainActorLivenessTests`' own
+warning-severity report, and that test passed.
+
+Why the figures read like that: Swift Testing runs the suite in parallel
+with no concurrency limit, the cooperative pool is as wide as the machine
+has cores (three here), and all 7975 tests are in flight at once. So
+`Test X passed after N seconds` is the run's wall clock as seen from X,
+not X's own work. In run 41030496532, of 6911 cases carrying a duration
+line, 6843 reported over 10 s, 6335 over 30 s and 1153 over 60 s, with 45
+under 1 s, against a run total of 131.530 s. A bound below the run's own
+duration therefore does not measure the test at all, and whether it fires
+depends on whether the timer enforcing it gets a thread — the same
+starvation the 2026-09-19 update above measured on `DetachedProbe`'s
+`DispatchQueue.global()` timer.
+
+So a `.timeLimit` has to sit ABOVE the whole suite's wall clock to be a
+hang bound, and below the job's step budget to be worth having at all:
+past the step budget the step is killed and the test's name is lost, which
+is the `docs/BACKLOG.md` row "A test parked on a bare continuation
+outlives its time limit". The 110 `.minutes(1)` bounds in `Tests/` were
+raised to `.minutes(5)` on 2026-10-30 — 2.3x the 131.530 s run against
+0.31x the 960 s step budget.
+
+Two limits of that fix, both unmeasured and left alone deliberately. It
+couples the bound to the suite's size: a run twice as long makes five
+minutes marginal again, so the figure above is a measurement with a shelf
+life, not a constant. And the 27 `.minutes(2)` bounds were not touched —
+no run has recorded one firing, though 120 s is 0.91x this run's total,
+which makes them the next candidates rather than a cleared set.
+
 Rule: assert the outcome and the ordering a bound is supposed to
 produce, not how long producing it took. A floor (`elapsed >= …`, "this
 did not return early") is fine — a slow machine cannot defeat it, only a
-broken one. A ceiling always can.
+broken one. A ceiling always can — including the one a `.timeLimit`
+states, which is a ceiling on a clock no assertion chose, and which the
+2026-10-30 update above measures firing on healthy tests.
 
 ## Architecture invariants
 
