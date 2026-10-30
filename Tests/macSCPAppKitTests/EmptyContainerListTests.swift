@@ -121,7 +121,7 @@ struct EmptyContainerListTests {
     /// a key added to the view and not to `allLines` is red rather than
     /// unmeasured. Read from comment-free source, so the list in the doc
     /// comment cannot stand in for the code.
-    @Test func everyKeyTheViewUsesIsOneTheCatalogueChecksCover() throws {
+    @MainActor @Test func everyKeyTheViewUsesIsOneTheCatalogueChecksCover() throws {
         let source = try SourceCorpus.commentFree(
             of: SourceCorpus.url(of: .sources)
                 .appendingPathComponent("MacSCPAppKit/EmptyContainerListView.swift"))
