@@ -20,7 +20,7 @@ import Testing
 /// Every deadline here is fired BY HAND through an injected sleeper: nothing
 /// in this suite waits for the connect timeout, or for any wall-clock time.
 /// `.timeLimit` is a hang bound only.
-@Suite("SFTP start bound", .timeLimit(.minutes(1)))
+@Suite("SFTP start bound", .timeLimit(.minutes(5)))
 struct SFTPStartBoundTests {
     // MARK: - The seam
 

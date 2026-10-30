@@ -31,11 +31,18 @@ import Testing
 /// (restored in each test) — serializing avoids any cross-test interleaving
 /// on that shared, process-global state.
 ///
-/// `.timeLimit(.minutes(1))`: nothing here generates a key or touches a
+/// `.timeLimit(.minutes(5))`: nothing here generates a key or touches a
 /// real network — the mock transport is the slowest thing any test drives,
 /// and `signTimesOutWithProtocolError` bounds its own wait with a 0.05 s
-/// `signTimeout` regardless. The project default is enough.
-@Suite("AgentAuth", .serialized, .timeLimit(.minutes(1)))
+/// `signTimeout` regardless. That is an argument for not needing a LONG
+/// bound and it still holds; it was written as "The project default is
+/// enough" against a default of one minute — the withdrawn wording. One
+/// minute was not above what an awaiting case here reports on a three-core
+/// runner, because what it reports is the whole run's wall clock rather
+/// than its own work (CLAUDE.md, "A wall-clock ceiling in a test measures
+/// the runner", 2026-10-30). Five minutes now, like the rest of the tree,
+/// and nothing in this suite is expected to approach it.
+@Suite("AgentAuth", .serialized, .timeLimit(.minutes(5)))
 struct AgentAuthTests {
     // MARK: - Fixtures
 

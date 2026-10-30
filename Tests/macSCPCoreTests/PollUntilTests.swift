@@ -1,7 +1,7 @@
 import Testing
 import MacSCPTestSupport
 
-@Suite("pollUntil", .timeLimit(.minutes(1)))
+@Suite("pollUntil", .timeLimit(.minutes(5)))
 struct PollUntilTests {
     /// A condition that holds on the third evaluation returns after
     /// exactly three evaluations — the helper polls, it does not race.

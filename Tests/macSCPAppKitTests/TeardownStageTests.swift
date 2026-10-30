@@ -50,7 +50,7 @@ struct TeardownStageTests {
         func raise() { lock.withLock { raised = true } }
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aStageThatNeverReturnsIsAbandoned() async {
         // `boundSeconds: 0` rather than the stage's own five: this asserts
         // the abandonment BRANCH, and spending the real bound to reach it
@@ -79,7 +79,7 @@ struct TeardownStageTests {
     ///
     /// A bound forwarded as zero is caught by `finished` itself rather than
     /// by a clock: the bound would win the race and this would be `false`.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aStageThatReturnsIsNotAbandonedAndDoesNotWaitOutItsBound() async {
         let finished = await TeardownStage.stopEditWatchers
             .runBounded(boundSeconds: 3600) {}
@@ -89,7 +89,7 @@ struct TeardownStageTests {
     /// The property the whole per-stage design exists for, and the one a
     /// single bound around all of `teardown` would not have: giving up on
     /// one stage costs that stage only. Teardown runs to its end.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func abandoningOneStageStillLetsTheNextOneRun() async {
         let ran = Flag()
         let abandoned = await TeardownStage.stopEditWatchers

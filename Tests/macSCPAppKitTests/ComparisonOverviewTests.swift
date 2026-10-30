@@ -24,7 +24,7 @@ import macSCPCore
 /// `en.lproj` separately, by reading the file.
 ///
 /// No test asserts how long anything took.
-@Suite("Comparison overview", .timeLimit(.minutes(1)))
+@Suite("Comparison overview", .timeLimit(.minutes(5)))
 @MainActor
 struct ComparisonOverviewTests {
     private typealias Presentation = ComparisonOverviewPresentation

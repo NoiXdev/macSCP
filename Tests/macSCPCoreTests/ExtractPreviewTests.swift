@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import macSCPCore
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct ExtractPreviewTests {
     @Test func theListingCommandForAZipAsksUnzipForNamesOnly() throws {
         let plan = try ArchivePlan.listing(

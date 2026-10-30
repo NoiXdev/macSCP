@@ -47,7 +47,7 @@ final actor FailingArchiveChannel: ArchiveCommandChannel {
     }
 }
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct ArchiveCommandChannelTests {
     @Test func aChannelIsHandedTheLineAndTheBytesSeparately() async throws {
         let channel = RecordingArchiveChannel()

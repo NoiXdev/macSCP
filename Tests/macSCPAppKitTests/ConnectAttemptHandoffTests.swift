@@ -63,7 +63,7 @@ import Testing
 /// from the byte comparison — parsed via `SessionStore`'s own real reader,
 /// which is a READ, not a write, and therefore safe regardless of what a
 /// broken seam did.
-@Suite("Connect attempt hand-off", .timeLimit(.minutes(1)))
+@Suite("Connect attempt hand-off", .timeLimit(.minutes(5)))
 @MainActor
 struct ConnectAttemptHandoffTests {
     /// The ONE real, on-disk file this whole suite must never write —

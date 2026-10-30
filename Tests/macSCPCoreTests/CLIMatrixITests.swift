@@ -3001,7 +3001,7 @@ struct CLIMatrixCoverageTests {
 /// cancellation, so a generous limit would hide the very regression it
 /// exists for. The limit is still a net rather than a measurement — nothing
 /// below asserts on elapsed time.
-@Suite("CLIMatrixRunUntilLine", .timeLimit(.minutes(1)))
+@Suite("CLIMatrixRunUntilLine", .timeLimit(.minutes(5)))
 struct CLIMatrixRunUntilLineTests {
     private static let shell = URL(fileURLWithPath: "/bin/sh")
 

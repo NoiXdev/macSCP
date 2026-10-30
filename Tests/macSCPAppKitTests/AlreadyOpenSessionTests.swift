@@ -31,7 +31,7 @@ import Testing
 /// these tests leave in the strip is one of their own, built around
 /// `StartRecorder`, so a start that DOES go ahead is observed instead of
 /// dialed for real.
-@Suite("Session already open", .timeLimit(.minutes(1)))
+@Suite("Session already open", .timeLimit(.minutes(5)))
 @MainActor
 struct AlreadyOpenSessionTests {
     private func makeTempDirectory(_ label: String) -> URL {

@@ -639,7 +639,7 @@ struct ComparisonFetchTests {
     /// an arrow key. Built from a real queue and a real cancel; every
     /// postcondition is read BEFORE the parked read is let go, because the
     /// read ending would make the queue look tidy whatever the cancel did.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aDiffWhoseTaskIsCancelledMidFetchLeavesNoTransferRunning() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -725,7 +725,7 @@ struct ComparisonFetchTests {
     ///
     /// Every postcondition is read BEFORE the parked read is let go: the read
     /// ending would make the queue tidy whatever the cancel did.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aSettleInFlightIsCancelledByTheComparisonsOwnCancel() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -784,7 +784,7 @@ struct ComparisonFetchTests {
     /// started the same way and NOT cancelled, settles the row and reads both
     /// sides. Without this, a `startTrackedWork` that cancelled every task it
     /// was handed would pass the test above.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aSettleNobodyCancelsSettlesTheRowAndReadsBothSides() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -812,7 +812,7 @@ struct ComparisonFetchTests {
     /// cannot be satisfied by the other. Here the left file arrives and
     /// finishes, the right read is parked, and the task is cancelled — which
     /// is what selecting a row, waiting a moment and arrowing on does.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aDiffWhoseTaskIsCancelledDuringTheRightDownloadLeavesNoTransferRunning() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -849,7 +849,7 @@ struct ComparisonFetchTests {
     }
 
     /// The click route to the same fetch.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aSettleWhoseTaskIsCancelledMidFetchLeavesNoTransferRunning() async throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

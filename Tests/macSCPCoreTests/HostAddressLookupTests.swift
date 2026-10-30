@@ -23,7 +23,7 @@ import Testing
 /// depend on how fast the runner is. The suite's time limit is the
 /// harness's, for a regression that stops cutting it: it turns a hang into
 /// a red, and asserts nothing about how long the cut took.
-@Suite("Host address lookup for the connection form", .timeLimit(.minutes(1)))
+@Suite("Host address lookup for the connection form", .timeLimit(.minutes(5)))
 struct HostAddressLookupTests {
     private static let roomy: Duration = .seconds(600)
     private static let tight: Duration = .milliseconds(200)

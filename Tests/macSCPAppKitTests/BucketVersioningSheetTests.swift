@@ -293,7 +293,7 @@ struct BucketVersioningSheetTests {
     /// while the versioning read has already returned; in that window the sheet
     /// must still be `.reading`, not a settled sheet with no button. Only when
     /// the lock answer is in does the load settle, with both.
-    @MainActor @Test(.timeLimit(.minutes(1)))
+    @MainActor @Test(.timeLimit(.minutes(5)))
     func theVersioningAnswerDoesNotSettleBeforeTheLockAnswer() async {
         let entered = AsyncSignal()
         let release = AsyncSignal()

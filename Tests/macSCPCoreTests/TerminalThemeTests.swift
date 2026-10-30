@@ -10,7 +10,7 @@ import Testing
 /// Known blind spot: nothing here renders anything. That a theme reaches
 /// the emulator is `TerminalThemeWiringGuardTests`' (App, source-scanning);
 /// that SwiftTerm paints the sixteen colours it is handed is SwiftTerm's.
-@Suite("Terminal themes", .timeLimit(.minutes(1)))
+@Suite("Terminal themes", .timeLimit(.minutes(5)))
 struct TerminalThemeTests {
     // MARK: - Colour
 

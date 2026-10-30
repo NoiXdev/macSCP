@@ -33,11 +33,17 @@ import Testing
 
 /// Test keys are generated at RUNTIME (ssh-keygen) — never checked in.
 ///
-/// `.timeLimit(.minutes(1))`: `makeKey` shells out to `ssh-keygen` once per
-/// call, well under a second even on a loaded runner — a single invocation
-/// taking a full minute would itself be the defect. The project default is
-/// enough; nothing here needed the wider limit.
-@Suite("SSHPrivateKeyLoader", .timeLimit(.minutes(1)))
+/// `.timeLimit(.minutes(5))`: `makeKey` shells out to `ssh-keygen` once per
+/// call, well under a second even on a loaded runner. This paragraph went
+/// on to read "a single invocation taking a full minute would itself be the
+/// defect. The project default is enough; nothing here needed the wider
+/// limit" — the withdrawn wording, and its reasoning does not hold: a
+/// minute of time reported against a case on a saturated runner is not a
+/// minute of `ssh-keygen`, it is the run's own wall clock seen from that
+/// case (CLAUDE.md, "A wall-clock ceiling in a test measures the runner",
+/// 2026-10-30). There is no wider limit left to decline; five minutes is
+/// the figure the tree carries.
+@Suite("SSHPrivateKeyLoader", .timeLimit(.minutes(5)))
 struct SSHPrivateKeyLoaderTests {
     /// Generates a key of `type` in the temp directory; passphrase "" = unencrypted.
     /// `extra` is appended to the ssh-keygen argument list (e.g. `["-b", "384"]`,

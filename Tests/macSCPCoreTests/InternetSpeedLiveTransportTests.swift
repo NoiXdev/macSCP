@@ -24,7 +24,7 @@ import Testing
 /// Caching cannot cross a run here the way it can in the S3 suite: the live
 /// transport's session is ephemeral with `urlCache = nil`, and every
 /// request carries `.reloadIgnoringLocalAndRemoteCacheData`.
-@Suite("The internet speed test's live transport", .timeLimit(.minutes(1)))
+@Suite("The internet speed test's live transport", .timeLimit(.minutes(5)))
 struct InternetSpeedLiveTransportTests {
     /// A 307, which is the dangerous one: 301/302/303 rewrite the request
     /// to a GET and drop the body, while 307 and 308 preserve the method

@@ -17,7 +17,7 @@ import Testing
 /// suites use concurrently for their own, unrelated `SSH_AUTH_SOCK`
 /// critical sections — sharing it here would risk this test interfering
 /// with (or being interfered with by) them.
-@Suite("AgentEnvLock", .timeLimit(.minutes(1)))
+@Suite("AgentEnvLock", .timeLimit(.minutes(5)))
 struct AgentEnvLockTests {
     /// The scenario the bug produced: A holds the lock, B queues behind
     /// it, B is cancelled while still queued, A releases — and a fresh C

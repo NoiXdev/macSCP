@@ -13,7 +13,7 @@ import MacSCPTestSupport
 /// no clock of any kind, per CLAUDE.md "A wall-clock ceiling in a test
 /// measures the runner": the only thing that ends a wait here is either the
 /// body resuming, or `.timeLimit` cancelling the suite.
-@Suite("awaitResumption", .timeLimit(.minutes(1)))
+@Suite("awaitResumption", .timeLimit(.minutes(5)))
 struct AwaitResumptionTests {
     private enum ProbeError: Error, Equatable { case thrown }
 

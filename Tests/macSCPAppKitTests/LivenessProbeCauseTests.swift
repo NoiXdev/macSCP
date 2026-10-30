@@ -11,7 +11,7 @@ import Testing
 ///
 /// Isolation as in `LivenessProbeCancellationTests`: no `ContentView`, no
 /// store, no network.
-@Suite("Liveness probe cause", .timeLimit(.minutes(1)))
+@Suite("Liveness probe cause", .timeLimit(.minutes(5)))
 @MainActor
 struct LivenessProbeCauseTests {
     @Test func aThrownConnectionLossIsRecordedAsAClosedConnection() async {
@@ -166,7 +166,7 @@ private final class ScriptedStatFileSystem: RemoteFileSystem, @unchecked Sendabl
 /// place every disconnect goes through, and it is where the App stops
 /// listening — so a close arriving afterwards cannot write a line naming a
 /// tab whose session is gone.
-@Suite("Close report ends at teardown", .timeLimit(.minutes(1)))
+@Suite("Close report ends at teardown", .timeLimit(.minutes(5)))
 @MainActor
 struct CloseReportTeardownTests {
     @Test func teardownStopsTheCloseReport() async {

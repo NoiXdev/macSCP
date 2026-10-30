@@ -32,12 +32,17 @@ import Testing
 /// file `DiagnosticLogSharedSinkIsolationGuardTests` lets mention
 /// `DiagnosticLog.shared`.
 ///
-/// `.timeLimit(.minutes(1))`: nothing here waits on a wall clock — every
+/// `.timeLimit(.minutes(5))`: nothing here waits on a wall clock — every
 /// wait is either an `await flush()` (which the writer resolves through a
 /// sequence number, never a timer) or a synchronous read — so the limit is
-/// a backstop against a genuine hang, not a duration this suite is expected
-/// to approach.
-@Suite("DiagnosticLog", .timeLimit(.minutes(1)))
+/// a backstop against a genuine hang. The sentence ended "not a duration
+/// this suite is expected to approach", which was true of the suite's work
+/// and false of what the harness reports: an awaiting case on a three-core
+/// runner reports the whole run's wall clock, so at one minute this suite
+/// would have approached its bound without anything here being slow
+/// (CLAUDE.md, "A wall-clock ceiling in a test measures the runner",
+/// 2026-10-30).
+@Suite("DiagnosticLog", .timeLimit(.minutes(5)))
 struct DiagnosticLogTests {
     /// A fresh, empty directory under the system temp directory, removed by
     /// the caller in a `defer` — never `~/Library/Logs/macSCP` itself, so a

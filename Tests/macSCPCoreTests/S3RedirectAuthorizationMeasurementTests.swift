@@ -50,7 +50,7 @@ import Testing
 /// What this cannot see: what a REAL S3 provider does on a redirect. This
 /// measures Foundation against a controlled loopback stub, which is what the
 /// question is about, and nothing beyond it.
-@Suite("S3 redirect Authorization measurement", .timeLimit(.minutes(1)))
+@Suite("S3 redirect Authorization measurement", .timeLimit(.minutes(5)))
 struct S3RedirectAuthorizationMeasurementTests {
 
     // MARK: - Canned responses

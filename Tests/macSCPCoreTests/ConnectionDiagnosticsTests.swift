@@ -176,7 +176,7 @@ struct ConnectionDiagnosticsTests {
     /// runner").
     @Test(
         .enabled(if: ProcessInfo.processInfo.environment["MACSCP_NETSPIKE"] == "1"),
-        .timeLimit(.minutes(1)))
+        .timeLimit(.minutes(5)))
     func tcpPingToAnUnroutableAddressTimesOutInsideTheStepTimeout() async throws {
         let outcome = await HostResolver.resolve(host: "192.0.2.1", port: 22, timeout: .seconds(2))
         guard case .resolved(let addresses) = outcome, let address = addresses.first else {
@@ -1509,7 +1509,7 @@ struct ConnectionDiagnosticsTests {
     /// into a red rather than a hang: a step that waited for its probe
     /// would never return, because the gate it waits on is opened only
     /// after the step has returned.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aProbeThatIgnoresCancellationDoesNotHoldTheStepPastItsDeadline() async throws {
         let port = try #require(LoopbackSocket.closedPort())
         let release = Gate()

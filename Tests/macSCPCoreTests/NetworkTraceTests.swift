@@ -530,7 +530,7 @@ struct NetworkTraceTests {
     /// asserted before — the hops survive, and the ending names the budget —
     /// with no duration compared against any other duration anywhere in the
     /// case.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func anOuterMarginOverrunKeepsTheHopsTheWalkHadMeasured() async {
         let measured = NetworkTraceHop(
             ttl: 1, outcome: .forwarded(address: "10.0.0.1", rtt: .milliseconds(2)))

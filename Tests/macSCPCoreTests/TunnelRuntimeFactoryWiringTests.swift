@@ -18,7 +18,7 @@ import Testing
 /// listeners on port 0, a connection double standing in for the SSH server
 /// and refusing every channel, no rig. The SSH half is measured against the
 /// rig in `TunnelRigITests.aFailedConnectionIsCountedWhileTheForwardStaysUp`.
-@Suite("Tunnel runtime factory wiring", .timeLimit(.minutes(1)))
+@Suite("Tunnel runtime factory wiring", .timeLimit(.minutes(5)))
 struct TunnelRuntimeFactoryWiringTests {
 
     /// End to end through the runner: a `-L` whose server refuses the

@@ -57,7 +57,7 @@ import Testing
 /// `DiagnosticLog`'s own private `yyyy-MM-dd` formatting, documented on
 /// its class-level doc comment as the file-naming contract) — never by
 /// reading the live singleton's state back.
-@Suite("DiagnosticLog shared sink", .serialized, .timeLimit(.minutes(1)))
+@Suite("DiagnosticLog shared sink", .serialized, .timeLimit(.minutes(5)))
 struct DiagnosticLogSharedSinkTests {
     private func makeTempDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory

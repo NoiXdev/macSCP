@@ -18,7 +18,7 @@ import Testing
 /// Driven through the real `connect()` and `showFailure`, as the
 /// `lastFailureKind` tests in `ConnectionViewModelTests` are: what matters
 /// is that the marker reaches the property on the path the App reads.
-@Suite("Connection failure acknowledgement", .timeLimit(.minutes(1)))
+@Suite("Connection failure acknowledgement", .timeLimit(.minutes(5)))
 @MainActor
 struct ConnectionViewModelFailureAcknowledgementTests {
     private func makeVM(

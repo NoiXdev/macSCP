@@ -19,7 +19,7 @@ import Testing
 /// Written after a mutation probe on the cancellation gate came back GREEN
 /// (2026-09-06): nothing reached this type, because a `.remote` runtime is
 /// otherwise only built over a live SSH connection.
-@Suite("Tunnel runtime", .timeLimit(.minutes(1)))
+@Suite("Tunnel runtime", .timeLimit(.minutes(5)))
 struct TunnelRuntimeTests {
 
     @Test func aForwardThatEndsAfterTheServerConfirmedItIsReported() async throws {

@@ -16,7 +16,7 @@ import UserNotifications
 /// are driven through the real functions that own them
 /// (`ContentView.handleLivenessGiveUp(_:)`,
 /// `ContentView.notifyTransferFailures()`, `TunnelManager`'s state mirror).
-@Suite("Error notifications", .timeLimit(.minutes(1)))
+@Suite("Error notifications", .timeLimit(.minutes(5)))
 @MainActor
 struct ErrorNotificationTests {
 

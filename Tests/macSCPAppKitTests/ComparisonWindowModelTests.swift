@@ -22,7 +22,7 @@ import Testing
 /// Both sides are the real local file system over temporary directories, so
 /// a walk finishes without a network. No test asserts how long anything took;
 /// the suite's hang bound is `.timeLimit`.
-@Suite("Comparison window model", .timeLimit(.minutes(1)))
+@Suite("Comparison window model", .timeLimit(.minutes(5)))
 @MainActor
 struct ComparisonWindowModelTests {
 

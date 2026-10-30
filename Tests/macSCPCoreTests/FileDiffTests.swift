@@ -357,7 +357,7 @@ import Testing
     /// context and additions, and it spends no more edits than the
     /// shortest edit script does. Run over a two-letter alphabet, which is
     /// where the ties live.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func aWholeFileHunkReconstructsBothSidesWithAMinimalScript() {
         var rng = Lcg(state: 20_261_013)
         var differing = 0
@@ -393,7 +393,7 @@ import Testing
     /// it was, and the hunks are in order and do not overlap. And nothing is
     /// lost between them: `expectEveryChangeIsShownOnce` checks, against the
     /// whole-file script, that no change falls outside the hunks.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func everyHunkPointsAtItsOwnLinesOnBothSides() {
         var rng = Lcg(state: 20_261_014)
         var multiHunk = 0
@@ -571,7 +571,7 @@ import Testing
 
     /// Swapping the sides swaps the kinds: what one direction removes the
     /// other adds, and the same number of lines is touched.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func swappingTheSidesSwapsAddedAndRemoved() {
         var rng = Lcg(state: 20_261_015)
         var touched = 0

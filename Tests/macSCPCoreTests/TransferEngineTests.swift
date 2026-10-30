@@ -3,7 +3,7 @@ import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("TransferEngine", .timeLimit(.minutes(1)))
+@Suite("TransferEngine", .timeLimit(.minutes(5)))
 struct TransferEngineTests {
     private func makeSource(content: Data) -> MockRemoteFileSystem {
         MockRemoteFileSystem(

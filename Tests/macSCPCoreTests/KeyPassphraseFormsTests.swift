@@ -16,7 +16,7 @@ import Testing
 /// `Bool` computed first, so neither a value nor its spelling can reach a
 /// failure message (CLAUDE.md, "A value a test must not leak has two exits,
 /// not one"). That rule is the whole subject matter here.
-@Suite("Managed key passphrase forms", .timeLimit(.minutes(1)))
+@Suite("Managed key passphrase forms", .timeLimit(.minutes(5)))
 @MainActor
 struct KeyPassphraseFormsTests {
     /// What the key file actually opens with, before anything in a test runs.

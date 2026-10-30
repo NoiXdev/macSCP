@@ -10,7 +10,7 @@ import Testing
 /// injected, and the one real runner's pure half is tested through its
 /// `resolve` seam.
 @MainActor
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct FileActionActivityTests {
     private static let first = FileActionInvocation(executable: "wc", arguments: ["-l", "/d/a"])
     private static let second = FileActionInvocation(executable: "wc", arguments: ["-l", "/d/b"])
@@ -110,7 +110,7 @@ struct FileActionActivityTests {
 
     /// The runner here ignores the cancel, so what stops the second
     /// invocation is the activity's own check between the two.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func cancellingDuringARunStartsNoFurtherInvocation() async {
         let activity = FileActionActivity()
         let runner = RecordingRunner(parksFirst: true)

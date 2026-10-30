@@ -18,7 +18,7 @@ import Testing
 /// The store is a real `TunnelStore` on a temporary directory: the profiles
 /// the manager hands out come back through JSON, so a save that does not
 /// persist fails here rather than in a dev build.
-@Suite("Tunnel manager", .timeLimit(.minutes(1)))
+@Suite("Tunnel manager", .timeLimit(.minutes(5)))
 @MainActor
 struct TunnelManagerTests {
 

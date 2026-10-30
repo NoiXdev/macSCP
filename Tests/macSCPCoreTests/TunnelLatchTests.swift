@@ -16,12 +16,12 @@ import Testing
 /// is the direct measurement, so a future change to `TunnelLatch` is red
 /// here rather than red as a puzzling ordering failure two files away.
 ///
-/// `.timeLimit(.minutes(1))` per `PollingGuardTests
+/// `.timeLimit(.minutes(5))` per `PollingGuardTests
 /// .everyCallerOfPollUntilDeclaresATimeLimit` — and, honestly, it would
 /// not save this suite if the latch regressed: a wait that ignores
 /// cancellation ignores the time limit's cancellation too. Every case
 /// releases its latch on the way out.
-@Suite("Tunnel latch", .timeLimit(.minutes(1)))
+@Suite("Tunnel latch", .timeLimit(.minutes(5)))
 struct TunnelLatchTests {
     /// A wait entered from an ALREADY-CANCELLED task stays parked, and the
     /// release is what ends it — not the cancellation.

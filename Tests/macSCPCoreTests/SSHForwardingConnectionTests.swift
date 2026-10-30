@@ -32,7 +32,7 @@ import Testing
 ///
 /// The gated twin, against a real OpenSSH without the SFTP subsystem, is
 /// `ForwardingWithoutSFTPITests`.
-@Suite("SSHForwardingConnection", .timeLimit(.minutes(1)))
+@Suite("SSHForwardingConnection", .timeLimit(.minutes(5)))
 struct SSHForwardingConnectionTests {
     enum Path: String, CaseIterable, Sendable, CustomTestStringConvertible {
         case forwarding

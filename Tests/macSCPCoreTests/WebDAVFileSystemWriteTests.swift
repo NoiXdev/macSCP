@@ -95,7 +95,7 @@ private struct WriteOutcome: Sendable {
 /// `.timeLimit` is the one clock these tests carry: the three `abandonable`
 /// waits below end through the cancellation it performs, never through a
 /// timer of their own.
-@Suite("WebDAVFileSystem writes", .timeLimit(.minutes(1)))
+@Suite("WebDAVFileSystem writes", .timeLimit(.minutes(5)))
 struct WebDAVFileSystemWriteTests {
     private let config = WebDAVConnectionConfig(
         baseURL: "https://dav.example.com/dav", username: "u", useNextcloudPath: false,

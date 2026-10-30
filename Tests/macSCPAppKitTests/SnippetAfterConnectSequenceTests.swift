@@ -35,7 +35,7 @@ import Testing
 /// the maintainer's real session store and real Keychain. The tab the window
 /// starts with is replaced by one of this suite's own, so the only connector
 /// reachable from `tabsModel` is the fake.
-@Suite("Snippet after connect", .timeLimit(.minutes(1)))
+@Suite("Snippet after connect", .timeLimit(.minutes(5)))
 @MainActor
 struct SnippetAfterConnectSequenceTests {
     // MARK: - Harness

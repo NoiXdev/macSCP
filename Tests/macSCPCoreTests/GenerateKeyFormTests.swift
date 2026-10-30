@@ -11,7 +11,7 @@ import Testing
 /// fields changed during the run" is the test's own sequence, not a race.
 /// Nothing here runs `ssh-keygen`: the generator writes two placeholder files
 /// where the real one would, so the tests can see whether they are removed.
-@Suite("GenerateKeyForm", .timeLimit(.minutes(1)))
+@Suite("GenerateKeyForm", .timeLimit(.minutes(5)))
 @MainActor
 struct GenerateKeyFormTests {
     /// Never written into an `#expect` expression's source text (CLAUDE.md,

@@ -13,29 +13,64 @@ import Testing
 /// tests, but one layer up, at the view model.
 ///
 /// `.timeLimit(.minutes(5))` in its own suite rather than added to the much
-/// larger `RemoteBrowserViewModelTests` suite: only these tests poll via
-/// `pollUntil` for a background merge Task to catch up, so only they need a
-/// stated ceiling on how long that poll may run before the harness itself
+/// larger `RemoteBrowserViewModelTests` suite: these tests poll via
+/// `pollUntil` for a background merge Task to catch up, so they need a
+/// stated bound on how long that poll may run before the harness itself
 /// calls it a hang (CLAUDE.md: "Tests never block the cooperative pool" —
 /// every wait here is `pollUntil`'s `await Task.sleep`, never a blocking
 /// wait, and the `.timeLimit` is the only clock any assertion reads).
 ///
+/// That sentence read "only these tests poll via `pollUntil` for a
+/// background merge Task to catch up, so only they need a stated ceiling"
+/// until 2026-10-30 — the withdrawn wording, and a claim about the rest of
+/// the tree that nobody counted while writing it. Counted on 2026-10-30:
+/// 127 bounds of this kind stand in `Tests/`, 110 of them raised from one
+/// minute in the commit that corrects this paragraph.
+///
+///     grep -rnE '\.timeLimit\(\.minutes\(5\)\)' Tests/ | grep -vc '///'
+///
+/// A line count, not an occurrence count, and that is deliberate: a bound
+/// is one trait on one line, while the same spelling also appears in nine
+/// doc comments that describe their own suite's bound, and those must stay
+/// out of the figure. Writing this paragraph changed its own answer twice
+/// before the count stopped moving — 128 matches, then 136 — which is the
+/// `grep -c` distinction in CLAUDE.md arriving from the other side: here
+/// lines ARE the unit, so `-c` is the right tool and `-o | wc -l` is the
+/// wrong one. The pattern is written escaped so the command does not match
+/// its own text, and `grep -vc '///'` would drop that line regardless.
+///
 /// The bound read `.minutes(1)` until 2026-10-29 — the paragraph above
 /// opened "`.timeLimit(.minutes(1))` in its own suite" — when all seven
 /// polling cases here came back `Time limit was exceeded: 60.000 seconds`
-/// on CI run 40933631584, the first run of the gate on `macos-latest`. One
-/// minute was not a hang bound for them; it was a wall-clock ceiling, which
-/// is the thing CLAUDE.md has a rule against. On the development machine
+/// on CI run 40933631584, the first run of the gate on `macos-latest`. On
+/// the development machine
 ///
 ///     swift test --filter RemoteBrowserViewModelMetadataMergeTests
 ///
 /// reports the whole suite in 0.087 s, the slowest of the seven
 /// (`twoHundredEntriesArrivingInReverseOrderMergeUnderSizeSort`) in that
-/// same 0.087 s, and the other six in 0.011 s to 0.013 s. Sixty seconds is
-/// 690x the slowest case measured here and still lost to a loaded
-/// three-core runner. Five minutes is 3448x it, and turns a poll that
-/// never completes into a red just as well, which is all this bound is
-/// for. `ConnectionDiagnostics` carries `.minutes(5)` for the same reason.
+/// same 0.087 s, and the other six in 0.011 s to 0.013 s.
+///
+/// Two of the conclusions drawn from those figures are withdrawn as of
+/// 2026-10-30. The first attributed the red to this suite: "One minute was
+/// not a hang bound for them; it was a wall-clock ceiling, which is the
+/// thing CLAUDE.md has a rule against". The second derived the new value
+/// by ratio: "Sixty seconds is 690x the slowest case measured here and
+/// still lost to a loaded three-core runner. Five minutes is 3448x it".
+/// The direction was right; the attribution and the arithmetic were not.
+/// One minute was not too tight for these seven cases, it was too tight
+/// for any awaiting test on that runner — and a ratio against the local
+/// figure measures nothing, because the runner figure it divides into is
+/// the whole run's duration rather than the case's own work.
+///
+/// What survives from that sentence is the half that never rested on a
+/// ratio: five minutes "turns a poll that never completes into a red just
+/// as well, which is all this bound is for", and `ConnectionDiagnostics`
+/// carried `.minutes(5)` before any of this. The runs that show the rest,
+/// and the mechanism behind them, are in CLAUDE.md, "A wall-clock ceiling
+/// in a test measures the runner", 2026-10-30 update; what belongs here is
+/// only that this suite needs a bound at all, which the paragraph above
+/// says.
 ///
 /// One cross-reference checked while changing this, since it is a claim
 /// about other code: `twoHundredEntries…`'s own comment below cites

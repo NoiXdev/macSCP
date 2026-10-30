@@ -21,7 +21,7 @@ import Testing
 /// The manager runs on `TunnelManagerTests.Rig` — the same fake runners, the
 /// same real `TunnelStore` on a temporary directory — reused rather than
 /// copied.
-@Suite("Tunnel Dock presence", .timeLimit(.minutes(1)))
+@Suite("Tunnel Dock presence", .timeLimit(.minutes(5)))
 @MainActor
 struct TunnelDockPresenceTests {
 

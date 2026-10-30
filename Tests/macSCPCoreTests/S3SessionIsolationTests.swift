@@ -24,7 +24,7 @@ import Testing
 /// Neither test clears `URLCache.shared`: it belongs to whoever is running
 /// the suite. They only read it, and each dial uses a bucket name nothing
 /// has used before so the key they look up is unrepeatable.
-@Suite("S3 session isolation", .timeLimit(.minutes(1)))
+@Suite("S3 session isolation", .timeLimit(.minutes(5)))
 struct S3SessionIsolationTests {
 
     /// A well-formed, EXPLICITLY cacheable empty `ListObjectsV2` answer.

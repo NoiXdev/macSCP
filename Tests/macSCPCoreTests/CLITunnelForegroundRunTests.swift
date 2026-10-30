@@ -17,7 +17,7 @@ import Testing
 ///
 /// Every wait is an `await` on `pollUntil` (CLAUDE.md, "Tests never block
 /// the cooperative pool"), and nothing here asserts an elapsed time.
-@Suite("CLI tunnels start foreground loop", .timeLimit(.minutes(1)))
+@Suite("CLI tunnels start foreground loop", .timeLimit(.minutes(5)))
 struct CLITunnelForegroundRunTests {
 
     // MARK: - The clean sequence

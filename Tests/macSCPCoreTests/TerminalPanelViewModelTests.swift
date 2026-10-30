@@ -28,7 +28,7 @@ final class MockShell: RemoteShell, Sendable {
     func close() async { state.withLock { $0.closed = true }; continuation.finish() }
 }
 
-@Suite("TerminalPanelViewModel", .timeLimit(.minutes(1)))
+@Suite("TerminalPanelViewModel", .timeLimit(.minutes(5)))
 @MainActor
 struct TerminalPanelViewModelTests {
     @Test func toggleOpensShellAndForwardsOutput() async throws {
@@ -943,7 +943,7 @@ actor ShellFactory {
 /// out. The audit log's snippet entry hangs on it: before P5 the entry was
 /// written right after the send CALL, so a shell that failed to open left an
 /// entry claiming a snippet ran when its bytes were buffered and discarded.
-@Suite("TerminalPanelViewModel delivery callback", .timeLimit(.minutes(1)))
+@Suite("TerminalPanelViewModel delivery callback", .timeLimit(.minutes(5)))
 @MainActor
 struct TerminalPanelViewModelDeliveryTests {
     /// Lets the test decide WHEN the shell finishes opening, instead of
@@ -1007,7 +1007,7 @@ struct TerminalPanelViewModelDeliveryTests {
     /// trades a flaky test for a hung suite, in a repository whose backlog
     /// already carries a suite-hang incident. The ending that measurement
     /// bought was a private ceiling task of thirty seconds; it is now the
-    /// suite's `.timeLimit(.minutes(1))`, which cancels the test — and
+    /// suite's `.timeLimit(.minutes(5))`, which cancels the test — and
     /// `waitForFirstDelivery` resumes its parked waiter from the
     /// cancellation handler, so the caller's assertion and its message still
     /// run. A callback that will NEVER fire is still a red test with a
