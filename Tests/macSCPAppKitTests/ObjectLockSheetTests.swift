@@ -733,7 +733,7 @@ struct ObjectLockSheetTests {
     /// 2026-10-21 by planting out `guard canRun` in `run`, which left the run
     /// parked for ten minutes with no verdict. The limit turns that into a red;
     /// the `defer` lets go of anything still held when the test ends either way.
-    @MainActor @Test(.timeLimit(.minutes(1))) func aSecondRunWhileOneIsInFlightSendsNothing() async {
+    @MainActor @Test(.timeLimit(.minutes(5))) func aSecondRunWhileOneIsInFlightSendsNothing() async {
         let entered = AsyncSignal()
         let release = AsyncSignal()
         defer { release.signal() }

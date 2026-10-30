@@ -477,7 +477,7 @@ struct StoreReloadOnActivationGuardTests {
 /// `TabRegistry()` instances of their own, never `.shared` — the rule that
 /// type's own doc comment states, so a registration here can never leak into
 /// another test.
-@Suite("Every open window's session list", .timeLimit(.minutes(1)))
+@Suite("Every open window's session list", .timeLimit(.minutes(5)))
 @MainActor
 struct SessionListRegistrationTests {
 

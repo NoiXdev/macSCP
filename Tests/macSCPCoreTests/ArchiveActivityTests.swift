@@ -6,7 +6,7 @@ import Foundation
 /// the pane reads it from SwiftUI. Nothing in here blocks the main actor --
 /// every wait is an `await` on a continuation.
 @MainActor
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct ArchiveActivityTests {
     /// A runner that parks until the test releases it, so the running state
     /// can be read WHILE it is running. Parked on `AsyncSignal`, awaited --

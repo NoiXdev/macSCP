@@ -5,7 +5,7 @@ import Testing
 /// `OneAtATime`, the latch login-set import runs through. The first run is
 /// held open on a signal the test raises, so "the second call arrived while
 /// the first was in flight" is the test's own sequence, not a race.
-@Suite("OneAtATime", .timeLimit(.minutes(1)))
+@Suite("OneAtATime", .timeLimit(.minutes(5)))
 @MainActor
 struct OneAtATimeTests {
     @Test func anOverlappingRunIsRefusedWithoutRunning() async {

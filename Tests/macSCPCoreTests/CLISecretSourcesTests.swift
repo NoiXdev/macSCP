@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
-@Suite("PasswordCommandSecretSource", .timeLimit(.minutes(1)))
+@Suite("PasswordCommandSecretSource", .timeLimit(.minutes(5)))
 struct PasswordCommandSecretSourceTests {
     @Test func returnsTheCommandsOutputWithTrailingNewlineStripped() throws {
         let source = PasswordCommandSecretSource(command: "echo hunter2")

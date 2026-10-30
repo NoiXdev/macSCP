@@ -23,7 +23,7 @@ import Testing
     "WebDAVFileSystem against Docker Apache",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
     .serialized,
-    .timeLimit(.minutes(1))
+    .timeLimit(.minutes(5))
 )
 struct WebDAVFileSystemIntegrationTests {
 

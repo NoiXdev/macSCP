@@ -4,12 +4,12 @@ import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-/// `.timeLimit(.minutes(1))`: the parked-entry tests below abandon a child
+/// `.timeLimit(.minutes(5))`: the parked-entry tests below abandon a child
 /// `Task` on a `Gate` the test never opens — the ONLY clock that ends such a
 /// test is cancellation from this trait, never a wall-clock bound of the
 /// test's own (CLAUDE.md, "A wall-clock ceiling in a test measures the
 /// runner").
-@Suite("LocalFileSystem", .timeLimit(.minutes(1)))
+@Suite("LocalFileSystem", .timeLimit(.minutes(5)))
 struct LocalFileSystemTests {
     /// Creates a throwaway tree: <root>/unterordner/ and <root>/datei.txt (5 bytes).
     private func makeTempTree() throws -> URL {

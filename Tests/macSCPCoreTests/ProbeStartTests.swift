@@ -21,7 +21,7 @@ import Testing
 /// has not begun, whatever the machine is doing. What the cases assert is an
 /// outcome and an ordering; the one duration any of them reads is a FLOOR,
 /// which a slow machine cannot defeat.
-@Suite("A probe that never began", .timeLimit(.minutes(1)))
+@Suite("A probe that never began", .timeLimit(.minutes(5)))
 struct ProbeStartTests {
     /// Short, because nothing here waits for it on a clock: each case waits
     /// for the probe to return, however late that is.

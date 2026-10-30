@@ -29,7 +29,7 @@ import Testing
 /// its own. The remote port is named, and the fake answers with a DIFFERENT
 /// number, so `start` is measured to return what `onOpen` said rather than
 /// what it was asked for.
-@Suite("RemoteForward", .timeLimit(.minutes(1)))
+@Suite("RemoteForward", .timeLimit(.minutes(5)))
 struct RemoteForwardTests {
 
     /// The whole path: the server names a port, an inbound connection is

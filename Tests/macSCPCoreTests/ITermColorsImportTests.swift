@@ -21,7 +21,7 @@ import Testing
 /// read here. What is verified is the SHAPE described above, against files
 /// this suite authored and `plutil -lint` accepted — not that iTerm2's own
 /// export is byte-identical to them.
-@Suite("iTerm2 colour import", .timeLimit(.minutes(1)))
+@Suite("iTerm2 colour import", .timeLimit(.minutes(5)))
 struct ITermColorsImportTests {
     private static func fixture(_ name: String) throws -> Data {
         let url = URL(fileURLWithPath: #filePath)

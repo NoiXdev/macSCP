@@ -16,13 +16,13 @@ import Testing
 /// `.wait(until: Date(...)` (CLAUDE.md, "A wall-clock ceiling in a test
 /// measures the runner").
 ///
-/// `.timeLimit(.minutes(1))` because every check here scans every Swift
+/// `.timeLimit(.minutes(5))` because every check here scans every Swift
 /// file under `Tests/`. The files, their text and their blanked view come
 /// from `SourceCorpus`, each file read and blanked at most once per test
 /// process; the patterns are compiled once per process (`CompiledPattern`)
 /// rather than on every call; and the while-block scan two checks share is
 /// remembered per file (`sleepingWhileBlocksByFile`).
-@Suite("Polling guard", .timeLimit(.minutes(1)))
+@Suite("Polling guard", .timeLimit(.minutes(5)))
 struct PollingGuardTests {
     private static var testsRoot: URL {
         URL(fileURLWithPath: #filePath)

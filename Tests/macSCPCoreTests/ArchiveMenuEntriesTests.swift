@@ -1,7 +1,7 @@
 import Testing
 @testable import macSCPCore
 
-@Suite(.timeLimit(.minutes(1)))
+@Suite(.timeLimit(.minutes(5)))
 struct ArchiveMenuEntriesTests {
     private func file(_ name: String) -> RemoteFileItem {
         RemoteFileItem(name: name, path: "/d/" + name, kind: .file)

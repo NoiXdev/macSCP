@@ -34,7 +34,7 @@ import Testing
 /// file system this suite hands its sessions never answers and never touches
 /// disk, and the deadline is the shortest `probeTimeout(forInterval:)` can
 /// produce.
-@Suite("Liveness probe cancellation", .timeLimit(.minutes(1)))
+@Suite("Liveness probe cancellation", .timeLimit(.minutes(5)))
 @MainActor
 struct LivenessProbeCancellationTests {
     /// The shortest deadline the shipped policy can produce

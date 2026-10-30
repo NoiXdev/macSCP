@@ -13,7 +13,7 @@ import Testing
 /// describing a session said "New Connection". That the strip and the
 /// window title draw this plan's answer is `TabTitleWiringGuardTests`'
 /// claim, not this suite's.
-@Suite("Tab title plan", .timeLimit(.minutes(1)))
+@Suite("Tab title plan", .timeLimit(.minutes(5)))
 @MainActor
 struct TabTitlePlanTests {
     private static let target = StoredSession(

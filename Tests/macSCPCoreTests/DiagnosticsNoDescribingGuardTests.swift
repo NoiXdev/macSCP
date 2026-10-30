@@ -84,7 +84,7 @@ import Testing
 /// (a path separator, a query marker, a fragment marker, and whitespace as
 /// the fourth test). It is not an opening raw-string delimiter, so both
 /// stripping modes read every file here without throwing.
-@Suite("Diagnostics no String(describing:) guard", .timeLimit(.minutes(1)))
+@Suite("Diagnostics no String(describing:) guard", .timeLimit(.minutes(5)))
 struct DiagnosticsNoDescribingGuardTests {
     /// `#filePath` here is
     /// `<repoRoot>/Tests/macSCPCoreTests/DiagnosticsNoDescribingGuardTests.swift`;

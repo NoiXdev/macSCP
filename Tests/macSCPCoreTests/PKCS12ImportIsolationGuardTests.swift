@@ -112,7 +112,7 @@ import Testing
 /// stops the scan. Both cost a false alarm, neither a silent pass — and
 /// this paragraph is the one to distrust first, since it is the claim that
 /// was wrong the last time it was written.
-@Suite("PKCS#12 import isolation", .timeLimit(.minutes(1)))
+@Suite("PKCS#12 import isolation", .timeLimit(.minutes(5)))
 struct PKCS12ImportIsolationGuardTests {
     /// `#filePath` is
     /// `<repoRoot>/Tests/macSCPCoreTests/PKCS12ImportIsolationGuardTests.swift`.

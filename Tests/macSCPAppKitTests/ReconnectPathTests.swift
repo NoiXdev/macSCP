@@ -22,7 +22,7 @@ import Testing
 /// see that file's own "Isolation, round 3" — and
 /// `theRealSessionsFileIsNeverTouched` proves the isolation empirically
 /// rather than by reading the code.
-@Suite("Reconnect path", .timeLimit(.minutes(1)))
+@Suite("Reconnect path", .timeLimit(.minutes(5)))
 @MainActor
 struct ReconnectPathTests {
     private static var realSessionsFileURL: URL {

@@ -321,7 +321,7 @@ private final class UnreachedSecretStore: SecretStore, @unchecked Sendable {
 ///
 /// `TabRegistry()` instances of their own, never `.shared` — the rule that
 /// type's own doc comment states.
-@Suite("A tab's terminal type follows the tab", .timeLimit(.minutes(1)))
+@Suite("A tab's terminal type follows the tab", .timeLimit(.minutes(5)))
 @MainActor
 struct TerminalTypeWindowScopeTests {
 

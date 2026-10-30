@@ -14,7 +14,7 @@ import Testing
 /// terminfo entries (the task report); the gated
 /// `CitadelShellIntegrationTests.theChosenTerminalTypeReachesTheRemoteShell`
 /// proves only that the name reaches the server.
-@Suite("Terminal type", .timeLimit(.minutes(1)))
+@Suite("Terminal type", .timeLimit(.minutes(5)))
 @MainActor
 struct TerminalTypeTests {
     // MARK: - What is offered

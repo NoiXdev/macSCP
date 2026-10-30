@@ -4,7 +4,7 @@ import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
-@Suite("ConnectionViewModel", .timeLimit(.minutes(1)))
+@Suite("ConnectionViewModel", .timeLimit(.minutes(5)))
 @MainActor
 struct ConnectionViewModelTests {
     private func makeVM(

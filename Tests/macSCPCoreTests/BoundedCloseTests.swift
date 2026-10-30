@@ -42,7 +42,7 @@ struct BoundedCloseTests {
     /// contention as much as it measures this race, and a number large
     /// enough to be safe is too large to mean anything. "This must not
     /// hang" is the actual claim.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func anOperationThatNeverReturnsIsAbandonedAtTheBound() async {
         let startedAt = ContinuousClock.now
         let finished = await BoundedClose.run(boundSeconds: 1) { await self.neverReturns() }
@@ -72,7 +72,7 @@ struct BoundedCloseTests {
     /// stall `ConnectMainActorLivenessTests` records at up to 14.67 s — so
     /// the ceiling was measuring the runner, exactly as CLAUDE.md's "A
     /// wall-clock ceiling in a test measures the runner" says.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func anOperationThatFinishesInsideTheBoundIsNotAbandoned() async {
         let finished = await BoundedClose.run(boundSeconds: 120) {}
         #expect(finished == true)

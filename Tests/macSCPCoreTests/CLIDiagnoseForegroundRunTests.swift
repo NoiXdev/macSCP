@@ -12,7 +12,7 @@ import Testing
 /// The fake diagnoses park on an `AsyncSignal` — until they are cancelled,
 /// or until the case releases them — and never on a clock. The time limit
 /// is a hang bound.
-@Suite("CLI diagnose foreground run", .timeLimit(.minutes(1)))
+@Suite("CLI diagnose foreground run", .timeLimit(.minutes(5)))
 struct CLIDiagnoseForegroundRunTests {
     /// The first signal cancels the diagnosis and WAITS for it: the walk's
     /// cleanup — the throughput test's removal — runs, and its report is

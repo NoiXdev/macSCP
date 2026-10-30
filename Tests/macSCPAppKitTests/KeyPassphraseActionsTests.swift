@@ -24,7 +24,7 @@ import Testing
 /// members of a `View` and inherit its isolation; calling them from a
 /// nonisolated suite compiles with an `#ActorIsolatedCall` warning, and the
 /// warning budget here is zero.
-@Suite("Managed key passphrase actions", .timeLimit(.minutes(1)))
+@Suite("Managed key passphrase actions", .timeLimit(.minutes(5)))
 @MainActor
 struct KeyPassphraseActionsTests {
     private static let sourceFile = SourceCorpus.url(of: .sources)

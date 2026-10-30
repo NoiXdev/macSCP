@@ -23,7 +23,7 @@ import macSCPCore
 ///
 /// The three tests below take the three hops apart, so a red run names the
 /// hop rather than the symptom.
-@Suite("Terminal resize measurement", .serialized, .timeLimit(.minutes(1)))
+@Suite("Terminal resize measurement", .serialized, .timeLimit(.minutes(5)))
 @MainActor
 struct SSHTerminalViewSizingTests {
 

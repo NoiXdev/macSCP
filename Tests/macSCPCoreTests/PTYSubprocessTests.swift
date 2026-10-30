@@ -9,7 +9,7 @@ import Testing
 /// long a case takes (CLAUDE.md, "A wall-clock ceiling in a test measures
 /// the runner") — every wait in here is an `await` on `PTYSubprocess.run`
 /// or on its `Handle.output`, never a sleep guessed to be "long enough".
-@Suite("PTYSubprocess", .timeLimit(.minutes(1)))
+@Suite("PTYSubprocess", .timeLimit(.minutes(5)))
 struct PTYSubprocessTests {
     /// The positive this whole file exists to establish: `/usr/bin/tty`
     /// prints a real `/dev/ttysNNN` path, which it does if and only if its

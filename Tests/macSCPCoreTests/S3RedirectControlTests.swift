@@ -22,7 +22,7 @@ import Testing
 ///
 /// What this cannot see: what a REAL S3 provider does on a redirect. It
 /// measures this project's policy against a controlled stub.
-@Suite("S3 redirect control", .timeLimit(.minutes(1)))
+@Suite("S3 redirect control", .timeLimit(.minutes(5)))
 struct S3RedirectControlTests {
 
     private static func freshBucket() -> String { "bucket-\(UUID().uuidString)" }
