@@ -257,7 +257,10 @@ struct ConnectMainActorLivenessTests {
     /// wording and the withdrawn condition. `bar` is derived FROM `ambient`,
     /// so that test reduced to `ambient > 4 s`, and it let a control of one
     /// second stand as adequate resolution for a three-second ceiling.
-    /// Run 41040277938 (2026-10-30, `c8041d19`) is where that broke: test 2
+    /// Run 41040277938 (2026-10-30, `c8041d19` -- the head that run
+    /// had; the PR was rebased on merge, so the same change sits on
+    /// develop as `bcd0bc61`, which `git patch-id --stable` gives the
+    /// same id for) is where that broke: test 2
     /// printed `ambient=1.004113042 seconds gap=21.006908125 seconds
     /// ceiling=3.012339126 seconds` and FAILED on the gap. Nothing was
     /// blocking — the run's other 7974 tests passed. One sample of 1 s does
