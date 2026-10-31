@@ -194,7 +194,12 @@ jobs:
         #     not start until 397 s (6 m 37 s) into the step, leaving 83 s
         #     of the 480 s for the whole suite; the kill landed 96 s after
         #     the first test started. How many tests the current tree has is
-        #     not measured -- the run never reached a total.
+        #     not measured -- the run never reached a total. That head is
+        #     not on develop: the PR was rebased on merge, and the commit
+        #     carrying this same change there is `a774ac4d`. Both are named
+        #     because the run really did run on `9c8d3673`;
+        #     `git show <h> | git patch-id --stable` prints
+        #     ad968515ab03ec2249ff050a284e1b90f3fe5ba0 for either one.
         #
         # The two compile figures are NOT a toolchain comparison and must
         # not be read as one. 28,721 lines of test code and 17,144 lines of
@@ -206,13 +211,70 @@ jobs:
         # Note which way that cuts on the build half: Sources grew by those
         # 17,144 lines and the Build step still came back 240.40s -> 230.46s.
         #
-        # 16 minutes (960 s) is 2.04x of 392 s + 78 s = 470 s -- this
-        # image's measured compile plus the OTHER image's measured run,
-        # because this image's run figure does not exist yet: the step was
-        # killed before the suite finished. The first green run on this
-        # image replaces that addend and this number with its own
-        # measurement.
-        timeout-minutes: 16
+        # The promise above -- that the first green run on this image
+        # replaces that addend and this number with its own measurement --
+        # is kept here, and the replacement does not keep the number.
+        # Withdrawn, quoted verbatim: "16 minutes (960 s) is 2.04x of
+        # 392 s + 78 s = 470 s -- this image's measured compile plus the
+        # OTHER image's measured run, because this image's run figure does
+        # not exist yet: the step was killed before the suite finished."
+        # What was wrong with it is not the borrowed addend but the
+        # stitching: it adds two figures from two different runs and bounds
+        # a step that neither of them is. A step budget bounds a step's
+        # wall clock, and that is a field pair of the Actions API, present
+        # on every run that reached this step:
+        #
+        #     gh api repos/NoiXdev/macSCP/actions/runs/<id>/jobs --jq '.jobs[].steps[] | select(.name=="Unit-Tests") | "\(.conclusion) \((.completed_at|fromdateiso8601) - (.started_at|fromdateiso8601))s"'
+        #
+        #   38225383495  macos-15      329 s  success
+        #   40933631584  macos-latest  493 s  failure -- the 480 s budget's
+        #                              own kill plus the overhead of
+        #                              reporting it, not a suite duration
+        #   41045404989  macos-latest  581 s  success (that RUN went red
+        #                              later, on the warning gate below;
+        #                              this step did not)
+        #   41047833837  macos-latest  517 s  success
+        #   41048445836  macos-latest  640 s  success
+        #
+        # 640 s is the measured maximum of a step that finished. The spread
+        # it sits in matters more than the maximum: 517 -> 640 s is a
+        # factor of 1.24 across two runs ONE commit apart on the same
+        # image, and the compile half alone moved 345.71s -> 492.86s, a
+        # factor of 1.43. That pair isolates the variance about as well as
+        # anything here can: the only difference between the two trees is
+        # 23 added lines of CLAUDE.md, which no target compiles. The runs
+        # had heads `b9ba9d27` and `6f1fe42a`, and the rebase on merge left
+        # both unreachable, so the command below names the develop commits
+        # carrying those same two changes instead -- measured 2026-10-31,
+        # it prints one file and 23 insertions for either pair:
+        #
+        #     git diff --stat 6583396e 1ce3e9ff
+        #
+        # A budget has to clear that variance, not the mean.
+        #
+        # 20 minutes (1200 s) is 1.88x of 640 s. The two derivations this
+        # comment has carried landed at 2.09x and 2.04x, so this is the
+        # first one under 2 -- but neither of them states 2x as a
+        # requirement, so "the 2x floor" is a reading of them rather than a
+        # quote, and it is written here as a reading. 2x of 640 s is
+        # 1280 s, which makes 22 minutes (1320 s, 2.06x) the smallest
+        # whole-minute budget holding that reading. 20 is the maintainer's
+        # decision of 2026-10-31, taken while the best figure on offer was
+        # the 558.79 s the withdrawn stitching produced -- against which
+        # 1200 s read as 2.15x. The series above was measured after that
+        # decision, not before it, and 1.88x is what it leaves standing.
+        #
+        # Raising this does not crowd the JOB budget above it. Same API,
+        # one level up -- measured 2026-10-31:
+        #
+        #     gh api repos/NoiXdev/macSCP/actions/runs/<id>/jobs --jq '.jobs[] | "\(.conclusion) \((.completed_at|fromdateiso8601) - (.started_at|fromdateiso8601))s"'
+        #
+        # gives 753 s and 937 s for the two green runs above, against the
+        # job's 35 minutes (2100 s). A step that ran the full 1200 s would
+        # put the worst of those at 937 - 640 + 1200 = 1497 s, 0.71x of the
+        # job budget, so the job still kills a hung step later than this
+        # step does -- which is the ordering the step budget exists for.
+        timeout-minutes: 20
         run: |
           set -o pipefail
           swift test --event-stream-output-path "$RUNNER_TEMP/test-events.jsonl" \
