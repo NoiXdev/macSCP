@@ -22,9 +22,23 @@ import Testing
 /// **Hang bound, not a ceiling** (2026-09-28). Every case here races steps
 /// against a budget through `DetachedProbe`, whose deadline is armed at
 /// CREATION and so bounds how long a body waited for a thread as well as how
-/// long it ran. `.timeLimit` is the net for a case that truly hangs, and it
-/// is deliberately far larger than any step budget below, so no assertion in
-/// this suite depends on it.
+/// long it ran. `.timeLimit` is the net for a case that truly hangs, and no
+/// assertion in this suite depends on it.
+///
+/// Until 2026-11-01 that sentence read "`.timeLimit` is the net for a case
+/// that truly hangs, and it is deliberately far larger than any step budget
+/// below, so no assertion in this suite depends on it". The withdrawn clause
+/// was false of this file on the day it was written: the two roomy cases
+/// below were already at `.seconds(600)` against this suite's 300 s bound,
+/// `61850a9c` having set BOTH nine days earlier: `git blame` dates the
+/// `stepTimeout:` line inside `theJumpsResolveNamesTheJumpsAddresses` and
+/// the one inside `theJumpsSecretNeverReachesTheReport` to that commit, and
+/// the "Hang bound, not a ceiling" heading above to `ae19a53a`. Named rather
+/// than numbered
+/// because the first draft of this sentence cited two line numbers and the
+/// four lines it added moved both of them (CLAUDE.md, "prefer the symbol to
+/// the line number"). What the sentence was about survives without the
+/// withdrawn clause.
 ///
 /// **Every case here takes that bound from the suite** (2026-10-05). Four
 /// cases used to carry `@Test(.timeLimit(.minutes(1)))` of their own,
