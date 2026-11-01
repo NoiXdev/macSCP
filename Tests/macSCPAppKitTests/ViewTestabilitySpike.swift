@@ -186,20 +186,89 @@ struct ViewTestabilitySpike {
         #expect(withoutError != withError)
     }
 
-    /// The other single-variable half: only `isRegex` differs. Measured, not
-    /// assumed — `Toggle` is an AppKit-backed control, and its checked state
-    /// therefore stays out of the bitmap, the same way the `TextField`'s text
-    /// does. Recording it is what makes the comparison above unambiguous: the
-    /// inputs it holds fixed are known quantities, not untested ones.
-    @Test("Varying only isRegex leaves the pixels unchanged")
-    func varyingOnlyTheRegexToggleRendersIdentically() throws {
+    // NOTE (2026-11-01): the case below used to justify itself as making the
+    // comparison above unambiguous, "the inputs it holds fixed are known
+    // quantities, not untested ones". That was never load-bearing — an input
+    // held fixed contributes nothing to a difference whether or not it is
+    // discriminable — and the claim it rested on has since stopped being true
+    // of one of the two controls it named. The case earns its place on the
+    // reproducibility it asserts instead.
+
+    /// The other single-variable half: only `isRegex` differs. What this
+    /// asserts is that the renderer is a FUNCTION of this view's inputs —
+    /// each of the two renders reproducible across the other, both the same
+    /// size — and NOT whether the toggle's state reaches the pixels, because
+    /// that answer turned out to depend on the operating system.
+    ///
+    /// **Renamed and re-aimed 2026-11-01.** It was
+    /// `varyingOnlyTheRegexToggleRendersIdentically`, test name "Varying only
+    /// isRegex leaves the pixels unchanged", and its comment read: "Measured,
+    /// not assumed — `Toggle` is an AppKit-backed control, and its checked
+    /// state therefore stays out of the bitmap, the same way the
+    /// `TextField`'s text does. Recording it is what makes the comparison
+    /// above unambiguous: the inputs it holds fixed are known quantities, not
+    /// untested ones." That WAS measured, on 2026-08-10, and it still holds
+    /// on the gate: CI run 41255415337 reports the old name passing. On
+    /// macOS 27.0.1 it does not hold — `off == on` failed with two 840x80
+    /// bitmaps of 268800 bytes whose fingerprints are `6d8a304f01dbd6e1` and
+    /// `5a7939e70c422d9d`, and five runs of five reported exactly those two.
+    ///
+    /// **The A/B/A control below is new, and it is what makes that a finding
+    /// rather than noise.** This case never carried one, though the suite
+    /// note above promises one for every comparison, and without it a
+    /// difference could have been `ImageRenderer` settling rather than the
+    /// input. `off == offAgain` holds in all five runs, so the toggle's
+    /// checked state does reach the bitmap here.
+    ///
+    /// **And the withdrawn sentence was wrong, not merely stale**, in a way
+    /// worth keeping: "the same way the `TextField`'s text does" folded two
+    /// controls into one rule. `textFieldContentDoesNotReachTheBitmap` still
+    /// passes on macOS 27. So "AppKit-backed, therefore out of the bitmap"
+    /// was never the rule — it was two controls agreeing on one OS, and they
+    /// have stopped agreeing.
+    ///
+    /// Why neither direction is asserted any more: a case asserting the
+    /// difference would be red on the gate, and the case asserting the
+    /// equality was red here for 31 days, which cost every full-suite report
+    /// in `docs/superpowers/ledgers/` a paragraph explaining it away. A test
+    /// that is always red is not a test. Neither answer is a property of this
+    /// package; the reproducibility is, and it is the precondition every
+    /// comparison in this suite rests on. The platform finding itself lives
+    /// in `docs/BACKLOG.md`.
+    ///
+    /// Every assertion left here is an EQUALITY, which a renderer returning
+    /// one blank bitmap for every input would satisfy, so the positive checks
+    /// that stop it being an attestation are named rather than assumed:
+    /// `imageRendererProducesANonEmptyBitmap` for non-emptiness, and
+    /// `varyingOnlyTheErrorTextRendersDifferently` and
+    /// `buttonStyleDiscriminatesOnItsParameter` for discrimination on this
+    /// very view and on a second one. Without those three this case would be
+    /// a comment that runs.
+    @Test("Varying only isRegex renders reproducibly")
+    func varyingOnlyTheRegexToggleRendersReproducibly() throws {
         let off = try #require(
             renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
         )
         let on = try #require(
             renderSettled(searchField(text: "alpha", isRegex: true, errorText: nil))
         )
-        #expect(off == on)
+        let offAgain = try #require(
+            renderSettled(searchField(text: "alpha", isRegex: false, errorText: nil))
+        )
+        let onAgain = try #require(
+            renderSettled(searchField(text: "alpha", isRegex: true, errorText: nil))
+        )
+
+        #expect(
+            off == offAgain,
+            "A/B/A control: isRegex off must render identically before and after isRegex on"
+        )
+        #expect(
+            on == onAgain,
+            "A/B/A control: isRegex on must render identically before and after isRegex off"
+        )
+        #expect(off.width == on.width)
+        #expect(off.height == on.height)
     }
 
     /// A second, independent view — a pure-SwiftUI `ButtonStyle` with no
@@ -236,6 +305,13 @@ struct ViewTestabilitySpike {
                     errorText: nil
                 )
             )
+        )
+        let shortAgain = try #require(
+            renderSettled(searchField(text: "a", isRegex: false, errorText: nil))
+        )
+        #expect(
+            shortAgain == short,
+            "A/B/A control: the same input must render identically before and after the other one"
         )
         #expect(short == long)
     }
