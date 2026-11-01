@@ -96,11 +96,19 @@ interest is paid by checking, not by remembering.
    into this section even when the count is zero** — a zero measured on a
    date is evidence, a zero remembered is not.
 3. Ask, each time, whether the pin can move forward: a later tag with real
-   mileage behind it is better than this one, and the way to find out is
-   to re-run the 22-behaviour probe and the gated suites against it, the
-   same two measurements that chose it. Anything that then only goes green
-   by weakening an assertion disqualifies the candidate, exactly as it
-   disqualified SeaweedFS below.
+   mileage behind it is better than this one, and the way to find out is to
+   re-run both measurements that chose it against the candidate —
+   `scripts/s3-behaviour-probe`, which must exit 0 with 22/22, and the gated
+   suites:
+
+       MACSCP_ITEST=1 swift test --filter 'S3AccessProbeTests|S3BucketSettingsGatedTests|S3CORSGatedTests|S3CreateBucketGatedTests|S3FileSystemIntegrationTests|S3ObjectLockGatedTests|S3RedirectAuthorizationMeasurementTests'
+
+   Anything that then only goes green by weakening an assertion
+   disqualifies the candidate, exactly as it disqualified SeaweedFS below.
+   **This step named the probe in prose only until 2026-11-01**, reading
+   "the way to find out is to re-run the 22-behaviour probe and the gated
+   suites against it, the same two measurements that chose it" — when no
+   such probe was in the repository, so half of it could not be followed.
 4. Ask whether MinIO came back. If `minio/minio` and `minio/mc` are
    pullable again, that is a fact worth recording here — but it is not by
    itself a reason to go back: the maintainer's decision on 2026-09-24 was
@@ -216,18 +224,60 @@ Check 4 — MinIO has NOT come back. `docker buildx imagetools inspect` on
 this changes nothing either way; it is recorded because a zero measured on a
 date is evidence.
 
-**One step of the recipe above could not be run as committed.** Check 3 says
-to "re-run the 22-behaviour probe and the gated suites against it". The
-gated suites exist and were run. The 22-behaviour raw-SigV4 probe does not
-exist as an artifact in this repository — it was written for the
-2026-09-25 candidate comparison and never committed, and the 22 behaviours
-survive only as the prose list further down this file.
-`grep -rln 'AbortMultipartUpload' scripts docker` prints this README and
-nothing else. So the instruction asks a later reader to reconstruct a probe
-from a paragraph before they can follow it, which is the failure CLAUDE.md's
-"A number travels with the command that produced it" is about, in the
-verification step of a security review. `docs/BACKLOG.md` carries a row for
-it.
+**One step of the recipe above could not be run as committed — and now it
+can.** Check 3 says to re-run the 22-behaviour probe and the gated suites
+against a candidate. When the pin moved on 2026-11-01 the gated suites
+existed and were run, and the 22-behaviour raw-SigV4 probe did not exist as
+an artifact in this repository: it was written for the 2026-09-25 candidate
+comparison, never committed, and the 22 behaviours survived only as the
+prose list further down this file. So the one check meant to gate a
+security-driven version move asked a later reader to reconstruct a probe
+from a paragraph first, which is the failure CLAUDE.md's "A number travels
+with the command that produced it" is about, arriving in a verification
+step rather than in a figure.
+
+It is `scripts/s3-behaviour-probe` since 2026-11-01, one behaviour per
+check, named and numbered as the list below names them, signed with
+`curl --aws-sigv4` the way `s3/init.sh` is — and with the SigV4 query-string
+derivation spelled out for behaviours 17 and 18, because curl cannot
+presign and presigning is what the app's share feature does. It writes
+everything under one `probe-<run>/` prefix in an existing bucket, removes it
+at exit, creates no bucket and does not touch the seeded `a.txt` or
+`sub/b.txt`. Exit 0 means all 22; any other exit is the NUMBER of failed
+behaviours, except 70, which means it never reached behaviour 1.
+
+    scripts/s3-behaviour-probe
+
+Measured 2026-11-01 against the `1.0.4` the pin had just moved to: **22/22**,
+exit 0. That is the half of check 3 the move itself had to go without.
+
+**Its own sensitivity was measured, because a probe that passes everything
+on its first run is the attestation this repo has a rule about.** Three
+breakages, and the first one found a real defect in the probe rather than in
+the store: with `ROOT_SECRET` deliberately wrong, the readiness gate — an
+unbounded `until` on a SIGNED call — could not tell a store that is not
+listening from one that refuses these credentials, and it printed
+"waiting for the store" 131 times until it was killed. The gate is bounded
+now and names which of the two it hit.
+
+| breakage | exit | result |
+|---|---|---|
+| none | 0 | 22/22 |
+| `ROOT_SECRET` wrong, `READY_TRIES=3` | 70 | no hang; "answers unsigned requests (403) but refused a signed ListBuckets" |
+| `OTHER_BUCKET=macscp-seed` | 2 | 20/22, behaviours 20 and 22 named |
+| `BUCKET=macscp-no-such-bucket` | 20 | 2/22, only 19 and 22 pass — neither depends on the bucket existing |
+
+The union of those reddens **21 of the 22**. The one left is behaviour 19,
+"wrong credentials refused with 403", which could only be falsified by a
+store that accepts a bad signature; its sensitivity is argued, not measured,
+and it is named here rather than counted as covered.
+
+What the script does NOT restore is the `22/22` in the candidate table
+below for `chrislusf/seaweedfs:4.47`. That column is a 2026-09-25
+measurement against an image this rig no longer pulls, and reproducing it
+means pulling that image again and running the script against it. The
+method is reproducible now; that row's figure is still only as good as its
+date.
 
 Two candidates were measured against what the S3 backend actually
 exercises, with a raw-SigV4 probe (no SDK) of 22 behaviours and then with
