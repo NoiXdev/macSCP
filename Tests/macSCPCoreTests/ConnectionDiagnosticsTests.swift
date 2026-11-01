@@ -26,8 +26,18 @@ import Testing
 /// how long the body waited for a thread as well as how long it ran. On a
 /// three-core CI runner a body that computes nothing can miss a small budget
 /// entirely, and the step then settles as `notStarted`. `.timeLimit` is the
-/// net for a case that truly hangs; it is deliberately far larger than any
-/// step budget below, so no assertion in this suite depends on it.
+/// net for a case that truly hangs, and no assertion in this suite depends
+/// on it.
+///
+/// Until 2026-11-01 that sentence continued "it is deliberately far larger
+/// than any step budget below, so no assertion in this suite depends on it",
+/// and the clause quoted here is withdrawn: `roomy` is 600 s against this
+/// suite's 300 s bound, so the budget is the larger of the two. The ordering
+/// was never what made the claim true. A case asserting a dial's outcome
+/// wants a budget its own deadline cannot win — see `roomy` — and a case
+/// asserting the deadline sets a tight budget of its own and says so. Either
+/// way the assertion is on the outcome, not on a clock, which is the
+/// property the sentence was about.
 @Suite("ConnectionDiagnostics", .timeLimit(.minutes(5)))
 struct ConnectionDiagnosticsTests {
     /// The secret the SSH dial cases hand the runner. Named rather than
@@ -69,6 +79,43 @@ struct ConnectionDiagnosticsTests {
     /// Named, like every other secret in this file, because `#expect` prints
     /// the source text of what it checks.
     private static let slashBearingSecret = "wJalrDiagnostics/TestSecret/Value"
+
+    /// The step budget for a case whose claim is the OUTCOME of a dial, not
+    /// how long the dial took to report it. Roomy for the reason the suite
+    /// note above gives: `DetachedProbe` arms its deadline at CREATION, so a
+    /// small budget bounds how long a body waited for a thread as much as how
+    /// long it ran, and on a starved runner the deadline settles the step
+    /// before the body says what it met.
+    ///
+    /// 600 s, the figure `ResolveNamesTests.roomy` and the two roomy cases in
+    /// `ConnectionDiagnosticsJumpTests` already carry. One of those two,
+    /// `theJumpsSecretNeverReachesTheReport`, was moved off `.seconds(10)`
+    /// for exactly this failure on 2026-09-19 by `61850a9c`, whose diff is
+    /// one file, 10 insertions and 2 deletions — the other roomy case came
+    /// off `.seconds(30)` in the same commit — and which left the five
+    /// literals here standing. They fell 42 days later: CI run 41244948849
+    /// (2026-10-31, `e4e5d054`) read `.timedOut` in
+    /// `theSSHDialNeverPutsTheSecretInTheReport`, which fails that case's
+    /// anchor for the wrong reason. That run's own figures say why 10 s could
+    /// not hold — this command prints `8184 8307`:
+    ///
+    ///     gh run view 41244948849 --log-failed | grep -o 'ed after [0-9]*\.[0-9]* seconds' | sed -E 's/ed after ([0-9]+)\..*/\1/' | awk '{n++; if ($1>=10) k++} END {print k, n}'
+    ///
+    /// 8184 of the 8307 cases carrying a duration line reported a wall clock
+    /// AT OR ABOVE the budget those five handed the runner — the pipeline's
+    /// comparison is `>= 10` on the integer seconds — against a run total of
+    /// 116.701 s; the case that went red reported 64.975 s itself. A budget
+    /// below almost every case's wall clock does not bound the step's work,
+    /// only whether its body was given a thread in time.
+    ///
+    /// A roomy budget costs these five nothing, which is what makes it safe
+    /// here and unmeasured elsewhere: every target they use either answers
+    /// at once (the rig) or refuses at once (a closed loopback port, and the
+    /// skipped case never dials). None of them can park on this budget, so
+    /// raising it cannot lengthen a run. The same is NOT established for the
+    /// echo and trace cases, which send real probes — `docs/BACKLOG.md`,
+    /// "Wall-clock ceilings still in the tree", eighth shape.
+    private static let roomy: Duration = .seconds(600)
 
     // MARK: - Resolve
 
@@ -1074,7 +1121,7 @@ struct ConnectionDiagnosticsTests {
             descriptor: .descriptor(for: .ssh), values: values,
             secrets: FixedSecretSource(value: secret), sessionID: UUID(), jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(10)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: Self.roomy
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1101,7 +1148,7 @@ struct ConnectionDiagnosticsTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .ssh), values: values, secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(10)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: Self.roomy
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1341,7 +1388,7 @@ struct ConnectionDiagnosticsTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .s3), values: values, secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(10)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: Self.roomy
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1565,7 +1612,7 @@ struct ConnectionDiagnosticsTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .s3), values: values, secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(10)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: Self.roomy
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
@@ -1584,7 +1631,7 @@ struct ConnectionDiagnosticsTests {
         let report = await ConnectionDiagnostics(
             descriptor: .descriptor(for: .webdav), values: values, secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(10)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: Self.roomy
         ).run()
 
         let dial = try #require(report.steps.first { $0.id == DiagnosticStepID.dial })
