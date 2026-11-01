@@ -94,9 +94,19 @@ struct ConnectionDiagnosticsTests {
     /// one file, 10 insertions and 2 deletions — the other roomy case came
     /// off `.seconds(30)` in the same commit — and which left the five
     /// literals here standing. They fell 42 days later: CI run 41244948849
-    /// (2026-10-31, `e4e5d054`) read `.timedOut` in
-    /// `theSSHDialNeverPutsTheSecretInTheReport`, which fails that case's
-    /// anchor for the wrong reason. That run's own figures say why 10 s could
+    /// (2026-10-31, the change that is `351e47c3` on develop) read
+    /// `.timedOut` in `theSSHDialNeverPutsTheSecretInTheReport`, which fails
+    /// that case's anchor for the wrong reason.
+    ///
+    /// **That parenthesis read "`e4e5d054`" until 2026-11-01**, and the hash
+    /// is withdrawn rather than the claim. The run did run on `e4e5d054` —
+    /// `gh run view 41244948849 --json headSha` still says so — but the PR
+    /// carrying it landed by rebase, which is the only merge this repo's
+    /// settings allow, so that object is on no branch and no clone can reach
+    /// it. `351e47c3` is the same change on develop, matched by diffstat. The
+    /// run ID is the half of the citation that survives a rebase, which is
+    /// why it is now the load-bearing half (CLAUDE.md, "prefer the run or the
+    /// subject to a hash from your own branch"). That run's own figures say why 10 s could
     /// not hold — this command prints `8184 8307`:
     ///
     ///     gh run view 41244948849 --log-failed | grep -o 'ed after [0-9]*\.[0-9]* seconds' | sed -E 's/ed after ([0-9]+)\..*/\1/' | awk '{n++; if ($1>=10) k++} END {print k, n}'

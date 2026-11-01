@@ -400,6 +400,27 @@ in one piece of work — `:303`, then `:307`/`:308`, then `:310`/`:311` —
 each time because a sibling commit added comment lines above them. The
 symbol names written in their place survived all three.
 
+A second corollary, measured 2026-11-01: **prefer the run or the subject
+to a hash from your own branch.** This repo allows only rebase merges —
+`gh api repos/NoiXdev/macSCP --jq '[.allow_merge_commit, .allow_squash_merge, .allow_rebase_merge]'`
+prints `[false,false,true]` — so every commit a branch carries gets a new
+hash the moment it lands, and a record written ON that branch which cites
+its own hash stops resolving at exactly the moment the work becomes
+permanent. It happened the same morning the rule was written: PR #9's two
+commits, `e4e5d054` and `20fbe7f2`, became `351e47c3` and `f0fd5c48`, and
+two citations of the first — one in a test's doc comment, one in a
+`docs/BACKLOG.md` row, both committed hours earlier by the same work —
+were left pointing at an object no clone can reach.
+
+What survives: a CI run ID, which GitHub keeps and which still reports the
+dead hash as its `headSha`; a commit's subject line, which a rebase
+preserves; and a hash that was already on a long-lived branch when it was
+cited, which is why the citations of `61850a9c` and `ae19a53a` beside the
+broken one were fine. A hash is not banned — it is the best citation there
+is for history. It is specifically a hash from the branch you are standing
+on that cannot be trusted, and that is the one a report reaches for most
+naturally, because it is the one `git log -1` just printed.
+
 ## A correction quotes what it withdraws
 
 Measured 2026-10-02, on the `fullCRUDRoundTripOverBasic` row of
@@ -505,6 +526,43 @@ own:
    same remedy: before believing a zero, feed the pattern something it MUST
    match and watch it match. The corrected strip reproduces the figure the
    gate itself printed, 1 unique location, where the original reported 0.
+
+   **A zero can also be a REFUSAL you silenced, measured 2026-11-01.** A
+   sweep for the two dead hashes named in "prefer the run or the subject to
+   a hash from your own branch" above was written as
+   `grep -rnoE '.{0,55}(<sha>|<sha>).{0,40}' --include='*.swift' --include='*.md' Tests docs CLAUDE.md 2>/dev/null`
+   and printed nothing, which was read as "no occurrences remain" — while
+   three files carried one each, written minutes earlier by the same
+   session. ugrep had not matched nothing. It had REFUSED the pattern,
+   printing `exceeds complexity limits` on stderr and exiting **2**, and the
+   `2>/dev/null` threw the only evidence of that away. The boundary is real
+   and sits close to what a show-me-the-context sweep reaches for, because
+   each `.` expands to a UTF-8 alternation before the bound is applied:
+
+       grep -oE '.{0,48}e4e5d054.{0,48}' CLAUDE.md   # exit 0, three matches
+       grep -oE '.{0,49}e4e5d054.{0,49}' CLAUDE.md   # exit 2, no output
+
+   Both run as committed, and they keep running because the string they
+   search for is in this file — put there by the paragraph that withdraws
+   it, and twice more by the two command lines above, which is why the count
+   is three and not the one it was before these lines existed. That figure
+   was corrected here after re-running, which is the third point of "A
+   number travels with the command that produced it" happening inside the
+   paragraph that cites it. That is the self-reference of the third point under "A number travels
+   with the command that produced it" working in the useful direction for
+   once, and it is worth naming so a later reader does not take the match
+   for a surviving citation. `/usr/bin/grep` matches in both cases, so which
+   grep is on the path decides whether this pattern is a measurement or an
+   error.
+
+   Two rules come off it. **A verification command never gets
+   `2>/dev/null`** — the diagnostic is the part that tells you which kind of
+   zero you have. And **its exit status is part of its answer**: an empty
+   output with exit 2 is not a count, and nothing downstream of the pipe can
+   tell it from an empty output with exit 1. This is the `sed` case above
+   with the diagnostic deleted rather than missing, which is the worse of
+   the two: there the tool had no way to warn, here it warned and the
+   harness around it discarded the warning.
 
 2. **A guard that spells a symbol it could read instead is waiting for a
    rename.** Walk the name back from a call site, derive a catalogue key
