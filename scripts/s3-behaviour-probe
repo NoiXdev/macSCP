@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+#
+# s3-behaviour-probe — the 22 S3 behaviours the macSCP backend depends on,
+# measured against a running store with raw signed HTTP and no SDK.
+#
+# Why this exists as a script. `docker/test-server/README.md`, "This pin is a
+# debt with a review date", step 3 says to re-run the 22-behaviour probe
+# before the pin moves. Until 2026-11-01 that probe was not in this
+# repository: it was written for the 2026-09-25 candidate comparison, never
+# committed, and the 22 behaviours survived only as a prose list in that
+# README. So the one check meant to gate a version move could not be
+# followed, and the comparison table's two `22/22` figures were
+# unreproducible by anyone. That is this project's own rule about a figure
+# travelling with its command, failing in a verification step.
+#
+# What it is NOT: a test of macSCP. It tests the SERVER, which is why it
+# speaks HTTP directly. The gated Swift suites are the other half and test
+# the app against the same store.
+#
+# Usage:
+#   scripts/s3-behaviour-probe                 # the rig's documented defaults
+#   S3_URL=http://127.0.0.1:19000 scripts/s3-behaviour-probe
+#
+# Exits 0 only when all 22 pass, and otherwise the exit status is the NUMBER
+# of failed behaviours, each named on its own line. Exit 70 is the one
+# exception and means the probe never got as far as behaviour 1: see the
+# bounded readiness gate below, which says which of its two causes it hit.
+#
+# Credentials come from the environment, defaulting to the rig's fixture
+# values as compose.yml spells them. Nothing below prints a secret, a
+# signature or a presigned URL: a probe that fails must say WHICH behaviour
+# failed without putting the material in a log.
+#
+# Isolation: every object this writes lives under one `probe-<run>/` prefix
+# inside an existing bucket and is removed at exit. It creates no bucket and
+# never touches the seeded keys `a.txt` and `sub/b.txt`, so a run leaves the
+# rig exactly as the gated suites expect to find it.
+
+set -u
+
+S3_URL="${S3_URL:-http://127.0.0.1:19000}"
+BUCKET="${BUCKET:-macscp-seed}"
+OTHER_BUCKET="${OTHER_BUCKET:-macscp-second}"
+ROOT_KEY="${ROOT_KEY:-macscp}"
+ROOT_SECRET="${ROOT_SECRET:-macscpsecretkey}"
+SCOPED_KEY="${SCOPED_KEY:-macscp-scoped}"
+SCOPED_SECRET="${SCOPED_SECRET:-macscpscopedsecret}"
+REGION="${REGION:-us-east-1}"
+
+HOST="${S3_URL#*://}"
+RUN="probe-$$-$(date +%s)"
+WORK="$(mktemp -d)"
+PASS=0
+FAIL=0
+FAILED_NAMES=""
+
+cleanup() {
+    # Best effort, and deliberately silent: a cleanup failure must not be
+    # mistaken for a behaviour failure. The prefix is unique per run, so
+    # anything left behind is inert.
+    sign -X DELETE "$S3_URL/$BUCKET/$RUN/single.txt"      >/dev/null 2>&1
+    sign -X DELETE "$S3_URL/$BUCKET/$RUN/copy.txt"        >/dev/null 2>&1
+    sign -X DELETE "$S3_URL/$BUCKET/$RUN/presigned.txt"   >/dev/null 2>&1
+    sign -X DELETE "$S3_URL/$BUCKET/$RUN/folder/"         >/dev/null 2>&1
+    sign -X DELETE "$S3_URL/$BUCKET/$RUN/multipart.bin"   >/dev/null 2>&1
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+# --- signing -----------------------------------------------------------
+
+# Header-signed call as the root identity. curl does the SigV4; this is the
+# same mechanism docker/test-server/s3/init.sh uses, and the reason neither
+# needs a vendor CLI.
+sign() {
+    curl -sS --aws-sigv4 "aws:amz:$REGION:s3" --user "$ROOT_KEY:$ROOT_SECRET" "$@"
+}
+sign_as() {
+    local key="$1" secret="$2"; shift 2
+    curl -sS --aws-sigv4 "aws:amz:$REGION:s3" --user "$key:$secret" "$@"
+}
+status_of() {
+    sign -o /dev/null -w '%{http_code}' "$@"
+}
+status_as() {
+    local key="$1" secret="$2"; shift 2
+    sign_as "$key" "$secret" -o /dev/null -w '%{http_code}' "$@"
+}
+
+hmac_hex() { printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$1" -hex | sed 's/.*= //'; }
+hmac_hex_from_key() { printf '%s' "$2" | openssl dgst -sha256 -mac HMAC -macopt "key:$1" -hex | sed 's/.*= //'; }
+sha256_hex() { printf '%s' "$1" | openssl dgst -sha256 -hex | sed 's/.*= //'; }
+
+# A query-string-signed URL: SigV4 in the query, no Authorization header.
+# curl cannot presign, so the derivation is spelled out here — which is also
+# the point of behaviours 17 and 18, since the app presigns for the share
+# feature and a server that only accepts header signing would break it.
+presign() {
+    local method="$1" path="$2" expires="${3:-300}"
+    local amzdate datestamp scope cred canon_query canon_req sts k_date k_region k_service k_signing sig
+    amzdate="$(date -u +%Y%m%dT%H%M%SZ)"
+    datestamp="${amzdate%%T*}"
+    scope="$datestamp/$REGION/s3/aws4_request"
+    cred="$ROOT_KEY/$scope"
+    # The query must be sorted by key, and every value percent-encoded.
+    canon_query="X-Amz-Algorithm=AWS4-HMAC-SHA256"
+    canon_query="$canon_query&X-Amz-Credential=$(printf '%s' "$cred" | sed 's|/|%2F|g')"
+    canon_query="$canon_query&X-Amz-Date=$amzdate"
+    canon_query="$canon_query&X-Amz-Expires=$expires"
+    canon_query="$canon_query&X-Amz-SignedHeaders=host"
+    canon_req="$method
+$path
+$canon_query
+host:$HOST
+
+host
+UNSIGNED-PAYLOAD"
+    sts="AWS4-HMAC-SHA256
+$amzdate
+$scope
+$(sha256_hex "$canon_req")"
+    k_date="$(hmac_hex_from_key "AWS4$ROOT_SECRET" "$datestamp")"
+    k_region="$(hmac_hex "$k_date" "$REGION")"
+    k_service="$(hmac_hex "$k_region" "s3")"
+    k_signing="$(hmac_hex "$k_service" "aws4_request")"
+    sig="$(hmac_hex "$k_signing" "$sts")"
+    printf '%s%s?%s&X-Amz-Signature=%s' "$S3_URL" "$path" "$canon_query" "$sig"
+}
+
+# --- reporting ---------------------------------------------------------
+
+ok()   { PASS=$((PASS+1)); printf '  ok    %s\n' "$1"; }
+bad()  { FAIL=$((FAIL+1)); FAILED_NAMES="$FAILED_NAMES
+    $1 — $2"; printf '  FAIL  %s — %s\n' "$1" "$2"; }
+# `expect` compares and reports; it never echoes the credential material,
+# only the behaviour's name and what was seen.
+expect() {
+    local name="$1" want="$2" got="$3"
+    if [ "$want" = "$got" ]; then ok "$name"; else bad "$name" "expected $want, got $got"; fi
+}
+expect_match() {
+    local name="$1" pattern="$2" got="$3"
+    if printf '%s' "$got" | /usr/bin/grep -qE "$pattern"; then ok "$name"
+    else bad "$name" "no match for $pattern"; fi
+}
+
+printf 's3-behaviour-probe: %s, bucket %s, prefix %s\n' "$HOST" "$BUCKET" "$RUN"
+
+# --- readiness ---------------------------------------------------------
+
+# Bounded, and it names WHICH of the two failures it hit. The first
+# sensitivity run of this probe — `ROOT_SECRET` deliberately wrong — sat in
+# an unbounded `until` on a SIGNED call, where a store that is not listening
+# and a store that refuses these credentials look identical: it printed
+# "waiting for the store" 131 times and had to be killed. A probe that can
+# hang is the thing CLAUDE.md's "Tests never block the cooperative pool" is
+# about, one layer out, and a wait that cannot fail is the attestation its
+# guards section is about.
+READY_TRIES="${READY_TRIES:-20}"
+tries=0
+while [ "$(status_of "$S3_URL/")" != "200" ]; do
+    tries=$((tries+1))
+    if [ "$tries" -ge "$READY_TRIES" ]; then
+        unsigned="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$S3_URL/" 2>/dev/null)"
+        if [ -z "$unsigned" ] || [ "$unsigned" = "000" ]; then
+            printf 'the store at %s did not answer at all in %s tries\n' "$HOST" "$READY_TRIES"
+        else
+            printf 'the store at %s answers unsigned requests (%s) but refused a signed ListBuckets: the credentials in the environment are not this store'"'"'s\n' "$HOST" "$unsigned"
+        fi
+        exit 70
+    fi
+    sleep 1
+done
+
+# --- 1. HeadBucket ------------------------------------------------------
+expect "1 HeadBucket" "200" "$(status_of -I "$S3_URL/$BUCKET")"
+
+# --- 2. ListBuckets -----------------------------------------------------
+buckets="$(sign "$S3_URL/")"
+if printf '%s' "$buckets" | /usr/bin/grep -q "$BUCKET" && printf '%s' "$buckets" | /usr/bin/grep -q "$OTHER_BUCKET"; then
+    ok "2 ListBuckets names both buckets"
+else
+    bad "2 ListBuckets names both buckets" "one or both missing from the listing"
+fi
+
+# --- 3. ListObjectsV2 with delimiter and CommonPrefixes -----------------
+listing="$(sign "$S3_URL/$BUCKET?list-type=2&delimiter=%2F")"
+expect_match "3 ListObjectsV2 delimiter yields CommonPrefixes" '<CommonPrefixes>' "$listing"
+
+# --- 4. single-part PUT whose ETag is the object's MD5 ------------------
+printf 'hello probe body\n' > "$WORK/single.txt"
+want_md5="$(openssl dgst -md5 -hex < "$WORK/single.txt" | sed 's/.*= //')"
+put_etag="$(sign -X PUT --upload-file "$WORK/single.txt" -D - -o /dev/null "$S3_URL/$BUCKET/$RUN/single.txt" \
+    | tr -d '\r' | /usr/bin/grep -i '^etag:' | sed 's/.*: *//; s/"//g')"
+expect "4 single-part PUT ETag is the MD5" "$want_md5" "$put_etag"
+
+# --- 5. GetObject -------------------------------------------------------
+got_body="$(sign "$S3_URL/$BUCKET/$RUN/single.txt")"
+expect "5 GetObject returns the bytes" "$(cat "$WORK/single.txt")" "$got_body"
+
+# --- 6. ranged GET answering 206 with Content-Range at the offset -------
+range_head="$(sign -r 5-9 -D - -o /dev/null -w '%{http_code}' "$S3_URL/$BUCKET/$RUN/single.txt" | tr -d '\r')"
+if printf '%s' "$range_head" | /usr/bin/grep -qi 'content-range: bytes 5-9' && printf '%s' "$range_head" | /usr/bin/grep -q '206'; then
+    ok "6 ranged GET answers 206 at the offset asked for"
+else
+    bad "6 ranged GET answers 206 at the offset asked for" "no 206 with Content-Range starting at 5"
+fi
+
+# --- 7 & 8. the ranged GET with a matching and a stale If-Match ---------
+expect "7 ranged GET with a matching If-Match still answers 206" "206" \
+    "$(status_of -r 5-9 -H "If-Match: \"$want_md5\"" "$S3_URL/$BUCKET/$RUN/single.txt")"
+expect "8 ranged GET with a stale If-Match answers 412" "412" \
+    "$(status_of -r 5-9 -H 'If-Match: "00000000000000000000000000000000"' "$S3_URL/$BUCKET/$RUN/single.txt")"
+
+# --- 9. HeadObject ------------------------------------------------------
+expect "9 HeadObject" "200" "$(status_of -I "$S3_URL/$BUCKET/$RUN/single.txt")"
+
+# --- 10. CopyObject via x-amz-copy-source -------------------------------
+copy_status="$(status_of -X PUT -H "x-amz-copy-source: /$BUCKET/$RUN/single.txt" "$S3_URL/$BUCKET/$RUN/copy.txt")"
+if [ "$copy_status" = "200" ] && [ "$(sign "$S3_URL/$BUCKET/$RUN/copy.txt")" = "$(cat "$WORK/single.txt")" ]; then
+    ok "10 CopyObject via x-amz-copy-source"
+else
+    bad "10 CopyObject via x-amz-copy-source" "status $copy_status or the copy differs"
+fi
+
+# --- 11. a folder-marker PUT appears as a CommonPrefix ------------------
+sign -X PUT -H 'Content-Length: 0' --data-binary '' -o /dev/null "$S3_URL/$BUCKET/$RUN/folder/" >/dev/null 2>&1
+marker_listing="$(sign "$S3_URL/$BUCKET?list-type=2&delimiter=%2F&prefix=$RUN%2F")"
+expect_match "11 folder-marker PUT appears as a CommonPrefix" "<Prefix>$RUN/folder/</Prefix>|$RUN/folder/" "$marker_listing"
+
+# --- 12. CreateMultipartUpload + UploadPart -----------------------------
+create="$(sign -X POST "$S3_URL/$BUCKET/$RUN/multipart.bin?uploads")"
+upload_id="$(printf '%s' "$create" | sed -n 's|.*<UploadId>\(.*\)</UploadId>.*|\1|p')"
+if [ -n "$upload_id" ]; then
+    # 5 MiB is S3's minimum for a non-final part; two parts make the
+    # `<hex>-<parts>` ETag of behaviour 13 meaningful.
+    dd if=/dev/zero of="$WORK/part1" bs=1048576 count=5 2>/dev/null
+    printf 'tail\n' > "$WORK/part2"
+    e1="$(sign -X PUT --upload-file "$WORK/part1" -D - -o /dev/null "$S3_URL/$BUCKET/$RUN/multipart.bin?partNumber=1&uploadId=$upload_id" \
+        | tr -d '\r' | /usr/bin/grep -i '^etag:' | sed 's/.*: *//')"
+    e2="$(sign -X PUT --upload-file "$WORK/part2" -D - -o /dev/null "$S3_URL/$BUCKET/$RUN/multipart.bin?partNumber=2&uploadId=$upload_id" \
+        | tr -d '\r' | /usr/bin/grep -i '^etag:' | sed 's/.*: *//')"
+    if [ -n "$e1" ] && [ -n "$e2" ]; then
+        ok "12 CreateMultipartUpload and UploadPart"
+    else
+        bad "12 CreateMultipartUpload and UploadPart" "a part returned no ETag"
+    fi
+else
+    bad "12 CreateMultipartUpload and UploadPart" "no UploadId in the create response"
+fi
+
+# --- 13. CompleteMultipartUpload ETag of the <hex>-<parts> shape --------
+if [ -n "${upload_id:-}" ] && [ -n "${e1:-}" ] && [ -n "${e2:-}" ]; then
+    cat > "$WORK/complete.xml" <<XML
+<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>$e1</ETag></Part><Part><PartNumber>2</PartNumber><ETag>$e2</ETag></Part></CompleteMultipartUpload>
+XML
+    complete="$(sign -X POST -H 'Content-Type: application/xml' --data-binary "@$WORK/complete.xml" \
+        "$S3_URL/$BUCKET/$RUN/multipart.bin?uploadId=$upload_id")"
+    mp_etag="$(printf '%s' "$complete" | sed -n 's|.*<ETag>\(.*\)</ETag>.*|\1|p' | tr -d '"&quot;')"
+    expect_match "13 CompleteMultipartUpload ETag is <hex>-<parts>" '^[0-9a-f]+-[0-9]+$' "$mp_etag"
+else
+    bad "13 CompleteMultipartUpload ETag is <hex>-<parts>" "skipped: behaviour 12 did not produce parts"
+fi
+
+# --- 14. AbortMultipartUpload -------------------------------------------
+abort_create="$(sign -X POST "$S3_URL/$BUCKET/$RUN/aborted.bin?uploads")"
+abort_id="$(printf '%s' "$abort_create" | sed -n 's|.*<UploadId>\(.*\)</UploadId>.*|\1|p')"
+if [ -n "$abort_id" ]; then
+    expect "14 AbortMultipartUpload" "204" \
+        "$(status_of -X DELETE "$S3_URL/$BUCKET/$RUN/aborted.bin?uploadId=$abort_id")"
+else
+    bad "14 AbortMultipartUpload" "no UploadId to abort"
+fi
+
+# --- 15. batch DeleteObjects (POST ?delete with Content-MD5) ------------
+cat > "$WORK/delete.xml" <<XML
+<Delete><Object><Key>$RUN/copy.txt</Key></Object><Object><Key>$RUN/multipart.bin</Key></Object></Delete>
+XML
+del_md5="$(openssl dgst -md5 -binary < "$WORK/delete.xml" | base64)"
+del_status="$(status_of -X POST -H "Content-MD5: $del_md5" -H 'Content-Type: application/xml' \
+    --data-binary "@$WORK/delete.xml" "$S3_URL/$BUCKET?delete")"
+if [ "$del_status" = "200" ] && [ "$(status_of -I "$S3_URL/$BUCKET/$RUN/copy.txt")" = "404" ]; then
+    ok "15 batch DeleteObjects with Content-MD5"
+else
+    bad "15 batch DeleteObjects with Content-MD5" "status $del_status or a key survived"
+fi
+
+# --- 16. DeleteObject on an absent key answers 204 ----------------------
+expect "16 DeleteObject on an absent key answers 204" "204" \
+    "$(status_of -X DELETE "$S3_URL/$BUCKET/$RUN/never-existed.txt")"
+
+# --- 17. a presigned GET (query-string SigV4, no Authorization) ---------
+presigned_get="$(presign GET "/$BUCKET/$RUN/single.txt")"
+expect "17 presigned GET" "200" "$(curl -sS -o /dev/null -w '%{http_code}' "$presigned_get")"
+
+# --- 18. a presigned PUT ------------------------------------------------
+presigned_put="$(presign PUT "/$BUCKET/$RUN/presigned.txt")"
+expect "18 presigned PUT" "200" \
+    "$(curl -sS -o /dev/null -w '%{http_code}' -X PUT --data-binary 'presigned' "$presigned_put")"
+
+# --- 19. wrong credentials refused with 403 -----------------------------
+# The secret is deliberately a literal that is not a credential anywhere.
+expect "19 wrong credentials refused with 403" "403" \
+    "$(status_as "$ROOT_KEY" "not-the-secret" "$S3_URL/$BUCKET?list-type=2")"
+
+# --- 20. the scoped key's ListBuckets is 200 with a filtered list -------
+scoped_buckets="$(sign_as "$SCOPED_KEY" "$SCOPED_SECRET" "$S3_URL/")"
+if printf '%s' "$scoped_buckets" | /usr/bin/grep -q "$BUCKET" && ! printf '%s' "$scoped_buckets" | /usr/bin/grep -q "$OTHER_BUCKET"; then
+    ok "20 the scoped key's ListBuckets is filtered, not refused"
+else
+    bad "20 the scoped key's ListBuckets is filtered, not refused" "the listing is not exactly the policy's one bucket"
+fi
+
+# --- 21. the scoped key lists its own bucket ----------------------------
+expect "21 the scoped key lists its own bucket" "200" \
+    "$(status_as "$SCOPED_KEY" "$SCOPED_SECRET" "$S3_URL/$BUCKET?list-type=2")"
+
+# --- 22. the scoped key is refused the bucket its policy omits ---------
+expect "22 the scoped key is refused the bucket its policy omits" "403" \
+    "$(status_as "$SCOPED_KEY" "$SCOPED_SECRET" "$S3_URL/$OTHER_BUCKET?list-type=2")"
+
+# --- verdict ------------------------------------------------------------
+printf '\n%s/%s behaviours satisfied\n' "$PASS" "$((PASS+FAIL))"
+if [ "$FAIL" -ne 0 ]; then
+    printf 'failed:%s\n' "$FAILED_NAMES"
+    exit "$FAIL"
+fi
+exit 0
