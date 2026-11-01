@@ -57,7 +57,7 @@ services:
   # suites did not have to change: the ports, both bucket names, both key
   # pairs and every refusal they assert are what they were.
   s3:
-    image: rustfs/rustfs:1.0.0
+    image: rustfs/rustfs:1.0.4
     container_name: macscp-test-s3
     # Host ports are deliberately non-standard (19000/19001, mapped to the
     # container's 9000/9001) to avoid colliding with an S3 service a dev
