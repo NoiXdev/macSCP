@@ -18,17 +18,19 @@ struct CitadelFileSystemIntegrationTests {
             username: "testuser",
             auth: .password("testpass")
         )
-        // The store is only consulted during the handshake (never retained by
-        // the returned `CitadelFileSystem`), so its temp directory can be
-        // removed right after `connect` returns — every caller of this
-        // shared helper gets known-hosts cleanup for free.
+        // The store is seeded with the rig's own host keys before the dial and
+        // is only consulted during the handshake (never retained by the
+        // returned `CitadelFileSystem`), so its temp directory can be removed
+        // right after `connect` returns — every caller of this shared helper
+        // gets known-hosts cleanup for free.
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let store = KnownHostsStore(directory: dir)
+        let store = try await Self.rigKnownHosts(in: dir)
         return try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
     }
 
@@ -106,10 +108,11 @@ struct CitadelFileSystemIntegrationTests {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let store = KnownHostsStore(directory: dir)
+        let store = try await Self.rigKnownHosts(in: dir)
         await #expect(throws: RemoteFSError.authenticationFailed) {
             _ = try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
     }
 
@@ -382,10 +385,11 @@ struct CitadelFileSystemIntegrationTests {
         let khDir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("macscp-kh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: khDir) }
-        let store = KnownHostsStore(directory: khDir)
+        let store = try await Self.rigKnownHosts(in: khDir)
         let fs = try await connectWithRetry {
             try await CitadelFileSystem.connect(
-                config: config, connectTimeout: .seconds(30), knownHosts: store, onUnknownHostKey: .asking { _ in true })
+                config: config, connectTimeout: .seconds(30), knownHosts: store,
+                onUnknownHostKey: .refusing)
         }
         defer { Task { await fs.disconnect() } }
 
