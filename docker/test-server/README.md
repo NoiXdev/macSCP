@@ -50,14 +50,20 @@ appears in `THIRD_PARTY_NOTICES.md`, which is generated from
 
 ### This pin is a debt with a review date
 
-Upstream: <https://github.com/rustfs/rustfs>. Tag `1.0.0` was **released
-2026-09-16** and pinned here **2026-09-25**, nine days later. The digest
-that tag resolved to when it was pinned, read from the pulled image with
-`docker image inspect rustfs/rustfs:1.0.0 --format '{{index .RepoDigests 0}}'`:
+Upstream: <https://github.com/rustfs/rustfs>. The pin is **`1.0.4`**, moved
+there on **2026-11-01** by the review below, which found six published
+advisories covering the version pinned until then. Its index digest, read
+from the registry with
+`docker buildx imagetools inspect rustfs/rustfs:1.0.4`:
 
 ```
-rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+rustfs/rustfs@sha256:ed9210d6411d77ffceb70d94b964a3cb7d225983368bc25bebe01e995293dcc2
 ```
+
+The pin before it was `1.0.0`, **released 2026-09-16** and pinned here
+**2026-09-25**, nine days later; the digest that tag resolved to, which it
+still resolved to when the pin moved, was
+`rustfs/rustfs@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`.
 
 Nine days of public mileage is not much for the only server the gated S3
 suites measure anything against, and this repo already has a rule for a
@@ -67,11 +73,23 @@ interest is paid by checking, not by remembering.
 
 **Check at every release, and before any change to this pin:**
 
-1. Re-read the digest above (`docker image inspect`, or
-   `docker manifest inspect rustfs/rustfs:1.0.0`). A tag that now resolves
-   to a different digest has been moved under the rig, which is the one
-   thing a pinned tag is supposed to prevent — say so here before doing
-   anything else.
+1. Re-read the digest above with
+   `docker buildx imagetools inspect rustfs/rustfs:1.0.4`, which asks the
+   REGISTRY. A tag that now resolves to a different digest has been moved
+   under the rig, which is the one thing a pinned tag is supposed to
+   prevent — say so here before doing anything else.
+   **Corrected 2026-11-01**, having read "Re-read the digest above
+   (`docker image inspect`, or `docker manifest inspect
+   rustfs/rustfs:1.0.0`)": the first of those two cannot do this job.
+   `docker image inspect` reads the LOCAL image, so on a machine that
+   pulled at pin time it prints the pinned digest whatever the registry now
+   serves. Measured the same day: that machine's local image carried
+   `.Metadata.LastTagTime` `2026-09-25`, the pin date, and the command
+   printed the pinned digest — a moved tag would have gone unseen by the
+   check written to catch exactly that. `docker manifest inspect` does
+   reach the registry, but prints each platform's manifest digest rather
+   than the index digest recorded above, so it cannot be compared with it
+   directly.
 2. `gh api repos/rustfs/rustfs/releases` and
    `gh api repos/rustfs/rustfs/security-advisories`. A security fix is
    taken first, before any other upgrade. **Write the count and the date
@@ -106,6 +124,110 @@ of a project that discloses and patches, all of it before 1.0.0.
 tags to be `1.0.1-preview.1` … `1.0.1-preview.11` (the last 2026-09-24) —
 previews, so `1.0.0` is still the newest release, and there is nothing
 stable to move the pin forward to yet.
+
+**Checked 2026-11-01, 37 days after the pin — and the zero above is no
+longer the zero.** Nothing in the 2026-09-25 block is withdrawn: every
+claim in it is dated and was true of what it measured. Two of its
+conclusions no longer describe the present, and are quoted here so that a
+reader skimming the section does not carry them forward — "the count that
+matters here is **zero advisories against the pinned version, measured
+2026-09-25**", and "there is nothing stable to move the pin forward to
+yet". Both were overtaken on 2026-10-18 and nobody looked until this
+review, which is the whole reason the review date exists.
+
+Check 1 — the tag had NOT been moved. The registry served the same index
+digest the pin recorded,
+`sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff`,
+read with `docker buildx imagetools inspect rustfs/rustfs:1.0.0`.
+
+Check 2 — `gh api repos/rustfs/rustfs/security-advisories` returns **30** on
+one page and **43** with `--paginate`, against 30 and 35 at the pin. **Six
+of the 43 name a vulnerable range that covers `1.0.0`**, all six patched in
+`1.0.2`, and two of the six are high:
+
+| advisory | sev | range | subject |
+|---|---|---|---|
+| `GHSA-28w4-rp2p-636w` | high | `= 1.0.0` | Object Lock COMPLIANCE bypass: force-deleting a bucket destroys retained objects |
+| `GHSA-rhg6-jrf2-29c4` | high | `<= 1.0.1` | alternate protocol listeners (WebDAV, FTP, SFTP) bypass bucket policies and condition-key denials |
+| `GHSA-q23w-fp7p-472v` | medium | `<= 1.0.1` | `PutObjectRetention` reads policy conditions from the header, applies the body |
+| `GHSA-gjph-xcgw-4p7w` | medium | `<= 1.0.1` | `PutObject` with `?versionId=` overwrites a version without `DeleteObjectVersion` |
+| `GHSA-g7fq-6xjm-mxf4` | medium | `<= 1.0.1` | `DeleteObjects` writes delete markers at a dot-segment key's resolved path |
+| `GHSA-wqmc-vjgv-jrpw` | medium | `= 1.0.0` | SSE-C objects expose plaintext MD5 as ETag |
+
+Five of the six were published **2026-10-18**. The listing that found them,
+which prints each advisory's id, severity, ranges and patched versions:
+
+```
+gh api --paginate repos/rustfs/rustfs/security-advisories > /tmp/adv.json
+jq -r '.[] | select(.vulnerabilities[]? | .vulnerable_version_range | test("^= 1\\.0\\.0$|^<= 1\\.0\\.1$")) | "\(.ghsa_id) \(.severity) \([.vulnerabilities[]?.vulnerable_version_range]|join(";")) patched=\([.vulnerabilities[]?.patched_versions]|join(";"))"' /tmp/adv.json
+```
+
+A **seventh** advisory matches a looser filter and is NOT one of the six:
+`GHSA-vcwh-pff9-64cc` (CVE-2026-22042, IAM privilege escalation) carries the
+range `All versions` but `patched_versions` `alpha.79`, so `1.0.0` already
+contained its fix. It is named here because a filter that reads
+`All versions` as covering the pin counts seven, and the difference between
+six and seven is a `patched_versions` field, not a judgement.
+
+Check 3 — the pin CAN move forward, and `1.0.1` is not where it goes: one
+advisory names `= 1.0.1` and four name `<= 1.0.1`. `1.0.2` (2026-10-16),
+`1.0.3` (2026-10-17) and `1.0.4` (2026-10-25) are all `prerelease=false` and
+none is covered by any of the 43 — the only hit against them is the
+`All versions` row above. `1.0.2` is also the highest `patched_versions`
+named anywhere in the 43, so it is the frontier of what upstream has fixed.
+
+**The pin went to `1.0.4`, which was the maintainer's decision against the
+recommendation on the table.** The recommendation was `1.0.2`: the version
+all six name as patched, with 16 days of public mileage against `1.0.4`'s 7,
+and the minimum change that answers the finding — the argument being that
+thin mileage is precisely what this section holds against `1.0.0`. The
+maintainer chose the newest stable instead. Recorded because a decision
+taken against a stated argument is worth more to a later reader than the
+decision alone.
+
+What was measured against `1.0.4`, with the rig recreated on it and
+`init.sh` reseeding both buckets and the scoped identity:
+
+| measurement | `1.0.0` | `1.0.4` |
+|---|---|---|
+| `S3FileSystemIntegrationTests` + `S3AccessProbeTests` (the pair this section's own comparison used) | 39 tests, green, 4.909 s | 39 tests, green, 5.076 s |
+| all seven rig-gated S3 suites | not measured | 52 tests in 7 suites, green, 5.146 s |
+
+```
+MACSCP_ITEST=1 swift test --filter 'S3FileSystemIntegrationTests|S3AccessProbeTests'
+MACSCP_ITEST=1 swift test --filter 'S3AccessProbeTests|S3BucketSettingsGatedTests|S3CORSGatedTests|S3CreateBucketGatedTests|S3FileSystemIntegrationTests|S3ObjectLockGatedTests|S3RedirectAuthorizationMeasurementTests'
+```
+
+No test was changed to get there: the only tracked file this move touches is
+`compose.yml`, one line. The seven-suite run includes
+`S3ObjectLockGatedTests` and `S3BucketSettingsGatedTests`, which is where the
+high COMPLIANCE advisory would be felt if the app's assertions depended on
+the bug. **Two limits of that measurement, stated rather than implied.** The
+`1.0.0` column has no figure for the seven-suite run, because the baseline
+was taken for the pair this section names and the pin had already moved when
+the wider set was run — a green needs no baseline, a red would have needed
+one. And a green suite does not establish that `1.0.4` fixed the six; it
+establishes that nothing the app asserts changed across the move.
+
+Check 4 — MinIO has NOT come back. `docker buildx imagetools inspect` on
+`minio/minio:latest` and `minio/mc:latest` both answer
+`insufficient_scope: authorization failed`, measured 2026-11-01. The
+2026-09-24 decision was a replacement, not these images from elsewhere, so
+this changes nothing either way; it is recorded because a zero measured on a
+date is evidence.
+
+**One step of the recipe above could not be run as committed.** Check 3 says
+to "re-run the 22-behaviour probe and the gated suites against it". The
+gated suites exist and were run. The 22-behaviour raw-SigV4 probe does not
+exist as an artifact in this repository — it was written for the
+2026-09-25 candidate comparison and never committed, and the 22 behaviours
+survive only as the prose list further down this file.
+`grep -rln 'AbortMultipartUpload' scripts docker` prints this README and
+nothing else. So the instruction asks a later reader to reconstruct a probe
+from a paragraph before they can follow it, which is the failure CLAUDE.md's
+"A number travels with the command that produced it" is about, in the
+verification step of a security review. `docs/BACKLOG.md` carries a row for
+it.
 
 Two candidates were measured against what the S3 backend actually
 exercises, with a raw-SigV4 probe (no SDK) of 22 behaviours and then with
