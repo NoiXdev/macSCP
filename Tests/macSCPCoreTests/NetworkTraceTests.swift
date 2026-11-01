@@ -96,6 +96,57 @@ final class BlockingGate: @unchecked Sendable {
 /// it inside `onOwnQueue`.
 @Suite("NetworkTrace", .serialized)
 struct NetworkTraceTests {
+
+    /// The step budget for a case whose claim is the OUTCOME of a step, not
+    /// how long the step took to report it. `DetachedProbe` arms its deadline
+    /// at CREATION, so a small budget bounds how long a body waited for a
+    /// THREAD as much as how long it ran; on a saturated cooperative pool a
+    /// step whose body computes nothing can be settled `.timedOut` or
+    /// `notStarted` before it says what it met, and a case asserting the
+    /// outcome then fails for the runner's reason instead of its own.
+    ///
+    /// 600 s, the figure `ResolveNamesTests.roomy` and
+    /// `ConnectionDiagnosticsTests.roomy` already carry. This shape was fixed
+    /// in `ConnectionDiagnosticsJumpTests` on 2026-09-19 and in
+    /// `ConnectionDiagnosticsTests` on 2026-10-31 — one file at a time both
+    /// times, which is why it kept coming back — and on the second occasion
+    /// this file's literals were named as deliberately NOT swept, because
+    /// what a roomy budget costs here was unmeasured.
+    ///
+    /// **Measured 2026-11-01, and that is what let them move.** This command
+    /// reports `51 tests in 3 suites passed after 1.415 seconds`, the slowest
+    /// case in it being 1.005 s:
+    ///
+    ///     swift test --filter 'ICMPEchoTests|NetworkTraceTests|InternetSpeedProbeTests'
+    ///
+    /// No budget in these three files bounds anything that takes seconds, so
+    /// a roomy one cannot lengthen a run.
+    ///
+    /// Every site that uses it is the `stepTimeout` and never the
+    /// `traceTimeout` a case varies, which is the distinction that makes this
+    /// safe at all. `traceStep` keeps its own note on why its step budget is
+    /// generous — the 5.004 s a shared listener once cost the TCP step — and
+    /// a roomy one widens the gap between it and the trace budget under test,
+    /// which is what `theTraceSpendsItsOwnBudgetRatherThanTheStepTimeout` is
+    /// named for. The `.timedOut` that `traceStep(budget: .zero)` asserts is
+    /// the TRACE budget expiring, not this one.
+    ///
+    /// **THREE sites use it, not all four**, and the split was decided by a
+    /// plant rather than by reading. `scripts/mutation-probe` set every
+    /// `roomy` to `.nanoseconds(1)` and reported `RESULT: RED` naming
+    /// `anIPv6OnlyEndpointReportsTheTraceAsUnmeasured`,
+    /// `theRunnerPutsTheTraceAfterTheDialAndBeforeTheContributions` and
+    /// `theTraceSpendsItsOwnBudgetRatherThanTheStepTimeout` from this file,
+    /// plus one from `ICMPEchoTests`.
+    ///
+    /// `aTraceWithNothingResolvedIsSkipped` keeps its own `.seconds(2)`
+    /// because the plant could not redden it: with a one-nanosecond budget
+    /// the trace step still reads `.skipped`, the runner having decided to
+    /// skip before it builds a probe, so no deadline is armed and the budget
+    /// is not in that assertion's path. The first draft of this comment said
+    /// "All four sites here are the `stepTimeout`", which was true of the
+    /// count it was describing and wrong about what the budget reaches.
+    private static let roomy: Duration = .seconds(600)
     /// RFC 5737 TEST-NET-1, reached only with a TTL of 1 or 2.
     private static let testNetV4 = "192.0.2.1"
 
@@ -650,7 +701,8 @@ struct NetworkTraceTests {
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
             values: FieldValues(), secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(5)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off),
+            stepTimeout: Self.roomy
         ).run()
 
         #expect(
@@ -709,7 +761,8 @@ struct NetworkTraceTests {
             descriptor: Self.probeDescriptor(endpoint: Endpoint(host: "::1", port: listener.port)),
             values: FieldValues(), secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(3)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off),
+            stepTimeout: Self.roomy
         ).run()
 
         let trace = try #require(report.steps.first { $0.id == DiagnosticStepID.trace })
@@ -841,7 +894,8 @@ struct NetworkTraceTests {
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
             values: FieldValues(), secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(5),
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off),
+            stepTimeout: Self.roomy,
             traceTimeout: budget
         ).run()
         return report.steps.first { $0.id == DiagnosticStepID.trace }

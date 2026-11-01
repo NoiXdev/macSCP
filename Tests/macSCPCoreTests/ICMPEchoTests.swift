@@ -31,6 +31,53 @@ import Testing
 /// `await`.
 @Suite("ICMPEcho", .serialized)
 struct ICMPEchoTests {
+
+    /// The step budget for a case whose claim is the OUTCOME of a step, not
+    /// how long the step took to report it. `DetachedProbe` arms its deadline
+    /// at CREATION, so a small budget bounds how long a body waited for a
+    /// THREAD as much as how long it ran; on a saturated cooperative pool a
+    /// step whose body computes nothing can be settled `.timedOut` or
+    /// `notStarted` before it says what it met, and a case asserting the
+    /// outcome then fails for the runner's reason instead of its own.
+    ///
+    /// 600 s, the figure `ResolveNamesTests.roomy` and
+    /// `ConnectionDiagnosticsTests.roomy` already carry. This shape was fixed
+    /// in `ConnectionDiagnosticsJumpTests` on 2026-09-19 and in
+    /// `ConnectionDiagnosticsTests` on 2026-10-31 — one file at a time both
+    /// times, which is why it kept coming back — and on the second occasion
+    /// this file's literals were named as deliberately NOT swept, because
+    /// what a roomy budget costs here was unmeasured.
+    ///
+    /// **Measured 2026-11-01, and that is what let them move.** This command
+    /// reports `51 tests in 3 suites passed after 1.415 seconds`, the slowest
+    /// case in it being 1.005 s:
+    ///
+    ///     swift test --filter 'ICMPEchoTests|NetworkTraceTests|InternetSpeedProbeTests'
+    ///
+    /// No budget in these three files bounds anything that takes seconds, so
+    /// a roomy one cannot lengthen a run.
+    ///
+    /// **ONE site in this file uses it**, and which one was decided by a
+    /// plant rather than by reading: `scripts/mutation-probe` set every
+    /// `roomy` in these files to `.nanoseconds(1)`, so the deadline cannot
+    /// lose, and reported `RESULT: RED` naming four cases across the two
+    /// files that kept it. From here,
+    /// `theRunnerPutsTheEchoBetweenTheTCPPingAndTheDial` — it asserts a step
+    /// ORDER and `icmp.outcome == .ok` over three loopback echoes, and a
+    /// budget the deadline wins takes the `.ok` away.
+    ///
+    /// `anEchoWithNothingResolvedIsSkipped` keeps its own `.seconds(2)`, and
+    /// the first draft of this comment was wrong about it. That draft read:
+    /// "`anEchoWithNothingResolvedIsSkipped` is `guard case .skipped` with an
+    /// `Issue.record` that interpolates the outcome — the exact shape that
+    /// read "did not skip" about a `.timedOut` in the 2026-10-31 red." The
+    /// shape is identical and the conclusion does not follow: the plant did
+    /// NOT redden it. With a one-nanosecond budget the echo step still reads
+    /// `.skipped`, because the runner decides to skip before it builds a
+    /// probe, so no deadline is ever armed and the budget is not in that
+    /// assertion's path. Moving it would have been harmless and unjustified,
+    /// which is how this whole shape kept coming back.
+    private static let roomy: Duration = .seconds(600)
     /// A family no `socket` call can serve — past Darwin's `AF_MAX`, so the
     /// kernel refuses with `EAFNOSUPPORT` and the step has a real errno to
     /// report rather than a synthetic sentence.
@@ -276,7 +323,8 @@ struct ICMPEchoTests {
                 endpoint: Endpoint(host: "127.0.0.1", port: listener.port)),
             values: FieldValues(), secrets: nil, jump: nil,
             throughput: DiagnosticThroughputSettings(),
-            internetSpeed: DiagnosticInternetSpeedSettings(service: .off), stepTimeout: .seconds(5)
+            internetSpeed: DiagnosticInternetSpeedSettings(service: .off),
+            stepTimeout: Self.roomy
         ).run()
 
         #expect(
