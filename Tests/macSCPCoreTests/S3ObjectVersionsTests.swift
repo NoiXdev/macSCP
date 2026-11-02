@@ -263,6 +263,28 @@ struct S3ObjectVersionsTests {
         #expect(request.url?.query == "delimiter=%2F&prefix=&versions=")
     }
 
+    @Test func deletedEntriesAreOneLevelDeep() async throws {
+        // `delimiter=/` makes the store roll `d/sub/x.txt` up into
+        // `CommonPrefixes`; the stub models that answer (the rollup itself is
+        // unmeasured against a store, which the rig task does). The shallow
+        // marker is reported, the nested one is not, and the roll-up is not
+        // read as an entry.
+        let body = Data(
+            """
+            <ListVersionsResult><IsTruncated>false</IsTruncated>
+            \(Self.marker("d/top.txt", "tm", latest: true))
+            <CommonPrefixes><Prefix>d/sub/</Prefix></CommonPrefixes>
+            </ListVersionsResult>
+            """.utf8)
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [Self.ok(body)])
+        let deleted = try await fs.deletedEntries(inBucket: "b", prefix: "d/")
+
+        #expect(deleted.map(\.key) == ["d/top.txt"])
+        #expect(deleted.contains { $0.key.hasPrefix("d/sub/") } == false)
+        let request = try #require(await Self.listingRequests(transport).first)
+        #expect(request.url?.query(percentEncoded: true)?.contains("delimiter=%2F") == true)
+    }
+
     @Test func deletedEntriesUnderAPrefixAreFoundOnEveryPage() async throws {
         let first = Self.page(
             [Self.marker("d/a.txt", "am", latest: true)], next: (key: "d/a.txt", versionId: "am"))
@@ -306,7 +328,9 @@ struct S3ObjectVersionsTests {
     // MARK: - Placeholders (canaries)
 
     // These four cases exist to be DELETED. `readStream` is implemented by
-    // Task 5; `restore`, `deleteVersion` and `liftDeleteMarker` by Task 4.
+    // the version download (Task 5 of the plan under
+    // `.superpowers/sdd/2026-10-23-s3-version-history`); `restore`,
+    // `deleteVersion` and `liftDeleteMarker` by the write half (its Task 4).
     // Until then each method refuses with `.finding(.operationNotSupported)`,
     // which is indistinguishable from a store that does not support the call.
     // A case going red means the method it names was implemented, and its case
