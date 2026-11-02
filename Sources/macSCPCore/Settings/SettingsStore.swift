@@ -61,6 +61,7 @@ public final class SettingsStore {
         static let defaultEditorPath = "defaultEditorPath"
         static let fileAssociations = "fileAssociations"
         static let showHiddenFiles = "showHiddenFiles"
+        static let showDeletedFiles = "showDeletedFiles"
         static let autoRefreshEnabled = "autoRefreshEnabled"
         static let autoRefreshIntervalSeconds = "autoRefreshIntervalSeconds"
         static let terminalFontName = "terminalFontName"
@@ -106,6 +107,7 @@ public final class SettingsStore {
         static let uploadLimitKBs = 0
         static let downloadLimitKBs = 0
         static let showHiddenFiles = false
+        static let showDeletedFiles = false
         static let autoRefreshEnabled = true
         static let autoRefreshIntervalSeconds = 5
         static let terminalFontSize = 13
@@ -261,6 +263,16 @@ public final class SettingsStore {
     public var showHiddenFiles: Bool {
         get { boolValue(for: Keys.showHiddenFiles, default: Defaults.showHiddenFiles) }
         set { setBool(newValue, for: Keys.showHiddenFiles) }
+    }
+
+    /// Show the keys a delete marker hides, as rows of the remote pane, on a
+    /// bucket that keeps versions (S3 version history, Task 10). Default OFF.
+    /// Unlike `showHiddenFiles` it changes what is FETCHED, not only what is
+    /// shown (`RemoteBrowserViewModel.showDeletedFiles`), and it applies to the
+    /// remote pane alone.
+    public var showDeletedFiles: Bool {
+        get { boolValue(for: Keys.showDeletedFiles, default: Defaults.showDeletedFiles) }
+        set { setBool(newValue, for: Keys.showDeletedFiles) }
     }
 
     /// Auto-refresh of the active tab's remote pane (M9c). Default ON.

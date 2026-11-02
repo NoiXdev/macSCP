@@ -120,9 +120,14 @@ enum ObjectVersionsLines {
     static let refusalLockNotConfirmed = CatalogueLine(
         key: "s3.versions.refusal.lockNotConfirmed",
         english: "The lock on this version has not been confirmed, so it cannot be deleted.")
+    /// Says where a marker IS lifted: the browser's own row, behind the
+    /// "Show deleted files" switch (Task 10). (Withdrawn wording, verbatim:
+    /// "A delete marker is not a version with content, so it is not deleted
+    /// here." -- it said what the sheet does not do and, because the row that
+    /// does it had not been built, could not say where to go.)
     static let refusalMarker = CatalogueLine(
         key: "s3.versions.refusal.marker",
-        english: "A delete marker is not a version with content, so it is not deleted here.")
+        english: "A delete marker is not a version with content, so it is not deleted here. To bring the file back, turn on “Show deleted files” and restore it from its row.")
     static let refusalBusy = CatalogueLine(
         key: "s3.versions.refusal.busy",
         english: "Another change to this file's history is still running.")

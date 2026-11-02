@@ -63,6 +63,11 @@ public enum BrowserMenuEntry: Equatable, Sendable {
     /// action is a capability of the connection while this one is
     /// something the user authored.
     case userFileAction(FileAction)
+    /// Brings a DELETED key back by removing the delete marker the row carries
+    /// (S3 version history, Task 10). Offered only for a selection made
+    /// entirely of deleted rows, and then with `copyPath` and nothing else:
+    /// every other entry needs the object to exist.
+    case restoreDeleted
 }
 
 public enum BrowserContextMenu {
@@ -160,6 +165,16 @@ public enum BrowserContextMenu {
         // levels is held to the rule rather than escaping it.
         if selection.contains(where: { scope.isContainerRow(path: $0.path) }) {
             return [.copyPath]
+        }
+        // A DELETED row (`showDeletedFiles`) is a key a delete marker hides:
+        // nothing reads, renames, moves, compares or deletes it, and the
+        // backend would refuse each of those. What can be done is to lift the
+        // marker, which is offered when EVERY selected row is deleted; a
+        // selection that mixes deleted and present rows gets the clipboard
+        // write and nothing else, rather than an action that quietly acts on
+        // part of what was selected.
+        if selection.contains(where: \.isDeleted) {
+            return selection.allSatisfy(\.isDeleted) ? [.restoreDeleted, .copyPath] : [.copyPath]
         }
         // The background click at the bucket list: "New Folder" there means
         // a new BUCKET, which macSCP does not create, and `createDirectory`

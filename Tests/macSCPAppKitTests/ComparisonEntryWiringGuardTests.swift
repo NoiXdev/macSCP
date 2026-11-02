@@ -166,7 +166,11 @@ struct ComparisonEntryWiringGuardTests {
         let pane = try Self.code("BrowserPane.swift")
         #expect(pane.contains(
             "var onMenuAction: ((BrowserMenuEntry, [RemoteFileItem], BrowserPaneSide) -> Void)? = nil"))
-        #expect(pane.contains("default: onMenuAction?(entry, selection, side)"))
+        // The forward is named arm by arm and not behind a `default:` since
+        // the deleted-files row (S3 version history, Task 10). (Withdrawn
+        // wording, verbatim: `pane.contains("default: onMenuAction?(entry,
+        // selection, side)")`.)
+        #expect(pane.contains("onMenuAction?(entry, selection, side)"))
         // Positive beside it: `side` really is the pane's own stored one, so
         // the forward above is not reading something a caller passed twice.
         #expect(pane.contains("let side: BrowserPaneSide"))
@@ -191,13 +195,26 @@ struct ComparisonEntryWiringGuardTests {
     /// entry may be swallowed there.
     @Test func theBrowserPaneForwardsTheComparisonEntriesInsteadOfSwallowingThem() throws {
         let pane = try Self.code("BrowserPane.swift")
-        // Positive: the forwarding default is there, and the pane does keep
-        // other entries to itself.
-        #expect(pane.contains("default: onMenuAction?(entry, selection, side)"))
+        // Positive: the forward is there, and the pane does keep other
+        // entries to itself. (Withdrawn wording, verbatim: "the forwarding
+        // default is there" and `pane.contains("default: onMenuAction?(entry,
+        // selection, side)")` -- the forward names its entries now, so a new
+        // `BrowserMenuEntry` case is a compile error in the pane instead of
+        // one that is forwarded unseen.)
+        #expect(pane.contains("onMenuAction?(entry, selection, side)"))
         #expect(pane.contains("case .rename:"))
-        // Negative: it claims neither comparison entry.
-        #expect(!pane.contains("case .compareWithOtherPane"))
-        #expect(!pane.contains("case .compareTwoSelected"))
+        // The forward names both comparison entries: the pane forwards them,
+        // it does not handle them. Counted per entry, as the arm is a list.
+        let forward = try #require(pane.range(of: "case .transferToOtherPane, .transferToSession,"))
+        let call = try #require(pane.range(of: "onMenuAction?(entry, selection, side)"))
+        let arm = String(pane[forward.lowerBound..<call.lowerBound])
+        #expect(arm.contains(".compareWithOtherPane"))
+        #expect(arm.contains(".compareTwoSelected"))
+        // Negative: neither is claimed anywhere ELSE (an arm of its own that
+        // swallows it), and the switch has no `default:` of its own.
+        #expect(pane.components(separatedBy: ".compareWithOtherPane").count == 2)
+        #expect(pane.components(separatedBy: ".compareTwoSelected").count == 2)
+        #expect(!pane.contains("default: onMenuAction"))
     }
 
     /// The tree-wide caller set of `BrowserContextMenu.entries(` (fix round

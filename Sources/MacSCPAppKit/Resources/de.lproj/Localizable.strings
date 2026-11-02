@@ -9,6 +9,8 @@
 "settings.general.notifications.footer" = "Eine macOS-Mitteilung, wenn eine Verbindung abbricht, eine Übertragung fehlschlägt oder eine Portweiterleitung ausfällt. Nur solange macSCP im Hintergrund ist oder du das betroffene Fenster nicht vorne hast.";
 "settings.appearance.sidebarCompact" = "Kompakte Seitenleiste";
 "settings.general.showHiddenHint" = "Gilt für beide Seiten. Kürzel: ⌘⇧.";
+"settings.general.showDeleted" = "Gelöschte Dateien anzeigen";
+"settings.general.showDeletedHint" = "Zeigt auf der Remote-Seite die gelöschten Dateien von Buckets mit Versionierung an, damit du sie wiederherstellen kannst.";
 "settings.general.autoRefresh" = "Remote-Ansicht automatisch aktualisieren";
 "settings.general.autoRefreshInterval %lld" = "Alle %lld Sekunden";
 "settings.general.updateCheck" = "Automatisch nach Updates suchen";
@@ -294,6 +296,7 @@
    Namens-Zelle einer Bucket-Zeile, dient zugleich als
    Accessibility-Beschreibung des Symbols. */
 "filetable.bucketTooltip" = "Bucket";
+"filetable.deletedTooltip" = "Gelöschte Datei. Wiederherstellen bringt sie zurück.";
 
 /* Platzhalter für eine leere Zelle in den Spalten "Rechte"/"Besitzer"/
    "Gruppe" (M11m/T2) — ein nil-Wert, nie eine geratene Anzeige. */
@@ -379,6 +382,7 @@
 
 /* Menü-Befehle (M7a/T4) */
 "menu.toggleHidden" = "Versteckte Dateien ein-/ausblenden";
+"menu.toggleDeleted" = "Gelöschte Dateien ein-/ausblenden";
 "menu.transfers.toggle" = "Übertragungen ein-/ausblenden";
 "common.save" = "Speichern";
 
@@ -431,12 +435,17 @@
 "menu.newFolder" = "Neuer Ordner…";
 "menu.newFile" = "Neue Datei…";
 "menu.copyPath" = "Pfad kopieren";
+"menu.restoreDeleted" = "Wiederherstellen";
 "menu.delete" = "Löschen…";
 "browser.action.presignedURL" = "Freigabe-Link…";
 "browser.action.retention" = "Aufbewahrung…";
 "browser.action.legalHold" = "Legal Hold…";
 "browser.action.versions" = "Versionen anzeigen…";
 "browser.action.versions.neverVersioned" = "In diesem Bucket war die Versionierung nie aktiviert, daher gibt es keinen Verlauf zum Anzeigen.";
+"browser.deleted.notice.versioningNotConfirmed" = "Gelöschte Dateien werden nicht angezeigt: macSCP konnte nicht bestätigen, ob dieser Bucket Versionen aufbewahrt.";
+"browser.deleted.notice.listingFailed" = "Die gelöschten Dateien konnten nicht aufgelistet werden. Angezeigt werden die vorhandenen Dateien.";
+"browser.deleted.notice.restoreNotConfirmed" = "Die Wiederherstellung konnte nicht bestätigt werden. Die Liste wurde neu gelesen: Prüfe, ob die Datei wieder da ist, bevor du es erneut versuchst.";
+"browser.deleted.notice.restoreGone" = "Diese Datei ist nicht mehr gelöscht. Die Liste wurde neu gelesen.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Verbindungsaktionen";
@@ -501,7 +510,7 @@
 "s3.versions.refusal.versioningNotConfirmed" = "Das Wiederherstellen setzt voraus, dass die Versionierung für diesen Bucket eingeschaltet ist, und macSCP konnte nicht bestätigen, ob sie es ist. Öffne den Verlauf erneut, um es noch einmal zu versuchen.";
 "s3.versions.refusal.locked" = "Diese Version ist gesperrt und lässt sich deshalb nicht löschen.";
 "s3.versions.refusal.lockNotConfirmed" = "Die Sperre dieser Version wurde nicht bestätigt, deshalb lässt sie sich nicht löschen.";
-"s3.versions.refusal.marker" = "Eine Löschmarkierung ist keine Version mit Inhalt und wird deshalb hier nicht gelöscht.";
+"s3.versions.refusal.marker" = "Eine Löschmarkierung ist keine Version mit Inhalt und wird deshalb hier nicht gelöscht. Um die Datei zurückzuholen, schalte „Gelöschte Dateien anzeigen“ ein und stelle sie in ihrer Zeile wieder her.";
 "s3.versions.refusal.busy" = "Eine andere Änderung am Verlauf dieser Datei läuft noch.";
 "s3.versions.refusal.unavailable" = "Das ist hier nicht verfügbar.";
 "s3.versions.restore.title" = "Diese Version wiederherstellen?";

@@ -324,6 +324,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         switch column {
         case .name:
             if item.isBucket { return bucketDescription }
+            if item.isDeleted { return deletedDescription }
             return item.kind == .symlink ? symlinkDescription : nil
         case .checksum: return text.isEmpty ? nil : text
         case .size, .modified, .permissions, .owner, .group, .type: return nil
@@ -343,6 +344,17 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// lookup so the two cannot come apart.
     static var bucketDescription: String {
         L10n.string("filetable.bucketTooltip", "Bucket")
+    }
+
+    /// The words for a deleted row (S3 version history, Task 10): the key is
+    /// hidden by a delete marker and "Restore" brings it back. The name cell's
+    /// tooltip. The row has no glyph of its own, deliberately: a third marker
+    /// would sit between the bucket's and the tooltip that explains it, and
+    /// `IconTooltipLintTests` (12 lines) measured that the bucket's glyph
+    /// would lose its hint to the added branch, so the row is told apart by
+    /// its dimmed name and this tooltip instead.
+    static var deletedDescription: String {
+        L10n.string("filetable.deletedTooltip", "Deleted file. Restore brings it back.")
     }
 
     /// Backing storage for the two kind-marker glyphs `Coordinator
@@ -835,6 +847,8 @@ struct RemoteFileTableView: NSViewRepresentable {
             pasteboardWriterForRow row: Int
         ) -> NSPasteboardWriting? {
             guard row >= 0, row < items.count else { return nil }
+            // A deleted row has no content to drag out.
+            guard !items[row].isDeleted else { return nil }
             return pasteboardWriter?(items[row])
         }
 
@@ -956,7 +970,11 @@ struct RemoteFileTableView: NSViewRepresentable {
             switch column {
             case .name:
                 cell.textField?.font = .systemFont(ofSize: 12.5)
-                cell.textField?.textColor = DesignTokens.inkNS
+                // A deleted row (`showDeletedFiles`) is dimmed: it is a key
+                // the store hides, listed so that it can be restored. Set on
+                // every pass, the colour included, because a reused cell
+                // must not keep a dimmed name from the row it showed before.
+                cell.textField?.textColor = item.isDeleted ? DesignTokens.inkSecondaryNS : DesignTokens.inkNS
                 cell.textField?.alignment = .natural
                 // The marker's image and visibility are set above, beside
                 // `cell.toolTip` — not here, since they now vary with
@@ -995,6 +1013,9 @@ struct RemoteFileTableView: NSViewRepresentable {
         /// above and the ⌘↓/⌘O keyboard action below (M11j/T2) so the
         /// directory/file/symlink branch exists in exactly one place.
         func open(_ item: RemoteFileItem) {
+            // A deleted row (`showDeletedFiles`) has nothing to open: the one
+            // thing to do with it is to restore it, from the menu.
+            if item.isDeleted { return }
             if item.isDirectory {
                 onOpen(item)
             } else if item.kind == .file {
@@ -1362,6 +1383,10 @@ struct RemoteFileTableView: NSViewRepresentable {
                     return unavailableItem(title: title, reason: fileActionUnavailableReason(action))
                 }
                 return actionItem(title: title, entry: entry, selection: selection)
+            case .restoreDeleted:
+                return actionItem(
+                    title: L10n.string("menu.restoreDeleted", "Restore"), entry: entry,
+                    selection: selection)
             case .userFileAction(let action):
                 // The title is the user's own text, so it is not looked up in
                 // a catalogue: there is no key for a name somebody typed. It

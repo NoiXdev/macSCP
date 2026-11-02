@@ -11,6 +11,8 @@
 "settings.general.notifications.footer" = "Une notification macOS lorsqu'une connexion est perdue, qu'un transfert échoue ou qu'une redirection de port échoue. Affichée uniquement lorsque macSCP est en arrière-plan ou que la fenêtre concernée n'est pas au premier plan.";
 "settings.appearance.sidebarCompact" = "Barre latérale compacte";
 "settings.general.showHiddenHint" = "S'applique aux deux volets. Raccourci : ⌘⇧.";
+"settings.general.showDeleted" = "Afficher les fichiers supprimés";
+"settings.general.showDeletedHint" = "Liste dans le volet distant les fichiers supprimés des buckets qui conservent les versions, pour pouvoir les restaurer.";
 "settings.general.autoRefresh" = "Actualisation automatique de la vue distante";
 "settings.general.autoRefreshInterval %lld" = "Toutes les %lld secondes";
 "settings.general.updateCheck" = "Rechercher automatiquement les mises à jour";
@@ -296,6 +298,7 @@
    sur la cellule de nom d'une ligne de compartiment, sert aussi de
    description d'accessibilité du symbole. */
 "filetable.bucketTooltip" = "Bucket";
+"filetable.deletedTooltip" = "Fichier supprimé. Restaurer le ramène.";
 
 /* Espace réservé pour une cellule vide dans les colonnes "Autorisations"/
    "Propriétaire"/"Groupe" (M11m/T2) — une valeur nil, jamais une valeur
@@ -382,6 +385,7 @@
 
 /* Commandes de menu (M7a/T4) */
 "menu.toggleHidden" = "Afficher/Masquer les fichiers cachés";
+"menu.toggleDeleted" = "Afficher/Masquer les fichiers supprimés";
 "menu.transfers.toggle" = "Afficher/Masquer les transferts";
 "common.save" = "Enregistrer";
 
@@ -434,12 +438,17 @@
 "menu.newFolder" = "Nouveau dossier…";
 "menu.newFile" = "Nouveau fichier…";
 "menu.copyPath" = "Copier le chemin";
+"menu.restoreDeleted" = "Restaurer";
 "menu.delete" = "Supprimer…";
 "browser.action.presignedURL" = "Lien de partage…";
 "browser.action.retention" = "Rétention…";
 "browser.action.legalHold" = "Conservation légale…";
 "browser.action.versions" = "Afficher les versions…";
 "browser.action.versions.neverVersioned" = "La gestion des versions n’a jamais été activée sur ce bucket : il n’y a aucun historique à afficher.";
+"browser.deleted.notice.versioningNotConfirmed" = "Les fichiers supprimés ne sont pas affichés : macSCP n’a pas pu confirmer si ce bucket conserve des versions.";
+"browser.deleted.notice.listingFailed" = "Les fichiers supprimés n’ont pas pu être listés. Les fichiers présents sont affichés.";
+"browser.deleted.notice.restoreNotConfirmed" = "La restauration n’a pas pu être confirmée. La liste a été relue : vérifiez si le fichier est de retour avant de réessayer.";
+"browser.deleted.notice.restoreGone" = "Ce fichier n’est plus supprimé. La liste a été relue.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Actions de connexion";
@@ -504,7 +513,7 @@
 "s3.versions.refusal.versioningNotConfirmed" = "La restauration exige que le versionnement soit activé pour ce bucket, et macSCP n’a pas pu confirmer s’il l’est. Rouvrez l’historique pour réessayer.";
 "s3.versions.refusal.locked" = "Cette version est verrouillée ; elle ne peut donc pas être supprimée.";
 "s3.versions.refusal.lockNotConfirmed" = "Le verrou de cette version n’a pas été confirmé ; elle ne peut donc pas être supprimée.";
-"s3.versions.refusal.marker" = "Un marqueur de suppression n’est pas une version avec contenu ; il n’est donc pas supprimé ici.";
+"s3.versions.refusal.marker" = "Un marqueur de suppression n’est pas une version avec contenu ; il n’est donc pas supprimé ici. Pour récupérer le fichier, activez « Afficher les fichiers supprimés » et restaurez-le depuis sa ligne.";
 "s3.versions.refusal.busy" = "Une autre modification de l’historique de ce fichier est encore en cours.";
 "s3.versions.refusal.unavailable" = "Ce n’est pas disponible ici.";
 "s3.versions.restore.title" = "Restaurer cette version ?";

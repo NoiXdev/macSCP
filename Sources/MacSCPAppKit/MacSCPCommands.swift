@@ -153,6 +153,12 @@ struct MacSCPCommands: Commands {
             }
             .keyboardShortcut(".", modifiers: [.command, .shift])
 
+            // No shortcut: ⌘⇧. and ⌘⇧Y are taken, and the switch is a
+            // setting more than a gesture (it changes what is fetched).
+            Button(L10n.string("menu.toggleDeleted", "Show/Hide Deleted Files")) {
+                settingsStore.showDeletedFiles.toggle()
+            }
+
             Button(L10n.string("menu.transfers.toggle", "Show/Hide Transfers")) {
                 tabCommands?.toggleTransfers?()
             }

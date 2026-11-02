@@ -2107,6 +2107,15 @@ struct ContentView: View {
         // (`BrowserSession.bucketVersioning`), which the version history's
         // menu row and sheet read.
         tab.session?.bucketVersioning = BrowserSession.bucketVersioning(for: fs)
+        // The remote pane's source of deleted files (S3 version history,
+        // Task 10): present only for a connection that keeps a history, so a
+        // pane over any other backend takes the "show deleted files" switch
+        // and does nothing with it. The bucket of a connection rooted in one
+        // bucket is read from the tab's form, as `connectionActionContext`
+        // reads it, and for the same reason it is true of the live connection.
+        tab.session?.remote.deletedFileSource = S3DeletedFileSource.make(
+            for: fs, versioning: tab.session?.bucketVersioning,
+            configuredBucket: { [weak tab] in tab?.connectionViewModel.values[S3Field.bucket] ?? "" })
         // Fresh liveness for a fresh session (Task 4, fix round 1):
         // `SessionTab.liveness` lives on the tab, not the session (see that
         // property's own doc comment for why), so it needs its own reset
@@ -2138,6 +2147,9 @@ struct ContentView: View {
         // kept in sync afterwards by the `.onChange` observer above.
         tab.session?.local.showHiddenFiles = settingsStore.showHiddenFiles
         tab.session?.remote.showHiddenFiles = settingsStore.showHiddenFiles
+        // Deleted files belong to the remote pane alone: the local one has
+        // no history to read, and is never given the switch.
+        tab.session?.remote.showDeletedFiles = settingsStore.showDeletedFiles
         // The tab's queue is created ONCE (in `SessionTab.init`, together with
         // its limiter/concurrency/decider wiring) and OUTLIVES each session of
         // that tab (M5d/T3): interrupted transfers stay in the bar across a

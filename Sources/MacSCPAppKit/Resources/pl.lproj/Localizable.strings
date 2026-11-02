@@ -11,6 +11,8 @@
 "settings.general.notifications.footer" = "Powiadomienie macOS, gdy połączenie zostanie utracone, transfer się nie powiedzie lub przekierowanie portu przestanie działać. Wyświetlane tylko wtedy, gdy macSCP działa w tle lub dane okno nie jest na pierwszym planie.";
 "settings.appearance.sidebarCompact" = "Kompaktowy pasek boczny";
 "settings.general.showHiddenHint" = "Dotyczy obu paneli. Skrót: ⌘⇧.";
+"settings.general.showDeleted" = "Pokaż usunięte pliki";
+"settings.general.showDeletedHint" = "Wyświetla w panelu zdalnym usunięte pliki z bucketów przechowujących wersje, aby można je było przywrócić.";
 "settings.general.autoRefresh" = "Automatyczne odświeżanie widoku zdalnego";
 "settings.general.autoRefreshInterval %lld" = "Co %lld sekund";
 "settings.general.updateCheck" = "Automatycznie sprawdzaj aktualizacje";
@@ -296,6 +298,7 @@
    komórce nazwy wiersza zasobnika, służy też jako opis ułatwień dostępu
    dla symbolu. */
 "filetable.bucketTooltip" = "Bucket";
+"filetable.deletedTooltip" = "Usunięty plik. Przywrócenie go odzyskuje.";
 
 /* Symbol zastępczy dla pustej komórki w kolumnach „Uprawnienia”/
    „Właściciel”/„Grupa” (M11m/T2) — wartość nil, nigdy zgadywana. */
@@ -381,6 +384,7 @@
 
 /* Polecenia menu (M7a/T4) */
 "menu.toggleHidden" = "Pokaż/ukryj ukryte pliki";
+"menu.toggleDeleted" = "Pokaż/ukryj usunięte pliki";
 "menu.transfers.toggle" = "Pokaż/ukryj transfery";
 "common.save" = "Zapisz";
 
@@ -432,12 +436,17 @@
 "menu.newFolder" = "Nowy folder…";
 "menu.newFile" = "Nowy plik…";
 "menu.copyPath" = "Kopiuj ścieżkę";
+"menu.restoreDeleted" = "Przywróć";
 "menu.delete" = "Usuń…";
 "browser.action.presignedURL" = "Link udostępniania…";
 "browser.action.retention" = "Okres przechowywania…";
 "browser.action.legalHold" = "Blokada prawna…";
 "browser.action.versions" = "Pokaż wersje…";
 "browser.action.versions.neverVersioned" = "W tym buckecie wersjonowanie nigdy nie było włączone, więc nie ma historii do wyświetlenia.";
+"browser.deleted.notice.versioningNotConfirmed" = "Usunięte pliki nie są wyświetlane: macSCP nie mógł potwierdzić, czy ten bucket przechowuje wersje.";
+"browser.deleted.notice.listingFailed" = "Nie udało się wyświetlić listy usuniętych plików. Widoczne są pliki, które istnieją.";
+"browser.deleted.notice.restoreNotConfirmed" = "Nie udało się potwierdzić przywrócenia. Lista została odczytana ponownie: sprawdź, czy plik wrócił, zanim spróbujesz ponownie.";
+"browser.deleted.notice.restoreGone" = "Ten plik nie jest już usunięty. Lista została odczytana ponownie.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Akcje połączenia";
@@ -502,7 +511,7 @@
 "s3.versions.refusal.versioningNotConfirmed" = "Przywracanie wymaga włączonego wersjonowania w tym buckecie, a macSCP nie mógł potwierdzić, czy jest włączone. Otwórz historię ponownie, aby spróbować jeszcze raz.";
 "s3.versions.refusal.locked" = "Ta wersja jest zablokowana, więc nie można jej usunąć.";
 "s3.versions.refusal.lockNotConfirmed" = "Blokada tej wersji nie została potwierdzona, więc nie można jej usunąć.";
-"s3.versions.refusal.marker" = "Znacznik usunięcia nie jest wersją z zawartością, więc nie usuwa się go tutaj.";
+"s3.versions.refusal.marker" = "Znacznik usunięcia nie jest wersją z zawartością, więc nie usuwa się go tutaj. Aby odzyskać plik, włącz „Pokaż usunięte pliki” i przywróć go z jego wiersza.";
 "s3.versions.refusal.busy" = "Inna zmiana w historii tego pliku jest jeszcze w toku.";
 "s3.versions.refusal.unavailable" = "To nie jest tutaj dostępne.";
 "s3.versions.restore.title" = "Przywrócić tę wersję?";

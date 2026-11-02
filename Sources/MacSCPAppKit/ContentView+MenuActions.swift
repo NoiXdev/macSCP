@@ -63,6 +63,8 @@ extension ContentView {
             break   // handled inside BrowserPane (BrowserPane+Archive.swift), never forwarded
         case .userFileAction:
             break   // handled inside BrowserPane (BrowserPane+FileActions.swift), never forwarded
+        case .restoreDeleted:
+            restoreDeletedFiles(selection, side: side, in: tab, session: session)
         case .backendFileAction(let action):
             // Backend-contributed actions are keyed off `action.id` through
             // `BackendFileActionRoute`, the file menu's counterpart of
@@ -140,6 +142,37 @@ extension ContentView {
                         session: session)
                 }
             }
+        }
+    }
+
+    /// The "Restore" entry of a deleted row (S3 version history, Task 10):
+    /// lifts the delete marker each selected deleted row carries, then lists
+    /// the pane again so the file appears and the deleted row goes. How it
+    /// ended, when it did not end plainly, is the pane's notice.
+    ///
+    /// **Remote only, and only deleted rows**: the menu model offers the entry
+    /// for a selection made wholly of deleted rows and the pane lists such rows
+    /// only for a connection with the version capability, and both are asked
+    /// again here because a restore is a write.
+    func restoreDeletedFiles(
+        _ selection: [RemoteFileItem], side: BrowserPaneSide, in tab: SessionTab,
+        session: BrowserSession
+    ) {
+        guard side == .remote else { return }
+        let rows = selection.filter(\.isDeleted)
+        guard !rows.isEmpty else { return }
+        let context = connectionActionContext(in: tab, session: session)
+        let remote = session.remote
+        guard let provider = session.remoteFS as? any ObjectVersionProvider else {
+            remote.deletedFilesNotice = .restoreUnavailable
+            return
+        }
+        let restorer = DeletedFileRestorer(provider: provider, recorder: tab.auditRecorder)
+        Task { @MainActor in
+            let notice = await restorer.restore(rows, in: context)
+            await remote.refresh()
+            // After the refresh, which clears the notice as it starts.
+            if let notice { remote.deletedFilesNotice = notice }
         }
     }
 

@@ -61,7 +61,15 @@ struct ArchivePaneWiringGuardTests {
         // selection)` until then. What it pins is unchanged — that the
         // archive arms come BEFORE the forwarding default — and only the
         // spelling of the default moved.
-        let forward = try #require(code.range(of: "default: onMenuAction?(entry, selection, side)"))
+        //
+        // The forward is no longer behind a `default:` (S3 version history,
+        // Task 10): the pane names the entries it forwards, so a new
+        // `BrowserMenuEntry` case is a compile error here. The anchor is the
+        // forwarding call itself, which appears once in the file. (Withdrawn
+        // wording, verbatim: `code.range(of: "default: onMenuAction?(entry,
+        // selection, side)")`.)
+        #expect(code.components(separatedBy: "onMenuAction?(entry, selection, side)").count == 2)
+        let forward = try #require(code.range(of: "onMenuAction?(entry, selection, side)"))
         #expect(compress.upperBound <= forward.lowerBound)
         #expect(extract.upperBound <= forward.lowerBound)
     }

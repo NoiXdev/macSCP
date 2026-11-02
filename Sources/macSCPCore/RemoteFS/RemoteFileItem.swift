@@ -31,6 +31,15 @@ public struct RemoteFileItem: Equatable, Sendable {
     /// Defaults to `false` so every existing call site keeps compiling
     /// unchanged.
     public let isBucket: Bool
+    /// The version id of the delete marker that hides this key, for a row
+    /// that stands for a DELETED key (S3 version history, Task 10); `nil` for
+    /// every ordinary row. Such a row exists only while the browser's
+    /// `showDeletedFiles` switch is on, and removing that marker
+    /// (`ObjectVersionProvider.liftDeleteMarker`) is what brings the key back,
+    /// so the row carries the id and the restore needs no second listing.
+    /// `isDeleted` is derived from it, so the two cannot disagree. Defaults to
+    /// `nil` so every existing call site keeps compiling unchanged.
+    public let deleteMarkerVersionID: String?
 
     public init(
         name: String,
@@ -41,7 +50,8 @@ public struct RemoteFileItem: Equatable, Sendable {
         permissions: UInt32? = nil,
         owner: String? = nil,
         group: String? = nil,
-        isBucket: Bool = false
+        isBucket: Bool = false,
+        deleteMarkerVersionID: String? = nil
     ) {
         self.name = name
         self.path = path
@@ -52,9 +62,42 @@ public struct RemoteFileItem: Equatable, Sendable {
         self.owner = owner
         self.group = group
         self.isBucket = isBucket
+        self.deleteMarkerVersionID = deleteMarkerVersionID
     }
 
     public var isDirectory: Bool { kind == .directory }
+
+    /// Whether this row stands for a key that a delete marker hides. Such a
+    /// row has no content to read, rename, move or delete: the one thing that
+    /// can be done with it is to lift the marker.
+    public var isDeleted: Bool { deleteMarkerVersionID != nil }
+}
+
+extension RemoteFileItem {
+    /// The rows for the deleted keys of ONE directory: `entries` are the keys
+    /// directly under `keyPrefix` (`""` at the bucket root, otherwise the
+    /// folder's key with its trailing `/`), and `path` is the directory's own
+    /// path in the pane, so each row's path is the one the plain listing would
+    /// have given the key.
+    ///
+    /// A row's name is the key after the prefix. An entry with no such part, one
+    /// outside the prefix, or one that reaches into a sub-folder is not a row of
+    /// this directory and is dropped: `S3FileSystem.deletedEntries` already
+    /// refuses all three, and this is the second line of defence for another
+    /// provider. A row is a file with no size; its date is the marker's, i.e. when
+    /// the key was deleted.
+    public static func deletedRows(
+        from entries: [DeletedEntry], inDirectory path: String, keyPrefix: String
+    ) -> [RemoteFileItem] {
+        entries.compactMap { entry in
+            guard entry.key.hasPrefix(keyPrefix) else { return nil }
+            let name = String(entry.key.dropFirst(keyPrefix.count))
+            guard !name.isEmpty, !name.contains("/") else { return nil }
+            return RemoteFileItem(
+                name: name, path: RemotePath.join(path, name), kind: .file,
+                modifiedAt: entry.modifiedAt, deleteMarkerVersionID: entry.markerVersionId)
+        }
+    }
 }
 
 /// `Identifiable` conformance for sheet presentation (M7b): `.sheet(item:)`

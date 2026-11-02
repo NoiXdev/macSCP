@@ -71,6 +71,9 @@ public enum BrowserKeyCommand {
             return .rename(only)
         case .commandDown, .commandO:
             guard let only = selection.first, selection.count == 1 else { return nil }
+            // A deleted row (`showDeletedFiles`) has no content to open, and
+            // this case never asks `entries`, so it is refused here.
+            guard !only.isDeleted else { return nil }
             return .open(only)
         case .commandDelete:
             guard !selection.isEmpty else { return nil }
