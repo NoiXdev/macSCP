@@ -1141,18 +1141,31 @@ final class VersionConfirmationBridge {
                 self.request = request
                 self.continuation = continuation
                 asked?()
-                // A task that was cancelled before it got here had its handler
-                // run BEFORE this body (`withTaskCancellationHandler` runs
-                // `onCancel` at once for a cancelled task), when there was
-                // nothing to withdraw. Nothing would resume the continuation
-                // installed just now, and the write waiting on it would hold
-                // `writeInProgress` for the life of the sheet. So it is looked
-                // at again here, with the continuation in place.
-                if Task.isCancelled { answer(false, forQuestion: id) }
             }
         } onCancel: {
-            // A hop, because the handler is not isolated; it can land after
-            // the next question is up, so it names the question it is for.
+            // Carried by a hop, because the handler is not isolated. **The hop
+            // is the only withdrawal, and it always lands:** an unstructured
+            // task that holds `self`, so it runs whether or not anyone is
+            // still waiting. For a task that was cancelled before it asked,
+            // `onCancel` runs first and spawns the hop; the asker keeps the
+            // main actor until it suspends on the continuation it has just
+            // installed, so the hop lands after the install and resumes it.
+            // The hop can also land after the NEXT question is up, so it names
+            // the question it is for (`answer(_:forQuestion:)`).
+            //
+            // (Withdrawn wording, verbatim, from a check that stood in the
+            // body: "A task that was cancelled before it got here had its
+            // handler run BEFORE this body (`withTaskCancellationHandler` runs
+            // `onCancel` at once for a cancelled task), when there was nothing
+            // to withdraw. Nothing would resume the continuation installed
+            // just now, and the write waiting on it would hold
+            // `writeInProgress` for the life of the sheet. So it is looked at
+            // again here, with the continuation in place." The premise was
+            // false: the hop above resumes it, one turn later. The check only
+            // ever answered the same already-cancelled case one turn before
+            // the hop does, which is why the plant that deleted it ("no look
+            // at cancellation once installed") came back GREEN in fix round
+            // 1, and why it is gone.)
             Task { @MainActor in self.answer(false, forQuestion: id) }
         }
     }
