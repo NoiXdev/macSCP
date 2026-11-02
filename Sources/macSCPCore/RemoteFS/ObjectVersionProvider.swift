@@ -21,10 +21,25 @@ public struct ObjectVersion: Sendable, Equatable, Identifiable {
     public let entityTag: String?
 
     public var id: String { versionId }
+
+    public init(
+        versionId: String, key: String, isLatest: Bool, isDeleteMarker: Bool,
+        size: UInt64?, modifiedAt: Date?, entityTag: String?
+    ) {
+        self.versionId = versionId
+        self.key = key
+        self.isLatest = isLatest
+        self.isDeleteMarker = isDeleteMarker
+        self.size = size
+        self.modifiedAt = modifiedAt
+        self.entityTag = entityTag
+    }
 }
 
 /// One page of a bucket's version listing, and where the next one starts.
 public struct ObjectVersionPage: Sendable, Equatable {
+    /// The entries as the page carries them, in the order they were handed
+    /// to the initializer. Nothing here sorts or reverses them.
     public let versions: [ObjectVersion]
     /// The key to resume the listing after. `nil` when this is the last page.
     public let nextKeyMarker: String?
@@ -34,6 +49,12 @@ public struct ObjectVersionPage: Sendable, Equatable {
     /// Whether another page follows. Read from `nextKeyMarker` alone: a store
     /// that truncates a page always names the key to resume from.
     public var isTruncated: Bool { nextKeyMarker != nil }
+
+    public init(versions: [ObjectVersion], nextKeyMarker: String?, nextVersionIdMarker: String?) {
+        self.versions = versions
+        self.nextKeyMarker = nextKeyMarker
+        self.nextVersionIdMarker = nextVersionIdMarker
+    }
 }
 
 /// A key whose latest entry is a delete marker: gone from a plain listing,
@@ -46,6 +67,12 @@ public struct DeletedEntry: Sendable, Equatable {
     /// When the marker was written, i.e. when the key was deleted. `nil` when
     /// the store did not report a date it could be parsed from.
     public let modifiedAt: Date?
+
+    public init(key: String, markerVersionId: String, modifiedAt: Date?) {
+        self.key = key
+        self.markerVersionId = markerVersionId
+        self.modifiedAt = modifiedAt
+    }
 }
 
 /// An OPTIONAL backend capability (queried via `as?`, like
@@ -67,8 +94,12 @@ public struct DeletedEntry: Sendable, Equatable {
 /// of how it was opened, and a connection that starts at the account's bucket
 /// list has none.
 public protocol ObjectVersionProvider: Sendable {
-    /// The history of `key`: its versions and delete markers, newest first as
-    /// the store lists them. Empty when the key has no history at all.
+    /// The history of `key`: its versions and delete markers. Empty when the
+    /// key has no history at all.
+    ///
+    /// The order is whatever the store returns. Nothing here sorts or
+    /// reverses it, and no order is measured or relied on at this layer; a
+    /// caller that needs a defined order sorts explicitly.
     func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion]
 
     /// The keys under `prefix` whose latest entry is a delete marker.
