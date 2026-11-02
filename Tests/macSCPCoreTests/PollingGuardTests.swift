@@ -171,23 +171,42 @@ struct PollingGuardTests {
     /// `race(timeout:)` and to a call wrapped after the bracket, which found a
     /// fifth: the subprocess runner's own teardown bound.)
     ///
-    /// Two exemptions are found by path: `AsyncSignalTests.swift` tests
-    /// the bounded API itself (the positive below), and
-    /// `AsyncSignal.swift` (in `Sources/macSCPCore` since 2026-09-19, and
-    /// matched by its exact path there) declares `wait(timeout:)`, so its own
-    /// signature spells the phrase. The third is found by neither path
-    /// nor file name, per the brief for this check: `SubprocessRunnerTests.swift`
-    /// keeps one bound — `started.wait(timeout: startBound)` — because
-    /// there the bound IS the saturation being measured, and the comment
-    /// above the call says exactly that ("the bound IS the measurement").
-    /// Matching that phrase instead of the file name means a file rename
-    /// cannot silently widen the exemption, and rewording the comment
-    /// without also removing the wait would turn this check red rather
-    /// than quietly staying green.
+    /// **Every exemption is an exact path** (Task 9, fix round 4), and a
+    /// sentence is a second factor where there is one, never the only one: a
+    /// right sentence in a wrong file was silent, a wrong path is loud.
+    /// `AsyncSignalTests.swift` tests the bounded API itself (the positive
+    /// below), and `AsyncSignal.swift` (in `Sources/macSCPCore` since
+    /// 2026-09-19) declares `wait(timeout:)`, so its own signature spells the
+    /// phrase. `SubprocessRunnerTests.swift` keeps one bound,
+    /// `started.wait(timeout: startBound)`, because there the bound IS the
+    /// saturation being measured, and the comment above the call says exactly
+    /// that ("the bound IS the measurement"): that file, at that path, with
+    /// that sentence in it. Rewording the comment without also removing the
+    /// wait turns this check red rather than quietly staying green.
+    /// (Withdrawn wording, verbatim: "The third is found by neither path nor
+    /// file name, per the brief for this check" and "Matching that phrase
+    /// instead of the file name means a file rename cannot silently widen the
+    /// exemption" -- the sentence alone let any file carry it, and the first
+    /// arm matched `AsyncSignalTests.swift` by suffix, which the doc on
+    /// `asyncSignalPath()` argues against.)
     @Test func noLatchIsWaitedOnWithATimeout() throws {
         let measurementSentence = "the bound IS the measurement"
         let sources = try Self.sources()
         let asyncSignalPath = try Self.asyncSignalPath()
+        // The two test-file exemptions as EXACT paths, built from their types'
+        // names (`String(describing:)`), so renaming a type breaks compilation
+        // and moving or renaming a file leaves a path nothing is at, which the
+        // positives below turn red. A suffix would have exempted any file of
+        // that name anywhere under `Tests/` (planted and measured: both arms
+        // passed with a stray file carrying the name, or the sentence).
+        let asyncSignalTestsPath = Self.testsRoot
+            .appendingPathComponent(
+                "macSCPCoreTests/\(String(describing: AsyncSignalTests.self)).swift"
+            ).path
+        let subprocessRunnerTestsPath = Self.testsRoot
+            .appendingPathComponent(
+                "macSCPCoreTests/\(String(describing: SubprocessRunnerTests.self)).swift"
+            ).path
 
         // The fourth exemption (Task 9 fix round 2): one file, found by name
         // AND by sentence, so a rename turns this check red and the sentence
@@ -213,10 +232,10 @@ struct PollingGuardTests {
             pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
         }
         let offenders = callers.filter {
-            !$0.path.hasSuffix("AsyncSignalTests.swift")
+            $0.path != asyncSignalTestsPath
                 && $0.path != asyncSignalPath
                 && $0.path != subprocessRunnerPath
-                && !$0.text.contains(measurementSentence)
+                && !($0.path == subprocessRunnerTestsPath && $0.text.contains(measurementSentence))
                 && !($0.path == hangBoundPath && $0.text.contains(hangBoundSentence))
         }.map(\.path)
 
@@ -236,7 +255,7 @@ struct PollingGuardTests {
         // Positive: the bounded API is still exercised directly — without
         // this, the negative above could pass over a tree with no callers
         // at all, exempt or otherwise.
-        #expect(callers.contains { $0.path.hasSuffix("AsyncSignalTests.swift") })
+        #expect(callers.contains { $0.path == asyncSignalTestsPath })
 
         // Positive for the third exemption specifically: the measurement
         // sentence is actually live in `SubprocessRunnerTests.swift`,
@@ -248,7 +267,7 @@ struct PollingGuardTests {
         // and nobody noticed because the file happened not to be scanned
         // as an offender for some other reason."
         #expect(sources.contains {
-            $0.path.hasSuffix("SubprocessRunnerTests.swift")
+            $0.path == subprocessRunnerTestsPath
                 && $0.text.contains("wait(timeout:")
                 && $0.text.contains(measurementSentence)
         })
