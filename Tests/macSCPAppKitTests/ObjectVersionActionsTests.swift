@@ -473,7 +473,14 @@ struct ObjectVersionActionsTests {
         let v1 = Self.row("v1", in: rig)
         var duringTheQuestion: [VersionActionRefusal?] = []
         var secondOutcome: VersionActionOutcome?
+        var asked = 0
         rig.model.confirm = { [model = rig.model] _ in
+            asked += 1
+            // Only the first question tries a second write. Without the
+            // guard, a model that lets the second write start would ask again
+            // from inside this very closure, and so on without end: a red
+            // would be a hang.
+            guard asked == 1 else { return true }
             duringTheQuestion.append(model.refusal(of: .restore, on: v1))
             duringTheQuestion.append(model.refusal(of: .deleteVersion, on: v1))
             secondOutcome = await model.action(.restore, on: v1)
@@ -652,6 +659,13 @@ struct ObjectVersionActionsTests {
     /// Every way the question can go away is a "no": a cancelled task, and a
     /// second question arriving over the first. The first test is the "yes"
     /// beside them.
+    ///
+    /// **A question that is NOT answered must be a red and not a hang.** The
+    /// waits here are on the signal the bridge raises and on one yield, which
+    /// lets the main actor run the hop `onCancel` spawns; the task is only
+    /// awaited once it is known to have been released, and a question still
+    /// standing after the yield is released by the test itself, after the
+    /// failure is recorded.
     @Test func aQuestionThatGoesAwayIsANo() async {
         let bridge = VersionConfirmationBridge()
         let first = AsyncSignal()
@@ -659,19 +673,32 @@ struct ObjectVersionActionsTests {
         let cancelled = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
         _ = await first.wait()
         cancelled.cancel()
+        await Task.yield()
+        let stillStanding = bridge.request != nil
+        #expect(!stillStanding, "a cancelled question is withdrawn")
+        if stillStanding { bridge.answer(false) }
         #expect(await cancelled.value == false)
         #expect(bridge.request == nil)
 
         let second = AsyncSignal()
         bridge.asked = { second.signal() }
-        let replaced = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
+        var replacedAnswer: Bool?
+        let replaced = Task { @MainActor in
+            replacedAnswer = await bridge.ask(Self.sampleQuestion)
+        }
         _ = await second.wait()
         let third = AsyncSignal()
         bridge.asked = { third.signal() }
         let replacing = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        // The second question is answered "no" by the third arriving.
-        #expect(await replaced.value == false)
         _ = await third.wait()
+        await Task.yield()
+        // The second question was answered "no" by the third arriving.
+        #expect(replacedAnswer == false)
+        if replacedAnswer == nil {
+            // Released by the test so that nothing is left waiting; the first
+            // question's continuation was overwritten, so it is not awaited.
+            replaced.cancel()
+        }
         bridge.answer(true)
         #expect(await replacing.value == true)
     }
@@ -711,8 +738,10 @@ struct ObjectVersionActionsTests {
         let events = trail.events
         #expect(events.map(\.kind) == [.versionRestored, .versionDeleted])
         #expect(events.allSatisfy { !$0.isError && $0.errorMessage == nil })
-        #expect(events[0].detail == "restored version v2 of b/a.txt as its current version")
-        #expect(events[1].detail == "permanently deleted version v1 of b/a.txt")
+        // Read through `first`/`last`, not by index: a missing line is a red
+        // here and not a trap that takes the rest of the run with it.
+        #expect(events.first?.detail == "restored version v2 of b/a.txt as its current version")
+        #expect(events.last?.detail == "permanently deleted version v1 of b/a.txt")
     }
 
     /// A write that could not be confirmed is recorded as an attempt that
