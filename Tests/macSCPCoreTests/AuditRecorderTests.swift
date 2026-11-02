@@ -28,7 +28,7 @@ struct AuditRecorderTests {
             destinationTabID: destinationTabID, isEditUpload: isEditUpload,
             destinationDirectory: destinationDirectory,
             destinationPath: RemotePath.join(destinationDirectory, fileName),
-            destinationSupportsResume: true, crossRemote: false, crossBackendTarget: nil)
+            canResumeIfInterrupted: true, crossRemote: false, crossBackendTarget: nil)
     }
 
     /// Spec M9b (binding, maintainer-approved) requires "Richtung, Name,

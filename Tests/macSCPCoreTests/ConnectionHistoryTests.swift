@@ -287,7 +287,7 @@ struct ConnectionHistoryTests {
             sourcePath: RemotePath.join("/source", fileName),
             destinationTabID: nil, isEditUpload: false, destinationDirectory: "/dest",
             destinationPath: RemotePath.join("/dest", fileName),
-            destinationSupportsResume: true, crossRemote: false, crossBackendTarget: nil)
+            canResumeIfInterrupted: true, crossRemote: false, crossBackendTarget: nil)
     }
 
     /// The one test here that does not hand-build its events. `AuditRecorder`

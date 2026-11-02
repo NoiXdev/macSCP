@@ -29,7 +29,8 @@ import Foundation
 /// since" to check.
 ///
 /// Everything a transfer's source does not do refuses, so a caller that used
-/// this as anything but a source would find out at once. It is never a
+/// this as anything but a source would find out at once; the one exception is
+/// `disconnect()`, a no-op (below). It is never a
 /// destination, so it inherits `supportsAppendResume`'s default without
 /// answering for it, as `ThroughputPayload` does
 /// (`RemoteFileSystemAppendResumeGuardTests` lists both).
@@ -93,7 +94,7 @@ struct VersionDownloadSource: RemoteFileSystem {
     func rename(from: String, to: String) async throws { throw Self.refusal }
     func setPermissions(path: String, permissions: UInt32) async throws { throw Self.refusal }
     func deleteTree(at path: String) async throws { throw Self.refusal }
-    func homeDirectoryPath() async throws -> String { "/" }
+    func homeDirectoryPath() async throws -> String { throw Self.refusal }
     /// The provider belongs to the tab's connection, which owns its
     /// lifecycle; a download's source must not close it.
     func disconnect() async {}

@@ -355,6 +355,15 @@ extension ContentView {
     ///
     /// The local name carries the version (`VersionLocalName`), so two
     /// versions of one key can be open together.
+    ///
+    /// **Nothing calls this yet, and its body has never executed.** The
+    /// version sheet task of
+    /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires it.
+    /// `NSWorkspace`, the `chmod`, the temp directory and the
+    /// `CancellationError` arm are covered by a source scan
+    /// (`VersionDownloadTests`) only, which reads this one function's body: a
+    /// `beginEditing` moved into a private helper that this calls would not be
+    /// seen by it.
     func openVersionReadOnly(
         _ version: ObjectVersion, fileName: String, bucket: String,
         in tab: SessionTab, session: BrowserSession

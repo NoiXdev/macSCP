@@ -214,13 +214,13 @@ struct TransferQueueBar: View {
                     .foregroundStyle(DesignTokens.inkSecondary)
                     .lineLimit(1).truncationMode(.middle)
             }
-            if !item.destinationSupportsResume, item.status == .queued || item.status.isRunning {
+            if !item.canResumeIfInterrupted, item.status == .queued || item.status.isRunning {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .help(L10n.string(
                         "transfers.noResume.hint",
-                        "If interrupted, this upload restarts from the beginning."))
+                        "If interrupted, this transfer restarts from the beginning."))
             }
             Spacer(minLength: 8)
             switch item.status {

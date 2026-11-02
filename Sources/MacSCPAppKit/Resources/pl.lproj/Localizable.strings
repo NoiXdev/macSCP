@@ -329,7 +329,7 @@
 
 /* Cross-backend resume warning (M16) — shown while a queued/running item's
    destination backend cannot resume an interrupted upload/download. */
-"transfers.noResume.hint" = "W razie przerwania to wysyłanie zacznie się od nowa.";
+"transfers.noResume.hint" = "W razie przerwania ten transfer zacznie się od nowa.";
 
 /* Full paths on demand (2026-09-03): a row shows a file name and an
    arrow, so its hover hint carries the whole source and destination,

@@ -3,8 +3,14 @@ import Foundation
 
 /// What a downloaded old version is called on disk: the object's own file name
 /// with the version's id folded in BEFORE the extension, so two versions of
-/// one key can sit side by side (`doc (3f2c9a10-0b7e).txt` and
-/// `doc (7d41c2aa-91f3).txt`) and each still opens with the right application.
+/// one key can sit side by side and each still opens with the right
+/// application. A lower-case, UUID-shaped id (the test rig's shape) is shown
+/// as it is: `doc (3f2c9a10-0b7e-4c1d).txt`. An id with upper case, `+`, `/` or
+/// anything else outside the whitelist below (a real AWS version id is mixed
+/// case, so it always takes this path) is digested:
+/// `doc (3HL4kqtJvjVB~4ce1d782d7517756).txt` for the id
+/// `3HL4kqtJvjVBH40Nrjfkd`, the readable part being the id's first twelve
+/// permitted characters.
 ///
 /// **A version id is opaque text the store supplied.** Nothing here may assume
 /// it is a path-safe token: it is cut into a file name, so it is held to a
@@ -15,7 +21,10 @@ import Foundation
 /// - two ids that sanitize to the same readable text still get different names
 ///   (the digest sees the bytes the readable part dropped), which is the
 ///   collision this type exists to prevent arriving through the sanitizer
-///   instead of through the id;
+///   instead of through the id. What distinguishes two digested ids is the
+///   first 16 hex digits (64 bits) of the SHA-256 of the WHOLE id, nothing
+///   more: a collision between two ids of one key is possible in principle
+///   and not a practical concern, and it is not excluded structurally;
 /// - the digest marker `~` is outside the whitelist, so a verbatim id can
 ///   never equal a digested one's tag;
 /// - the verbatim whitelist is lower-case only, so two ids that differ only in

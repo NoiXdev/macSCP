@@ -239,6 +239,33 @@ struct VersionDownloadQueueTests {
         #expect(provider.asked.count == 1)
     }
 
+    /// The transfer row warns "restarts from the beginning" while a transfer
+    /// that cannot resume is queued or running (`Item.canResumeIfInterrupted`
+    /// false). A version download to the local disk is the one download where
+    /// that is unconditionally true, and the local disk can append, so the
+    /// flag cannot be left to the destination's answer. Checked while the item
+    /// is still in the bar (the first status seen is the queued/running one),
+    /// beside the ordinary download whose flag IS the destination's.
+    @Test func aVersionDownloadIsMarkedAsRestartingWhereAnOrdinaryOneIsNot() async throws {
+        let directory = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let provider = FakeProvider(
+            history: [Self.entry("v1", size: 1)], reads: ["v1": .init(body: Data("x".utf8))])
+        let queue = TransferQueueViewModel()
+        try await queue.enqueueAndWaitVersion(
+            fileName: "v.txt", source: provider, bucket: "b", key: "doc.txt", versionId: "v1",
+            destination: LocalFileSystem(), destinationDirectory: directory.path(percentEncoded: false))
+        #expect(queue.items.map(\.canResumeIfInterrupted) == [false])
+
+        let source = TransferQueueViewModelTests.QueueTestFS(reads: [
+            "/a.txt": .init(content: Data("x".utf8)),
+        ])
+        try await queue.enqueueAndWait(
+            fileName: "a.txt", direction: .download, source: source, sourcePath: "/a.txt",
+            destination: LocalFileSystem(), destinationDirectory: directory.path(percentEncoded: false))
+        #expect(queue.items.map(\.canResumeIfInterrupted) == [false, true])
+    }
+
     /// The control for the case above: the same lost connection, the same
     /// destination, an ordinary download. It IS retained, so the case above
     /// is a decision about versions and not what any download does here.
