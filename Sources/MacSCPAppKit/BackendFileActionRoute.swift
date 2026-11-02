@@ -12,6 +12,9 @@ struct FileActionVerdict: Equatable {
 
     static let available = FileActionVerdict(isAvailable: true, reason: nil)
     static let unrouted = FileActionVerdict(isAvailable: false, reason: nil)
+    /// Declined because the row's target cannot be worked out: the history
+    /// sheet needs a bucket, and with none it would be live and inert.
+    static let noTarget = FileActionVerdict(isAvailable: false, reason: nil)
 }
 
 /// The backend file actions the window can carry out, by the `id` the
@@ -79,13 +82,28 @@ enum BackendFileActionRoute: String, CaseIterable {
 
     /// `verdict(for:bucketVersioning:)` for the bucket the pane is in, asked of
     /// the session's cache: it reads only what the cache already holds
-    /// (`knownVersioning(_:)`), so a bucket nobody has asked about, no bucket
-    /// at all (the pane is at the bucket list) and no cache (a backend without
-    /// bucket settings) all give `nil`, and the row is offered.
+    /// (`knownVersioning(_:)`), so a bucket nobody has asked about and no cache
+    /// (a backend without bucket settings) both give `nil`, and the row is
+    /// offered.
+    ///
+    /// **The history row needs a bucket, and with none it is declined.** The
+    /// handler builds its target with `ObjectVersionsTarget.resolve`, which
+    /// answers `nil` without one (a single-bucket connection with no bucket
+    /// configured; at the bucket list there is no file row to ask about), and
+    /// a row offered there is live and inert. The facts are the same ones:
+    /// `ConnectionActionContext.bucket` is what the resolver reads for a file
+    /// in a bucket. (Withdrawn wording, verbatim: "so a bucket nobody has
+    /// asked about, no bucket at all (the pane is at the bucket list) and no
+    /// cache (a backend without bucket settings) all give `nil`, and the row is
+    /// offered." The two Object Lock rows share the shape and are not changed
+    /// here.)
     @MainActor
     static func verdict(
         for action: FileActionContribution, bucket: String?, cache: BucketVersioningCache?
     ) -> FileActionVerdict {
+        if BackendFileActionRoute(action: action) == .versions, bucket == nil {
+            return .noTarget
+        }
         let known = bucket.flatMap { cache?.knownVersioning($0) }
         return verdict(for: action, bucketVersioning: known)
     }
