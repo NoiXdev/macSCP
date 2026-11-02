@@ -559,7 +559,7 @@ public enum S3SettingsXML {
 
     /// An S3 timestamp: ISO 8601 in UTC, with or without fractional seconds
     /// (the rig writes `.000`, other stores omit it).
-    private static func timestamp(_ text: String) -> Date? {
+    static func timestamp(_ text: String) -> Date? {
         if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) {
             return date
         }
