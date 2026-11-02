@@ -422,6 +422,10 @@ extension ContentView {
     /// current folder, then the tab's queue (`enqueueAndWaitVersion`), where it
     /// shows up in the transfer bar like any download.
     ///
+    /// **The panel's "replace?" is the only question**: the queue is told the
+    /// person has already answered (`replacingExisting`), so a second prompt
+    /// from its conflict decider does not follow for the same file.
+    ///
     /// The queue is asked for the version and not for a path: a plain read of
     /// the key would be its CURRENT content. **A failed or cancelled transfer
     /// is the queue's to show** (its row in the bar says so), so this does not
@@ -444,7 +448,8 @@ extension ContentView {
                 try? await tab.transferQueue.enqueueAndWaitVersion(
                     fileName: url.lastPathComponent, source: provider, bucket: bucket,
                     key: version.key, versionId: version.versionId,
-                    destination: session.localFS, destinationDirectory: directory)
+                    destination: session.localFS, destinationDirectory: directory,
+                    replacingExisting: true)
             }
         }
     }

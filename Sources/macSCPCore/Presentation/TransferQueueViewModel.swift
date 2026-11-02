@@ -750,6 +750,16 @@ public final class TransferQueueViewModel {
     /// current content and not this version's (`VersionDownloadSource`). The
     /// user starts the download again; it begins from the first byte.
     ///
+    /// **`replacingExisting`** says the caller has already asked the person
+    /// about a file that is already there, so the queue's own conflict check is
+    /// skipped and the engine overwrites. The default is the queue's ordinary
+    /// rule (the tab's decider is asked). Without it the version sheet's save
+    /// panel, whose own "replace?" prompt IS the decision, was followed by the
+    /// queue's prompt for the same file (`byDefaultAFileThatIsAlreadyThereIsAskedAbout`
+    /// and `aCallerThatAlreadyAskedReplacesWithoutASecondQuestion` hold both
+    /// halves). The failure classification is unaffected: a version download
+    /// is checked for first.
+    ///
     /// **Callers:** the version sheet's "Open (Read-Only)" and "Download…"
     /// (`ContentView.openVersionReadOnly`, `ContentView.downloadVersion`) and
     /// the left side of "Compare with Current Version" (`Comparison.fetch`).
@@ -760,7 +770,8 @@ public final class TransferQueueViewModel {
     public func enqueueAndWaitVersion(
         fileName: String, source: any ObjectVersionProvider, bucket: String,
         key: String, versionId: String,
-        destination: any RemoteFileSystem, destinationDirectory: String
+        destination: any RemoteFileSystem, destinationDirectory: String,
+        replacingExisting: Bool = false
     ) async throws {
         let versionSource = VersionDownloadSource(
             source: source, bucket: bucket, key: key, versionId: versionId)
@@ -772,7 +783,7 @@ public final class TransferQueueViewModel {
                 id: id, source: versionSource, sourcePath: versionSource.displayPath,
                 destination: destination, destinationDirectory: destinationDirectory,
                 fileName: fileName, direction: .download, onCompleted: nil,
-                isVersionDownload: true)
+                bypassConflictCheck: replacingExisting, isVersionDownload: true)
             order.append(id)
             items.append(Item(
                 id: id, fileName: fileName, direction: .download, status: .queued,

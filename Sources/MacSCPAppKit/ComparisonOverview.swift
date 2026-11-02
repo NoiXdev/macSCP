@@ -416,7 +416,8 @@ enum ComparisonOverviewPresentation {
         if let fetch = error as? ComparisonFetchError {
             switch fetch {
             case .sessionClosed: return settleSessionClosed.text
-            case .wrongKind, .noContentToCompare: return settleNotPossible.text
+            case .wrongKind, .noContentToCompare, .versionIsADeleteMarker:
+                return settleNotPossible.text
             case .rowOutOfRange: return settleRowMoved.text
             }
         }

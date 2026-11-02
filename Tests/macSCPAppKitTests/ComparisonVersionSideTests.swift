@@ -122,7 +122,11 @@ struct ComparisonVersionSideTests {
         let marker = makeRig(
             history: [Self.version("v1", marker: true), Self.version("v2", latest: true)],
             contents: ["v1": Data("x".utf8)], current: Data("y".utf8), root: root)
-        await #expect(throws: RemoteFSError.self) { try await marker.comparison.diffFilePair() }
+        // A marker is its own refusal, a sentence of the project's own and not a
+        // reason string (`aDeleteMarkerOnTheVersionSideIsSaidInTheReadersLanguage`).
+        await #expect(throws: ComparisonFetchError.versionIsADeleteMarker) {
+            try await marker.comparison.diffFilePair()
+        }
         #expect(marker.provider.readVersionIds.isEmpty)
 
         // The positive: the same shape with a real version reads it.
@@ -131,6 +135,38 @@ struct ComparisonVersionSideTests {
             contents: ["v1": Data("x".utf8)], current: Data("y".utf8), root: root)
         _ = try await real.comparison.diffFilePair()
         #expect(real.provider.readVersionIds == ["v1"])
+    }
+
+    /// A version that turns out to be a delete marker is said in the reader's
+    /// language, with a sentence of the project's own and not a reason string
+    /// Core-style: the error reaches the diff window, which shows what it is
+    /// given. The positive is the English column (the sentence says nothing was
+    /// compared, like every other refusal there); the negative is that no
+    /// language shows the English literal the error used to carry.
+    @Test(arguments: ["en", "de", "fr", "pl"])
+    func aDeleteMarkerOnTheVersionSideIsSaidInTheReadersLanguage(locale: String) async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rig = makeRig(
+            history: [Self.version("v1", marker: true), Self.version("v2", latest: true)],
+            contents: ["v1": Data("x".utf8)], current: Data("y".utf8), root: root)
+        var thrown: (any Error)?
+        do { _ = try await rig.comparison.diffFilePair() } catch { thrown = error }
+        let error = try #require(thrown)
+        #expect(error is ComparisonFetchError, "\(error)")
+
+        let text = L10n.$localeOverride.withValue(locale) {
+            ComparisonDiffPresentation.failureText(for: error)
+        }
+        let english = L10n.$localeOverride.withValue("en") {
+            ComparisonDiffPresentation.failureText(for: error)
+        }
+        let oldLiteral = "this version is a delete marker and has no content to compare"
+        let showsTheOldLiteral = text.contains(oldLiteral)
+        #expect(!showsTheOldLiteral)
+        let saysNothingWasCompared = english.lowercased().contains("nothing was compared")
+        #expect(saysNothingWasCompared)
+        if locale != "en" { #expect(text != english) }
     }
 
     @Test func theVersionSideIsLetGoWithTheFileSystems() throws {
@@ -146,44 +182,6 @@ struct ComparisonVersionSideTests {
     }
 
     // MARK: - The tab resolves the version against its own session
-
-    /// A file system that also keeps a version history, standing where a
-    /// session's remote stands.
-    private struct VersionedFS: RemoteFileSystem, ObjectVersionProvider {
-        let files: MemoryFS
-        let history: FakeVersionProvider
-
-        func list(path: String) async throws -> [RemoteFileItem] { try await files.list(path: path) }
-        func stat(path: String) async throws -> RemoteFileItem { try await files.stat(path: path) }
-        func readStream(path: String, fromOffset offset: UInt64) async throws
-            -> AsyncThrowingStream<Data, Error>
-        { try await files.readStream(path: path, fromOffset: offset) }
-        func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
-        func delete(path: String) async throws {}
-        func createDirectory(at path: String) async throws {}
-        func rename(from: String, to: String) async throws {}
-        func setPermissions(path: String, permissions: UInt32) async throws {}
-        func deleteTree(at path: String) async throws {}
-        func homeDirectoryPath() async throws -> String { "/" }
-        func disconnect() async {}
-
-        func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
-            try await history.versions(ofKey: key, inBucket: bucket)
-        }
-        func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {
-            try await history.deletedEntries(inBucket: bucket, prefix: prefix)
-        }
-        func readStream(
-            ofKey key: String, inBucket bucket: String, versionId: String
-        ) async throws -> AsyncThrowingStream<Data, Error> {
-            try await history.readStream(ofKey: key, inBucket: bucket, versionId: versionId)
-        }
-        func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {}
-        func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {}
-        func liftDeleteMarker(
-            ofKey key: String, inBucket bucket: String, markerVersionId: String
-        ) async throws {}
-    }
 
     private func connectedTab(remote: any RemoteFileSystem) -> SessionTab {
         let tab = SessionTab(
@@ -256,4 +254,48 @@ struct ComparisonVersionSideTests {
             ], on: .local)
         #expect(pair?.leftVersion == nil)
     }
+}
+
+/// A file system that also keeps a version history, standing where a session's
+/// remote stands. A class, so a test can say that something is THE object the
+/// tab holds.
+final class VersionedFS: RemoteFileSystem, ObjectVersionProvider, Sendable {
+    let files: MemoryFS
+    let history: FakeVersionProvider
+
+    init(files: MemoryFS, history: FakeVersionProvider) {
+        self.files = files
+        self.history = history
+    }
+
+    func list(path: String) async throws -> [RemoteFileItem] { try await files.list(path: path) }
+    func stat(path: String) async throws -> RemoteFileItem { try await files.stat(path: path) }
+    func readStream(path: String, fromOffset offset: UInt64) async throws
+        -> AsyncThrowingStream<Data, Error>
+    { try await files.readStream(path: path, fromOffset: offset) }
+    func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
+    func delete(path: String) async throws {}
+    func createDirectory(at path: String) async throws {}
+    func rename(from: String, to: String) async throws {}
+    func setPermissions(path: String, permissions: UInt32) async throws {}
+    func deleteTree(at path: String) async throws {}
+    func homeDirectoryPath() async throws -> String { "/" }
+    func disconnect() async {}
+
+    func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
+        try await history.versions(ofKey: key, inBucket: bucket)
+    }
+    func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {
+        try await history.deletedEntries(inBucket: bucket, prefix: prefix)
+    }
+    func readStream(
+        ofKey key: String, inBucket bucket: String, versionId: String
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        try await history.readStream(ofKey: key, inBucket: bucket, versionId: versionId)
+    }
+    func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {}
+    func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {}
+    func liftDeleteMarker(
+        ofKey key: String, inBucket bucket: String, markerVersionId: String
+    ) async throws {}
 }

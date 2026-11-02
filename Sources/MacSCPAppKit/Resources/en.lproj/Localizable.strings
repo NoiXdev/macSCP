@@ -504,6 +504,7 @@
 "s3.versions.refusal.isCurrent" = "This is the current version already.";
 "s3.versions.refusal.currentIsMarker" = "The file is deleted at the moment, so there is no current content to compare with.";
 "s3.versions.refusal.versioningNotEnabled" = "Restoring needs versioning to be turned on for this bucket. While it is off or suspended, a restore would replace the current content instead of adding a version.";
+"s3.versions.refusal.versioningNotConfirmed" = "Restoring needs versioning to be turned on for this bucket, and macSCP could not confirm whether it is. Open the history again to retry.";
 "s3.versions.refusal.locked" = "This version is locked, so it cannot be deleted.";
 "s3.versions.refusal.lockNotConfirmed" = "The lock on this version has not been confirmed, so it cannot be deleted.";
 "s3.versions.refusal.marker" = "A delete marker is not a version with content, so it is not deleted here.";
@@ -1859,6 +1860,7 @@
 "compare.diff.failure.notKnownFiles" = "macSCP could not tell that both sides are ordinary files, so their contents were not compared.";
 "compare.diff.failure.sessionClosed" = "The session was closed, so these files can no longer be fetched. Nothing was compared.";
 "compare.diff.failure.notPossible" = "These entries cannot be compared by their contents.";
+"compare.diff.failure.versionIsADeleteMarker" = "This version is a delete marker and has no content, so nothing was compared.";
 "compare.diff.failure.rowMoved" = "This row is no longer in the list as it was, so nothing was compared.";
 "compare.diff.failure.stopped" = "Fetching the files was stopped, so nothing was compared.";
 "compare.diff.failure.failed %@" = "The files could not be compared. %@";

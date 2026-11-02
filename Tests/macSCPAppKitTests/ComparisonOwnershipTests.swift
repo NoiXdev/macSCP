@@ -503,6 +503,44 @@ struct ComparisonOwnershipTests {
         Self.settle(comparison)
     }
 
+    /// The same scan over a comparison whose LEFT side is a version
+    /// (`Comparison.VersionSide`). The ordinary case above builds a comparison
+    /// with no such property, so its negative checks have no span over it: a
+    /// later `VersionSide` that captured a closure or a session would pass.
+    /// What may be reachable through it is the version's three ids and the
+    /// very object the tab holds, seen through the version capability.
+    @Test func aComparisonCarryingAVersionStoresNoConnectionOfItsOwnEither() async throws {
+        let remote = VersionedFS(files: MemoryFS(files: [:]), history: FakeVersionProvider())
+        let tab = connectedTab(remote: remote)
+        let comparison = try #require(
+            tab.startComparison(
+                left: .remote, leftRoot: "/b/a (v1).txt", right: .remote, rightRoot: "/b/a.txt",
+                algorithm: .sha256, kind: .filePair,
+                leftVersion: .init(bucket: "b", key: "a.txt", versionId: "v1")))
+        let children = Self.storedValues(of: comparison, path: "comparison")
+
+        // Positive: the scan reaches the version side, and its ids.
+        #expect(children.contains { $0.label == "comparison._versionSide" })
+        #expect(children.contains { ($0.value as? String) == "v1" })
+        let providers = children.compactMap { $0.value as? any ObjectVersionProvider }
+        #expect(!providers.isEmpty)
+        // Everything that can reach the store through the version capability
+        // is the tab's own remote object and no other.
+        #expect(providers.allSatisfy { ($0 as AnyObject) === (remote as AnyObject) })
+
+        for child in children {
+            if child.value is any RemoteFileSystem { continue }
+            if child.value is TransferQueueViewModel { continue }
+            let typeName = String(describing: type(of: child.value))
+            for forbidden in Self.forbiddenTypeNames {
+                #expect(!typeName.contains(forbidden), "\(child.label) is a \(typeName)")
+            }
+            #expect(!typeName.contains("->"), "\(child.label) is a closure: \(typeName)")
+        }
+
+        Self.settle(comparison)
+    }
+
     /// Every stored value reachable from `value`, labelled by path. The file
     /// systems sit inside `Comparison.FileSystems` inside an optional, so the
     /// walk descends through optionals and structs — and through every other

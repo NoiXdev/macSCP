@@ -383,6 +383,12 @@ enum ComparisonFetchError: Error, Equatable {
     /// (one side missing, a directory, a type mismatch, a link, or a path
     /// that could not be read in the first place).
     case noContentToCompare(ComparisonState)
+    /// The version on the left side of a version comparison is a delete
+    /// marker, which stores no content. A case of its own and not a
+    /// `RemoteFSError.protocolError(reason:)` with a sentence in it: that
+    /// reason reaches the diff window verbatim, and a sentence written in code
+    /// is read in a language nobody here speaks.
+    case versionIsADeleteMarker
 }
 
 extension UndeterminedReason {
@@ -699,7 +705,7 @@ extension Comparison {
                 // lets this one download finish into the directory the
                 // comparison removes; the cost is bytes, not a wrong file.
                 try await queue.enqueueAndWaitVersion(
-                    fileName: Self.versionFileName(of: version), source: version.source,
+                    fileName: leftName, source: version.source,
                     bucket: version.reference.bucket, key: version.reference.key,
                     versionId: version.reference.versionId,
                     destination: LocalFileSystem(),
@@ -801,8 +807,7 @@ extension Comparison {
             throw RemoteFSError.notFound(path: path)
         }
         guard !entry.isDeleteMarker else {
-            throw RemoteFSError.protocolError(
-                reason: "this version is a delete marker and has no content to compare")
+            throw ComparisonFetchError.versionIsADeleteMarker
         }
         return RemoteFileItem(
             name: fileName(of: reference.key), path: path, kind: .file, size: entry.size,

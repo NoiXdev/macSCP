@@ -146,6 +146,61 @@ struct VersionDownloadQueueTests {
         #expect(item.kind == .file)
     }
 
+    // MARK: - A destination that exists
+
+    /// Counts how often the queue asked what to do about a file that was
+    /// already there, and answers "overwrite".
+    final class CountingDecider: Sendable {
+        private let asked = Mutex(0)
+        var count: Int { asked.withLock { $0 } }
+        var decider: ConflictDecider {
+            { [self] _ in
+                asked.withLock { $0 += 1 }
+                return (resolution: .overwrite, applyToAll: false)
+            }
+        }
+    }
+
+    private func downloadOverExistingFile(
+        replacingExisting: Bool
+    ) async throws -> (decider: CountingDecider, written: Data) {
+        let directory = try Self.scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let old = Data("the old content".utf8)
+        try Data("what was already there".utf8).write(
+            to: directory.appendingPathComponent("doc (v1).txt"))
+        let provider = FakeProvider(
+            history: [Self.entry("v1", size: UInt64(old.count))], reads: ["v1": .init(body: old)])
+        let queue = TransferQueueViewModel()
+        let counting = CountingDecider()
+        queue.conflictDecider = counting.decider
+        try await queue.enqueueAndWaitVersion(
+            fileName: "doc (v1).txt", source: provider, bucket: "b", key: "doc.txt", versionId: "v1",
+            destination: LocalFileSystem(), destinationDirectory: directory.path(percentEncoded: false),
+            replacingExisting: replacingExisting)
+        let written = try Data(contentsOf: directory.appendingPathComponent("doc (v1).txt"))
+        return (counting, written)
+    }
+
+    /// The default is the queue's ordinary rule: a file that is already there is
+    /// a conflict, and the tab's decider is asked. This is the control for the
+    /// case below; the read-only open and the comparison write into directories
+    /// of their own and never meet it.
+    @Test func byDefaultAFileThatIsAlreadyThereIsAskedAbout() async throws {
+        let (decider, written) = try await downloadOverExistingFile(replacingExisting: false)
+        #expect(decider.count == 1)
+        #expect(written == Data("the old content".utf8))
+    }
+
+    /// A caller that has already asked the person (the version sheet's save
+    /// panel, whose own "replace?" prompt IS the decision) says so, and the
+    /// queue does not ask a second time.
+    @Test func aCallerThatAlreadyAskedReplacesWithoutASecondQuestion() async throws {
+        let (decider, written) = try await downloadOverExistingFile(replacingExisting: true)
+        #expect(decider.count == 0)
+        #expect(written == Data("the old content".utf8))
+    }
+
     // MARK: - Refused before a byte is read
 
     @Test func aDeleteMarkerAndAnUnknownIdAreRefusedBeforeAnythingIsRead() async throws {

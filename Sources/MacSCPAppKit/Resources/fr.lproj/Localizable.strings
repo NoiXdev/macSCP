@@ -501,6 +501,7 @@
 "s3.versions.refusal.isCurrent" = "C’est déjà la version actuelle.";
 "s3.versions.refusal.currentIsMarker" = "Le fichier est actuellement supprimé : il n’y a donc pas de contenu actuel à comparer.";
 "s3.versions.refusal.versioningNotEnabled" = "La restauration exige que le versionnement soit activé pour ce bucket. Tant qu’il est désactivé ou suspendu, une restauration remplacerait le contenu actuel au lieu d’ajouter une version.";
+"s3.versions.refusal.versioningNotConfirmed" = "La restauration exige que le versionnement soit activé pour ce bucket, et macSCP n’a pas pu confirmer s’il l’est. Rouvrez l’historique pour réessayer.";
 "s3.versions.refusal.locked" = "Cette version est verrouillée ; elle ne peut donc pas être supprimée.";
 "s3.versions.refusal.lockNotConfirmed" = "Le verrou de cette version n’a pas été confirmé ; elle ne peut donc pas être supprimée.";
 "s3.versions.refusal.marker" = "Un marqueur de suppression n’est pas une version avec contenu ; il n’est donc pas supprimé ici.";
@@ -1857,6 +1858,7 @@
 "compare.diff.failure.notKnownFiles" = "macSCP n’a pas pu établir que les deux côtés sont des fichiers ordinaires ; leurs contenus n’ont donc pas été comparés.";
 "compare.diff.failure.sessionClosed" = "La session a été fermée : ces fichiers ne peuvent plus être récupérés. Rien n’a été comparé.";
 "compare.diff.failure.notPossible" = "Ces éléments ne peuvent pas être comparés par leur contenu.";
+"compare.diff.failure.versionIsADeleteMarker" = "Cette version est un marqueur de suppression et n’a pas de contenu ; rien n’a donc été comparé.";
 "compare.diff.failure.rowMoved" = "Cette ligne n’est plus dans la liste telle qu’elle était : rien n’a été comparé.";
 "compare.diff.failure.stopped" = "La récupération des fichiers a été arrêtée : rien n’a été comparé.";
 "compare.diff.failure.failed %@" = "Les fichiers n’ont pas pu être comparés. %@";
