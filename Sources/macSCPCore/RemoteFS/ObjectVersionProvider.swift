@@ -1,0 +1,94 @@
+import Foundation
+
+/// One entry of an object's version history: either a stored version or a
+/// delete marker.
+public struct ObjectVersion: Sendable, Equatable, Identifiable {
+    /// The store's identifier for this entry. Unique within one key's history,
+    /// which is what `id` leans on: a list of versions is always ONE key's.
+    public let versionId: String
+    public let key: String
+    /// Whether this entry is the key's current one.
+    public let isLatest: Bool
+    /// A delete marker stores no content: it hides the key from a plain
+    /// listing, and removing it brings the previous version back.
+    public let isDeleteMarker: Bool
+    /// The content length in bytes. `nil` for a delete marker, which has none.
+    public let size: UInt64?
+    /// When the entry was written. `nil` when the store did not report a
+    /// date it could be parsed from.
+    public let modifiedAt: Date?
+    /// The entity tag as the store reported it. `nil` for a delete marker.
+    public let entityTag: String?
+
+    public var id: String { versionId }
+}
+
+/// One page of a bucket's version listing, and where the next one starts.
+public struct ObjectVersionPage: Sendable, Equatable {
+    public let versions: [ObjectVersion]
+    /// The key to resume the listing after. `nil` when this is the last page.
+    public let nextKeyMarker: String?
+    /// The version to resume after within `nextKeyMarker`'s key. `nil` when
+    /// this is the last page, and may be `nil` on a truncated page too.
+    public let nextVersionIdMarker: String?
+    /// Whether another page follows. Read from `nextKeyMarker` alone: a store
+    /// that truncates a page always names the key to resume from.
+    public var isTruncated: Bool { nextKeyMarker != nil }
+}
+
+/// A key whose latest entry is a delete marker: gone from a plain listing,
+/// still recoverable.
+public struct DeletedEntry: Sendable, Equatable {
+    public let key: String
+    /// The version id of the delete marker that hides the key. Removing that
+    /// marker (`liftDeleteMarker`) is what brings the key back.
+    public let markerVersionId: String
+    /// When the marker was written, i.e. when the key was deleted. `nil` when
+    /// the store did not report a date it could be parsed from.
+    public let modifiedAt: Date?
+}
+
+/// An OPTIONAL backend capability (queried via `as?`, like
+/// `PresignedURLProvider` and `S3BucketSettings`): the version history of one
+/// object, as opposed to the object's current content.
+///
+/// **It is not named for S3.** What it describes is an object that has
+/// versions, delete markers that hide it, and a way to read, restore or
+/// remove one of them; S3 is the backend that has those today, not the
+/// definition of them. A caller asking `as? ObjectVersionProvider` is asking
+/// whether the backend keeps history, not which vendor it is.
+///
+/// **`RemoteFileSystem` is deliberately untouched.** History is a property of
+/// some backends only, so it is a capability beside the protocol rather than
+/// a requirement on every conformer, the same decision as
+/// `PresignedURLProvider`.
+///
+/// Every method names its bucket: the connection's own bucket is a property
+/// of how it was opened, and a connection that starts at the account's bucket
+/// list has none.
+public protocol ObjectVersionProvider: Sendable {
+    /// The history of `key`: its versions and delete markers, newest first as
+    /// the store lists them. Empty when the key has no history at all.
+    func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion]
+
+    /// The keys under `prefix` whose latest entry is a delete marker.
+    func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry]
+
+    /// Streams the content of one specific version of `key`, from its first
+    /// byte.
+    func readStream(
+        ofKey key: String, inBucket bucket: String, versionId: String
+    ) async throws -> AsyncThrowingStream<Data, Error>
+
+    /// Makes `versionId`'s content the current content of `key`, by writing
+    /// it as a NEW version. The history keeps every entry it had.
+    func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws
+
+    /// Permanently removes one version of `key`. Unlike deleting the key, it
+    /// leaves no marker and cannot be undone.
+    func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws
+
+    /// Removes the delete marker `markerVersionId`, so the version beneath it
+    /// is the key's current content again.
+    func liftDeleteMarker(ofKey key: String, inBucket bucket: String, markerVersionId: String) async throws
+}
