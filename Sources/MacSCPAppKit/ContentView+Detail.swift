@@ -450,6 +450,15 @@ extension ContentView {
                                     // `handleBrowserMenuEntry(_:selection:side:in:session:)`.
                                     onMenuAction: { entry, selection, side in handleBrowserMenuEntry(entry, selection: selection, side: side, in: tab, session: session) },
                                     crossSessionTargets: { CrossSessionTargets.targets(excluding: tab.id, in: tabsModel.tabs) },
+                                    // The local file system contributes no
+                                    // backend file action (`fileActions` is
+                                    // not passed above), so the table never
+                                    // asks. Answered anyway, and fail-closed:
+                                    // the parameters have no default, so a
+                                    // pane cannot be built that inherits "every
+                                    // row is live".
+                                    isFileActionAvailable: { _ in false },
+                                    fileActionUnavailableReason: { _ in nil },
                                     userFileActions: { fileActionsForMenu() },
                                     // Where this pane's "Transfer ▸ To the
                                     // other pane" would send (review C-1): the
@@ -546,6 +555,19 @@ extension ContentView {
                                     fileActions: {
                                         BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
                                             .fileActions
+                                    },
+                                    // Asked at each menu build, from the
+                                    // session's own caches
+                                    // (`fileActionVerdict(_:in:session:)`),
+                                    // so a row declined for a bucket whose
+                                    // versioning was read earlier is drawn
+                                    // disabled, and an id the window has no arm
+                                    // for is declined too.
+                                    isFileActionAvailable: { action in
+                                        fileActionVerdict(action, in: tab, session: session).isAvailable
+                                    },
+                                    fileActionUnavailableReason: { action in
+                                        fileActionVerdict(action, in: tab, session: session).reason?.text
                                     },
                                     userFileActions: { fileActionsForMenu() },
                                     // The mirror of the local pane's line

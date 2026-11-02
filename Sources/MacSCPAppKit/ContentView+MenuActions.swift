@@ -64,50 +64,99 @@ extension ContentView {
         case .userFileAction:
             break   // handled inside BrowserPane (BrowserPane+FileActions.swift), never forwarded
         case .backendFileAction(let action):
-            // Backend-contributed actions are keyed off `action.id` so a new
-            // contribution doesn't need a new `BrowserMenuEntry` case, just
-            // another `if` here: S3's presigned URL (M14/T5) first, and the two
-            // Object Lock actions after it (S3 bucket settings, Task 10).
-            // (This comment used to open, verbatim: "Currently the only
-            // backend-contributed action is S3's presigned URL (M14/T5)" and to
-            // say "a future second contribution"; the second has arrived.)
-            // `selection.count == 1` mirrors the menu-model
-            // gate (`BrowserContextMenu.entries`) that only ever offers
-            // `backendFileAction` for a single selected file, and `side` is
-            // asked because the local pane contributes none (its
-            // `fileActions` is nil) — the same shape as `openInEditor` above.
-            if side == .remote, action.id == "s3.presignedURL",
-                selection.count == 1, let file = selection.first,
-                let provider = session.remoteFS as? PresignedURLProvider
-            {
-                // Same "no leading slash" convention
-                // `S3FileSystem.objectKey(forPath:)` uses internally:
-                // normalize first (collapses any repeated slashes), then drop
-                // the single leading one.
-                let normalizedPath = RemotePath.normalizedAbsolute(file.path)
-                let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
-                presignedSheetItem = PresignedSheetItem(itemKey: key, provider: provider)
-            }
-            // The two Object Lock actions (S3 bucket settings, Task 10), keyed
-            // off `action.id` through `ObjectLockFileAction` like the one above
-            // is keyed off its string, and under the same gates. The target is
-            // worked out from the connection's own facts, so at a bucket list
-            // the bucket is the path's first component. Without all four of
-            // the file, the capability, the session's cache and a target
-            // nothing opens: a COMPLIANCE write is never reachable from a
-            // half-resolved path.
-            if side == .remote, selection.count == 1, let file = selection.first,
-                let lockAction = ObjectLockFileAction(action: action),
-                let target = ObjectLockTarget.resolve(
-                    path: file.path, in: connectionActionContext(in: tab, session: session)),
-                let settings = session.remoteFS as? any S3BucketSettings,
-                let states = session.objectLockStates
-            {
-                objectLockSheetItem = ObjectLockSheetItem(
-                    recorder: tab.auditRecorder, focus: lockAction.focus, target: target,
-                    settings: settings, states: states)
+            // Backend-contributed actions are keyed off `action.id` through
+            // `BackendFileActionRoute`, the file menu's counterpart of
+            // `ConnectionActionRoute`: the enum is the table, this `switch` has
+            // no `default`, and the menu draws a row whose id has no case
+            // disabled (`fileActionVerdict`). So a contribution cannot be
+            // declared, offered and matched by nothing, which is what
+            // `s3.versions` was while this was an `if`-chain with no `else`.
+            // (This comment used to say, verbatim: "Backend-contributed
+            // actions are keyed off `action.id` so a new contribution doesn't
+            // need a new `BrowserMenuEntry` case, just another `if` here". It
+            // still needs no new entry case; it now needs a route case, and
+            // the compiler asks for the arm.)
+            //
+            // Every arm is gated alike: `selection.count == 1` mirrors the
+            // menu-model gate (`BrowserContextMenu.entries`) that only ever
+            // offers `backendFileAction` for a single selected file, and
+            // `side` is asked because the local pane contributes none (its
+            // `fileActions` is nil) -- the same shape as `openInEditor` above.
+            guard let route = BackendFileActionRoute(action: action) else { break }
+            switch route {
+            case .presignedURL:
+                // S3's presigned URL (M14/T5).
+                if side == .remote,
+                    selection.count == 1, let file = selection.first,
+                    let provider = session.remoteFS as? PresignedURLProvider
+                {
+                    // Same "no leading slash" convention
+                    // `S3FileSystem.objectKey(forPath:)` uses internally:
+                    // normalize first (collapses any repeated slashes), then
+                    // drop the single leading one.
+                    let normalizedPath = RemotePath.normalizedAbsolute(file.path)
+                    let key = normalizedPath == "/" ? "" : String(normalizedPath.dropFirst())
+                    presignedSheetItem = PresignedSheetItem(itemKey: key, provider: provider)
+                }
+            case .retention, .legalHold:
+                // The two Object Lock actions (S3 bucket settings, Task 10),
+                // keyed off `action.id` through `ObjectLockFileAction`. The
+                // target is worked out from the connection's own facts, so at
+                // a bucket list the bucket is the path's first component.
+                // Without all four of the file, the capability, the session's
+                // cache and a target nothing opens: a COMPLIANCE write is never
+                // reachable from a half-resolved path.
+                if side == .remote, selection.count == 1, let file = selection.first,
+                    let lockAction = ObjectLockFileAction(action: action),
+                    let target = ObjectLockTarget.resolve(
+                        path: file.path, in: connectionActionContext(in: tab, session: session)),
+                    let settings = session.remoteFS as? any S3BucketSettings,
+                    let states = session.objectLockStates
+                {
+                    objectLockSheetItem = ObjectLockSheetItem(
+                        recorder: tab.auditRecorder, focus: lockAction.focus, target: target,
+                        settings: settings, states: states)
+                }
+            case .versions:
+                // The version history (S3 version history, Task 7). It needs
+                // the version capability and a target; the bucket-settings
+                // capability is optional, and without it the rows simply carry
+                // no lock state. The lock cache is the session's, so this sheet
+                // and the Object Lock sheets share one read per bucket; the
+                // fallback is a cache of its own over the same capability.
+                if side == .remote, selection.count == 1, let file = selection.first,
+                    let provider = session.remoteFS as? any ObjectVersionProvider,
+                    let target = ObjectVersionsTarget.resolve(
+                        file: file, in: connectionActionContext(in: tab, session: session))
+                {
+                    let locks = (session.remoteFS as? any S3BucketSettings).map {
+                        ObjectVersionsModel.LockBacking(
+                            settings: $0,
+                            cache: session.objectLockStates ?? ObjectLockStateCache(settings: $0))
+                    }
+                    objectVersionsSheetItem = ObjectVersionsSheetItem(
+                        target: target, provider: provider, locks: locks)
+                }
             }
         }
+    }
+
+    /// What the file context menu does with `action` now: offered, or drawn
+    /// disabled with the sentence that says why.
+    ///
+    /// Asked at each menu build, and **synchronous**: it reads only what the
+    /// session already knows (`BucketVersioningCache.knownVersioning(_:)`),
+    /// never starts a read, and a bucket whose versioning has not been read
+    /// OFFERS the row (`BackendFileActionRoute.verdict(bucketVersioning:)`
+    /// gives the policy and its stated limit). The bucket is the one the
+    /// remote pane is standing in, from the same context the connection
+    /// actions use.
+    func fileActionVerdict(
+        _ action: FileActionContribution, in tab: SessionTab, session: BrowserSession
+    ) -> FileActionVerdict {
+        BackendFileActionRoute.verdict(
+            for: action, bucket: connectionActionContext(in: tab, session: session).bucket,
+            cache: session.bucketVersioning)
     }
 }
 
@@ -205,9 +254,19 @@ extension ContentView {
                 // but a sheet that cannot ask whether the bucket has a lock
                 // has no button and nothing to say, and that is worse than one
                 // extra read.
+                //
+                // The versioning cache is told when this sheet writes
+                // (`BucketVersioningModel.apply`), so the "Show Versions" row
+                // stops answering for the state from before it. The same
+                // fallback applies, and is harmless for the same reason: a
+                // cache nobody else reads is merely one that is invalidated
+                // for nobody -- but the session always has one when
+                // `settings` is non-nil (`BrowserSession.bucketVersioning(for:)`).
                 versioningSheetItem = BucketVersioningSheetItem(
                     recorder: tab.auditRecorder, bucket: bucket, settings: settings,
-                    states: session.objectLockStates ?? ObjectLockStateCache(settings: settings))
+                    states: session.objectLockStates ?? ObjectLockStateCache(settings: settings),
+                    versioning: session.bucketVersioning
+                        ?? BucketVersioningCache(settings: settings))
             }
         case .cors:
             if let settings = context.settings, let bucket = context.bucket {

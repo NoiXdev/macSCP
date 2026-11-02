@@ -150,7 +150,7 @@ extension ContentView {
         .sheet(item: $versioningSheetItem) { item in
             BucketVersioningSheet(
                 recorder: item.recorder, bucket: item.bucket, settings: item.settings,
-                locks: item.states)
+                locks: item.states, versioning: item.versioning)
         }
         // Bucket CORS sheet (S3 bucket settings, Task 9): opened from the same
         // menu, through the same dispatcher.
@@ -177,6 +177,14 @@ extension ContentView {
             ObjectLockSheet(
                 recorder: item.recorder, focus: item.focus, target: item.target,
                 settings: item.settings, cache: item.states)
+        }
+        // Version history of one file (S3 version history, Task 7): opened
+        // from the file context menu's "Show Versions…", see
+        // `handleBrowserMenuEntry`.
+        .sheet(item: $objectVersionsSheetItem) { item in
+            ObjectVersionsSheet(
+                model: ObjectVersionsModel(
+                    target: item.target, provider: item.provider, locks: item.locks))
         }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it

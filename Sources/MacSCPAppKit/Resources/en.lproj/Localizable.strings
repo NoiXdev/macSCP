@@ -467,6 +467,33 @@
 "s3.versioning.objectLockKeepsItOn" = "This bucket uses Object Lock, so its versioning cannot be switched off.";
 "s3.versioning.error.lockRead" = "Whether this bucket uses Object Lock could not be read, so its versioning cannot be changed here.";
 
+/* Version history of one file (S3 version history, Task 7) */
+"s3.versions.title %@" = "Versions of “%@”";
+"s3.versions.reading" = "Reading the version history…";
+"s3.versions.empty" = "No versions were found for this file.";
+"s3.versions.noMatches" = "No versions match.";
+"s3.versions.error.read" = "The version history could not be read.";
+"s3.versions.error.denied" = "Your access key is not allowed to read this file's version history.";
+"s3.versions.column.modified" = "Modified";
+"s3.versions.column.size" = "Size";
+"s3.versions.column.state" = "State";
+"s3.versions.column.versionId" = "Version ID";
+"s3.versions.filter.label" = "Show";
+"s3.versions.filter.all" = "All";
+"s3.versions.filter.versions" = "Versions";
+"s3.versions.filter.deleteMarkers" = "Delete markers";
+"s3.versions.filter.locked" = "Locked";
+"s3.versions.state.current" = "Current";
+"s3.versions.state.earlier" = "Earlier version";
+"s3.versions.state.deleteMarker" = "Delete marker";
+"s3.versions.state.metadataOnly" = "Same content as the version before";
+"s3.versions.state.locked %1$@ %2$@" = "Locked until %2$@ (%1$@)";
+"s3.versions.state.legalHold" = "Legal hold";
+"s3.versions.state.lockUnknown" = "Checking lock…";
+"s3.versions.state.lockUnreadable" = "Lock could not be confirmed";
+"s3.versions.count %lld" = "%lld entries";
+"s3.versions.countFiltered %lld %lld" = "%lld of %lld";
+
 /* Bucket CORS rules (S3 bucket settings, Task 9) */
 "s3.cors.title %@" = "CORS rules for “%@”";
 "s3.cors.intro" = "CORS rules decide which websites may use this bucket's files from a browser.";

@@ -319,7 +319,7 @@ final class BucketVersioningModel {
     /// `BucketSettingsAuditTests`.
     func apply(
         _ target: BucketVersioning, bucket: String, via settings: any S3BucketSettings,
-        locks: ObjectLockStateCache, recorder: AuditRecorder?
+        locks: ObjectLockStateCache, versioning: BucketVersioningCache, recorder: AuditRecorder?
     ) async {
         guard !isApplying, offeredStates.contains(target) else { return }
         isApplying = true
@@ -327,6 +327,17 @@ final class BucketVersioningModel {
         defer { isApplying = false }
         do {
             try await settings.setVersioning(target, ofBucket: bucket)
+            // The store changed, so what the session remembers about this
+            // bucket is stale: tell the cache, now that the write has
+            // returned, and before anything below can throw or be skipped.
+            // **Only here, on success.** A write that threw changed nothing,
+            // and dropping a good answer because a request failed would throw
+            // away what is still true; the `catch` below leaves the cache
+            // alone. `versioning` is required for the reason `locks` is: an
+            // `apply` that could be called without the cache could leave the
+            // "Show Versions" row saying the bucket was never versioned for
+            // the rest of the session.
+            versioning.invalidate(bucket)
             // At the moment the store accepted it, before the read-back that
             // follows: nothing after this line can lose the record.
             recorder?.recordVersioningChanged(bucket: bucket, to: target, failure: nil)
@@ -391,6 +402,10 @@ struct BucketVersioningSheet: BoundedView {
     /// no default**: a sheet that could be built without one could be built
     /// that never asks.
     let locks: ObjectLockStateCache
+    /// The session's versioning cache (`BrowserSession.bucketVersioning`),
+    /// told when this sheet writes (`BucketVersioningModel.apply`). **Required,
+    /// with no default**, like `locks`.
+    let versioning: BucketVersioningCache
 
     @Environment(\.dismiss) private var dismiss
     @State private var model: BucketVersioningModel
@@ -402,12 +417,14 @@ struct BucketVersioningSheet: BoundedView {
     /// one already in a state, so a measurement does not wait for a read.
     init(
         recorder: AuditRecorder?, bucket: String, settings: any S3BucketSettings,
-        locks: ObjectLockStateCache, model: BucketVersioningModel = BucketVersioningModel()
+        locks: ObjectLockStateCache, versioning: BucketVersioningCache,
+        model: BucketVersioningModel = BucketVersioningModel()
     ) {
         self.recorder = recorder
         self.bucket = bucket
         self.settings = settings
         self.locks = locks
+        self.versioning = versioning
         _model = State(initialValue: model)
     }
 
@@ -429,7 +446,7 @@ struct BucketVersioningSheet: BoundedView {
                         Task {
                             await model.apply(
                                 target, bucket: bucket, via: settings, locks: locks,
-                                recorder: recorder)
+                                versioning: versioning, recorder: recorder)
                         }
                     }
                     .buttonStyle(.polishedProminent)

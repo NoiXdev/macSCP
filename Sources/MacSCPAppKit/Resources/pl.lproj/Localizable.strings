@@ -462,6 +462,33 @@
 "s3.versioning.objectLockKeepsItOn" = "Ten bucket używa blokady obiektów, więc jego wersjonowania nie można wyłączyć.";
 "s3.versioning.error.lockRead" = "Nie udało się odczytać, czy ten bucket używa blokady obiektów, więc nie można tutaj zmienić jego wersjonowania.";
 
+/* Historia wersji pliku (historia wersji S3, Task 7) */
+"s3.versions.title %@" = "Wersje pliku „%@”";
+"s3.versions.reading" = "Odczytywanie historii wersji…";
+"s3.versions.empty" = "Nie znaleziono żadnej wersji tego pliku.";
+"s3.versions.noMatches" = "Brak pasujących wersji.";
+"s3.versions.error.read" = "Nie udało się odczytać historii wersji.";
+"s3.versions.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu historii wersji tego pliku.";
+"s3.versions.column.modified" = "Zmodyfikowano";
+"s3.versions.column.size" = "Rozmiar";
+"s3.versions.column.state" = "Stan";
+"s3.versions.column.versionId" = "Identyfikator wersji";
+"s3.versions.filter.label" = "Pokaż";
+"s3.versions.filter.all" = "Wszystkie";
+"s3.versions.filter.versions" = "Wersje";
+"s3.versions.filter.deleteMarkers" = "Znaczniki usunięcia";
+"s3.versions.filter.locked" = "Zablokowane";
+"s3.versions.state.current" = "Bieżąca";
+"s3.versions.state.earlier" = "Wcześniejsza wersja";
+"s3.versions.state.deleteMarker" = "Znacznik usunięcia";
+"s3.versions.state.metadataOnly" = "Ta sama zawartość co poprzednia wersja";
+"s3.versions.state.locked %1$@ %2$@" = "Zablokowana do %2$@ (%1$@)";
+"s3.versions.state.legalHold" = "Blokada prawna";
+"s3.versions.state.lockUnknown" = "Sprawdzanie blokady…";
+"s3.versions.state.lockUnreadable" = "Nie udało się potwierdzić blokady";
+"s3.versions.count %lld" = "%lld wpisów";
+"s3.versions.countFiltered %lld %lld" = "%lld z %lld";
+
 /* Reguły CORS bucketa (ustawienia bucketów S3, Task 9) */
 "s3.cors.title %@" = "Reguły CORS bucketa „%@”";
 "s3.cors.intro" = "Reguły CORS określają, które strony internetowe mogą używać plików tego bucketa z poziomu przeglądarki.";

@@ -122,25 +122,25 @@ struct FileActionAvailabilityTests {
 
     /// The menu the coordinator builds for one selected file on a remote S3
     /// pane, with the availability closures a caller would hand the table.
+    ///
+    /// `availability` is the bucket's versioning state the closures answer
+    /// for; `nil` answers the way the window does for a bucket nothing has
+    /// read yet (`BackendFileActionRoute.verdict`), which offers every row.
     @MainActor
-    private static func menu(
-        availability: BucketVersioning?, supplyClosures: Bool = true
-    ) -> NSMenu {
+    private static func menu(availability: BucketVersioning?) -> NSMenu {
         let coordinator = RemoteFileTableView.Coordinator(
-            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote,
+            isFileActionAvailable: { action in
+                BackendFileActionRoute.verdict(for: action, bucketVersioning: availability)
+                    .isAvailable
+            },
+            fileActionUnavailableReason: { action in
+                BackendFileActionRoute.verdict(for: action, bucketVersioning: availability)
+                    .reason?.text
+            })
         coordinator.items = [file]
         let actions = BackendDescriptor.descriptor(for: .s3).fileActions
         coordinator.fileActions = { actions }
-        if supplyClosures, let availability {
-            let verdict = VersionsRowAvailability(versioning: availability)
-            coordinator.isFileActionAvailable = { action in
-                action.id == VersionsRowAvailability.actionID ? verdict.isAvailable : true
-            }
-            coordinator.fileActionUnavailableReason = { action in
-                action.id == VersionsRowAvailability.actionID
-                    ? verdict.reasonKey.map { L10n.string($0, "") } : nil
-            }
-        }
         let menu = NSMenu()
         coordinator.populate(menu, selection: [file])
         return menu
@@ -190,10 +190,13 @@ struct FileActionAvailabilityTests {
         #expect(row.toolTip == nil, "\(state)")
     }
 
-    /// A table that was handed no availability closures (every call site that
-    /// predates them, and the local pane) draws every row as it always did.
-    @MainActor @Test func withoutTheClosuresEveryRowIsLiveAsBefore() throws {
-        let menu = Self.menu(availability: nil, supplyClosures: false)
+    /// A bucket whose versioning nothing has read yet OFFERS the row: the
+    /// menu builds synchronously and nothing would ever read it, so a row
+    /// disabled while unknown could not become enabled by waiting. The
+    /// positive control is the same menu for a bucket that was read as never
+    /// versioned, where the row is disabled.
+    @MainActor @Test func aBucketNotReadYetOffersEveryRow() throws {
+        let menu = Self.menu(availability: nil)
         let actions = BackendDescriptor.descriptor(for: .s3).fileActions
         #expect(!actions.isEmpty)
         for action in actions {
@@ -201,6 +204,9 @@ struct FileActionAvailabilityTests {
             #expect(item.isEnabled == true, "\(action.id)")
             #expect(item.toolTip == nil, "\(action.id)")
         }
+        let versions = try #require(Self.versionsAction)
+        let declined = try #require(Self.row(for: versions, in: Self.menu(availability: .never)))
+        #expect(declined.isEnabled == false)
     }
 
     /// The reason comes from the closure and is what the tooltip says, in

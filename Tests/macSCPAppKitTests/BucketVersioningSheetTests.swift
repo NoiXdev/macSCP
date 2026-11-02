@@ -198,14 +198,14 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func aSuspensionOnALockBearingBucketIsNeverSent() async {
         let settings = FakeBucketSettings(versioning: .enabled)
         let locked = BucketVersioningModel(current: .enabled, bucketHasObjectLock: true)
-        await locked.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await locked.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes.isEmpty)
         let unread = BucketVersioningModel(current: .enabled, bucketHasObjectLock: nil)
-        await unread.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await unread.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes.isEmpty)
         // The positive control: the same bucket, known to have no lock.
         let open = BucketVersioningModel(current: .enabled, bucketHasObjectLock: false)
-        await open.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await open.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes.count == 1)
     }
 
@@ -252,7 +252,7 @@ struct BucketVersioningSheetTests {
         await model.read(bucket: "b", from: healed, locks: cache)
         #expect(model.lockReadFailed)
         healed.setHasLockError(nil)
-        await model.apply(.enabled, bucket: "b", via: healed, locks: cache, recorder: nil)
+        await model.apply(.enabled, bucket: "b", via: healed, locks: cache, versioning: BucketVersioningCache(settings: healed), recorder: nil)
         #expect(healed.hasLockReads == ["b", "b"])
         #expect(model.current == .enabled)
         #expect(model.bucketHasObjectLock == false)
@@ -266,7 +266,7 @@ struct BucketVersioningSheetTests {
         let lockedModel = BucketVersioningModel()
         await lockedModel.read(bucket: "b", from: locked, locks: lockedCache)
         locked.setHasLockError(nil)
-        await lockedModel.apply(.enabled, bucket: "b", via: locked, locks: lockedCache, recorder: nil)
+        await lockedModel.apply(.enabled, bucket: "b", via: locked, locks: lockedCache, versioning: BucketVersioningCache(settings: locked), recorder: nil)
         #expect(lockedModel.offeredStates == [])
         #expect(lockedModel.blockedReasonKey == "s3.versioning.objectLockKeepsItOn")
 
@@ -276,7 +276,7 @@ struct BucketVersioningSheetTests {
         let stuckCache = ObjectLockStateCache(settings: stuck)
         let stuckModel = BucketVersioningModel()
         await stuckModel.read(bucket: "b", from: stuck, locks: stuckCache)
-        await stuckModel.apply(.enabled, bucket: "b", via: stuck, locks: stuckCache, recorder: nil)
+        await stuckModel.apply(.enabled, bucket: "b", via: stuck, locks: stuckCache, versioning: BucketVersioningCache(settings: stuck), recorder: nil)
         #expect(stuck.hasLockReads == ["b", "b"])
         #expect(stuckModel.current == .enabled)
         #expect(stuckModel.offeredStates == [])
@@ -368,7 +368,7 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func enablingWritesOnceToTheNamedBucketAndShowsTheStoresAnswer() async {
         let settings = FakeBucketSettings(versioning: .never)
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "macscp-second", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await model.apply(.enabled, bucket: "macscp-second", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes == [FakeBucketSettings.Write(state: .enabled, bucket: "macscp-second")])
         #expect(model.current == .enabled)
         #expect(model.offeredStates == [.suspended])
@@ -379,7 +379,7 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func suspendingWritesSuspended() async {
         let settings = FakeBucketSettings(versioning: .enabled)
         let model = BucketVersioningModel(current: .enabled, bucketHasObjectLock: false)
-        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes == [FakeBucketSettings.Write(state: .suspended, bucket: "b")])
         #expect(model.current == .suspended)
     }
@@ -390,8 +390,8 @@ struct BucketVersioningSheetTests {
     @MainActor @Test func aStateThatWasNotOfferedIsNeverSent() async {
         let settings = FakeBucketSettings(versioning: .never)
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.never, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
-        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await model.apply(.never, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
+        await model.apply(.suspended, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes.isEmpty)
         #expect(model.current == .never)
     }
@@ -400,11 +400,68 @@ struct BucketVersioningSheetTests {
         let settings = FakeBucketSettings(
             versioning: .never, writeError: RemoteFSError.finding(.operationNotSupported))
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         #expect(settings.writes.count == 1)
         #expect(model.current == .never)
         #expect(model.applyFailure == RemoteFSFinding.operationNotSupported.message)
         #expect(!model.isApplying)
+    }
+
+    // MARK: - The session's versioning cache is told
+
+    /// The four clicks: the "Show Versions" row was evaluated on a never
+    /// versioned bucket, the user enables versioning here, and the next
+    /// evaluation must not still say the bucket never had it. The cache is the
+    /// session's, so the sheet has to tell it, and only about the bucket it
+    /// wrote.
+    @MainActor @Test func aSuccessfulWriteMakesTheCacheReadTheBucketAgain() async throws {
+        let settings = FakeBucketSettings(versioning: .never)
+        let cache = BucketVersioningCache(settings: settings)
+        let other = "elsewhere"
+        #expect(try await cache.versioning("b") == .never)
+        _ = try await cache.versioning(other)
+        let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
+        await model.apply(
+            .enabled, bucket: "b", via: settings,
+            locks: ObjectLockStateCache(settings: settings), versioning: cache, recorder: nil)
+        #expect(settings.writes.count == 1)
+        #expect(cache.knownVersioning("b") == nil, "the answer from before the write is gone")
+        #expect(try await cache.versioning("b") == .enabled)
+        // The positive control: the other bucket kept its answer.
+        #expect(cache.knownVersioning(other) == .never)
+    }
+
+    /// A write that threw changed nothing, so the answer the cache holds is
+    /// still true and is kept.
+    @MainActor @Test func aRefusedWriteLeavesTheCachedAnswerAlone() async throws {
+        let settings = FakeBucketSettings(
+            versioning: .never, writeError: RemoteFSError.finding(.operationNotSupported))
+        let cache = BucketVersioningCache(settings: settings)
+        #expect(try await cache.versioning("b") == .never)
+        let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
+        await model.apply(
+            .enabled, bucket: "b", via: settings,
+            locks: ObjectLockStateCache(settings: settings), versioning: cache, recorder: nil)
+        // The write was attempted and refused (the positive), and the cache is
+        // as it was.
+        #expect(settings.writes.count == 1)
+        #expect(model.applyFailure != nil)
+        #expect(cache.knownVersioning("b") == .never)
+        #expect(settings.reads == ["b"], "nothing was read again")
+    }
+
+    /// A target the model did not offer is dropped before any request, and
+    /// there was no write to tell the cache about.
+    @MainActor @Test func aDroppedTargetLeavesTheCachedAnswerAlone() async throws {
+        let settings = FakeBucketSettings(versioning: .never)
+        let cache = BucketVersioningCache(settings: settings)
+        _ = try await cache.versioning("b")
+        let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
+        await model.apply(
+            .suspended, bucket: "b", via: settings,
+            locks: ObjectLockStateCache(settings: settings), versioning: cache, recorder: nil)
+        #expect(settings.writes.isEmpty)
+        #expect(cache.knownVersioning("b") == .never)
     }
 
     /// A raw `reason` can carry the endpoint the user typed, and that field
@@ -419,7 +476,7 @@ struct BucketVersioningSheetTests {
         let settings = FakeBucketSettings(
             versioning: .never, writeError: RemoteFSError.protocolError(reason: planted))
         let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
-        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), recorder: nil)
+        await model.apply(.enabled, bucket: "b", via: settings, locks: ObjectLockStateCache(settings: settings), versioning: BucketVersioningCache(settings: settings), recorder: nil)
         let text = model.applyFailure ?? ""
         let quoted = text.contains("SECRETEXAMPLE") || text.contains("store.invalid")
         #expect(!text.isEmpty)

@@ -748,6 +748,10 @@ struct ContentView: View {
         /// Where the sheet reads whether the bucket has Object Lock, captured
         /// with the capability (Task 11b).
         let states: ObjectLockStateCache
+        /// The session's versioning cache, told when the sheet changes the
+        /// bucket's state (Task 7), so the "Show Versions" row does not go on
+        /// answering for the state from before the write.
+        let versioning: BucketVersioningCache
     }
 
     @State var versioningSheetItem: BucketVersioningSheetItem?
@@ -809,6 +813,21 @@ struct ContentView: View {
     }
 
     @State var objectLockSheetItem: ObjectLockSheetItem?
+
+    // MARK: - Version history (S3 version history, Task 7)
+
+    /// The file whose version history the sheet shows: the object as the row
+    /// named it, and what to read it with, captured at presentation time for
+    /// the reason `BucketVersioningSheetItem` gives. `locks` is `nil` for a
+    /// backend without bucket settings, whose rows then carry no lock state.
+    struct ObjectVersionsSheetItem: Identifiable {
+        let id = UUID()
+        let target: ObjectVersionsTarget
+        let provider: any ObjectVersionProvider
+        let locks: ObjectVersionsModel.LockBacking?
+    }
+
+    @State var objectVersionsSheetItem: ObjectVersionsSheetItem?
     /// Set by `performExport` right before `showExportFileExporter`, and
     /// cleared by the `fileExporter` completion handler — which decides
     /// whether the "exported without password" alert is needed (spec M9a

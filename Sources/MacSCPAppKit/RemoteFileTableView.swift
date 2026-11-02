@@ -70,15 +70,24 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// rows: per row, because an action's availability can depend on the
     /// connection (the version history's depends on the bucket's versioning
     /// state, `VersionsRowAvailability`). Read at each menu build, like
-    /// `fileActions` above. The default offers every row, which is what the
-    /// menu did before this existed and what the local pane still gets.
-    var isFileActionAvailable: (FileActionContribution) -> Bool = { _ in true }
+    /// `fileActions` above.
+    ///
+    /// **Required, with no default.** Task 6 gave it `{ _ in true }` so the
+    /// existing call site kept compiling; once it was forwarded
+    /// (`BrowserPane`), the default was dropped. (Withdrawn wording, verbatim:
+    /// "The default offers every row, which is what the menu did before this
+    /// existed and what the local pane still gets.") A permissive default is a
+    /// fail-open guard: a later call site that forgot to wire it would ship a
+    /// live row that does nothing. Now it does not compile, and the local
+    /// pane, which contributes no backend action, says so by answering `false`.
+    var isFileActionAvailable: (FileActionContribution) -> Bool
     /// The sentence that says why a row is disabled, shown as the menu item's
     /// tooltip, or `nil` for none. **New behaviour, not a copied pattern:**
     /// `ConnectionActionsMenu` disables a row with no reason text at all, so
     /// there is no precedent here to mirror. Consulted only for a row
     /// `isFileActionAvailable` declined; an available row never carries one.
-    var fileActionUnavailableReason: (FileActionContribution) -> String? = { _ in nil }
+    /// Required for the same reason `isFileActionAvailable` is.
+    var fileActionUnavailableReason: (FileActionContribution) -> String?
     /// The actions the USER wrote (file-actions plan), as a closure for the
     /// reason `crossSessionTargets` and `fileActions` are: read at each
     /// `menuNeedsUpdate`, so an action saved a moment ago is in the very next
@@ -165,7 +174,10 @@ struct RemoteFileTableView: NSViewRepresentable {
     var destinationRows: (() -> [RemoteFileItem])? = nil
 
     func makeCoordinator() -> Coordinator {
-        let coordinator = Coordinator(onOpen: onOpen, onSelect: onSelect, side: side)
+        let coordinator = Coordinator(
+            onOpen: onOpen, onSelect: onSelect, side: side,
+            isFileActionAvailable: isFileActionAvailable,
+            fileActionUnavailableReason: fileActionUnavailableReason)
         coordinator.onOpenFile = onOpenFile
         coordinator.onOpenSymlink = onOpenSymlink
         coordinator.pasteboardWriter = pasteboardWriter
@@ -174,8 +186,6 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
-        coordinator.isFileActionAvailable = isFileActionAvailable
-        coordinator.fileActionUnavailableReason = fileActionUnavailableReason
         coordinator.userFileActions = userFileActions
         coordinator.supportsChecksum = supportsChecksum
         coordinator.supportsArchiving = supportsArchiving
@@ -471,6 +481,17 @@ struct RemoteFileTableView: NSViewRepresentable {
         }
     }
 
+    /// Hands the coordinator the availability closures this view was last
+    /// built with. **`updateNSView` calls this on every update**, because the
+    /// closures capture the session and the tab, and a coordinator that kept
+    /// the first pair would answer for the state of the menu's first build
+    /// (`FileActionThreadingTests` holds the call in place, and holds this
+    /// function to doing the handing).
+    func refreshAvailability(of coordinator: Coordinator) {
+        coordinator.isFileActionAvailable = isFileActionAvailable
+        coordinator.fileActionUnavailableReason = fileActionUnavailableReason
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         let oldItems = context.coordinator.items
         let itemsChanged = Self.needsReload(old: oldItems, new: items)
@@ -485,8 +506,7 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
-        context.coordinator.isFileActionAvailable = isFileActionAvailable
-        context.coordinator.fileActionUnavailableReason = fileActionUnavailableReason
+        refreshAvailability(of: context.coordinator)
         context.coordinator.userFileActions = userFileActions
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.supportsArchiving = supportsArchiving
@@ -740,8 +760,10 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
-        var isFileActionAvailable: (FileActionContribution) -> Bool = { _ in true }
-        var fileActionUnavailableReason: (FileActionContribution) -> String? = { _ in nil }
+        /// Required, like the view's own: see
+        /// `RemoteFileTableView.isFileActionAvailable`.
+        var isFileActionAvailable: (FileActionContribution) -> Bool
+        var fileActionUnavailableReason: (FileActionContribution) -> String?
         var userFileActions: (() -> [FileAction])?
         var supportsChecksum = false
         var supportsArchiving = false
@@ -791,11 +813,15 @@ struct RemoteFileTableView: NSViewRepresentable {
 
         init(
             onOpen: @escaping (RemoteFileItem) -> Void, onSelect: @escaping ([RemoteFileItem]) -> Void,
-            side: BrowserPaneSide
+            side: BrowserPaneSide,
+            isFileActionAvailable: @escaping (FileActionContribution) -> Bool,
+            fileActionUnavailableReason: @escaping (FileActionContribution) -> String?
         ) {
             self.onOpen = onOpen
             self.onSelect = onSelect
             self.side = side
+            self.isFileActionAvailable = isFileActionAvailable
+            self.fileActionUnavailableReason = fileActionUnavailableReason
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {

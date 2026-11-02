@@ -464,6 +464,33 @@
 "s3.versioning.objectLockKeepsItOn" = "Ce bucket utilise le verrouillage d’objet ; sa gestion des versions ne peut donc pas être désactivée.";
 "s3.versioning.error.lockRead" = "Impossible de lire si ce bucket utilise le verrouillage d’objet ; sa gestion des versions ne peut donc pas être modifiée ici.";
 
+/* Historique des versions d'un fichier (historique des versions S3, Task 7) */
+"s3.versions.title %@" = "Versions de « %@ »";
+"s3.versions.reading" = "Lecture de l’historique des versions…";
+"s3.versions.empty" = "Aucune version trouvée pour ce fichier.";
+"s3.versions.noMatches" = "Aucune version correspondante.";
+"s3.versions.error.read" = "L’historique des versions n’a pas pu être lu.";
+"s3.versions.error.denied" = "Votre clé d’accès n’est pas autorisée à lire l’historique des versions de ce fichier.";
+"s3.versions.column.modified" = "Modifié";
+"s3.versions.column.size" = "Taille";
+"s3.versions.column.state" = "État";
+"s3.versions.column.versionId" = "ID de version";
+"s3.versions.filter.label" = "Afficher";
+"s3.versions.filter.all" = "Toutes";
+"s3.versions.filter.versions" = "Versions";
+"s3.versions.filter.deleteMarkers" = "Marqueurs de suppression";
+"s3.versions.filter.locked" = "Verrouillées";
+"s3.versions.state.current" = "Actuelle";
+"s3.versions.state.earlier" = "Version antérieure";
+"s3.versions.state.deleteMarker" = "Marqueur de suppression";
+"s3.versions.state.metadataOnly" = "Même contenu que la version précédente";
+"s3.versions.state.locked %1$@ %2$@" = "Verrouillée jusqu’au %2$@ (%1$@)";
+"s3.versions.state.legalHold" = "Conservation légale";
+"s3.versions.state.lockUnknown" = "Vérification du verrou…";
+"s3.versions.state.lockUnreadable" = "Le verrou n’a pas pu être confirmé";
+"s3.versions.count %lld" = "%lld entrées";
+"s3.versions.countFiltered %lld %lld" = "%lld sur %lld";
+
 /* Règles CORS du bucket (réglages de bucket S3, Task 9) */
 "s3.cors.title %@" = "Règles CORS du bucket « %@ »";
 "s3.cors.intro" = "Les règles CORS déterminent quels sites web peuvent utiliser les fichiers de ce bucket depuis un navigateur.";

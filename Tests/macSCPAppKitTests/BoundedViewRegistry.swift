@@ -62,7 +62,9 @@ struct BoundedViewEntry {
 /// a red that names which side holds the extra type.
 @MainActor
 enum BoundedViewRegistry {
-    static var all: [BoundedViewEntry] { valueInSheets + keySheets + listingSheets + cappedViews }
+    static var all: [BoundedViewEntry] {
+        valueInSheets + keySheets + listingSheets + historySheets + cappedViews
+    }
 
     // MARK: - States other tests must name
 
@@ -162,6 +164,59 @@ enum BoundedViewRegistry {
             outcome: .failed(
                 sentence: RemoteFSFinding.bucketAlreadyOwnedByYou.message, bucketMayExist: true),
             name: "macscp-archive-2026")
+    }
+
+    /// A version sheet over a state, never asked to read: the model has no
+    /// store behind it.
+    static func versionsModel(
+        phase: ObjectVersionsModel.Phase, versions: [ObjectVersion],
+        readings: [String: ObjectVersionsModel.LockReading] = [:]
+    ) -> ObjectVersionsModel {
+        ObjectVersionsModel(
+            target: ObjectVersionsTarget(
+                bucket: "macscp-seed", key: "reports/2026/quarterly-summary.pdf",
+                displayName: "quarterly-summary.pdf",
+                displayPath: "/macscp-seed/reports/2026/quarterly-summary.pdf"),
+            phase: phase, versions: versions, bucketLock: versions.isEmpty ? .notApplicable : .applies,
+            readings: readings, now: { lockNow })
+    }
+
+    private static func historyEntry(
+        _ id: String, latest: Bool = false, marker: Bool = false, size: UInt64 = 2_400_000,
+        daysAgo: Double, etag: String? = nil
+    ) -> ObjectVersion {
+        ObjectVersion(
+            versionId: id, key: "reports/2026/quarterly-summary.pdf", isLatest: latest,
+            isDeleteMarker: marker, size: marker ? nil : size,
+            modifiedAt: lockNow.addingTimeInterval(-daysAgo * 86_400),
+            entityTag: marker ? nil : etag)
+    }
+
+    /// Six entries, newest first. The version ids are the 32-character kind a
+    /// store issues, and one is the word `null`.
+    static var versionHistory: [ObjectVersion] {
+        [
+            historyEntry("3HL4kqtJlcpXroDTDmJ.rmSpXd3dIsJk", latest: true, daysAgo: 1, etag: "e1"),
+            historyEntry("5ZxQ0pYtN1dKcJZq2Mbq8aWc4vRfL7uE", daysAgo: 3, etag: "e2"),
+            historyEntry("9aQm2rVx1LpTz6WcYb0NfHdK3sJeU5oG", daysAgo: 4, etag: "e2"),
+            historyEntry("Dm7sP0cLw4TgXn2BvQh8YrKe5JaUz1Fo", marker: true, daysAgo: 6),
+            historyEntry("Kp3vN8yRt0QcLw5ZxJb2HmDa7SgUe4Fo", daysAgo: 9, etag: "e3"),
+            historyEntry("null", daysAgo: 30, etag: "e4"),
+        ]
+    }
+
+    /// The lock of each row that has one: a COMPLIANCE retention on the
+    /// newest entry, a legal hold on an earlier one, and one row whose lock
+    /// could not be confirmed.
+    static var versionReadings: [String: ObjectVersionsModel.LockReading] {
+        [
+            "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIsJk": .read(
+                retention: ObjectRetention(mode: .compliance, retainUntil: lockDate), legalHold: false),
+            "5ZxQ0pYtN1dKcJZq2Mbq8aWc4vRfL7uE": .read(retention: nil, legalHold: true),
+            "Kp3vN8yRt0QcLw5ZxJb2HmDa7SgUe4Fo": .unreadable,
+            "9aQm2rVx1LpTz6WcYb0NfHdK3sJeU5oG": .read(retention: nil, legalHold: false),
+            "null": .read(retention: nil, legalHold: false),
+        ]
     }
 
     /// The cache an Object Lock sheet is handed. It is never asked: the models
@@ -368,6 +423,7 @@ enum BoundedViewRegistry {
                     recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    versioning: BucketVersioningCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .never, bucketHasObjectLock: false))
             },
             BoundedViewEntry("an enabled bucket, with the suspension warning") {
@@ -375,6 +431,7 @@ enum BoundedViewRegistry {
                     recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    versioning: BucketVersioningCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a suspended bucket, offered enabling again") {
@@ -382,6 +439,7 @@ enum BoundedViewRegistry {
                     recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    versioning: BucketVersioningCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .suspended, bucketHasObjectLock: false))
             },
             BoundedViewEntry("a bucket whose versioning could not be read") {
@@ -389,6 +447,7 @@ enum BoundedViewRegistry {
                     recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    versioning: BucketVersioningCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(
                         loadFailure: BucketVersioningModel.deniedLine.text))
             },
@@ -400,6 +459,7 @@ enum BoundedViewRegistry {
                     recorder: nil,
                     bucket: "macscp-seed", settings: FakeBucketSettings(),
                     locks: ObjectLockStateCache(settings: FakeBucketSettings()),
+                    versioning: BucketVersioningCache(settings: FakeBucketSettings()),
                     model: BucketVersioningModel(current: .enabled, bucketHasObjectLock: true))
             },
 
@@ -858,6 +918,54 @@ enum BoundedViewRegistry {
                         title: "Bug Fixes",
                         entries: [.init(scope: "terminal", text: "a pasted command keeps its newlines")]),
                 ]),
+        ]
+    }
+
+    /// The version history of one file (S3 version history, Task 7), in a
+    /// section of its own: the arrays around it carry counted classifications
+    /// of their members, and this sheet belongs to none of them.
+    ///
+    /// The model takes a loaded state as a plain input, so the first entry puts
+    /// a history up: every kind of row (the current one under a COMPLIANCE
+    /// retention, an earlier one under a legal hold, a metadata-only one, a
+    /// delete marker, the version whose id is the word `null`, and one whose
+    /// lock could not be confirmed).
+    ///
+    /// **What that measures, and what it does not.** Measured 2026-11-02 with
+    /// `MACSCP_BOUND_FIGURES=1 swift test --filter BoundedViewFigureReportTests`:
+    /// the history entry and the empty entry report the SAME width figures in
+    /// every catalogue (minimum 207.5 / 179.5 / 248.5 / 206.5 of 640 for de /
+    /// en / fr / pl), because the minimum is the filter menu and the search
+    /// field above the table, and they differ in height (201.0 against 245.0
+    /// of 480). A `Table`'s cells are not what the width instrument reads, so
+    /// the row text is NOT measured here. It cannot overflow by construction
+    /// instead: every cell is one line, tail-truncated, with the full text as
+    /// its help tag. The entry's worth is that the table is on screen at all
+    /// (a column or a footer that stopped fitting the bound would move it) and
+    /// the type-set equality it provides.
+    ///
+    /// Three states, because each puts different text on screen: the rows, the
+    /// empty sentence, and the red read failure. A fourth, the sheet while it
+    /// is still reading, was registered first and removed:
+    /// `BoundedViewLayoutGuardTests.entriesOfOneTypeMeasureDifferentStates`
+    /// measured it identical to the empty one in every catalogue (its progress
+    /// line is no wider than the empty sentence), so it was one state entered
+    /// twice.
+    private static var historySheets: [BoundedViewEntry] {
+        [
+            BoundedViewEntry("a version history with a locked, a held, a marker and a null row") {
+                ObjectVersionsSheet(
+                    model: versionsModel(
+                        phase: .loaded, versions: versionHistory, readings: versionReadings))
+            },
+            BoundedViewEntry("a file with no versions to list") {
+                ObjectVersionsSheet(model: versionsModel(phase: .loaded, versions: []))
+            },
+            BoundedViewEntry("a version history that could not be read") {
+                ObjectVersionsSheet(
+                    model: versionsModel(
+                        phase: .failed(ObjectVersionsLines.denied.text), versions: []))
+            },
         ]
     }
 
