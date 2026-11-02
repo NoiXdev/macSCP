@@ -146,7 +146,7 @@ enum S3VersionsXML {
                 case "VersionId": versionId = currentText
                 case "IsLatest": isLatest = trimmed.lowercased() == "true"
                 // `S3SettingsXML.timestamp` builds its format style per call,
-                // so a page costs up to one per entry. Unmeasured here.
+                // so a page costs up to two per entry. Unmeasured here.
                 // `S3ListParser` took the contrary decision in this very
                 // position (cached formatters behind a `Mutex`); which is
                 // right for a listing parser is an open question, not a
