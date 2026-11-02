@@ -562,9 +562,19 @@ final class SessionTab: Identifiable {
         left: ComparisonSide, leftRoot: String,
         right: ComparisonSide, rightRoot: String,
         algorithm: ChecksumAlgorithm,
-        kind: Comparison.Kind = .folders
+        kind: Comparison.Kind = .folders,
+        leftVersion: Comparison.VersionRef? = nil
     ) -> Comparison? {
         guard let session, !isTearingDown else { return nil }
+        // A version on the left is resolved against THIS session's remote
+        // side, through the version capability; a request carries the ids and
+        // never a connection. A session whose remote has no such capability
+        // starts nothing.
+        var versionSide: Comparison.VersionSide?
+        if let leftVersion {
+            guard let source = session.remoteFS as? any ObjectVersionProvider else { return nil }
+            versionSide = Comparison.VersionSide(reference: leftVersion, source: source)
+        }
         func system(_ side: ComparisonSide) -> any RemoteFileSystem {
             switch side {
             case .local: session.localFS
@@ -576,7 +586,8 @@ final class SessionTab: Identifiable {
             right: system(right), rightRoot: rightRoot,
             algorithm: algorithm,
             transferQueue: transferQueue,
-            kind: kind)
+            kind: kind,
+            versionSide: versionSide)
         comparisons.append(comparison)
         comparison.start()
         return comparison

@@ -489,6 +489,36 @@
 "s3.versions.count %lld" = "%lld wpisów";
 "s3.versions.countFiltered %lld %lld" = "%lld z %lld";
 
+/* Version row actions (S3 version history, Task 9) */
+"s3.versions.action.open" = "Otwórz (tylko do odczytu)";
+"s3.versions.action.compare" = "Porównaj z bieżącą wersją";
+"s3.versions.action.download" = "Pobierz…";
+"s3.versions.action.restore" = "Przywróć jako bieżącą…";
+"s3.versions.action.delete" = "Usuń tę wersję…";
+"s3.versions.refusal.noContent" = "Znacznik usunięcia nie ma zawartości.";
+"s3.versions.refusal.isCurrent" = "To już jest bieżąca wersja.";
+"s3.versions.refusal.currentIsMarker" = "Plik jest teraz usunięty, więc nie ma bieżącej zawartości do porównania.";
+"s3.versions.refusal.versioningNotEnabled" = "Przywracanie wymaga włączonego wersjonowania w tym buckecie. Gdy jest wyłączone lub wstrzymane, przywrócenie zastąpiłoby bieżącą zawartość zamiast dodać wersję.";
+"s3.versions.refusal.locked" = "Ta wersja jest zablokowana, więc nie można jej usunąć.";
+"s3.versions.refusal.lockNotConfirmed" = "Blokada tej wersji nie została potwierdzona, więc nie można jej usunąć.";
+"s3.versions.refusal.marker" = "Znacznik usunięcia nie jest wersją z zawartością, więc nie usuwa się go tutaj.";
+"s3.versions.refusal.busy" = "Inna zmiana w historii tego pliku jest jeszcze w toku.";
+"s3.versions.refusal.unavailable" = "To nie jest tutaj dostępne.";
+"s3.versions.restore.title" = "Przywrócić tę wersję?";
+"s3.versions.restore.message %1$@ %2$@" = "„%1$@” otrzyma nową wersję z zawartością wersji z %2$@. Wszystkie wersje w historii zostaną zachowane.";
+"s3.versions.restore.button" = "Przywróć";
+"s3.versions.delete.title" = "Usunąć tę wersję?";
+"s3.versions.delete.message %1$@ %2$@ %3$@" = "Wersja pliku „%1$@” z %2$@ (identyfikator wersji %3$@) zostanie trwale usunięta. Tej operacji nie można cofnąć.";
+"s3.versions.delete.button" = "Usuń wersję";
+"s3.versions.outcome.restored" = "Przywrócono. Plik ma nową bieżącą wersję.";
+"s3.versions.outcome.deleted" = "Wersja została usunięta.";
+"s3.versions.outcome.restoreNotConfirmed" = "Nie udało się potwierdzić przywrócenia. Historia została odczytana ponownie: sprawdź ją, zanim spróbujesz jeszcze raz.";
+"s3.versions.outcome.deleteNotConfirmed" = "Nie udało się potwierdzić usunięcia. Historia została odczytana ponownie: sprawdź, czy wersja nadal jest na liście.";
+"s3.versions.outcome.locked" = "Magazyn odmówił: ta wersja jest zablokowana. Nic nie zostało zmienione.";
+"s3.versions.outcome.gone" = "Tej wersji nie ma już w historii. Nic nie zostało zmienione.";
+"s3.versions.outcome.denied" = "Twój klucz dostępu nie ma na to uprawnień. Nic nie zostało zmienione.";
+"s3.versions.outcome.unsupported" = "Ten magazyn tego nie obsługuje. Nic nie zostało zmienione.";
+
 /* Reguły CORS bucketa (ustawienia bucketów S3, Task 9) */
 "s3.cors.title %@" = "Reguły CORS bucketa „%@”";
 "s3.cors.intro" = "Reguły CORS określają, które strony internetowe mogą używać plików tego bucketa z poziomu przeglądarki.";

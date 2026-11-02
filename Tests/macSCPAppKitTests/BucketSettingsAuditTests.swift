@@ -564,6 +564,10 @@ struct BucketSettingsAuditTests {
             String(describing: ContentView.BucketObjectLockSheetItem.self),
             String(describing: ContentView.CreateBucketSheetItem.self),
             String(describing: ContentView.ObjectLockSheetItem.self),
+            // The version sheet's restore and delete (S3 version history,
+            // Task 9) are writes of the same weight: the delete is the one
+            // thing macSCP does here that leaves nothing to undo it with.
+            String(describing: ContentView.ObjectVersionsSheetItem.self),
         ]
         for item in items {
             let at = try #require(Self.firstUse(of: item, in: dispatchers), "\(item) is built nowhere")
@@ -582,6 +586,9 @@ struct BucketSettingsAuditTests {
             String(describing: BucketObjectLockSheet.self),
             String(describing: CreateBucketSheet.self),
             String(describing: ObjectLockSheet.self),
+            // The version sheet is built through its model, which carries the
+            // recorder (`ContentView.objectVersionsModel(for:)`).
+            String(describing: ObjectVersionsModel.self),
         ]
         for name in names {
             let at = try #require(Self.firstUse(of: name, in: sheets), "\(name) is built nowhere")

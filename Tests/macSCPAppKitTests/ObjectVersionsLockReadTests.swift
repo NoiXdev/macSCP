@@ -57,7 +57,7 @@ struct ObjectVersionsLockReadTests {
         let fake = FakeBucketSettings(lock: fixture)
         let model = ObjectVersionsModel(
             target: target, provider: FakeVersionProvider(versions: history(count)),
-            locks: .init(settings: fake, cache: ObjectLockStateCache(settings: fake)))
+            recorder: nil, locks: .init(settings: fake, cache: ObjectLockStateCache(settings: fake)))
         await model.load()
         return (model, hold, fake)
     }

@@ -750,10 +750,13 @@ public final class TransferQueueViewModel {
     /// current content and not this version's (`VersionDownloadSource`). The
     /// user starts the download again; it begins from the first byte.
     ///
-    /// **No caller yet:** the version sheet task of
-    /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires this
+    /// **Callers:** the version sheet's "Open (Read-Only)" and "Download…"
+    /// (`ContentView.openVersionReadOnly`, `ContentView.downloadVersion`) and
+    /// the left side of "Compare with Current Version" (`Comparison.fetch`).
+    /// (Withdrawn wording, verbatim: "**No caller yet:** the version sheet task
+    /// of `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires this
     /// (through `ContentView.openVersionReadOnly` and the download action);
-    /// until then only tests reach it.
+    /// until then only tests reach it.")
     public func enqueueAndWaitVersion(
         fileName: String, source: any ObjectVersionProvider, bucket: String,
         key: String, versionId: String,

@@ -182,9 +182,7 @@ extension ContentView {
         // from the file context menu's "Show Versions…", see
         // `handleBrowserMenuEntry`.
         .sheet(item: $objectVersionsSheetItem) { item in
-            ObjectVersionsSheet(
-                model: ObjectVersionsModel(
-                    target: item.target, provider: item.provider, locks: item.locks))
+            ObjectVersionsSheet(model: objectVersionsModel(for: item))
         }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
@@ -734,5 +732,39 @@ extension ContentView {
         guard let window else { return }
         window.makeKeyAndOrderFront(nil)
         showHiddenImportsSheet = true
+    }
+}
+
+extension ContentView {
+    /// The model behind the version sheet for `item`, with the three row
+    /// actions that need the window wired to it: open (a read-only copy),
+    /// compare (a file pair in the diff window) and download (a save panel and
+    /// the tab's queue). Restore and delete are the model's own, through the
+    /// provider the item captured.
+    func objectVersionsModel(for item: ObjectVersionsSheetItem) -> ObjectVersionsModel {
+        let target = item.target
+        let tab = item.tab
+        let session = item.session
+        return ObjectVersionsModel(
+            target: target, provider: item.provider, recorder: item.recorder, locks: item.locks,
+            versioning: item.versioning,
+            handlers: VersionActionHandlers(
+                open: { version in
+                    openVersionReadOnly(
+                        version, fileName: target.displayName, bucket: target.bucket,
+                        in: tab, session: session)
+                },
+                compareWithCurrent: { version in
+                    openComparison(
+                        ComparisonRequest.forVersion(
+                            bucket: target.bucket, key: version.key, versionId: version.versionId,
+                            currentPath: target.displayPath),
+                        on: tab)
+                },
+                download: { version in
+                    downloadVersion(
+                        version, fileName: target.displayName, bucket: target.bucket,
+                        in: tab, session: session)
+                }))
     }
 }

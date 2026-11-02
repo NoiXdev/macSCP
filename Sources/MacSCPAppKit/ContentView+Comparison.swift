@@ -40,7 +40,7 @@ extension ContentView {
             left: request.left, leftRoot: request.leftRoot,
             right: request.right, rightRoot: request.rightRoot,
             algorithm: settingsStore.checksumAlgorithm,
-            kind: request.kind)
+            kind: request.kind, leftVersion: request.leftVersion)
         else { return }
         openWindow(value: ComparisonSeed(tabID: tab.id, comparisonID: comparison.id))
     }

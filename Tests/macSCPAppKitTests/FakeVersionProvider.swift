@@ -4,11 +4,14 @@ import macSCPCore
 
 /// An in-memory `ObjectVersionProvider` for the sheets that read a history.
 ///
-/// It answers `versions(ofKey:inBucket:)` and nothing else: the five other
-/// requirements throw `RemoteFSError.finding(.operationNotSupported)`, so a
-/// sheet that reached for a write it was not given fails loudly instead of
-/// reading a made-up answer. The listing is returned in the order it was
-/// given, so a test that needs the model to sort can hand it a shuffled one.
+/// It answers `versions(ofKey:inBucket:)` and, unless told otherwise, nothing
+/// else: the other requirements throw `RemoteFSError.finding(.operationNotSupported)`,
+/// so a sheet that reached for a write it was not given fails loudly instead of
+/// reading a made-up answer. **A write is recorded whatever it answers**
+/// (`writes`), so a test can say that the store was not asked, and `writeAnswer`
+/// opts a case in to a write that succeeds or one that throws something
+/// specific. The listing is returned in the order it was given, so a test that
+/// needs the model to sort can hand it a shuffled one.
 ///
 /// No wait, no sleep: every method answers at once.
 final class FakeVersionProvider: ObjectVersionProvider, Sendable {
@@ -18,20 +21,68 @@ final class FakeVersionProvider: ObjectVersionProvider, Sendable {
         let bucket: String
     }
 
+    /// One restore, delete or marker removal, as it arrived.
+    struct Write: Equatable, Sendable {
+        enum Kind: Sendable { case restore, deleteVersion, liftDeleteMarker }
+        let kind: Kind
+        let key: String
+        let bucket: String
+        let versionId: String
+    }
+
+    /// What a write answers.
+    enum WriteAnswer: Sendable {
+        case unsupported
+        case accepted
+        case throwing(any Error)
+    }
+
     private struct State {
         var versions: [ObjectVersion]
         var error: (any Error)?
         var listings: [Listing] = []
+        var writes: [Write] = []
+        var writeAnswer: WriteAnswer = .unsupported
+        var contents: [String: Data] = [:]
+        var readVersionIds: [String] = []
     }
 
     private let state: Mutex<State>
 
-    init(versions: [ObjectVersion] = [], error: (any Error)? = nil) {
-        state = Mutex(State(versions: versions, error: error))
+    /// `contents` is what `readStream` answers, by version id; a version it
+    /// does not hold is `.notFound`, and a provider with no contents at all
+    /// reads nothing (`.operationNotSupported`).
+    init(
+        versions: [ObjectVersion] = [], error: (any Error)? = nil,
+        contents: [String: Data] = [:]
+    ) {
+        state = Mutex(State(versions: versions, error: error, contents: contents))
     }
+
+    /// The version ids `readStream` was asked for, in order.
+    var readVersionIds: [String] { state.withLock { $0.readVersionIds } }
 
     /// The listings asked for, in order.
     var listings: [Listing] { state.withLock { $0.listings } }
+    /// The writes asked for, in order, whatever each answered.
+    var writes: [Write] { state.withLock { $0.writes } }
+
+    /// What the writes answer from now on.
+    func setWriteAnswer(_ answer: WriteAnswer) {
+        state.withLock { $0.writeAnswer = answer }
+    }
+
+    private func record(_ write: Write) throws {
+        let answer = state.withLock { state -> WriteAnswer in
+            state.writes.append(write)
+            return state.writeAnswer
+        }
+        switch answer {
+        case .unsupported: throw Self.unsupported
+        case .accepted: return
+        case .throwing(let error): throw error
+        }
+    }
 
     private static var unsupported: RemoteFSError { .finding(.operationNotSupported) }
 
@@ -50,18 +101,29 @@ final class FakeVersionProvider: ObjectVersionProvider, Sendable {
     func readStream(
         ofKey key: String, inBucket bucket: String, versionId: String
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        throw Self.unsupported
+        let data = try state.withLock { state -> Data in
+            state.readVersionIds.append(versionId)
+            if state.contents.isEmpty { throw Self.unsupported }
+            guard let data = state.contents[versionId] else {
+                throw RemoteFSError.notFound(path: "/" + bucket + "/" + key)
+            }
+            return data
+        }
+        return AsyncThrowingStream { continuation in
+            if !data.isEmpty { continuation.yield(data) }
+            continuation.finish()
+        }
     }
 
     func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
-        throw Self.unsupported
+        try record(Write(kind: .restore, key: key, bucket: bucket, versionId: versionId))
     }
 
     func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {
-        throw Self.unsupported
+        try record(Write(kind: .deleteVersion, key: key, bucket: bucket, versionId: versionId))
     }
 
     func liftDeleteMarker(ofKey key: String, inBucket bucket: String, markerVersionId: String) async throws {
-        throw Self.unsupported
+        try record(Write(kind: .liftDeleteMarker, key: key, bucket: bucket, versionId: markerVersionId))
     }
 }

@@ -356,9 +356,12 @@ extension ContentView {
     /// The local name carries the version (`VersionLocalName`), so two
     /// versions of one key can be open together.
     ///
-    /// **Nothing calls this yet, and its body has never executed.** The
-    /// version sheet task of
-    /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires it.
+    /// **Called by the version sheet's "Open (Read-Only)"**
+    /// (`objectVersionsModel(for:)`), and its body has never executed against a
+    /// real application. (Withdrawn wording, verbatim: "**Nothing calls this
+    /// yet, and its body has never executed.** The version sheet task of
+    /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires it." --
+    /// the second half is still true, the first is not.)
     /// `VersionDownloadTests` scans this body for the presence of
     /// `enqueueAndWaitVersion(` and `makeReadOnlyCopyDirectory(` and for the
     /// absence of the three edit-registering calls, and nothing else: the
@@ -409,6 +412,39 @@ extension ContentView {
                 tab.editErrorMessage = String(format: L10n.string(
                     "versions.openFailed", "Could not open this version: %@"),
                     TransferFailureLabel.text(for: error))
+            }
+        }
+    }
+
+    /// Downloads ONE OLD VERSION of an object to a place the person picks: a
+    /// save panel proposing the version's own local name (`VersionLocalName`,
+    /// so two versions of one key sit side by side) in the local pane's
+    /// current folder, then the tab's queue (`enqueueAndWaitVersion`), where it
+    /// shows up in the transfer bar like any download.
+    ///
+    /// The queue is asked for the version and not for a path: a plain read of
+    /// the key would be its CURRENT content. **A failed or cancelled transfer
+    /// is the queue's to show** (its row in the bar says so), so this does not
+    /// raise a second message for the same event; it only has to not throw
+    /// into nothing, which is what `try?` is for here.
+    func downloadVersion(
+        _ version: ObjectVersion, fileName: String, bucket: String,
+        in tab: SessionTab, session: BrowserSession
+    ) {
+        guard let provider = session.remoteFS as? any ObjectVersionProvider else { return }
+        let panel = NSSavePanel()
+        panel.directoryURL = URL(
+            fileURLWithPath: session.local.currentPath, isDirectory: true)
+        panel.nameFieldStringValue = VersionLocalName.forDownload(
+            fileName: fileName, versionId: version.versionId)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            let directory = url.deletingLastPathComponent().path(percentEncoded: false)
+            Task { @MainActor in
+                try? await tab.transferQueue.enqueueAndWaitVersion(
+                    fileName: url.lastPathComponent, source: provider, bucket: bucket,
+                    key: version.key, versionId: version.versionId,
+                    destination: session.localFS, destinationDirectory: directory)
             }
         }
     }
