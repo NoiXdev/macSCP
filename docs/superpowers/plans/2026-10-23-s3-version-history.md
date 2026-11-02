@@ -163,10 +163,14 @@ git commit -m "feat(core): an optional capability for one object's versions"
   ```swift
   enum S3VersionsXML {
       static func parsePage(_ body: Data, status: Int) throws -> ObjectVersionPage
-      static func markerQueryValue(_ marker: String) -> String
+      // WITHDRAWN 2026-11-02 during Task 2's review; see the amendment under
+      // this block. The line read verbatim:
+      //     static func markerQueryValue(_ marker: String) -> String
   }
   ```
   `parsePage` throws `S3FileSystem.mapErrorStatus(...)` for any non-2xx — there is no "not configured" answer to forgive here, unlike `parseObjectLockState`. `markerQueryValue` percent-encodes a marker for a query value.
+
+**Amendment 2026-11-02, from Task 2's review: `markerQueryValue` is WITHDRAWN and was never shipped.** The sentence above stands as what this plan asked for; what it asked for was wrong, and the measurement is this. The function as written was the same algorithm as `SigV4Signer.rfc3986Encode` — the same unreserved set spelled with the same `UInt8(ascii:)` ranges, the same `String(format: "%%%02X", byte)`, the same `reserveCapacity` — and `SigV4Signer.canonicalQueryString(query:)` maps `rfc3986Encode` over BOTH the name and the value of every pair, so this module's request path already takes raw values and encodes them exactly once. Six call sites go through it (`S3FileSystem` x3, `SigV4Signer` x2, `S3RequestSigning` x1), and no query-building path here skips it: `presignedQuery` goes through it too, and `reSigned` reproduces a redirect target verbatim rather than building a query. So a Task 3 that followed the house path and passed `markerQueryValue(marker)` as a query value would have sent `%255B` where the store issued `[` — a marker the store never issued, and a failure no retry fixes. `canonicalQueryString`'s own doc comment records the precedent: it was widened to internal "keeping the signed and sent queries byte-identical (see M12 review I-1: a `URLComponents`-encoded wire query left `+` un-escaped, so it diverged from what was signed here whenever a value — e.g. a base64 `continuation-token` — contained one)", and a continuation marker is that same kind of value. **What satisfies the spec instead:** §4.9 requires the marker to be percent-encoded on the way back and never concatenated into a URL by hand, which the house path already does. The spec never required a function by this name. **Task 3 therefore passes markers RAW as query pair values**, and the encoding coverage moved to `canonicalQueryString` over a raw walker token — the path Task 3 actually uses.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -197,7 +201,10 @@ Fixtures are the bodies the spec's §4.8/§4.9 measured. Keep each fixture in a 
     // Measured 2026-10-23 (spec §4.9): RustFS returns the walker handle inside
     // the marker. Review Focus 2.
     let marker = "k1.txt[rustfs_cache:v2,id:58bdf6cd,src:walker,gen:live]"
-    let encoded = S3VersionsXML.markerQueryValue(marker)
+    // WITHDRAWN 2026-11-02 with the function: this line read
+    //     let encoded = S3VersionsXML.markerQueryValue(marker)
+    // The shipped test asserts the same two properties over
+    // `SigV4Signer.canonicalQueryString`, which is the path Task 3 uses.
     let leaksABracket = encoded.contains("[") || encoded.contains("]")
     #expect(leaksABracket == false)
     #expect(encoded.contains("%5B"))
