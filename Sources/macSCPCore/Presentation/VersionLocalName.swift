@@ -4,13 +4,22 @@ import Foundation
 /// What a downloaded old version is called on disk: the object's own file name
 /// with the version's id folded in BEFORE the extension, so two versions of
 /// one key can sit side by side and each still opens with the right
-/// application. A lower-case, UUID-shaped id (the test rig's shape) is shown
-/// as it is: `doc (3f2c9a10-0b7e-4c1d).txt`. An id with upper case, `+`, `/` or
-/// anything else outside the whitelist below (a real AWS version id is mixed
-/// case, so it always takes this path) is digested:
-/// `doc (3HL4kqtJvjVB~4ce1d782d7517756).txt` for the id
-/// `3HL4kqtJvjVBH40Nrjfkd`, the readable part being the id's first twelve
-/// permitted characters.
+/// application. An id inside the whitelist below is shown as it is: a
+/// lower-case UUID-shaped one (the test rig's shape) as
+/// `doc (3f2c9a10-0b7e-4c1d).txt`, and so is `null`, the id S3 reports for an
+/// object written before versioning was enabled or while it is suspended:
+/// `doc (null).txt`. An id with upper case, `+`, `/` or anything else outside
+/// the whitelist (an AWS-generated version id is mixed case, so it takes this
+/// path) is digested: `doc (3HL4kqtJvjVB~4ce1d782d7517756).txt` for the id
+/// `3HL4kqtJvjVBH40Nrjfkd`. The digest is
+/// `printf '%s' '3HL4kqtJvjVBH40Nrjfkd' | shasum -a 256 | cut -c1-16`; the
+/// readable part before the `~` is the id's first twelve characters that are
+/// in the readable set, `A-Za-z0-9_-` (the whitelist plus upper case).
+/// (Withdrawn wording, verbatim: "a real AWS version id is mixed case, so it
+/// always takes this path" — false of `null`, which is lower case and is
+/// shown verbatim; the sheet will display it, and it is the same fact that
+/// makes a restore on a suspended-versioning bucket replace the `null`
+/// version rather than add one.)
 ///
 /// **A version id is opaque text the store supplied.** Nothing here may assume
 /// it is a path-safe token: it is cut into a file name, so it is held to a

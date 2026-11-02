@@ -165,16 +165,30 @@ struct VersionDownloadTests {
     /// The guard above reads `Self.code`, and everything it concludes from an
     /// ABSENCE depends on that being the comment-and-string-blanked view. If it
     /// read the raw text instead, a doc comment that names the forbidden calls
-    /// (and `openVersionReadOnly`'s does) would turn the negative check red
-    /// for the wrong reason, or a future edit would learn to avoid the words;
-    /// worse, a planted call hidden in a string would pass. So the control for
-    /// the control: a phrase that exists only in the function's doc comment is
-    /// in the raw file and absent from the view the guard reads.
-    @Test func theGuardReadsABlankedViewThatDropsComments() throws {
+    /// would turn the negative check red for the wrong reason, or a future edit
+    /// would learn to avoid the words. If it kept string literals, a call
+    /// written inside one would be read as code. So the control for the
+    /// control, in two halves, each with its positive beside it:
+    /// - a phrase that exists only in a doc comment is in the raw file and
+    ///   absent from the view the guard reads;
+    /// - a catalogue key that exists only inside a string literal is in the
+    ///   comment-free view (which keeps literals) and absent from the view the
+    ///   guard reads.
+    @Test func theGuardReadsABlankedViewThatDropsCommentsAndStringLiterals() throws {
         let url = Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit/ContentView+Transfers.swift")
-        let phrase = "registered and a watcher started"
-        #expect(try SourceCorpus.text(of: url).contains(phrase))
-        #expect(try Self.code("ContentView+Transfers.swift").contains(phrase) == false)
+        let inAComment = "registered and a watcher started"
+        #expect(try SourceCorpus.text(of: url).contains(inAComment))
+        #expect(try Self.code("ContentView+Transfers.swift").contains(inAComment) == false)
+
+        let inALiteral = "versions.openFailed"
+        #expect(try SourceCorpus.commentFree(of: url).contains(inALiteral))
+        #expect(try Self.code("ContentView+Transfers.swift").contains(inALiteral) == false)
+    }
+
+    @Test func anIdOfNullIsShownAsItIs() {
+        // `null` is the id S3 reports for an object written before versioning
+        // was enabled or while it is suspended; it is lower case, so verbatim.
+        #expect(VersionLocalName.forDownload(fileName: "doc.txt", versionId: "null") == "doc (null).txt")
     }
 
     /// The row's "restarts from the beginning" hint is read for a transfer

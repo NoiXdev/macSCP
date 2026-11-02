@@ -181,6 +181,26 @@ struct VersionDownloadQueueTests {
 
     // MARK: - No resume
 
+    /// The adapter is a source and nothing else: every other member refuses,
+    /// `homeDirectoryPath` included (it once answered `"/"`). The positive
+    /// beside the refusals is the source half, which works.
+    @Test func theAdapterRefusesEverythingBeyondReadingOneVersion() async throws {
+        let adapter = VersionDownloadSource(
+            source: FakeProvider(history: [Self.entry("v1", size: 1)], reads: [:]),
+            bucket: "b", key: "doc.txt", versionId: "v1")
+        let refusal = RemoteFSError.protocolError(reason: VersionDownloadSource.refusalReason)
+
+        func refused(_ operation: () async throws -> Void) async -> Bool {
+            do { try await operation() } catch { return (error as? RemoteFSError) == refusal }
+            return false
+        }
+        #expect(await refused { _ = try await adapter.homeDirectoryPath() })
+        #expect(await refused { _ = try await adapter.list(path: "/") })
+        #expect(await refused { try await adapter.delete(path: "/x") })
+        #expect(await refused { try await adapter.createDirectory(at: "/x") })
+        #expect(try await adapter.stat(path: "ignored").size == 1)
+    }
+
     /// The adapter has no offset to honour. A read from anywhere but the
     /// start is refused, and the provider is not asked.
     @Test func theAdapterRefusesAResumeOffset() async throws {
@@ -243,9 +263,10 @@ struct VersionDownloadQueueTests {
     /// that cannot resume is queued or running (`Item.canResumeIfInterrupted`
     /// false). A version download to the local disk is the one download where
     /// that is unconditionally true, and the local disk can append, so the
-    /// flag cannot be left to the destination's answer. Checked while the item
-    /// is still in the bar (the first status seen is the queued/running one),
-    /// beside the ordinary download whose flag IS the destination's.
+    /// flag cannot be left to the destination's answer. The flag is read AFTER the download completes, which is as good as reading it
+    /// while the item is queued or running: the field is immutable, set once
+    /// at enqueue. The ordinary download beside it shows the flag IS the
+    /// destination's there.
     @Test func aVersionDownloadIsMarkedAsRestartingWhereAnOrdinaryOneIsNot() async throws {
         let directory = try Self.scratchDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

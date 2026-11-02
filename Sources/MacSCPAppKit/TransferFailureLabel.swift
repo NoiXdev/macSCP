@@ -60,12 +60,24 @@ import macSCPCore
 /// **The 2026-11-02 recount**, the seventh, run against the head that adds
 /// `VersionDownloadSource`: both recipes were run as written above, from the
 /// repository root, with `/usr/bin/grep` — 91 and 29 where the previous
-/// figures were 78 and 17. Counted per commit with `git grep` over
-/// `Sources/macSCPCore`: the base of the version-history work gave 88 and 29,
-/// so the second recipe's twelve extra lines and ten of the first recipe's
-/// thirteen were already there before it, and three same-line constructions
-/// are the version download's own (`VersionDownloadSource.stat`,
-/// `.readStream` and its `refusal`). The old comment's AppKit line numbers
+/// figures were 78 and 17. Where the thirteen and twelve extra lines come
+/// from, counted with `git grep -n` over `Sources/macSCPCore` at three
+/// points (the recipes' patterns as above, at a commit instead of the
+/// working tree):
+/// - the base this branch forked from (the merge-base with `develop`): 81
+///   and 26;
+/// - the parent of the commit that adds `VersionDownloadSource`, which
+///   already carries the version-history work's first four tasks: 88 and 29;
+/// - this head: 91 and 29.
+/// So the first recipe's thirteen = 3 (before the branch forked) + 7 (the
+/// first four tasks) + 3 (this commit's own: `VersionDownloadSource.stat`,
+/// `.readStream` and its `refusal`), and the second recipe's twelve = 9 + 3
+/// + 0. (Withdrawn wording, verbatim: "the base of the version-history work
+/// gave 88 and 29, so the second recipe's twelve extra lines and ten of the
+/// first recipe's thirteen were already there before it" — 88 and 29 are the
+/// parent of this commit, not the base the branch forked from, so that
+/// attributed the first four tasks' lines to the time before the work began.)
+/// The old comment's AppKit line numbers
 /// (`:276`, `:1871`, `:3434`) no longer pointed at the constructions; they are
 /// named by symbol above, and the count of three is unchanged. The
 /// "whole-tree total is 70" it replaces was 67 + 3, and the "15" it lists are
@@ -97,6 +109,9 @@ import macSCPCore
 /// `S3ListParser.hasAnyEntries` to `RemoteFSError.finding(.listingUnparsable)`:
 /// two lines left the FIRST recipe, and every figure derived from it dropped
 /// by two.
+/// (Withdrawn wording, verbatim: "The second recipe's 17 and the App layer's
+/// 3 are unchanged." — true at `af283217`; the second recipe finds 29 now,
+/// and the App layer's three are named by symbol above.)
 ///
 /// The 27 the second recipe finds (the enumeration that read "The 15 the
 /// second recipe finds" is withdrawn, verbatim: "The 15 the second recipe

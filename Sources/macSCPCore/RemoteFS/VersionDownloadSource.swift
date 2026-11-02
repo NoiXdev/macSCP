@@ -40,7 +40,7 @@ struct VersionDownloadSource: RemoteFileSystem {
         "a version download cannot be resumed: start it again from the beginning"
     /// Why a delete marker was refused as a download: it holds no content.
     static let markerReason = "this version is a delete marker and has no content to download"
-    private static let refusalReason = "a version download source reads one version and nothing else"
+    static let refusalReason = "a version download source reads one version and nothing else"
 
     let source: any ObjectVersionProvider
     let bucket: String

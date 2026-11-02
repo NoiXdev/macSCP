@@ -359,11 +359,18 @@ extension ContentView {
     /// **Nothing calls this yet, and its body has never executed.** The
     /// version sheet task of
     /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires it.
-    /// `NSWorkspace`, the `chmod`, the temp directory and the
-    /// `CancellationError` arm are covered by a source scan
-    /// (`VersionDownloadTests`) only, which reads this one function's body: a
+    /// `VersionDownloadTests` scans this body for the presence of
+    /// `enqueueAndWaitVersion(` and `makeReadOnlyCopyDirectory(` and for the
+    /// absence of the three edit-registering calls, and nothing else: the
+    /// `NSWorkspace` hand-off, the permissions write and the
+    /// `CancellationError` arm are untested, and dropping the `chmod` turns
+    /// nothing red. The scan reads this one function's body, so a
     /// `beginEditing` moved into a private helper that this calls would not be
-    /// seen by it.
+    /// seen by it. (Withdrawn wording, verbatim: "`NSWorkspace`, the `chmod`,
+    /// the temp directory and the `CancellationError` arm are covered by a
+    /// source scan (`VersionDownloadTests`) only" — nothing scans for them;
+    /// the temp directory is only the call to `makeReadOnlyCopyDirectory(`
+    /// being present.)
     func openVersionReadOnly(
         _ version: ObjectVersion, fileName: String, bucket: String,
         in tab: SessionTab, session: BrowserSession
