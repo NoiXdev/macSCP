@@ -150,7 +150,8 @@ struct RemoteFileTableTypeColumnGuardTests {
         let plain = RemoteFileItem(name: "report.pdf", path: "/report.pdf", kind: .file)
 
         let coordinator = RemoteFileTableView.Coordinator(
-            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote,
+            isFileActionAvailable: { _ in false }, fileActionUnavailableReason: { _ in nil })
         coordinator.items = [bucket, symlink, plain]
 
         let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
@@ -188,7 +189,8 @@ struct RemoteFileTableTypeColumnGuardTests {
         let bucket = RemoteFileItem(
             name: "ido", path: "/ido", kind: .directory, isBucket: true)
         let coordinator = RemoteFileTableView.Coordinator(
-            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote,
+            isFileActionAvailable: { _ in false }, fileActionUnavailableReason: { _ in nil })
         coordinator.items = [bucket]
 
         let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))
@@ -222,7 +224,8 @@ struct RemoteFileTableTypeColumnGuardTests {
             name: "ido", path: "/ido", kind: .directory, isBucket: true)
         let plain = RemoteFileItem(name: "news", path: "/news", kind: .directory)
         let coordinator = RemoteFileTableView.Coordinator(
-            onOpen: { _ in }, onSelect: { _ in }, side: .remote)
+            onOpen: { _ in }, onSelect: { _ in }, side: .remote,
+            isFileActionAvailable: { _ in false }, fileActionUnavailableReason: { _ in nil })
         coordinator.items = [bucket, plain]
 
         let tableView = NSTableView(frame: NSRect(x: 0, y: 0, width: 400, height: 100))

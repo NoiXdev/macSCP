@@ -12,7 +12,7 @@ import macSCPCore
 ///
 /// The five writes do not share a signature. They are
 /// `CreateBucketModel.create(via:recorder:)`,
-/// `BucketVersioningModel.apply(_:bucket:via:locks:recorder:)`,
+/// `BucketVersioningModel.apply(_:bucket:via:locks:versioning:recorder:)`,
 /// `BucketCORSModel.save(bucket:via:recorder:)`,
 /// `ObjectLockModel.run(key:bucket:via:recorder:)` (a file's retention and a
 /// file's legal hold are the same method, told apart by the model's focus) and
@@ -80,7 +80,8 @@ struct BucketSettingsAuditTests {
             let model = BucketVersioningModel(current: .never, bucketHasObjectLock: false)
             await model.apply(
                 .enabled, bucket: "b1", via: settings,
-                locks: ObjectLockStateCache(settings: settings), recorder: recorder)
+                locks: ObjectLockStateCache(settings: settings),
+                versioning: BucketVersioningCache(settings: settings), recorder: recorder)
             return Outcome(
                 storeWasAskedToWrite: settings.writes.count == 1,
                 modelShowsAFailure: model.applyFailure != nil)

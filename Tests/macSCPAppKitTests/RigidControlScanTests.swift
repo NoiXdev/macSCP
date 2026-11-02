@@ -188,9 +188,13 @@ struct RigidControlScanTests {
     /// did not. Its rigidity is a hand-written `.fixedSize()`, checked by
     /// `everyHandWrittenMenuCarriesFixedSize`. Counted the same way,
     /// `grep -rn 'pickerStyle[(][.]menu[)]' Sources/MacSCPAppKit`, which prints
+    /// 8 lines: `ConnectionFormView` (2), and one each in `AuditLogSheet`,
+    /// `DiagnosticsPanel`, `FileSearchBar`, `SheetFacetPicker`,
+    /// `SidebarTagFilterBar` and `ObjectVersionsSheet` (added with the version
+    /// history sheet, 2026-11-02). (Withdrawn wording, verbatim: "which prints
     /// 7 lines: `ConnectionFormView` (2), and one each in `AuditLogSheet`,
     /// `DiagnosticsPanel`, `FileSearchBar`, `SheetFacetPicker` and
-    /// `SidebarTagFilterBar`.
+    /// `SidebarTagFilterBar`." It was true until that sheet's filter menu.)
     private static let menu = Style(
         name: "menu",
         pattern: #"\.pickerStyle\(\s*\.menu\s*\)|(?:^|\W)MenuPickerStyle(?!\w)"#,
@@ -201,6 +205,7 @@ struct RigidControlScanTests {
             "FileSearchBar.swift": 1,
             "SheetFacetPicker.swift": 1,
             "SidebarTagFilterBar.swift": 1,
+            "ObjectVersionsSheet.swift": 1,
         ],
         matching: [
             "        .pickerStyle(.menu)", "x\n    .pickerStyle(\n        .menu\n    )",
@@ -262,8 +267,9 @@ struct RigidControlScanTests {
     /// `.palette`, `.switch`) would walk past every allow-list. So the number of
     /// `.pickerStyle(` and `.toggleStyle(` calls is held to the sum of the
     /// styles that ARE named. Counted 2026-10-18 with
-    /// `grep -rn 'pickerStyle[(]' Sources/MacSCPAppKit`, which prints 14 lines
-    /// (6 segmented, 1 radio group, 7 menu), and
+    /// `grep -rn 'pickerStyle[(]' Sources/MacSCPAppKit`, which prints 15 lines
+    /// (6 segmented, 1 radio group, 8 menu; withdrawn, verbatim: "which prints
+    /// 14 lines (6 segmented, 1 radio group, 7 menu)"), and
     /// `grep -rn 'toggleStyle[(]' Sources/MacSCPAppKit`, which prints 2 (the
     /// checkbox, the toggle button).
     @Test func noPickerOrToggleStyleEscapesTheNamedFamilies() throws {

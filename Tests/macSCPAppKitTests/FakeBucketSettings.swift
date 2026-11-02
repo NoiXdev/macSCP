@@ -112,6 +112,18 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         /// versioning read has already returned.
         var hasLockEntered: AsyncSignal?
         var hasLockRelease: AsyncSignal?
+        /// What a read that NAMES a version id answers (the version history
+        /// reads one version at a time). A version absent from a map reads
+        /// as having none: no retention, no hold. A read that names no
+        /// version keeps answering `retention` / `legalHold` above.
+        var retentionByVersion: [String: ObjectRetention] = [:]
+        var legalHoldByVersion: [String: Bool] = [:]
+        /// Versions whose read throws, whichever of the two it is.
+        var failingVersions: Set<String> = []
+        /// How many times a version read gives up its turn before it
+        /// answers, so that reads started together are in flight together and
+        /// a test can see how many were.
+        var yieldsPerVersionRead = 0
 
         init(
             hasLock: Bool = true, bucketDefault: ObjectLockDefault? = nil,
@@ -186,6 +198,19 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         var retentionWrites: [RetentionWrite] = []
         var legalHoldReads: [String] = []
         var legalHoldWrites: [LegalHoldWrite] = []
+        var versionReads: [VersionRead] = []
+        var versionReadsInFlight = 0
+        var maxVersionReadsInFlight = 0
+        var versioningGate: (entered: AsyncSignal, release: AsyncSignal)?
+    }
+
+    /// One retention or legal-hold read that named a version id, as it arrived.
+    struct VersionRead: Equatable, Sendable {
+        enum Kind: Sendable { case retention, legalHold }
+        let kind: Kind
+        let key: String
+        let bucket: String
+        let versionId: String
     }
 
     private let state: Mutex<State>
@@ -239,9 +264,24 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
     var legalHoldReads: [String] { state.withLock { $0.legalHoldReads } }
     /// The `setLegalHold` calls, in order.
     var legalHoldWrites: [LegalHoldWrite] { state.withLock { $0.legalHoldWrites } }
+    /// The retention and legal-hold reads that named a version id, in order.
+    var versionReads: [VersionRead] { state.withLock { $0.versionReads } }
+    /// The most version reads that were in flight at the same moment.
+    var maxVersionReadsInFlight: Int { state.withLock { $0.maxVersionReadsInFlight } }
+
+    /// Holds every `versioning(ofBucket:)` read at the store, after it has
+    /// taken the state it will answer with, until `release` is raised. The
+    /// answer a held read returns is therefore the state from BEFORE anything
+    /// written while it was held, as a read that was on the wire when a write
+    /// landed would be.
+    func holdVersioningReads() -> (entered: AsyncSignal, release: AsyncSignal) {
+        let gate = (entered: AsyncSignal(), release: AsyncSignal())
+        state.withLock { $0.versioningGate = gate }
+        return gate
+    }
 
     func versioning(ofBucket bucket: String) async throws -> BucketVersioning {
-        try state.withLock { state in
+        let (answer, gate) = try state.withLock { state -> (BucketVersioning, (entered: AsyncSignal, release: AsyncSignal)?) in
             state.reads.append(bucket)
             if let error = state.readError { throw error }
             // A create the store refused left nothing to read, as a real one
@@ -252,8 +292,13 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             {
                 throw RemoteFSError.notFound(path: "/" + bucket)
             }
-            return state.versioning
+            return (state.versioning, state.versioningGate)
         }
+        if let gate {
+            gate.entered.signal()
+            _ = await gate.release.wait()
+        }
+        return answer
     }
 
     func setVersioning(_ target: BucketVersioning, ofBucket bucket: String) async throws {
@@ -394,10 +439,43 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             state.lock = lock
         }
     }
+    /// The shared shape of a read that names a version: recorded, counted while
+    /// in flight, given up its turn `yieldsPerVersionRead` times, then answered
+    /// from the per-version maps or thrown.
+    private func versionRead<T: Sendable>(
+        _ kind: VersionRead.Kind, key: String, bucket: String, versionId: String,
+        answer: @Sendable (ObjectLockFixture) -> T
+    ) async throws -> T {
+        let yields = try state.withLock { state -> Int in
+            guard let lock = state.lock else { throw Self.unsupported }
+            state.versionReads.append(
+                VersionRead(kind: kind, key: key, bucket: bucket, versionId: versionId))
+            state.versionReadsInFlight += 1
+            state.maxVersionReadsInFlight = max(
+                state.maxVersionReadsInFlight, state.versionReadsInFlight)
+            return lock.yieldsPerVersionRead
+        }
+        defer { state.withLock { $0.versionReadsInFlight -= 1 } }
+        for _ in 0..<yields { await Task.yield() }
+        return try state.withLock { state in
+            guard let lock = state.lock else { throw Self.unsupported }
+            if let error = lock.readError { throw error }
+            if lock.failingVersions.contains(versionId) {
+                throw RemoteFSError.protocolError(reason: "planted version read failure")
+            }
+            return answer(lock)
+        }
+    }
+
     func retention(ofKey key: String, inBucket bucket: String, versionId: String?) async throws
         -> ObjectRetention?
     {
-        try state.withLock { state in
+        if let versionId {
+            return try await versionRead(.retention, key: key, bucket: bucket, versionId: versionId) {
+                $0.retentionByVersion[versionId]
+            }
+        }
+        return try state.withLock { state in
             state.retentionReads.append(key)
             guard let lock = state.lock else { throw Self.unsupported }
             if let error = lock.readError { throw error }
@@ -423,7 +501,12 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         }
     }
     func legalHold(ofKey key: String, inBucket bucket: String, versionId: String?) async throws -> Bool {
-        try state.withLock { state in
+        if let versionId {
+            return try await versionRead(.legalHold, key: key, bucket: bucket, versionId: versionId) {
+                $0.legalHoldByVersion[versionId] ?? false
+            }
+        }
+        return try state.withLock { state in
             state.legalHoldReads.append(key)
             guard let lock = state.lock else { throw Self.unsupported }
             if let error = lock.readError { throw error }

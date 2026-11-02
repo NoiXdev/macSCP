@@ -92,4 +92,81 @@ struct BucketVersioningCacheTests {
         #expect(BrowserSession.bucketVersioning(for: FakeBucketSettings()) != nil)
         #expect(BrowserSession.bucketVersioning(for: LocalFileSystem()) == nil)
     }
+
+    // MARK: - What the menu can ask without waiting
+
+    /// `knownVersioning` answers from what was already read and `nil` for
+    /// "not asked", which is none of the three states: a bucket never asked
+    /// about is not a bucket that was never versioned.
+    @MainActor @Test func theSynchronousAccessorAnswersOnlyFromWhatWasRead() async throws {
+        let probe = FakeBucketSettings(versioning: .never)
+        let cache = BucketVersioningCache(settings: probe)
+        #expect(cache.knownVersioning("b") == nil)
+        #expect(probe.reads.isEmpty, "asking synchronously reads nothing")
+        _ = try await cache.versioning("b")
+        #expect(cache.knownVersioning("b") == .never)
+        #expect(cache.knownVersioning("other") == nil)
+        // A failed read leaves nothing to know.
+        let failing = FakeBucketSettings(
+            versioning: .enabled, readError: RemoteFSError.finding(.operationNotSupported))
+        let failed = BucketVersioningCache(settings: failing)
+        await #expect(throws: RemoteFSError.self) { _ = try await failed.versioning("b") }
+        #expect(failed.knownVersioning("b") == nil)
+    }
+
+    // MARK: - A write
+
+    /// The four clicks that gave a wrong answer: the row is evaluated on a
+    /// `.never` bucket, the user enables versioning, and the cache must not go
+    /// on saying `.never`.
+    @MainActor @Test func aWriteThenAnAskReadsAgain() async throws {
+        let probe = FakeBucketSettings(versioning: .never)
+        let cache = BucketVersioningCache(settings: probe)
+        #expect(try await cache.versioning("b") == .never)
+        try await probe.setVersioning(.enabled, ofBucket: "b")
+        // Before the writer tells it, the cache still says what it read: the
+        // gap `invalidate` exists to close.
+        #expect(cache.knownVersioning("b") == .never)
+        cache.invalidate("b")
+        #expect(cache.knownVersioning("b") == nil)
+        #expect(try await cache.versioning("b") == .enabled)
+        #expect(probe.reads == ["b", "b"])
+        #expect(cache.knownVersioning("b") == .enabled)
+    }
+
+    /// The positive control for the case above: a write to one bucket does not
+    /// drop the answer for another, which is not read again.
+    @MainActor @Test func aWriteToOneBucketDoesNotInvalidateAnother() async throws {
+        let probe = FakeBucketSettings(versioning: .suspended)
+        let cache = BucketVersioningCache(settings: probe)
+        _ = try await cache.versioning("b")
+        _ = try await cache.versioning("other")
+        #expect(probe.reads == ["b", "other"])
+        cache.invalidate("b")
+        #expect(cache.knownVersioning("other") == .suspended)
+        #expect(cache.knownVersioning("b") == nil)
+        _ = try await cache.versioning("other")
+        #expect(probe.reads == ["b", "other"], "the other bucket was not read again")
+        _ = try await cache.versioning("b")
+        #expect(probe.reads == ["b", "other", "b"])
+    }
+
+    /// A read that was already on the wire when the write landed returns the
+    /// state from before it. It must not put that back into the cache.
+    @MainActor @Test func aReadInFlightWhenAWriteLandsDoesNotRecordTheOldState() async throws {
+        let probe = FakeBucketSettings(versioning: .never)
+        let gate = probe.holdVersioningReads()
+        let cache = BucketVersioningCache(settings: probe)
+        let stale = Task { @MainActor in try await cache.versioning("b") }
+        _ = await gate.entered.wait()
+        try await probe.setVersioning(.enabled, ofBucket: "b")
+        cache.invalidate("b")
+        gate.release.signal()
+        // The caller that was waiting gets what its read saw.
+        #expect(try await stale.value == .never)
+        // The cache does not keep it.
+        #expect(cache.knownVersioning("b") == nil)
+        #expect(try await cache.versioning("b") == .enabled)
+        #expect(cache.knownVersioning("b") == .enabled)
+    }
 }

@@ -68,6 +68,15 @@ struct BrowserPane: View {
     /// `nil` for the local pane's call site (`ContentView`), since the local
     /// file system never contributes any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// Whether a contributed file action can be carried out now, and the
+    /// sentence that says why not when it cannot -- forwarded verbatim to
+    /// `RemoteFileTableView`, which draws a declined row disabled; see its doc
+    /// comments. **Required, with no default**, as there: a pane built without
+    /// answering would otherwise inherit "every row is live". The local pane's
+    /// call site answers `false` and `nil`, because its file system contributes
+    /// no action and the table never asks.
+    var isFileActionAvailable: (FileActionContribution) -> Bool
+    var fileActionUnavailableReason: (FileActionContribution) -> String?
     /// The actions the user wrote (file-actions plan, Task 11) —
     /// forwarded verbatim to `RemoteFileTableView`; see its doc comment.
     /// Handed to BOTH panes: which of them an action appears on is the
@@ -394,6 +403,8 @@ struct BrowserPane: View {
                     focusRequestToken: tableFocusToken,
                     crossSessionTargets: crossSessionTargets,
                     fileActions: fileActions,
+                    isFileActionAvailable: isFileActionAvailable,
+                    fileActionUnavailableReason: fileActionUnavailableReason,
                     userFileActions: userFileActions,
                     supportsChecksum: supportsChecksum,
                     supportsArchiving: supportsArchiving,

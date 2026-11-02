@@ -139,9 +139,17 @@ struct ComparisonEntryWiringGuardTests {
         // ABOUT a literal (`action.id`'s value), which the code-only view
         // blanks.
         let withLiterals = try Self.withLiterals(Self.routerFile)
+        //
+        // **The second anchor moved with the handler (S3 version history,
+        // Task 7).** It read, verbatim: `if side == .remote, action.id ==
+        // "s3.presignedURL",`, when the backend arms were an `if`-chain keyed
+        // off the id. They are a `switch` over `BackendFileActionRoute` now, so
+        // the id is the case and the gate follows it: what is pinned is still
+        // that the presigned URL's arm opens on `side == .remote` and on
+        // nothing inverted.
         for gate in [
             "case .openInEditor: if side == .remote, let item = selection.first {",
-            "if side == .remote, action.id == \"s3.presignedURL\",",
+            "case .presignedURL: if side == .remote,",
         ] {
             #expect(Self.occurrences(of: gate, in: withLiterals) == 1, "\(gate)")
         }
