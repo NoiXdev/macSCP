@@ -1,9 +1,8 @@
 import Foundation
 
 /// Reads a `ListObjectVersions` answer (`ListVersionsResult`) into the types
-/// `ObjectVersionProvider` speaks, and encodes the continuation markers for
-/// the next request. Foundation's `XMLParser`, no new dependency — the same
-/// approach as `S3SettingsXML`.
+/// `ObjectVersionProvider` speaks. Foundation's `XMLParser`, no new
+/// dependency — the same approach as `S3SettingsXML`.
 ///
 /// **This type reports what arrived.** It does not filter: `prefix=doc.txt`
 /// also matches `doc.txt.bak` at the store, and keeping only the exact key is
@@ -26,10 +25,24 @@ enum S3VersionsXML {
     ///   `KeyMarker` and `VersionIdMarker` beside them are the REQUEST's echo
     ///   and are not read. Both are kept exactly as written: they are opaque
     ///   tokens (spec §4.9 measured a store returning an internal handle
-    ///   inside one), so nothing here trims, splits or reads inside them.
-    ///   `<IsTruncated>` is not read either: `ObjectVersionPage.isTruncated`
-    ///   is derived from the key marker alone, and a second truth for it
-    ///   would be a way to disagree with it.
+    ///   inside one), so nothing here trims, splits or reads inside them. An
+    ///   empty `Next` element is no marker. Sending a marker back is not this
+    ///   type's business and it offers no encoder for it: a request goes out
+    ///   through `SigV4Signer.canonicalQueryString`, which takes the RAW value
+    ///   and percent-encodes it exactly once, so a pre-encoded marker handed
+    ///   to it would be encoded twice and reach the store as a marker it
+    ///   never issued.
+    /// - `<IsTruncated>` is read only to refuse one answer: `true` with no
+    ///   `NextKeyMarker` is `.protocolError`. `ObjectVersionPage.isTruncated`
+    ///   is derived from the key marker alone and gains no second truth from
+    ///   this; but a page that says it is cut short and offers nothing to
+    ///   continue with would otherwise read as the key's complete history.
+    ///   Unmeasured: whether the final page of a listing carries a
+    ///   `NextKeyMarker`. The spec's paging record (section 4.9) measures the
+    ///   flag's value per page and does not record it, so no claim is made
+    ///   here about what a store sends on a last page beyond the flag. The
+    ///   opposite disagreement, a marker beside `IsTruncated=false`, is left
+    ///   to the caller's paging loop.
     /// - A document whose root is not `ListVersionsResult` (a proxy's error
     ///   page, say), one that is not well-formed, an entry with no `Key` or no
     ///   `VersionId`, and a `Size` that is not a non-negative integer are
@@ -54,35 +67,15 @@ enum S3VersionsXML {
             throw RemoteFSError.protocolError(
                 reason: "Failed to parse S3 version listing response: \(reason)")
         }
+        if delegate.isTruncatedFlag == true && delegate.nextKeyMarker == nil {
+            throw RemoteFSError.protocolError(
+                reason: "Failed to parse S3 version listing response: "
+                    + "IsTruncated is true but no NextKeyMarker continues it")
+        }
         return ObjectVersionPage(
             versions: delegate.versions,
             nextKeyMarker: delegate.nextKeyMarker,
             nextVersionIdMarker: delegate.nextVersionIdMarker)
-    }
-
-    /// `marker` percent-encoded for use as the value of a query parameter
-    /// (`key-marker`, `version-id-marker`): every byte but an RFC 3986
-    /// unreserved one (`A-Za-z0-9-._~`) becomes an uppercase `%XX` escape.
-    ///
-    /// Not a shortcut for a key: a marker may carry `[`, `]`, `,` and `:`
-    /// (spec §4.9), and pasting one into a URL by concatenation sends
-    /// something else. The marker is encoded as a whole and never looked
-    /// into.
-    static func markerQueryValue(_ marker: String) -> String {
-        var result = ""
-        result.reserveCapacity(marker.utf8.count)
-        for byte in marker.utf8 {
-            switch byte {
-            case UInt8(ascii: "A")...UInt8(ascii: "Z"),
-                UInt8(ascii: "a")...UInt8(ascii: "z"),
-                UInt8(ascii: "0")...UInt8(ascii: "9"),
-                UInt8(ascii: "-"), UInt8(ascii: "."), UInt8(ascii: "_"), UInt8(ascii: "~"):
-                result.append(Character(UnicodeScalar(byte)))
-            default:
-                result.append(String(format: "%%%02X", byte))
-            }
-        }
-        return result
     }
 
     private final class PageDelegate: NSObject, XMLParserDelegate {
@@ -91,6 +84,9 @@ enum S3VersionsXML {
         private(set) var versions: [ObjectVersion] = []
         private(set) var nextKeyMarker: String?
         private(set) var nextVersionIdMarker: String?
+        /// `<IsTruncated>` as the store wrote it, or `nil` when absent or
+        /// not a boolean.
+        private(set) var isTruncatedFlag: Bool?
         private var depth = 0
         private var currentText = ""
         /// Which kind of entry is open: `Version` or `DeleteMarker`.
@@ -149,11 +145,19 @@ enum S3VersionsXML {
                 case "Key": key = currentText
                 case "VersionId": versionId = currentText
                 case "IsLatest": isLatest = trimmed.lowercased() == "true"
+                // `S3SettingsXML.timestamp` builds its format style per call,
+                // so a page costs up to one per entry. Unmeasured here.
+                // `S3ListParser` took the contrary decision in this very
+                // position (cached formatters behind a `Mutex`); which is
+                // right for a listing parser is an open question, not a
+                // settled one.
                 case "LastModified": modifiedAt = S3SettingsXML.timestamp(trimmed)
                 case "ETag": entityTag = currentText
                 case "Size":
                     guard let bytes = UInt64(trimmed) else {
-                        abortReason = "Size \"\(trimmed)\" is not an integer"
+                        // The store's text is not repeated: it is unbounded
+                        // and not ours to carry into a message.
+                        abortReason = "Size is not an integer"
                         parser.abortParsing()
                         return
                     }
@@ -172,6 +176,12 @@ enum S3VersionsXML {
                     nextKeyMarker = currentText
                 case "NextVersionIdMarker" where !currentText.isEmpty:
                     nextVersionIdMarker = currentText
+                case "IsTruncated":
+                    switch currentText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                    case "true": isTruncatedFlag = true
+                    case "false": isTruncatedFlag = false
+                    default: break
+                    }
                 default: break
                 }
             }

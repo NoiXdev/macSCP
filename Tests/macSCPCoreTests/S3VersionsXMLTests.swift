@@ -103,6 +103,32 @@ struct S3VersionsXMLTests {
         </ListVersionsResult>
         """.utf8)
 
+    /// A last page that spells its empty continuation out: both `Next`
+    /// elements present and empty. CONSTRUCTED; whether a store writes them
+    /// this way is unmeasured, which is why the parser must not depend on it.
+    static let finalPageWithEmptyNextMarkers = Data(
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Prefix></Prefix><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
+          <NextKeyMarker></NextKeyMarker><NextVersionIdMarker></NextVersionIdMarker>
+          <Version>
+            <Key>k5.txt</Key><VersionId>55555555-5555-4555-8555-555555555555</VersionId>
+            <IsLatest>true</IsLatest><LastModified>2026-10-23T13:50:02.000Z</LastModified>
+            <ETag>"5d41402abc4b2a76b9719d911017c592"</ETag><Size>12</Size>
+          </Version>
+        </ListVersionsResult>
+        """.utf8)
+
+    /// A page that says it is cut short and offers nothing to continue with.
+    /// CONSTRUCTED.
+    static let truncatedWithoutAContinuation = Data(
+        """
+        <ListVersionsResult><IsTruncated>true</IsTruncated>
+          <Version><Key>k6.txt</Key><VersionId>66666666-6666-4666-8666-666666666666</VersionId>
+          <IsLatest>true</IsLatest><Size>1</Size></Version></ListVersionsResult>
+        """.utf8)
+
     /// CONSTRUCTED, around one measured fact. Measured (spec section 4.6): RustFS
     /// answers a call it does not implement with 501 and
     /// `<Code>NotImplemented</Code>`; the call measured there was
@@ -213,31 +239,50 @@ struct S3VersionsXMLTests {
         #expect(page.isTruncated == false)
     }
 
-    @Test func aMarkerCarryingAnInternalTokenIsEncodedNotParsed() {
-        // The shape is measured (spec section 4.9: RustFS returned a walker
-        // handle with brackets, commas and colons inside `NextKeyMarker`). This
-        // literal is a SHORTENED, constructed variant of it, not the measured
-        // string; `walkerMarker` is the measured one.
-        let marker = "k1.txt[rustfs_cache:v2,id:58bdf6cd,src:walker,gen:live]"
-        let encoded = S3VersionsXML.markerQueryValue(marker)
-        let leaksABracket = encoded.contains("[") || encoded.contains("]")
+    // The path a marker really travels on its way back to the store:
+    // `SigV4Signer.canonicalQueryString` takes the RAW value and encodes it
+    // exactly once. Nothing in this module pre-encodes a marker, and a
+    // pre-encoded one would be encoded twice.
+
+    /// The value of `name` in a query string, percent-decoded once.
+    private static func decodedValue(of name: String, in query: String) -> String? {
+        for pair in query.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if parts.count == 2 && parts[0] == name { return String(parts[1]).removingPercentEncoding }
+        }
+        return nil
+    }
+
+    @Test func aMarkerCarryingAnInternalTokenReachesTheQueryEncodedOnce() throws {
+        let token = Self.walkerMarker
+        let query = SigV4Signer.canonicalQueryString(query: [
+            (name: "key-marker", value: token), (name: "versions", value: ""),
+        ])
+        let leaksABracket = query.contains("[") || query.contains("]")
+        let isEncodedTwice = query.contains("%25")
         #expect(leaksABracket == false)
-        #expect(encoded.contains("%5B"))
+        #expect(isEncodedTwice == false)
+        #expect(query.contains("%5B"))
+        // The positive control: one decode returns the token the store issued.
+        #expect(Self.decodedValue(of: "key-marker", in: query) == token)
     }
 
-    @Test func anEncodedMarkerDecodesBackToTheMarkerItCameFrom() {
-        // The positive control for the test above: dropping every
-        // character would also leave no bracket.
-        let encoded = S3VersionsXML.markerQueryValue(Self.walkerMarker)
-        #expect(encoded.removingPercentEncoding == Self.walkerMarker)
-    }
-
-    @Test func aMarkerWithNonASCIIAndQueryDelimitersRoundTrips() {
+    @Test func aMarkerWithNonASCIIAndQueryDelimitersRoundTripsThroughTheQuery() {
         let marker = "dir/ü ber&x=1+2/ключ#?.txt"
-        let encoded = S3VersionsXML.markerQueryValue(marker)
-        let leaksADelimiter = encoded.contains { "&=+#? /".contains($0) }
+        let query = SigV4Signer.canonicalQueryString(query: [(name: "key-marker", value: marker)])
+        let valueText = String(query.dropFirst("key-marker=".count))
+        let leaksADelimiter = valueText.contains { "&=+#? /".contains($0) }
         #expect(leaksADelimiter == false)
-        #expect(encoded.removingPercentEncoding == marker)
+        #expect(Self.decodedValue(of: "key-marker", in: query) == marker)
+    }
+
+    @Test func aPageParsedFromTheStoreFeedsTheQueryUnchanged() throws {
+        // The two halves together: what the parser hands back is what the
+        // query builder takes, with no step between them to get wrong.
+        let page = try S3VersionsXML.parsePage(Self.truncatedFirstPage, status: 200)
+        let marker = try #require(page.nextKeyMarker)
+        let query = SigV4Signer.canonicalQueryString(query: [(name: "key-marker", value: marker)])
+        #expect(Self.decodedValue(of: "key-marker", in: query) == Self.walkerMarker)
     }
 
     // MARK: - Refusals
@@ -321,6 +366,57 @@ struct S3VersionsXMLTests {
             """.utf8)
         let page = try S3VersionsXML.parsePage(body, status: 200)
         #expect(page.versions.first?.modifiedAt == Date(timeIntervalSince1970: expected))
+    }
+
+    @Test func emptyNextMarkerElementsAreNoMarkerAndNoFurtherPage() throws {
+        // Without the empty-element guard every last page would report a
+        // marker of "" and so `isTruncated == true`, and a caller would page
+        // forever.
+        let page = try S3VersionsXML.parsePage(Self.finalPageWithEmptyNextMarkers, status: 200)
+        #expect(page.versions.count == 1)
+        #expect(page.nextKeyMarker == nil)
+        #expect(page.nextVersionIdMarker == nil)
+        #expect(page.isTruncated == false)
+    }
+
+    @Test func aPageThatIsTruncatedWithNothingToContinueItIsAProtocolError() {
+        // Reading it as the complete history would offer a short history as
+        // the whole one. The positive control is `aTruncatedPageCarriesBothMarkers`:
+        // the same flag WITH a marker parses.
+        let thrown = Self.thrownError(Self.truncatedWithoutAContinuation, status: 200)
+        guard case .protocolError? = thrown else {
+            Issue.record("expected a protocolError, got \(String(describing: thrown))")
+            return
+        }
+    }
+
+    @Test func aVersionWithoutAKeyIsAProtocolError() {
+        let body = Data(
+            "<ListVersionsResult><Version><VersionId>v</VersionId><IsLatest>true</IsLatest></Version></ListVersionsResult>"
+                .utf8)
+        let thrown = Self.thrownError(body, status: 200)
+        guard case .protocolError? = thrown else {
+            Issue.record("expected a protocolError, got \(String(describing: thrown))")
+            return
+        }
+    }
+
+    @Test func theStoresSizeTextDoesNotTravelIntoTheError() {
+        let storeText = "storewrote-this-sentence"
+        let body = Data(
+            """
+            <ListVersionsResult><Version><Key>a</Key><VersionId>v</VersionId>\
+            <IsLatest>true</IsLatest><Size>\(storeText)</Size></Version></ListVersionsResult>
+            """.utf8)
+        let thrown = Self.thrownError(body, status: 200)
+        var carriesIt = false
+        var isProtocolError = false
+        if case .protocolError(let reason)? = thrown {
+            isProtocolError = true
+            carriesIt = reason.contains(storeText)
+        }
+        #expect(isProtocolError)
+        #expect(carriesIt == false)
     }
 
     @Test func anEmptyListingIsAnEmptyPage() throws {
