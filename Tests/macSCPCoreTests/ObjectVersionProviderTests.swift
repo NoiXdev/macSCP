@@ -23,4 +23,27 @@ struct ObjectVersionProviderTests {
         let page = ObjectVersionPage(versions: [], nextKeyMarker: "doc.txt", nextVersionIdMarker: nil)
         #expect(page.isTruncated)
     }
+
+    @Test func aPageCarriesItsVersionsInExactlyTheOrderTheyWereGiven() {
+        // Deliberately neither by id nor by date, ascending or descending.
+        let given = [
+            ObjectVersion(
+                versionId: "m", key: "doc.txt", isLatest: false, isDeleteMarker: false,
+                size: 3, modifiedAt: Date(timeIntervalSince1970: 200), entityTag: nil),
+            ObjectVersion(
+                versionId: "z", key: "doc.txt", isLatest: true, isDeleteMarker: true,
+                size: nil, modifiedAt: Date(timeIntervalSince1970: 100), entityTag: nil),
+            ObjectVersion(
+                versionId: "b", key: "doc.txt", isLatest: false, isDeleteMarker: false,
+                size: 7, modifiedAt: Date(timeIntervalSince1970: 300), entityTag: nil),
+            ObjectVersion(
+                versionId: "a", key: "doc.txt", isLatest: false, isDeleteMarker: false,
+                size: 1, modifiedAt: nil, entityTag: nil),
+        ]
+        let page = ObjectVersionPage(versions: given, nextKeyMarker: nil, nextVersionIdMarker: nil)
+        #expect(page.versions.count == given.count)
+        for (index, version) in given.enumerated() {
+            #expect(page.versions[index] == version)
+        }
+    }
 }
