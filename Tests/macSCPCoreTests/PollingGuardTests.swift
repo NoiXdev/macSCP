@@ -153,7 +153,11 @@ struct PollingGuardTests {
     /// shape under another spelling — a `Duration` bound raced against
     /// scheduled work instead of a `ContinuousClock` literal — and the
     /// "ceilings under other spellings" plan retired every caller that
-    /// was not one of three exemptions.
+    /// was not one of three exemptions. (Withdrawn wording, verbatim: "was
+    /// not one of three exemptions" -- there is a fourth since Task 9's fix
+    /// round 2, `macSCPAppKitTests/HangBound.swift`: a bound that asserts a
+    /// signal ARRIVED and never how long it took, for a test that would
+    /// otherwise park where the time limit cannot end it.)
     ///
     /// Two exemptions are found by path: `AsyncSignalTests.swift` tests
     /// the bounded API itself (the positive below), and
@@ -173,12 +177,30 @@ struct PollingGuardTests {
         let sources = try Self.sources()
         let asyncSignalPath = try Self.asyncSignalPath()
 
+        // The fourth exemption (Task 9 fix round 2): one file, found by name
+        // AND by sentence, so a rename turns this check red and the sentence
+        // pasted into another file buys nothing. It declares the hang bound
+        // that turns a signal nobody raises into a named failure; its
+        // assertion is that the signal ARRIVED, never how long it took, and
+        // its callers say `arrives(_:)`, which does not spell this phrase.
+        let hangBoundSentence = "This bound is a hang bound, not a ceiling"
         let callers = sources.filter { $0.text.contains("wait(timeout:") }
         let offenders = callers.filter {
             !$0.path.hasSuffix("AsyncSignalTests.swift")
                 && $0.path != asyncSignalPath
                 && !$0.text.contains(measurementSentence)
+                && !($0.path.hasSuffix("macSCPAppKitTests/HangBound.swift")
+                    && $0.text.contains(hangBoundSentence))
         }.map(\.path)
+
+        // Positive for the fourth exemption: the file is there, it carries the
+        // sentence, and it holds the call the exemption is for. Without this
+        // the exemption is proven only by the negative above not listing it.
+        #expect(sources.contains {
+            $0.path.hasSuffix("macSCPAppKitTests/HangBound.swift")
+                && $0.text.contains(hangBoundSentence)
+                && $0.text.contains("wait(timeout:")
+        })
 
         // Positive: the bounded API is still exercised directly — without
         // this, the negative above could pass over a tree with no callers

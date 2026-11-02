@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import Testing
 import macSCPCore
 
 /// An in-memory `ObjectVersionProvider` for the sheets that read a history.
@@ -107,7 +108,7 @@ final class FakeVersionProvider: ObjectVersionProvider, Sendable {
         }
         if let gate {
             gate.entered.signal()
-            _ = await gate.release.wait()
+            await gate.release.arrives("a parked listing being released")
         }
         return answer
     }
