@@ -820,11 +820,22 @@ struct ContentView: View {
     /// named it, and what to read it with, captured at presentation time for
     /// the reason `BucketVersioningSheetItem` gives. `locks` is `nil` for a
     /// backend without bucket settings, whose rows then carry no lock state.
+    /// (Task 9 added the recorder, the versioning cache and the tab and
+    /// session the row actions act on.)
     struct ObjectVersionsSheetItem: Identifiable {
         let id = UUID()
+        /// The tab's recorder, for the restore's and the delete's trail.
+        let recorder: AuditRecorder?
         let target: ObjectVersionsTarget
         let provider: any ObjectVersionProvider
         let locks: ObjectVersionsModel.LockBacking?
+        /// The session's versioning cache, which the restore gate reads
+        /// through the model.
+        let versioning: BucketVersioningCache?
+        /// The tab and session the row actions act on (open, compare and
+        /// download all go through the tab's queue, panes and windows).
+        let tab: SessionTab
+        let session: BrowserSession
     }
 
     @State var objectVersionsSheetItem: ObjectVersionsSheetItem?

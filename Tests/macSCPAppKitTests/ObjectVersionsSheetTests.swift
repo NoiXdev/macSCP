@@ -59,7 +59,7 @@ struct ObjectVersionsSheetTests {
             ObjectVersionsModel.LockBacking(settings: $0, cache: ObjectLockStateCache(settings: $0))
         }
         let model = ObjectVersionsModel(
-            target: target, provider: provider, locks: locks, now: { epoch })
+            target: target, provider: provider, recorder: nil, locks: locks, now: { epoch })
         return (model, provider)
     }
 
@@ -674,12 +674,19 @@ struct ObjectVersionsSheetTests {
                 #expect(found == english, "\(line.key) in \(locale)")
             }
         }
-        #expect(withSpecifiers == 4)
+        // Six: the sheet's title, the lock line, the two counts, and the two
+        // confirmation sentences of the row actions (Task 9). (Withdrawn
+        // wording, verbatim: `#expect(withSpecifiers == 4)` -- true until the
+        // restore and delete confirmations, which name the file, the date and
+        // for the delete the version id, joined the family.)
+        #expect(withSpecifiers == 6)
     }
 
     /// Every German line, not one: the name and the plural make a claim about
     /// all of them. The negative (no polite form anywhere) has its positive
-    /// beside it: the lines were really scanned (25 of them), and the one that
+    /// beside it: the lines were really scanned (more than twenty; the
+    /// comment used to say "25 of them", true before the row actions' lines
+    /// joined the family), and the one that
     /// carries an address form carries the informal one.
     @Test func theGermanSentencesAddressTheReaderAsDu() {
         let german = L10n.$localeOverride.withValue("de") {
@@ -778,7 +785,7 @@ struct ObjectVersionsSheetHostedTests {
         let model = ObjectVersionsModel(
             target: ObjectVersionsTarget(
                 bucket: "b", key: "a.txt", displayName: "a.txt", displayPath: "/b/a.txt"),
-            provider: FakeVersionProvider(versions: history),
+            provider: FakeVersionProvider(versions: history), recorder: nil,
             locks: .init(settings: settings, cache: ObjectLockStateCache(settings: settings)))
         await model.load()
         #expect(model.bucketLock == .applies)

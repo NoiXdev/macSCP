@@ -86,12 +86,98 @@ enum ObjectVersionsLines {
     static let countFiltered = CatalogueLine(
         key: "s3.versions.countFiltered %lld %lld", english: "%lld of %lld")
 
+    // MARK: Row actions (Task 9)
+
+    static let actionOpen = CatalogueLine(
+        key: "s3.versions.action.open", english: "Open (Read-Only)")
+    static let actionCompare = CatalogueLine(
+        key: "s3.versions.action.compare", english: "Compare with Current Version")
+    static let actionDownload = CatalogueLine(
+        key: "s3.versions.action.download", english: "Download…")
+    static let actionRestore = CatalogueLine(
+        key: "s3.versions.action.restore", english: "Restore as Current…")
+    static let actionDelete = CatalogueLine(
+        key: "s3.versions.action.delete", english: "Delete This Version…")
+
+    static let refusalNoContent = CatalogueLine(
+        key: "s3.versions.refusal.noContent",
+        english: "A delete marker has no content.")
+    static let refusalIsCurrent = CatalogueLine(
+        key: "s3.versions.refusal.isCurrent",
+        english: "This is the current version already.")
+    static let refusalCurrentIsMarker = CatalogueLine(
+        key: "s3.versions.refusal.currentIsMarker",
+        english: "The file is deleted at the moment, so there is no current content to compare with.")
+    static let refusalVersioningNotEnabled = CatalogueLine(
+        key: "s3.versions.refusal.versioningNotEnabled",
+        english: "Restoring needs versioning to be turned on for this bucket. While it is off or suspended, a restore would replace the current content instead of adding a version.")
+    static let refusalLocked = CatalogueLine(
+        key: "s3.versions.refusal.locked",
+        english: "This version is locked, so it cannot be deleted.")
+    static let refusalLockNotConfirmed = CatalogueLine(
+        key: "s3.versions.refusal.lockNotConfirmed",
+        english: "The lock on this version has not been confirmed, so it cannot be deleted.")
+    static let refusalMarker = CatalogueLine(
+        key: "s3.versions.refusal.marker",
+        english: "A delete marker is not a version with content, so it is not deleted here.")
+    static let refusalBusy = CatalogueLine(
+        key: "s3.versions.refusal.busy",
+        english: "Another change to this file's history is still running.")
+    static let refusalUnavailable = CatalogueLine(
+        key: "s3.versions.refusal.unavailable",
+        english: "This is not available here.")
+
+    static let restoreTitle = CatalogueLine(
+        key: "s3.versions.restore.title", english: "Restore this version?")
+    static let restoreMessage = CatalogueLine(
+        key: "s3.versions.restore.message %1$@ %2$@",
+        english: "“%1$@” gets a new version with the content of the version from %2$@. Every version in the history is kept.")
+    static let restoreButton = CatalogueLine(
+        key: "s3.versions.restore.button", english: "Restore")
+    static let deleteTitle = CatalogueLine(
+        key: "s3.versions.delete.title", english: "Delete this version?")
+    static let deleteMessage = CatalogueLine(
+        key: "s3.versions.delete.message %1$@ %2$@ %3$@",
+        english: "The version of “%1$@” from %2$@ (version ID %3$@) is deleted for good. This cannot be undone.")
+    static let deleteButton = CatalogueLine(
+        key: "s3.versions.delete.button", english: "Delete Version")
+
+    static let outcomeRestored = CatalogueLine(
+        key: "s3.versions.outcome.restored",
+        english: "Restored. The file has a new current version.")
+    static let outcomeDeleted = CatalogueLine(
+        key: "s3.versions.outcome.deleted", english: "The version was deleted.")
+    static let outcomeRestoreNotConfirmed = CatalogueLine(
+        key: "s3.versions.outcome.restoreNotConfirmed",
+        english: "The restore could not be confirmed. The history was read again: check it before trying again.")
+    static let outcomeDeleteNotConfirmed = CatalogueLine(
+        key: "s3.versions.outcome.deleteNotConfirmed",
+        english: "The deletion could not be confirmed. The history was read again: check whether the version is still listed.")
+    static let outcomeLocked = CatalogueLine(
+        key: "s3.versions.outcome.locked",
+        english: "The store refused: this version is locked. Nothing was changed.")
+    static let outcomeGone = CatalogueLine(
+        key: "s3.versions.outcome.gone",
+        english: "This version is no longer in the history. Nothing was changed.")
+    static let outcomeDenied = CatalogueLine(
+        key: "s3.versions.outcome.denied",
+        english: "Your access key is not allowed to do this. Nothing was changed.")
+    static let outcomeUnsupported = CatalogueLine(
+        key: "s3.versions.outcome.unsupported",
+        english: "This store does not support that. Nothing was changed.")
+
     /// Every line, for the tests that hold each to all four catalogues.
     static let all: [CatalogueLine] = [
         title, reading, empty, noMatches, readFailed, denied, modifiedColumn, sizeColumn,
         stateColumn, versionIDColumn, filterLabel, filterAll, filterVersions,
         filterDeleteMarkers, filterLocked, current, earlier, deleteMarker, metadataOnly, locked,
         legalHold, lockUnknown, lockUnreadable, count, countFiltered,
+        actionOpen, actionCompare, actionDownload, actionRestore, actionDelete,
+        refusalNoContent, refusalIsCurrent, refusalCurrentIsMarker, refusalVersioningNotEnabled,
+        refusalLocked, refusalLockNotConfirmed, refusalMarker, refusalBusy, refusalUnavailable,
+        restoreTitle, restoreMessage, restoreButton, deleteTitle, deleteMessage, deleteButton,
+        outcomeRestored, outcomeDeleted, outcomeRestoreNotConfirmed, outcomeDeleteNotConfirmed,
+        outcomeLocked, outcomeGone, outcomeDenied, outcomeUnsupported,
     ]
 
     /// The sentence for a failed listing. A finding carries no foreign text
@@ -108,6 +194,133 @@ enum ObjectVersionsLines {
         default:
             return readFailed.text
         }
+    }
+}
+
+/// The five things a person can do with one row of the history.
+enum VersionRowAction: CaseIterable, Equatable {
+    case open, compareWithCurrent, download, restore, deleteVersion
+
+    var line: CatalogueLine {
+        switch self {
+        case .open: ObjectVersionsLines.actionOpen
+        case .compareWithCurrent: ObjectVersionsLines.actionCompare
+        case .download: ObjectVersionsLines.actionDownload
+        case .restore: ObjectVersionsLines.actionRestore
+        case .deleteVersion: ObjectVersionsLines.actionDelete
+        }
+    }
+}
+
+/// Why an action is not offered on a row: a typed reason, so the menu can say
+/// it and a test can read it, rather than a bare `false`.
+///
+/// It carries no text of its own and no foreign text: `line` is a catalogue
+/// sentence this project wrote.
+enum VersionActionRefusal: Equatable {
+    /// The row is a delete marker, which stores no content to open, compare,
+    /// download or restore.
+    case deleteMarkerHasNoContent
+    /// The row is the key's current entry.
+    case isTheCurrentVersion
+    /// The key's current entry is a delete marker: there is no current content.
+    case currentIsADeleteMarker
+    /// Restore needs the bucket's versioning to be `.enabled`, and nothing
+    /// else will do. See `ObjectVersionsModel.refusal(of:on:)`.
+    case versioningIsNotEnabled
+    /// A retention in force or a legal hold forbids the delete.
+    case lockedOrHeld
+    /// The lock has not been read yet, or could not be.
+    case lockNotConfirmed
+    /// The row is a delete marker, which the delete here would undelete
+    /// instead of deleting.
+    case aMarkerIsNotDeletedHere
+    /// A restore or a delete is already running (or waiting to be confirmed).
+    case anotherWriteIsRunning
+    /// Nothing is wired to do this: no window to open it in, or no store.
+    case notAvailableHere
+
+    var line: CatalogueLine {
+        switch self {
+        case .deleteMarkerHasNoContent: ObjectVersionsLines.refusalNoContent
+        case .isTheCurrentVersion: ObjectVersionsLines.refusalIsCurrent
+        case .currentIsADeleteMarker: ObjectVersionsLines.refusalCurrentIsMarker
+        case .versioningIsNotEnabled: ObjectVersionsLines.refusalVersioningNotEnabled
+        case .lockedOrHeld: ObjectVersionsLines.refusalLocked
+        case .lockNotConfirmed: ObjectVersionsLines.refusalLockNotConfirmed
+        case .aMarkerIsNotDeletedHere: ObjectVersionsLines.refusalMarker
+        case .anotherWriteIsRunning: ObjectVersionsLines.refusalBusy
+        case .notAvailableHere: ObjectVersionsLines.refusalUnavailable
+        }
+    }
+}
+
+/// What the person is asked before a write runs.
+struct VersionConfirmation: Equatable {
+    let action: VersionRowAction
+    let title: CatalogueLine
+    let message: CatalogueLine
+    /// `message` with its arguments filled in, in the ambient language.
+    let messageText: String
+    let confirm: CatalogueLine
+    /// Whether the confirm button is drawn as destructive.
+    let isDestructive: Bool
+}
+
+/// How an action ended, said so that the wording cannot call an unconfirmed
+/// write a failed one.
+enum VersionActionOutcome: Equatable {
+    /// Open, compare or download was handed to the window that does it.
+    case handedOff(VersionRowAction)
+    /// The store confirmed it by reading the history back.
+    case restored, deleted
+    /// The person said no (or the sheet went away while the question stood).
+    case cancelled
+    /// The action was not offered on that row. A menu does not offer it, so
+    /// this is a stale menu or a caller that skipped `isEnabled`.
+    case declined(VersionActionRefusal)
+    /// The request was sent and the history did not confirm it, or the answer
+    /// never came back. **Not "failed"**: the write may or may not have
+    /// happened, and the history was read again so the person can see.
+    case notConfirmed(VersionRowAction)
+    /// The store (or Core) refused outright, so nothing was changed.
+    case refused(VersionRowAction, why: CatalogueLine)
+
+    /// The sentence for the status line under the table, or `nil` for an
+    /// outcome that says nothing (the hand-offs and a "no").
+    var line: CatalogueLine? {
+        switch self {
+        case .handedOff, .cancelled: nil
+        case .restored: ObjectVersionsLines.outcomeRestored
+        case .deleted: ObjectVersionsLines.outcomeDeleted
+        case .declined(let refusal): refusal.line
+        case .notConfirmed(let action):
+            action == .restore
+                ? ObjectVersionsLines.outcomeRestoreNotConfirmed
+                : ObjectVersionsLines.outcomeDeleteNotConfirmed
+        case .refused(_, let why): why
+        }
+    }
+}
+
+/// What opening, comparing and downloading do. They are the window's, not the
+/// sheet's: each needs the tab, the session and the transfer queue, which the
+/// sheet does not hold. `nil` means the window gave none, and the action is
+/// then not offered (an enabled row that does nothing is worse than a
+/// disabled one).
+struct VersionActionHandlers {
+    var open: (@MainActor (ObjectVersion) -> Void)?
+    var compareWithCurrent: (@MainActor (ObjectVersion) -> Void)?
+    var download: (@MainActor (ObjectVersion) -> Void)?
+
+    init(
+        open: (@MainActor (ObjectVersion) -> Void)? = nil,
+        compareWithCurrent: (@MainActor (ObjectVersion) -> Void)? = nil,
+        download: (@MainActor (ObjectVersion) -> Void)? = nil
+    ) {
+        self.open = open
+        self.compareWithCurrent = compareWithCurrent
+        self.download = download
     }
 }
 
@@ -203,7 +416,30 @@ final class ObjectVersionsModel {
     private(set) var bucketLock: BucketLock
     private(set) var readings: [String: LockReading]
 
+    /// What the bucket's versioning is, as far as the sheet has read it; `nil`
+    /// until the read has come back, or when it could not be made. Restore
+    /// reads it (`refusal(of:on:)`), so an unknown state is a refusal.
+    private(set) var bucketVersioning: BucketVersioning?
+    /// How the last action ended, for the status line. Cleared when the next
+    /// action starts.
+    private(set) var lastOutcome: VersionActionOutcome?
+    /// A restore or a delete is running, or its confirmation is on screen.
+    private(set) var writeInProgress = false
+
     @ObservationIgnored private let provider: (any ObjectVersionProvider)?
+    @ObservationIgnored private let versioningCache: BucketVersioningCache?
+    /// Where a restore's and a delete's outcome is written. **Required, with
+    /// no default, and optional in its type**, as the bucket-settings sheets'
+    /// is (`BucketSettingsAuditTests`): `nil` is a real answer (a tab whose
+    /// stored session was deleted has none), but it has to be given at the
+    /// call site and not inherited from a default nobody read.
+    @ObservationIgnored private let recorder: AuditRecorder?
+    /// What opening, comparing and downloading do; set by the window.
+    @ObservationIgnored var handlers: VersionActionHandlers
+    /// Asks the person before a restore or a delete runs, and answers whether
+    /// they agreed. **Fails closed**: until a window sets it, nothing is ever
+    /// confirmed, so no write can run without a question having been asked.
+    @ObservationIgnored var confirm: @MainActor (VersionConfirmation) async -> Bool = { _ in false }
     @ObservationIgnored private let lockBacking: LockBacking?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let gate = ConcurrencyGate(limit: ObjectVersionsModel.lockReadLimit)
@@ -218,11 +454,16 @@ final class ObjectVersionsModel {
     /// A sheet that has not read anything yet.
     init(
         target: ObjectVersionsTarget, provider: any ObjectVersionProvider,
-        locks: LockBacking?, now: @escaping () -> Date = { Date() }
+        recorder: AuditRecorder?, locks: LockBacking?, versioning: BucketVersioningCache? = nil,
+        handlers: VersionActionHandlers = VersionActionHandlers(),
+        now: @escaping () -> Date = { Date() }
     ) {
         self.target = target
         self.provider = provider
+        self.recorder = recorder
         self.lockBacking = locks
+        self.versioningCache = versioning
+        self.handlers = handlers
         self.now = now
         phase = .idle
         versions = []
@@ -235,11 +476,16 @@ final class ObjectVersionsModel {
     init(
         target: ObjectVersionsTarget, phase: Phase, versions: [ObjectVersion],
         bucketLock: BucketLock, readings: [String: LockReading] = [:],
+        bucketVersioning: BucketVersioning? = nil,
         now: @escaping () -> Date = { Date() }
     ) {
         self.target = target
         self.provider = nil
         self.lockBacking = nil
+        self.versioningCache = nil
+        self.recorder = nil
+        self.handlers = VersionActionHandlers()
+        self.bucketVersioning = bucketVersioning
         self.now = now
         self.phase = phase
         self.versions = Self.ordered(versions)
@@ -287,7 +533,22 @@ final class ObjectVersionsModel {
         }
         versions = Self.ordered(listed)
         phase = .loaded
+        await readBucketVersioning()
         await askWhetherTheBucketHasALock()
+    }
+
+    /// Reads the bucket's versioning state, which the restore gate needs and
+    /// the listing does not. **Like the lock question, it cannot spoil the
+    /// listing**: the rows are already in, and a read that fails leaves the
+    /// state `nil`, which is "not known" and offers no restore. A cancelled
+    /// read (the sheet closed) changes nothing.
+    private func readBucketVersioning() async {
+        guard let versioningCache else { return }
+        do {
+            bucketVersioning = try await versioningCache.versioning(target.bucket)
+        } catch {
+            if !Task.isCancelled { bucketVersioning = nil }
+        }
     }
 
     private func askWhetherTheBucketHasALock() async {
@@ -474,6 +735,273 @@ final class ObjectVersionsModel {
     }
 }
 
+// MARK: - The row actions
+
+extension ObjectVersionsModel {
+    /// Why `action` is not offered on `version`, or `nil` when it is.
+    ///
+    /// **Restore is gated on the bucket being `.enabled`, and on nothing
+    /// wider.** The sheet itself opens on `.suspended` as well
+    /// (`VersionsRowAvailability`), because a suspended bucket still HAS a
+    /// history. A write to a suspended bucket, though, replaces the `null`
+    /// version instead of adding one, so a restore there destroys the current
+    /// content rather than preserving it. The two questions are different and
+    /// have different answers; a state that is not known (`nil`) is not
+    /// `.enabled` either.
+    ///
+    /// **"Is this the current version" is `version.isLatest`**, never
+    /// `rowState(of:) == .current`: the state puts a lock ahead of `.current`,
+    /// so a locked newest version is `.locked`, and a gate written against
+    /// `.current` would offer a restore of the row that already is current.
+    /// The delete gate reads the lock the other way round, on purpose: the
+    /// lock states are the question there, and `rowState` answers them.
+    ///
+    /// A row that is a delete marker has no content, so the four actions that
+    /// need content refuse it with a reason of their own, and the delete here
+    /// refuses it too: `deleteVersion` is the request that UNDELETES a key when
+    /// it names a marker, which is not what "delete this version" says.
+    func refusal(of action: VersionRowAction, on version: ObjectVersion) -> VersionActionRefusal? {
+        switch action {
+        case .restore, .deleteVersion:
+            if writeInProgress { return .anotherWriteIsRunning }
+        case .open, .compareWithCurrent, .download:
+            break
+        }
+        return gate(action, on: version)
+    }
+
+    func isEnabled(_ action: VersionRowAction, on version: ObjectVersion) -> Bool {
+        refusal(of: action, on: version) == nil
+    }
+
+    /// The refusals that depend on the row and the sheet's state, without the
+    /// one about another write running (which the write itself must be able to
+    /// ask again, after its own question).
+    private func gate(_ action: VersionRowAction, on version: ObjectVersion) -> VersionActionRefusal? {
+        switch action {
+        case .open:
+            if version.isDeleteMarker { return .deleteMarkerHasNoContent }
+            return handlers.open == nil ? .notAvailableHere : nil
+        case .download:
+            if version.isDeleteMarker { return .deleteMarkerHasNoContent }
+            return handlers.download == nil ? .notAvailableHere : nil
+        case .compareWithCurrent:
+            if version.isDeleteMarker { return .deleteMarkerHasNoContent }
+            if version.isLatest { return .isTheCurrentVersion }
+            if versions.first(where: \.isLatest)?.isDeleteMarker == true {
+                return .currentIsADeleteMarker
+            }
+            return handlers.compareWithCurrent == nil ? .notAvailableHere : nil
+        case .restore:
+            if version.isDeleteMarker { return .deleteMarkerHasNoContent }
+            if version.isLatest { return .isTheCurrentVersion }
+            if provider == nil { return .notAvailableHere }
+            return bucketVersioning == .enabled ? nil : .versioningIsNotEnabled
+        case .deleteVersion:
+            if version.isDeleteMarker { return .aMarkerIsNotDeletedHere }
+            if provider == nil { return .notAvailableHere }
+            switch rowState(of: version) {
+            case .locked, .legalHold: return .lockedOrHeld
+            case .lockUnknown, .lockUnreadable: return .lockNotConfirmed
+            case .current, .plain, .metadataOnly, .deleteMarker: return nil
+            }
+        }
+    }
+
+    /// Does `action` on `version`. Open, compare and download are handed to the
+    /// window; restore and delete ask first and write only on a yes.
+    ///
+    /// A row the action is not offered on is `.declined` and nothing happens:
+    /// the menu does not offer it, so this is a stale menu or a caller that
+    /// skipped `isEnabled`, and it is checked again here because the cost of
+    /// trusting the menu is a destructive write.
+    @discardableResult
+    func action(_ action: VersionRowAction, on version: ObjectVersion) async -> VersionActionOutcome {
+        lastOutcome = nil
+        let outcome = await perform(action, on: version)
+        lastOutcome = outcome
+        return outcome
+    }
+
+    private func perform(
+        _ action: VersionRowAction, on version: ObjectVersion
+    ) async -> VersionActionOutcome {
+        if let refusal = refusal(of: action, on: version) { return .declined(refusal) }
+        switch action {
+        case .open:
+            guard let open = handlers.open else { return .declined(.notAvailableHere) }
+            open(version)
+            return .handedOff(action)
+        case .compareWithCurrent:
+            guard let compare = handlers.compareWithCurrent else { return .declined(.notAvailableHere) }
+            compare(version)
+            return .handedOff(action)
+        case .download:
+            guard let download = handlers.download else { return .declined(.notAvailableHere) }
+            download(version)
+            return .handedOff(action)
+        case .restore, .deleteVersion:
+            return await write(action, on: version)
+        }
+    }
+
+    /// A restore or a delete: the question, then the request, then the history
+    /// read again.
+    ///
+    /// **`writeInProgress` covers the question as well as the request**, so a
+    /// second write cannot start while the first waits for its answer, and a
+    /// retry of a restore that is still running cannot make a second copy.
+    ///
+    /// **The gate is asked again after the answer.** The question can stand for
+    /// as long as the person likes, and the history can be read again under it;
+    /// the answer was given about the row as it was.
+    private func write(_ action: VersionRowAction, on version: ObjectVersion) async -> VersionActionOutcome {
+        guard let provider else { return .declined(.notAvailableHere) }
+        writeInProgress = true
+        defer { writeInProgress = false }
+        guard await confirm(confirmation(for: action, on: version)) else { return .cancelled }
+        if let refusal = gate(action, on: version) { return .declined(refusal) }
+
+        let outcome: VersionActionOutcome
+        do {
+            switch action {
+            case .restore:
+                try await provider.restore(
+                    key: target.key, inBucket: target.bucket, toVersionId: version.versionId)
+                outcome = .restored
+            case .deleteVersion:
+                try await provider.deleteVersion(
+                    ofKey: target.key, inBucket: target.bucket, versionId: version.versionId)
+                outcome = .deleted
+            case .open, .compareWithCurrent, .download:
+                return .declined(.notAvailableHere)
+            }
+        } catch {
+            // A cancelled task is not a refusal either: the request may have
+            // gone out, so it is as unconfirmed as a lost connection.
+            outcome = Self.outcome(of: error, for: action)
+        }
+        // Written at the moment the request has been answered (or lost), before
+        // the history is read again: a permanent delete leaves nothing to
+        // reconstruct it from, and nothing after this line may lose its trace.
+        record(outcome, of: action, on: version)
+        if outcome.rereadsHistory, !Task.isCancelled { await load() }
+        return outcome
+    }
+
+    /// One line in the session's trail for a write that was sent: done,
+    /// refused, or not confirmed. **A write that was not sent records
+    /// nothing** (a "no", a refused row), and this is only reached after the
+    /// request.
+    ///
+    /// The failure text is a fixed sentence and never the error's own: a
+    /// `reason` can carry the endpoint, and that field takes
+    /// `scheme://KEY:SECRET@host` as ordinary input
+    /// (`AuditRecorder.recordVersionRestored`). The unconfirmed sentence says
+    /// "could not be confirmed" for the reason the sheet's wording does: the
+    /// request went out and the history does not say what became of it.
+    private func record(
+        _ outcome: VersionActionOutcome, of action: VersionRowAction, on version: ObjectVersion
+    ) {
+        guard let recorder else { return }
+        let failure: String?
+        switch outcome {
+        case .restored, .deleted:
+            failure = nil
+        case .notConfirmed:
+            failure = "the outcome could not be confirmed: the request was sent and the history does not show it"
+        case .refused(_, let why):
+            switch why {
+            case ObjectVersionsLines.outcomeLocked:
+                failure = "refused by the store: the version is under a retention or a legal hold"
+            case ObjectVersionsLines.outcomeGone:
+                failure = "refused by the store: the version is not in the history"
+            case ObjectVersionsLines.outcomeDenied:
+                failure = "refused by the store: the access key is not allowed to do this"
+            default:
+                failure = "refused by the store: it does not support this"
+            }
+        case .handedOff, .cancelled, .declined:
+            return
+        }
+        switch action {
+        case .restore:
+            recorder.recordVersionRestored(
+                key: target.key, bucket: target.bucket, versionId: version.versionId, failure: failure)
+        case .deleteVersion:
+            recorder.recordVersionDeleted(
+                key: target.key, bucket: target.bucket, versionId: version.versionId, failure: failure)
+        case .open, .compareWithCurrent, .download:
+            return
+        }
+    }
+
+    /// What the person is asked. The restore says what it does (it writes a
+    /// NEW version and keeps every other), and the delete says it is for good
+    /// and names the version id it is about to remove.
+    private func confirmation(
+        for action: VersionRowAction, on version: ObjectVersion
+    ) -> VersionConfirmation {
+        let when = ObjectVersionsFormat.date(version.modifiedAt)
+        switch action {
+        case .deleteVersion:
+            return VersionConfirmation(
+                action: action, title: ObjectVersionsLines.deleteTitle,
+                message: ObjectVersionsLines.deleteMessage,
+                messageText: String(
+                    format: ObjectVersionsLines.deleteMessage.text, target.displayName, when,
+                    version.versionId),
+                confirm: ObjectVersionsLines.deleteButton, isDestructive: true)
+        case .restore, .open, .compareWithCurrent, .download:
+            return VersionConfirmation(
+                action: action, title: ObjectVersionsLines.restoreTitle,
+                message: ObjectVersionsLines.restoreMessage,
+                messageText: String(
+                    format: ObjectVersionsLines.restoreMessage.text, target.displayName, when),
+                confirm: ObjectVersionsLines.restoreButton, isDestructive: false)
+        }
+    }
+
+    /// What an error from a write means for the person.
+    ///
+    /// **Certain refusals say nothing was changed; everything else says the
+    /// outcome could not be confirmed.** The store refusing for a lock, a
+    /// missing version, a missing permission or a missing capability is an
+    /// answer, and nothing was written. Anything else (Core's own
+    /// "the history does not show it", a connection lost before the answer, a
+    /// cancelled request) leaves the write possibly done, and "failed" would
+    /// be a claim nobody has checked. The history is read again after it, so
+    /// the sheet shows what the store holds.
+    static func outcome(of error: any Error, for action: VersionRowAction) -> VersionActionOutcome {
+        switch error {
+        case RemoteFSError.finding(.objectUnderRetention), RemoteFSError.finding(.objectUnderLegalHold):
+            return .refused(action, why: ObjectVersionsLines.outcomeLocked)
+        case RemoteFSError.notFound:
+            return .refused(action, why: ObjectVersionsLines.outcomeGone)
+        case RemoteFSError.permissionDenied, RemoteFSError.authenticationFailed:
+            return .refused(action, why: ObjectVersionsLines.outcomeDenied)
+        case RemoteFSError.finding(.operationNotSupported):
+            return .refused(action, why: ObjectVersionsLines.outcomeUnsupported)
+        default:
+            return .notConfirmed(action)
+        }
+    }
+}
+
+extension VersionActionOutcome {
+    /// Whether the sheet reads the history again after this outcome: after a
+    /// write that happened or may have, and after a refusal that says the row
+    /// is gone (the list on screen is stale). Not after a refusal that leaves
+    /// the history as it was.
+    var rereadsHistory: Bool {
+        switch self {
+        case .restored, .deleted, .notConfirmed: true
+        case .refused(_, let why): why == ObjectVersionsLines.outcomeGone
+        case .handedOff, .cancelled, .declined: false
+        }
+    }
+}
+
 /// One row of the table: a version and everything the columns and the search
 /// read off it, resolved at the moment the row is made.
 struct ObjectVersionRow: Identifiable {
@@ -563,14 +1091,56 @@ extension ObjectVersionsModel {
     }
 }
 
+/// The question a restore or a delete asks, between the model that wants an
+/// answer and the dialog that shows it.
+///
+/// `ask` suspends until `answer` is called, and every way the question can go
+/// away answers it with a "no": a task that is cancelled, a second question
+/// arriving, the sheet disappearing. Nothing is ever left waiting, and nothing
+/// is ever answered "yes" except by the person.
+@MainActor
+@Observable
+final class VersionConfirmationBridge {
+    /// The question on screen, or `nil`.
+    private(set) var request: VersionConfirmation?
+    @ObservationIgnored private var continuation: CheckedContinuation<Bool, Never>?
+    /// Called on the main actor each time a question is put up. For a test
+    /// that has to wait until it is on screen: it raises a signal and awaits
+    /// it, instead of polling `request`.
+    @ObservationIgnored var asked: (@MainActor () -> Void)?
+
+    func ask(_ request: VersionConfirmation) async -> Bool {
+        answer(false)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.request = request
+                self.continuation = continuation
+                asked?()
+            }
+        } onCancel: {
+            Task { @MainActor in self.answer(false) }
+        }
+    }
+
+    /// Answers the question on screen, once; a second call is a no-op.
+    func answer(_ yes: Bool) {
+        guard let continuation else { return }
+        self.continuation = nil
+        request = nil
+        continuation.resume(returning: yes)
+    }
+}
+
 /// The sheet behind the file context menu's "Show Versions…": one file's
 /// history in a sortable table, filtered and searched, with a counting footer.
 ///
 /// The shape is `AuditLogSheet`'s, chosen by the maintainer on 2026-10-23 from
 /// three drawn alternatives: a `Table`, a `Picker` filter, the shared
-/// `SheetSearchField`, and a footer that counts. It reads; it writes nothing.
-/// The actions on a row come with the row's context menu, which is a later
-/// task's.
+/// `SheetSearchField`, and a footer that counts. The five actions on a row are
+/// its context menu (`VersionRowAction`); of them only restore and delete
+/// write, each after a question (`VersionConfirmationBridge`). (Withdrawn
+/// wording, verbatim: "It reads; it writes nothing. The actions on a row come
+/// with the row's context menu, which is a later task's.")
 struct ObjectVersionsSheet: BoundedView {
     /// The size `ObjectVersionsSheet` bounds itself to, applied with
     /// `.sheetBound(Self.bound)`.
@@ -594,6 +1164,8 @@ struct ObjectVersionsSheet: BoundedView {
     @State private var filter: ObjectVersionsModel.Filter = .all
     @State private var searchText = ""
     @State private var searchIsRegex = false
+    @State private var selection: Set<ObjectVersionRow.ID> = []
+    @State private var confirmations = VersionConfirmationBridge()
     @State private var sortOrder: [KeyPathComparator<ObjectVersionRow>] = [
         KeyPathComparator(\ObjectVersionRow.modifiedSort, order: .reverse)
     ]
@@ -648,6 +1220,14 @@ struct ObjectVersionsSheet: BoundedView {
 
             content(shown: shown)
 
+            if let line = model.lastOutcome?.line {
+                Text(line.text)
+                    .font(.caption)
+                    .foregroundStyle(DesignTokens.inkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack {
                 Text(footerText(shownCount: shown.count))
                     .font(.caption)
@@ -661,7 +1241,26 @@ struct ObjectVersionsSheet: BoundedView {
         .padding(Self.padding)
         .sheetBound(Self.bound)
         .task {
+            model.confirm = { [confirmations] request in await confirmations.ask(request) }
             if model.phase == .idle { await model.load() }
+        }
+        // A question still on screen when the sheet goes is a "no".
+        .onDisappear { confirmations.answer(false) }
+        .confirmationDialog(
+            confirmations.request?.title.text ?? "",
+            isPresented: Binding(
+                get: { confirmations.request != nil },
+                set: { if !$0 { confirmations.answer(false) } }),
+            titleVisibility: .visible, presenting: confirmations.request
+        ) { request in
+            Button(request.confirm.text, role: request.isDestructive ? .destructive : nil) {
+                confirmations.answer(true)
+            }
+            Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {
+                confirmations.answer(false)
+            }
+        } message: { request in
+            Text(request.messageText)
         }
     }
 
@@ -699,7 +1298,7 @@ struct ObjectVersionsSheet: BoundedView {
     }
 
     private func table(_ shown: [ObjectVersionRow]) -> some View {
-        Table(shown, sortOrder: $sortOrder) {
+        Table(shown, selection: $selection, sortOrder: $sortOrder) {
             TableColumn(
                 ObjectVersionsLines.modifiedColumn.text,
                 sortUsing: KeyPathComparator(\ObjectVersionRow.modifiedSort)
@@ -738,6 +1337,35 @@ struct ObjectVersionsSheet: BoundedView {
             }
             .width(min: Self.versionIDMinimum, ideal: 150)
         }
+        .contextMenu(forSelectionType: ObjectVersionRow.ID.self) { ids in
+            actionMenu(for: ids)
+        }
+    }
+
+    /// The row's five actions. A row an action is not offered on is drawn
+    /// disabled with the reason as its tooltip, like the file menu's rows.
+    @ViewBuilder private func actionMenu(for ids: Set<ObjectVersionRow.ID>) -> some View {
+        if ids.count == 1, let id = ids.first,
+            let version = model.versions.first(where: { $0.versionId == id })
+        {
+            actionButton(.open, on: version)
+            actionButton(.compareWithCurrent, on: version)
+            actionButton(.download, on: version)
+            Divider()
+            actionButton(.restore, on: version)
+            actionButton(.deleteVersion, on: version)
+        }
+    }
+
+    @ViewBuilder private func actionButton(
+        _ action: VersionRowAction, on version: ObjectVersion
+    ) -> some View {
+        let refusal = model.refusal(of: action, on: version)
+        Button(action.line.text, role: action == .deleteVersion ? .destructive : nil) {
+            Task { await model.action(action, on: version) }
+        }
+        .disabled(refusal != nil)
+        .help(refusal?.line.text ?? "")
     }
 
     private func footerText(shownCount: Int) -> String {

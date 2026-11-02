@@ -494,6 +494,36 @@
 "s3.versions.count %lld" = "%lld entries";
 "s3.versions.countFiltered %lld %lld" = "%lld of %lld";
 
+/* Version row actions (S3 version history, Task 9) */
+"s3.versions.action.open" = "Open (Read-Only)";
+"s3.versions.action.compare" = "Compare with Current Version";
+"s3.versions.action.download" = "Download…";
+"s3.versions.action.restore" = "Restore as Current…";
+"s3.versions.action.delete" = "Delete This Version…";
+"s3.versions.refusal.noContent" = "A delete marker has no content.";
+"s3.versions.refusal.isCurrent" = "This is the current version already.";
+"s3.versions.refusal.currentIsMarker" = "The file is deleted at the moment, so there is no current content to compare with.";
+"s3.versions.refusal.versioningNotEnabled" = "Restoring needs versioning to be turned on for this bucket. While it is off or suspended, a restore would replace the current content instead of adding a version.";
+"s3.versions.refusal.locked" = "This version is locked, so it cannot be deleted.";
+"s3.versions.refusal.lockNotConfirmed" = "The lock on this version has not been confirmed, so it cannot be deleted.";
+"s3.versions.refusal.marker" = "A delete marker is not a version with content, so it is not deleted here.";
+"s3.versions.refusal.busy" = "Another change to this file's history is still running.";
+"s3.versions.refusal.unavailable" = "This is not available here.";
+"s3.versions.restore.title" = "Restore this version?";
+"s3.versions.restore.message %1$@ %2$@" = "“%1$@” gets a new version with the content of the version from %2$@. Every version in the history is kept.";
+"s3.versions.restore.button" = "Restore";
+"s3.versions.delete.title" = "Delete this version?";
+"s3.versions.delete.message %1$@ %2$@ %3$@" = "The version of “%1$@” from %2$@ (version ID %3$@) is deleted for good. This cannot be undone.";
+"s3.versions.delete.button" = "Delete Version";
+"s3.versions.outcome.restored" = "Restored. The file has a new current version.";
+"s3.versions.outcome.deleted" = "The version was deleted.";
+"s3.versions.outcome.restoreNotConfirmed" = "The restore could not be confirmed. The history was read again: check it before trying again.";
+"s3.versions.outcome.deleteNotConfirmed" = "The deletion could not be confirmed. The history was read again: check whether the version is still listed.";
+"s3.versions.outcome.locked" = "The store refused: this version is locked. Nothing was changed.";
+"s3.versions.outcome.gone" = "This version is no longer in the history. Nothing was changed.";
+"s3.versions.outcome.denied" = "Your access key is not allowed to do this. Nothing was changed.";
+"s3.versions.outcome.unsupported" = "This store does not support that. Nothing was changed.";
+
 /* Bucket CORS rules (S3 bucket settings, Task 9) */
 "s3.cors.title %@" = "CORS rules for “%@”";
 "s3.cors.intro" = "CORS rules decide which websites may use this bucket's files from a browser.";

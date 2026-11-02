@@ -491,6 +491,36 @@
 "s3.versions.count %lld" = "%lld entrées";
 "s3.versions.countFiltered %lld %lld" = "%lld sur %lld";
 
+/* Version row actions (S3 version history, Task 9) */
+"s3.versions.action.open" = "Ouvrir (lecture seule)";
+"s3.versions.action.compare" = "Comparer avec la version actuelle";
+"s3.versions.action.download" = "Télécharger…";
+"s3.versions.action.restore" = "Restaurer comme version actuelle…";
+"s3.versions.action.delete" = "Supprimer cette version…";
+"s3.versions.refusal.noContent" = "Un marqueur de suppression n’a pas de contenu.";
+"s3.versions.refusal.isCurrent" = "C’est déjà la version actuelle.";
+"s3.versions.refusal.currentIsMarker" = "Le fichier est actuellement supprimé : il n’y a donc pas de contenu actuel à comparer.";
+"s3.versions.refusal.versioningNotEnabled" = "La restauration exige que le versionnement soit activé pour ce bucket. Tant qu’il est désactivé ou suspendu, une restauration remplacerait le contenu actuel au lieu d’ajouter une version.";
+"s3.versions.refusal.locked" = "Cette version est verrouillée ; elle ne peut donc pas être supprimée.";
+"s3.versions.refusal.lockNotConfirmed" = "Le verrou de cette version n’a pas été confirmé ; elle ne peut donc pas être supprimée.";
+"s3.versions.refusal.marker" = "Un marqueur de suppression n’est pas une version avec contenu ; il n’est donc pas supprimé ici.";
+"s3.versions.refusal.busy" = "Une autre modification de l’historique de ce fichier est encore en cours.";
+"s3.versions.refusal.unavailable" = "Ce n’est pas disponible ici.";
+"s3.versions.restore.title" = "Restaurer cette version ?";
+"s3.versions.restore.message %1$@ %2$@" = "« %1$@ » reçoit une nouvelle version avec le contenu de la version du %2$@. Toutes les versions de l’historique sont conservées.";
+"s3.versions.restore.button" = "Restaurer";
+"s3.versions.delete.title" = "Supprimer cette version ?";
+"s3.versions.delete.message %1$@ %2$@ %3$@" = "La version de « %1$@ » du %2$@ (ID de version %3$@) sera définitivement supprimée. Cette action est irréversible.";
+"s3.versions.delete.button" = "Supprimer la version";
+"s3.versions.outcome.restored" = "Restauration effectuée. Le fichier a une nouvelle version actuelle.";
+"s3.versions.outcome.deleted" = "La version a été supprimée.";
+"s3.versions.outcome.restoreNotConfirmed" = "La restauration n’a pas pu être confirmée. L’historique a été relu : vérifiez-le avant de réessayer.";
+"s3.versions.outcome.deleteNotConfirmed" = "La suppression n’a pas pu être confirmée. L’historique a été relu : vérifiez si la version y figure encore.";
+"s3.versions.outcome.locked" = "Le stockage a refusé : cette version est verrouillée. Rien n’a été modifié.";
+"s3.versions.outcome.gone" = "Cette version ne figure plus dans l’historique. Rien n’a été modifié.";
+"s3.versions.outcome.denied" = "Votre clé d’accès n’y est pas autorisée. Rien n’a été modifié.";
+"s3.versions.outcome.unsupported" = "Ce stockage ne prend pas cela en charge. Rien n’a été modifié.";
+
 /* Règles CORS du bucket (réglages de bucket S3, Task 9) */
 "s3.cors.title %@" = "Règles CORS du bucket « %@ »";
 "s3.cors.intro" = "Les règles CORS déterminent quels sites web peuvent utiliser les fichiers de ce bucket depuis un navigateur.";

@@ -135,7 +135,9 @@ extension ContentView {
                             cache: session.objectLockStates ?? ObjectLockStateCache(settings: $0))
                     }
                     objectVersionsSheetItem = ObjectVersionsSheetItem(
-                        target: target, provider: provider, locks: locks)
+                        recorder: tab.auditRecorder, target: target, provider: provider,
+                        locks: locks, versioning: session.bucketVersioning, tab: tab,
+                        session: session)
                 }
             }
         }

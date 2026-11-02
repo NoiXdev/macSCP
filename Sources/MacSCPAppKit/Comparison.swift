@@ -111,9 +111,37 @@ final class Comparison: Identifiable {
         let right: any RemoteFileSystem
     }
 
+    /// Which version of an object the LEFT side of a `.filePair` is, by value.
+    /// A request carries this and no connection: the tab resolves it against
+    /// its own session (`SessionTab.startComparison`).
+    struct VersionRef: Equatable {
+        let bucket: String
+        let key: String
+        let versionId: String
+    }
+
+    /// The left side of a version comparison: a version of an object, read
+    /// through the version-aware capability and NOT through the left file
+    /// system. **Why not**: a version download that goes through the plain
+    /// queue path could be retained as an interrupted transfer, and the
+    /// queue's retry hands such a job the tab's own file system, whose read of
+    /// the same path is the key's CURRENT content, appended to the tail of an
+    /// old version's partial file (`VersionDownloadSource`). The version path
+    /// of the queue retains nothing, so this side uses it
+    /// (`TransferQueueViewModel.enqueueAndWaitVersion`).
+    struct VersionSide {
+        let reference: VersionRef
+        let source: any ObjectVersionProvider
+    }
+
     /// Borrowed from the owning tab's session; see the type's doc comment.
     /// `nil` after `releaseFileSystems()`, and then for good.
     private(set) var fileSystems: FileSystems?
+    /// The version the left side is, when it is one; `nil` for every other
+    /// comparison, and `nil` again after `releaseFileSystems()` for the reason
+    /// `fileSystems` is: it is a connection (the same object, seen through the
+    /// version capability).
+    private(set) var versionSide: VersionSide?
     /// The tab's transfer queue, through which every fetch goes. A SIBLING of
     /// `fileSystems`, not a member: `ComparisonOwnershipTests` counts exactly
     /// two file systems in this object's graph and exactly one queue. Cleared
@@ -166,10 +194,12 @@ final class Comparison: Identifiable {
         algorithm: ChecksumAlgorithm,
         transferQueue: TransferQueueViewModel,
         kind: Kind = .folders,
+        versionSide: VersionSide? = nil,
         temporaryRoot: URL = FileManager.default.temporaryDirectory
             .appendingPathComponent("macscp-compare", isDirectory: true)
     ) {
         self.fileSystems = FileSystems(left: left, right: right)
+        self.versionSide = versionSide
         self.transferQueue = transferQueue
         self.kind = kind
         self.leftRoot = leftRoot
@@ -313,6 +343,7 @@ final class Comparison: Identifiable {
     /// to one exists anywhere".
     func releaseFileSystems() {
         fileSystems = nil
+        versionSide = nil
         transferQueue = nil
         removeTemporaryDirectory()
     }
@@ -529,7 +560,15 @@ extension Comparison {
             (DiffRefusal.Side.left, sides.left, leftPath),
             (DiffRefusal.Side.right, sides.right, rightPath),
         ] {
-            let item = try await system.stat(path: path)
+            // A version on the left is asked about through the version
+            // capability: the left file system, the tab's own in production,
+            // would answer about the key's CURRENT content.
+            let item: RemoteFileItem
+            if side == .left, let version = versionSide {
+                item = try await Self.stat(of: version)
+            } else {
+                item = try await system.stat(path: path)
+            }
             // The KIND before the size (fix round 1, F1). A `.filePair`
             // comparison skips the classification by design — the user asked
             // for the content — so this is the only place either side's kind
@@ -637,7 +676,7 @@ extension Comparison {
         let directory = try makeFetchDirectory()
         let leftDirectory = directory.appendingPathComponent("left", isDirectory: true)
         let rightDirectory = directory.appendingPathComponent("right", isDirectory: true)
-        let leftName = Self.fileName(of: leftPath)
+        let leftName = versionSide.map(Self.versionFileName(of:)) ?? Self.fileName(of: leftPath)
         let rightName = Self.fileName(of: rightPath)
         do {
             try FileManager.default.createDirectory(
@@ -653,12 +692,26 @@ extension Comparison {
             // download carried on behind a view that had gone elsewhere.
             // Opt-in on the queue, so the other callers of
             // `enqueueAndWait` are unchanged.
-            try await queue.enqueueAndWait(
-                fileName: leftName, direction: .download,
-                source: sides.left, sourcePath: leftPath,
-                destination: LocalFileSystem(),
-                destinationDirectory: leftDirectory.path(percentEncoded: false),
-                cancelsWithTask: true)
+            if let version = versionSide {
+                // The version path of the queue: nothing it retains can be
+                // resumed with the tab's own file system (`VersionSide`). It
+                // has no cancel-with-task form, so a selection that moves away
+                // lets this one download finish into the directory the
+                // comparison removes; the cost is bytes, not a wrong file.
+                try await queue.enqueueAndWaitVersion(
+                    fileName: Self.versionFileName(of: version), source: version.source,
+                    bucket: version.reference.bucket, key: version.reference.key,
+                    versionId: version.reference.versionId,
+                    destination: LocalFileSystem(),
+                    destinationDirectory: leftDirectory.path(percentEncoded: false))
+            } else {
+                try await queue.enqueueAndWait(
+                    fileName: leftName, direction: .download,
+                    source: sides.left, sourcePath: leftPath,
+                    destination: LocalFileSystem(),
+                    destinationDirectory: leftDirectory.path(percentEncoded: false),
+                    cancelsWithTask: true)
+            }
             // Between the two transfers too: a release during the first must
             // not be followed by a second download over the released system.
             guard fileSystems != nil else { throw ComparisonFetchError.sessionClosed }
@@ -724,6 +777,36 @@ extension Comparison {
         case .undetermined(let reason): reason.canBeSettledByBytes
         case .onlyLeft, .onlyRight, .bothDirectories, .typeMismatch: false
         }
+    }
+
+    /// What the version is called on disk: the object's file name with the
+    /// version's id folded in (`VersionLocalName`), the name the read-only open
+    /// and the download use, so the left and the right file of one comparison
+    /// can never be the same name in two directories by accident of a key.
+    private static func versionFileName(of version: VersionSide) -> String {
+        VersionLocalName.forDownload(
+            fileName: fileName(of: version.reference.key), versionId: version.reference.versionId)
+    }
+
+    /// The version's entry in the key's history, as the `RemoteFileItem` that
+    /// `stat` would have answered: its size for the ceiling check, and the
+    /// two refusals a download of it would make (a version the history does
+    /// not hold, and a delete marker, which has no content).
+    private static func stat(of version: VersionSide) async throws -> RemoteFileItem {
+        let reference = version.reference
+        let path = "/" + reference.bucket + "/" + reference.key
+        let history = try await version.source.versions(
+            ofKey: reference.key, inBucket: reference.bucket)
+        guard let entry = history.first(where: { $0.versionId == reference.versionId }) else {
+            throw RemoteFSError.notFound(path: path)
+        }
+        guard !entry.isDeleteMarker else {
+            throw RemoteFSError.protocolError(
+                reason: "this version is a delete marker and has no content to compare")
+        }
+        return RemoteFileItem(
+            name: fileName(of: reference.key), path: path, kind: .file, size: entry.size,
+            modifiedAt: entry.modifiedAt)
     }
 
     private static func fileName(of path: String) -> String {

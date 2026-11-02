@@ -45,6 +45,9 @@ struct ComparisonRequest: Equatable {
     let right: SessionTab.ComparisonSide
     let rightRoot: String
     let kind: Comparison.Kind
+    /// When the LEFT side is a version of an object rather than a path on
+    /// `left`: which one. `nil` for every request but `forVersion`.
+    var leftVersion: Comparison.VersionRef? = nil
 
     /// "Compare with Other Pane", for ONE selected row: that row against the
     /// entry of the same NAME in the other pane's current directory. A
@@ -92,6 +95,29 @@ struct ComparisonRequest: Equatable {
                 left: .local, leftRoot: counterpart,
                 right: .remote, rightRoot: row.path, kind: kind)
         }
+    }
+
+    /// "Compare with Current Version", from the version sheet: one old version
+    /// of an object (left) against the object as it is now (right, on the
+    /// tab's remote side at `currentPath`, the path the pane holds for it).
+    ///
+    /// The left side's `leftRoot` is a LABEL, not a path anything reads: the
+    /// object's own place with the version folded into the file name
+    /// (`VersionLocalName`), so the window says which version it is showing.
+    /// The version itself is `leftVersion`, resolved against the tab's session
+    /// by `SessionTab.startComparison`, which this request never holds a
+    /// connection for.
+    static func forVersion(
+        bucket: String, key: String, versionId: String, currentPath: String
+    ) -> ComparisonRequest {
+        let name = key.split(separator: "/").last.map(String.init) ?? key
+        let label = RemotePath.join(
+            RemotePath.parent(of: currentPath),
+            VersionLocalName.forDownload(fileName: name, versionId: versionId))
+        return ComparisonRequest(
+            left: .remote, leftRoot: label,
+            right: .remote, rightRoot: currentPath, kind: .filePair,
+            leftVersion: Comparison.VersionRef(bucket: bucket, key: key, versionId: versionId))
     }
 
     /// "Compare the Two Selected Files", for exactly two selected files of
