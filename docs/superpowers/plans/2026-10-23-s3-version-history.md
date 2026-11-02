@@ -597,7 +597,7 @@ the `.timeLimit` enforcing it, because the timer needs a thread the starved pool
 ### Task 9: The five row actions
 
 **Files:**
-- Modify: `Sources/MacSCPAppKit/ObjectVersionsSheet.swift`, `Sources/MacSCPAppKit/Comparison.swift`, the four catalogues in both targets
+- Modify: `Sources/MacSCPAppKit/ObjectVersionsSheet.swift`, `Sources/MacSCPAppKit/Comparison.swift`, the four `MacSCPAppKit` catalogues
 - Test: `Tests/macSCPAppKitTests/ObjectVersionActionsTests.swift`
 
 **Interfaces:**
@@ -620,6 +620,42 @@ One per disabled condition from spec §6.2's table, each asserting `isEnabled` i
 - [ ] **Step 2–4: red, implement, green**
 
 Delete takes an ordinary confirmation (spec §6.2, maintainer's decision of 2026-10-23) — **not** the COMPLIANCE acknowledgement, which is Plan B's.
+
+**Amended 2026-11-02, before Task 9 was dispatched.** (Withdrawn wording, verbatim:
+`the four catalogues in both targets`.) **Third time in this plan for the same defect**, after
+Task 6's `titleKey` and Task 7's own file list: every string this task adds is a view string in
+an `MacSCPAppKit` view, and both files it modifies are in that target. Run from the repository
+root, `grep -c 'versions\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings` prints
+27 against 0 for `Sources/macSCPCore/Resources/en.lproj/Localizable.strings` — the sheet's own
+family, measured for this task rather than inherited from Task 7's figure, because the families
+differ even where the answer does not. The zero exits 1, and that exit is part of the answer.
+Touch Core's catalogues only for a Core-layer message, which none of these is.
+
+Six things this task inherits from the tasks before it, none of them derivable from the step above:
+
+1. **Restore is gated on `.enabled` ALONE**, not on `VersionsRowAvailability`. The sheet opens on
+   `.suspended` too, because a suspended bucket still has a history — but a write to a suspended
+   bucket REPLACES the `null` version instead of adding one, so a restore there destroys the
+   current content rather than preserving it. The sheet's availability and this action's gate are
+   different questions with different answers, and conflating them is the one mistake here that
+   loses data.
+2. **"Open" is not offered on a delete marker**, and the refusal is a typed finding rather than a
+   bare `false` — a marker has no content to open, and the user asking deserves the reason.
+3. **An unconfirmed restore is not worded as a failure.** Task 4's read-back confirms by ETag, and
+   a multipart or opaque source ETag cannot be compared, so the honest outcome is "could not be
+   confirmed", which is a different fact from "failed" and the user acts differently on it. Task
+   11's rig measurement 1 is the one that could turn this into a real failure; until it runs, the
+   weak path fails toward *done*.
+4. **"Is this the current version" is `version.isLatest`, never `rowState(of:) == .current`.**
+   Task 7's precedence puts the lock states ahead of `.current`, so a locked newest version is
+   `.locked`, and a gate written against `.current` would silently offer restore on the row it
+   must refuse. Use `isMetadataOnly(_:)` for the metadata-only note in the same way.
+5. **A version id can literally be the four characters `null`** — a real, displayable id, never a
+   missing value, and every action must accept it as a target.
+6. **Each of the four `…IsNotOfferedOn…` negatives takes its positive beside it**, which the step
+   above already asks for ("the happy sibling `true`"): a negative check is the only kind that can
+   go stale in silence, and four of them in a row with nothing asserting the actions exist at all
+   is a suite that passes when the action enum is emptied.
 
 - [ ] **Step 5: Commit**
 
