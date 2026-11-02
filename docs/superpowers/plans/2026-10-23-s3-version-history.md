@@ -390,7 +390,9 @@ Open for a version downloads through the queue into a temp directory and hands t
 
 **Interfaces:**
 - Consumes: `S3BucketSettings.versioning(ofBucket:)`.
-- Produces: `BucketVersioningCache.versioning(_ bucket: String) async throws -> BucketVersioning`, owned by `BrowserSession` beside `objectLockStates`; `RemoteFileTableView` gains `let isFileActionAvailable: (FileActionContribution) -> Bool` and `let fileActionUnavailableReason: (FileActionContribution) -> String?`; the descriptor gains `FileActionContribution(id: "s3.versions", titleKey: "menu.s3.versions", titleDefault: "Show Versions…")`.
+- Produces: `BucketVersioningCache.versioning(_ bucket: String) async throws -> BucketVersioning`, owned by `BrowserSession` beside `objectLockStates`; `RemoteFileTableView` gains `let isFileActionAvailable: (FileActionContribution) -> Bool` and `let fileActionUnavailableReason: (FileActionContribution) -> String?`; the descriptor gains `FileActionContribution(id: "s3.versions", titleKey: "browser.action.versions", titleDefault: "Show Versions…")`.
+
+**Corrected 2026-11-02, before Task 6 was dispatched.** (Withdrawn wording, verbatim: `titleKey: "menu.s3.versions"`.) There is no `menu.s3.` namespace in the catalogues: `grep -c 'menu.s3' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings` prints 0 where `browser.action` prints 3, and the three existing file actions all use that namespace (`browser.action.presignedURL`, `.retention`, `.legalHold` in `BackendDescriptor`), each present in all four catalogues, checked per locale. **And nothing would have caught the wrong key:** `BackendContributionTests` asserts only `!action.titleKey.isEmpty`, and no test pins a `FileActionContribution.titleKey` to the catalogues, so a key with no entry falls back to the English `titleDefault` in de, fr and pl with the suite green. Task 6 therefore also adds that guard, parameterised over the contributions the descriptor declares and the four languages, the way `SnippetAuditWiringGuardTests.everyKindHasACatalogLabel` does it for `audit.kind.*`.
 
 **Why a closure and not a Core field:** `ConnectionActionsMenu` already answers availability with an App-side closure (`let isAvailable: (ConnectionActionContribution) -> Bool`), and the row is `.disabled(!isAvailable(action))`. This mirrors it. **Correction to the spec, 2026-10-23:** spec §6.1 claimed the precedent is "disabled with the reason beside it"; it is not — the existing precedent disables with no reason text at all. The reason is therefore carried as the `NSMenuItem`'s `toolTip`, which is new behaviour, not a copied pattern, and the spec has been corrected to say so.
 
@@ -578,6 +580,7 @@ Behind `MACSCP_ITEST=1`, against the rig started **from the main checkout**. One
 3. **Is a version delete visible to the immediately following read-back?** `deleteVersion` and `liftDeleteMarker` confirm by ABSENCE. A store whose delete is not yet visible to the next read reports a successful delete as failed.
 4. **What does `delimiter=/` do on `?versions`?** `deletedEntries` sends it and does not read `CommonPrefixes`. Task 4's fix round made the one-level reading hold whatever the store answers, so this no longer decides correctness — it decides whether the delimiter is buying anything.
 5. **Does a last page carry a `NextKeyMarker`?** The paging loop FOLLOWS a marker beside `IsTruncated=false`, which costs one extra request per listing. Measure whether that request is ever needed here.
+6. **What does a version download's extra `ListObjectVersions` cost?** (added after Task 5) `VersionDownloadSource.stat` reads the history to size the transfer, so every version download pays one listing request before a byte moves. Unmeasured against a real store.
 
 Buckets the suite creates and deletes itself; never `macscp-seed`, `macscp-second` or `macscp-probe-lock`; and **no COMPLIANCE retention on any bucket the suite means to delete.**
 
@@ -589,6 +592,8 @@ Expected: PASS. Record the figures in the commit body beside the commands that p
 - [ ] **Step 4: Backlog rows**
 
 One row for the 5 GiB single-part copy ceiling (spec §3, unmeasured above 8 MiB). One row for anything this plan's reviews parked.
+
+**Amended 2026-11-02, after Task 5.** One row for `TransferFailureLabel`'s counted comment: Task 5's recount was its **seventh**, and the figure has been wrong on arrival every time (68, 69, 63, 57, 81, 78, now 91/29). CLAUDE.md's own answer to a property that keeps buying one spelling and revealing another is a structural boundary rather than another anchor, so the row argues for a TEST that counts those call sites — or for dropping the figure and keeping the recipes — not for an eighth recount. The row is the place to decide that; this plan does not.
 
 - [ ] **Step 5: User documentation**
 
