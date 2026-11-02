@@ -109,10 +109,34 @@ struct BackendFileActionRouteTests {
             !BackendFileActionRoute.verdict(for: action, bucket: "b", cache: cache).isAvailable)
         #expect(
             BackendFileActionRoute.verdict(for: action, bucket: "other", cache: cache).isAvailable)
-        // No bucket (the bucket list) and no cache (no bucket settings) offer it.
-        #expect(BackendFileActionRoute.verdict(for: action, bucket: nil, cache: cache).isAvailable)
+        // No cache (no bucket settings) offers it.
         #expect(BackendFileActionRoute.verdict(for: action, bucket: "b", cache: nil).isAvailable)
         #expect(probe.reads == ["b"])
+    }
+
+    // MARK: - A target that cannot resolve is not offered
+
+    /// `ObjectVersionsTarget.resolve` needs a bucket, and so does the verdict:
+    /// with none (a single-bucket connection with no bucket configured; at the
+    /// bucket list there is no file row to ask about) the history row would be
+    /// live and inert, so it is declined, with no sentence of its own. The
+    /// other rows are not touched by this (the Object Lock arms are out of this
+    /// round's scope): the presigned-URL row, which needs no bucket, is the
+    /// positive control.
+    @MainActor @Test func theHistoryRowIsDeclinedWhereItsTargetCannotResolve() {
+        let history = FileActionContribution(
+            id: BackendFileActionRoute.versions.rawValue, titleKey: "k", titleDefault: "")
+        let presigned = FileActionContribution(
+            id: BackendFileActionRoute.presignedURL.rawValue, titleKey: "k", titleDefault: "")
+        let cache = BucketVersioningCache(settings: FakeBucketSettings())
+        for cache in [cache, nil] {
+            let verdict = BackendFileActionRoute.verdict(for: history, bucket: nil, cache: cache)
+            #expect(verdict.isAvailable == false)
+            #expect(verdict.reason == nil)
+            #expect(BackendFileActionRoute.verdict(for: presigned, bucket: nil, cache: cache).isAvailable)
+        }
+        // And with a bucket it is offered, unread or not.
+        #expect(BackendFileActionRoute.verdict(for: history, bucket: "b", cache: cache).isAvailable)
     }
 
     // MARK: - Wiring (source scans)

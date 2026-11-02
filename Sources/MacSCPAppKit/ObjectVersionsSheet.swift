@@ -111,46 +111,6 @@ enum ObjectVersionsLines {
     }
 }
 
-/// At most `limit` bodies run at once; the rest wait their turn.
-///
-/// The lock read is two signed requests per version with no batch form, so a
-/// long history must not turn into hundreds of requests in flight. A waiter
-/// whose task was cancelled still waits for a slot and then returns without
-/// running its body: the wait is bounded by the reads in front of it, which
-/// are themselves cancelled, and not tracking a continuation per waiter keeps
-/// there nothing to strand.
-@MainActor
-final class ConcurrencyGate {
-    private let limit: Int
-    private var running = 0
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    init(limit: Int) {
-        precondition(limit >= 1, "a gate that admits nobody would park every caller forever")
-        self.limit = limit
-    }
-
-    /// Runs `body` when a slot is free. `nil` when the calling task was
-    /// cancelled by the time the slot came.
-    func run<T>(_ body: () async -> T) async -> T? {
-        if running >= limit {
-            await withCheckedContinuation { waiters.append($0) }
-        } else {
-            running += 1
-        }
-        // A slot is held here in both branches: the waiter was handed one.
-        defer {
-            if waiters.isEmpty {
-                running -= 1
-            } else {
-                waiters.removeFirst().resume()
-            }
-        }
-        if Task.isCancelled { return nil }
-        return await body()
-    }
-}
-
 /// What the version sheet knows and decides, apart from how it is drawn.
 ///
 /// **The listing and the lock are two stages, and the second cannot spoil the
@@ -250,6 +210,10 @@ final class ObjectVersionsModel {
     /// Versions whose lock read is running now, so a cell that appears twice
     /// does not send the same two requests twice.
     @ObservationIgnored private var reading: Set<String> = []
+    /// Called on the main actor each time a version's lock reading is recorded.
+    /// For a test that has to wait until the reads it started have landed: it
+    /// raises a signal and awaits it, instead of polling the model.
+    @ObservationIgnored var lockReadRecorded: (@MainActor () -> Void)?
 
     /// A sheet that has not read anything yet.
     init(
@@ -372,18 +336,24 @@ final class ObjectVersionsModel {
         let settings = lockBacking.settings
         let bucket = target.bucket
         let key = target.key
-        let outcome = await gate.run { () async -> LockReading? in
+        // The body always answers. A task cancelled before its slot came makes
+        // `run` answer `nil`, and one cancelled while the store was being asked
+        // is dropped by the check after it: either way nothing is recorded, and
+        // the row stays unknown. (An error caught while cancelled would
+        // otherwise be an `.unreadable` for a read nobody was waiting for.)
+        let outcome = await gate.run { () async -> LockReading in
             do {
                 let retention = try await settings.retention(
                     ofKey: key, inBucket: bucket, versionId: id)
                 let hold = try await settings.legalHold(ofKey: key, inBucket: bucket, versionId: id)
                 return .read(retention: retention, legalHold: hold)
             } catch {
-                return Task.isCancelled ? nil : .unreadable
+                return .unreadable
             }
         }
         guard let outcome, !Task.isCancelled else { return }
         readings[id] = outcome
+        lockReadRecorded?()
     }
 
     /// `readLockState(of:)` for each of `versions`, together, still bounded.
@@ -452,36 +422,50 @@ final class ObjectVersionsModel {
         return versions.isEmpty ? ObjectVersionsLines.empty : ObjectVersionsLines.noMatches
     }
 
-    /// The state column's text: what the row is, in the reader's language.
+    /// The state column's text: what the row is, in `localeCode`'s language
+    /// (the ambient override by default), words and date alike. **One
+    /// language:** every line resolves through the same code, so a caller whose
+    /// code differs from the ambient override still gets a single language.
+    ///
     /// `Current` leads when the entry is the key's current one, even when a
     /// lock is what `rowState` reports, and the metadata-only note follows
-    /// whatever else is said.
+    /// whatever else is said. **A row under both a retention and a legal hold
+    /// says both** (`rowState` keeps the retention, which a later task gates
+    /// on): a version with a hold stays undeletable past the retention's date,
+    /// so "Locked until <date>" alone would promise a date it will not be
+    /// deletable on.
     func stateText(of version: ObjectVersion, localeCode: String? = L10n.localeOverride) -> String {
-        let state = rowState(of: version)
-        var parts: [String] = []
-        if state == .deleteMarker {
-            return ObjectVersionsLines.deleteMarker.text
+        L10n.$localeOverride.withValue(localeCode) {
+            let state = rowState(of: version)
+            if state == .deleteMarker {
+                return ObjectVersionsLines.deleteMarker.text
+            }
+            var parts: [String] = []
+            if version.isLatest { parts.append(ObjectVersionsLines.current.text) }
+            switch state {
+            case .current, .deleteMarker, .metadataOnly:
+                break
+            case .plain:
+                parts.append(ObjectVersionsLines.earlier.text)
+            case .locked(let until, let mode):
+                parts.append(
+                    String(
+                        format: ObjectVersionsLines.locked.text,
+                        ObjectLockLines.modeName(mode).text,
+                        ObjectLockDates.text(until, localeCode: localeCode)))
+                if case .read(_, legalHold: true)? = readings[version.versionId] {
+                    parts.append(ObjectVersionsLines.legalHold.text)
+                }
+            case .legalHold:
+                parts.append(ObjectVersionsLines.legalHold.text)
+            case .lockUnknown:
+                parts.append(ObjectVersionsLines.lockUnknown.text)
+            case .lockUnreadable:
+                parts.append(ObjectVersionsLines.lockUnreadable.text)
+            }
+            if isMetadataOnly(version) { parts.append(ObjectVersionsLines.metadataOnly.text) }
+            return parts.joined(separator: " · ")
         }
-        if version.isLatest { parts.append(ObjectVersionsLines.current.text) }
-        switch state {
-        case .current, .deleteMarker, .metadataOnly:
-            break
-        case .plain:
-            parts.append(ObjectVersionsLines.earlier.text)
-        case .locked(let until, let mode):
-            parts.append(
-                String(
-                    format: ObjectVersionsLines.locked.text, ObjectLockLines.modeName(mode).text,
-                    ObjectLockDates.text(until, localeCode: localeCode)))
-        case .legalHold:
-            parts.append(ObjectVersionsLines.legalHold.text)
-        case .lockUnknown:
-            parts.append(ObjectVersionsLines.lockUnknown.text)
-        case .lockUnreadable:
-            parts.append(ObjectVersionsLines.lockUnreadable.text)
-        }
-        if isMetadataOnly(version) { parts.append(ObjectVersionsLines.metadataOnly.text) }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -625,7 +609,11 @@ struct ObjectVersionsSheet: BoundedView {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // Built once per render and handed to both users: the table and the
+        // footer's count. Each build filters, formats every row's state text
+        // and sorts.
+        let shown = rows
+        return VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(String(format: ObjectVersionsLines.title.text, model.target.displayName))
                     .font(.headline)
@@ -653,10 +641,10 @@ struct ObjectVersionsSheet: BoundedView {
             let (_, searchError) = sheetSearchPredicate(text: searchText, isRegex: searchIsRegex)
             SheetSearchField(text: $searchText, isRegex: $searchIsRegex, errorText: searchError)
 
-            content
+            content(shown: shown)
 
             HStack {
-                Text(footerText)
+                Text(footerText(shownCount: shown.count))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -672,7 +660,7 @@ struct ObjectVersionsSheet: BoundedView {
         }
     }
 
-    @ViewBuilder private var content: some View {
+    @ViewBuilder private func content(shown: [ObjectVersionRow]) -> some View {
         switch model.phase {
         case .idle, .loading:
             Spacer(minLength: 0)
@@ -691,7 +679,6 @@ struct ObjectVersionsSheet: BoundedView {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         case .loaded:
-            let shown = rows
             if let emptyLine = model.emptyLine(visibleRows: shown.count) {
                 // Genuinely empty (the store listed nothing) says so; a
                 // history that the filter or the search emptied says that.
@@ -748,12 +735,12 @@ struct ObjectVersionsSheet: BoundedView {
         }
     }
 
-    private var footerText: String {
+    private func footerText(shownCount: Int) -> String {
         let total = model.versions.count
         if filter == .all && searchText.isEmpty {
             return String(format: ObjectVersionsLines.count.text, total)
         }
-        return String(format: ObjectVersionsLines.countFiltered.text, rows.count, total)
+        return String(format: ObjectVersionsLines.countFiltered.text, shownCount, total)
     }
 }
 

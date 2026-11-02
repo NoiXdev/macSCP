@@ -298,6 +298,49 @@ struct ObjectVersionsSheetTests {
         #expect(other.stateText(of: latestLocked).hasPrefix(ObjectVersionsLines.current.text))
     }
 
+    /// What the ROW TELLS THE USER, not what the enum is. A version under a
+    /// retention and a legal hold stays undeletable past the retention's date,
+    /// so a text that said only "Locked until <date>" would promise a date it
+    /// will not be deletable on. `rowState` keeps the retention (a later task
+    /// gates on it); the text says both.
+    @Test func aRowUnderBothARetentionAndAHoldTellsTheUserBoth() async {
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.retentionByVersion = ["v2": ObjectRetention(mode: .compliance, retainUntil: Self.at(600))]
+        fixture.legalHoldByVersion = ["v2": true]
+        let (model, _) = Self.model(Self.threeVersions, settings: FakeBucketSettings(lock: fixture))
+        await model.load()
+        await model.readLockStates(of: model.versions)
+        let v2 = model.versions[1]
+        #expect(v2.versionId == "v2")
+        // The enum is unchanged.
+        #expect(model.rowState(of: v2) == .locked(until: Self.at(600), mode: .compliance))
+        let text = model.stateText(of: v2)
+        let retention = String(
+            format: ObjectVersionsLines.locked.text, ObjectLockLines.modeName(.compliance).text,
+            ObjectLockDates.text(Self.at(600)))
+        #expect(text.contains(retention))
+        #expect(text.contains(ObjectVersionsLines.legalHold.text))
+        // And in that order: the date first, the hold as a further part.
+        #expect(text == "\(retention) · \(ObjectVersionsLines.legalHold.text)")
+    }
+
+    /// The positive control for the case above: a retention alone says only
+    /// the retention, and a hold alone says only the hold.
+    @Test func aRowUnderOnlyARetentionOrOnlyAHoldTellsOnlyThat() async {
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.retentionByVersion = ["v2": ObjectRetention(mode: .governance, retainUntil: Self.at(600))]
+        fixture.legalHoldByVersion = ["v1": true]
+        let (model, _) = Self.model(Self.threeVersions, settings: FakeBucketSettings(lock: fixture))
+        await model.load()
+        await model.readLockStates(of: model.versions)
+        let retentionOnly = model.stateText(of: model.versions[1])
+        #expect(retentionOnly.contains(ObjectLockDates.text(Self.at(600))))
+        #expect(!retentionOnly.contains(ObjectVersionsLines.legalHold.text))
+        #expect(!retentionOnly.contains("·"))
+        let holdOnly = model.stateText(of: model.versions[2])
+        #expect(holdOnly == ObjectVersionsLines.legalHold.text)
+    }
+
     @Test func aRetentionThatHasRunOutIsNotALockAndOneInForceWinsOverAHold() async {
         var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
         fixture.retentionByVersion = [
@@ -390,8 +433,71 @@ struct ObjectVersionsSheetTests {
         await model.readLockStates(of: model.versions)
         #expect(model.readings.count == 14, "every row was read")
         #expect(settings.versionReads.count == 28, "retention and hold, once per row")
-        #expect(settings.maxVersionReadsInFlight >= 1)
+        // A floor of 2, not the limit: how many of the four slots the scheduler
+        // fills at once is its business, so the exact peak would be flaky here.
+        // The exact peak is pinned deterministically by the next case; this one
+        // keeps the ceiling and proves at least some parallelism (a model that
+        // read one row at a time peaks at 1).
+        #expect(settings.maxVersionReadsInFlight >= 2)
         #expect(settings.maxVersionReadsInFlight <= ObjectVersionsModel.lockReadLimit)
+    }
+
+    /// A read cancelled while the store is being asked records nothing either:
+    /// the fake does not honour cancellation, so the read comes back with an
+    /// answer after the cancel, and it must be dropped, not recorded.
+    @Test(.timeLimit(.minutes(5)))
+    func aReadCancelledWhileTheStoreIsBeingAskedRecordsNothing() async {
+        let hold = FakeBucketSettings.VersionReadHold(
+            threshold: 1, reached: AsyncSignal(), release: AsyncSignal())
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.versionReadHold = hold
+        fixture.legalHoldByVersion = ["v2": true]
+        let settings = FakeBucketSettings(lock: fixture)
+        let (model, _) = Self.model(Self.threeVersions, settings: settings)
+        await model.load()
+        let row = model.versions[1]
+        let read = Task { @MainActor in await model.readLockState(of: row) }
+        _ = await hold.reached.wait()
+        read.cancel()
+        hold.release.signal()
+        await read.value
+        // The store answered (the positive: there was a read to drop) and the
+        // row is as unknown as before.
+        #expect(!settings.versionReads.isEmpty)
+        #expect(model.readings[row.versionId] == nil)
+        #expect(model.rowState(of: row) == .lockUnknown)
+    }
+
+    /// The peak as a fact. The fake holds every version read at the store until
+    /// the test lets go, and says when `lockReadLimit` are in flight at once: a
+    /// model that reads fewer never raises it (the case waits on the case's own
+    /// `.timeLimit`), one that reads more has more than the limit in flight
+    /// when the test checks before releasing.
+    @Test(.timeLimit(.minutes(5)))
+    func theLimitIsReachedAndNotExceeded() async {
+        let many = (0..<14).map {
+            Self.version("v\($0)", latest: $0 == 13, at: TimeInterval($0), etag: "E\($0)")
+        }
+        let hold = FakeBucketSettings.VersionReadHold(
+            threshold: ObjectVersionsModel.lockReadLimit, reached: AsyncSignal(),
+            release: AsyncSignal())
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.versionReadHold = hold
+        let settings = FakeBucketSettings(lock: fixture)
+        let (model, _) = Self.model(many, settings: settings)
+        await model.load()
+        let all = model.versions
+        let reading = Task { @MainActor in await model.readLockStates(of: all) }
+        _ = await hold.reached.wait()
+        // Give every other row the chance to get to the store, if the gate lets
+        // it: the rest of the rows' tasks are runnable now.
+        for _ in 0..<50 { await Task.yield() }
+        #expect(settings.maxVersionReadsInFlight == ObjectVersionsModel.lockReadLimit)
+        #expect(settings.versionReads.count == ObjectVersionsModel.lockReadLimit)
+        hold.release.signal()
+        await reading.value
+        #expect(model.readings.count == 14)
+        #expect(settings.maxVersionReadsInFlight == ObjectVersionsModel.lockReadLimit)
     }
 
     @Test func theGateRunsAtMostItsLimitAtOnceAndAllOfThem() async {
@@ -462,6 +568,39 @@ struct ObjectVersionsSheetTests {
         #expect(Set(model.rows(filter: .all, matching: byState).map(\.id)) == ["v2", "v1"])
         let (nothing, _) = sheetSearchPredicate(text: "no such version", isRegex: false)
         #expect(model.rows(filter: .all, matching: nothing).isEmpty)
+    }
+
+    /// `stateText(of:localeCode:)` speaks ONE language: the words and the date
+    /// are both in `localeCode`, whatever the ambient override says. It used to
+    /// resolve only the date through the parameter.
+    @Test func theStateTextIsInOneLanguageWhateverTheAmbientOverrideIs() async {
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.retentionByVersion = ["v2": ObjectRetention(mode: .compliance, retainUntil: Self.at(600))]
+        let (model, _) = Self.model(Self.threeVersions, settings: FakeBucketSettings(lock: fixture))
+        await model.load()
+        await model.readLockStates(of: model.versions)
+        let v2 = model.versions[1]
+        let german = L10n.$localeOverride.withValue("en") {
+            model.stateText(of: v2, localeCode: "de")
+        }
+        let expected = L10n.$localeOverride.withValue("de") {
+            String(
+                format: ObjectVersionsLines.locked.text, ObjectLockLines.modeName(.compliance).text,
+                ObjectLockDates.text(Self.at(600), localeCode: "de"))
+        }
+        #expect(german == expected)
+        // The control: the same call under an English override and an English
+        // code is English, so the two outputs above differ by language.
+        let english = L10n.$localeOverride.withValue("en") {
+            model.stateText(of: v2, localeCode: "en")
+        }
+        #expect(english != german)
+        #expect(english.hasPrefix("Locked until"))
+        // The rows go through the same parameter.
+        let rows = L10n.$localeOverride.withValue("en") {
+            model.rows(filter: .all, matching: Self.everything, localeCode: "de")
+        }
+        #expect(rows.first { $0.id == "v2" }?.stateText == expected)
     }
 
     // MARK: - The target
@@ -538,11 +677,22 @@ struct ObjectVersionsSheetTests {
         #expect(withSpecifiers == 4)
     }
 
+    /// Every German line, not one: the name and the plural make a claim about
+    /// all of them. The negative (no polite form anywhere) has its positive
+    /// beside it: the lines were really scanned (25 of them), and the one that
+    /// carries an address form carries the informal one.
     @Test func theGermanSentencesAddressTheReaderAsDu() {
-        let german = L10n.$localeOverride.withValue("de") { ObjectVersionsLines.denied.text }
-        #expect(german.contains("Dein "))
-        let polite = german.contains(" Ihr") || german.contains("Ihnen") || german.contains("Sie ")
-        #expect(!polite)
+        let german = L10n.$localeOverride.withValue("de") {
+            ObjectVersionsLines.all.map(\.text)
+        }
+        #expect(german.count == ObjectVersionsLines.all.count)
+        #expect(german.count > 20)
+        #expect(german.contains { $0.contains("Dein ") })
+        let polite = german.filter {
+            $0.contains(" Ihr") || $0.hasPrefix("Ihr") || $0.contains("Ihnen")
+                || $0.contains("Sie ") || $0.contains(" Sie")
+        }
+        #expect(polite.isEmpty, "\(polite)")
     }
 
     /// The sheet's source is read for the keys it spells, so a key used in a
@@ -566,6 +716,22 @@ struct ObjectVersionsSheetTests {
         let needed = ObjectVersionsSheet.columnMinimums + 2 * ObjectVersionsSheet.padding
         #expect(needed > 2 * ObjectVersionsSheet.padding, "the columns have a width")
         #expect(needed <= ObjectVersionsSheet.bound.grantedWidth, "\(needed) of \(ObjectVersionsSheet.bound.grantedWidth)")
+    }
+
+    /// The row set is built once per render and handed to the table and to the
+    /// footer's count: each build filters, formats and sorts every row. The
+    /// negative (no second read of `rows`) has its positive beside it: the one
+    /// `let` is found.
+    @Test func theRowSetIsBuiltOncePerRender() throws {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("MacSCPAppKit/ObjectVersionsSheet.swift")
+        let source = try SourceCorpus.code(of: url)
+        #expect(source.contains("let shown = rows"))
+        let reads = source.matches(of: #/(?:^|[^.\w])rows(?!\w)/#).count
+        // The model's `func rows(`, the view's `private var rows`, and the one
+        // read (`model.rows(` is preceded by a dot and not counted).
+        #expect(reads == 3, "`rows` is spelled \(reads) times")
+        #expect(!source.contains("rows.count"))
     }
 
     /// The sheet is the audit log's shape: a table, a filter menu, the shared
@@ -627,24 +793,26 @@ struct ObjectVersionsSheetHostedTests {
         window.contentView = host
         host.layoutSubtreeIfNeeded()
 
-        // A `#require`, not an `#expect`: with no read requested the loop below
+        // A `#require`, not an `#expect`: with no read requested the wait below
         // would wait for reads that were never sent.
         try #require(
             !settings.versionReads.isEmpty, "laying the table out asked for no row's lock")
         // Wait for the reads of the rows the model lists, counted off the model
         // and not spelled: a listing that lost a row (the `null` one) would
-        // otherwise wait for a read that is never sent. A spin on the main
-        // actor starves the case's own `.timeLimit`, measured 2026-11-02 by a
-        // plant that dropped the `null` row (the run sat at full CPU for 30
-        // minutes), so the loop has an iteration bound of its own. It is a
-        // bound on a hang and not on speed: a slow machine runs the same
-        // iterations, it does not run fewer.
+        // otherwise wait for a read that is never sent. The wait is an `await`
+        // on a signal the model raises as each reading is recorded, so the main
+        // actor is free while it waits and the case's own `.timeLimit` can fire
+        // if a reading never lands. (It was a `Task.yield()` loop with an
+        // iteration bound; it made progress, but it burned the one main-actor
+        // executor for as long as the reads took, which is the starvation
+        // CLAUDE.md measures on the three-core runner.)
         let expected = model.versions.filter { !$0.isDeleteMarker }.count
-        var spins = 0
-        while model.readings.count < expected && spins < 10_000_000 {
-            await Task.yield()
-            spins += 1
+        let allRecorded = AsyncSignal()
+        model.lockReadRecorded = { [unowned model] in
+            if model.readings.count >= expected { allRecorded.signal() }
         }
+        if model.readings.count >= expected { allRecorded.signal() }
+        _ = await allRecorded.wait()
         #expect(model.readings.count == expected, "the reads did not all come back")
         #expect(model.readings.keys.sorted() == ["null", "v3"])
         let nullVersion = try #require(

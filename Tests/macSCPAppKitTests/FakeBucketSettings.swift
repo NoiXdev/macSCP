@@ -124,6 +124,13 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         /// answers, so that reads started together are in flight together and
         /// a test can see how many were.
         var yieldsPerVersionRead = 0
+        /// Holds every version read at the store, after it counts as in flight,
+        /// until `release` is raised; raises `reached` when `threshold` reads
+        /// are in flight at once. With it a test sees the peak as a fact and
+        /// not as what a scheduler happened to do: a gate that lets fewer than
+        /// `threshold` through never raises `reached`, one that lets more has
+        /// them all in flight before the release.
+        var versionReadHold: VersionReadHold?
 
         init(
             hasLock: Bool = true, bucketDefault: ObjectLockDefault? = nil,
@@ -145,6 +152,13 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             self.readError = readError
             self.writeError = writeError
         }
+    }
+
+    /// See `ObjectLockFixture.versionReadHold`.
+    struct VersionReadHold: Sendable {
+        let threshold: Int
+        let reached: AsyncSignal
+        let release: AsyncSignal
     }
 
     /// A bucket default as `objectLockDefault(ofBucket:)` returns it.
@@ -446,16 +460,21 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
         _ kind: VersionRead.Kind, key: String, bucket: String, versionId: String,
         answer: @Sendable (ObjectLockFixture) -> T
     ) async throws -> T {
-        let yields = try state.withLock { state -> Int in
+        let (yields, hold, inFlight) = try state.withLock {
+            state -> (Int, VersionReadHold?, Int) in
             guard let lock = state.lock else { throw Self.unsupported }
             state.versionReads.append(
                 VersionRead(kind: kind, key: key, bucket: bucket, versionId: versionId))
             state.versionReadsInFlight += 1
             state.maxVersionReadsInFlight = max(
                 state.maxVersionReadsInFlight, state.versionReadsInFlight)
-            return lock.yieldsPerVersionRead
+            return (lock.yieldsPerVersionRead, lock.versionReadHold, state.versionReadsInFlight)
         }
         defer { state.withLock { $0.versionReadsInFlight -= 1 } }
+        if let hold {
+            if inFlight >= hold.threshold { hold.reached.signal() }
+            _ = await hold.release.wait()
+        }
         for _ in 0..<yields { await Task.yield() }
         return try state.withLock { state in
             guard let lock = state.lock else { throw Self.unsupported }
