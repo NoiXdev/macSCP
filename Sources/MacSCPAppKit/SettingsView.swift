@@ -538,6 +538,20 @@ private struct AppearanceSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Deleted files (S3 version history, Task 10): a second switch of
+            // its own, not a variant of the one above. It changes what the
+            // remote pane FETCHES, and only on a bucket that keeps versions.
+            Section {
+                Toggle(
+                    L10n.string("settings.general.showDeleted", "Show deleted files"),
+                    isOn: $store.showDeletedFiles)
+            } footer: {
+                Text(L10n.string(
+                    "settings.general.showDeletedHint",
+                    "Lists the deleted files of buckets that keep versions in the remote pane, so they can be restored."))
+                    .foregroundStyle(.secondary)
+            }
+
             // File-list columns (M11m/T2): one checkbox per toggleable
             // `FileColumn` — `name` is excluded (`FileColumn.isToggleable`
             // is `false` only for it), so it never gets a row here and stays

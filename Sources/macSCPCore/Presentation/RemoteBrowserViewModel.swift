@@ -69,6 +69,25 @@ public final class RemoteBrowserViewModel {
     /// changing it — the filter is presentation-only, never in the FS layer.
     public var showHiddenFiles = false
 
+    /// Whether the keys a delete marker hides are listed as rows too (S3
+    /// version history, Task 10). **Unlike `showHiddenFiles` this is not
+    /// presentation-only**: those keys are not in the plain listing at all, so
+    /// showing them takes a second request (`deletedFileSource`), and a pane
+    /// that only re-derived `items` would have nothing to show. Setting it
+    /// here changes nothing by itself; `setShowDeletedFiles(_:)` is the call
+    /// that also fetches, and `load()` honours it on every listing.
+    public var showDeletedFiles = false
+
+    /// Where the deleted keys of a directory come from, or `nil` for a pane
+    /// that has none (a local pane, a backend without a version history).
+    /// Set once by the App when the session is built.
+    public var deletedFileSource: (any DeletedFileSource)?
+
+    /// What the pane has to say about deleted files it was asked for and
+    /// could not show, or about a restore that did not end plainly. `nil`
+    /// again from the top of every `load()`. See `DeletedFilesNotice`.
+    public var deletedFilesNotice: DeletedFilesNotice?
+
     /// The archive operation this pane has running, if any. Per pane and
     /// per session, so a pane that is remounted by the window does not lose
     /// track of a run still going. See `ArchiveActivity` for why this is
@@ -406,6 +425,7 @@ public final class RemoteBrowserViewModel {
         mergePathIndex = [:]
         state = .loading
         lastLoadError = nil
+        deletedFilesNotice = nil
         selectedItems = []
         let path = currentPath
         let clock = ContinuousClock()
@@ -413,7 +433,13 @@ public final class RemoteBrowserViewModel {
         do {
             let listed = try await fs.list(path: path)
             guard currentPath == path else { return }
-            displayedAll = displayItems(from: listed)
+            // The second request, and only when the switch is on and the pane
+            // has a source: see `showDeletedFiles`. A failure of THIS request
+            // never fails the load, because the plain listing above worked.
+            let deleted = await fetchDeletedRows(inDirectory: path)
+            guard currentPath == path else { return }
+            displayedAll = displayItems(from: listed, deleted: deleted.rows)
+            deletedFilesNotice = deleted.notice
             applySearch()
             state = .loaded
             // Its own line, one layer above `LocalFileSystem.list`'s own
@@ -588,11 +614,84 @@ public final class RemoteBrowserViewModel {
 
     /// Shared display pipeline for `load()` and `refreshQuietly()` — the
     /// hidden-files filter and sort MUST stay identical between the two.
-    private func displayItems(from listed: [RemoteFileItem]) -> [RemoteFileItem] {
+    ///
+    /// **The hidden-files filter is presentation-only; the deleted rows are
+    /// not.** `showHiddenFiles` works on a listing the pane already holds, so
+    /// flipping it needs no request. `deleted` is the result of a SECOND
+    /// request (`fetchDeletedRows(inDirectory:)`), made only when
+    /// `showDeletedFiles` is on, because a key a delete marker hides is not in
+    /// the plain listing to be filtered in. That is why the switch's caller
+    /// re-`load()`s (`setShowDeletedFiles(_:)`) and why a `load()` fetches
+    /// afresh each time. The merged rows then go through the same filter and
+    /// sort as the rest, so a deleted dotfile is hidden like any other. A
+    /// deleted row whose path the plain listing already holds is dropped: the
+    /// table identifies rows by path, and a key and a folder can share a name.
+    private func displayItems(
+        from listed: [RemoteFileItem], deleted: [RemoteFileItem] = []
+    ) -> [RemoteFileItem] {
+        let listedPaths = Set(listed.map(\.path))
+        let all = listed + deleted.filter { !listedPaths.contains($0.path) }
         let visible = showHiddenFiles
-            ? listed
-            : listed.filter { !$0.name.hasPrefix(".") }
+            ? all
+            : all.filter { !$0.name.hasPrefix(".") }
         return Self.sortedForDisplay(visible, key: sortKey, ascending: sortAscending)
+    }
+
+    /// The deleted rows for `path`, or none and the reason there are none that
+    /// the pane must say. Empty and silent where the switch is off or the pane
+    /// has no source, and where the source says it does not apply.
+    private func fetchDeletedRows(
+        inDirectory path: String
+    ) async -> (rows: [RemoteFileItem], notice: DeletedFilesNotice?) {
+        guard showDeletedFiles, let source = deletedFileSource else { return ([], nil) }
+        do {
+            switch try await source.deletedFiles(inDirectory: path) {
+            case .notApplicable: return ([], nil)
+            case .rows(let rows): return (rows, nil)
+            case .notConfirmed: return ([], .versioningNotConfirmed)
+            }
+        } catch {
+            // The error is not kept: its text can carry an endpoint. The pane
+            // says a fixed sentence (`DeletedFilesNotice.listingFailed`).
+            return ([], .listingFailed)
+        }
+    }
+
+    /// Turns the switch and, where it has something to do, makes the pane
+    /// show the result. **Where it cannot apply it does nothing at all**: no
+    /// request, no state change, no error. A local pane, a backend with no
+    /// history, the bucket list and a bucket that never kept versions each
+    /// take the switch as a preference for the next directory it does apply
+    /// to; none of them re-lists, since a listing that cannot differ is a
+    /// request wasted.
+    ///
+    /// Off needs no request either: the rows that came from the second
+    /// request are simply dropped from the listing already held.
+    public func setShowDeletedFiles(_ newValue: Bool) async {
+        let changed = showDeletedFiles != newValue
+        showDeletedFiles = newValue
+        guard changed else { return }
+        if !newValue {
+            guard displayedAll.contains(where: \.isDeleted) || deletedFilesNotice != nil else { return }
+            let selectedPaths = Set(selectedItems.map(\.path))
+            displayedAll = displayedAll.filter { !$0.isDeleted }
+            deletedFilesNotice = nil
+            applySearch()
+            selectedItems = items.filter { selectedPaths.contains($0.path) }
+            return
+        }
+        guard let source = deletedFileSource, state == .loaded else { return }
+        let path = currentPath
+        switch await source.availability(inDirectory: path) {
+        case .notApplicable:
+            return
+        case .notConfirmed:
+            guard currentPath == path else { return }
+            deletedFilesNotice = .versioningNotConfirmed
+        case .available:
+            guard currentPath == path else { return }
+            await load()
+        }
     }
 
     /// Silent background refresh (M9c): re-lists the current directory and
@@ -618,13 +717,18 @@ public final class RemoteBrowserViewModel {
         guard state == .loaded else { return }
         let path = currentPath
         guard let listed = try? await fs.list(path: path) else { return }
+        let fetched = await fetchDeletedRows(inDirectory: path)
         guard state == .loaded, currentPath == path else { return }
+        // A deleted listing that failed does not blank the deleted rows the
+        // pane already shows: like the plain listing's own failure above, a
+        // silent refresh keeps what it has rather than paint a gap.
+        let deleted = fetched.notice == nil ? fetched.rows : displayedAll.filter(\.isDeleted)
         // Rebuild the selection FROM the fresh items rather than filtering
         // the old structs (M9c final review): membership semantics are the
         // same, but the surviving entries carry current size/date/permission
         // values and stay in table order.
         let selectedPaths = Set(selectedItems.map(\.path))
-        displayedAll = displayItems(from: listed)
+        displayedAll = displayItems(from: listed, deleted: deleted)
         // Unlike `load()`, the directory is the SAME one — an active
         // search stays active and is re-applied to the fresh listing
         // (M11k design).

@@ -325,6 +325,13 @@ struct BrowserPane: View {
             // shape, and the same one-at-a-time rule.
             FileActionActivityRow(activity: viewModel.fileActionActivity)
 
+            // What the pane could not do about deleted files, or how a
+            // restore ended (S3 version history, Task 10): a fixed sentence,
+            // present only while there is something to say.
+            if let notice = viewModel.deletedFilesNotice {
+                DeletedFilesNoticeRow(notice: notice)
+            }
+
             ZStack {
                 RemoteFileTableView(
                     items: viewModel.items,
@@ -392,7 +399,16 @@ struct BrowserPane: View {
                             beginExtract(format, selection: selection)
                         case .userFileAction(let action):
                             beginFileAction(action, selection: selection)
-                        default: onMenuAction?(entry, selection, side)
+                        // Forwarded to the window, which carries each out. Named
+                        // one by one and not behind a `default:`, so a new
+                        // `BrowserMenuEntry` case is a compile error here
+                        // instead of a row that is forwarded to a switch with
+                        // no arm for it (`handleBrowserMenuEntry` has none
+                        // either).
+                        case .transferToOtherPane, .transferToSession, .openInEditor,
+                            .copyPath, .compareWithOtherPane, .compareTwoSelected,
+                            .backendFileAction, .restoreDeleted:
+                            onMenuAction?(entry, selection, side)
                         }
                     },
                     onGoUp: { Task { await viewModel.goUp() } },

@@ -204,6 +204,18 @@ extension ContentView {
                 }
             }
         }
+        // Deleted-files switch (S3 version history, Task 10): the remote pane
+        // of every connected tab, for the reason the toggle above does that.
+        // Not a `refresh()` like the one above: this switch changes what is
+        // FETCHED, and where it has nothing to do (no history, the bucket
+        // list, a bucket that never kept versions) `setShowDeletedFiles(_:)`
+        // sends no request at all.
+        .onChange(of: settingsStore.showDeletedFiles) { _, newValue in
+            for tab in tabsModel.tabs {
+                guard let session = tab.session else { continue }
+                Task { await session.remote.setShowDeletedFiles(newValue) }
+            }
+        }
         // Keeps `menuBarModel.tabs` synced with the window's tab list
         // (M11n/T2) — `SessionTab` is a class (`Identifiable`, not
         // `Equatable`), so `[SessionTab]` itself can't drive `.onChange`
