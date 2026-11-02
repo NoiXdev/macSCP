@@ -276,6 +276,10 @@ enum ComparisonDiffPresentation {
     static let notPossible = Wording(
         key: "compare.diff.failure.notPossible",
         english: "These entries cannot be compared by their contents.")
+    static let versionIsADeleteMarker = Wording(
+        key: "compare.diff.failure.versionIsADeleteMarker",
+        english:
+            "This version is a delete marker and has no content, so nothing was compared.")
     static let rowMoved = Wording(
         key: "compare.diff.failure.rowMoved",
         english: "This row is no longer in the list as it was, so nothing was compared.")
@@ -299,6 +303,7 @@ enum ComparisonDiffPresentation {
             case .sessionClosed: return sessionClosed.text
             case .wrongKind: return notPossible.text
             case .rowOutOfRange: return rowMoved.text
+            case .versionIsADeleteMarker: return versionIsADeleteMarker.text
             case .noContentToCompare(let state): return wording(forNoContentIn: state).text
             }
         }
@@ -334,7 +339,7 @@ enum ComparisonDiffPresentation {
 
     /// The wordings above that are not a refusal and not a no-content reason.
     static let otherWordings: [Wording] = [
-        sessionClosed, notPossible, rowMoved, stopped, failed, pickRow, pending, identical,
+        sessionClosed, notPossible, versionIsADeleteMarker, rowMoved, stopped, failed, pickRow, pending, identical,
         legend, lineRemoved, lineAdded, lineUnchanged,
     ]
 

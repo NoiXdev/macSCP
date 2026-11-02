@@ -44,6 +44,8 @@ final class FakeVersionProvider: ObjectVersionProvider, Sendable {
         var writes: [Write] = []
         var writeAnswer: WriteAnswer = .unsupported
         var contents: [String: Data] = [:]
+        /// The listing (1-based) that waits at the store, and for what.
+        var parked: (number: Int, entered: AsyncSignal, release: AsyncSignal)?
         var readVersionIds: [String] = []
     }
 
@@ -86,12 +88,28 @@ final class FakeVersionProvider: ObjectVersionProvider, Sendable {
 
     private static var unsupported: RemoteFSError { .finding(.operationNotSupported) }
 
+    /// Holds the `number`th listing (1-based, counted from the provider's
+    /// creation) at the store until `release` is raised, after raising
+    /// `entered`. For a test that has to look at the world while a listing is
+    /// still on the wire.
+    func parkListing(number: Int) -> (entered: AsyncSignal, release: AsyncSignal) {
+        let gate = (entered: AsyncSignal(), release: AsyncSignal())
+        state.withLock { $0.parked = (number, gate.entered, gate.release) }
+        return gate
+    }
+
     func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
-        try state.withLock { state in
+        let (answer, gate) = try state.withLock { state -> ([ObjectVersion], (entered: AsyncSignal, release: AsyncSignal)?) in
             state.listings.append(Listing(key: key, bucket: bucket))
             if let error = state.error { throw error }
-            return state.versions
+            let parked = state.parked.flatMap { $0.number == state.listings.count ? ($0.entered, $0.release) : nil }
+            return (state.versions, parked.map { (entered: $0.0, release: $0.1) })
         }
+        if let gate {
+            gate.entered.signal()
+            _ = await gate.release.wait()
+        }
+        return answer
     }
 
     func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {

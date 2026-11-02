@@ -498,6 +498,7 @@
 "s3.versions.refusal.isCurrent" = "Das ist bereits die aktuelle Version.";
 "s3.versions.refusal.currentIsMarker" = "Die Datei ist im Moment gelöscht, deshalb gibt es keinen aktuellen Inhalt zum Vergleichen.";
 "s3.versions.refusal.versioningNotEnabled" = "Wiederherstellen setzt voraus, dass die Versionierung für diesen Bucket eingeschaltet ist. Solange sie aus oder ausgesetzt ist, würde eine Wiederherstellung den aktuellen Inhalt ersetzen, statt eine Version hinzuzufügen.";
+"s3.versions.refusal.versioningNotConfirmed" = "Das Wiederherstellen setzt voraus, dass die Versionierung für diesen Bucket eingeschaltet ist, und macSCP konnte nicht bestätigen, ob sie es ist. Öffne den Verlauf erneut, um es noch einmal zu versuchen.";
 "s3.versions.refusal.locked" = "Diese Version ist gesperrt und lässt sich deshalb nicht löschen.";
 "s3.versions.refusal.lockNotConfirmed" = "Die Sperre dieser Version wurde nicht bestätigt, deshalb lässt sie sich nicht löschen.";
 "s3.versions.refusal.marker" = "Eine Löschmarkierung ist keine Version mit Inhalt und wird deshalb hier nicht gelöscht.";
@@ -1854,6 +1855,7 @@
 "compare.diff.failure.notKnownFiles" = "macSCP konnte nicht feststellen, dass beide Seiten gewöhnliche Dateien sind, deshalb wurden ihre Inhalte nicht verglichen.";
 "compare.diff.failure.sessionClosed" = "Die Sitzung wurde geschlossen, deshalb lassen sich diese Dateien nicht mehr abrufen. Es wurde nichts verglichen.";
 "compare.diff.failure.notPossible" = "Diese Einträge lassen sich nicht über ihren Inhalt vergleichen.";
+"compare.diff.failure.versionIsADeleteMarker" = "Diese Version ist eine Löschmarkierung und hat keinen Inhalt, deshalb wurde nichts verglichen.";
 "compare.diff.failure.rowMoved" = "Diese Zeile steht nicht mehr so in der Liste, deshalb wurde nichts verglichen.";
 "compare.diff.failure.stopped" = "Das Abrufen der Dateien wurde gestoppt, deshalb wurde nichts verglichen.";
 "compare.diff.failure.failed %@" = "Die Dateien konnten nicht verglichen werden. %@";

@@ -122,8 +122,9 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// (Withdrawn wording, verbatim: "Recorded through
         /// `AuditRecorder.recordVersionRestored`. Like the bucket-settings
         /// kinds, not carried by `RemoteBrowserViewModel`'s `auditSink`." It
-        /// described a producer, and none exists yet. Also withdrawn,
-        /// verbatim: "and no caller yet: the version sheet task wires it.")
+        /// described a producer, and none existed when it was written; the
+        /// version sheet's Restore is one now. Also withdrawn, verbatim: "and
+        /// no caller yet: the version sheet task wires it.")
         case versionRestored
         /// One version of an object was removed for good: no marker is left
         /// and nothing can bring it back. Has a recorder,

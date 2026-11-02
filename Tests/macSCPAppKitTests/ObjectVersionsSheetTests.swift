@@ -637,6 +637,15 @@ struct ObjectVersionsSheetTests {
 
     private static let locales = ["en", "de", "fr", "pl"]
 
+    /// How many lines the family has, written down. **An independent figure**:
+    /// `german.count == all.count` can never fail (one is a map of the other),
+    /// and `> 20` was true of a family of 25 and of one of 54. The command
+    /// that produces it, from the repository root, counting the keys the App's
+    /// English catalogue holds under this family:
+    /// `grep -o '"s3\.versions\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l`.
+    /// Adding a line means changing this figure, which is the point.
+    static let lineCount = 54
+
     /// The one place a language's word IS the English one: "Versions" is also
     /// the French word. Named by language and key, so a copy anywhere else is
     /// still red, and checked to be the English word (above) rather than
@@ -659,7 +668,7 @@ struct ObjectVersionsSheetTests {
                 #expect(resolved != line.english, "\(line.key) in \(locale)")
             }
         }
-        #expect(ObjectVersionsLines.all.count > 20)
+        #expect(ObjectVersionsLines.all.count == Self.lineCount)
     }
 
     @Test func everyTranslationKeepsTheFormatSpecifiersOfTheEnglish() {
@@ -693,7 +702,7 @@ struct ObjectVersionsSheetTests {
             ObjectVersionsLines.all.map(\.text)
         }
         #expect(german.count == ObjectVersionsLines.all.count)
-        #expect(german.count > 20)
+        #expect(german.count == Self.lineCount)
         #expect(german.contains { $0.contains("Dein ") })
         let polite = german.filter {
             $0.contains(" Ihr") || $0.hasPrefix("Ihr") || $0.contains("Ihnen")

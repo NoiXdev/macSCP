@@ -111,6 +111,9 @@ enum ObjectVersionsLines {
     static let refusalVersioningNotEnabled = CatalogueLine(
         key: "s3.versions.refusal.versioningNotEnabled",
         english: "Restoring needs versioning to be turned on for this bucket. While it is off or suspended, a restore would replace the current content instead of adding a version.")
+    static let refusalVersioningNotConfirmed = CatalogueLine(
+        key: "s3.versions.refusal.versioningNotConfirmed",
+        english: "Restoring needs versioning to be turned on for this bucket, and macSCP could not confirm whether it is. Open the history again to retry.")
     static let refusalLocked = CatalogueLine(
         key: "s3.versions.refusal.locked",
         english: "This version is locked, so it cannot be deleted.")
@@ -174,6 +177,7 @@ enum ObjectVersionsLines {
         legalHold, lockUnknown, lockUnreadable, count, countFiltered,
         actionOpen, actionCompare, actionDownload, actionRestore, actionDelete,
         refusalNoContent, refusalIsCurrent, refusalCurrentIsMarker, refusalVersioningNotEnabled,
+        refusalVersioningNotConfirmed,
         refusalLocked, refusalLockNotConfirmed, refusalMarker, refusalBusy, refusalUnavailable,
         restoreTitle, restoreMessage, restoreButton, deleteTitle, deleteMessage, deleteButton,
         outcomeRestored, outcomeDeleted, outcomeRestoreNotConfirmed, outcomeDeleteNotConfirmed,
@@ -228,6 +232,10 @@ enum VersionActionRefusal: Equatable {
     /// Restore needs the bucket's versioning to be `.enabled`, and nothing
     /// else will do. See `ObjectVersionsModel.refusal(of:on:)`.
     case versioningIsNotEnabled
+    /// The bucket's versioning could not be read, so whether a restore is
+    /// safe is not known. Refused like `.versioningIsNotEnabled`, and worded
+    /// as what it is: not confirmed, not "off".
+    case versioningNotConfirmed
     /// A retention in force or a legal hold forbids the delete.
     case lockedOrHeld
     /// The lock has not been read yet, or could not be.
@@ -246,6 +254,7 @@ enum VersionActionRefusal: Equatable {
         case .isTheCurrentVersion: ObjectVersionsLines.refusalIsCurrent
         case .currentIsADeleteMarker: ObjectVersionsLines.refusalCurrentIsMarker
         case .versioningIsNotEnabled: ObjectVersionsLines.refusalVersioningNotEnabled
+        case .versioningNotConfirmed: ObjectVersionsLines.refusalVersioningNotConfirmed
         case .lockedOrHeld: ObjectVersionsLines.refusalLocked
         case .lockNotConfirmed: ObjectVersionsLines.refusalLockNotConfirmed
         case .aMarkerIsNotDeletedHere: ObjectVersionsLines.refusalMarker
@@ -294,12 +303,17 @@ enum VersionActionOutcome: Equatable {
         case .restored: ObjectVersionsLines.outcomeRestored
         case .deleted: ObjectVersionsLines.outcomeDeleted
         case .declined(let refusal): refusal.line
-        case .notConfirmed(let action):
-            action == .restore
-                ? ObjectVersionsLines.outcomeRestoreNotConfirmed
-                : ObjectVersionsLines.outcomeDeleteNotConfirmed
+        case .notConfirmed(let action): Self.notConfirmedLine(for: action)
         case .refused(_, let why): why
         }
+    }
+
+    /// The sentence for a write that could not be confirmed. One place, for
+    /// the status line and for the trail.
+    static func notConfirmedLine(for action: VersionRowAction) -> CatalogueLine {
+        action == .restore
+            ? ObjectVersionsLines.outcomeRestoreNotConfirmed
+            : ObjectVersionsLines.outcomeDeleteNotConfirmed
     }
 }
 
@@ -796,6 +810,11 @@ extension ObjectVersionsModel {
             if version.isDeleteMarker { return .deleteMarkerHasNoContent }
             if version.isLatest { return .isTheCurrentVersion }
             if provider == nil { return .notAvailableHere }
+            // Two different facts, and two sentences (the lock half of this
+            // model has two states for the same reason): the state was read
+            // and is not on, or it was not read and nothing is known. The
+            // GATE is the same for both; only what the person is told differs.
+            guard let bucketVersioning else { return .versioningNotConfirmed }
             return bucketVersioning == .enabled ? nil : .versioningIsNotEnabled
         case .deleteVersion:
             if version.isDeleteMarker { return .aMarkerIsNotDeletedHere }
@@ -894,12 +913,19 @@ extension ObjectVersionsModel {
     /// nothing** (a "no", a refused row), and this is only reached after the
     /// request.
     ///
-    /// The failure text is a fixed sentence and never the error's own: a
-    /// `reason` can carry the endpoint, and that field takes
-    /// `scheme://KEY:SECRET@host` as ordinary input
-    /// (`AuditRecorder.recordVersionRestored`). The unconfirmed sentence says
-    /// "could not be confirmed" for the reason the sheet's wording does: the
-    /// request went out and the history does not say what became of it.
+    /// The failure text is the outcome's own catalogue sentence
+    /// (`VersionActionOutcome.line`) and never the error's: a `reason` can
+    /// carry the endpoint, and that field takes `scheme://KEY:SECRET@host` as
+    /// ordinary input (`AuditRecorder.recordVersionRestored`). A catalogue
+    /// line is as fixed as a literal, so nothing leaks, and it is in the
+    /// reader's language like every other kind's trail
+    /// (`ObjectLockSheet.apply` passes a catalogue sentence too). **The
+    /// sentence is chosen once**, where the outcome is made, so a reason added
+    /// later cannot be recorded under another's words, and this switch has no
+    /// `default:` for the same reason: a new outcome is a compile error here.
+    /// The unconfirmed sentence says "could not be confirmed" for the reason
+    /// the sheet's wording does: the request went out and the history does not
+    /// say what became of it.
     private func record(
         _ outcome: VersionActionOutcome, of action: VersionRowAction, on version: ObjectVersion
     ) {
@@ -908,19 +934,10 @@ extension ObjectVersionsModel {
         switch outcome {
         case .restored, .deleted:
             failure = nil
-        case .notConfirmed:
-            failure = "the outcome could not be confirmed: the request was sent and the history does not show it"
+        case .notConfirmed(let attempted):
+            failure = VersionActionOutcome.notConfirmedLine(for: attempted).text
         case .refused(_, let why):
-            switch why {
-            case ObjectVersionsLines.outcomeLocked:
-                failure = "refused by the store: the version is under a retention or a legal hold"
-            case ObjectVersionsLines.outcomeGone:
-                failure = "refused by the store: the version is not in the history"
-            case ObjectVersionsLines.outcomeDenied:
-                failure = "refused by the store: the access key is not allowed to do this"
-            default:
-                failure = "refused by the store: it does not support this"
-            }
+            failure = why.text
         case .handedOff, .cancelled, .declined:
             return
         }
@@ -1108,26 +1125,48 @@ final class VersionConfirmationBridge {
     /// that has to wait until it is on screen: it raises a signal and awaits
     /// it, instead of polling `request`.
     @ObservationIgnored var asked: (@MainActor () -> Void)?
+    /// Called on the main actor each time a question is answered, after its
+    /// asker has been resumed. For a test that has to wait until a withdrawal
+    /// has landed, for the reason `asked` gives.
+    @ObservationIgnored var answered: (@MainActor () -> Void)?
+    /// The number of the question on screen (or the last one asked).
+    private(set) var questionID = 0
 
     func ask(_ request: VersionConfirmation) async -> Bool {
         answer(false)
+        questionID += 1
+        let id = questionID
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 self.request = request
                 self.continuation = continuation
                 asked?()
+                // A task that was cancelled before it got here had its handler
+                // run BEFORE this body (`withTaskCancellationHandler` runs
+                // `onCancel` at once for a cancelled task), when there was
+                // nothing to withdraw. Nothing would resume the continuation
+                // installed just now, and the write waiting on it would hold
+                // `writeInProgress` for the life of the sheet. So it is looked
+                // at again here, with the continuation in place.
+                if Task.isCancelled { answer(false, forQuestion: id) }
             }
         } onCancel: {
-            Task { @MainActor in self.answer(false) }
+            // A hop, because the handler is not isolated; it can land after
+            // the next question is up, so it names the question it is for.
+            Task { @MainActor in self.answer(false, forQuestion: id) }
         }
     }
 
-    /// Answers the question on screen, once; a second call is a no-op.
-    func answer(_ yes: Bool) {
+    /// Answers the question on screen, once; a second call is a no-op. With
+    /// `forQuestion`, only if that question is still the one on screen: a
+    /// withdrawal that arrives late must not answer a later question.
+    func answer(_ yes: Bool, forQuestion id: Int? = nil) {
+        if let id, id != questionID { return }
         guard let continuation else { return }
         self.continuation = nil
         request = nil
         continuation.resume(returning: yes)
+        answered?()
     }
 }
 

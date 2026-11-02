@@ -253,12 +253,24 @@ struct ObjectVersionActionsTests {
         #expect(enabled.provider.writes.count == 1)
     }
 
-    /// A state that could not be read is not `.enabled`.
+    /// A state that could not be read is not `.enabled`, and it is not
+    /// reported as a state that WAS read either: "off or suspended" is a fact
+    /// the app did not measure. The gate refuses, as it must; the sentence
+    /// says it could not confirm. The positive beside it is the parameterised
+    /// case above, where the state was read and the older sentence is right.
     @Test func aVersioningStateThatCouldNotBeReadDoesNotOfferRestore() async {
         let rig = await Self.rig(Self.history, versioningReadFails: true)
         #expect(rig.model.bucketVersioning == nil)
         let v2 = Self.row("v2", in: rig)
-        #expect(rig.model.refusal(of: .restore, on: v2) == .versioningIsNotEnabled)
+        #expect(!rig.model.isEnabled(.restore, on: v2))
+        let refusal = rig.model.refusal(of: .restore, on: v2)
+        #expect(refusal == .versioningNotConfirmed)
+        #expect(refusal != .versioningIsNotEnabled)
+        #expect(refusal?.line != VersionActionRefusal.versioningIsNotEnabled.line)
+        // The action itself sends nothing and asks nothing.
+        let outcome = await rig.model.action(.restore, on: v2)
+        #expect(outcome == .declined(.versioningNotConfirmed))
+        #expect(rig.provider.writes.isEmpty)
         // The history itself still listed, and reading actions still offered.
         #expect(rig.model.phase == .loaded)
         #expect(rig.model.isEnabled(.download, on: v2))
@@ -660,47 +672,70 @@ struct ObjectVersionActionsTests {
     /// second question arriving over the first. The first test is the "yes"
     /// beside them.
     ///
-    /// **A question that is NOT answered must be a red and not a hang.** The
-    /// waits here are on the signal the bridge raises and on one yield, which
-    /// lets the main actor run the hop `onCancel` spawns; the task is only
-    /// awaited once it is known to have been released, and a question still
-    /// standing after the yield is released by the test itself, after the
-    /// failure is recorded.
+    /// The waits are on the signal the bridge raises from inside `answer`, once
+    /// the asker has been resumed: no yield, no assumption about when the
+    /// cancel's hop gets its turn. **If the bridge never withdraws, this waits
+    /// for ever** (the hang bound is `.timeLimit`), which is the price of not
+    /// guessing the schedule.
     @Test func aQuestionThatGoesAwayIsANo() async {
         let bridge = VersionConfirmationBridge()
         let first = AsyncSignal()
         bridge.asked = { first.signal() }
+        let withdrawn = AsyncSignal()
+        bridge.answered = { withdrawn.signal() }
         let cancelled = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
         _ = await first.wait()
         cancelled.cancel()
-        await Task.yield()
-        let stillStanding = bridge.request != nil
-        #expect(!stillStanding, "a cancelled question is withdrawn")
-        if stillStanding { bridge.answer(false) }
+        _ = await withdrawn.wait()
         #expect(await cancelled.value == false)
         #expect(bridge.request == nil)
 
         let second = AsyncSignal()
         bridge.asked = { second.signal() }
-        var replacedAnswer: Bool?
-        let replaced = Task { @MainActor in
-            replacedAnswer = await bridge.ask(Self.sampleQuestion)
-        }
+        let replacedWithdrawn = AsyncSignal()
+        bridge.answered = { replacedWithdrawn.signal() }
+        let replaced = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
         _ = await second.wait()
         let third = AsyncSignal()
         bridge.asked = { third.signal() }
         let replacing = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
+        // The second question is answered "no" by the third arriving.
+        _ = await replacedWithdrawn.wait()
+        #expect(await replaced.value == false)
         _ = await third.wait()
-        await Task.yield()
-        // The second question was answered "no" by the third arriving.
-        #expect(replacedAnswer == false)
-        if replacedAnswer == nil {
-            // Released by the test so that nothing is left waiting; the first
-            // question's continuation was overwritten, so it is not awaited.
-            replaced.cancel()
-        }
         bridge.answer(true)
         #expect(await replacing.value == true)
+    }
+
+    /// A withdrawal that arrives late, for a question that is long gone, does
+    /// not answer the question that is on screen now. The cancel of a task is
+    /// carried to the bridge by a hop that can land after the next question
+    /// has gone up; it names the question it is for.
+    @Test func aLateWithdrawalOfAnEarlierQuestionDoesNotAnswerALaterOne() async {
+        let bridge = VersionConfirmationBridge()
+        let firstPosted = AsyncSignal()
+        bridge.asked = { firstPosted.signal() }
+        let earlier = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
+        _ = await firstPosted.wait()
+        let earlierID = bridge.questionID
+        bridge.answer(true)
+        #expect(await earlier.value == true)
+
+        let secondPosted = AsyncSignal()
+        bridge.asked = { secondPosted.signal() }
+        let later = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
+        _ = await secondPosted.wait()
+        #expect(bridge.questionID != earlierID)
+
+        // The hop of the first question's cancel, arriving now.
+        bridge.answer(false, forQuestion: earlierID)
+        let stillOnScreen = bridge.request != nil
+        #expect(stillOnScreen, "the later question was answered by an earlier one's withdrawal")
+
+        // The positive beside it: the right number does answer it.
+        bridge.answer(true, forQuestion: bridge.questionID)
+        #expect(await later.value == true)
+        #expect(bridge.request == nil)
     }
 
     // MARK: - The trail
@@ -778,6 +813,70 @@ struct ObjectVersionActionsTests {
         }
     }
 
+    /// The trail is written in the reader's language, like every other kind's:
+    /// the audit log shows `errorMessage` as it was recorded. Each reason has
+    /// its own sentence (a catalogue line, fixed, never built from the error),
+    /// so a reason cannot be recorded under another's words.
+    @Test(arguments: ["de", "fr", "pl"])
+    func theTrailSaysItInTheReadersLanguageAndEachReasonInItsOwnWords(locale: String) async {
+        let cases: [(any Error, VersionRowAction, CatalogueLine)] = [
+            (RemoteFSError.finding(.objectUnderRetention(path: "/b/a.txt")), .deleteVersion, ObjectVersionsLines.outcomeLocked),
+            (RemoteFSError.finding(.objectUnderLegalHold(path: "/b/a.txt")), .deleteVersion, ObjectVersionsLines.outcomeLocked),
+            (RemoteFSError.notFound(path: "/b/a.txt"), .deleteVersion, ObjectVersionsLines.outcomeGone),
+            (RemoteFSError.permissionDenied(path: "/b/a.txt"), .restore, ObjectVersionsLines.outcomeDenied),
+            (RemoteFSError.finding(.operationNotSupported), .restore, ObjectVersionsLines.outcomeUnsupported),
+            (RemoteFSError.protocolError(reason: Self.storeWords), .deleteVersion, ObjectVersionsLines.outcomeDeleteNotConfirmed),
+            (RemoteFSError.connectionFailed(reason: Self.storeWords), .restore, ObjectVersionsLines.outcomeRestoreNotConfirmed),
+        ]
+        var recorded: [String] = []
+        for (error, action, line) in cases {
+            let trail = Trail()
+            defer { trail.remove() }
+            let rig = await Self.rig(Self.history, writes: .throwing(error), recorder: trail.recorder)
+            let v2 = Self.row("v2", in: rig)
+            await L10n.$localeOverride.withValue(locale) {
+                _ = await rig.model.action(action, on: v2)
+            }
+            let message = trail.events.first?.errorMessage ?? ""
+            let expected = L10n.$localeOverride.withValue(locale) { line.text }
+            #expect(message == expected, "\(action) in \(locale)")
+            #expect(message != line.english, "\(action) in \(locale)")
+            let canary = Self.storeWords
+            let leaked = message.contains(canary)
+            #expect(!leaked)
+            recorded.append(message)
+        }
+        // Five distinct reasons (two of the seven share a sentence: a
+        // retention and a hold are both "locked"), and none of them empty.
+        #expect(Set(recorded).count == 6)
+        #expect(recorded.allSatisfy { !$0.isEmpty })
+    }
+
+    /// The line is written BEFORE the history is read again. A permanent
+    /// delete leaves nothing to reconstruct it from, so its trace must not
+    /// wait for a read that may never come back: with the reload parked at
+    /// the store, the trail already holds the line.
+    @Test func theTrailHoldsTheLineWhileTheHistoryIsStillBeingReadAgain() async {
+        let trail = Trail()
+        defer { trail.remove() }
+        let rig = await Self.rig(Self.history, recorder: trail.recorder)
+        // The load in `rig` was listing 1; the re-read after the write is 2.
+        let parked = rig.provider.parkListing(number: 2)
+        let v1 = Self.row("v1", in: rig)
+        let acting = Task { @MainActor in await rig.model.action(.deleteVersion, on: v1) }
+        _ = await parked.entered.wait()
+        // Read BEFORE the reload is let go.
+        let whileParked = trail.events
+        let writesWhileParked = rig.provider.writes.count
+        parked.release.signal()
+        let outcome = await acting.value
+        // The positive: the delete did reach the store and did finish.
+        #expect(writesWhileParked == 1)
+        #expect(outcome == .deleted)
+        #expect(whileParked.map(\.kind) == [.versionDeleted])
+        #expect(whileParked.first?.isError == false)
+    }
+
     /// Nothing sent, nothing recorded: a "no", a refused row and a bucket the
     /// restore is not offered on leave the trail empty. The positive is the
     /// test above.
@@ -818,6 +917,7 @@ struct ObjectVersionActionsTests {
             ObjectVersionsLines.refusalIsCurrent,
             ObjectVersionsLines.refusalCurrentIsMarker,
             ObjectVersionsLines.refusalVersioningNotEnabled,
+            ObjectVersionsLines.refusalVersioningNotConfirmed,
             ObjectVersionsLines.refusalLocked,
             ObjectVersionsLines.refusalLockNotConfirmed,
             ObjectVersionsLines.refusalMarker,
@@ -838,7 +938,7 @@ struct ObjectVersionActionsTests {
             ObjectVersionsLines.outcomeDenied,
             ObjectVersionsLines.outcomeUnsupported,
         ]
-        #expect(lines.count == 28)
+        #expect(lines.count == 29)
         for line in lines {
             #expect(ObjectVersionsLines.all.contains(line), "\(line.key)")
             let resolved = L10n.$localeOverride.withValue(locale) {

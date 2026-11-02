@@ -162,6 +162,26 @@ struct VersionDownloadTests {
         #expect(enqueuesWriteBack == false)
     }
 
+    /// The save panel's own "replace?" is the question for a version download
+    /// to a file that exists, so the download tells the queue the person has
+    /// answered it (`replacingExisting: true`); without it the queue's conflict
+    /// decider asks for the same file a second time. The wiring is the
+    /// `NSSavePanel` completion, which no test can drive, so it is read: the
+    /// body is found by name, it downloads through the version queue call, and
+    /// it passes the flag. The read-only open writes into a directory of its
+    /// own and passes none, which is the positive that the flag is not simply
+    /// everywhere.
+    @Test func theVersionDownloadTellsTheQueueThePanelAlreadyAskedAboutReplacing() throws {
+        let transfers = try Self.code("ContentView+Transfers.swift")
+        let download = try #require(SourceSpan.body(after: "func downloadVersion(", in: transfers))
+        #expect(download.contains("enqueueAndWaitVersion("))
+        let passesTheFlag = download.contains("replacingExisting: true")
+        #expect(passesTheFlag)
+        let open = try #require(SourceSpan.body(after: "func openVersionReadOnly(", in: transfers))
+        let openPassesIt = open.contains("replacingExisting")
+        #expect(!openPassesIt)
+    }
+
     /// The guard above reads `Self.code`, and everything it concludes from an
     /// ABSENCE depends on that being the comment-and-string-blanked view. If it
     /// read the raw text instead, a doc comment that names the forbidden calls
