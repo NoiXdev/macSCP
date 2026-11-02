@@ -2206,6 +2206,113 @@ extension S3FileSystem: S3BucketSettings {
     }
 }
 
+/// `ObjectVersionProvider` conformance: an object's version history, read with
+/// `GET ?versions` on the named bucket. Built and signed the way the
+/// `S3BucketSettings` conformance above does it (`signedRequest` pairs the URL
+/// with the canonical path, `send` is the one way out), so there is no second
+/// signer.
+///
+/// **A continuation marker goes into the query RAW.** `SigV4Signer.
+/// canonicalQueryString` percent-encodes the name and the value of every pair
+/// exactly once, for the signature and for the wire alike; a marker encoded
+/// here first would reach the store as a token it never issued (`%255B` where
+/// it sent `[`). Nothing in this file splits, trims or reads inside a marker.
+extension S3FileSystem: ObjectVersionProvider {
+    /// The most pages one listing may take. A safety net against a store whose
+    /// listing never ends, NOT a way to detect progress: a marker is opaque
+    /// and one real store repeats the same key marker across the pages of a
+    /// listing (spec section 4.9), so comparing markers would end a healthy
+    /// listing early. Past this the call fails rather than return a history
+    /// that may be missing its oldest entries.
+    static let versionPageLimit = 100_000
+
+    public func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
+        let entries = try await versionEntries(
+            inBucket: bucket, prefix: key, delimiter: nil, pageLimit: Self.versionPageLimit)
+        // `prefix=doc.txt` also matches `doc.txt.bak`; the parser reports what
+        // arrived and the exact key is chosen here.
+        return entries.filter { $0.key == key }
+    }
+
+    public func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {
+        let entries = try await versionEntries(
+            inBucket: bucket, prefix: prefix, delimiter: "/", pageLimit: Self.versionPageLimit)
+        // Only a marker that is its key's CURRENT entry hides the key. An older
+        // marker under a newer version describes a key that was deleted and
+        // then written again, which is not deleted.
+        return entries.filter { $0.isDeleteMarker && $0.isLatest }.map {
+            DeletedEntry(key: $0.key, markerVersionId: $0.versionId, modifiedAt: $0.modifiedAt)
+        }
+    }
+
+    /// Every entry of the listing `?versions&prefix=…[&delimiter=…]`, pages
+    /// followed to the end.
+    ///
+    /// The loop ends when a page carries no `NextKeyMarker`. The page type
+    /// derives `isTruncated` from that marker alone, so a marker beside
+    /// `IsTruncated=false` is indistinguishable from a marker beside `true`
+    /// at this layer and is FOLLOWED: the cost is one further request that
+    /// ends the listing, where trusting the flag instead would risk dropping
+    /// the rest of a history. (The opposite disagreement, `true` with no
+    /// marker, never gets here: `S3VersionsXML.parsePage` refuses it.) Whether
+    /// a real store sends a marker on its last page is unmeasured.
+    ///
+    /// A non-2xx answer is mapped HERE, with the bucket as its path, rather
+    /// than left to the parser: the parser has no path and would hand a 404
+    /// back as `.notFound(path: "")`, which names nothing.
+    func versionEntries(
+        inBucket bucket: String, prefix: String, delimiter: String?, pageLimit: Int
+    ) async throws -> [ObjectVersion] {
+        var collected: [ObjectVersion] = []
+        var keyMarker: String?
+        var versionIdMarker: String?
+        for _ in 0..<pageLimit {
+            var query: [(name: String, value: String)] = [
+                (name: "versions", value: ""), (name: "prefix", value: prefix),
+            ]
+            if let delimiter { query.append((name: "delimiter", value: delimiter)) }
+            if let keyMarker { query.append((name: "key-marker", value: keyMarker)) }
+            if let versionIdMarker {
+                query.append((name: "version-id-marker", value: versionIdMarker))
+            }
+            let request = try Self.signedRequest(
+                .bucketRoot(bucket: bucket), method: "GET", query: query, config: config)
+            let (data, response) = try await send(request)
+            guard (200..<300).contains(response.statusCode) else {
+                throw Self.mapErrorStatus(response.statusCode, body: data, path: "/" + bucket)
+            }
+            let page = try S3VersionsXML.parsePage(data, status: response.statusCode)
+            collected.append(contentsOf: page.versions)
+            guard let next = page.nextKeyMarker else { return collected }
+            keyMarker = next
+            versionIdMarker = page.nextVersionIdMarker
+        }
+        throw RemoteFSError.protocolError(
+            reason: "the version listing did not end within \(pageLimit) pages")
+    }
+
+    // Placeholders until the tasks that implement them land: the protocol
+    // needs all six for the conformance to exist, and refusing is the only
+    // answer that cannot be mistaken for a performed write.
+    public func readStream(
+        ofKey key: String, inBucket bucket: String, versionId: String
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        throw RemoteFSError.finding(.operationNotSupported)
+    }
+
+    public func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
+        throw RemoteFSError.finding(.operationNotSupported)
+    }
+
+    public func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {
+        throw RemoteFSError.finding(.operationNotSupported)
+    }
+
+    public func liftDeleteMarker(ofKey key: String, inBucket bucket: String, markerVersionId: String) async throws {
+        throw RemoteFSError.finding(.operationNotSupported)
+    }
+}
+
 /// The checksum capability for an object store, which is a different kind of
 /// answer from SSH's: **nothing is computed on request here.** S3 offers no
 /// way to ask a bucket for a digest, and the maintainer's ruling of
