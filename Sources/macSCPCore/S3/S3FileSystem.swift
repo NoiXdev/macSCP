@@ -2224,6 +2224,10 @@ extension S3FileSystem: ObjectVersionProvider {
     /// listing (spec section 4.9), so comparing markers would end a healthy
     /// listing early. Past this the call fails rather than return a history
     /// that may be missing its oldest entries.
+    ///
+    /// 100,000 is an arbitrary runaway bound, unmeasured, chosen so that the
+    /// direction above holds rather than for its magnitude; no real listing
+    /// is expected anywhere near it.
     static let versionPageLimit = 100_000
 
     public func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
@@ -2294,6 +2298,13 @@ extension S3FileSystem: ObjectVersionProvider {
     // Placeholders until the tasks that implement them land: the protocol
     // needs all six for the conformance to exist, and refusing is the only
     // answer that cannot be mistaken for a performed write.
+    //
+    // Owners, one per method: `readStream` is Task 5's; `restore`,
+    // `deleteVersion` and `liftDeleteMarker` are Task 4's. A refusal here is
+    // indistinguishable from a store that does not support the call, so
+    // `S3ObjectVersionsTests` carries one case per placeholder that goes red
+    // the moment its method is implemented; the implementing commit removes
+    // that case.
     public func readStream(
         ofKey key: String, inBucket bucket: String, versionId: String
     ) async throws -> AsyncThrowingStream<Data, Error> {
