@@ -837,7 +837,8 @@ struct ObjectVersionActionsTests {
             let attempted = events.first?.detail.hasPrefix("permanently deleted version v2") ?? false
             #expect(attempted)
             let message = events.first?.errorMessage ?? ""
-            #expect(!message.isEmpty)
+            let isEmpty = message.isEmpty
+            #expect(!isEmpty)
             let saysUnconfirmed = message.contains("could not be confirmed")
             #expect(saysUnconfirmed == unconfirmed)
             let saysFailed = message.lowercased().contains("fail")
@@ -876,17 +877,28 @@ struct ObjectVersionActionsTests {
             }
             let message = trail.events.first?.errorMessage ?? ""
             let expected = L10n.$localeOverride.withValue(locale) { line.text }
-            #expect(message == expected, "\(action) in \(locale)")
-            #expect(message != line.english, "\(action) in \(locale)")
+            // Every comparison below is computed into a `Bool` BEFORE it is
+            // expected: `#expect` prints the source text of its expression and
+            // the values in it, and `message` is exactly the value that carries
+            // the store's words on the regression this test exists for. The
+            // name of the action and the locale are what a failure keeps.
+            let isTheCataloguesSentence = message == expected
+            let isNotTheEnglish = message != line.english
             let canary = Self.storeWords
             let leaked = message.contains(canary)
-            #expect(!leaked)
+            let isEmpty = message.isEmpty
+            #expect(isTheCataloguesSentence, "\(action) in \(locale)")
+            #expect(isNotTheEnglish, "\(action) in \(locale)")
+            #expect(!leaked, "\(action) in \(locale)")
+            #expect(!isEmpty, "\(action) in \(locale)")
             recorded.append(message)
         }
-        // Five distinct reasons (two of the seven share a sentence: a
-        // retention and a hold are both "locked"), and none of them empty.
-        #expect(Set(recorded).count == 6)
-        #expect(recorded.allSatisfy { !$0.isEmpty })
+        // Seven cases (counted in the expectation below), of which a retention
+        // and a hold both say "locked": six distinct sentences.
+        let caseCount = cases.count
+        let distinct = Set(recorded).count
+        #expect(caseCount == 7)
+        #expect(distinct == 6)
     }
 
     /// The line is written BEFORE the history is read again. A permanent
