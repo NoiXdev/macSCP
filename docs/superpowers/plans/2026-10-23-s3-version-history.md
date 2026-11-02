@@ -385,7 +385,19 @@ Open for a version downloads through the queue into a temp directory and hands t
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/BucketVersioningCache.swift`
-- Modify: `Sources/MacSCPAppKit/RemoteFileTableView.swift`, `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`, the four catalogues in both targets
+- Modify: `Sources/MacSCPAppKit/RemoteFileTableView.swift`, `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`, the four `MacSCPAppKit` catalogues
+
+**Corrected 2026-11-02, after this task was closed.** This line first read
+`the four catalogues in both targets`, which is withdrawn. The correction made for
+this task on dispatch day reached its `titleKey` STEP and not this Files block, so
+the block kept a claim the step had already withdrawn, and a sweep for the phrase
+counted the line as accounted for. The shipped work was right regardless: Task 6's
+one key is `VersionsRowAvailability.neverVersionedReasonKey`,
+`browser.action.versions.neverVersioned`, and
+`grep -o '"browser\.action\.' <catalogue> | wc -l` prints 5 for the App's `en`
+and 0 for Core's, whose 131 keys (`grep -o '^"' … | wc -l`) are the positive
+control that the zero is measured and not an unread file. Nothing is owed to the
+code here; the record is what is being repaired.
 - Test: `Tests/macSCPAppKitTests/BucketVersioningCacheTests.swift`, `Tests/macSCPAppKitTests/FileActionAvailabilityTests.swift`
 
 **Interfaces:**
@@ -622,8 +634,20 @@ One per disabled condition from spec §6.2's table, each asserting `isEnabled` i
 Delete takes an ordinary confirmation (spec §6.2, maintainer's decision of 2026-10-23) — **not** the COMPLIANCE acknowledgement, which is Plan B's.
 
 **Amended 2026-11-02, before Task 9 was dispatched.** (Withdrawn wording, verbatim:
-`the four catalogues in both targets`.) **Third time in this plan for the same defect**, after
-Task 6's `titleKey` and Task 7's own file list: every string this task adds is a view string in
+`the four catalogues in both targets`.) **Fourth time in this plan for the same defect**, after
+Task 6's `titleKey`, Task 6's own Files block, and Task 7's file list.
+
+*Corrected 2026-11-02, while amending Task 10.* This sentence first read
+`**Third time in this plan for the same defect**, after Task 6's \`titleKey\` and
+Task 7's own file list`, which is withdrawn: it undercounted by one, because Task
+6's Files block carried the same wording and no sweep had yet classified it. The
+ordinal was a claim about the rest of the plan, and it read as plausible exactly
+while being wrong, which is what this project's rule about numbers in comments is
+for. The figure below was also re-measured on the corrected date: `grep -c` counts
+LINES, and these catalogues put a record on one line, so it agreed with
+`grep -o 'versions\.' … | wc -l` on all four files (55/55/56/55 after this task's
+keys landed) — an agreement that is a property of these files, not of the tool.
+Every string this task adds is a view string in
 an `MacSCPAppKit` view, and both files it modifies are in that target. Run from the repository
 root, `grep -c 'versions\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings` prints
 27 against 0 for `Sources/macSCPCore/Resources/en.lproj/Localizable.strings` — the sheet's own
@@ -664,8 +688,88 @@ Six things this task inherits from the tasks before it, none of them derivable f
 ### Task 10: `showDeletedFiles`
 
 **Files:**
-- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift`, `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`, `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift`, `Sources/MacSCPAppKit/SettingsView.swift`, `Sources/MacSCPAppKit/MacSCPCommands.swift`, `Sources/MacSCPAppKit/RemoteFileTableView.swift`, `Sources/macSCPCore/Presentation/BrowserContextMenu.swift`, the four catalogues in both targets
+- Modify: `Sources/macSCPCore/Settings/SettingsStore.swift`, `Sources/macSCPCore/Presentation/RemoteBrowserViewModel.swift`, `Sources/macSCPCore/RemoteFS/RemoteFileItem.swift`, `Sources/MacSCPAppKit/SettingsView.swift`, `Sources/MacSCPAppKit/MacSCPCommands.swift`, `Sources/MacSCPAppKit/RemoteFileTableView.swift`, `Sources/MacSCPAppKit/BrowserPane.swift`, `Sources/MacSCPAppKit/ContentView+MenuActions.swift`, `Sources/macSCPCore/Presentation/BrowserContextMenu.swift`, the four `MacSCPAppKit` catalogues
 - Test: `Tests/macSCPCoreTests/DeletedEntryListingTests.swift`, `Tests/macSCPAppKitTests/ShowDeletedFilesTests.swift`
+
+**Amended 2026-11-02, before dispatch, two corrections and five carry-forwards.**
+
+**Correction 1 — the catalogue scope.** This list first read `the four catalogues
+in both targets`, which is withdrawn. Task 10's keys are App keys and Core's
+catalogues are not touched. Measured for THIS task's own key families, not
+inherited from an earlier task's figure, with `grep -o … | wc -l` because `-c`
+counts lines and these files put a record on one line:
+
+```
+grep -o '"settings\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l
+grep -o '"browser\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l
+grep -o '"browser\.action\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l
+```
+
+App: 183, 33, 5. The same three against
+`Sources/macSCPCore/Resources/en.lproj/Localizable.strings`: 0, 0, 0. The positive
+control beside those three zeros, because a zero from an unread file reads exactly
+like a measured one: `grep -o '^"' Sources/macSCPCore/Resources/en.lproj/Localizable.strings | wc -l`
+prints 131, so Core's catalogue is there and populated and the zeros are about the
+key families. `BrowserContextMenu.Entry` is declared in Core and carries no title
+of its own; the App resolves it.
+
+This is the FIFTH occurrence of `both targets` in this plan being false of the
+tree. This sentence first read `This is the FOURTH occurrence of \`both targets\`
+in this plan being false of the tree (Task 6's \`titleKey\`, Task 7's file list,
+Task 9's file list, this one)`, which is withdrawn: running the sweep AFTER writing
+it turned up a live fifth in Task 6's Files block, which the earlier correction had
+missed because it reached that task's `titleKey` step instead. The enumeration is
+Task 6's `titleKey`, Task 6's Files block, Task 7's file list, Task 9's file list,
+and this one. Classifying per MATCH and not per line is what separated the three
+surviving occurrences into two quotations and one live claim. The
+backlog row Task 11 opens for it is not a style note: the plan was written before
+any of this code existed, and the phrase was true of the plan's mental model and
+false of the tree from the first line.
+
+**Correction 2 — two files the list omitted.** `BrowserPane.swift` and
+`ContentView+MenuActions.swift` are added above. A new `BrowserContextMenu.Entry`
+case must be handled everywhere the existing cases are, and that is three files,
+not one:
+
+```
+grep -rln 'BrowserContextMenu\.Entry\|case .computeChecksum\|case .copyPath' Sources/
+```
+
+prints `RemoteFileTableView.swift`, `ContentView+MenuActions.swift`,
+`BrowserPane.swift`. The positive control that the pattern reaches the declaration
+too: `grep -rn 'case copyPath' Sources/macSCPCore/Presentation/BrowserContextMenu.swift`
+prints line 42. This is the same defect as Correction 1 one level up — the list
+names where the deliverable LIVES and not where it must be WIRED, which is what
+Tasks 7 and 9 both ran into.
+
+**Carry-forwards:**
+
+1. **`isBucket` is the precedent for `deleteMarkerVersionID`.** `RemoteFileItem`'s
+   init takes every parameter after `kind` with a default, so
+   `RemoteFileItem(name:path:kind:)` compiles today and the plan's positive-control
+   test is sound. `isBucket` is the last such property and its doc comment states
+   the default exists so every existing call site keeps compiling. Follow that
+   shape, including the comment.
+2. **`AuditRecorder.recordDeleteMarkerLifted` is still without a caller, and it is
+   Task 10's.** Task 9 found that none of the three version recorders had one — the
+   plan had assumed `S3FileSystem` wrote those lines and it does not — and wired
+   restore and delete. Lifting a marker from the browser row is the third, and
+   `AuditEvent`'s comment names Task 10 as its caller. The failure text is a FIXED
+   sentence, never the store's own: a `reason` can carry `scheme://KEY:SECRET@host`.
+3. **The refusal sentence `s3.versions.refusal.marker` gets its second half here.**
+   It reads "A delete marker is not a version with content, so it is not deleted
+   here." Task 9 could not say where it IS done, because this task had not built it.
+   Once the browser row lifts markers, that sentence points at it — in all four App
+   catalogues, German in du-form.
+4. **One counting stub, shared.** `theSwitchChangesWhatIsFetchedAndNotOnlyWhatIsShown`
+   and `togglingWhereItCannotApplyNeitherReListsNorErrors` both need a listing
+   counter. Write one and share it; two counters that drift answer different
+   questions while reading as one.
+5. **The toggle test is a positive AND a negative.** `togglingWhereItCannotApply`
+   asserts zero extra requests across four cases. A request count that is zero
+   because the stub was never reached reads exactly like one that is zero because
+   the toggle correctly did nothing, so the same stub must be shown counting a real
+   listing in the same suite.
 
 **Interfaces:**
 - Consumes: Task 3's `deletedEntries(inBucket:prefix:)`, Task 4's `liftDeleteMarker`.
