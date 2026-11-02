@@ -345,6 +345,11 @@ final class ObjectVersionsModel {
             do {
                 let retention = try await settings.retention(
                     ofKey: key, inBucket: bucket, versionId: id)
+                // The second request is only worth sending to someone who is
+                // still waiting for it. A store whose call does not itself
+                // refuse a cancelled task would otherwise answer it for a sheet
+                // that has gone (`ObjectVersionsLockReadTests`).
+                try Task.checkCancellation()
                 let hold = try await settings.legalHold(ofKey: key, inBucket: bucket, versionId: id)
                 return .read(retention: retention, legalHold: hold)
             } catch {

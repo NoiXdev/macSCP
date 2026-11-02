@@ -8,6 +8,16 @@ import Foundation
 /// running its body: the wait is bounded by the reads in front of it, which
 /// are themselves cancelled, and not tracking a continuation per waiter keeps
 /// there nothing to strand.
+///
+/// **Measured 2026-11-02 (S3 version history, Task 8): that design leaks
+/// nothing.** Cancelling every waiter of a limit-1 gate whose slot is held
+/// leaves each of them returning `nil` once the slot reaches it, with its body
+/// never entered and nobody left waiting
+/// (`ObjectVersionsLockReadTests.aWaiterCancelledInTheQueueNeverRunsItsBodyAndStrandsNobody`).
+/// What the bound leans on is that the running reads end when they are
+/// cancelled, and that is the store's call, not the gate's: a read that came
+/// back anyway is the caller's to stop before it sends anything more
+/// (`ObjectVersionsModel.readLockState(of:)`).
 @MainActor
 final class ConcurrencyGate {
     private let limit: Int
