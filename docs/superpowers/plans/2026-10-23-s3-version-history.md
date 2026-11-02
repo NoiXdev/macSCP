@@ -546,6 +546,48 @@ Table, `Picker` filter, `SheetSearchField` with `sheetSearchPredicate(text:isReg
 }
 ```
 
+**Amended 2026-11-02, after Task 7's review. Three of these four properties are already
+pinned, and this task is what remains.** Task 7 built the bounded read itself — `ConcurrencyGate`,
+`readLockState(of:)`, `readLockStates(of:)` and the state cell's `.task(id:)` — because the
+`RowState` cases this plan gave Task 7 (`.locked`, `.legalHold`, `.lockUnknown`,
+`.lockUnreadable`) cannot be answered without reading. Do not rebuild any of it, and do not
+re-dispatch what the following tests already hold:
+
+- "a row whose lock is not yet known is not treated as unlocked" → `aBucketWithALockHasEachRowsLockReadAndUnreadRowsAreUnknownNotUnlocked`,
+  which asserts `.lockUnknown` for every row before any read and the three distinct outcomes
+  after.
+- "zero lock requests on a bucket without Object Lock, on a counting stub" →
+  `aListingThatSucceededIsNotEmptiedByALockReadThatCouldNotApply`, across three backings, reading
+  the count off `FakeBucketSettings`' own record. The positive control the zero needs is in the
+  same case: the rows are asserted present and `.loaded`.
+- "at most the concurrency limit at once" → `theGateRunsAtMostItsLimitAtOnceAndAllOfThem`
+  measures the peak through an external probe. The model-level case's floor was too weak to pin
+  parallelism and was raised in Task 7's fix round 1, so this task does not touch it either.
+
+**What remains is the one property nothing pins, and it is work and not only a test.** No test
+closes the sheet with reads still outstanding, and `ConcurrencyGate`'s waiters are not
+cancellation-aware by design. So on a long history behind a limit-4 gate, a sheet dismissed while
+rows are queued leaves the waiters to wake and send their reads against the store after the
+surface that wanted them is gone. Decide whether that is a leak worth closing — a request the
+user cannot see the answer to is a request they did not ask for — and either make the gate's wait
+cancellation-aware or record, with the reasoning, why the reads are harmless. Either way the
+property gets the test the plan named.
+
+`readLocks(forVisible:)` as a signature is withdrawn. (Withdrawn wording, verbatim:
+`ObjectVersionsModel.readLocks(forVisible rows: [ObjectVersion]) async`.) Task 7 answered the
+"visible" half better than a parameter could: each state cell asks for its own row in `.task(id:)`,
+so nothing off-screen is read and no caller has to compute what is visible. The name in the tree
+is `readLockStates(of:)`.
+
+**And the bound above is wrong by this project's own rule.** (Withdrawn wording, verbatim:
+`` `.timeLimit(.minutes(1))` as the hang bound; no wall-clock ceiling. ``) A `.timeLimit` is a
+wall-clock ceiling too, and 60 s sits below this suite's own run duration, so it does not measure
+the test at all — the 110 such bounds in `Tests/` were raised to `.minutes(5)` on 2026-10-30 after
+two runs of the same image, two commits apart, reddened 148 cases on it. Use
+`.timeLimit(.minutes(5))`. Task 7 already measured a fresh instance of why the bound is not the
+thing to lean on: a plant that trapped the runner spun the main actor for ~30 minutes and starved
+the `.timeLimit` enforcing it, because the timer needs a thread the starved pool would not give.
+
 - [ ] **Step 2–4: red, implement, green**
 
 - [ ] **Step 5: Commit**
