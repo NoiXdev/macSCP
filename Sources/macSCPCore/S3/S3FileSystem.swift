@@ -2232,7 +2232,7 @@ extension S3FileSystem: ObjectVersionProvider {
 
     public func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion] {
         let entries = try await versionEntries(
-            inBucket: bucket, prefix: key, delimiter: nil, pageLimit: Self.versionPageLimit)
+            inBucket: bucket, prefix: key, delimiter: nil)
         // `prefix=doc.txt` also matches `doc.txt.bak`; the parser reports what
         // arrived and the exact key is chosen here.
         return entries.filter { $0.key == key }
@@ -2240,7 +2240,12 @@ extension S3FileSystem: ObjectVersionProvider {
 
     public func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {
         let entries = try await versionEntries(
-            inBucket: bucket, prefix: prefix, delimiter: "/", pageLimit: Self.versionPageLimit)
+            inBucket: bucket, prefix: prefix, delimiter: "/")
+        // One level deep BY DESIGN (a folder view): `delimiter=/` rolls a
+        // marker in a sub-prefix (`d/sub/x.txt` under `d/`) up into
+        // `CommonPrefixes`, which the parser does not read, so such a marker
+        // is not reported here. A caller wanting a sub-folder's deletions asks
+        // with that sub-folder as the prefix.
         // Only a marker that is its key's CURRENT entry hides the key. An older
         // marker under a newer version describes a key that was deleted and
         // then written again, which is not deleted.
@@ -2265,7 +2270,8 @@ extension S3FileSystem: ObjectVersionProvider {
     /// than left to the parser: the parser has no path and would hand a 404
     /// back as `.notFound(path: "")`, which names nothing.
     func versionEntries(
-        inBucket bucket: String, prefix: String, delimiter: String?, pageLimit: Int
+        inBucket bucket: String, prefix: String, delimiter: String?,
+        pageLimit: Int = S3FileSystem.versionPageLimit
     ) async throws -> [ObjectVersion] {
         var collected: [ObjectVersion] = []
         var keyMarker: String?
@@ -2295,12 +2301,14 @@ extension S3FileSystem: ObjectVersionProvider {
             reason: "the version listing did not end within \(pageLimit) pages")
     }
 
-    // Placeholders until the tasks that implement them land: the protocol
-    // needs all six for the conformance to exist, and refusing is the only
-    // answer that cannot be mistaken for a performed write.
+    // Placeholders until the tasks that implement them land: all six
+    // requirements must be met for the conformance to exist, and refusing is
+    // the only answer that cannot be mistaken for a performed write.
     //
-    // Owners, one per method: `readStream` is Task 5's; `restore`,
-    // `deleteVersion` and `liftDeleteMarker` are Task 4's. A refusal here is
+    // Owners, one per method, in the plan under
+    // `.superpowers/sdd/2026-10-23-s3-version-history`: `readStream` is the
+    // version download (Task 5); `restore`, `deleteVersion` and
+    // `liftDeleteMarker` are the write half (Task 4). A refusal here is
     // indistinguishable from a store that does not support the call, so
     // `S3ObjectVersionsTests` carries one case per placeholder that goes red
     // the moment its method is implemented; the implementing commit removes

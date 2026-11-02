@@ -109,7 +109,9 @@ public protocol ObjectVersionProvider: Sendable {
     /// caller that needs a defined order sorts explicitly.
     func versions(ofKey key: String, inBucket bucket: String) async throws -> [ObjectVersion]
 
-    /// The keys under `prefix` whose latest entry is a delete marker.
+    /// The keys directly under `prefix` (one level, as a folder view shows
+    /// them; keys in a sub-prefix are not reported) whose latest entry is a
+    /// delete marker.
     func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry]
 
     /// Streams the content of one specific version of `key`, from its first
