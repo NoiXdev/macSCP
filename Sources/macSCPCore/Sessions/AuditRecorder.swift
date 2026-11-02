@@ -178,8 +178,12 @@ public struct AuditRecorder: Sendable {
     /// endpoint the user typed. `nil` is a create that went through. **No
     /// default value**, for the reason `BucketVersioningModel.init(current:
     /// bucketHasObjectLock:)` gives: a default is what lets a caller leave a
-    /// refusal reading as done without saying so. The same goes for the three
-    /// methods after this one.
+    /// refusal reading as done without saying so. The same goes for the
+    /// recorders after this one in this section and for the three of the
+    /// version-history section below it. (Withdrawn wording, verbatim: "The
+    /// same goes for the three methods after this one." Three recorders were
+    /// added after those three, so the count no longer described everything
+    /// that follows.)
     ///
     /// A create that failed after the bucket existed (the versioning request
     /// that follows it) is recorded as a failure too, and its sentence says
@@ -295,6 +299,43 @@ public struct AuditRecorder: Sendable {
             detail = "default retention of bucket \(bucket) set to \(mode.rawValue) for \(days) days"
         }
         appendBucketSetting(.objectLockChanged, detail: detail, failure: failure)
+    }
+
+    // MARK: - S3 version history (Task 4)
+
+    /// Logs an older version of `key` written again as the current one, or
+    /// refused. `failure` follows `recordBucketCreated`'s rule: a FIXED
+    /// sentence, never an error's own text (which can carry the endpoint), and
+    /// **no default value**, so a caller cannot leave a refusal reading as done
+    /// by saying nothing. The line names the bucket, the key and the version
+    /// id and nothing else: none of the three is a secret, and the endpoint
+    /// and the credentials never reach this method.
+    public func recordVersionRestored(key: String, bucket: String, versionId: String, failure: String?) {
+        appendBucketSetting(
+            .versionRestored,
+            detail: "restored version \(versionId) of \(bucket)/\(key) as its current version",
+            failure: failure)
+    }
+
+    /// Logs one version removed for good, or refused. Worded "permanently"
+    /// because it is the one write of the three that leaves nothing to undo it
+    /// with: no marker, no history entry.
+    public func recordVersionDeleted(key: String, bucket: String, versionId: String, failure: String?) {
+        appendBucketSetting(
+            .versionDeleted,
+            detail: "permanently deleted version \(versionId) of \(bucket)/\(key)",
+            failure: failure)
+    }
+
+    /// Logs a delete marker removed, so the version beneath it is current
+    /// again, or refused.
+    public func recordDeleteMarkerLifted(
+        key: String, bucket: String, markerVersionId: String, failure: String?
+    ) {
+        appendBucketSetting(
+            .deleteMarkerLifted,
+            detail: "removed delete marker \(markerVersionId) from \(bucket)/\(key)",
+            failure: failure)
     }
 
     private func appendBucketSetting(_ kind: AuditEvent.Kind, detail: String, failure: String?) {

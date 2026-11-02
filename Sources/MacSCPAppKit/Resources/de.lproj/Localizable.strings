@@ -816,6 +816,10 @@
 "audit.kind.versioningChanged" = "Versionierung geändert";
 "audit.kind.corsChanged" = "CORS-Regeln geändert";
 "audit.kind.objectLockChanged" = "Objektsperre geändert";
+"audit.kind.versionRestored" = "Version wiederhergestellt";
+"audit.kind.versionDeleted" = "Version gelöscht";
+"audit.kind.deleteMarkerLifted" = "Löschmarkierung entfernt";
+"audit.kind.metadataChanged" = "Metadaten geändert";
 
 /* Sessions-Menü (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";

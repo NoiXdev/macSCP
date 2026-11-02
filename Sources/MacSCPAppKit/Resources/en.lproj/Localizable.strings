@@ -822,6 +822,10 @@
 "audit.kind.versioningChanged" = "Versioning changed";
 "audit.kind.corsChanged" = "CORS rules changed";
 "audit.kind.objectLockChanged" = "Object Lock changed";
+"audit.kind.versionRestored" = "Version restored";
+"audit.kind.versionDeleted" = "Version deleted";
+"audit.kind.deleteMarkerLifted" = "Delete marker removed";
+"audit.kind.metadataChanged" = "Metadata changed";
 
 /* Sessions menu (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";

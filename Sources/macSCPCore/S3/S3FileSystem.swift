@@ -800,6 +800,9 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// delete that names a `versionId` meets the `403`, and nothing here sends
     /// one yet. The refusal below is therefore not reachable from this method
     /// against that store today, and is what the version-aware half will meet.
+    /// That half is `deleteVersion` (the `ObjectVersionProvider` conformance
+    /// below), which reads its refusals through the same `refusalOfDelete`,
+    /// naming the version.
     private func delete(bucket: String, key: String) async throws {
         let request = try buildSignedRequest(
             bucket: bucket, method: "DELETE", key: key, query: [],
@@ -828,9 +831,17 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// The path in a finding is `key`, the caller's own, never one the store
     /// wrote. Not `private`, so the rig test can hand it a refusal it provoked
     /// with a versioned delete.
-    func refusalOfDelete(status: Int, body: Data, bucket: String, key: String) async -> RemoteFSError {
+    ///
+    /// `versionId` is the version the refused `DELETE` named, or `nil` for a
+    /// plain delete of the key. A lock sits on a VERSION, so the object is
+    /// asked about the version the request named: asking about the current one
+    /// would answer for a different object than the one refused.
+    func refusalOfDelete(
+        status: Int, body: Data, bucket: String, key: String, versionId: String? = nil
+    ) async -> RemoteFSError {
         if S3ErrorCode.parse(body) == "AccessDenied",
-            let locked = await lockFinding(forRefusedDeleteOf: key, inBucket: bucket)
+            let locked = await lockFinding(
+                forRefusedDeleteOf: key, inBucket: bucket, versionId: versionId)
         {
             return locked
         }
@@ -936,8 +947,12 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `400 InvalidRequest` to both, a network error, a missing permission)
     /// establishes nothing, and `nil` sends the caller back to the original
     /// refusal; a probe's failure never replaces the answer it was asked
-    /// about. The current version is the one read (`versionId: nil`), which is
-    /// the only version this half deletes.
+    /// about. The version read is `versionId` when the refused `DELETE` named
+    /// one (`deleteVersion`), and the current version (`nil`) for a plain
+    /// delete. (Withdrawn wording, verbatim: "The current version is the one
+    /// read (`versionId: nil`), which is the only version this half deletes."
+    /// `deleteVersion` deletes a named version, so it was no longer the only
+    /// one.)
     ///
     /// **Two callers, and one of them gates this on the bucket first.**
     /// `refusalOfDelete` asks it for the single key a `DELETE` was refused
@@ -945,12 +960,14 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// `bucketLockState(ofBucket:)` once per call, does not come here at all
     /// for a bucket that has no Object Lock, and comes here at most once when
     /// the bucket's own state could not be read -- see its own comment.
-    private func lockFinding(forRefusedDeleteOf key: String, inBucket bucket: String) async -> RemoteFSError? {
+    private func lockFinding(
+        forRefusedDeleteOf key: String, inBucket bucket: String, versionId: String? = nil
+    ) async -> RemoteFSError? {
         let path = reportedPath(bucket: bucket, key: key)
-        if (try? await legalHold(ofKey: key, inBucket: bucket, versionId: nil)) == true {
+        if (try? await legalHold(ofKey: key, inBucket: bucket, versionId: versionId)) == true {
             return .finding(.objectUnderLegalHold(path: path))
         }
-        if let held = try? await retention(ofKey: key, inBucket: bucket, versionId: nil),
+        if let held = try? await retention(ofKey: key, inBucket: bucket, versionId: versionId),
             held.retainUntil > Date()
         {
             return .finding(.objectUnderRetention(path: path))
@@ -1441,10 +1458,26 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// only remaining copy of the data. A real `CopyObjectResult` body never
     /// contains an `<Error` element, so a plain substring check is enough to
     /// catch this without a full XML parse.
+    ///
+    /// **`sourceVersionId` names one version of the source** (`restore`):
+    /// the header then reads `/{bucket}/{key}?versionId={id}`. The suffix is
+    /// appended AFTER the key has been encoded and is itself the one pair
+    /// `SigV4Signer.canonicalQueryString` encodes, so the id is encoded
+    /// exactly once and by the signer's own rule. Encoding `key + "?versionId="
+    /// + id` as one path instead would turn the `?` and `=` into `%3F` and
+    /// `%3D`, and the store would read them as part of the key's name. The
+    /// check above matters more on that path than on `rename`'s: a restore
+    /// reported as done when the copy failed tells the user their old version
+    /// is back when it is not.
     private func copyObject(
-        sourceBucket: String, fromKey: String, destinationBucket: String, toKey: String
+        sourceBucket: String, fromKey: String, destinationBucket: String, toKey: String,
+        sourceVersionId: String? = nil
     ) async throws {
-        let copySource = "/\(sourceBucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
+        var copySource = "/\(sourceBucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
+        if let sourceVersionId {
+            copySource +=
+                "?" + SigV4Signer.canonicalQueryString(query: [(name: "versionId", value: sourceVersionId)])
+        }
         let request = try buildSignedRequest(
             bucket: destinationBucket, method: "PUT", key: toKey, query: [],
             extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
@@ -2207,7 +2240,9 @@ extension S3FileSystem: S3BucketSettings {
 }
 
 /// `ObjectVersionProvider` conformance: an object's version history, read with
-/// `GET ?versions` on the named bucket. Built and signed the way the
+/// `GET ?versions` on the named bucket, and the writes that act on it (a
+/// restore, a version delete, a marker removal) under "Writes" below. Built
+/// and signed the way the
 /// `S3BucketSettings` conformance above does it (`signedRequest` pairs the URL
 /// with the canonical path, `send` is the one way out), so there is no second
 /// signer.
@@ -2331,33 +2366,187 @@ extension S3FileSystem: ObjectVersionProvider {
             reason: "the version listing did not end within \(pageLimit) pages")
     }
 
-    // Placeholders until the tasks that implement them land: all six
-    // requirements must be met for the conformance to exist, and refusing is
-    // the only answer that cannot be mistaken for a performed write.
+    /// The `reason` of the `.protocolError` a `restore` throws when the copy
+    /// was accepted and the history afterwards does not show the restored
+    /// content as the key's new current version. Named so a test reads it
+    /// instead of spelling a second copy. Carries nothing the store wrote.
+    static let restoreUnconfirmedReason =
+        "S3 restore could not be confirmed: the history shows no new current version with the restored content"
+    /// The same, for `deleteVersion`: the store answered, and the version is
+    /// still listed.
+    static let deleteVersionUnconfirmedReason =
+        "S3 version delete could not be confirmed: the version is still listed"
+    /// The same, for `liftDeleteMarker`: the store answered, and the marker
+    /// is still listed.
+    static let liftDeleteMarkerUnconfirmedReason =
+        "S3 delete-marker removal could not be confirmed: the marker is still listed"
+    /// A `restore` whose source version is a delete marker: it stores no
+    /// content, so there is nothing to copy.
+    static let restoreFromMarkerReason =
+        "S3 restore: the version to restore from is a delete marker and has no content"
+    /// A `liftDeleteMarker` whose id names a version that holds content.
+    static let liftOfAVersionReason =
+        "S3 delete-marker removal: the entry is a version with content, not a delete marker"
+
+    // MARK: Writes
     //
-    // Owners, one per method, in
-    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`: `readStream` is the
-    // version download (Task 5); `restore`, `deleteVersion` and
-    // `liftDeleteMarker` are the write half (Task 4). A refusal here is
-    // indistinguishable from a store that does not support the call, so
-    // `S3ObjectVersionsTests` carries one case per placeholder that goes red
-    // the moment its method is implemented; the implementing commit removes
-    // that case.
+    // Each write is READ BACK before it is reported as done. A `204`, or a
+    // `200` from a copy, is the store saying it took the request; what the
+    // history shows afterwards is what happened, and the user is told the
+    // second. A write the history does not confirm throws instead of
+    // returning, so a caller that sees no error may rely on the change.
+    // None of the three sends `x-amz-bypass-governance-retention`: a version
+    // under a GOVERNANCE retention stays refused.
+
+    /// Makes `versionId`'s content the current content of `key` by copying it
+    /// onto the key, which the store writes as a NEW version; the history
+    /// keeps every entry it had.
+    ///
+    /// The history is read BEFORE the copy for three things: the source
+    /// version must exist and must hold content (a delete marker has none, and
+    /// nothing is sent for either refusal), its ETag is the evidence the
+    /// read-back compares against, and the versions that already existed are
+    /// what makes the version the copy writes recognisably NEW.
+    ///
+    /// **Confirmed when** the history afterwards has a current entry that is
+    /// not a delete marker and is not among the versions listed before the
+    /// copy, and, where the source's ETag is a file MD5, carries that same
+    /// MD5. A restore that produced no new current entry is unconfirmed on
+    /// every path.
+    ///
+    /// **The two evidence paths differ on purpose.** A single-part object's
+    /// ETag IS the MD5 of its bytes, so a copy of it must reproduce it and
+    /// equality is a content check. A multipart object's ETag is an MD5 over
+    /// the parts' MD5s with `-N` appended, which depends on the chunking, and
+    /// a server-side copy may chunk differently: a correct copy of a large
+    /// file need not match its source. Requiring equality there would report
+    /// a correct restore as unconfirmed and the user would retry it, making a
+    /// second copy. So for a source whose ETag is a composite, or is no
+    /// checksum at all, the evidence is the weaker pair (a new current
+    /// version that is not a marker). Which shape an ETag has is decided by
+    /// `ObjectStorageETag.interpret`, not here.
+    ///
+    /// **Unmeasured, and the direction it errs in is the safe one:** an object
+    /// stored with a customer or KMS key can carry an ETag that is shaped like
+    /// an MD5 and is not one, in which case a correct copy would differ and
+    /// read as unconfirmed. And where versioning is suspended, a restore
+    /// replaces the `null` version rather than adding one, which reads as no
+    /// NEW version. Both fail toward "could not be confirmed", never toward
+    /// "done".
+    public func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
+        try Self.requireObjectKey(key)
+        let before = try await versions(ofKey: key, inBucket: bucket)
+        guard let source = before.first(where: { $0.versionId == versionId }) else {
+            throw RemoteFSError.notFound(path: reportedPath(bucket: bucket, key: key))
+        }
+        guard !source.isDeleteMarker else {
+            throw RemoteFSError.protocolError(reason: Self.restoreFromMarkerReason)
+        }
+
+        try await copyObject(
+            sourceBucket: bucket, fromKey: key, destinationBucket: bucket, toKey: key,
+            sourceVersionId: versionId)
+
+        let known = Set(before.map(\.versionId))
+        let after = try await versions(ofKey: key, inBucket: bucket)
+        guard let current = after.first(where: \.isLatest),
+            !current.isDeleteMarker, !known.contains(current.versionId),
+            Self.restoredContent(of: current, matches: source)
+        else {
+            throw RemoteFSError.protocolError(reason: Self.restoreUnconfirmedReason)
+        }
+    }
+
+    /// Whether `restored` can be the content of `source`: the equality of two
+    /// file MD5s where `source` has one, and nothing to compare otherwise (see
+    /// `restore`).
+    private static func restoredContent(of restored: ObjectVersion, matches source: ObjectVersion) -> Bool {
+        guard let sourceTag = source.entityTag,
+            case .fileMD5(let expected) = ObjectStorageETag.interpret(sourceTag)
+        else { return true }
+        guard let restoredTag = restored.entityTag,
+            case .fileMD5(let actual) = ObjectStorageETag.interpret(restoredTag)
+        else { return false }
+        return actual == expected
+    }
+
+    /// Permanently removes one version of `key`: a `DELETE` that names the
+    /// version, so no delete marker is written and nothing can undo it.
+    /// Confirmed by ABSENCE: the history afterwards no longer lists it.
+    public func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {
+        try Self.requireObjectKey(key)
+        try await removeVersion(key: key, bucket: bucket, versionId: versionId)
+        let after = try await versions(ofKey: key, inBucket: bucket)
+        guard !after.contains(where: { $0.versionId == versionId }) else {
+            throw RemoteFSError.protocolError(reason: Self.deleteVersionUnconfirmedReason)
+        }
+    }
+
+    /// Removes the delete marker `markerVersionId`: one `DELETE` of that
+    /// version id, confirmed by absence.
+    ///
+    /// The history is read first, and the id must name a delete marker in it.
+    /// The request that lifts a marker is the same request that destroys a
+    /// version, so an id that names content (or none) is refused before
+    /// anything is sent: lifting a "marker" that is really a version would
+    /// delete data for good.
+    public func liftDeleteMarker(
+        ofKey key: String, inBucket bucket: String, markerVersionId: String
+    ) async throws {
+        try Self.requireObjectKey(key)
+        let before = try await versions(ofKey: key, inBucket: bucket)
+        guard let entry = before.first(where: { $0.versionId == markerVersionId }) else {
+            throw RemoteFSError.notFound(path: reportedPath(bucket: bucket, key: key))
+        }
+        guard entry.isDeleteMarker else {
+            throw RemoteFSError.protocolError(reason: Self.liftOfAVersionReason)
+        }
+        try await removeVersion(key: key, bucket: bucket, versionId: markerVersionId)
+        let after = try await versions(ofKey: key, inBucket: bucket)
+        guard !after.contains(where: { $0.versionId == markerVersionId }) else {
+            throw RemoteFSError.protocolError(reason: Self.liftDeleteMarkerUnconfirmedReason)
+        }
+    }
+
+    /// One signed `DELETE {key}?versionId={id}`. A refusal is read through
+    /// `refusalOfDelete`, naming the version, so a version under a retention or
+    /// a legal hold says so instead of reading as a failed credential.
+    private func removeVersion(key: String, bucket: String, versionId: String) async throws {
+        let request = try buildSignedRequest(
+            bucket: bucket, method: "DELETE", key: key,
+            query: [(name: "versionId", value: versionId)],
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        let (data, response) = try await send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            throw await refusalOfDelete(
+                status: response.statusCode, body: data, bucket: bucket, key: key,
+                versionId: versionId)
+        }
+    }
+
+    /// An empty key addresses the bucket itself, and a `DELETE` of the bucket
+    /// root is not a version delete: refused before any request is built.
+    private static func requireObjectKey(_ key: String) throws {
+        guard !key.isEmpty else {
+            throw RemoteFSError.protocolError(reason: "S3 version write: an object key is required")
+        }
+    }
+
+    // `readStream` is still a placeholder until the version download lands
+    // (Task 5 of `docs/superpowers/plans/2026-10-23-s3-version-history.md`):
+    // all six requirements must be met for the conformance to exist, and
+    // refusing is the only answer that cannot be mistaken for a performed
+    // read. A refusal here is indistinguishable from a store that does not
+    // support the call, so `S3ObjectVersionsTests` carries a case that goes
+    // red the moment it is implemented; the implementing commit removes that
+    // case. (Withdrawn wording, verbatim: "Placeholders until the tasks that
+    // implement them land: all six requirements must be met for the
+    // conformance to exist" and "`restore`, `deleteVersion` and
+    // `liftDeleteMarker` are the write half (Task 4)." The write half is
+    // implemented above, so one placeholder remains, not four.)
     public func readStream(
         ofKey key: String, inBucket bucket: String, versionId: String
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        throw RemoteFSError.finding(.operationNotSupported)
-    }
-
-    public func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
-        throw RemoteFSError.finding(.operationNotSupported)
-    }
-
-    public func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {
-        throw RemoteFSError.finding(.operationNotSupported)
-    }
-
-    public func liftDeleteMarker(ofKey key: String, inBucket bucket: String, markerVersionId: String) async throws {
         throw RemoteFSError.finding(.operationNotSupported)
     }
 }

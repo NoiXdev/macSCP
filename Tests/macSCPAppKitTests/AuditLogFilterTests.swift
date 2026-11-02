@@ -33,6 +33,35 @@ struct AuditLogFilterTests {
         .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
     ]
 
+    /// The kinds the version-history plan added. `metadataChanged` is among
+    /// them although nothing records it yet (it belongs to the metadata plan),
+    /// so that `Filter.segment(of:)` is extended once. File Ops, like the
+    /// bucket-settings kinds before them: they are writes to files.
+    private static let versionHistoryKinds: [AuditEvent.Kind] = [
+        .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged,
+    ]
+
+    @Test(arguments: versionHistoryKinds)
+    func aVersionHistoryWriteIsListedUnderFileOps(kind: AuditEvent.Kind) {
+        let listed = Filter.fileOps.includes(Self.event(kind))
+        #expect(listed)
+    }
+
+    @Test(arguments: versionHistoryKinds)
+    func aVersionHistoryWriteIsListedUnderNoOtherKindSegment(kind: AuditEvent.Kind) {
+        let others = Self.kindSegments.filter { $0 != .fileOps }
+        // The positive half: the segments are really being asked.
+        #expect(others.count == 3)
+        let listedElsewhere = others.filter { $0.includes(Self.event(kind)) }
+        #expect(listedElsewhere.isEmpty)
+    }
+
+    @Test(arguments: versionHistoryKinds)
+    func aVersionHistoryWriteIsListedUnderAll(kind: AuditEvent.Kind) {
+        let listed = Filter.all.includes(Self.event(kind))
+        #expect(listed)
+    }
+
     @Test(arguments: bucketSettingsKinds)
     func aBucketSettingsWriteIsListedUnderFileOps(kind: AuditEvent.Kind) {
         let listed = Filter.fileOps.includes(Self.event(kind))

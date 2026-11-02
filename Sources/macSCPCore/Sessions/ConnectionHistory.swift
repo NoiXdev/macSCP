@@ -161,11 +161,15 @@ public struct ConnectionHistory: Sendable, Equatable {
                 open?.failedTransfers += 1
             case .transferCancelled, .editUpload, .crossSessionTransfer, .rename, .delete,
                 .permissions, .newFolder, .newFile, .snippetExecuted, .plaintextConfirmed,
-                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
+                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
+                .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged:
                 // Not a connection boundary and not a transfer this list
                 // counts. Spelled out rather than left to a `default`, so a
                 // kind added later has to be classified here instead of
-                // silently joining the ignored set.
+                // silently joining the ignored set. The version-history kinds
+                // are in the set because they are writes to objects, which
+                // neither open nor close a session nor move bytes between
+                // machines (a restore is a copy inside the store).
                 continue
             }
         }

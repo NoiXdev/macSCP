@@ -90,8 +90,13 @@ struct AuditLogSheet: BoundedView {
             // **All**", and it lists File Ops among the filter menu's
             // entries. Earlier this comment marked the statement as
             // unverified; verified, the hedge is dropped.)
+            // The same ruling covers the version-history kinds (the S3
+            // version-history plan, Task 4): they are writes to files, and
+            // `metadataChanged` is among them although nothing records it yet.
+            // Moving them costs the same user-documentation page.
             case .rename, .delete, .permissions, .newFolder, .newFile,
-                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged:
+                .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
+                .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged:
                 return .fileOps
             case .snippetExecuted:
                 return .terminal
