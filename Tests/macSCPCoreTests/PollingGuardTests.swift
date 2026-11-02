@@ -99,6 +99,15 @@ struct PollingGuardTests {
     private static let elapsedCeilingPattern = #"elapsed\s*<=?\s*\."#
     private static let sleepingChildPattern =
         #"addTask(?:\([^)]*\))?\s*\{\s*(?:do\s*\{\s*)?(?:try\??\s+)?(?:await\s+)?Task\.sleep\(for:"#
+    /// A latch wait or race with a `Duration` bound: `wait(timeout:` and
+    /// `race(timeout:`, with whatever whitespace (a line break included) a
+    /// formatter puts after the bracket or before the colon. **A literal
+    /// `wait(timeout:` cannot see a wrapped call**, and `race(timeout:)` is the
+    /// same bound reached without the word `wait`; both were holes in this
+    /// guard until Task 9's fix round 3 (planted and measured: both passed).
+    /// The match is over RAW text, comments included, like the first spelling
+    /// always was.
+    private static let boundedLatchPattern = #"\b(?:wait|race)\(\s*timeout\s*:"#
     private static let dateCeilingPattern = #"Date\(\)\.timeIntervalSince\([^)]*\)\s*<=?"#
     private static let dateDeadlinePattern = #"\.wait\(until:\s*Date\("#
     private static let whileBlockPattern = #"\bwhile\b[^{]*\{\s*$"#
@@ -157,7 +166,10 @@ struct PollingGuardTests {
     /// not one of three exemptions" -- there is a fourth since Task 9's fix
     /// round 2, `macSCPAppKitTests/HangBound.swift`: a bound that asserts a
     /// signal ARRIVED and never how long it took, for a test that would
-    /// otherwise park where the time limit cannot end it.)
+    /// otherwise park where the time limit cannot end it. Fix round 3 matched
+    /// that file by its exact path and widened what is scanned to
+    /// `race(timeout:)` and to a call wrapped after the bracket, which found a
+    /// fifth: the subprocess runner's own teardown bound.)
     ///
     /// Two exemptions are found by path: `AsyncSignalTests.swift` tests
     /// the bounded API itself (the positive below), and
@@ -184,22 +196,41 @@ struct PollingGuardTests {
         // assertion is that the signal ARRIVED, never how long it took, and
         // its callers say `arrives(_:)`, which does not spell this phrase.
         let hangBoundSentence = "This bound is a hang bound, not a ceiling"
-        let callers = sources.filter { $0.text.contains("wait(timeout:") }
+        // An EXACT path, not a suffix: `hasSuffix("macSCPAppKitTests/HangBound.swift")`
+        // let `Tests/XmacSCPAppKitTests/HangBound.swift` through (planted and
+        // measured), which is the loophole an exemption by name exists to close.
+        let hangBoundPath = Self.testsRoot
+            .appendingPathComponent("macSCPAppKitTests/HangBound.swift").path
+        // The fifth, found by widening the pattern to `race(timeout:)`: the
+        // subprocess runner itself bounds its child's teardown with
+        // `AsyncSignal.race(timeout:)` (`SubprocessRunner.swift`), as production
+        // mechanics and not as a test's ceiling. It is in `sources()` only
+        // because the sleeping-child check reads it. Exempt by its exact path,
+        // with a positive below that the widened pattern really does see it.
+        let subprocessRunnerPath = try Self.runnerSources()[0].path
+        let pattern = try CompiledPattern.regex(Self.boundedLatchPattern)
+        let callers = sources.filter {
+            pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
+        }
         let offenders = callers.filter {
             !$0.path.hasSuffix("AsyncSignalTests.swift")
                 && $0.path != asyncSignalPath
+                && $0.path != subprocessRunnerPath
                 && !$0.text.contains(measurementSentence)
-                && !($0.path.hasSuffix("macSCPAppKitTests/HangBound.swift")
-                    && $0.text.contains(hangBoundSentence))
+                && !($0.path == hangBoundPath && $0.text.contains(hangBoundSentence))
         }.map(\.path)
 
-        // Positive for the fourth exemption: the file is there, it carries the
-        // sentence, and it holds the call the exemption is for. Without this
-        // the exemption is proven only by the negative above not listing it.
+        // Positive for the fifth: the widened pattern sees the runner's call.
+        #expect(callers.contains { $0.path == subprocessRunnerPath })
+
+        // Positive for the fourth exemption: the file is there at that exact
+        // path, it carries the sentence, and it holds the call the exemption
+        // is for. Without this the exemption is proven only by the negative
+        // above not listing it.
         #expect(sources.contains {
-            $0.path.hasSuffix("macSCPAppKitTests/HangBound.swift")
+            $0.path == hangBoundPath
                 && $0.text.contains(hangBoundSentence)
-                && $0.text.contains("wait(timeout:")
+                && pattern.firstMatch(in: $0.text, range: NSRange($0.text.startIndex..., in: $0.text)) != nil
         })
 
         // Positive: the bounded API is still exercised directly — without
@@ -223,6 +254,31 @@ struct PollingGuardTests {
         })
 
         #expect(offenders.isEmpty, "\(offenders)")
+    }
+
+    /// Positive controls for `boundedLatchPattern`, fed to the pattern itself:
+    /// each spelling it exists to catch MUST match, and the neighbours it must
+    /// leave alone must not. Without this a pattern that matched nothing would
+    /// read as a check that is satisfied (CLAUDE.md, "Guards that name what
+    /// they watch").
+    @Test func theBoundedLatchPatternSeesEveryShapeItIsFor() throws {
+        let pattern = try CompiledPattern.regex(Self.boundedLatchPattern)
+        func matches(_ text: String) -> Bool {
+            pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+        }
+        // Must match: the plain call, a call wrapped after the bracket, a call
+        // with space before the colon, and `race` spelled the same ways.
+        #expect(matches("_ = await signal.wait(timeout: .seconds(1))"))
+        #expect(matches("_ = await signal.wait(\n        timeout: .seconds(1))"))
+        #expect(matches("_ = await signal.wait( timeout : .seconds(1))"))
+        #expect(matches("await AsyncSignal.race(timeout: .seconds(1)) { .signalled }"))
+        #expect(matches("await AsyncSignal.race(\n    timeout: bound) { .signalled }"))
+        // Must not: the unbounded wait, the Date-spelled wait the sibling check
+        // owns, a name that merely ends in `wait`/`race`, and a parameter.
+        #expect(!matches("_ = await signal.wait()"))
+        #expect(!matches("lock.wait(until: Date(timeIntervalSinceNow: 1))"))
+        #expect(!matches("await embrace(timeout: 3)"))
+        #expect(!matches("func f(timeout: Duration) {}"))
     }
 
     /// Negative: no test races a sleeping sibling against real work inside
