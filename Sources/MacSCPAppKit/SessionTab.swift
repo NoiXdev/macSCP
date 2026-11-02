@@ -70,6 +70,21 @@ struct BrowserSession {
     /// dies with that connection and a reconnect starts from nothing. Set once
     /// by `ContentView.startSession`.
     var objectLockStates: ObjectLockStateCache?
+    /// Which versioning state each of this connection's buckets is in, read
+    /// once each and kept (`BucketVersioningCache`), or `nil` when the
+    /// connection has no bucket settings. The sibling of `objectLockStates`
+    /// above and for the same reason: it is true of this connection and of no
+    /// other, so it dies with it. Set once by `ContentView.startSession`.
+    var bucketVersioning: BucketVersioningCache?
+
+    /// The cache for a connection over `fileSystem`: one when it has the
+    /// bucket-settings capability, `nil` when it does not -- the question
+    /// `objectLockStates(for:)` answers for the lock cache, asked of the same
+    /// capability.
+    @MainActor
+    static func bucketVersioning(for fileSystem: Any) -> BucketVersioningCache? {
+        (fileSystem as? any S3BucketSettings).map(BucketVersioningCache.init(settings:))
+    }
 
     /// The cache for a connection over `fileSystem`: one when it has the
     /// bucket-settings capability (queried with `as?`, like every optional

@@ -441,6 +441,8 @@
 "browser.action.presignedURL" = "Share Link…";
 "browser.action.retention" = "Retention…";
 "browser.action.legalHold" = "Legal Hold…";
+"browser.action.versions" = "Show Versions…";
+"browser.action.versions.neverVersioned" = "This bucket has never had versioning turned on, so there is no history to show.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Connection Actions";
