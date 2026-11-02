@@ -138,6 +138,7 @@ struct RemoteFileSystemAppendResumeGuardTests {
         #expect(conformers == [
             "S3FileSystem", "WebDAVFileSystem", "LocalFileSystem",
             "CitadelFileSystem", "ThroughputPayload", "ThroughputSink",
+            "VersionDownloadSource",
         ], """
             The set of RemoteFileSystem conformers in Sources/ changed. A new \
             conformer inherits supportsAppendResume == true from the protocol \

@@ -116,6 +116,16 @@ public protocol ObjectVersionProvider: Sendable {
 
     /// Streams the content of one specific version of `key`, from its first
     /// byte.
+    ///
+    /// **There is no offset, so a version download cannot resume.** The plain
+    /// read (`RemoteFileSystem.readStream(path:fromOffset:ifMatching:)`) takes
+    /// an offset and a validator; this one deliberately does not, and the
+    /// transfer queue treats a lost connection on a version download as a
+    /// failure to start again from the first byte, never as an interruption
+    /// to resume (`TransferQueueViewModel.enqueueAndWaitVersion`). Widening
+    /// this with an offset would make a resume possible only together with a
+    /// retry that keeps the version as its source, which the queue's retry
+    /// does not: it substitutes the tab's own file system.
     func readStream(
         ofKey key: String, inBucket bucket: String, versionId: String
     ) async throws -> AsyncThrowingStream<Data, Error>

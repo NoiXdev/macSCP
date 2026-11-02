@@ -63,7 +63,11 @@ public enum TransferFailureKind: Equatable, Sendable {
     /// queued and running item into this case rather than into `.cancelled`.
     case connectionLost
     /// The connection went away and this job is not resumable — an editor
-    /// write-back, a cross-session job, or a destination that cannot append.
+    /// write-back, a cross-session job, a destination that cannot append, or
+    /// a download of one version of an object (`enqueueAndWaitVersion`).
+    /// (Withdrawn wording, verbatim: "an editor write-back, a cross-session
+    /// job, or a destination that cannot append." — it listed three kinds of
+    /// job and there are four.)
     case interrupted
     /// The rename probe walked its 999 candidates without finding a free
     /// name.

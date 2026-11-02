@@ -528,8 +528,29 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     ) async throws -> AsyncThrowingStream<Data, Error> {
         try refuseBucketLevelOperation(.readStream, path: path)
         let (bucket, key) = try mode.resolve(path: path)
+        return try await streamObject(
+            bucket: bucket, key: key, query: [], fromOffset: offset, ifMatching: tag, notFoundPath: path)
+    }
+
+    /// The body of both readers: one signed `GET` of `key` in `bucket` (with
+    /// `query` on it: empty for the object's current content, `versionId` for
+    /// one version of it), the status mapping, the refused-redirect and
+    /// cancellation handling, and the re-wrapping of the body's errors. The
+    /// plain reader (`readStream(path:fromOffset:ifMatching:)`) and the
+    /// version reader (`readStream(ofKey:inBucket:versionId:)`) differ only in
+    /// how they arrive at a bucket, a key and a query, so what a read DOES is
+    /// written once. `notFoundPath` is what a 404 names: the path the caller
+    /// passed, or `/bucket/key` for the version reader, which has no path.
+    ///
+    /// Named for what it does and not `readStream`: it is not a protocol
+    /// requirement, and `RemoteFileSystemReadStreamCycleGuardTests` reads
+    /// declarations of that name.
+    private func streamObject(
+        bucket: String, key: String, query: [(name: String, value: String)],
+        fromOffset offset: UInt64, ifMatching tag: String?, notFoundPath path: String
+    ) async throws -> AsyncThrowingStream<Data, Error> {
         var request = try buildSignedRequest(
-            bucket: bucket, method: "GET", key: key, query: [],
+            bucket: bucket, method: "GET", key: key, query: query,
             payloadHash: SigV4Signer.emptyPayloadHash)
         request.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
         // Only a RESUME carries the precondition: a fresh read has no
@@ -2403,6 +2424,8 @@ extension S3FileSystem: ObjectVersionProvider {
         "S3 version delete: the entry is a delete marker, not a version with content"
     /// A version write that was handed an empty key.
     static let objectKeyRequiredReason = "S3 version write: an object key is required"
+    /// A version read that was handed an empty key.
+    static let versionReadKeyRequiredReason = "S3 version read: an object key is required"
 
     // MARK: Writes
     //
@@ -2583,28 +2606,35 @@ extension S3FileSystem: ObjectVersionProvider {
 
     /// An empty key addresses the bucket itself, and a `DELETE` of the bucket
     /// root is not a version delete: refused before any request is built.
-    private static func requireObjectKey(_ key: String) throws {
+    private static func requireObjectKey(_ key: String, reason: String = objectKeyRequiredReason) throws {
         guard !key.isEmpty else {
-            throw RemoteFSError.protocolError(reason: objectKeyRequiredReason)
+            throw RemoteFSError.protocolError(reason: reason)
         }
     }
 
-    // `readStream` is still a placeholder until the version download lands
-    // (Task 5 of `docs/superpowers/plans/2026-10-23-s3-version-history.md`):
-    // all six requirements must be met for the conformance to exist, and
-    // refusing is the only answer that cannot be mistaken for a performed
-    // read. A refusal here is indistinguishable from a store that does not
-    // support the call, so `S3ObjectVersionsTests` carries a case that goes
-    // red the moment it is implemented; the implementing commit removes that
-    // case. (Withdrawn wording, verbatim: "Placeholders until the tasks that
-    // implement them land: all six requirements must be met for the
-    // conformance to exist" and "`restore`, `deleteVersion` and
-    // `liftDeleteMarker` are the write half (Task 4)." The write half is
-    // implemented above, so one placeholder remains, not four.)
+    /// One version's content, from its first byte: the plain reader's `GET`
+    /// with `versionId` on it, sharing its whole body (`streamObject`), so the
+    /// status mapping, the refused-redirect check, the cancellation mapping
+    /// and the 416-is-an-empty-stream contract are the same code and not a
+    /// copy. An empty key is refused first, as the write half does, since it
+    /// would address the bucket.
+    ///
+    /// **There is no offset, so there is no resume.** The read always asks for
+    /// `bytes=0-`, and sends no `If-Match`: a version id names immutable
+    /// content, so there is no later change to guard a resume against, and
+    /// nothing here is able to continue from the middle. What follows from
+    /// that is decided where the download is queued (`VersionDownloadSource`).
+    ///
+    /// The id is passed raw: `SigV4Signer.canonicalQueryString` encodes name
+    /// and value once, and a pre-encoded id would reach the store encoded
+    /// twice.
     public func readStream(
         ofKey key: String, inBucket bucket: String, versionId: String
     ) async throws -> AsyncThrowingStream<Data, Error> {
-        throw RemoteFSError.finding(.operationNotSupported)
+        try Self.requireObjectKey(key, reason: Self.versionReadKeyRequiredReason)
+        return try await streamObject(
+            bucket: bucket, key: key, query: [(name: "versionId", value: versionId)],
+            fromOffset: 0, ifMatching: nil, notFoundPath: Self.objectLockPath(bucket: bucket, key: key))
     }
 }
 

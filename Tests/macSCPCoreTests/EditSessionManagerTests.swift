@@ -599,4 +599,31 @@ struct EditSessionManagerTests {
         // Idempotent: a second call on an already-missing tree does not throw.
         EditSessionManager.sweepOrphanedTempDirectories(root: root)
     }
+
+    // MARK: - 9: a directory for a read-only copy (version history, Task 5)
+
+    /// An old version is opened READ-ONLY (spec section 11.1): its copy needs
+    /// a directory, but no edit, no watcher and no upload destination. The
+    /// directory lives under the session's own temp tree so `stopAll` removes
+    /// it with the rest, and every call returns a fresh one so two versions
+    /// of one key cannot meet on disk.
+    @Test func aReadOnlyCopyDirectoryIsFreshRegistersNoEditAndGoesWithTheSession() async throws {
+        let manager = EditSessionManager(
+            sessionID: UUID(), queue: TransferQueueViewModel(),
+            debounceInterval: .zero, sleep: { _ in })
+
+        let first = try manager.makeReadOnlyCopyDirectory()
+        let second = try manager.makeReadOnlyCopyDirectory()
+
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: first.path(percentEncoded: false), isDirectory: &isDirectory))
+        #expect(isDirectory.boolValue)
+        #expect(first != second)
+        #expect(manager.activeEdits.isEmpty)
+
+        await manager.stopAll()
+        // The positive beside the removal: both existed a moment ago.
+        #expect(!FileManager.default.fileExists(atPath: first.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: second.path(percentEncoded: false)))
+    }
 }

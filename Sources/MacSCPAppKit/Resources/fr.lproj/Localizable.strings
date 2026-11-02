@@ -342,6 +342,7 @@
 
 /* Intégration de l'éditeur (M5e/T4) */
 "edit.openFailed" = "Impossible d'ouvrir le fichier pour modification : %@";
+"versions.openFailed" = "Impossible d'ouvrir cette version : %@";
 
 /* Finitions du formulaire de connexion (revue de conception 2026-07-10) */
 "common.ok" = "OK";
