@@ -2241,17 +2241,39 @@ extension S3FileSystem: ObjectVersionProvider {
     public func deletedEntries(inBucket bucket: String, prefix: String) async throws -> [DeletedEntry] {
         let entries = try await versionEntries(
             inBucket: bucket, prefix: prefix, delimiter: "/")
-        // One level deep BY DESIGN (a folder view): `delimiter=/` rolls a
-        // marker in a sub-prefix (`d/sub/x.txt` under `d/`) up into
-        // `CommonPrefixes`, which the parser does not read, so such a marker
-        // is not reported here. A caller wanting a sub-folder's deletions asks
-        // with that sub-folder as the prefix.
+        // One level deep BY DESIGN (a folder view); a caller wanting a
+        // sub-folder's deletions asks with that sub-folder as the prefix.
+        // Two reasons a marker in a sub-prefix (`d/sub/x.txt` under `d/`) is
+        // not reported, and both are kept: `delimiter=/` lets a store roll it
+        // up into `CommonPrefixes`, which the parser does not read, so one
+        // request stays cheaper than listing everything and filtering; and
+        // `oneLevelBelow` drops it here regardless of what the store did.
+        // (Withdrawn wording, verbatim: "such a marker is not reported here"
+        // was attributed to the roll-up alone. A store that ignores
+        // `delimiter` answers with the nested marker as an ordinary entry,
+        // which that sentence would have left reported. What a real store does
+        // with `delimiter=/` on `?versions` is unmeasured; Task 11 of
+        // `docs/superpowers/plans/2026-10-23-s3-version-history.md` measures it, and this answer no longer depends on it.)
         // Only a marker that is its key's CURRENT entry hides the key. An older
         // marker under a newer version describes a key that was deleted and
         // then written again, which is not deleted.
-        return entries.filter { $0.isDeleteMarker && $0.isLatest }.map {
+        return entries.filter {
+            $0.isDeleteMarker && $0.isLatest && Self.oneLevelBelow(prefix, key: $0.key)
+        }.map {
             DeletedEntry(key: $0.key, markerVersionId: $0.versionId, modifiedAt: $0.modifiedAt)
         }
+    }
+
+    /// Whether `key` is at most one level below `prefix`: the part after the
+    /// prefix holds no `/`. Measured from the prefix, not from a folder, so a
+    /// prefix such as `d/to` keeps `d/top.txt` (rest `p.txt`) and drops
+    /// `d/top/x.txt` (rest `p/x.txt`); `""` keeps only keys with no `/` at
+    /// all. A key that does not start with the prefix is dropped: it answers a
+    /// question that was not asked, and guessing where its remainder begins
+    /// would be inventing an answer.
+    static func oneLevelBelow(_ prefix: String, key: String) -> Bool {
+        guard key.hasPrefix(prefix) else { return false }
+        return !key.dropFirst(prefix.count).contains("/")
     }
 
     /// Every entry of the listing `?versions&prefix=…[&delimiter=…]`, pages
@@ -2305,8 +2327,8 @@ extension S3FileSystem: ObjectVersionProvider {
     // requirements must be met for the conformance to exist, and refusing is
     // the only answer that cannot be mistaken for a performed write.
     //
-    // Owners, one per method, in the plan under
-    // `.superpowers/sdd/2026-10-23-s3-version-history`: `readStream` is the
+    // Owners, one per method, in
+    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`: `readStream` is the
     // version download (Task 5); `restore`, `deleteVersion` and
     // `liftDeleteMarker` are the write half (Task 4). A refusal here is
     // indistinguishable from a store that does not support the call, so

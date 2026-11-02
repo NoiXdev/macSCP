@@ -264,15 +264,19 @@ struct S3ObjectVersionsTests {
     }
 
     @Test func deletedEntriesAreOneLevelDeep() async throws {
-        // `delimiter=/` makes the store roll `d/sub/x.txt` up into
-        // `CommonPrefixes`; the stub models that answer (the rollup itself is
-        // unmeasured against a store, which the rig task does). The shallow
-        // marker is reported, the nested one is not, and the roll-up is not
-        // read as an entry.
+        // The body carries BOTH shapes a store can answer with: the roll-up a
+        // store that honours `delimiter=/` sends (`CommonPrefixes`), and the
+        // nested marker as an ordinary top-level `DeleteMarker`, which is what
+        // a store that ignores the parameter sends. The second is what makes
+        // the absence assertion about OUR code: without the local exclusion
+        // `d/sub/x.txt` would be reported. What a real store does with
+        // `delimiter=/` on `?versions` is unmeasured (the rig task measures
+        // it); the answer here no longer depends on that.
         let body = Data(
             """
             <ListVersionsResult><IsTruncated>false</IsTruncated>
             \(Self.marker("d/top.txt", "tm", latest: true))
+            \(Self.marker("d/sub/x.txt", "nm", latest: true))
             <CommonPrefixes><Prefix>d/sub/</Prefix></CommonPrefixes>
             </ListVersionsResult>
             """.utf8)
@@ -283,6 +287,29 @@ struct S3ObjectVersionsTests {
         #expect(deleted.contains { $0.key.hasPrefix("d/sub/") } == false)
         let request = try #require(await Self.listingRequests(transport).first)
         #expect(request.url?.query(percentEncoded: true)?.contains("delimiter=%2F") == true)
+    }
+
+    /// The boundary cases of "one level below the prefix": the part of a key
+    /// after the prefix must hold no `/`. A prefix need not end on a folder
+    /// boundary, and a key the store sent that does not start with the prefix
+    /// is not an answer to the question and is dropped.
+    @Test(arguments: [
+        // Root view: only keys with no `/` at all.
+        (prefix: "", expected: ["top.txt", "elsewhere.txt"]),
+        (prefix: "d/", expected: ["d/top.txt", "d/"]),
+        // Mid-name prefix: the rest after `d/to` is `p.txt` (kept), `/x` and
+        // `p/x.txt` (below one level).
+        (prefix: "d/to", expected: ["d/top.txt"]),
+    ])
+    func oneLevelIsMeasuredFromThePrefixNotFromAFolder(
+        prefix: String, expected: [String]
+    ) async throws {
+        let keys = ["top.txt", "d/top.txt", "d/", "d/sub/x.txt", "d/to/x", "d/top/x.txt", "elsewhere.txt"]
+        let body = Self.page(keys.map { Self.marker($0, "m-" + $0, latest: true) })
+        let (fs, _) = try await S3SettingsFake.connect(responses: [Self.ok(body)])
+        let deleted = try await fs.deletedEntries(inBucket: "b", prefix: prefix)
+        // `elsewhere.txt` does not start with `d/` or `d/to`: dropped there.
+        #expect(Set(deleted.map(\.key)) == Set(expected))
     }
 
     @Test func deletedEntriesUnderAPrefixAreFoundOnEveryPage() async throws {
@@ -328,8 +355,8 @@ struct S3ObjectVersionsTests {
     // MARK: - Placeholders (canaries)
 
     // These four cases exist to be DELETED. `readStream` is implemented by
-    // the version download (Task 5 of the plan under
-    // `.superpowers/sdd/2026-10-23-s3-version-history`); `restore`,
+    // the version download (Task 5 of
+    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`); `restore`,
     // `deleteVersion` and `liftDeleteMarker` by the write half (its Task 4).
     // Until then each method refuses with `.finding(.operationNotSupported)`,
     // which is indistinguishable from a store that does not support the call.
