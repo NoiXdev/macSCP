@@ -339,6 +339,7 @@
 
 /* Editor integration (M5e/T4) */
 "edit.openFailed" = "Datei konnte nicht zum Bearbeiten geöffnet werden: %@";
+"versions.openFailed" = "Diese Version konnte nicht geöffnet werden: %@";
 
 /* Connection form polish (design review 2026-07-10) */
 "common.ok" = "OK";

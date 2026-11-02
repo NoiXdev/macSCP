@@ -336,4 +336,64 @@ extension ContentView {
             }
         }
     }
+
+    /// Opens ONE OLD VERSION of an object READ-ONLY in the application that
+    /// would open it: downloads it through the tab's queue into a directory of
+    /// its own (it shows up as a download in the bar) and hands the file to
+    /// the same application resolution as `openInEditor`.
+    ///
+    /// **Not an edit.** An old version must never be written back: a save in
+    /// the opening application would overwrite the CURRENT object with an edit
+    /// of an old one (spec section 11.1). So this does not go through
+    /// `editManager.beginEditing`, the one place a destination for uploads is
+    /// registered and a watcher started; the edit session is asked for a
+    /// directory (`makeReadOnlyCopyDirectory`, which registers nothing) and
+    /// nothing else. The file is made read-only on disk as well, so an
+    /// application that would save in place says so instead.
+    /// `VersionDownloadTests` holds this body to that, beside the positive
+    /// that `openInEditor` does register one.
+    ///
+    /// The local name carries the version (`VersionLocalName`), so two
+    /// versions of one key can be open together.
+    func openVersionReadOnly(
+        _ version: ObjectVersion, fileName: String, bucket: String,
+        in tab: SessionTab, session: BrowserSession
+    ) {
+        let preResolvedAppURL = EditorResolver.applicationURL(
+            forFileName: fileName, settings: settingsStore)
+        Task {
+            do {
+                guard let provider = session.remoteFS as? any ObjectVersionProvider else {
+                    throw RemoteFSError.finding(.operationNotSupported)
+                }
+                let directory = try session.editManager.makeReadOnlyCopyDirectory()
+                let localName = VersionLocalName.forDownload(
+                    fileName: fileName, versionId: version.versionId)
+                try await tab.transferQueue.enqueueAndWaitVersion(
+                    fileName: localName, source: provider, bucket: bucket,
+                    key: version.key, versionId: version.versionId,
+                    destination: session.localFS,
+                    destinationDirectory: directory.path(percentEncoded: false))
+                let localURL = directory.appendingPathComponent(localName, isDirectory: false)
+                try? FileManager.default.setAttributes(
+                    [.posixPermissions: 0o444], ofItemAtPath: localURL.path(percentEncoded: false))
+                let appURL = preResolvedAppURL ?? EditorResolver.systemApplicationURL(for: localURL)
+                if let appURL {
+                    _ = try await NSWorkspace.shared.open(
+                        [localURL], withApplicationAt: appURL,
+                        configuration: NSWorkspace.OpenConfiguration())
+                } else {
+                    NSWorkspace.shared.open(localURL)
+                }
+                tab.editErrorMessage = nil
+            } catch is CancellationError {
+                // Teardown cancelled the download (disconnect while opening)
+                // or the user cancelled it in the bar: nothing to report.
+            } catch {
+                tab.editErrorMessage = String(format: L10n.string(
+                    "versions.openFailed", "Could not open this version: %@"),
+                    TransferFailureLabel.text(for: error))
+            }
+        }
+    }
 }

@@ -354,28 +354,4 @@ struct S3ObjectVersionsTests {
             #expect((error as? RemoteFSError) == .finding(.operationNotSupported))
         }
     }
-
-    // MARK: - Placeholders (canaries)
-
-    // This case exists to be DELETED. `readStream` is implemented by the
-    // version download (Task 5 of
-    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`). Until then it
-    // refuses with `.finding(.operationNotSupported)`, which is
-    // indistinguishable from a store that does not support the call. The case
-    // going red means the method was implemented, and the case must be removed
-    // in the same commit.
-    //
-    // (Withdrawn wording, verbatim: "These four cases exist to be DELETED.",
-    // "`restore`, `deleteVersion` and `liftDeleteMarker` by the write half
-    // (its Task 4)." and "One case per method, not one over all four, so a
-    // single survivor is named." The write half's three cases were removed in
-    // the commit that implemented those methods; one remains, so the last
-    // sentence has nothing left to say.)
-
-    @Test func placeholderReadStreamStillRefuses() async throws {
-        let (fs, _) = try await S3SettingsFake.connect(responses: [])
-        await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
-            _ = try await fs.readStream(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
-        }
-    }
 }

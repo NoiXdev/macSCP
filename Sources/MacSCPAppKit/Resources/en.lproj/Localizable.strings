@@ -346,6 +346,7 @@
 
 /* Editor integration (M5e/T4) */
 "edit.openFailed" = "Could not open file for editing: %@";
+"versions.openFailed" = "Could not open this version: %@";
 
 /* Connection form polish (design review 2026-07-10) */
 "common.ok" = "OK";

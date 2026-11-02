@@ -202,6 +202,29 @@ public final class EditSessionManager {
         return try await task.value
     }
 
+    /// A fresh directory for a READ-ONLY copy of a remote file (an old
+    /// version of an object, opened for viewing), under this session's own
+    /// temp tree so `stopAll` removes it with everything else and the launch
+    /// sweep (`sweepOrphanedTempDirectories`) catches it after a hard kill.
+    ///
+    /// **This registers nothing**: no `ActiveEdit`, no watcher, no upload
+    /// destination. That is the point of it. A copy that went through
+    /// `beginEditing` would write a save in the opening application back
+    /// over the CURRENT object, with an edit of an old one. Every call
+    /// returns a new directory, so two versions of one key never share a
+    /// folder, and the caller names the file in it.
+    ///
+    /// The `versions` level keeps these apart from the per-edit directories,
+    /// which are named by `pathHash`; that is a hex digest and cannot equal
+    /// it.
+    public func makeReadOnlyCopyDirectory() throws -> URL {
+        let directory = sessionDirectory
+            .appendingPathComponent("versions", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     /// The actual download + registration, run inside the reserved
     /// `inFlightDownloads` task. Throws on download failure — no edit/watcher
     /// is registered in that case (and the reservation is removed by the

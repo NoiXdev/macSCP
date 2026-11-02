@@ -447,6 +447,16 @@ public final class TransferQueueViewModel {
         /// `Item` would add it to a public, `Equatable` type that has no
         /// reader for it.
         let expectedSourceValidator: String?
+        /// True only for a download of one specific version of an object
+        /// (`enqueueAndWaitVersion`). Its source is a `VersionDownloadSource`,
+        /// not the tab's file system, and `retryInterrupted` would swap the
+        /// tab's in: the resumed read would fetch the key's CURRENT content
+        /// and append its tail to an old version's partial file. So a lost
+        /// connection on this job is classified as failed and the job is
+        /// never retained (`process`). Because it is never retained, no
+        /// reconstruction site (the interrupt-retain, `retryInterrupted`) can
+        /// see a job that carries it, and none of them threads it.
+        let isVersionDownload: Bool
 
         init(
             id: UUID, source: any RemoteFileSystem, sourcePath: String,
@@ -456,7 +466,8 @@ public final class TransferQueueViewModel {
             bypassConflictCheck: Bool = false,
             destinationTabID: UUID? = nil, crossRemote: Bool = false,
             isEditUpload: Bool = false,
-            expectedSourceValidator: String? = nil
+            expectedSourceValidator: String? = nil,
+            isVersionDownload: Bool = false
         ) {
             self.id = id
             self.source = source
@@ -472,6 +483,7 @@ public final class TransferQueueViewModel {
             self.crossRemote = crossRemote
             self.isEditUpload = isEditUpload
             self.expectedSourceValidator = expectedSourceValidator
+            self.isVersionDownload = isVersionDownload
         }
     }
 
@@ -703,6 +715,53 @@ public final class TransferQueueViewModel {
             if let id = relay.cancelled() {
                 Task { @MainActor [self] in cancel(itemID: id) }
             }
+        }
+    }
+
+    /// Downloads ONE VERSION of an object to `destinationDirectory/fileName`
+    /// through the queue, and returns only once exactly this item is done.
+    /// Throws on failed/cancelled/skipped, mirroring `enqueueAndWait`.
+    ///
+    /// The item is an ordinary download in the transfer bar (`source` is read
+    /// through a `VersionDownloadSource`, which presents the one version as a
+    /// file), with the queue's conflict check, pacing and cancel. The caller
+    /// names the local file: `VersionLocalName.forDownload` makes a name that
+    /// cannot collide with another version of the same key.
+    ///
+    /// **It cannot resume.** A lost connection fails the item
+    /// (`.failed(.interrupted)`) and retains nothing, so `retryInterrupted`
+    /// never sees it: the capability's read has no offset, and a retry would
+    /// have to be given the tab's own file system, which reads the key's
+    /// current content and not this version's (`VersionDownloadSource`). The
+    /// user starts the download again; it begins from the first byte.
+    public func enqueueAndWaitVersion(
+        fileName: String, source: any ObjectVersionProvider, bucket: String,
+        key: String, versionId: String,
+        destination: any RemoteFileSystem, destinationDirectory: String
+    ) async throws {
+        let versionSource = VersionDownloadSource(
+            source: source, bucket: bucket, key: key, versionId: versionId)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            // Synchronous on the MainActor: enqueue first, then register the
+            // waiter, before the worker can start — so no result misses it.
+            let id = UUID()
+            jobs[id] = Job(
+                id: id, source: versionSource, sourcePath: versionSource.displayPath,
+                destination: destination, destinationDirectory: destinationDirectory,
+                fileName: fileName, direction: .download, onCompleted: nil,
+                isVersionDownload: true)
+            order.append(id)
+            items.append(Item(
+                id: id, fileName: fileName, direction: .download, status: .queued,
+                sourcePath: versionSource.displayPath,
+                destinationTabID: nil, isEditUpload: false,
+                destinationDirectory: destinationDirectory,
+                destinationPath: RemotePath.join(destinationDirectory, fileName),
+                destinationSupportsResume: destination.supportsAppendResume,
+                crossRemote: false,
+                crossBackendTarget: nil))
+            waiters[id] = continuation
+            kickWorker()
         }
     }
 
@@ -1245,7 +1304,19 @@ public final class TransferQueueViewModel {
         } catch let error as RemoteFSError where error.isConnectionFailure {
             progressContinuation.finish()
             await consumer.value
-            if job.bypassConflictCheck {
+            if job.isVersionDownload {
+                // A version download: NOT resumable, and the reason is not
+                // the destination's. The local disk CAN append, so without
+                // this branch the job would be retained below and
+                // `retryInterrupted` would give it the tab's own source for
+                // the key's CURRENT content, resumed at the partial file's
+                // size (`Job.isVersionDownload`). A plain failure; the user
+                // starts the download again from the first byte.
+                setStatus(jobID, .failed(.interrupted))
+                jobs[jobID] = nil
+                runningTransferTasks[jobID] = nil
+                resumeWaiter(jobID, with: .failure(error))
+            } else if job.bypassConflictCheck {
                 // Editor write-back (M6a): NOT resumable — its temp source is
                 // deleted by `stopAll` on disconnect, so a later resume would
                 // visibly fail. Surface it as a plain failure instead; the
