@@ -71,7 +71,12 @@ struct ObjectVersionsLockReadTests {
         let (model, hold, settings) = await Self.heldSheet(count: 14)
         let rows = model.versions
         let cells = rows.map { row in Task { @MainActor in await model.readLockState(of: row) } }
-        _ = await hold.reached.wait()
+        guard await hold.reached.arrives("lockReadLimit reads being held at the store") else {
+            // A read held at the fake store is let go by the cancel itself.
+            for cell in cells { cell.cancel() }
+            for cell in cells { await cell.value }
+            return
+        }
         // Every other row's task is runnable now: give them the chance to reach
         // the gate and queue.
         for _ in 0..<50 { await Task.yield() }
@@ -112,11 +117,16 @@ struct ObjectVersionsLockReadTests {
             await gate.run { () async -> Int in
                 probe.bodiesRun.append(0)
                 entered.signal()
-                _ = await release.wait()
+                await release.arrives("the first body being released")
                 return 0
             }
         }
-        _ = await entered.wait()
+        guard await entered.arrives("the first body entering the gate") else {
+            first.cancel()
+            release.signal()
+            _ = await first.value
+            return
+        }
         let queued = (1...4).map { index in
             Task { @MainActor in
                 await gate.run { () async -> Int in

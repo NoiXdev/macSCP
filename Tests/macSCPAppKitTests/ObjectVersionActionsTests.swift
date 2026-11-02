@@ -658,7 +658,11 @@ struct ObjectVersionActionsTests {
         let posted = AsyncSignal()
         bridge.asked = { posted.signal() }
         let asking = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        _ = await posted.wait()
+        guard await posted.arrives("the question being put up") else {
+            asking.cancel()
+            bridge.answer(false)
+            return
+        }
         #expect(bridge.request == Self.sampleQuestion)
         bridge.answer(true)
         #expect(await asking.value == true)
@@ -674,9 +678,13 @@ struct ObjectVersionActionsTests {
     ///
     /// The waits are on the signal the bridge raises from inside `answer`, once
     /// the asker has been resumed: no yield, no assumption about when the
-    /// cancel's hop gets its turn. **If the bridge never withdraws, this waits
-    /// for ever** (the hang bound is `.timeLimit`), which is the price of not
-    /// guessing the schedule.
+    /// cancel's hop gets its turn. Each wait carries the hang bound
+    /// (`AsyncSignal.arrives`), and a signal that never comes is a named
+    /// failure after which the test releases whatever is still asking and
+    /// returns. (Withdrawn wording, verbatim: "**If the bridge never withdraws,
+    /// this waits for ever** (the hang bound is `.timeLimit`), which is the
+    /// price of not guessing the schedule." The time limit does not end a park,
+    /// and the plant that exercised it hung until it was killed by hand.)
     @Test func aQuestionThatGoesAwayIsANo() async {
         let bridge = VersionConfirmationBridge()
         let first = AsyncSignal()
@@ -684,9 +692,18 @@ struct ObjectVersionActionsTests {
         let withdrawn = AsyncSignal()
         bridge.answered = { withdrawn.signal() }
         let cancelled = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        _ = await first.wait()
+        guard await first.arrives("the first question being put up") else {
+            cancelled.cancel()
+            bridge.answer(false)
+            return
+        }
         cancelled.cancel()
-        _ = await withdrawn.wait()
+        guard await withdrawn.arrives("the cancelled question being withdrawn") else {
+            // Released by the test so that nothing is left asking; the failure
+            // is already recorded.
+            bridge.answer(false)
+            return
+        }
         #expect(await cancelled.value == false)
         #expect(bridge.request == nil)
 
@@ -695,14 +712,26 @@ struct ObjectVersionActionsTests {
         let replacedWithdrawn = AsyncSignal()
         bridge.answered = { replacedWithdrawn.signal() }
         let replaced = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        _ = await second.wait()
+        guard await second.arrives("the second question being put up") else {
+            replaced.cancel()
+            bridge.answer(false)
+            return
+        }
         let third = AsyncSignal()
         bridge.asked = { third.signal() }
         let replacing = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        // The second question is answered "no" by the third arriving.
-        _ = await replacedWithdrawn.wait()
+        // The second question is answered "no" by the third arriving. If it is
+        // not, its continuation was overwritten and cannot be resumed, so it is
+        // not awaited; the third is released instead.
+        guard await replacedWithdrawn.arrives("the replaced question being answered") else {
+            bridge.answer(false)
+            return
+        }
         #expect(await replaced.value == false)
-        _ = await third.wait()
+        guard await third.arrives("the third question being put up") else {
+            bridge.answer(false)
+            return
+        }
         bridge.answer(true)
         #expect(await replacing.value == true)
     }
@@ -716,7 +745,11 @@ struct ObjectVersionActionsTests {
         let firstPosted = AsyncSignal()
         bridge.asked = { firstPosted.signal() }
         let earlier = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        _ = await firstPosted.wait()
+        guard await firstPosted.arrives("the first question being put up") else {
+            earlier.cancel()
+            bridge.answer(false)
+            return
+        }
         let earlierID = bridge.questionID
         bridge.answer(true)
         #expect(await earlier.value == true)
@@ -724,7 +757,11 @@ struct ObjectVersionActionsTests {
         let secondPosted = AsyncSignal()
         bridge.asked = { secondPosted.signal() }
         let later = Task { @MainActor in await bridge.ask(Self.sampleQuestion) }
-        _ = await secondPosted.wait()
+        guard await secondPosted.arrives("the later question being put up") else {
+            later.cancel()
+            bridge.answer(false)
+            return
+        }
         #expect(bridge.questionID != earlierID)
 
         // The hop of the first question's cancel, arriving now.
@@ -864,7 +901,11 @@ struct ObjectVersionActionsTests {
         let parked = rig.provider.parkListing(number: 2)
         let v1 = Self.row("v1", in: rig)
         let acting = Task { @MainActor in await rig.model.action(.deleteVersion, on: v1) }
-        _ = await parked.entered.wait()
+        guard await parked.entered.arrives("the re-read listing reaching the store") else {
+            parked.release.signal()
+            _ = await acting.value
+            return
+        }
         // Read BEFORE the reload is let go.
         let whileParked = trail.events
         let writesWhileParked = rig.provider.writes.count
