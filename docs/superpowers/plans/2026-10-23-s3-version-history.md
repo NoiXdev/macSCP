@@ -410,8 +410,8 @@ Cache: an answer is cached and a failure is not; two asks share one read (both m
 
 **Files:**
 - Create: `Sources/MacSCPAppKit/ObjectVersionsSheet.swift`
-- Modify: `Sources/MacSCPAppKit/ContentView+Sheets.swift`, `Sources/MacSCPAppKit/ContentView+MenuActions.swift`, the four catalogues in both targets
-- Test: `Tests/macSCPAppKitTests/ObjectVersionsSheetTests.swift`
+- Modify: `Sources/MacSCPAppKit/ContentView+Sheets.swift`, `Sources/MacSCPAppKit/ContentView+MenuActions.swift`, `Sources/MacSCPAppKit/BrowserPane.swift`, `Sources/MacSCPAppKit/BucketVersioningCache.swift`, `Sources/MacSCPAppKit/BucketVersioningSheet.swift`, the four `MacSCPAppKit` catalogues
+- Test: `Tests/macSCPAppKitTests/ObjectVersionsSheetTests.swift`, `Tests/macSCPAppKitTests/BucketVersioningCacheTests.swift`
 
 **Interfaces:**
 - Consumes: Tasks 1–6.
@@ -427,6 +427,72 @@ Cache: an answer is cached and a failure is not; two asks share one read (both m
       func rowState(of version: ObjectVersion) -> RowState
   }
   ```
+
+**Amended 2026-11-02, after Task 6's review.** Four requirements come here from that task,
+and one correction to the line above.
+
+**The correction.** (Withdrawn wording, verbatim: `the four catalogues in both targets`.) The
+keys this task adds are view strings in a `MacSCPAppKit` view, and that target is where its
+siblings' are: run from the repository root,
+`grep -c 'versioning\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings` prints 15
+against 0 for `Sources/macSCPCore/Resources/en.lproj/Localizable.strings`, and `browser.action`
+prints 5 against 0 — the three existing file actions plus Task 6's two keys. A zero printed by
+`grep -c` exits 1, and that exit is part of the answer, not a failed command. Touch Core's
+catalogues only if this task adds a Core-layer message, which the sheet is not. This is the
+same defect Task 6's brief carried for its `titleKey`, in the same plan, found the same way:
+by checking a task's identifiers against the tree they land in rather than against the spec.
+
+**1. Thread both availability closures, and make them required once they are threaded.**
+Task 6 left `RemoteFileTableView.isFileActionAvailable` and `.fileActionUnavailableReason` as
+`var … = { _ in true }` / `{ _ in nil }` so the existing call sites kept compiling, and nothing
+forwards them. `BrowserPane.swift` is the only place that constructs `RemoteFileTableView`
+(`grep -rln 'RemoteFileTableView(' Sources` prints that one file); the path upward from there to
+the session that owns the cache is for this task to establish, and this plan does not pretend to
+know it. **Once the closures are forwarded, drop the defaults** so a later call site must answer
+rather than inheriting "available": a permissive default is a fail-open guard, and the unwired
+state should fail to compile instead of shipping a live row that does nothing.
+
+**2. Route the id, and write the test that an unrouted id cannot be offered.** Backend file
+actions are an `if`-chain in `ContentView+MenuActions.swift` with no `else`, so `s3.versions`
+currently matches nothing and the row is enabled and inert on every S3 file. The connection side
+has the boundary this side lacks: `ConnectionActionRoute` (`ConnectionActionRoute.swift:57`) is
+`String, CaseIterable`, `init?(action:)` is nil for an id it has no case for, and the menu
+disables that row — the route enum IS the table. Follow that shape here if it is cheap; what is
+required either way is that choosing the row opens the sheet, and that a declared
+`FileActionContribution` the handler does not route is not offered as available.
+
+**3. A bucket whose versioning has not been read yet OFFERS the row.** The menu builds
+synchronously and `BucketVersioningCache.versioning(_:)` is `async`, so this task needs a
+synchronous accessor that answers only from what was already read — `nil` for "not asked" — and
+a policy for that `nil`. The policy is: offer the row, and let the sheet report an absent or
+empty history when it opens, which this task already has a test for
+(`anEmptyHistorySaysSoRatherThanLookingLikeAFailure`). Disabling while unknown is the reading to
+reject: nothing triggers the read, so the row could not become enabled by waiting, and a dead
+end is worse than a slow one. This matches `objectLockStates`, which `ObjectLockSheet` also asks
+only when it opens. **The limitation it leaves, stated rather than designed around:** the
+disabled row and its reason are then reachable only for a bucket whose versioning was read
+earlier in the session, so in a fresh session the per-row unavailability is mostly latent. The
+fix is a prefetch on entering a bucket, its cost is one `GET ?versioning` per navigation, and
+that trade goes to Task 11 as a backlog row rather than into this plan's code.
+
+**4. The cache must be able to take a write.** `BucketVersioningSheet.apply(_:bucket:via:locks:recorder:)`
+sends `setVersioning` and reads the state back, and never tells the cache. So once the row is
+wired, four clicks produce a wrong answer in one session: the row is evaluated on a `.never`
+bucket, the user enables versioning in the Versioning sheet, and for the rest of the session the
+row stays disabled saying the bucket never had versioning turned on. Give the cache
+`invalidate(_ bucket: String)` (or a `record`), and have `apply` call it **after a successful
+write only** — a write that failed changed nothing, and invalidating on failure throws away a
+good answer because a request failed. `apply` already takes `locks: ObjectLockStateCache`, so
+the cache threads in the way its sibling already does. Tests: a write then an ask reads again,
+and a positive control that a write to one bucket does not invalidate another.
+**Why the lock cache needs none of this:** Object Lock on a bucket is effectively one-way and
+the app offers no un-setting of it, so no write the app sends can make that cache lie.
+Versioning is a three-state toggle the app writes. The precedent does not carry.
+
+**5. Test the threading itself.** Task 6's review found that the closure assignments in
+`makeCoordinator` and `updateNSView` are exercised by no test — dropping the `updateNSView` line
+leaves the suite green while the table keeps stale closures after a state change. That was
+untested because nothing passed the closures; once this task does, a test pins it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -592,6 +658,13 @@ Expected: PASS. Record the figures in the commit body beside the commands that p
 - [ ] **Step 4: Backlog rows**
 
 One row for the 5 GiB single-part copy ceiling (spec §3, unmeasured above 8 MiB). One row for anything this plan's reviews parked.
+
+**Amended 2026-11-02, after Task 6's review.** One row for the availability prefetch: with the
+unknown-offers-the-row policy ruled in Task 7, a bucket's versioning is read only when a surface
+asks, so the disabled "Show Versions…" row and its reason are latent in a fresh session. The row
+weighs that against one `GET ?versioning` per bucket navigation — a per-navigation request this
+plan declined to add unmeasured — and names the cheaper half-measure too: seeding the cache from
+the answer the Versioning sheet already reads.
 
 **Amended 2026-11-02, after Task 5.** One row for `TransferFailureLabel`'s counted comment: Task 5's recount was its **seventh**, and the figure has been wrong on arrival every time (68, 69, 63, 57, 81, 78, now 91/29). CLAUDE.md's own answer to a property that keeps buying one spelling and revealing another is a structural boundary rather than another anchor, so the row argues for a TEST that counts those call sites — or for dropping the figure and keeping the recipes — not for an eighth recount. The row is the place to decide that; this plan does not.
 
