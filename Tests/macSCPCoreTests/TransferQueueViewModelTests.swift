@@ -3799,7 +3799,7 @@ struct TransferQueueViewModelTests {
             onCompleted: nil, destinationTabID: UUID(), crossRemote: true,
             crossBackendTarget: CrossBackendTarget(name: "prod-bucket", kind: .s3))
         let item = vm.items.last!
-        #expect(item.destinationSupportsResume == false)
+        #expect(item.canResumeIfInterrupted == false)
         #expect(item.crossBackendTarget == CrossBackendTarget(name: "prod-bucket", kind: .s3))
 
         await waitUntil { vm.isActive == false }
@@ -3815,7 +3815,7 @@ struct TransferQueueViewModelTests {
             onCompleted: nil, destinationTabID: UUID(), crossRemote: true,
             crossBackendTarget: CrossBackendTarget(name: "web", kind: .ssh))
         let item = vm.items.last!
-        #expect(item.destinationSupportsResume == true)
+        #expect(item.canResumeIfInterrupted == true)
         #expect(item.crossBackendTarget?.kind == .ssh)
 
         await waitUntil { vm.isActive == false }
@@ -3829,7 +3829,7 @@ struct TransferQueueViewModelTests {
             destination: QueueTestFS(reads: [:], supportsAppendResume: false), destinationDirectory: "/",
             onCompleted: nil)
         let item = vm.items.last!
-        #expect(item.destinationSupportsResume == false)
+        #expect(item.canResumeIfInterrupted == false)
         #expect(item.crossBackendTarget == nil)
 
         await waitUntil { vm.isActive == false }

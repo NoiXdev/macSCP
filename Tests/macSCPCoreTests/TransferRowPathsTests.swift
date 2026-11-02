@@ -42,7 +42,7 @@ struct TransferRowPathsTests {
             destinationDirectory: destinationDirectory,
             destinationPath: destinationPath
                 ?? RemotePath.join(destinationDirectory, fileName),
-            destinationSupportsResume: true, crossRemote: crossRemote,
+            canResumeIfInterrupted: true, crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget)
     }
 

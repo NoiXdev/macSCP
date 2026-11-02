@@ -115,8 +115,7 @@ struct VersionDownloadTests {
 
     // MARK: - Read-only open
 
-    private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    private static let repoRoot: URL = SourceCorpus.packageRoot
 
     private static func code(_ name: String) throws -> String {
         try SourceCorpus.code(of: repoRoot.appendingPathComponent("Sources/MacSCPAppKit/\(name)"))
@@ -127,6 +126,13 @@ struct VersionDownloadTests {
     /// writes a save back), so opening a version must not go through it: a
     /// save in the opening application would otherwise overwrite the CURRENT
     /// object with an edit of an old one.
+    ///
+    /// **Scope:** this scans ONE function body, `openVersionReadOnly`'s. A
+    /// `beginEditing` moved into a private helper that the body calls is not
+    /// seen by it; mutation probing measures this guard's sensitivity, not its
+    /// scope (CLAUDE.md, "Guards that name what they watch"). The check is a
+    /// three-name substring test over the blanked body, with two positive
+    /// anchors (the ordinary open registers; the version open downloads).
     ///
     /// The assertion is an ABSENCE, and an absence scanned for in a body that
     /// moved reads exactly like a satisfied check. So the positive half sits
@@ -154,6 +160,44 @@ struct VersionDownloadTests {
         #expect(registersEdit == false)
         #expect(namesUploadDestination == false)
         #expect(enqueuesWriteBack == false)
+    }
+
+    /// The guard above reads `Self.code`, and everything it concludes from an
+    /// ABSENCE depends on that being the comment-and-string-blanked view. If it
+    /// read the raw text instead, a doc comment that names the forbidden calls
+    /// (and `openVersionReadOnly`'s does) would turn the negative check red
+    /// for the wrong reason, or a future edit would learn to avoid the words;
+    /// worse, a planted call hidden in a string would pass. So the control for
+    /// the control: a phrase that exists only in the function's doc comment is
+    /// in the raw file and absent from the view the guard reads.
+    @Test func theGuardReadsABlankedViewThatDropsComments() throws {
+        let url = Self.repoRoot.appendingPathComponent("Sources/MacSCPAppKit/ContentView+Transfers.swift")
+        let phrase = "registered and a watcher started"
+        #expect(try SourceCorpus.text(of: url).contains(phrase))
+        #expect(try Self.code("ContentView+Transfers.swift").contains(phrase) == false)
+    }
+
+    /// The row's "restarts from the beginning" hint is read for a transfer
+    /// that cannot resume, and a version DOWNLOAD is one: its text must not
+    /// say "upload", in any of the four catalogues. The bar reads the item's
+    /// own proposition, not the destination's.
+    @Test func theNoResumeHintIsNotAboutUploadsAndTheBarReadsTheItemsOwnFlag() throws {
+        let bar = try Self.code("TransferQueueBar.swift")
+        #expect(bar.contains("!item.canResumeIfInterrupted"))
+        #expect(bar.contains("destinationSupportsResume") == false)
+        let forbidden: [String: [String]] = [
+            "en": ["upload"], "de": ["upload", "hochlad"], "fr": ["envoi", "télévers"], "pl": ["wysy", "przesy"],
+        ]
+        for (locale, words) in forbidden {
+            let data = try Data(contentsOf: Self.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/\(locale).lproj/Localizable.strings"))
+            let catalogue = try #require(
+                try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String])
+            let hint = try #require(catalogue["transfers.noResume.hint"], "\(locale) lacks the hint")
+            for word in words {
+                #expect(hint.lowercased().contains(word) == false, "\(locale): \(word)")
+            }
+        }
     }
 
     /// The failure frame goes through the app's own label, as the ordinary

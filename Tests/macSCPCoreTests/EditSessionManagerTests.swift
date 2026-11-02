@@ -620,6 +620,12 @@ struct EditSessionManagerTests {
         #expect(isDirectory.boolValue)
         #expect(first != second)
         #expect(manager.activeEdits.isEmpty)
+        // The positive beside the absence: an edit that IS begun shows up in
+        // `activeEdits`, so the empty list above is not a list that never fills.
+        let remote = makeRemote(name: "a.txt", content: Data("x".utf8))
+        _ = try await manager.beginEditing(
+            remotePath: "/dir/a.txt", fileName: "a.txt", source: remote, destinationForUploads: remote)
+        #expect(manager.activeEdits.count == 1)
 
         await manager.stopAll()
         // The positive beside the removal: both existed a moment ago.

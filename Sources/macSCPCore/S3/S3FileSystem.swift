@@ -2495,7 +2495,7 @@ extension S3FileSystem: ObjectVersionProvider {
     /// over-general claim is the sentence a later reader checks instead of
     /// the code.)
     public func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
-        try Self.requireObjectKey(key)
+        try Self.requireObjectKey(key, reason: Self.objectKeyRequiredReason)
         let path = Self.objectLockPath(bucket: bucket, key: key)
         let before = try await versions(ofKey: key, inBucket: bucket)
         guard let source = before.first(where: { $0.versionId == versionId }) else {
@@ -2544,7 +2544,7 @@ extension S3FileSystem: ObjectVersionProvider {
     /// not a deletion the store's `204` would otherwise let through. The two
     /// are told apart by error case. Nothing is sent for either.
     public func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws {
-        try Self.requireObjectKey(key)
+        try Self.requireObjectKey(key, reason: Self.objectKeyRequiredReason)
         let path = Self.objectLockPath(bucket: bucket, key: key)
         let before = try await versions(ofKey: key, inBucket: bucket)
         guard let entry = before.first(where: { $0.versionId == versionId }) else {
@@ -2571,7 +2571,7 @@ extension S3FileSystem: ObjectVersionProvider {
     public func liftDeleteMarker(
         ofKey key: String, inBucket bucket: String, markerVersionId: String
     ) async throws {
-        try Self.requireObjectKey(key)
+        try Self.requireObjectKey(key, reason: Self.objectKeyRequiredReason)
         let path = Self.objectLockPath(bucket: bucket, key: key)
         let before = try await versions(ofKey: key, inBucket: bucket)
         guard let entry = before.first(where: { $0.versionId == markerVersionId }) else {
@@ -2604,9 +2604,12 @@ extension S3FileSystem: ObjectVersionProvider {
         }
     }
 
-    /// An empty key addresses the bucket itself, and a `DELETE` of the bucket
-    /// root is not a version delete: refused before any request is built.
-    private static func requireObjectKey(_ key: String, reason: String = objectKeyRequiredReason) throws {
+    /// An empty key addresses the bucket itself: a `DELETE` of the bucket root
+    /// is not a version delete and a `GET` of it is a listing, not a read.
+    /// Refused before any request is built, with the CALLER's `reason` (the
+    /// write half's and the read's differ, and no default is offered so a new
+    /// caller has to choose).
+    private static func requireObjectKey(_ key: String, reason: String) throws {
         guard !key.isEmpty else {
             throw RemoteFSError.protocolError(reason: reason)
         }

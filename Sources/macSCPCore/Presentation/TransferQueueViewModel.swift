@@ -182,11 +182,26 @@ public final class TransferQueueViewModel {
         /// are two spellings of one fact, and `renamedItemsDestinationPathFollowsTheEffectiveName`
         /// is what keeps the second one from going stale.
         public internal(set) var destinationPath: String
-        /// Whether the destination backend supports append-based resume (M16).
-        /// Read from `destination.supportsAppendResume` at enqueue; `false`
-        /// for an S3 destination. Drives the passive resume warning in the
-        /// transfer row. `true` for terminal skip/error items (no transfer).
-        public let destinationSupportsResume: Bool
+        /// Whether an interruption of THIS transfer could be resumed from where
+        /// it stopped, as the enqueuer knows it: what the transfer row's
+        /// passive "restarts from the beginning" warning is drawn from while
+        /// the item is queued or running. `true` for terminal skip/error items
+        /// (no transfer).
+        ///
+        /// Read from `destination.supportsAppendResume` at enqueue (M16), so
+        /// `false` for an S3 destination — EXCEPT a version download
+        /// (`enqueueAndWaitVersion`), which passes `false` whatever the
+        /// destination answers, because that job never resumes: the local disk
+        /// can append, but the source cannot continue from an offset.
+        ///
+        /// Known imprecision, left as it was: an editor write-back and a
+        /// cross-session job are also never resumed (`process` fails them),
+        /// and still pass the destination's answer here. This property was
+        /// `destinationSupportsResume` ("Whether the destination backend
+        /// supports append-based resume (M16)") until the version download
+        /// needed it to be a statement about the job; the destination's own
+        /// answer is still `destination.supportsAppendResume`.
+        public let canResumeIfInterrupted: Bool
         /// True for a remote→remote transfer routed through this app (M8b) —
         /// mirrors `Job.crossRemote`. Such a transfer is enqueued with
         /// `direction == .upload` (the target-write side is what the tab
@@ -601,7 +616,7 @@ public final class TransferQueueViewModel {
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
             destinationPath: RemotePath.join(destinationDirectory, fileName),
-            destinationSupportsResume: destination.supportsAppendResume,
+            canResumeIfInterrupted: destination.supportsAppendResume,
             crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
         kickWorker()
@@ -633,7 +648,7 @@ public final class TransferQueueViewModel {
             destinationTabID: nil, isEditUpload: true,
             destinationDirectory: remoteDirectory,
             destinationPath: RemotePath.join(remoteDirectory, fileName),
-            destinationSupportsResume: destination.supportsAppendResume,
+            canResumeIfInterrupted: destination.supportsAppendResume,
             crossRemote: false,
             crossBackendTarget: nil))
         kickWorker()
@@ -734,6 +749,11 @@ public final class TransferQueueViewModel {
     /// have to be given the tab's own file system, which reads the key's
     /// current content and not this version's (`VersionDownloadSource`). The
     /// user starts the download again; it begins from the first byte.
+    ///
+    /// **No caller yet:** the version sheet task of
+    /// `docs/superpowers/plans/2026-10-23-s3-version-history.md` wires this
+    /// (through `ContentView.openVersionReadOnly` and the download action);
+    /// until then only tests reach it.
     public func enqueueAndWaitVersion(
         fileName: String, source: any ObjectVersionProvider, bucket: String,
         key: String, versionId: String,
@@ -757,7 +777,9 @@ public final class TransferQueueViewModel {
                 destinationTabID: nil, isEditUpload: false,
                 destinationDirectory: destinationDirectory,
                 destinationPath: RemotePath.join(destinationDirectory, fileName),
-                destinationSupportsResume: destination.supportsAppendResume,
+                // Always false, whatever the destination can append: see
+                // `Item.canResumeIfInterrupted`.
+                canResumeIfInterrupted: false,
                 crossRemote: false,
                 crossBackendTarget: nil))
             waiters[id] = continuation
@@ -1591,7 +1613,7 @@ public final class TransferQueueViewModel {
             destinationTabID: destinationTabID, isEditUpload: false,
             destinationDirectory: destinationDirectory,
             destinationPath: destinationPath,
-            destinationSupportsResume: true,
+            canResumeIfInterrupted: true,
             crossRemote: crossRemote,
             crossBackendTarget: crossBackendTarget))
         registerGroupItem(id, group: groupID)

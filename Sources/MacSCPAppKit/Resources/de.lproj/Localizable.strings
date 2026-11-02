@@ -327,7 +327,7 @@
 
 /* Cross-backend resume warning (M16) — shown while a queued/running item's
    destination backend cannot resume an interrupted upload/download. */
-"transfers.noResume.hint" = "Bei Abbruch startet dieser Upload von vorn.";
+"transfers.noResume.hint" = "Bei Abbruch startet diese Übertragung von vorn.";
 
 /* Full paths on demand (2026-09-03): a row shows a file name and an
    arrow, so its hover hint carries the whole source and destination,

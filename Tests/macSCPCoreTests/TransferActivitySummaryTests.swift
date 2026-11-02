@@ -21,7 +21,7 @@ struct TransferActivitySummaryTests {
             isEditUpload: false,
             destinationDirectory: "/",
             destinationPath: "/f",
-            destinationSupportsResume: true,
+            canResumeIfInterrupted: true,
             crossRemote: false,
             crossBackendTarget: nil
         )

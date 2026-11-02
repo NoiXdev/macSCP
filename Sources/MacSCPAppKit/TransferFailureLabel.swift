@@ -26,48 +26,99 @@ import macSCPCore
 /// `reason` rather than a path or an enum. For those the App says the
 /// sentence itself, from its own catalogue, and keeps the detail behind it.
 ///
-/// ## What the detail actually is (counted 2026-09-28, recounted 2026-10-01)
+/// ## What the detail actually is (counted 2026-09-28, recounted 2026-10-01 and 2026-11-02)
 ///
 /// The first version of this comment called it "free text a backend or
 /// Foundation wrote". That was measured false, and it has been recounted
 /// after every conversion since. Two recipes over `Sources/macSCPCore`, both
 /// run against THIS HEAD:
 /// `grep -rn 'protocolError(reason:\|connectionFailed(reason:' Sources/macSCPCore`
-/// finds **78** lines, minus **17** belonging to `AgentError` — an unrelated
+/// finds **91** lines, minus **17** belonging to `AgentError` — an unrelated
 /// SSH-agent error type whose `protocolError(reason:)` case happens to share
-/// the name, counting its call sites and its own case declaration — minus
-/// `RemoteFSError`'s own **2** case declarations, minus **7** lines that
-/// quote the pattern in a comment rather than construct it
-/// (`DiagnosticLog.swift:266-267`, `DialProbes.swift:164-165`,
+/// the name, counting its call sites and its own case declaration (every line
+/// of that recipe's output that names `agent`, case-insensitively, in
+/// `AgentBackedPrivateKey.swift`, `SSHAgentCodec.swift` and
+/// `SSHAgentClient.swift`) — minus `RemoteFSError`'s own **2** case
+/// declarations, minus **7** lines that quote the pattern in a comment rather
+/// than construct it (`DiagnosticLog.swift:266-267`, `DialProbes.swift:164-165`,
 /// `ConnectionViewModel.swift:2333`, `RemoteFSFinding.swift:10`,
-/// `CitadelFileSystem.swift:763`) = **52**. That recipe is a FLOOR, not a
+/// `CitadelFileSystem.swift:763`) = **65**. That recipe is a FLOOR, not a
 /// census: it matches only a construction whose `reason:` sits on the SAME
 /// line, and this project splits the line whenever the reason is long — six
 /// sites hid there until Task 6. So
 /// `grep -rnE '(protocolError|connectionFailed)\($' Sources/macSCPCore`
-/// finds **17** further lines, **2** of them `AgentError`
+/// finds **29** further lines, **2** of them `AgentError`
 /// (`AgentBackedPrivateKey.swift:351`, `SSHAgentClient.swift:196`), leaving
-/// **15**. The two recipes' matches are disjoint, so 52 + 15 = **67** for
-/// `Sources/macSCPCore`. Both are scoped to that path; three more
-/// constructions of the same shape live in `Sources/MacSCPAppKit/`
-/// (`ContentView+Lifecycle.swift:276`, `ContentView.swift:1871`,
-/// `ContentView.swift:3434`), which neither path reaches. **The whole-tree
-/// total is 70.**
+/// **27**. The two recipes' matches are disjoint (the second needs the line
+/// to end at the open parenthesis, the first needs `reason:` after it), so
+/// 65 + 27 = **92** for `Sources/macSCPCore`. Both are scoped to that path;
+/// three more constructions of the same shape live in `Sources/MacSCPAppKit/`
+/// (`ContentView.startSession`, `ContentView.openExternalTerminalFromSidebar`,
+/// `ContentView+Lifecycle.makeTab`), which neither path reaches.
+/// **The whole-tree total is 95.**
+///
+/// **The 2026-11-02 recount**, the seventh, run against the head that adds
+/// `VersionDownloadSource`: both recipes were run as written above, from the
+/// repository root, with `/usr/bin/grep` — 91 and 29 where the previous
+/// figures were 78 and 17. Counted per commit with `git grep` over
+/// `Sources/macSCPCore`: the base of the version-history work gave 88 and 29,
+/// so the second recipe's twelve extra lines and ten of the first recipe's
+/// thirteen were already there before it, and three same-line constructions
+/// are the version download's own (`VersionDownloadSource.stat`,
+/// `.readStream` and its `refusal`). The old comment's AppKit line numbers
+/// (`:276`, `:1871`, `:3434`) no longer pointed at the constructions; they are
+/// named by symbol above, and the count of three is unchanged. The
+/// "whole-tree total is 70" it replaces was 67 + 3, and the "15" it lists are
+/// the 27 below.
+///
+/// (Withdrawn wording, verbatim: "finds **78** lines, minus **17**
+/// belonging to `AgentError` — an unrelated SSH-agent error type whose
+/// `protocolError(reason:)` case happens to share the name, counting its
+/// call sites and its own case declaration — minus `RemoteFSError`'s own
+/// **2** case declarations, minus **7** lines that quote the pattern in a
+/// comment rather than construct it (`DiagnosticLog.swift:266-267`,
+/// `DialProbes.swift:164-165`, `ConnectionViewModel.swift:2333`,
+/// `RemoteFSFinding.swift:10`, `CitadelFileSystem.swift:763`) = **52**.
+/// That recipe is a FLOOR, not a census: it matches only a construction
+/// whose `reason:` sits on the SAME line, and this project splits the
+/// line whenever the reason is long — six sites hid there until Task 6.
+/// So `grep -rnE '(protocolError|connectionFailed)\($'
+/// Sources/macSCPCore` finds **17** further lines, **2** of them
+/// `AgentError` (`AgentBackedPrivateKey.swift:351`,
+/// `SSHAgentClient.swift:196`), leaving **15**. The two recipes' matches
+/// are disjoint, so 52 + 15 = **67** for `Sources/macSCPCore`. Both are
+/// scoped to that path; three more constructions of the same shape live
+/// in `Sources/MacSCPAppKit/` (`ContentView+Lifecycle.swift:276`,
+/// `ContentView.swift:1871`, `ContentView.swift:3434`), which neither
+/// path reaches. **The whole-tree total is 70.**")
 ///
 /// The chain stood at 80 → 54 → 69 → 72 until `af283217`, which converted
 /// the two same-line constructions in `S3FileSystem.parseObjectKeys` and
 /// `S3ListParser.hasAnyEntries` to `RemoteFSError.finding(.listingUnparsable)`:
 /// two lines left the FIRST recipe, and every figure derived from it dropped
-/// by two. The second recipe's 17 and the App layer's 3 are unchanged.
+/// by two.
 ///
-/// The 15 the second recipe finds, every citation opened against this HEAD:
-/// `S3MultipartXML.parseUploadID`, `S3FileSystem.swift:714`, `:896`, `:1116`,
-/// `S3ListParser.parseBuckets`, `RemoteChecksumProvider.swift:329`,
-/// `CitadelShell.swift:130`, `CitadelFileSystem.swift:397`, `:825`, `:837`,
-/// `:1671`, `WebDAVFileSystem.delete`, `WebDAVFileSystem.setPermissions`,
-/// `ThroughputProbe.swift:632`, `:702`.
+/// The 27 the second recipe finds (the enumeration that read "The 15 the
+/// second recipe finds" is withdrawn, verbatim: "The 15 the second recipe
+/// finds, every citation opened against this HEAD: `S3MultipartXML.parseUploadID`,
+/// `S3FileSystem.swift:714`, `:896`, `:1116`, `S3ListParser.parseBuckets`,
+/// `RemoteChecksumProvider.swift:329`, `CitadelShell.swift:130`,
+/// `CitadelFileSystem.swift:397`, `:825`, `:837`, `:1671`,
+/// `WebDAVFileSystem.delete`, `WebDAVFileSystem.setPermissions`,
+/// `ThroughputProbe.swift:632`, `:702`."), every site opened against this
+/// head, named by symbol and counted once per line:
+/// `S3SettingsXML.parseVersioning` (2), `.parseCORS`, `.objectLockBody`,
+/// `.parseLegalHold` (2), `.leaves(of:root:what:)`; `S3VersionsXML.parsePage`
+/// (2); `S3FileSystem.delete`, `.deleteTree`, `.copyObject`,
+/// `.versionEntries`; `S3MultipartXML.parseUploadID`;
+/// `S3ListParser.parseBuckets`; `RemoteChecksumProvider.checksum`;
+/// `CitadelFileSystem.connectWithTOFURetries`, `.mapStageAware` (2),
+/// `.standardOutput(of:)`, `.run(_:stdin:)`, `.listing(of:limit:)`;
+/// `CitadelShell.open`; `ThroughputProbe.swift`'s two `refusal` constants;
+/// `WebDAVFileSystem.delete` and `.setPermissions` — 7 + 2 + 4 + 1 + 1 + 1
+/// + 6 + 1 + 2 + 2 = 27.
 ///
-/// Three of those were line numbers until 2026-10-01, and each had been
+/// Three of the old 15 were line numbers until 2026-10-01, and each had been
 /// moved TWICE by the branch that corrected them — traced per commit, not
 /// assumed. `S3ListParser.swift:90` went to `:92` in `af283217` and back to
 /// `:91` in `5fd6d211`; `WebDAVFileSystem.swift:586` and `:630` went to
@@ -82,8 +133,10 @@ import macSCPCore
 /// diagnostic string macSCP mostly wrote in English, occasionally relayed
 /// from elsewhere, and in neither case translated.
 ///
-/// Six earlier recounts stood here — 68, 69, 63, 57, 81, 78 — each
-/// superseded by the next. What each measured, and what each got wrong, is
+/// Seven recounts stand here — 68, 69, 63, 57, 81, 78, 91 — each
+/// superseded by the next (withdrawn wording, verbatim: "Six earlier
+/// recounts stood here — 68, 69, 63, 57, 81, 78 — each superseded by the
+/// next."). What each measured, and what each got wrong, is
 /// in `docs/superpowers/specs/2026-09-28-typed-remote-fs-findings-design.md`
 /// and in this file's git history.
 ///
