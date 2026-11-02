@@ -296,7 +296,10 @@ struct S3ObjectVersionsTests {
     @Test(arguments: [
         // Root view: only keys with no `/` at all.
         (prefix: "", expected: ["top.txt", "elsewhere.txt"]),
-        (prefix: "d/", expected: ["d/top.txt", "d/"]),
+        // `d/` under `d/` is the prefix itself, the folder and not a child of
+        // it: dropped, as `S3ListParser` drops `key != prefix`. (Withdrawn
+        // expectation, verbatim: `["d/top.txt", "d/"]`, which kept it.)
+        (prefix: "d/", expected: ["d/top.txt"]),
         // Mid-name prefix: the rest after `d/to` is `p.txt` (kept), `/x` and
         // `p/x.txt` (below one level).
         (prefix: "d/to", expected: ["d/top.txt"]),

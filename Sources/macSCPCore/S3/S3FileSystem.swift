@@ -2253,7 +2253,8 @@ extension S3FileSystem: ObjectVersionProvider {
         // `delimiter` answers with the nested marker as an ordinary entry,
         // which that sentence would have left reported. What a real store does
         // with `delimiter=/` on `?versions` is unmeasured; Task 11 of
-        // `docs/superpowers/plans/2026-10-23-s3-version-history.md` measures it, and this answer no longer depends on it.)
+        // `docs/superpowers/plans/2026-10-23-s3-version-history.md` measures
+        // it, and this answer no longer depends on it.)
         // Only a marker that is its key's CURRENT entry hides the key. An older
         // marker under a newer version describes a key that was deleted and
         // then written again, which is not deleted.
@@ -2271,8 +2272,15 @@ extension S3FileSystem: ObjectVersionProvider {
     /// all. A key that does not start with the prefix is dropped: it answers a
     /// question that was not asked, and guessing where its remainder begins
     /// would be inventing an answer.
+    ///
+    /// A key EQUAL to the prefix (empty remainder) is dropped too: it is the
+    /// folder itself, not a child of it, and this agrees on purpose with the
+    /// non-versioned listing (`key != prefix` in `S3ListParser`'s `Contents`
+    /// handling). (Withdrawn wording, verbatim: "the part after the prefix
+    /// holds no `/`" was the whole rule, which kept the empty remainder, so
+    /// `d/` under `d/` was reported as a deleted row with no name.)
     static func oneLevelBelow(_ prefix: String, key: String) -> Bool {
-        guard key.hasPrefix(prefix) else { return false }
+        guard key.hasPrefix(prefix), key != prefix else { return false }
         return !key.dropFirst(prefix.count).contains("/")
     }
 
