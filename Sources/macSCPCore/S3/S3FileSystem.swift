@@ -2463,8 +2463,14 @@ extension S3FileSystem: ObjectVersionProvider {
     /// never toward "done"." True of the first two, and false of the third,
     /// which was not listed.)
     ///
-    /// Every error names `/{bucket}/{key}` (`objectLockPath`), the bucket the
-    /// call named, whichever bucket the connection itself was opened on.
+    /// Every `.notFound` and every refusal finding names `/{bucket}/{key}`
+    /// (`objectLockPath`), the bucket the call named, whichever bucket the
+    /// connection itself was opened on. The `.protocolError`s raised here
+    /// carry a reason and no path at all, which is why this sentence names
+    /// the two kinds rather than all of them. (Withdrawn wording, verbatim:
+    /// "Every error names `/{bucket}/{key}`" — over-general, and an
+    /// over-general claim is the sentence a later reader checks instead of
+    /// the code.)
     public func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws {
         try Self.requireObjectKey(key)
         let path = Self.objectLockPath(bucket: bucket, key: key)

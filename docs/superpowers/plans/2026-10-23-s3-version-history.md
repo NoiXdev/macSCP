@@ -569,7 +569,17 @@ It was approved on 2026-10-23 and written outside the worktree so the first half
 
 - [ ] **Step 2: Write the gated suite**
 
-Behind `MACSCP_ITEST=1`, against the rig started **from the main checkout**. One case per measured row of spec §4.1–§4.3 and §4.8–§4.9, each asserting what that row recorded. Buckets the suite creates and deletes itself; never `macscp-seed`, `macscp-second` or `macscp-probe-lock`; and **no COMPLIANCE retention on any bucket the suite means to delete.**
+Behind `MACSCP_ITEST=1`, against the rig started **from the main checkout**. One case per measured row of spec §4.1–§4.3 and §4.8–§4.9, each asserting what that row recorded.
+
+**Amended 2026-11-02, after Tasks 3 and 4.** The sentence above is kept and not withdrawn — those rows are still cases — but it was the whole of this step, and five measurements have since been carried here by decisions those two tasks had to make without a store. Each is named below with the decision that depends on it, because a measurement that lives only in the SDD ledger dies with the plan's gitignored workspace, and one of these is already promised by a doc comment in shipped source (`S3FileSystem.restore` names this task). Spec §4.4 is the row that covers the copy; it was not named above and is now.
+
+1. **Does the store honour `versionId` in `x-amz-copy-source`?** (spec §4.4) `restore` is a self-copy naming a non-current version. If the store ignores the version id and copies the CURRENT content onto the key, the restore is wrong — and on the weak confirmation path (a multipart or opaque source ETag) it is reported as **done**. This is the one carried measurement whose failure direction is unsafe; the other four fail toward "could not be confirmed".
+2. **Is a copy onto the same key accepted at all when it names a source version?** AWS refuses a self-copy that changes nothing; with a source `versionId` on a versioned bucket it is the standard restore idiom. Assumed legal in Task 4, unmeasured.
+3. **Is a version delete visible to the immediately following read-back?** `deleteVersion` and `liftDeleteMarker` confirm by ABSENCE. A store whose delete is not yet visible to the next read reports a successful delete as failed.
+4. **What does `delimiter=/` do on `?versions`?** `deletedEntries` sends it and does not read `CommonPrefixes`. Task 4's fix round made the one-level reading hold whatever the store answers, so this no longer decides correctness — it decides whether the delimiter is buying anything.
+5. **Does a last page carry a `NextKeyMarker`?** The paging loop FOLLOWS a marker beside `IsTruncated=false`, which costs one extra request per listing. Measure whether that request is ever needed here.
+
+Buckets the suite creates and deletes itself; never `macscp-seed`, `macscp-second` or `macscp-probe-lock`; and **no COMPLIANCE retention on any bucket the suite means to delete.**
 
 - [ ] **Step 3: Run it**
 
