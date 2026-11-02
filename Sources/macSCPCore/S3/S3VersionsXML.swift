@@ -85,15 +85,6 @@ enum S3VersionsXML {
         return result
     }
 
-    /// An S3 timestamp: ISO 8601 in UTC, with or without fractional seconds
-    /// (the rig writes `.000`, other stores omit it).
-    private static func timestamp(_ text: String) -> Date? {
-        if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(text) {
-            return date
-        }
-        return try? Date.ISO8601FormatStyle().parse(text)
-    }
-
     private final class PageDelegate: NSObject, XMLParserDelegate {
         private(set) var sawRoot = false
         private(set) var abortReason: String?
@@ -158,7 +149,7 @@ enum S3VersionsXML {
                 case "Key": key = currentText
                 case "VersionId": versionId = currentText
                 case "IsLatest": isLatest = trimmed.lowercased() == "true"
-                case "LastModified": modifiedAt = S3VersionsXML.timestamp(trimmed)
+                case "LastModified": modifiedAt = S3SettingsXML.timestamp(trimmed)
                 case "ETag": entityTag = currentText
                 case "Size":
                     guard let bytes = UInt64(trimmed) else {

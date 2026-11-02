@@ -6,9 +6,13 @@ import Testing
 struct S3VersionsXMLTests {
     // MARK: - Fixtures
     //
-    // Bodies in the shape the spec's section 4 measured (element names, the
-    // order the store wrote them in, the walker token inside the marker). Built
-    // from raw strings; nothing is fetched.
+    // Every body here is CONSTRUCTED for this suite from a raw string; none is
+    // a transcript of a response, and nothing is fetched. The spec records no
+    // verbatim `ListVersionsResult` body (it describes the element names in
+    // prose, section 4.1), so the keys, version ids, dates, tags and sizes in
+    // these documents are scaffolding. What is measured text is named on the
+    // fixtures that carry some: `walkerMarker` and `notImplementedBody` (and
+    // `accessDeniedBody` for its code only).
 
     /// A delete marker on top of two content versions of one key.
     static let twoVersionsOneMarker = Data(
@@ -56,8 +60,9 @@ struct S3VersionsXMLTests {
         </ListVersionsResult>
         """#.utf8)
 
-    /// The walker handle RustFS returns as `NextKeyMarker` (spec section 4.9),
-    /// identical across the pages of one listing.
+    /// MEASURED text: the `NextKeyMarker` value spec section 4.9 records
+    /// RustFS returning, copied from there character for character. The
+    /// listing documents that carry it are constructed.
     static let walkerMarker =
         "k1.txt[rustfs_cache:v2,id:58bdf6cd-abf7-46e6-be83-f09a449f2af3,src:walker,gen:live]"
 
@@ -98,7 +103,14 @@ struct S3VersionsXMLTests {
         </ListVersionsResult>
         """.utf8)
 
-    /// RustFS's answer to a call it does not implement (spec section 4.6).
+    /// CONSTRUCTED, around one measured fact. Measured (spec section 4.6): RustFS
+    /// answers a call it does not implement with 501 and
+    /// `<Code>NotImplemented</Code>`; the call measured there was
+    /// `GetBucketOwnershipControls`, not a version listing. Scaffolding: the
+    /// `Message` and `Resource` text, and the pairing with a version listing,
+    /// which RustFS does implement (section 4.1). The pairing is the point of
+    /// the fixture: some other store may not implement it, and its answer must
+    /// not read as an authentication failure.
     static let notImplementedBody = Data(
         #"""
         <?xml version="1.0" encoding="UTF-8"?>
@@ -108,7 +120,9 @@ struct S3VersionsXMLTests {
         """#.utf8)
 
     /// The positive control for the 501 case: a refusal that really is one
-    /// of credentials or permission.
+    /// of credentials or permission. CONSTRUCTED: section 4.7 measured an
+    /// `AccessDenied` code at 403 (on a version delete); this body's message
+    /// and resource are scaffolding.
     static let accessDeniedBody = Data(
         #"""
         <?xml version="1.0" encoding="UTF-8"?>
@@ -200,8 +214,10 @@ struct S3VersionsXMLTests {
     }
 
     @Test func aMarkerCarryingAnInternalTokenIsEncodedNotParsed() {
-        // Measured 2026-10-23 (spec §4.9): RustFS returns the walker handle inside
-        // the marker.
+        // The shape is measured (spec section 4.9: RustFS returned a walker
+        // handle with brackets, commas and colons inside `NextKeyMarker`). This
+        // literal is a SHORTENED, constructed variant of it, not the measured
+        // string; `walkerMarker` is the measured one.
         let marker = "k1.txt[rustfs_cache:v2,id:58bdf6cd,src:walker,gen:live]"
         let encoded = S3VersionsXML.markerQueryValue(marker)
         let leaksABracket = encoded.contains("[") || encoded.contains("]")
@@ -291,6 +307,20 @@ struct S3VersionsXMLTests {
             Issue.record("expected a protocolError, got \(String(describing: thrown))")
             return
         }
+    }
+
+    @Test(arguments: [
+        ("2026-10-23T13:50:02.000Z", 1_792_763_402.0),
+        ("2026-10-23T13:50:02Z", 1_792_763_402.0),
+    ])
+    func aTimestampReadsWithOrWithoutFractionalSeconds(text: String, expected: Double) throws {
+        let body = Data(
+            """
+            <ListVersionsResult><Version><Key>a</Key><VersionId>v</VersionId>\
+            <IsLatest>true</IsLatest><LastModified>\(text)</LastModified></Version></ListVersionsResult>
+            """.utf8)
+        let page = try S3VersionsXML.parsePage(body, status: 200)
+        #expect(page.versions.first?.modifiedAt == Date(timeIntervalSince1970: expected))
     }
 
     @Test func anEmptyListingIsAnEmptyPage() throws {
