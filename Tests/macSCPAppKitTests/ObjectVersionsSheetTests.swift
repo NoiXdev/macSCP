@@ -457,7 +457,12 @@ struct ObjectVersionsSheetTests {
         await model.load()
         let row = model.versions[1]
         let read = Task { @MainActor in await model.readLockState(of: row) }
-        _ = await hold.reached.wait()
+        guard await hold.reached.arrives("the held lock read reaching the store") else {
+            read.cancel()
+            hold.release.signal()
+            await read.value
+            return
+        }
         read.cancel()
         hold.release.signal()
         await read.value
@@ -470,9 +475,10 @@ struct ObjectVersionsSheetTests {
 
     /// The peak as a fact. The fake holds every version read at the store until
     /// the test lets go, and says when `lockReadLimit` are in flight at once: a
-    /// model that reads fewer never raises it (the case waits on the case's own
-    /// `.timeLimit`), one that reads more has more than the limit in flight
-    /// when the test checks before releasing.
+    /// model that reads fewer never raises it (the wait for it ends at the hang
+    /// bound with a named failure; it used to wait on the case's own
+    /// `.timeLimit`, which does not end a park), one that reads more has more
+    /// than the limit in flight when the test checks before releasing.
     @Test(.timeLimit(.minutes(5)))
     func theLimitIsReachedAndNotExceeded() async {
         let many = (0..<14).map {
@@ -488,7 +494,12 @@ struct ObjectVersionsSheetTests {
         await model.load()
         let all = model.versions
         let reading = Task { @MainActor in await model.readLockStates(of: all) }
-        _ = await hold.reached.wait()
+        guard await hold.reached.arrives("lockReadLimit lock reads being in flight together") else {
+            reading.cancel()
+            hold.release.signal()
+            await reading.value
+            return
+        }
         // Give every other row the chance to get to the store, if the gate lets
         // it: the rest of the rows' tasks are runnable now.
         for _ in 0..<50 { await Task.yield() }
@@ -773,8 +784,9 @@ struct ObjectVersionsSheetHostedTests {
     /// every realised cell's `.task` to start (a first retention read per
     /// row, up to the limit, was recorded before any await), so the
     /// assertion that something was asked needs no waiting. The wait for the
-    /// rest is for the reads to finish, and the case's own `.timeLimit` is its
-    /// hang bound.
+    /// rest is for the reads to finish, and `AsyncSignal.arrives` is its hang
+    /// bound. (Withdrawn wording, verbatim: "the case's own `.timeLimit` is its
+    /// hang bound" -- it does not end a park.)
     @Test(.timeLimit(.minutes(5)))
     func theTableAsksForTheLockOfEveryRowItShowsAndOfNoMarker() async throws {
         let history = [
@@ -817,8 +829,11 @@ struct ObjectVersionsSheetHostedTests {
         // and not spelled: a listing that lost a row (the `null` one) would
         // otherwise wait for a read that is never sent. The wait is an `await`
         // on a signal the model raises as each reading is recorded, so the main
-        // actor is free while it waits and the case's own `.timeLimit` can fire
-        // if a reading never lands. (It was a `Task.yield()` loop with an
+        // actor is free while it waits, and the wait carries the hang bound
+        // (`AsyncSignal.arrives`) so that a reading that never lands is a named
+        // failure. (Withdrawn wording, verbatim: "so the main actor is free while
+        // it waits and the case's own `.timeLimit` can fire if a reading never
+        // lands" -- the time limit does not end a park.) (It was a `Task.yield()` loop with an
         // iteration bound; it made progress, but it burned the one main-actor
         // executor for as long as the reads took, which is the starvation
         // CLAUDE.md measures on the three-core runner.)
@@ -828,7 +843,7 @@ struct ObjectVersionsSheetHostedTests {
             if model.readings.count >= expected { allRecorded.signal() }
         }
         if model.readings.count >= expected { allRecorded.signal() }
-        _ = await allRecorded.wait()
+        guard await allRecorded.arrives("every lock reading being recorded") else { return }
         #expect(model.readings.count == expected, "the reads did not all come back")
         #expect(model.readings.keys.sorted() == ["null", "v3"])
         let nullVersion = try #require(
