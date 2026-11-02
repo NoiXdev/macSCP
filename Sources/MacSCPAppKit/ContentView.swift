@@ -2073,6 +2073,10 @@ struct ContentView: View {
         // set here, once, so it dies with the session and a reconnect starts
         // from nothing (`BrowserSession.objectLockStates`).
         tab.session?.objectLockStates = BrowserSession.objectLockStates(for: fs)
+        // The same for each bucket's versioning state
+        // (`BrowserSession.bucketVersioning`), which the version history's
+        // menu row and sheet read.
+        tab.session?.bucketVersioning = BrowserSession.bucketVersioning(for: fs)
         // Fresh liveness for a fresh session (Task 4, fix round 1):
         // `SessionTab.liveness` lives on the tab, not the session (see that
         // property's own doc comment for why), so it needs its own reset

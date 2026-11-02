@@ -342,6 +342,12 @@ final class FakeBucketSettings: S3BucketSettings, Sendable {
             }
         }
     }
+    /// Changes what `versioning(ofBucket:)` throws from now on (`nil` to answer
+    /// again), for a test in which the same store fails once and then does not.
+    func setReadError(_ error: (any Error)?) {
+        state.withLock { $0.readError = error }
+    }
+
     /// Changes what `hasObjectLock` throws from now on (`nil` to answer again),
     /// for a test in which the same store fails once and then does not. A
     /// no-op on a fake that was given no Object Lock fixture.

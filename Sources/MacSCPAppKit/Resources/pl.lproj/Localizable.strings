@@ -436,6 +436,8 @@
 "browser.action.presignedURL" = "Link udostępniania…";
 "browser.action.retention" = "Okres przechowywania…";
 "browser.action.legalHold" = "Blokada prawna…";
+"browser.action.versions" = "Pokaż wersje…";
+"browser.action.versions.neverVersioned" = "W tym buckecie wersjonowanie nigdy nie było włączone, więc nie ma historii do wyświetlenia.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Akcje połączenia";

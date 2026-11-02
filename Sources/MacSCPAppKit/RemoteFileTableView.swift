@@ -64,6 +64,21 @@ struct RemoteFileTableView: NSViewRepresentable {
     /// shows a backend action, since the local file system never contributes
     /// any.
     var fileActions: (() -> [FileActionContribution])? = nil
+    /// Whether THIS contributed file action can be carried out now. A row for
+    /// which it answers `false` is drawn DISABLED rather than enabled and
+    /// inert, the choice `ConnectionActionsMenu.isAvailable` makes for its
+    /// rows: per row, because an action's availability can depend on the
+    /// connection (the version history's depends on the bucket's versioning
+    /// state, `VersionsRowAvailability`). Read at each menu build, like
+    /// `fileActions` above. The default offers every row, which is what the
+    /// menu did before this existed and what the local pane still gets.
+    var isFileActionAvailable: (FileActionContribution) -> Bool = { _ in true }
+    /// The sentence that says why a row is disabled, shown as the menu item's
+    /// tooltip, or `nil` for none. **New behaviour, not a copied pattern:**
+    /// `ConnectionActionsMenu` disables a row with no reason text at all, so
+    /// there is no precedent here to mirror. Consulted only for a row
+    /// `isFileActionAvailable` declined; an available row never carries one.
+    var fileActionUnavailableReason: (FileActionContribution) -> String? = { _ in nil }
     /// The actions the USER wrote (file-actions plan), as a closure for the
     /// reason `crossSessionTargets` and `fileActions` are: read at each
     /// `menuNeedsUpdate`, so an action saved a moment ago is in the very next
@@ -159,6 +174,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         coordinator.onOpenSearch = onOpenSearch
         coordinator.crossSessionTargets = crossSessionTargets
         coordinator.fileActions = fileActions
+        coordinator.isFileActionAvailable = isFileActionAvailable
+        coordinator.fileActionUnavailableReason = fileActionUnavailableReason
         coordinator.userFileActions = userFileActions
         coordinator.supportsChecksum = supportsChecksum
         coordinator.supportsArchiving = supportsArchiving
@@ -468,6 +485,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         context.coordinator.onOpenSearch = onOpenSearch
         context.coordinator.crossSessionTargets = crossSessionTargets
         context.coordinator.fileActions = fileActions
+        context.coordinator.isFileActionAvailable = isFileActionAvailable
+        context.coordinator.fileActionUnavailableReason = fileActionUnavailableReason
         context.coordinator.userFileActions = userFileActions
         context.coordinator.supportsChecksum = supportsChecksum
         context.coordinator.supportsArchiving = supportsArchiving
@@ -721,6 +740,8 @@ struct RemoteFileTableView: NSViewRepresentable {
         var onOpenSearch: (() -> Void)?
         var crossSessionTargets: (() -> [CrossSessionTarget])?
         var fileActions: (() -> [FileActionContribution])?
+        var isFileActionAvailable: (FileActionContribution) -> Bool = { _ in true }
+        var fileActionUnavailableReason: (FileActionContribution) -> String? = { _ in nil }
         var userFileActions: (() -> [FileAction])?
         var supportsChecksum = false
         var supportsArchiving = false
@@ -1093,6 +1114,14 @@ struct RemoteFileTableView: NSViewRepresentable {
                     $0 < items.count ? items[$0] : nil
                 }
             }
+            populate(menu, selection: selection)
+        }
+
+        /// Rebuilds `menu` for `selection`. The part of `menuNeedsUpdate` after
+        /// the click has been resolved to a selection, on its own so that a
+        /// test can hand it one: `NSTableView.clickedRow` is read-only and a
+        /// click is what sets it.
+        func populate(_ menu: NSMenu, selection: [RemoteFileItem]) {
             menu.removeAllItems()
             let entries = BrowserContextMenu.entries(
                 for: selection, side: side, crossSessionTargets: crossSessionTargets?() ?? [],
@@ -1302,8 +1331,11 @@ struct RemoteFileTableView: NSViewRepresentable {
                 // Handler wiring (e.g. the S3 presigned-URL sheet) happens at
                 // the `onMenuAction` call site in `ContentView`, keyed off
                 // `action.id` — this file never inspects it either.
-                return actionItem(
-                    title: L10n.string(action.titleKey, action.titleDefault), entry: entry, selection: selection)
+                let title = L10n.string(action.titleKey, action.titleDefault)
+                guard isFileActionAvailable(action) else {
+                    return unavailableItem(title: title, reason: fileActionUnavailableReason(action))
+                }
+                return actionItem(title: title, entry: entry, selection: selection)
             case .userFileAction(let action):
                 // The title is the user's own text, so it is not looked up in
                 // a catalogue: there is no key for a name somebody typed. It
@@ -1323,6 +1355,20 @@ struct RemoteFileTableView: NSViewRepresentable {
             let item = NSMenuItem(title: title, action: #selector(menuItemFired(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = MenuActionBox(entry: entry, selection: selection)
+            return item
+        }
+
+        /// A row the backend declined to offer: disabled, with the reason as
+        /// its tooltip when there is one.
+        ///
+        /// It has NO action, not merely `isEnabled = false`: the menu
+        /// validates its items each time it opens (`autoenablesItems`), and an
+        /// item with a target that responds to its action is switched back on.
+        /// An item with nothing to fire cannot be.
+        private func unavailableItem(title: String, reason: String?) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            item.toolTip = reason
             return item
         }
 

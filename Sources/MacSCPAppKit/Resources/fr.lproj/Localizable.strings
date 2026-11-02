@@ -438,6 +438,8 @@
 "browser.action.presignedURL" = "Lien de partage…";
 "browser.action.retention" = "Rétention…";
 "browser.action.legalHold" = "Conservation légale…";
+"browser.action.versions" = "Afficher les versions…";
+"browser.action.versions.neverVersioned" = "La gestion des versions n’a jamais été activée sur ce bucket : il n’y a aucun historique à afficher.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Actions de connexion";
