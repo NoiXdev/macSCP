@@ -122,13 +122,39 @@ public protocol ObjectVersionProvider: Sendable {
 
     /// Makes `versionId`'s content the current content of `key`, by writing
     /// it as a NEW version. The history keeps every entry it had.
+    ///
+    /// **Returns only when the history confirms it**: a new current version
+    /// that is not a delete marker (and, where the backend can tell, carries
+    /// the restored content). A write the history does not show throws
+    /// `.protocolError`, so a caller that sees no error may rely on it.
+    /// Throws, with nothing written, `.notFound` when the history holds no
+    /// such version and `.protocolError` when `versionId` names a delete
+    /// marker (it has no content) or `key` is empty. Costs a history read
+    /// before the write and one after.
     func restore(key: String, inBucket bucket: String, toVersionId versionId: String) async throws
 
     /// Permanently removes one version of `key`. Unlike deleting the key, it
     /// leaves no marker and cannot be undone.
+    ///
+    /// **Returns only when the history no longer lists it**; a version that is
+    /// still listed throws `.protocolError`. Throws, with nothing removed,
+    /// `.notFound` when the history holds no such version and `.protocolError`
+    /// when `versionId` names a delete marker (that is `liftDeleteMarker`,
+    /// which has the opposite effect) or `key` is empty. A version the store
+    /// refuses to remove because of a retention or a legal hold is
+    /// `.finding(.objectUnderRetention)` or `.finding(.objectUnderLegalHold)`.
+    /// Costs a history read before the delete and one after.
     func deleteVersion(ofKey key: String, inBucket bucket: String, versionId: String) async throws
 
     /// Removes the delete marker `markerVersionId`, so the version beneath it
     /// is the key's current content again.
+    ///
+    /// The same request as `deleteVersion` on the wire, so the history is read
+    /// first and the id must name a delete marker: `.notFound` when it names
+    /// nothing, `.protocolError` when it names a version with content (lifting
+    /// that would delete data for good) or `key` is empty, in both cases with
+    /// nothing sent. **Returns only when the history no longer lists the
+    /// marker**; otherwise `.protocolError`. Costs a history read before the
+    /// delete and one after.
     func liftDeleteMarker(ofKey key: String, inBucket bucket: String, markerVersionId: String) async throws
 }

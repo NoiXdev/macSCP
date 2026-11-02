@@ -260,12 +260,12 @@ public struct AuditRecorder: Sendable {
                 "; the bucket already had a \(bucketDefault.mode.rawValue) default retention of "
                 + "\(bucketDefault.days) \(bucketDefault.days == 1 ? "day" : "days")"
         }
-        appendBucketSetting(.bucketCreated, detail: detail, failure: failure)
+        appendS3Write(.bucketCreated, detail: detail, failure: failure)
     }
 
     /// Logs a bucket's versioning moved to `state`, or refused.
     public func recordVersioningChanged(bucket: String, to state: BucketVersioning, failure: String?) {
-        appendBucketSetting(
+        appendS3Write(
             .versioningChanged, detail: "versioning of bucket \(bucket) set to \(state.rawValue)",
             failure: failure)
     }
@@ -280,7 +280,7 @@ public struct AuditRecorder: Sendable {
             ruleCount == 0
             ? "CORS configuration of bucket \(bucket) cleared"
             : "CORS rules of bucket \(bucket) set to \(ruleCount) \(ruleCount == 1 ? "rule" : "rules")"
-        appendBucketSetting(.corsChanged, detail: detail, failure: failure)
+        appendS3Write(.corsChanged, detail: detail, failure: failure)
     }
 
     /// Logs an Object Lock write, or its refusal. A retention's line names the
@@ -298,7 +298,7 @@ public struct AuditRecorder: Sendable {
         case .bucketDefault(let days, let mode, let bucket):
             detail = "default retention of bucket \(bucket) set to \(mode.rawValue) for \(days) days"
         }
-        appendBucketSetting(.objectLockChanged, detail: detail, failure: failure)
+        appendS3Write(.objectLockChanged, detail: detail, failure: failure)
     }
 
     // MARK: - S3 version history (Task 4)
@@ -311,7 +311,7 @@ public struct AuditRecorder: Sendable {
     /// id and nothing else: none of the three is a secret, and the endpoint
     /// and the credentials never reach this method.
     public func recordVersionRestored(key: String, bucket: String, versionId: String, failure: String?) {
-        appendBucketSetting(
+        appendS3Write(
             .versionRestored,
             detail: "restored version \(versionId) of \(bucket)/\(key) as its current version",
             failure: failure)
@@ -321,7 +321,7 @@ public struct AuditRecorder: Sendable {
     /// because it is the one write of the three that leaves nothing to undo it
     /// with: no marker, no history entry.
     public func recordVersionDeleted(key: String, bucket: String, versionId: String, failure: String?) {
-        appendBucketSetting(
+        appendS3Write(
             .versionDeleted,
             detail: "permanently deleted version \(versionId) of \(bucket)/\(key)",
             failure: failure)
@@ -332,13 +332,17 @@ public struct AuditRecorder: Sendable {
     public func recordDeleteMarkerLifted(
         key: String, bucket: String, markerVersionId: String, failure: String?
     ) {
-        appendBucketSetting(
+        appendS3Write(
             .deleteMarkerLifted,
             detail: "removed delete marker \(markerVersionId) from \(bucket)/\(key)",
             failure: failure)
     }
 
-    private func appendBucketSetting(_ kind: AuditEvent.Kind, detail: String, failure: String?) {
+    /// Appends one S3 write's event: the bucket-settings writes and the
+    /// version-history writes share it. (Renamed from `appendBucketSetting`,
+    /// which stopped being true of what it served when the version-history
+    /// recorders began to use it.)
+    private func appendS3Write(_ kind: AuditEvent.Kind, detail: String, failure: String?) {
         store.append(
             AuditEvent(kind: kind, detail: detail, isError: failure != nil, errorMessage: failure),
             for: sessionID)

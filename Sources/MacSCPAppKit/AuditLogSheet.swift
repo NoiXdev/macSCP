@@ -90,10 +90,14 @@ struct AuditLogSheet: BoundedView {
             // **All**", and it lists File Ops among the filter menu's
             // entries. Earlier this comment marked the statement as
             // unverified; verified, the hedge is dropped.)
-            // The same ruling covers the version-history kinds (the S3
-            // version-history plan, Task 4): they are writes to files, and
+            // The version-history kinds (the S3 version-history plan, Task 4)
+            // are listed here too: they are writes to files, and
             // `metadataChanged` is among them although nothing records it yet.
-            // Moving them costs the same user-documentation page.
+            // Unlike the four above, they cost the user documentation nothing
+            // to move today: read on 2026-11-02 in the user-docs worktree
+            // `noix-docs-s3-bucket-settings`, the audit log page names only the
+            // four bucket-settings events. That stops being true when the
+            // plan's closeout task documents these.
             case .rename, .delete, .permissions, .newFolder, .newFile,
                 .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
                 .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged:

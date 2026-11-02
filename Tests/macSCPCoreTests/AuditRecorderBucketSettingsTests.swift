@@ -18,7 +18,7 @@ import Testing
 /// under, what its line says, and that a refused write does not read as
 /// done." The suite now holds a second group, and that sentence described
 /// the first only.)
-@Suite("AuditRecorder bucket settings")
+@Suite("AuditRecorder bucket settings and version history")
 struct AuditRecorderBucketSettingsTests {
     /// 2027-01-15T08:00:00Z. Checked with
     /// `python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp(1_800_000_000).isoformat())"`.

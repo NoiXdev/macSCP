@@ -205,17 +205,10 @@ struct S3VersionActionsTests {
         }
     }
 
-    /// **Why the evidence differs by the source's ETag.** A single-part
-    /// object's ETag IS the MD5 of its bytes, so a copy of it must reproduce
-    /// the ETag and the content is checkable against the source. A multipart
-    /// object's ETag is an MD5 over the PARTS' MD5s with `-N` appended, so it
-    /// depends on the chunking, and a server-side copy is free to chunk
-    /// differently: a correct copy of a large file need not match its source.
-    /// Requiring equality there would report a correct restore as unconfirmed
-    /// and the user would retry it, making a second copy. For a source that
-    /// is not a file MD5 the confirmation is therefore the weaker pair: a new
-    /// current version that is not a delete marker and is not the version
-    /// restored from. The two paths rest on different evidence on purpose.
+    /// Equality of ETags is demanded only where `ObjectStorageETag.interpret`
+    /// says the source's is a file MD5; for a composite the confirmation is
+    /// the weaker pair, a new current version that is not a delete marker. The
+    /// reason is stated once, on `S3FileSystem.restore`.
     @Test func aMultipartSourceIsConfirmedByANewCurrentVersionEvenWhenTheCompositeDiffers() async throws {
         let (fs, _) = try await S3SettingsFake.connect(responses: [
             Self.history([
@@ -302,13 +295,28 @@ struct S3VersionActionsTests {
         #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET", "PUT"])
     }
 
+    @Test func aCopyTheStoreRefusesNamesTheObjectInTheBucketTheCallNamed() async throws {
+        // The connection's own bucket is `macscp-seed`; the call names `b`.
+        // The path in the error must be `b`'s, not a path in another bucket.
+        let (fs, _) = try await S3SettingsFake.connect(responses: [
+            Self.history([
+                Self.entry("v2", latest: true, etag: Self.md5B),
+                Self.entry("v1", latest: false, etag: Self.md5A),
+            ]),
+            (Data(), S3SettingsFake.httpResponse(status: 404)),
+        ])
+        await #expect(throws: RemoteFSError.notFound(path: "/b/doc.txt")) {
+            try await fs.restore(key: "doc.txt", inBucket: "b", toVersionId: "v1")
+        }
+    }
+
     // MARK: - restore: what it refuses before it writes
 
     @Test func restoringAVersionTheHistoryDoesNotHoldWritesNothing() async throws {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
             Self.history([Self.entry("v2", latest: true, etag: Self.md5B)])
         ])
-        await #expect(throws: RemoteFSError.notFound(path: "/doc.txt")) {
+        await #expect(throws: RemoteFSError.notFound(path: "/b/doc.txt")) {
             try await fs.restore(key: "doc.txt", inBucket: "b", toVersionId: "v-missing")
         }
         // Positive half: the history WAS read, and nothing but that read left.
@@ -322,15 +330,8 @@ struct S3VersionActionsTests {
                 Self.entry("v1", latest: false, etag: Self.md5A),
             ])
         ])
-        var failure: RemoteFSError?
-        do {
+        await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.restoreFromMarkerReason)) {
             try await fs.restore(key: "doc.txt", inBucket: "b", toVersionId: "m1")
-        } catch let error as RemoteFSError {
-            failure = error
-        }
-        guard case .protocolError? = failure else {
-            Issue.record("expected a .protocolError, got \(String(describing: failure))")
-            return
         }
         #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET"])
     }
@@ -352,9 +353,13 @@ struct S3VersionActionsTests {
         let noHold = S3ObjectVersionsTests.ok(
             Data("<LegalHold><Status>OFF</Status></LegalHold>".utf8))
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.history([
+                Self.entry("v2", latest: true, etag: Self.md5B),
+                Self.entry("v1", latest: false, etag: Self.md5A),
+            ]),
             Self.error("AccessDenied", status: 403), noHold, farFuture,
         ])
-        await #expect(throws: RemoteFSError.finding(.objectUnderRetention(path: "/doc.txt"))) {
+        await #expect(throws: RemoteFSError.finding(.objectUnderRetention(path: "/b/doc.txt"))) {
             try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
         }
 
@@ -362,8 +367,7 @@ struct S3VersionActionsTests {
         // answer. `#require` first, so an empty set fails loudly instead of
         // running an absence check over nothing.
         let sent = await Self.sent(transport)
-        let delete = try #require(sent.first)
-        #expect(delete.httpMethod == "DELETE")
+        let delete = try #require(sent.first { $0.httpMethod == "DELETE" })
         #expect(delete.url?.path == "/b/doc.txt")
         #expect(delete.url?.query == "versionId=v1")
 
@@ -376,7 +380,7 @@ struct S3VersionActionsTests {
         // Positive controls, through the SAME accessor, before its `nil` is
         // believed: a header that must be present is found, and the bypass
         // name itself resolves when a request carries it, in another case.
-        #expect(sent.count == 3)
+        #expect(sent.count == 4)
         #expect(sent.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") != nil })
         var control = URLRequest(url: try #require(URL(string: "http://127.0.0.1:9000/control")))
         control.setValue("true", forHTTPHeaderField: Self.bypassHeader)
@@ -390,6 +394,10 @@ struct S3VersionActionsTests {
 
     @Test func aVersionThatLeftTheHistoryIsDeleted() async throws {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.history([
+                Self.entry("v2", latest: true, etag: Self.md5B),
+                Self.entry("v1", latest: false, etag: Self.md5A),
+            ]),
             Self.noContent,
             Self.history([
                 Self.entry("v2", latest: true, etag: Self.md5B)
@@ -397,8 +405,8 @@ struct S3VersionActionsTests {
         ])
         try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
         let sent = await Self.sent(transport)
-        #expect(sent.map { $0.httpMethod ?? "" } == ["DELETE", "GET"])
-        let delete = try #require(sent.first)
+        #expect(sent.map { $0.httpMethod ?? "" } == ["GET", "DELETE", "GET"])
+        let delete = try #require(sent.first { $0.httpMethod == "DELETE" })
         #expect(delete.url?.path == "/b/doc.txt")
         #expect(delete.url?.query == "versionId=v1")
         let authorization = try #require(delete.value(forHTTPHeaderField: "Authorization"))
@@ -406,12 +414,17 @@ struct S3VersionActionsTests {
     }
 
     @Test func aVersionIdIsEncodedOnceOnTheDeleteRequest() async throws {
+        let token = S3ObjectVersionsTests.tokenVersionIdMarker
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
-            Self.noContent, Self.history([]),
+            Self.history([
+                Self.entry("v9", latest: true, etag: Self.md5B, key: "dir/a b.txt"),
+                Self.entry(token, latest: false, etag: Self.md5A, key: "dir/a b.txt"),
+            ]),
+            Self.noContent,
+            Self.history([Self.entry("v9", latest: true, etag: Self.md5B, key: "dir/a b.txt")]),
         ])
-        try await fs.deleteVersion(
-            ofKey: "dir/a b.txt", inBucket: "b", versionId: S3ObjectVersionsTests.tokenVersionIdMarker)
-        let delete = try #require(await Self.sent(transport).first)
+        try await fs.deleteVersion(ofKey: "dir/a b.txt", inBucket: "b", versionId: token)
+        let delete = try #require(await Self.sent(transport).first { $0.httpMethod == "DELETE" })
         let query = try #require(delete.url?.query(percentEncoded: true))
         #expect(query == "versionId=" + S3ObjectVersionsTests.tokenVersionIdMarkerOnTheWire)
         #expect(delete.url?.path(percentEncoded: true) == "/b/dir/a%20b.txt")
@@ -419,19 +432,58 @@ struct S3VersionActionsTests {
 
     @Test func aDeleteThatLeavesTheVersionInTheHistoryIsNotReportedAsDone() async throws {
         // The store answered 204, and the history still lists v1.
+        let stillThere = [
+            Self.entry("v2", latest: true, etag: Self.md5B),
+            Self.entry("v1", latest: false, etag: Self.md5A),
+        ]
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
-            Self.noContent,
-            Self.history([
-                Self.entry("v2", latest: true, etag: Self.md5B),
-                Self.entry("v1", latest: false, etag: Self.md5A),
-            ]),
+            Self.history(stillThere), Self.noContent, Self.history(stillThere),
         ])
         await #expect(
             throws: RemoteFSError.protocolError(reason: S3FileSystem.deleteVersionUnconfirmedReason)
         ) {
             try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
         }
-        #expect(await Self.sent(transport).count == 2)
+        #expect(await Self.sent(transport).count == 3)
+    }
+
+    /// Removing a delete marker UNDELETES the key. A caller that asked to
+    /// "permanently delete this version" with a marker's id has a stale history
+    /// or a bug, and is refused rather than having the key brought back and the
+    /// audit trail say the opposite ("permanently deleted version ..." for an
+    /// operation that restored the object). The canned set holds a DELETE
+    /// answer and a read-back, so an implementation that does not refuse goes
+    /// through all three and returns normally.
+    @Test func aDeleteMarkerIdIsRefusedByDeleteVersionAndNothingIsSent() async throws {
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.history([
+                S3ObjectVersionsTests.marker("doc.txt", "m1", latest: true),
+                Self.entry("v1", latest: false, etag: Self.md5A),
+            ]),
+            Self.noContent,
+            Self.history([Self.entry("v1", latest: true, etag: Self.md5A)]),
+        ])
+        await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.deleteOfAMarkerReason)) {
+            try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "m1")
+        }
+        // Positive half: the history WAS read, and no DELETE left.
+        #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET"])
+    }
+
+    @Test func aVersionTheHistoryDoesNotHoldIsNotReportedAsDeleted() async throws {
+        // S3 answers 204 for a version id that never existed, and the
+        // read-back then finds it absent: without the pre-read that is a
+        // "deletion". Refused as not found, the way the marker lift does it,
+        // and by a different error than a marker id gets.
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.history([Self.entry("v2", latest: true, etag: Self.md5B)]),
+            Self.noContent,
+            Self.history([Self.entry("v2", latest: true, etag: Self.md5B)]),
+        ])
+        await #expect(throws: RemoteFSError.notFound(path: "/b/doc.txt")) {
+            try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "v-missing")
+        }
+        #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET"])
     }
 
     // MARK: - liftDeleteMarker
@@ -466,15 +518,8 @@ struct S3VersionActionsTests {
                 Self.entry("v1", latest: false, etag: Self.md5A),
             ])
         ])
-        var failure: RemoteFSError?
-        do {
+        await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.liftOfAVersionReason)) {
             try await fs.liftDeleteMarker(ofKey: "doc.txt", inBucket: "b", markerVersionId: "v1")
-        } catch let error as RemoteFSError {
-            failure = error
-        }
-        guard case .protocolError? = failure else {
-            Issue.record("expected a .protocolError, got \(String(describing: failure))")
-            return
         }
         #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET"])
     }
@@ -483,7 +528,7 @@ struct S3VersionActionsTests {
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
             Self.history([Self.entry("v1", latest: true, etag: Self.md5A)])
         ])
-        await #expect(throws: RemoteFSError.notFound(path: "/doc.txt")) {
+        await #expect(throws: RemoteFSError.notFound(path: "/b/doc.txt")) {
             try await fs.liftDeleteMarker(ofKey: "doc.txt", inBucket: "b", markerVersionId: "m-missing")
         }
         #expect(await Self.sent(transport).map { $0.httpMethod ?? "" } == ["GET"])
@@ -518,10 +563,10 @@ struct S3VersionActionsTests {
         ] as [@Sendable () async throws -> Void] {
             var failure: RemoteFSError?
             do { try await write() } catch let error as RemoteFSError { failure = error }
-            guard case .protocolError? = failure else {
-                Issue.record("expected a .protocolError, got \(String(describing: failure))")
-                continue
-            }
+            // The key's own refusal, not any `.protocolError`: the transport
+            // fake raises one of its own when it runs out of answers, which
+            // would read the same if a request had been sent.
+            #expect(failure == .protocolError(reason: S3FileSystem.objectKeyRequiredReason))
         }
         // Positive half: the connection's own probe is the only request.
         #expect(await transport.requests.count == 1)

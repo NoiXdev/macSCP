@@ -115,18 +115,27 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// trace.
         case objectLockChanged
         /// An object's older version was restored: written again as a NEW
-        /// version, so the history keeps every entry it had. Recorded through
+        /// version, so the history keeps every entry it had. Has a recorder,
+        /// `AuditRecorder.recordVersionRestored`, and no caller yet: the
+        /// version sheet task wires it.
+        ///
+        /// (Withdrawn wording, verbatim: "Recorded through
         /// `AuditRecorder.recordVersionRestored`. Like the bucket-settings
-        /// kinds, not carried by `RemoteBrowserViewModel`'s `auditSink`.
+        /// kinds, not carried by `RemoteBrowserViewModel`'s `auditSink`." It
+        /// described a producer, and none exists yet.)
         case versionRestored
         /// One version of an object was removed for good: no marker is left
-        /// and nothing can bring it back. Recorded through
+        /// and nothing can bring it back. Has a recorder,
         /// `AuditRecorder.recordVersionDeleted`, whose `detail` says
-        /// "permanently".
+        /// "permanently", and no caller yet: the version sheet task wires it.
+        /// (Withdrawn wording, verbatim: "Recorded through
+        /// `AuditRecorder.recordVersionDeleted`".)
         case versionDeleted
         /// A delete marker was removed, so the version beneath it is the
-        /// object's current content again. Recorded through
-        /// `AuditRecorder.recordDeleteMarkerLifted`.
+        /// object's current content again. Has a recorder,
+        /// `AuditRecorder.recordDeleteMarkerLifted`, and no caller yet: the
+        /// version sheet task wires it. (Withdrawn wording, verbatim:
+        /// "Recorded through `AuditRecorder.recordDeleteMarkerLifted`.")
         case deleteMarkerLifted
         /// An object's metadata was rewritten. **Nothing produces this kind
         /// yet.** It belongs to Plan B, "S3 Metadata, ACL Display and the
