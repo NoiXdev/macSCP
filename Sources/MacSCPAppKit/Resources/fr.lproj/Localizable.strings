@@ -819,6 +819,10 @@
 "audit.kind.versioningChanged" = "Gestion des versions modifiée";
 "audit.kind.corsChanged" = "Règles CORS modifiées";
 "audit.kind.objectLockChanged" = "Verrouillage d’objet modifié";
+"audit.kind.versionRestored" = "Version restaurée";
+"audit.kind.versionDeleted" = "Version supprimée";
+"audit.kind.deleteMarkerLifted" = "Marqueur de suppression retiré";
+"audit.kind.metadataChanged" = "Métadonnées modifiées";
 
 /* Menu Sessions (M10a/T2, M10b/T3) */
 "menu.sessions" = "Sessions";

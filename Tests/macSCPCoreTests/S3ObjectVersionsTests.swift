@@ -357,41 +357,23 @@ struct S3ObjectVersionsTests {
 
     // MARK: - Placeholders (canaries)
 
-    // These four cases exist to be DELETED. `readStream` is implemented by
-    // the version download (Task 5 of
-    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`); `restore`,
-    // `deleteVersion` and `liftDeleteMarker` by the write half (its Task 4).
-    // Until then each method refuses with `.finding(.operationNotSupported)`,
-    // which is indistinguishable from a store that does not support the call.
-    // A case going red means the method it names was implemented, and its case
-    // must be removed in the same commit. One case per method, not one over
-    // all four, so a single survivor is named.
+    // This case exists to be DELETED. `readStream` is implemented by the
+    // version download (Task 5 of
+    // `docs/superpowers/plans/2026-10-23-s3-version-history.md`). Until then it
+    // refuses with `.finding(.operationNotSupported)`, which is
+    // indistinguishable from a store that does not support the call. The case
+    // going red means the method was implemented, and the case must be removed
+    // in the same commit.
+    //
+    // (Withdrawn wording, verbatim: "These four cases exist to be DELETED."
+    // and "`restore`, `deleteVersion` and `liftDeleteMarker` by the write half
+    // (its Task 4)." The write half's three cases were removed in the commit
+    // that implemented those methods; one remains.)
 
     @Test func placeholderReadStreamStillRefuses() async throws {
         let (fs, _) = try await S3SettingsFake.connect(responses: [])
         await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
             _ = try await fs.readStream(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
-        }
-    }
-
-    @Test func placeholderRestoreStillRefuses() async throws {
-        let (fs, _) = try await S3SettingsFake.connect(responses: [])
-        await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
-            try await fs.restore(key: "doc.txt", inBucket: "b", toVersionId: "v1")
-        }
-    }
-
-    @Test func placeholderDeleteVersionStillRefuses() async throws {
-        let (fs, _) = try await S3SettingsFake.connect(responses: [])
-        await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
-            try await fs.deleteVersion(ofKey: "doc.txt", inBucket: "b", versionId: "v1")
-        }
-    }
-
-    @Test func placeholderLiftDeleteMarkerStillRefuses() async throws {
-        let (fs, _) = try await S3SettingsFake.connect(responses: [])
-        await #expect(throws: RemoteFSError.finding(.operationNotSupported)) {
-            try await fs.liftDeleteMarker(ofKey: "doc.txt", inBucket: "b", markerVersionId: "m1")
         }
     }
 }

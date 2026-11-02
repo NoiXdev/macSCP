@@ -87,11 +87,21 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// session ran with credentials in the clear.
         case plaintextConfirmed
         /// A bucket the user created from the bucket list (S3 bucket
-        /// settings). The four kinds from here on are recorded by the sheets
-        /// that apply them, through `AuditRecorder.recordBucketCreated`,
+        /// settings). This kind and the three after it are recorded by the
+        /// sheets that apply them, through `AuditRecorder.recordBucketCreated`,
         /// `recordVersioningChanged`, `recordCORSChanged` and
         /// `recordObjectLockChanged`: those sheets do not go through
         /// `RemoteBrowserViewModel`, so its `auditSink` never carries them.
+        /// The kinds after `objectLockChanged` come with the version-history
+        /// work and are recorded through their own methods (see
+        /// `versionRestored`; `metadataChanged` has no recorder yet).
+        ///
+        /// (Withdrawn wording, verbatim: "The four kinds from here on are
+        /// recorded by the sheets that apply them, through
+        /// `AuditRecorder.recordBucketCreated`, `recordVersioningChanged`,
+        /// `recordCORSChanged` and `recordObjectLockChanged`". Four more cases
+        /// were appended after `objectLockChanged`, so "from here on" no
+        /// longer meant those four, and the list of recorders was short.)
         case bucketCreated
         /// A bucket's versioning moved to another state.
         case versioningChanged
@@ -104,6 +114,30 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// the only write macSCP makes that cannot be undone, and this is its
         /// trace.
         case objectLockChanged
+        /// An object's older version was restored: written again as a NEW
+        /// version, so the history keeps every entry it had. Recorded through
+        /// `AuditRecorder.recordVersionRestored`. Like the bucket-settings
+        /// kinds, not carried by `RemoteBrowserViewModel`'s `auditSink`.
+        case versionRestored
+        /// One version of an object was removed for good: no marker is left
+        /// and nothing can bring it back. Recorded through
+        /// `AuditRecorder.recordVersionDeleted`, whose `detail` says
+        /// "permanently".
+        case versionDeleted
+        /// A delete marker was removed, so the version beneath it is the
+        /// object's current content again. Recorded through
+        /// `AuditRecorder.recordDeleteMarkerLifted`.
+        case deleteMarkerLifted
+        /// An object's metadata was rewritten. **Nothing produces this kind
+        /// yet.** It belongs to Plan B, "S3 Metadata, ACL Display and the
+        /// Connection Manager's Bucket Implementation"
+        /// (`docs/superpowers/plans/2026-10-23-s3-metadata-and-acls.md`), and
+        /// is declared here so that the switches that must name every kind
+        /// (`AuditLogSheet.Filter.segment(of:)`, `ConnectionHistory.rows`)
+        /// are extended once, with the version-history kinds. It has its
+        /// catalogue labels and its switch arms and no recorder: that plan
+        /// writes the recorder and the producer.
+        case metadataChanged
     }
 }
 

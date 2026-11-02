@@ -3,13 +3,21 @@ import Testing
 
 @testable import macSCPCore
 
-/// The trail the five S3 bucket-settings writes leave (S3 bucket settings,
-/// Task 12): which kind each is recorded under, what its line says, and that
-/// a refused write does not read as done.
+/// The trail two groups of S3 writes leave: the five bucket-settings writes
+/// (S3 bucket settings, Task 12) and the three version-history writes (S3
+/// version history, Task 4). For each: which kind it is recorded under, what
+/// its line says, and that a refused write does not read as done.
 ///
 /// These pin the Core half -- the line a recorder composes from the values
-/// the sheet hands it. That the sheets hand it anything at all is
-/// `BucketSettingsAuditTests` in the App's test target.
+/// the caller hands it. That the bucket-settings sheets hand it anything at
+/// all is `BucketSettingsAuditTests` in the App's test target; the
+/// version-history callers are a later task's.
+///
+/// (Withdrawn wording, verbatim: "The trail the five S3 bucket-settings
+/// writes leave (S3 bucket settings, Task 12): which kind each is recorded
+/// under, what its line says, and that a refused write does not read as
+/// done." The suite now holds a second group, and that sentence described
+/// the first only.)
 @Suite("AuditRecorder bucket settings")
 struct AuditRecorderBucketSettingsTests {
     /// 2027-01-15T08:00:00Z. Checked with
@@ -31,6 +39,17 @@ struct AuditRecorderBucketSettingsTests {
         let declared = Set(AuditEvent.Kind.allCases.map(\.rawValue))
         #expect(
             declared.isSuperset(of: ["bucketCreated", "versioningChanged", "corsChanged", "objectLockChanged"]))
+    }
+
+    @Test func theVersionHistoryKindsAreDeclaredWithTheSpellingsTheCatalogueUses() {
+        let declared = Set(AuditEvent.Kind.allCases.map(\.rawValue))
+        // `metadataChanged` is in the list although nothing records it yet:
+        // the kind is declared now so the exhaustive switches over `Kind` are
+        // extended once, and its recorder arrives with the metadata plan.
+        #expect(
+            declared.isSuperset(of: [
+                "versionRestored", "versionDeleted", "deleteMarkerLifted", "metadataChanged",
+            ]))
     }
 
     // MARK: - One kind per operation
@@ -143,6 +162,101 @@ struct AuditRecorderBucketSettingsTests {
         }
         #expect(texts[0].hasSuffix("until 1970-01-01T00:00:00Z"))
         #expect(texts[1].hasSuffix("until \(Self.someDateText)"))
+    }
+
+    // MARK: - Version history
+
+    @Test func aRestoreNamesTheVersionTheObjectAndTheBucket() {
+        let events = recorded {
+            $0.recordVersionRestored(key: "reports/q3.pdf", bucket: "b1", versionId: "v7", failure: nil)
+        }
+        #expect(events.map(\.kind) == [.versionRestored])
+        #expect(events.first?.detail == "restored version v7 of b1/reports/q3.pdf as its current version")
+        #expect(events.first?.isError == false)
+    }
+
+    @Test func aVersionDeleteIsWordedAsPermanent() {
+        // The one write of the three that cannot be undone: the line says so.
+        let events = recorded {
+            $0.recordVersionDeleted(key: "reports/q3.pdf", bucket: "b1", versionId: "v7", failure: nil)
+        }
+        #expect(events.map(\.kind) == [.versionDeleted])
+        #expect(events.first?.detail == "permanently deleted version v7 of b1/reports/q3.pdf")
+    }
+
+    @Test func aLiftedMarkerNamesTheMarkerNotAVersion() {
+        let events = recorded {
+            $0.recordDeleteMarkerLifted(
+                key: "reports/q3.pdf", bucket: "b1", markerVersionId: "m2", failure: nil)
+        }
+        #expect(events.map(\.kind) == [.deleteMarkerLifted])
+        #expect(events.first?.detail == "removed delete marker m2 from b1/reports/q3.pdf")
+    }
+
+    @Test func theThreeVersionHistoryLinesReadDifferently() {
+        let details = recorded {
+            $0.recordVersionRestored(key: "k", bucket: "b1", versionId: "v1", failure: nil)
+            $0.recordVersionDeleted(key: "k", bucket: "b1", versionId: "v1", failure: nil)
+            $0.recordDeleteMarkerLifted(key: "k", bucket: "b1", markerVersionId: "v1", failure: nil)
+        }.map(\.detail)
+        #expect(details.count == 3)
+        #expect(Set(details).count == 3)
+    }
+
+    @Test func aRefusedVersionWriteRecordsTheFailureAndKeepsTheLine() {
+        let sentence = "The store refused the change."
+        let events = recorded {
+            $0.recordVersionRestored(key: "k", bucket: "b1", versionId: "v1", failure: sentence)
+            $0.recordVersionDeleted(key: "k", bucket: "b1", versionId: "v1", failure: sentence)
+            $0.recordDeleteMarkerLifted(key: "k", bucket: "b1", markerVersionId: "m1", failure: sentence)
+        }
+        #expect(events.count == 3)
+        #expect(events.allSatisfy { $0.isError })
+        #expect(events.allSatisfy { $0.errorMessage == sentence })
+        #expect(events.first?.detail == "restored version v1 of b1/k as its current version")
+    }
+
+    @Test func aSuccessfulVersionWriteCarriesNoErrorMessage() {
+        // The positive control for the test above.
+        let events = recorded {
+            $0.recordVersionDeleted(key: "k", bucket: "b1", versionId: "v1", failure: nil)
+        }
+        #expect(events.first?.isError == false)
+        #expect(events.first?.errorMessage == nil)
+    }
+
+    /// No `detail` carries the endpoint or the key's credentials. Those values
+    /// never reach a recorder -- it takes a bucket, a key and a version id --
+    /// so this pins that the lines are composed from those and from nothing
+    /// ambient. The values are NAMED CONSTANTS and the `Bool`s are computed
+    /// before the expectations: `#expect` reports the source text of its
+    /// expression, so a literal secret written inside one would be printed by
+    /// the very failure that finds it.
+    @Test func noVersionHistoryLineCarriesTheEndpointOrTheKeysCredentials() {
+        let endpoint = "http://storage.internal.example:9000"
+        let accessKey = "AKIAEXAMPLEACCESSKEY0"
+        let secretKey = "wJalrEXAMPLEsecretKEYvalue0"
+        let token = "FQoGZXIvYXdzEXAMPLEsessionTOKEN"
+        let leaked: (String) -> Bool = { text in
+            [endpoint, accessKey, secretKey, token].contains { text.contains($0) }
+        }
+
+        let lines = recorded {
+            $0.recordVersionRestored(key: "k", bucket: "b1", versionId: "v1", failure: nil)
+            $0.recordVersionDeleted(key: "k", bucket: "b1", versionId: "v1", failure: "refused")
+            $0.recordDeleteMarkerLifted(key: "k", bucket: "b1", markerVersionId: "m1", failure: nil)
+        }.map(\.detail)
+        // The positive half: there are lines to scan.
+        #expect(lines.count == 3)
+        let anyLineLeaks = lines.contains(where: leaked)
+        #expect(anyLineLeaks == false)
+
+        // And the predicate really fires: the same check, on a line that
+        // does carry each value, finds it. Without this the `false` above
+        // could be a check that matches nothing.
+        let controls = [endpoint, accessKey, secretKey, token].map { "restored via \($0)" }
+        let controlsDetected = controls.allSatisfy(leaked)
+        #expect(controlsDetected)
     }
 
     // MARK: - A refusal
