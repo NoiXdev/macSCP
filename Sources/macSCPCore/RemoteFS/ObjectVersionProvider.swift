@@ -3,8 +3,11 @@ import Foundation
 /// One entry of an object's version history: either a stored version or a
 /// delete marker.
 public struct ObjectVersion: Sendable, Equatable, Identifiable {
-    /// The store's identifier for this entry. Unique within one key's history,
-    /// which is what `id` leans on: a list of versions is always ONE key's.
+    /// The store's identifier for this entry. `id` leans on it, which is
+    /// right for one key's history (`versions(ofKey:inBucket:)`), where it is
+    /// unique. It is NOT unique across keys: two keys can both carry a `null`
+    /// version id, so a page that spans keys (`ObjectVersionPage`) must not
+    /// be fed through `id`.
     public let versionId: String
     public let key: String
     /// Whether this entry is the key's current one.
@@ -41,13 +44,17 @@ public struct ObjectVersionPage: Sendable, Equatable {
     /// The entries as the page carries them, in the order they were handed
     /// to the initializer. Nothing here sorts or reverses them.
     public let versions: [ObjectVersion]
-    /// The key to resume the listing after. `nil` when this is the last page.
+    /// The continuation marker for the next page, or `nil` when there is
+    /// none. An opaque token: it is sent back to the store percent-encoded
+    /// and never parsed, because its shape is the store's business and is not
+    /// necessarily a plain key.
     public let nextKeyMarker: String?
-    /// The version to resume after within `nextKeyMarker`'s key. `nil` when
-    /// this is the last page, and may be `nil` on a truncated page too.
+    /// The continuation marker's version half, handed back to the store
+    /// alongside `nextKeyMarker` and equally opaque: sent percent-encoded,
+    /// never parsed. This layer makes no claim about when it is `nil`.
     public let nextVersionIdMarker: String?
-    /// Whether another page follows. Read from `nextKeyMarker` alone: a store
-    /// that truncates a page always names the key to resume from.
+    /// Whether another page follows, derived from the presence of
+    /// `nextKeyMarker` alone.
     public var isTruncated: Bool { nextKeyMarker != nil }
 
     public init(versions: [ObjectVersion], nextKeyMarker: String?, nextVersionIdMarker: String?) {

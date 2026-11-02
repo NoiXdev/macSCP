@@ -3,8 +3,9 @@ import Testing
 @testable import macSCPCore
 
 /// The value types and the capability protocol of one object's version
-/// history. The conformance and the XML mapping are tested where they are
-/// written; this suite pins what the types themselves promise.
+/// history. This suite pins what the types themselves promise; the XML
+/// mapping and the S3 conformance will be tested beside the code that adds
+/// them.
 @Suite("Object version provider types")
 struct ObjectVersionProviderTests {
     @Test func anObjectVersionIsIdentifiedByItsVersionId() {
@@ -41,9 +42,6 @@ struct ObjectVersionProviderTests {
                 size: 1, modifiedAt: nil, entityTag: nil),
         ]
         let page = ObjectVersionPage(versions: given, nextKeyMarker: nil, nextVersionIdMarker: nil)
-        #expect(page.versions.count == given.count)
-        for (index, version) in given.enumerated() {
-            #expect(page.versions[index] == version)
-        }
+        #expect(page.versions == given)
     }
 }
