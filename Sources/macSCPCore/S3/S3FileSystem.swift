@@ -2320,6 +2320,11 @@ extension S3FileSystem: ObjectVersionProvider {
         // with `delimiter=/` on `?versions` is unmeasured; Task 11 of
         // `docs/superpowers/plans/2026-10-23-s3-version-history.md` measures
         // it, and this answer no longer depends on it.)
+        // **Measured 2026-11-03** (`S3VersionsGatedTests`, the delimiter
+        // case; RustFS 1.0.0 only, nothing here is a claim about AWS): the
+        // store rolls a nested key up into `CommonPrefixes` when asked, so
+        // the delimiter does cut the response, and this answer is the same
+        // either way, because `oneLevelBelow` decides it.
         // Only a marker that is its key's CURRENT entry hides the key. An older
         // marker under a newer version describes a key that was deleted and
         // then written again, which is not deleted.
@@ -2360,6 +2365,12 @@ extension S3FileSystem: ObjectVersionProvider {
     /// the rest of a history. (The opposite disagreement, `true` with no
     /// marker, never gets here: `S3VersionsXML.parsePage` refuses it.) Whether
     /// a real store sends a marker on its last page is unmeasured.
+    /// (**Measured 2026-11-03**, `S3VersionsGatedTests`, the last-page case,
+    /// RustFS 1.0.0: its last page carries `IsTruncated=false` and no
+    /// `NextKeyMarker` element at all, and a three-entry key's history took
+    /// one request, so the extra request this paragraph prices has not been
+    /// needed against that store. A different store may still send one; the
+    /// loop keeps following it.)
     ///
     /// A non-2xx answer is mapped HERE, with the bucket as its path, rather
     /// than left to the parser: the parser has no path and would hand a 404
@@ -2480,6 +2491,13 @@ extension S3FileSystem: ObjectVersionProvider {
     ///   is measured by Task 11 of
     ///   `docs/superpowers/plans/2026-10-23-s3-version-history.md`; nothing
     ///   here tries to close it.
+    ///   **Measured 2026-11-03** (`S3VersionsGatedTests`, RustFS 1.0.0 and
+    ///   nothing else): the store honours the version id. A raw copy naming
+    ///   the older version left that version's bytes on the key, and a
+    ///   restore of a multipart-ETag source, which is the weak path, wrote the
+    ///   source's bytes and not the current content. That is a statement
+    ///   about one store; any other store the weak path meets is as
+    ///   unmeasured as it was, and nothing here closes it either.
     ///
     /// (Withdrawn wording, verbatim: "**Unmeasured, and the direction it errs
     /// in is the safe one:**" and "Both fail toward "could not be confirmed",
