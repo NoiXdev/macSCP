@@ -179,11 +179,14 @@ public struct AuditRecorder: Sendable {
     /// default value**, for the reason `BucketVersioningModel.init(current:
     /// bucketHasObjectLock:)` gives: a default is what lets a caller leave a
     /// refusal reading as done without saying so. The same goes for the
-    /// recorders after this one in this section and for the three of the
-    /// version-history section below it. (Withdrawn wording, verbatim: "The
-    /// same goes for the three methods after this one." Three recorders were
-    /// added after those three, so the count no longer described everything
-    /// that follows.)
+    /// recorders after this one in this section, for the three of the
+    /// version-history section below it and for the metadata recorder below
+    /// those. (Withdrawn wording, verbatim: "The same goes for the three
+    /// methods after this one." Three recorders were added after those three,
+    /// so the count no longer described everything that follows. Also
+    /// withdrawn, verbatim: "and for the three of the version-history section
+    /// below it." A fourth recorder, `recordMetadataChanged`, now follows
+    /// them.)
     ///
     /// A create that failed after the bucket existed (the versioning request
     /// that follows it) is recorded as a failure too, and its sentence says
@@ -336,6 +339,43 @@ public struct AuditRecorder: Sendable {
             .deleteMarkerLifted,
             detail: "removed delete marker \(markerVersionId) from \(bucket)/\(key)",
             failure: failure)
+    }
+
+    // MARK: - S3 object metadata
+
+    /// Logs an object's metadata replaced, or refused. `failure` follows
+    /// `recordBucketCreated`'s rule: a FIXED sentence, never an error's own
+    /// text, and **no default value**.
+    ///
+    /// **Only COUNTS of what was sent go in, never a value and never a name.**
+    /// A header value is whatever the person typed, and a custom pair is the
+    /// place a person is most likely to put something that must not be in a
+    /// log. The counts are what a reader of the trail decides from: a replace
+    /// sends every field the sheet loaded, so two lines that differ only in
+    /// their counts are two different edits.
+    ///
+    /// `complianceDefaultDays` is the number of days of the bucket's
+    /// COMPLIANCE default retention when the write was made under one, and
+    /// `nil` otherwise. The write adds a new version (spec section 4.5), a
+    /// new version on a bucket with a default inherits it, and a COMPLIANCE
+    /// one is the version nobody can erase: the trail has to be able to tell
+    /// that edit from a plain one. The days are written and no date is,
+    /// because the store works the date out from the moment it saves.
+    public func recordMetadataChanged(
+        key: String, bucket: String, standardFieldCount: Int, customPairCount: Int,
+        complianceDefaultDays: Int?, failure: String?
+    ) {
+        var detail =
+            "metadata of \(bucket)/\(key) replaced, sending "
+            + "\(standardFieldCount) standard \(standardFieldCount == 1 ? "field" : "fields") and "
+            + "\(customPairCount) custom \(customPairCount == 1 ? "pair" : "pairs")"
+        if let complianceDefaultDays {
+            detail +=
+                "; the bucket's COMPLIANCE default retention of "
+                + "\(complianceDefaultDays) \(complianceDefaultDays == 1 ? "day" : "days") "
+                + "applies to the new version"
+        }
+        appendS3Write(.metadataChanged, detail: detail, failure: failure)
     }
 
     /// Appends one S3 write's event: the bucket-settings writes and the

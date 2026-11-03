@@ -43,9 +43,12 @@ struct AuditRecorderBucketSettingsTests {
 
     @Test func theVersionHistoryKindsAreDeclaredWithTheSpellingsTheCatalogueUses() {
         let declared = Set(AuditEvent.Kind.allCases.map(\.rawValue))
-        // `metadataChanged` is in the list although nothing records it yet:
-        // the kind is declared now so the exhaustive switches over `Kind` are
-        // extended once, and its recorder arrives with the metadata plan.
+        // `metadataChanged` was declared with the version-history kinds so the
+        // exhaustive switches over `Kind` were extended once; its recorder
+        // (`recordMetadataChanged`) arrived with the metadata plan, and is
+        // held below. (Withdrawn wording, verbatim: "`metadataChanged` is in
+        // the list although nothing records it yet:" ... "and its recorder
+        // arrives with the metadata plan.")
         #expect(
             declared.isSuperset(of: [
                 "versionRestored", "versionDeleted", "deleteMarkerLifted", "metadataChanged",
@@ -257,6 +260,78 @@ struct AuditRecorderBucketSettingsTests {
         let controls = [endpoint, accessKey, secretKey, token].map { "restored via \($0)" }
         let controlsDetected = controls.allSatisfy(leaked)
         #expect(controlsDetected)
+    }
+
+    // MARK: - Metadata
+
+    @Test func aMetadataChangeNamesTheObjectAndCountsWhatWasSent() {
+        let events = recorded {
+            $0.recordMetadataChanged(
+                key: "reports/q3.pdf", bucket: "b1", standardFieldCount: 2, customPairCount: 1,
+                complianceDefaultDays: nil, failure: nil)
+        }
+        #expect(events.map(\.kind) == [.metadataChanged])
+        #expect(
+            events.first?.detail
+                == "metadata of b1/reports/q3.pdf replaced, sending 2 standard fields and 1 custom pair")
+        #expect(events.first?.isError == false)
+        #expect(events.first?.errorMessage == nil)
+    }
+
+    @Test func theCountsAreWordedInTheSingularAndThePluralAndNone() {
+        let details = recorded {
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 1, customPairCount: 2,
+                complianceDefaultDays: nil, failure: nil)
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 0, customPairCount: 0,
+                complianceDefaultDays: nil, failure: nil)
+        }.map(\.detail)
+        #expect(
+            details == [
+                "metadata of b1/k replaced, sending 1 standard field and 2 custom pairs",
+                "metadata of b1/k replaced, sending 0 standard fields and 0 custom pairs",
+            ])
+    }
+
+    /// A COMPLIANCE default makes the new version one nobody can erase, and a
+    /// trail read afterwards has to be able to tell that edit from a plain one.
+    /// The days go in and the mode is spelled; no date, because the store
+    /// works the date out from the moment it saves.
+    @Test func aChangeUnderAComplianceDefaultSaysSoInItsLine() {
+        let plain = recorded {
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 1, customPairCount: 0,
+                complianceDefaultDays: nil, failure: nil)
+        }.first?.detail ?? ""
+        let locked = recorded {
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 1, customPairCount: 0,
+                complianceDefaultDays: 30, failure: nil)
+        }.first?.detail ?? ""
+        #expect(locked.hasPrefix(plain))
+        #expect(locked != plain)
+        #expect(locked.hasSuffix("; the bucket's COMPLIANCE default retention of 30 days applies to the new version"))
+        let oneDay = recorded {
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 1, customPairCount: 0,
+                complianceDefaultDays: 1, failure: nil)
+        }.first?.detail ?? ""
+        #expect(oneDay.hasSuffix("retention of 1 day applies to the new version"))
+    }
+
+    @Test func aRefusedMetadataChangeRecordsTheFailureAndKeepsTheLine() {
+        let sentence = "The change could not be saved."
+        let events = recorded {
+            $0.recordMetadataChanged(
+                key: "k", bucket: "b1", standardFieldCount: 3, customPairCount: 0,
+                complianceDefaultDays: nil, failure: sentence)
+        }
+        #expect(events.count == 1)
+        #expect(events.first?.isError == true)
+        #expect(events.first?.errorMessage == sentence)
+        #expect(
+            events.first?.detail == "metadata of b1/k replaced, sending 3 standard fields and 0 custom pairs")
     }
 
     // MARK: - A refusal

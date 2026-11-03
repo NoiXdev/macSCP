@@ -34,8 +34,10 @@ struct AuditLogFilterTests {
     ]
 
     /// The kinds the version-history plan added. `metadataChanged` is among
-    /// them although nothing records it yet (it belongs to the metadata plan),
-    /// so that `Filter.segment(of:)` is extended once. File Ops, like the
+    /// them; it was declared there so that `Filter.segment(of:)` is extended
+    /// once, and the metadata plan wrote its recorder. (Withdrawn wording,
+    /// verbatim: "although nothing records it yet (it belongs to the metadata
+    /// plan)".) File Ops, like the
     /// bucket-settings kinds before them: they are writes to files.
     private static let versionHistoryKinds: [AuditEvent.Kind] = [
         .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged,
