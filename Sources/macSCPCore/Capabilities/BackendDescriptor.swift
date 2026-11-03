@@ -517,7 +517,7 @@ public struct BackendDescriptor: Sendable {
             FileActionContribution(id: "s3.retention", titleKey: "browser.action.retention", titleDefault: "Retention…"),
             FileActionContribution(id: "s3.legalHold", titleKey: "browser.action.legalHold", titleDefault: "Legal Hold…"),
             FileActionContribution(id: "s3.versions", titleKey: "browser.action.versions", titleDefault: "Show Versions…"),
-            FileActionContribution(id: "s3.metadata", titleKey: "menu.s3.metadata", titleDefault: "Metadata…"),
+            FileActionContribution(id: "s3.metadata", titleKey: "browser.action.metadata", titleDefault: "Metadata…"),
         ],
         connectionActions: [
             ConnectionActionContribution(

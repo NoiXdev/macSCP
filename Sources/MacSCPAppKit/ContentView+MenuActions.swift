@@ -159,12 +159,11 @@ extension ContentView {
                         path: file.path, in: connectionActionContext(in: tab, session: session))
                 {
                     objectMetadataSheetItem = ObjectMetadataSheetItem(
-                        model: ObjectMetadataModel(
-                            target: target, provider: provider, settings: settings,
-                            locks: session.objectLockStates ?? ObjectLockStateCache(settings: settings),
-                            versioning: session.bucketVersioning
-                                ?? BucketVersioningCache(settings: settings),
-                            recorder: tab.auditRecorder))
+                        recorder: tab.auditRecorder, target: target, provider: provider,
+                        settings: settings,
+                        locks: session.objectLockStates ?? ObjectLockStateCache(settings: settings),
+                        versioning: session.bucketVersioning
+                            ?? BucketVersioningCache(settings: settings))
                 }
             }
         }

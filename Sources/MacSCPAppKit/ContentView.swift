@@ -844,12 +844,25 @@ struct ContentView: View {
 
     /// The file whose metadata the sheet edits, with what it reads and writes
     /// through, captured at presentation time for the reason
-    /// `BucketVersioningSheetItem` gives. The model is built by the menu
-    /// action, where the capabilities are in hand, so the sheet is handed a
-    /// model and not the pieces to make one.
+    /// `BucketVersioningSheetItem` gives.
+    ///
+    /// **The item carries the pieces and not a finished model**, like its
+    /// eight siblings, and that is what lets the audit-wiring guard see it:
+    /// `BucketSettingsAuditTests.everySheetItemIsBuiltWithTheTabsRecorder`
+    /// reads the text right after the item's construction for
+    /// `recorder: tab.auditRecorder`. A model built inline in the menu arm
+    /// put the recorder hundreds of characters away from there, and the fix
+    /// was to build the item the way the others are, not to widen the span
+    /// the guard reads. The model is made from the item in
+    /// `ContentView.objectMetadataModel(for:)`.
     struct ObjectMetadataSheetItem: Identifiable {
         let id = UUID()
-        let model: ObjectMetadataModel
+        let recorder: AuditRecorder?
+        let target: ObjectLockTarget
+        let provider: any ObjectMetadataProvider
+        let settings: any S3BucketSettings
+        let locks: ObjectLockStateCache
+        let versioning: BucketVersioningCache
     }
 
     @State var objectMetadataSheetItem: ObjectMetadataSheetItem?

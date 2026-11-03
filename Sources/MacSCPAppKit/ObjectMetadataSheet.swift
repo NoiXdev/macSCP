@@ -176,15 +176,32 @@ final class ObjectMetadataModel {
         let mode: RetentionMode
     }
 
-    /// Why `save()` wrote nothing and has an answer for the person. A save
-    /// that is not allowed for another reason (nothing read yet, one already
-    /// in flight, a draft that cannot be sent, a lock that could not be read)
-    /// returns `nil` and writes nothing too; the sheet says why through
-    /// `explanation`, and the Save button is off in each of those states.
+    /// Why `save()` wrote nothing and has an answer for the person.
     enum SaveRefusal: Equatable {
         case complianceNotAcknowledged
         case acknowledgementStale
         case nothingChanged
+    }
+
+    /// How a `save()` ended, with a case for every way it can, so that a caller
+    /// (or a test) cannot read a save that wrote nothing as one that wrote.
+    /// **Only `.written` means the store was changed.**
+    enum SaveOutcome: Equatable {
+        /// The store took the draft and the read-back agreed (Core throws
+        /// rather than report a write it could not confirm).
+        case written
+        /// Refused before anything was sent, for a reason the person is told:
+        /// the sheet redraws and says it.
+        case refused(SaveRefusal)
+        /// Not allowed in the state the sheet is in (nothing read yet, one
+        /// already in flight, a custom pair that cannot be sent): nothing was
+        /// asked of the store, and `explanation` carries the reason where
+        /// there is one. The Save button is off in each of these states.
+        case blocked
+        /// Tried and did not end in a write: the lock could not be read before
+        /// the write, or the store refused it. `applyFailure` carries the
+        /// fixed sentence. A refused write is also recorded in the trail.
+        case failed
     }
 
     /// A custom pair that cannot be sent, and which way.
@@ -281,11 +298,14 @@ final class ObjectMetadataModel {
     /// adopted as if it had just been read. **`recorder` has no default**, and
     /// is optional in its type: `nil` is a real answer (a tab whose stored
     /// session was deleted under it has none) but it has to be given at the
-    /// call site, not inherited from a default nobody read.
+    /// call site, not inherited from a default nobody read. It sits second, next
+    /// to the target, so that the one line the audit-wiring guard reads after
+    /// the call (`BucketSettingsAuditTests.everySheetIsBuiltWithItsItemsRecorder`)
+    /// holds it.
     init(
-        target: ObjectLockTarget, provider: any ObjectMetadataProvider,
-        settings: any S3BucketSettings, locks: ObjectLockStateCache,
-        versioning: BucketVersioningCache, recorder: AuditRecorder?,
+        target: ObjectLockTarget, recorder: AuditRecorder?,
+        provider: any ObjectMetadataProvider, settings: any S3BucketSettings,
+        locks: ObjectLockStateCache, versioning: BucketVersioningCache,
         now: @escaping () -> Date = { Date() },
         phase: Phase = .reading, loaded: ObjectMetadata? = nil,
         bucketLock: BucketLock = .reading, bucketDefault: LockDefault? = nil,
@@ -560,16 +580,13 @@ final class ObjectMetadataModel {
     }
 
     /// Replaces the file's metadata with the draft, if and only if nothing
-    /// stands in the way. Answers why it did not when there is an answer
-    /// (`SaveRefusal`); `nil` is a write that was made (check `isSaved` and
-    /// `applyFailure` for how it ended) or a save that was not allowed for a
-    /// reason `explanation` carries.
+    /// stands in the way, and answers how it ended (`SaveOutcome`).
     ///
     /// The order is the point:
     ///
     /// 1. **A draft equal to what the store holds writes nothing**, and asks
     ///    the store nothing either. (A draft with a pair that cannot be sent
-    ///    writes nothing before that, with no answer: `explanation` has it.)
+    ///    is `.blocked` before that: `explanation` has the sentence.)
     /// 2. **The bucket's Object Lock default is read again**, immediately
     ///    before anything is written, whatever the sheet read when it opened.
     ///    A bucket without Object Lock is asked once whether it has one
@@ -581,14 +598,14 @@ final class ObjectMetadataModel {
     ///    be an instruction to redo what the person has just done.
     /// 4. The write, then one line in the trail either way.
     @discardableResult
-    func save() async -> SaveRefusal? {
-        guard phase == .ready, !isApplying else { return nil }
+    func save() async -> SaveOutcome {
+        guard phase == .ready, !isApplying else { return .blocked }
         // A pair that cannot be sent comes first: a nameless pair is left out
         // of the draft, so a draft with only that problem can compare equal to
         // what the store holds, and "nothing changed" would hide the sentence
         // that says what is wrong.
-        guard draftProblem == nil else { return nil }
-        guard hasChanges else { return .nothingChanged }
+        guard draftProblem == nil else { return .blocked }
+        guard hasChanges else { return .refused(.nothingChanged) }
         isApplying = true
         applyFailure = nil
         isSaved = false
@@ -600,16 +617,16 @@ final class ObjectMetadataModel {
             // Nothing was sent, so nothing is recorded: the trail is for
             // writes and for the attempts that reached the store.
             applyFailure = ObjectLockLines.message(for: error, during: .reading)
-            return nil
+            return .failed
         }
         if defaultIsCompliance {
             if !acknowledged {
                 refusedSaves += 1
-                return .complianceNotAcknowledged
+                return .refused(.complianceNotAcknowledged)
             }
             if acknowledgementIsStale {
                 refusedSaves += 1
-                return .acknowledgementStale
+                return .refused(.acknowledgementStale)
             }
         }
 
@@ -627,6 +644,7 @@ final class ObjectMetadataModel {
             baseline = written
             acknowledged = false
             isSaved = true
+            return .written
         } catch {
             // Any phase but `.reading` and `.applyingRetention` gives the
             // generic "could not be saved" sentence, or the permission one;
@@ -636,8 +654,8 @@ final class ObjectMetadataModel {
                 key: target.key, bucket: target.bucket, standardFieldCount: standardFieldCount,
                 customPairCount: written.custom.count, complianceDefaultDays: complianceDays,
                 failure: applyFailure)
+            return .failed
         }
-        return nil
     }
 
     /// Reads whether the bucket has Object Lock and, if it does, its default,
@@ -772,29 +790,45 @@ struct ObjectMetadataSheet: BoundedView {
                 Text(ObjectMetadataLines.customNone.text)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            ForEach($model.custom) { $row in
-                HStack(spacing: 6) {
-                    TextField("", text: $row.name)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel(ObjectMetadataLines.customNameLabel.text)
-                    TextField("", text: $row.value)
-                        .labelsHidden()
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel(ObjectMetadataLines.customValueLabel.text)
-                    Button {
-                        model.removeCustomRow(row.id)
-                    } label: {
-                        Image(systemName: "minus.circle")
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        pairRows
                     }
-                    .buttonStyle(.borderless)
-                    .help(ObjectMetadataLines.removePair.text)
-                    .accessibilityLabel(ObjectMetadataLines.removePair.text)
                 }
+                .frame(maxHeight: Self.pairListHeight)
+                .scrollBounceBehavior(.basedOnSize)
             }
             Button(ObjectMetadataLines.addPair.text) { model.addCustomRow() }
                 .buttonStyle(.polished)
+        }
+    }
+
+    /// The tallest the list of pairs grows before it scrolls. The sheet is
+    /// bounded in width, not in height, and a sheet taller than the screen is
+    /// one whose buttons cannot be reached; a file can carry many pairs.
+    private static let pairListHeight: CGFloat = 180
+
+    @ViewBuilder private var pairRows: some View {
+        ForEach($model.custom) { $row in
+            HStack(spacing: 6) {
+                TextField("", text: $row.name)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(ObjectMetadataLines.customNameLabel.text)
+                TextField("", text: $row.value)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(ObjectMetadataLines.customValueLabel.text)
+                Button {
+                    model.removeCustomRow(row.id)
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .help(ObjectMetadataLines.removePair.text)
+                .accessibilityLabel(ObjectMetadataLines.removePair.text)
+            }
         }
     }
 

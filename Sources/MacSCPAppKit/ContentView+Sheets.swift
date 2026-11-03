@@ -187,7 +187,7 @@ extension ContentView {
         // Metadata of one file (S3 metadata, Task 4): opened from the file
         // context menu's "Metadata…", see `handleBrowserMenuEntry`.
         .sheet(item: $objectMetadataSheetItem) { item in
-            ObjectMetadataSheet(model: item.model)
+            ObjectMetadataSheet(model: objectMetadataModel(for: item))
         }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
@@ -741,6 +741,16 @@ extension ContentView {
 }
 
 extension ContentView {
+    /// The model behind the metadata sheet for `item`: the item's pieces,
+    /// with its recorder (the tab's, captured when the sheet opened) given
+    /// where `BucketSettingsAuditTests.everySheetIsBuiltWithItsItemsRecorder`
+    /// reads for it.
+    func objectMetadataModel(for item: ObjectMetadataSheetItem) -> ObjectMetadataModel {
+        ObjectMetadataModel(
+            target: item.target, recorder: item.recorder, provider: item.provider,
+            settings: item.settings, locks: item.locks, versioning: item.versioning)
+    }
+
     /// The model behind the version sheet for `item`, with the three row
     /// actions that need the window wired to it: open (a read-only copy),
     /// compare (a file pair in the diff window) and download (a save panel and

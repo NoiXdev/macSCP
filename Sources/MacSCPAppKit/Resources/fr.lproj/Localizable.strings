@@ -445,7 +445,7 @@
 "browser.action.legalHold" = "Conservation légale…";
 "browser.action.versions" = "Afficher les versions…";
 "browser.action.versions.neverVersioned" = "La gestion des versions n’a jamais été activée sur ce bucket : il n’y a aucun historique à afficher.";
-"menu.s3.metadata" = "Métadonnées…";
+"browser.action.metadata" = "Métadonnées…";
 "browser.deleted.notice.versioningNotConfirmed" = "Les fichiers supprimés ne sont pas affichés : macSCP n’a pas pu confirmer si ce bucket conserve des versions.";
 "browser.deleted.notice.listingFailed" = "Les fichiers supprimés n’ont pas pu être listés. Les fichiers présents sont affichés.";
 "browser.deleted.notice.restoreNotConfirmed" = "La restauration n’a pas pu être confirmée. La liste a été relue : vérifiez si le fichier est de retour avant de réessayer.";
