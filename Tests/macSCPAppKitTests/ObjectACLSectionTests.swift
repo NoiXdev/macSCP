@@ -215,6 +215,119 @@ import macSCPCore
 ///   macSCPAppKitTests.ObjectACLSectionTests/noCatalogueKeyAnywhereIsSpelledExactlyAsTheSubresourceName()
 /// ```
 ///
+/// ## Round 2: eleven more plants, on the tree of `fix(app): access-list section review round 2, every exit of save() is held, the failed-read figure follows the catalogue`
+///
+/// The block above ran with a control of 28 tests; the suite is now 32, so the
+/// plants whose catcher changed (P7, P11 and P12) are re-run here with the new
+/// control. P17 to P20 are the four exits of `save()` that the first version of
+/// `theListIsReadAgainAfterAConfirmedWriteAndOnlyThen` did not pin (the
+/// pre-write lock read failing, a stale acknowledgement, a draft that changed
+/// nothing, a blocked draft): before the test ranged over every exit, P17 and
+/// P18 were GREEN. P21 is the test that replaced a tautology: it is red if the
+/// failed-read sentence goes back to the process language. P22 and P23 bracket
+/// `listHeight` from both sides, P24 removes the keyboard-focus modifier (the
+/// test pins that the modifier is present; that it works is unverified).
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P7 no re-read of the list after a confirmed write' \
+///   --apply "perl -0pi -e 's/            await readAccessList\(\)\n            return \.written/            return .written/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theAccessListIsReadForTheFileWhenTheSheetOpensAndAgainAfterASave()
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P11 the list is read again after a write the store refused' \
+///   --apply "perl -0pi -e 's/(            applyFailure = ObjectLockLines\.message\(for: error, during: \.applyingDefault\)\n)/\$1            await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P12 the list is read again after a save refused for the acknowledgement' \
+///   --apply "perl -0pi -e 's/(            if !acknowledged \{\n                refusedSaves \+= 1\n)/\$1                await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P17 the list is read again after a lock read that failed before the write' \
+///   --apply "perl -0pi -e 's/(            applyFailure = ObjectLockLines\.message\(for: error, during: \.reading\)\n)/\$1            await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P18 the list is read again after a stale acknowledgement' \
+///   --apply "perl -0pi -e 's/(            if acknowledgementIsStale \{\n                refusedSaves \+= 1\n)/\$1                await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P19 the list is read again after a save that changed nothing' \
+///   --apply "perl -0pi -e 's/        guard hasChanges else \{ return \.refused\(\.nothingChanged\) \}\n/        guard hasChanges else {\n            await readAccessList()\n            return .refused(.nothingChanged)\n        }\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P20 the list is read again after a blocked draft' \
+///   --apply "perl -0pi -e 's/        guard draftProblem == nil else \{ return \.blocked \}\n/        guard draftProblem == nil else {\n            await readAccessList()\n            return .blocked\n        }\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P21 the failed-read sentence is read in the process language' \
+///   --apply "perl -0pi -e 's/(    static func findingMessage\(_ finding: RemoteFSFinding, locale: String\) -> String \{\n)/\$1        return finding.message\n/' Tests/macSCPAppKitTests/BoundedViewRegistry.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theLongestFailureSentenceFollowsTheCatalogueUnderMeasurement()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P22 the list is capped so high that a fourth entry shows in full' \
+///   --apply "perl -0pi -e 's/static let listHeight: CGFloat = 130/static let listHeight: CGFloat = 170/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListShowsThreeEntriesAndPartOfAFourth()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P23 the list is capped so low that a fourth entry shows nothing' \
+///   --apply "perl -0pi -e 's/static let listHeight: CGFloat = 130/static let listHeight: CGFloat = 100/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListShowsThreeEntriesAndPartOfAFourth()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P24 the entries list is not focusable' \
+///   --apply "perl -0pi -e 's/\n                \.focusable\(\)//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 32 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 32 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theEntriesListIsFocusableSoTheKeyboardCanScrollIt()
+/// ```
+///
 @Suite("Object access-list section")
 struct ObjectACLSectionTests {
     private static let locales = ["en", "de", "fr", "pl"]
