@@ -1499,18 +1499,25 @@ public final class S3FileSystem: RemoteFileSystem, S3RequestBuilder {
     /// check above matters more on that path than on `rename`'s: a restore
     /// reported as done when the copy failed tells the user their old version
     /// is back when it is not.
+    ///
+    /// **`extraHeaders` ride beside `x-amz-copy-source` and are signed with
+    /// it** (`setMetadata`: the `REPLACE` directive and the new values). The
+    /// copy-source header is set last, so a caller cannot displace it.
     private func copyObject(
         sourceBucket: String, fromKey: String, destinationBucket: String, toKey: String,
-        sourceVersionId: String? = nil, reportedAs path: String? = nil
+        sourceVersionId: String? = nil, reportedAs path: String? = nil,
+        extraHeaders: [String: String] = [:]
     ) async throws {
         var copySource = "/\(sourceBucket)/\(SigV4Signer.canonicalURI(path: fromKey))"
         if let sourceVersionId {
             copySource +=
                 "?" + SigV4Signer.canonicalQueryString(query: [(name: "versionId", value: sourceVersionId)])
         }
+        var headers = extraHeaders
+        headers["x-amz-copy-source"] = copySource
         let request = try buildSignedRequest(
             bucket: destinationBucket, method: "PUT", key: toKey, query: [],
-            extraHeaders: ["x-amz-copy-source": copySource], body: Data(),
+            extraHeaders: headers, body: Data(),
             payloadHash: SigV4Signer.emptyPayloadHash)
 
         let (data, response) = try await send(request)
@@ -2656,6 +2663,164 @@ extension S3FileSystem: ObjectVersionProvider {
         return try await streamObject(
             bucket: bucket, key: key, query: [(name: "versionId", value: versionId)],
             fromOffset: 0, ifMatching: nil, notFoundPath: Self.objectLockPath(bucket: bucket, key: key))
+    }
+}
+
+/// `ObjectMetadataProvider` conformance: one object's metadata, read with a
+/// `HEAD` and replaced with the copy onto itself spec section 4.5 measured,
+/// and its ACL, read and never written.
+///
+/// **Nothing here reports a write it did not read back.** `setMetadata` ends
+/// in a second `HEAD` whose answer must agree with what was sent, and throws
+/// `setMetadataUnconfirmedReason` when it does not; a `200` from the copy is
+/// not the evidence.
+///
+/// **A refusal is the store's own.** A `REPLACE` copy that the store refuses
+/// (its size ceiling, say: spec section 4.10 measured a single-part copy of
+/// 8 MiB and nothing above it) reaches the caller through `mapErrorStatus`
+/// like any other refusal, and nothing here retries it another way. In
+/// particular nothing falls back to a multipart copy.
+extension S3FileSystem: ObjectMetadataProvider {
+    /// The prefix of a custom-metadata header. Transport: added when a
+    /// request is built (`setMetadata`) and removed when an answer is read
+    /// (`objectMetadata(from:)`), so `ObjectMetadata.custom` never carries it.
+    static let customMetadataHeaderPrefix = "x-amz-meta-"
+
+    /// An empty key was handed to a metadata call: it would address the
+    /// bucket, not an object.
+    static let metadataKeyRequiredReason = "S3 object metadata: an object key is required"
+    /// A metadata field that cannot be sent as an HTTP header.
+    static let metadataFieldRefusedReason =
+        "S3 object metadata: a field cannot be sent as a header"
+    /// The `reason` of the `.protocolError` `setMetadata` throws when the
+    /// copy was accepted and the `HEAD` afterwards does not show what was
+    /// sent. Carries nothing the store wrote.
+    static let setMetadataUnconfirmedReason =
+        "S3 metadata change could not be confirmed: the object does not report the values that were sent"
+
+    public func metadata(ofKey key: String, inBucket bucket: String) async throws -> ObjectMetadata {
+        try Self.requireObjectKey(key, reason: Self.metadataKeyRequiredReason)
+        let request = try buildSignedRequest(
+            bucket: bucket, method: "HEAD", key: key, query: [],
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        let (_, response) = try await send(request)
+        guard (200..<300).contains(response.statusCode) else {
+            // A HEAD answer has no body to read a code from.
+            throw Self.mapErrorStatus(
+                response.statusCode, body: Data(), path: Self.objectLockPath(bucket: bucket, key: key))
+        }
+        return Self.objectMetadata(from: response)
+    }
+
+    public func setMetadata(
+        _ metadata: ObjectMetadata, ofKey key: String, inBucket bucket: String
+    ) async throws {
+        try Self.requireObjectKey(key, reason: Self.metadataKeyRequiredReason)
+        let headers = try Self.replacementHeaders(for: metadata)
+        let path = Self.objectLockPath(bucket: bucket, key: key)
+        try await copyObject(
+            sourceBucket: bucket, fromKey: key, destinationBucket: bucket, toKey: key,
+            reportedAs: path, extraHeaders: headers)
+
+        let after = try await self.metadata(ofKey: key, inBucket: bucket)
+        guard Self.metadata(after, confirms: metadata) else {
+            throw RemoteFSError.protocolError(reason: Self.setMetadataUnconfirmedReason)
+        }
+    }
+
+    public func acl(ofKey key: String, inBucket bucket: String) async throws -> ObjectACL? {
+        try Self.requireObjectKey(key, reason: Self.metadataKeyRequiredReason)
+        let request = try buildSignedRequest(
+            bucket: bucket, method: "GET", key: key, query: [(name: "acl", value: "")],
+            payloadHash: SigV4Signer.emptyPayloadHash)
+        let (data, response) = try await send(request)
+        return try S3ACLXML.parse(
+            data, status: response.statusCode, path: Self.objectLockPath(bucket: bucket, key: key))
+    }
+
+    /// The headers of a `REPLACE` copy for `metadata`: the directive, each of
+    /// the three standard fields that has a value, and one prefixed header per
+    /// custom pair. A field left `nil` is NOT sent, which is what makes the
+    /// replace drop it. Custom names are lower-cased, as the store reports
+    /// them.
+    ///
+    /// Refused with `metadataFieldRefusedReason`, before anything is sent: a
+    /// value with a control character (a line break would end the header and
+    /// start another) and a custom name that is empty or is not an HTTP token.
+    private static func replacementHeaders(for metadata: ObjectMetadata) throws -> [String: String] {
+        var headers = ["x-amz-metadata-directive": "REPLACE"]
+        let standard = [
+            ("content-type", metadata.contentType),
+            ("cache-control", metadata.cacheControl),
+            ("content-disposition", metadata.contentDisposition),
+        ]
+        for (name, value) in standard {
+            guard let value else { continue }
+            guard headerValueIsSendable(value) else {
+                throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
+            }
+            headers[name] = value
+        }
+        for (name, value) in metadata.custom {
+            guard headerNameIsToken(name), headerValueIsSendable(value) else {
+                throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
+            }
+            headers[customMetadataHeaderPrefix + name.lowercased()] = value
+        }
+        return headers
+    }
+
+    /// RFC 9110 section 5.6.2: a token is one or more of these characters.
+    private static let tokenCharacters = CharacterSet(
+        charactersIn: "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+    private static func headerNameIsToken(_ name: String) -> Bool {
+        !name.isEmpty && name.unicodeScalars.allSatisfy { tokenCharacters.contains($0) }
+    }
+
+    private static func headerValueIsSendable(_ value: String) -> Bool {
+        value.unicodeScalars.allSatisfy { $0 == "\t" || ($0.value >= 0x20 && $0.value != 0x7F) }
+    }
+
+    /// What a `HEAD` answer says about an object. Header names are matched
+    /// without regard to case; the custom ones lose the transport prefix and
+    /// are kept lower-cased. An answer with the prefix and nothing after it
+    /// names no key and is not read as one.
+    private static func objectMetadata(from response: HTTPURLResponse) -> ObjectMetadata {
+        var custom: [String: String] = [:]
+        for (rawName, rawValue) in response.allHeaderFields {
+            guard let name = (rawName as? String)?.lowercased(), let value = rawValue as? String,
+                name.hasPrefix(customMetadataHeaderPrefix)
+            else { continue }
+            let key = String(name.dropFirst(customMetadataHeaderPrefix.count))
+            if !key.isEmpty { custom[key] = value }
+        }
+        return ObjectMetadata(
+            contentType: response.value(forHTTPHeaderField: "Content-Type"),
+            cacheControl: response.value(forHTTPHeaderField: "Cache-Control"),
+            contentDisposition: response.value(forHTTPHeaderField: "Content-Disposition"),
+            custom: custom,
+            entityTag: response.value(forHTTPHeaderField: "ETag"))
+    }
+
+    /// Whether `actual`, read back, holds what `sent` asked for.
+    ///
+    /// The three standard fields must be equal, with one exception: a content
+    /// type that was not sent is not compared, because a store may assign a
+    /// default one to an object that has none (not measured on the rig, so
+    /// not assumed either way). The custom pairs must be equal as a whole, so
+    /// a pair that survived the `REPLACE` is as much a disagreement as one
+    /// that went missing. The entity tag is deliberately NOT compared: spec
+    /// section 4.5 measured it unchanged by a metadata copy, the bytes being
+    /// the same.
+    private static func metadata(_ actual: ObjectMetadata, confirms sent: ObjectMetadata) -> Bool {
+        if let type = sent.contentType, actual.contentType != type { return false }
+        guard actual.cacheControl == sent.cacheControl,
+            actual.contentDisposition == sent.contentDisposition
+        else { return false }
+        let sentCustom = Dictionary(
+            sent.custom.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { _, last in last })
+        return actual.custom == sentCustom
     }
 }
 
