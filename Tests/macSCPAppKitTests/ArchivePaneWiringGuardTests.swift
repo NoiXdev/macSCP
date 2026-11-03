@@ -50,28 +50,35 @@ struct ArchivePaneWiringGuardTests {
 
     // MARK: Entries are handled inside the pane, before they could be forwarded
 
-    @Test func theArchiveEntriesAreHandledBeforeTheForwardingDefault() throws {
+    /// The pane handles `.compressTo` and `.extractArchive` itself, once each,
+    /// and does not forward them.
+    ///
+    /// This test was named `theArchiveEntriesAreHandledBeforeTheForwardingDefault`
+    /// and asserted `compress.upperBound <= forward.lowerBound` and
+    /// `extract.upperBound <= forward.lowerBound`. Both are withdrawn: the
+    /// forward is a NAMED arm now, not a `default:`, so Swift's arm order says
+    /// nothing, an entry named in two arms is a duplicate-case compile error,
+    /// and the two ordering assertions had no failure mode left. What can
+    /// still go wrong, and what is asserted instead: a second forwarding call
+    /// (a re-added `default:` or an archive entry forwarded from a new arm),
+    /// and the archive arms vanishing.
+    @Test func theArchiveEntriesAreHandledInThePaneAndNeverForwarded() throws {
         let code = try Self.code("BrowserPane.swift")
-        let compress = try #require(
-            code.range(of: "case .compressTo(let format): startCompress(format, selection: selection)"))
-        let extract = try #require(
-            code.range(of: "case .extractArchive(let format): beginExtract(format, selection: selection)"))
-        // The forward carries the pane's own `side` since the diff view's fix
-        // round 3 (N1); this anchor read `default: onMenuAction?(entry,
-        // selection)` until then. What it pins is unchanged — that the
-        // archive arms come BEFORE the forwarding default — and only the
-        // spelling of the default moved.
-        //
-        // The forward is no longer behind a `default:` (S3 version history,
-        // Task 10): the pane names the entries it forwards, so a new
-        // `BrowserMenuEntry` case is a compile error here. The anchor is the
-        // forwarding call itself, which appears once in the file. (Withdrawn
-        // wording, verbatim: `code.range(of: "default: onMenuAction?(entry,
-        // selection, side)")`.)
-        #expect(code.components(separatedBy: "onMenuAction?(entry, selection, side)").count == 2)
-        let forward = try #require(code.range(of: "onMenuAction?(entry, selection, side)"))
-        #expect(compress.upperBound <= forward.lowerBound)
-        #expect(extract.upperBound <= forward.lowerBound)
+        // Positive: both arms are there, once each.
+        #expect(Self.occurrences(of: "case .compressTo(let format): startCompress(format, selection: selection)", in: code) == 1)
+        #expect(Self.occurrences(of: "case .extractArchive(let format): beginExtract(format, selection: selection)", in: code) == 1)
+        // Negative: the forwarding call appears once, and the forwarded arm
+        // (everything between the call's arm head and the call) names neither.
+        #expect(Self.occurrences(of: "onMenuAction?(entry, selection, side)", in: code) == 1)
+        let head = try #require(code.range(of: "case .transferToOtherPane, .transferToSession,"))
+        let call = try #require(
+            code.range(
+                of: "onMenuAction?(entry, selection, side)", range: head.upperBound..<code.endIndex))
+        let arm = String(code[head.lowerBound..<call.lowerBound])
+        #expect(!arm.contains(".compressTo"))
+        #expect(!arm.contains(".extractArchive"))
+        // The positive beside that: the slice is the forwarding arm.
+        #expect(arm.contains(".backendFileAction"))
     }
 
     @Test func theRowTheSheetAndTheReloadAreWired() throws {

@@ -1,4 +1,5 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 @testable import macSCPCore
 
@@ -193,7 +194,9 @@ struct DeletedEntryListingTests {
         await vm.load()
         #expect(vm.items.map(\.name) == ["Folder", "kept.txt"])
         #expect(vm.state == .loaded)
-        #expect(vm.lastLoadError == nil)
+        // Computed first: the error this pane might have kept carries the canary.
+        let keptNoError = vm.lastLoadError == nil
+        #expect(keptNoError)
         #expect(vm.deletedFilesNotice == .listingFailed)
         let noticeText = String(describing: vm.deletedFilesNotice)
         let leaked = noticeText.contains("SECRETCANARY") || noticeText.contains("AKIACANARYKEY")
@@ -215,21 +218,73 @@ struct DeletedEntryListingTests {
 
     // MARK: The silent refresh
 
-    @Test func theSilentRefreshKeepsTheDeletedRowsItCannotReread() async {
+    @Test func theSilentRefreshReplacesTheDeletedRowsWhenItCanRead() async {
         let source = FakeDeletedFileSource()
         source.answer = .rows([deletedRow("gone.txt")])
         let vm = RemoteBrowserViewModel(fs: makeFS())
         vm.deletedFileSource = source
         vm.showDeletedFiles = true
         await vm.load()
+        #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
+        source.answer = .rows([deletedRow("other.txt")])
+        await vm.refreshQuietly()
+        #expect(vm.items.filter(\.isDeleted).map(\.name) == ["other.txt"])
+        // A healthy refresh asks every time: that is what a refresh is.
+        await vm.refreshQuietly()
+        #expect(source.listed.count == 3)
+    }
+
+    @Test func theSilentRefreshKeepsTheDeletedRowsItCannotRereadAndStopsAsking() async {
+        let source = FakeDeletedFileSource()
+        source.answer = .rows([deletedRow("gone.txt")])
+        let vm = RemoteBrowserViewModel(fs: makeFS())
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        #expect(source.listed.count == 1)
         source.error = RemoteFSError.protocolError(reason: "x")
         await vm.refreshQuietly()
         #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
-        // And it replaces them when it can read: the row that is gone is gone.
+        #expect(source.listed.count == 2)
+        // The request that failed is not repeated on every tick after it.
+        await vm.refreshQuietly()
+        await vm.refreshQuietly()
+        await vm.refreshQuietly()
+        #expect(source.listed.count == 2)
+        #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
+        // A `load()` asks again, and so ends the suspension: the positive
+        // beside the three silent ticks above.
         source.error = nil
         source.answer = .rows([])
+        await vm.load()
+        #expect(source.listed.count == 3)
         await vm.refreshQuietly()
-        #expect(vm.items.filter(\.isDeleted).isEmpty)
+        #expect(source.listed.count == 4)
+    }
+
+    /// The case behind the rule: a versioning state that cannot be read comes
+    /// back from the source as a notice, with no rows and no error, on a
+    /// `load()`; the auto-refresh must not ask for it again every tick.
+    @Test func anUnreadableVersioningStateIsNotAskedAgainByTheSilentRefresh() async {
+        let source = FakeDeletedFileSource()
+        source.answer = .notConfirmed
+        let vm = RemoteBrowserViewModel(fs: makeFS())
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        #expect(vm.deletedFilesNotice == .versioningNotConfirmed)
+        #expect(source.listed.count == 1)
+        for _ in 0..<4 { await vm.refreshQuietly() }
+        #expect(source.listed.count == 1)
+        #expect(vm.items.map(\.name) == ["Folder", "kept.txt"])
+        // Turning the switch off clears the suspension with the notice.
+        source.answer = .rows([deletedRow("gone.txt")])
+        await vm.setShowDeletedFiles(false)
+        await vm.setShowDeletedFiles(true)
+        #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
+        #expect(source.listed.count == 2)
+        await vm.refreshQuietly()
+        #expect(source.listed.count == 3)
     }
 
     // MARK: Turning the switch
@@ -302,6 +357,70 @@ struct DeletedEntryListingTests {
         #expect(vm.deletedFilesNotice == .versioningNotConfirmed)
         #expect(await fs.listCallCounts["/"] == before)
         #expect(vm.state == .loaded)
+    }
+
+    // MARK: The phase-two merge's index
+
+    /// A file system that also streams metadata (`LocalMetadataSource`), driven
+    /// by the test: nothing arrives until the test yields.
+    private final class StreamingFS: RemoteFileSystem, LocalMetadataSource, @unchecked Sendable {
+        let tree: [String: [RemoteFileItem]]
+        private(set) var continuations: [AsyncStream<RemoteFileItem>.Continuation] = []
+
+        init(tree: [String: [RemoteFileItem]]) { self.tree = tree }
+
+        func list(path: String) async throws -> [RemoteFileItem] { tree[path] ?? [] }
+        func stat(path: String) async throws -> RemoteFileItem { throw RemoteFSError.notFound(path: path) }
+        func readStream(path: String, fromOffset offset: UInt64) async throws
+            -> AsyncThrowingStream<Data, Error>
+        { AsyncThrowingStream { $0.finish() } }
+        func write(path: String, mode: WriteMode, contents: AsyncThrowingStream<Data, Error>) async throws {}
+        func delete(path: String) async throws {}
+        func createDirectory(at path: String) async throws {}
+        func rename(from: String, to: String) async throws {}
+        func setPermissions(path: String, permissions: UInt32) async throws {}
+        func deleteTree(at path: String) async throws {}
+        func disconnect() async {}
+        func homeDirectoryPath() async throws -> String { "/" }
+
+        func metadata(for items: [RemoteFileItem]) -> AsyncStream<RemoteFileItem> {
+            let (stream, continuation) = AsyncStream<RemoteFileItem>.makeStream(of: RemoteFileItem.self)
+            continuations.append(continuation)
+            return stream
+        }
+    }
+
+    /// Dropping the deleted rows moves every row after them up one place, and
+    /// the merge loop writes through positions it recorded earlier. The App
+    /// never gives this switch to a pane that merges, so this is not reachable
+    /// today; it is held anyway, because "never given" is a fact about the
+    /// wiring and not about `setShowDeletedFiles`. Without the rebuild, the
+    /// arrival for `a.txt` lands on the slot `c.txt` now holds.
+    @Test func droppingDeletedRowsLeavesThePhaseTwoMergeWritingToTheRightRows() async throws {
+        let fs = StreamingFS(tree: [
+            "/": [
+                RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file),
+                RemoteFileItem(name: "c.txt", path: "/c.txt", kind: .file),
+            ]
+        ])
+        let source = FakeDeletedFileSource()
+        // Sorts first, so every plain row sits one place later than it will.
+        source.answer = .rows([deletedRow("0-gone.txt")])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        #expect(vm.items.map(\.name) == ["0-gone.txt", "a.txt", "c.txt"])
+        await vm.setShowDeletedFiles(false)
+        #expect(vm.items.map(\.name) == ["a.txt", "c.txt"])
+
+        fs.continuations[0].yield(RemoteFileItem(name: "a.txt", path: "/a.txt", kind: .file, size: 7))
+        try await pollUntil("a.txt's row to fill in") {
+            vm.items.first(where: { $0.path == "/a.txt" })?.size == 7
+        }
+        #expect(vm.items.map(\.name) == ["a.txt", "c.txt"])
+        #expect(vm.items.first(where: { $0.path == "/c.txt" })?.size == nil)
+        fs.continuations[0].finish()
     }
 
     // MARK: Menu and keys

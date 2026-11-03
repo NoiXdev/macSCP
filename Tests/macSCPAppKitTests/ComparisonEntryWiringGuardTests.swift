@@ -205,11 +205,28 @@ struct ComparisonEntryWiringGuardTests {
         #expect(pane.contains("case .rename:"))
         // The forward names both comparison entries: the pane forwards them,
         // it does not handle them. Counted per entry, as the arm is a list.
+        //
+        // **The slice is total.** The call is searched for only AFTER the arm
+        // (`range(of:range:)` over the tail), so a second forwarding call
+        // anywhere above the arm cannot put the two indices out of order: the
+        // earlier form searched the whole file twice and sliced between the
+        // answers, and `Range requires lowerBound <= upperBound` is a trap,
+        // which takes the verdict of every test in the target with it
+        // (measured by a reviewer's plant: signal 5, no verdict lines). A guard
+        // fails by name or it is worse than none.
         let forward = try #require(pane.range(of: "case .transferToOtherPane, .transferToSession,"))
-        let call = try #require(pane.range(of: "onMenuAction?(entry, selection, side)"))
+        let call = try #require(
+            pane.range(
+                of: "onMenuAction?(entry, selection, side)",
+                range: forward.upperBound..<pane.endIndex))
         let arm = String(pane[forward.lowerBound..<call.lowerBound])
         #expect(arm.contains(".compareWithOtherPane"))
         #expect(arm.contains(".compareTwoSelected"))
+        // The Restore entry of a deleted row is forwarded the same way, and is
+        // claimed nowhere else: a pane that swallowed it would draw the item
+        // enabled and do nothing (a reviewer's plant: the whole suite green).
+        #expect(arm.contains(".restoreDeleted"))
+        #expect(pane.components(separatedBy: ".restoreDeleted").count == 2)
         // Negative: neither is claimed anywhere ELSE (an arm of its own that
         // swallows it), and the switch has no `default:` of its own.
         #expect(pane.components(separatedBy: ".compareWithOtherPane").count == 2)

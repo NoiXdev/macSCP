@@ -88,6 +88,18 @@ public final class RemoteBrowserViewModel {
     /// again from the top of every `load()`. See `DeletedFilesNotice`.
     public var deletedFilesNotice: DeletedFilesNotice?
 
+    /// Set when a request for the deleted keys ended in a notice (the
+    /// versioning state could not be read, or the listing failed), and clear
+    /// again at the top of every `load()`. While it is set the SILENT refresh
+    /// (`refreshQuietly()`) asks no more: `BucketVersioningCache` rightly
+    /// keeps no failure, so without this a bucket whose `GET ?versioning`
+    /// fails would cost one failing request every auto-refresh tick (5
+    /// seconds by default) for as long as the pane sat there. A manual
+    /// refresh, a navigation and turning the switch each `load()`, which asks
+    /// again; what a suspended refresh costs is that a store that starts
+    /// answering is not noticed until one of those.
+    private var deletedRefreshSuspended = false
+
     /// The archive operation this pane has running, if any. Per pane and
     /// per session, so a pane that is remounted by the window does not lose
     /// track of a run still going. See `ArchiveActivity` for why this is
@@ -426,6 +438,7 @@ public final class RemoteBrowserViewModel {
         state = .loading
         lastLoadError = nil
         deletedFilesNotice = nil
+        deletedRefreshSuspended = false
         selectedItems = []
         let path = currentPath
         let clock = ContinuousClock()
@@ -440,6 +453,7 @@ public final class RemoteBrowserViewModel {
             guard currentPath == path else { return }
             displayedAll = displayItems(from: listed, deleted: deleted.rows)
             deletedFilesNotice = deleted.notice
+            deletedRefreshSuspended = deleted.notice != nil
             applySearch()
             state = .loaded
             // Its own line, one layer above `LocalFileSystem.list`'s own
@@ -672,9 +686,17 @@ public final class RemoteBrowserViewModel {
         showDeletedFiles = newValue
         guard changed else { return }
         if !newValue {
+            deletedRefreshSuspended = false
             guard displayedAll.contains(where: \.isDeleted) || deletedFilesNotice != nil else { return }
             let selectedPaths = Set(selectedItems.map(\.path))
             displayedAll = displayedAll.filter { !$0.isDeleted }
+            // Rows left `displayedAll`, so every later row moved up. The
+            // phase-two merge (`load()`) reads positions out of this map and
+            // writes through them without a bounds check. It exists only for a
+            // pane over `LocalMetadataSource`, which is never given this
+            // switch, but "never given" is a fact about the App's wiring and
+            // not about this method: rebuilt here, so it does not matter.
+            if !mergePathIndex.isEmpty { mergePathIndex = Self.pathIndex(for: displayedAll) }
             deletedFilesNotice = nil
             applySearch()
             selectedItems = items.filter { selectedPaths.contains($0.path) }
@@ -717,12 +739,18 @@ public final class RemoteBrowserViewModel {
         guard state == .loaded else { return }
         let path = currentPath
         guard let listed = try? await fs.list(path: path) else { return }
-        let fetched = await fetchDeletedRows(inDirectory: path)
+        // Not asked again while a request for the deleted keys is known to be
+        // failing (`deletedRefreshSuspended`).
+        let fetched = deletedRefreshSuspended
+            ? (rows: [RemoteFileItem](), notice: DeletedFilesNotice?.none)
+            : await fetchDeletedRows(inDirectory: path)
         guard state == .loaded, currentPath == path else { return }
         // A deleted listing that failed does not blank the deleted rows the
         // pane already shows: like the plain listing's own failure above, a
-        // silent refresh keeps what it has rather than paint a gap.
-        let deleted = fetched.notice == nil ? fetched.rows : displayedAll.filter(\.isDeleted)
+        // silent refresh keeps what it has rather than paint a gap. It does
+        // stop asking, silently: the notice is a `load()`'s to show.
+        if fetched.notice != nil { deletedRefreshSuspended = true }
+        let deleted = deletedRefreshSuspended ? displayedAll.filter(\.isDeleted) : fetched.rows
         // Rebuild the selection FROM the fresh items rather than filtering
         // the old structs (M9c final review): membership semantics are the
         // same, but the surviving entries carry current size/date/permission
