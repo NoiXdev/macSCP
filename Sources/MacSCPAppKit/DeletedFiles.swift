@@ -17,6 +17,9 @@ enum DeletedFilesLines {
     static let restoreNotConfirmed = CatalogueLine(
         key: "browser.deleted.notice.restoreNotConfirmed",
         english: "The restore could not be confirmed. The listing was read again: check whether the file is back before trying again.")
+    static let notRefreshed = CatalogueLine(
+        key: "browser.deleted.notice.notRefreshed",
+        english: "The deleted files shown could not be refreshed, so they may be out of date. Refresh to try again.")
     static let restoreGone = CatalogueLine(
         key: "browser.deleted.notice.restoreGone",
         english: "This file is not deleted any more. The listing was read again.")
@@ -25,7 +28,7 @@ enum DeletedFilesLines {
     /// catalogues. The notices that reuse the version sheet's sentences are
     /// covered by that sheet's own family.
     static let all: [CatalogueLine] = [
-        versioningNotConfirmed, listingFailed, restoreNotConfirmed, restoreGone,
+        versioningNotConfirmed, listingFailed, restoreNotConfirmed, restoreGone, notRefreshed,
     ]
 }
 
@@ -37,6 +40,7 @@ extension DeletedFilesNotice {
         case .versioningNotConfirmed: DeletedFilesLines.versioningNotConfirmed
         case .listingFailed: DeletedFilesLines.listingFailed
         case .restoreNotConfirmed: DeletedFilesLines.restoreNotConfirmed
+        case .deletedRowsNotRefreshed: DeletedFilesLines.notRefreshed
         case .restoreGone: DeletedFilesLines.restoreGone
         case .restoreDenied: ObjectVersionsLines.outcomeDenied
         case .restoreUnsupported: ObjectVersionsLines.outcomeUnsupported

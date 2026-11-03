@@ -291,6 +291,32 @@ struct ShowDeletedFilesTests {
         #expect(pane.counters.deleted.count == 2)
     }
 
+    /// Frozen rows must not look current. A pane that loaded deleted rows and
+    /// then failed to refresh them says so, and keeps saying so on every look
+    /// until a load replaces the notice: the row that shows it reads the
+    /// pane's notice, which nothing but a load or the switch clears.
+    @Test func deletedRowsThatCouldNotBeRefreshedAreSaidToBeOutOfDate() async {
+        let pane = Pane()
+        pane.vm.showDeletedFiles = true
+        await pane.vm.load()
+        #expect(pane.vm.items.contains { $0.isDeleted })
+        #expect(pane.vm.deletedFilesNotice == nil)
+        pane.counters.setDeletedError(RemoteFSError.finding(.operationNotSupported))
+        await pane.vm.refreshQuietly()
+        #expect(pane.vm.items.contains { $0.isDeleted })
+        #expect(pane.vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        for _ in 0..<3 { await pane.vm.refreshQuietly() }
+        #expect(pane.vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        #expect(pane.counters.deleted.count == 2)
+        let line = DeletedFilesNotice.deletedRowsNotRefreshed.line
+        #expect(line.english.contains("could not be refreshed"))
+        #expect(line.english.lowercased().contains("lost") == false)
+        // A load that can read again replaces it.
+        pane.counters.setDeletedError(nil)
+        await pane.vm.refresh()
+        #expect(pane.vm.deletedFilesNotice == nil)
+    }
+
     /// The containment must not reach the healthy path: with nothing failing,
     /// every tick asks for the deleted keys, which is what keeps a row that
     /// someone else restored from lingering.
@@ -550,12 +576,13 @@ struct ShowDeletedFilesTests {
     /// How many lines the family has, written down. The command that produces
     /// the figure, from the repository root:
     /// `grep -o '"browser\.deleted\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l`.
-    static let lineCount = 4
+    static let lineCount = 5
 
     @Test func everyNoticeHasASentenceInTheCatalogue() {
         for notice in [
             DeletedFilesNotice.versioningNotConfirmed, .listingFailed, .restoreNotConfirmed,
             .restoreGone, .restoreDenied, .restoreUnsupported, .restoreUnavailable,
+            .deletedRowsNotRefreshed,
         ] {
             let resolved = L10n.$localeOverride.withValue("de") {
                 L10n.string(notice.line.key, "ZZ-UNRESOLVED-ZZ")

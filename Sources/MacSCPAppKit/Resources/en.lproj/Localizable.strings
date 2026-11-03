@@ -452,6 +452,7 @@
 "browser.deleted.notice.listingFailed" = "The deleted files could not be listed. The files that are there are shown.";
 "browser.deleted.notice.restoreNotConfirmed" = "The restore could not be confirmed. The listing was read again: check whether the file is back before trying again.";
 "browser.deleted.notice.restoreGone" = "This file is not deleted any more. The listing was read again.";
+"browser.deleted.notice.notRefreshed" = "The deleted files shown could not be refreshed, so they may be out of date. Refresh to try again.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Connection Actions";

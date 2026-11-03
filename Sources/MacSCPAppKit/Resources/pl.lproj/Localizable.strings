@@ -447,6 +447,7 @@
 "browser.deleted.notice.listingFailed" = "Nie udało się wyświetlić listy usuniętych plików. Widoczne są pliki, które istnieją.";
 "browser.deleted.notice.restoreNotConfirmed" = "Nie udało się potwierdzić przywrócenia. Lista została odczytana ponownie: sprawdź, czy plik wrócił, zanim spróbujesz ponownie.";
 "browser.deleted.notice.restoreGone" = "Ten plik nie jest już usunięty. Lista została odczytana ponownie.";
+"browser.deleted.notice.notRefreshed" = "Nie udało się odświeżyć wyświetlanych usuniętych plików, więc mogą być nieaktualne. Odśwież, aby spróbować ponownie.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Akcje połączenia";
