@@ -32,11 +32,6 @@ public enum DeletedFilesNotice: Equatable, Sendable {
     case versioningNotConfirmed
     /// The plain listing worked and the listing of deleted keys did not.
     case listingFailed
-    /// The deleted rows on screen could not be refreshed by the silent
-    /// refresh, so they are the ones the last good read left and may be out of
-    /// date. Stays until a `load()` replaces it, which is also what lets the
-    /// silent refresh ask again: the notice and the suspension end together.
-    case deletedRowsNotRefreshed
     /// A restore was sent and the history does not confirm it.
     case restoreNotConfirmed
     /// The marker the row carried was no longer there.
