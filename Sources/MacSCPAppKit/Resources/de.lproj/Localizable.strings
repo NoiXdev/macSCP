@@ -555,6 +555,18 @@
 "s3.metadata.blocked.customNamePrefixed" = "macSCP ergänzt das Präfix, das ein eigener Name braucht, selbst. Gib den Namen ohne „x-amz-meta-“ ein.";
 "s3.metadata.blocked.customNameDuplicated" = "Zwei eigene Paare haben denselben Namen. Groß- und Kleinschreibung unterscheidet Namen nicht.";
 
+/* S3 object access list, read-only (S3 metadata, Task 5) */
+"s3.acl.heading" = "Zugriffsliste";
+"s3.acl.readOnlyNote" = "macSCP zeigt diese Liste nur an und ändert sie nicht.";
+"s3.acl.reading" = "Zugriffsliste wird gelesen…";
+"s3.acl.error.read" = "Die Zugriffsliste konnte nicht gelesen werden.";
+"s3.acl.notOffered" = "Dieser Speicher bietet keine Zugriffslisten für Dateien an.";
+"s3.acl.none" = "Die Zugriffsliste enthält keine Einträge.";
+"s3.acl.owner" = "Eigentümer";
+"s3.acl.owner.unnamed" = "Der Speicher hat keinen Eigentümer angegeben.";
+"s3.acl.holder.unnamed" = "Der Speicher hat nicht angegeben, wer diese Berechtigung innehat.";
+"s3.acl.identifier %@" = "Kennung: %@";
+
 /* Bucket-CORS-Regeln (S3-Bucket-Einstellungen, Task 9) */
 "s3.cors.title %@" = "CORS-Regeln für „%@“";
 "s3.cors.intro" = "CORS-Regeln legen fest, welche Websites die Dateien dieses Buckets aus einem Browser heraus verwenden dürfen.";

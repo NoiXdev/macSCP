@@ -8,14 +8,23 @@ import macSCPCore
 
 /// An in-memory `ObjectMetadataProvider` that records what it is asked.
 ///
-/// It answers only the two calls the metadata sheet makes today. `acl` throws
-/// `.operationNotSupported`, so a sheet that reached for it before the ACL
-/// section exists would fail loudly instead of reading a made-up answer.
+/// It answers the three calls the sheet makes. `acl` answers what `aclAnswer`
+/// says (by default the store offers none, `nil`, which is what Core returns
+/// for a store without object ACLs) and records every key it was asked about
+/// in `aclReads`.
 ///
 /// `observeAtWrite` runs at the moment `setMetadata` is called, before the
 /// call is recorded: it is how a test sees what the store had been asked
 /// BEFORE the write, which a count read afterwards cannot tell.
 final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
+    /// What `acl(ofKey:inBucket:)` answers.
+    enum ACLAnswer: Sendable {
+        /// `nil` from Core: the store offers no object ACLs.
+        case notOffered
+        case policy(ObjectACL)
+        case failure(any Error)
+    }
+
     struct Write: Equatable, Sendable {
         let metadata: ObjectMetadata
         let key: String
@@ -27,6 +36,8 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
         var readError: (any Error)?
         var writeError: (any Error)?
         var reads: [String] = []
+        var aclReads: [String] = []
+        var aclAnswer: ACLAnswer
         var writes: [Write] = []
         var observation: Int?
     }
@@ -38,10 +49,14 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
 
     init(
         stored: ObjectMetadata, readError: (any Error)? = nil, writeError: (any Error)? = nil,
+        aclAnswer: ACLAnswer = .notOffered,
         observeAtWrite: (@Sendable () -> Int)? = nil, writeEntered: AsyncSignal? = nil,
         writeRelease: AsyncSignal? = nil
     ) {
-        state = Mutex(State(stored: stored, readError: readError, writeError: writeError))
+        state = Mutex(
+            State(
+                stored: stored, readError: readError, writeError: writeError,
+                aclAnswer: aclAnswer))
         self.observeAtWrite = observeAtWrite
         self.writeEntered = writeEntered
         self.writeRelease = writeRelease
@@ -49,6 +64,8 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
 
     var reads: [String] { state.withLock { $0.reads } }
     var writes: [Write] { state.withLock { $0.writes } }
+    /// The keys `acl(ofKey:inBucket:)` was asked about, in order.
+    var aclReads: [String] { state.withLock { $0.aclReads } }
     /// What `observeAtWrite` answered at the first write, or `nil` if there was none.
     var observationAtFirstWrite: Int? { state.withLock { $0.observation } }
 
@@ -75,7 +92,15 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
     }
 
     func acl(ofKey key: String, inBucket bucket: String) async throws -> ObjectACL? {
-        throw RemoteFSError.finding(.operationNotSupported)
+        let answer = state.withLock { state in
+            state.aclReads.append(key)
+            return state.aclAnswer
+        }
+        switch answer {
+        case .notOffered: return nil
+        case .policy(let policy): return policy
+        case .failure(let error): throw error
+        }
     }
 }
 
@@ -244,6 +269,7 @@ struct ObjectMetadataSheetTests {
             versioning: BucketVersioning = .enabled,
             lock: FakeBucketSettings.ObjectLockFixture? = .init(hasLock: false),
             readError: (any Error)? = nil, writeError: (any Error)? = nil,
+            aclAnswer: FakeObjectMetadataProvider.ACLAnswer = .notOffered,
             recording: Bool = false, writeEntered: AsyncSignal? = nil,
             writeRelease: AsyncSignal? = nil
         ) {
@@ -251,7 +277,7 @@ struct ObjectMetadataSheetTests {
             let atWrite: @Sendable () -> Int = { settings.defaultReads.count }
             let provider = FakeObjectMetadataProvider(
                 stored: stored, readError: readError, writeError: writeError,
-                observeAtWrite: atWrite, writeEntered: writeEntered, writeRelease: writeRelease)
+                aclAnswer: aclAnswer, observeAtWrite: atWrite, writeEntered: writeEntered, writeRelease: writeRelease)
             let trail = recording ? Trail() : nil
             let clock = Clock()
             self.provider = provider
