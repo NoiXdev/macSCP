@@ -310,10 +310,45 @@ struct ObjectACLSectionTests {
         }
     }
 
+    /// **The hosted walk alone is not enough, and that was measured.** With a
+    /// SwiftUI `Button` planted into the section, the walk above stayed green:
+    /// a default-styled `Button` is drawn by SwiftUI and is not an AppKit
+    /// control the walk can find (plant P5, run on the tree of the commit that
+    /// introduced the section, was caught only by the source scan). So the
+    /// check is the walk (anything AppKit-backed and editable) AND the type of
+    /// the view the section actually builds, below.
     @MainActor @Test func theSectionOffersNoControlThatWrites() {
         for display in Self.everyDisplay {
             #expect(Self.controls(in: display) == [], "\(display)")
+            let controls = Self.controlTypes(in: ObjectACLSection(display: display))
+            #expect(controls == [], "\(display)")
         }
+    }
+
+    /// The control types named in the compiled type of the section's body.
+    /// A view's body type spells every view it can build, in every branch of
+    /// every `switch` and every closure of every `ForEach`, so this reads what
+    /// the section is made of and not what one state happens to show.
+    @MainActor private static func controlTypes(in section: ObjectACLSection) -> [String] {
+        let tree = String(reflecting: type(of: section.body))
+        return [
+            "Button", "Toggle", "TextField", "TextEditor", "SecureField", "Picker", "Menu",
+            "Stepper", "Slider", "DatePicker", "ColorPicker", "Link", "TapGesture",
+            "CheckboxRow", "DisclosureGroup",
+        ].filter { tree.contains($0) }
+    }
+
+    /// The positive beside the type read above: it does name the views the
+    /// section is made of, and it does name a control when one is there.
+    @MainActor @Test func theTypeReadSeesWhatTheSectionIsMadeOfAndAControlWhenThereIsOne() {
+        let tree = String(
+            reflecting: type(of: ObjectACLSection(display: .notOffered).body))
+        for name in ["Text", "ScrollView", "ForEach", "ProgressView"] {
+            #expect(tree.contains(name), "\(name) not in the type of the section's body")
+        }
+        let withAButton = String(
+            reflecting: type(of: VStack { Text("x"); Button("y") {} }))
+        #expect(withAButton.contains("Button"))
     }
 
     /// The positive beside the walk above: the same walk over the whole sheet
