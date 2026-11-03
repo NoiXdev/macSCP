@@ -103,6 +103,11 @@ extension ContentView {
             // stray click reaching either one reaches the user's host.
             onOpenTerminal: SessionRowTerminalEffect { stored in openTerminalFromSidebar(stored) },
             onOpenExternalTerminal: SessionRowExternalTerminalEffect { stored in openExternalTerminalFromSidebar(stored) },
+            // "Connect and Create Bucket…" (S3 metadata plan, Task 6): the
+            // same start, with the create-bucket sheet to follow on the tab
+            // it opens. An effect value for the reason `onConnect` is --
+            // choosing it dials the user's host.
+            onCreateBucket: SessionRowCreateBucketEffect { stored in createBucketFromSidebar(stored) },
             onExport: { scope in exportSheetItem = ExportSheetItem(scope: scope) },
             onImport: { showImportFileImporter = true },
             onShowAuditLog: { stored in auditLogSession = stored },
@@ -238,6 +243,18 @@ extension ContentView {
             PendingSnippetRunner(
                 tab: tab, activeTabID: tabsModel.activeTab.id,
                 onDeliver: { deliverPendingSnippetRun(on: $0) })
+        }
+    }
+    // The create-bucket sheet after the connection manager's "Connect and
+    // Create Bucket…" (S3 metadata plan, Task 6): one per tab, for the same
+    // reason the snippet runner above is -- the tab that armed it is not
+    // necessarily the tab on screen when its bucket list has loaded. Same
+    // zero-size, non-hit-testing shape; it composes with the layers above.
+    .background {
+        ForEach(tabsModel.tabs) { tab in
+            PendingCreateBucketRunner(
+                tab: tab, activeTabID: tabsModel.activeTab.id,
+                onDeliver: { deliverPendingCreateBucket(on: $0) })
         }
     }
     // Writes the dragged sidebar width back to `SettingsStore` — see
@@ -3196,6 +3213,70 @@ struct PendingSnippetRunner: View {
             armed: tab.pendingSnippetRun != nil,
             sessionID: tab.session?.id,
             terminalState: tab.session?.terminal.state,
+            isReconnecting: tab.isReconnecting,
+            storedSessionID: tab.activeStoredSessionID,
+            activeTabID: activeTabID)
+    }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onChange(of: signal, initial: true) { _, _ in
+                onDeliver(tab)
+            }
+    }
+}
+
+/// Hands the create-bucket sheet to the route once the tab the connection
+/// manager's "Connect and Create Bucket…" opened is connected, in front, and
+/// showing a bucket list that has loaded (S3 metadata plan, Task 6) --
+/// mounted per tab in `ContentView.splitLayout`'s `.background`, for every
+/// tab and not only the active one, for the reason `PendingSnippetRunner`
+/// states: the connect can finish while the user is looking at another tab.
+///
+/// **It decides nothing.** The whole rule -- wait, drop, hand over -- is
+/// `ContentView.deliverPendingCreateBucket(on:)`, which
+/// `SidebarNewBucketTests` drives directly. This view only calls it whenever
+/// one of the facts that method reads has changed, which is the split every
+/// other runner here uses: nothing in a SwiftUI body is reachable from a test
+/// in this project, so nothing that decides may live in one.
+///
+/// The facts are collected into `Signal` so there is one place to read what
+/// wakes this view. `initial: true`, for the reason `PendingSnippetRunner`
+/// gives: a request armed before SwiftUI has mounted this row would otherwise
+/// have its first transition missed, and there is no later change to fall
+/// back on when the list is already up. `remoteState` is the fact this one
+/// adds to the snippet runner's: the pane loads when it appears, so the list
+/// becoming `.loaded` is a change nothing else announces.
+struct PendingCreateBucketRunner: View {
+    let tab: SessionTab
+    /// Which tab is on screen. Part of the signal because the hand-off
+    /// refuses a background tab: without it, coming back to a tab whose list
+    /// loaded while it was behind would wake nothing, and the request would
+    /// sit armed for ever.
+    let activeTabID: UUID
+    /// Routes to `ContentView.deliverPendingCreateBucket(on:)` -- passed in
+    /// because this type has no access to `ContentView`'s own state.
+    let onDeliver: (SessionTab) -> Void
+
+    /// Everything `ContentView.deliverPendingCreateBucket(on:)` reads, as one
+    /// `Equatable` value. A fact that method starts reading and this struct
+    /// does not carry is a wake-up that will not happen.
+    private struct Signal: Equatable {
+        let armed: Bool
+        let sessionID: UUID?
+        let remoteState: RemoteBrowserViewModel.State?
+        let isReconnecting: Bool
+        let storedSessionID: UUID?
+        let activeTabID: UUID
+    }
+
+    private var signal: Signal {
+        Signal(
+            armed: tab.pendingCreateBucket != nil,
+            sessionID: tab.session?.id,
+            remoteState: tab.session?.remote.state,
             isReconnecting: tab.isReconnecting,
             storedSessionID: tab.activeStoredSessionID,
             activeTabID: activeTabID)

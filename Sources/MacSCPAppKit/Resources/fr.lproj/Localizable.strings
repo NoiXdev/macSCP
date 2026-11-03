@@ -356,6 +356,7 @@
 "sidebar.connect" = "Se connecter";
 "sidebar.openTerminal" = "Ouvrir le terminal";
 "sidebar.openExternalTerminal" = "Ouvrir dans un terminal externe";
+"sidebar.connectAndCreateBucket" = "Se connecter et créer un bucket…";
 "sidebar.edit" = "Modifier…";
 "sidebar.rename" = "Renommer";
 "sidebar.duplicate" = "Dupliquer";

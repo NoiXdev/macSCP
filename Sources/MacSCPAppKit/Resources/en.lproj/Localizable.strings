@@ -360,6 +360,7 @@
 "sidebar.connect" = "Connect";
 "sidebar.openTerminal" = "Open Terminal";
 "sidebar.openExternalTerminal" = "Open in External Terminal";
+"sidebar.connectAndCreateBucket" = "Connect and Create Bucket…";
 "sidebar.edit" = "Edit…";
 "sidebar.rename" = "Rename";
 "sidebar.duplicate" = "Duplicate";

@@ -417,6 +417,19 @@ struct ContentView: View {
         /// need no clearing rule at all — two of them simply drop the
         /// request, and the third hands this to `startWithoutAsking`.
         let pendingSnippet: Snippet?
+        /// Whether the start was the connection manager's "Connect and
+        /// Create Bucket…" (S3 metadata plan, Task 6), carried through the
+        /// query for the reason `paneVisibility` and `pendingSnippet` are:
+        /// "Open Anyway" has to start the SAME thing that was asked for,
+        /// and without this it would quietly turn the entry into a plain
+        /// connect. `false` for every other start.
+        ///
+        /// Like the snippet it rides on the QUESTION rather than on a tab,
+        /// and the three answers need no clearing rule: two of them drop the
+        /// request, and the third hands this to `startWithoutAsking`.
+        /// "Go to Existing Tab" is one of the two that drop it, the same as
+        /// for a snippet -- it activates a tab and moves nothing else.
+        let createsBucket: Bool
     }
 
     /// A sidebar start that stopped because some tab already holds the
@@ -1832,6 +1845,91 @@ struct ContentView: View {
         triggerSnippet(pending.snippet, execute: true)
     }
 
+    /// What `deliverPendingCreateBucket(on:)` did, handed back because the
+    /// one line that would show it -- the sheet's own `@State` -- is a write
+    /// no test of this project can observe (see `sidebarStart`).
+    enum PendingCreateBucketDelivery: Equatable {
+        /// Nothing was armed on the tab.
+        case notArmed
+        /// Armed, and a fact it needs is not there yet: the dial has not
+        /// finished, the tab is not in front, or the bucket list has not
+        /// loaded. Stays armed; the runner calls again when one changes.
+        case waiting
+        /// Armed, and it can never be carried out: the dial failed, the tab
+        /// is on another stored connection, or the bucket list failed to
+        /// load. Cleared.
+        case dropped
+        /// Cleared and handed to `openCreateContainerSheet(in:session:)`,
+        /// which is where the route decides whether the sheet opens.
+        case handedToTheRoute
+    }
+
+    /// Opens the create-bucket sheet on a tab the connection manager's
+    /// "Connect and Create Bucket…" connected (S3 metadata plan, Task 6) --
+    /// evaluated fresh every time a fact it reads changes;
+    /// `PendingCreateBucketRunner` is the view that watches them.
+    ///
+    /// **It goes THROUGH the route.** The sheet is opened by
+    /// `openCreateContainerSheet(in:session:)`, which asks the backend's
+    /// descriptor and hands the contribution to `handleConnectionAction`,
+    /// which re-asks availability and builds the sheet. This method decides
+    /// WHEN, never WHETHER: the rule that says the action is possible, and
+    /// the construction of the sheet, are each spelled exactly once, and a
+    /// copy here is how they would come to disagree about a bucket nobody is
+    /// looking at.
+    ///
+    /// **Three things must be true before it hands over, and the third is the
+    /// reason this is not a one-line call at the end of `connect`.**
+    /// - the tab holds a session, and it is the stored connection the request
+    ///   was made for;
+    /// - the tab is the one in front: the sheet is the window's, and
+    ///   presenting it over another tab's pane would offer to create a bucket
+    ///   in a connection the user is not looking at;
+    /// - the remote pane's listing has LOADED. The sheet is handed a
+    ///   snapshot of that listing to check proposed names against
+    ///   (`CreateBucketModel.listing(of:)`), and a snapshot taken while the
+    ///   pane is still loading is one that says "the list has not been
+    ///   loaded" for as long as the sheet is open. Nothing in `connect`
+    ///   waits for it: the pane loads when it appears. A listing that FAILED
+    ///   drops the request -- the pane says why, and the toolbar's menu is
+    ///   still there.
+    ///
+    /// **Nothing here is timed.** Every condition is a published fact of the
+    /// tab or its pane; there is no sleep, no deadline and no retry count.
+    ///
+    /// **Cleared on the way out, whatever the outcome**, before the hand-off
+    /// rather than after: this method is called again for every later change
+    /// of the facts above, and a second call must not open a second sheet --
+    /// least of all after the user has cancelled the first.
+    @discardableResult
+    func deliverPendingCreateBucket(on tab: SessionTab) -> PendingCreateBucketDelivery {
+        guard let pending = tab.pendingCreateBucket else { return .notArmed }
+        guard let session = tab.session else {
+            // No session yet is "still dialling" while the tab holds its dial
+            // lock, and "the dial ended without one" once it does not.
+            if tab.isReconnecting { return .waiting }
+            tab.pendingCreateBucket = nil
+            return .dropped
+        }
+        guard tab.activeStoredSessionID == pending.storedSessionID else {
+            tab.pendingCreateBucket = nil
+            return .dropped
+        }
+        guard tabsModel.activeTab.id == tab.id else { return .waiting }
+        switch session.remote.state {
+        case .loading:
+            return .waiting
+        case .failed:
+            tab.pendingCreateBucket = nil
+            return .dropped
+        case .loaded:
+            break
+        }
+        tab.pendingCreateBucket = nil
+        openCreateContainerSheet(in: tab, session: session)
+        return .handedToTheRoute
+    }
+
     /// Title for the update-check result alert (M11b/T2, spec §4) — one per
     /// `UpdateCheckResult` case, `""` while no dialog is showing (`nil`).
     /// `SwiftUI` evaluates this even during dismissal, so it must not force-
@@ -2414,6 +2512,27 @@ struct ContentView: View {
         sidebarStart(stored, paneVisibility: nil, pendingSnippet: pendingSnippet)
     }
 
+    /// Sidebar row "Connect and Create Bucket…" (S3 metadata plan, Task 6;
+    /// spec 6.6): the SAME start a sidebar row performs, differing in one
+    /// argument -- the tab it opens is to present the create-bucket sheet
+    /// once it is connected and showing its bucket list.
+    ///
+    /// **The connection is a tab's.** The tab rule picks the target, the
+    /// connect runs through `connect(in:stored:)`, and the teardown is
+    /// `TabTeardown.run` -- the one place its stages are spelled. Nothing
+    /// here, and nothing in the sidebar, holds a connection of its own: a
+    /// transient one owned by the connection manager would be a second owner
+    /// of exactly what the window-scope invariant keeps single.
+    ///
+    /// Like "Open Terminal", one line onto `sidebarStart`, so the
+    /// already-open query, the tab rule, the in-flight guard and every
+    /// failure path are the connect's by construction. The sheet is not
+    /// built here: `deliverPendingCreateBucket(on:)` hands it to the route.
+    @discardableResult
+    func createBucketFromSidebar(_ stored: StoredSession) -> AlreadyOpenSessionRequest? {
+        sidebarStart(stored, paneVisibility: nil, createsBucket: true)
+    }
+
     /// Sidebar row "Open Terminal" (P3c/T2): the SAME start a sidebar row
     /// performs, differing in one argument — the session comes up showing
     /// the terminal instead of the file browser.
@@ -2456,18 +2575,20 @@ struct ContentView: View {
     /// of only being parked, and `AlreadyOpenSessionTests` reads it there.
     @discardableResult
     func sidebarStart(
-        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil
+        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil,
+        createsBucket: Bool = false
     ) -> AlreadyOpenSessionRequest? {
         guard let existing = tabsModel.tabHolding(
             stored.id, storedSessionIDOf: \.activeStoredSessionID)
         else {
             startWithoutAsking(
-                stored, paneVisibility: paneVisibility, pendingSnippet: pendingSnippet)
+                stored, paneVisibility: paneVisibility, pendingSnippet: pendingSnippet,
+                createsBucket: createsBucket)
             return nil
         }
         let request = AlreadyOpenSessionRequest(
             stored: stored, existingTabID: existing.id, paneVisibility: paneVisibility,
-            pendingSnippet: pendingSnippet)
+            pendingSnippet: pendingSnippet, createsBucket: createsBucket)
         alreadyOpenRequest = request
         return request
     }
@@ -2497,14 +2618,27 @@ struct ContentView: View {
     /// active tab with a fresh one), so `connect`'s reconnect-in-place
     /// teardown — which clears `pendingSnippetRun` — cannot run here and
     /// take this write back.
+    ///
+    /// `createsBucket` (S3 metadata plan, Task 6) is armed the same way and
+    /// for the same reason as the snippet: this is the first moment anybody
+    /// knows which tab it belongs to, and only when that tab is not already
+    /// dialling -- `connect(in:stored:)` is about to return without doing
+    /// anything, and a request left behind would wait for somebody else's
+    /// attempt. The target is never a connected tab, so the reconnect-in-place
+    /// teardown, which clears it, cannot run here and take the write back.
     func startWithoutAsking(
-        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil
+        _ stored: StoredSession, paneVisibility: PaneVisibility?, pendingSnippet: Snippet? = nil,
+        createsBucket: Bool = false
     ) {
         let target = tabsModel.sidebarConnectTarget(
             activeTabIsConnected: activeTab.isConnected, makeTab: makeSidebarTab)
         if let pendingSnippet, !target.isReconnecting {
             target.pendingSnippetRun = SessionTab.PendingSnippetRun(
                 snippet: pendingSnippet, storedSessionID: stored.id)
+        }
+        if createsBucket, !target.isReconnecting {
+            target.pendingCreateBucket = SessionTab.PendingCreateBucket(
+                storedSessionID: stored.id)
         }
         connect(in: target, stored: stored, paneVisibility: paneVisibility)
     }

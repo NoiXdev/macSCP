@@ -12,7 +12,8 @@ import macSCPCore
 ///
 /// Which inputs are here is not "everything the context menu offers": the
 /// line is whether the entry STARTS A SESSION on the user's host. Connect,
-/// "Open Terminal" and "Open in External Terminal" do; rename, export,
+/// "Open Terminal", "Open in External Terminal" and "Connect and Create
+/// Bucket…" do; rename, export,
 /// move and "Audit Log…" stay inside this window, and the snippet submenu
 /// types into a shell the window already holds — all of them stay plain
 /// callbacks on the row. Drawing the line anywhere else would either leave
@@ -28,7 +29,7 @@ enum SessionRowInput: Equatable, CaseIterable {
     case doubleClick
     /// Return on the row that currently holds the sidebar's selection.
     case returnKey
-    /// The row's own "Connect" context-menu entry — one of three inputs
+    /// The row's own "Connect" context-menu entry — one of the inputs
     /// that are not gestures but things the user picked by name.
     case contextMenuEntry
     /// The row's "Open Terminal" entry: the same connect `contextMenuEntry`
@@ -39,6 +40,13 @@ enum SessionRowInput: Equatable, CaseIterable {
     /// this session would connect with and hands it to another program,
     /// which is what dials.
     case externalTerminalMenuEntry
+    /// The row's "Connect and Create Bucket…" entry, offered only on a stored
+    /// S3 connection that starts at the bucket list: the same connect
+    /// `contextMenuEntry` asks for, in a tab of its own, and once that tab is
+    /// connected and showing its bucket list, the create-bucket sheet opens on
+    /// it. The sheet is not this input's business; it only names the intent
+    /// the connect carries.
+    case newBucketMenuEntry
 
     /// Whether the user picked this input by name from a menu rather than
     /// making a gesture whose meaning has to be inferred. The rename guard
@@ -48,7 +56,8 @@ enum SessionRowInput: Equatable, CaseIterable {
     /// here instead of quietly counting as a gesture.
     var isMenuEntry: Bool {
         switch self {
-        case .contextMenuEntry, .terminalMenuEntry, .externalTerminalMenuEntry:
+        case .contextMenuEntry, .terminalMenuEntry, .externalTerminalMenuEntry,
+            .newBucketMenuEntry:
             return true
         case .singleClick, .doubleClick, .returnKey:
             return false
@@ -72,6 +81,10 @@ enum SessionRowInput: Equatable, CaseIterable {
 /// effect types in this file reach the user's host — `SessionRowConnectEffect`,
 /// `SessionRowTerminalEffect`, `SessionRowExternalTerminalEffect`,
 /// `SessionRowStartTunnelEffect` and `SessionRowStartAllTunnelsEffect`.
+/// Recounted 2026-11-04, when the S3 metadata plan's Task 6 added
+/// `SessionRowCreateBucketEffect`: six, every `struct SessionRow…Effect` in
+/// this file but this one (`grep -n '^struct SessionRow[A-Za-z]*Effect'
+/// Sources/MacSCPAppKit/SessionRowActivation.swift` lists seven lines).
 struct SessionRowSelectEffect<Value> {
     fileprivate let run: (Value) -> Void
 
@@ -172,6 +185,23 @@ struct SessionRowExternalTerminalEffect<Value> {
     }
 }
 
+/// The effect behind the row's "Connect and Create Bucket…" entry: the same
+/// dial `SessionRowConnectEffect` performs, carrying the intent to open the
+/// create-bucket sheet once the tab it dials in is connected.
+///
+/// Its own type for the reason `SessionRowSelectEffect` states, and held to
+/// the rule `SessionRowConnectEffect` states: the far end is
+/// `ContentView.createBucketFromSidebar`, which is `sidebarStart` with one
+/// argument filled in. A stray click reaching it dials the user's host, so
+/// nothing in the sidebar can fire it except by naming `.newBucketMenuEntry`.
+struct SessionRowCreateBucketEffect<Value> {
+    fileprivate let run: (Value) -> Void
+
+    init(_ run: @escaping (Value) -> Void) {
+        self.run = run
+    }
+}
+
 /// What a session row does with a `SessionRowInput`.
 ///
 /// The rule this type exists for: a single click used to open a connection.
@@ -214,20 +244,26 @@ enum SessionRowActivation: Equatable {
     /// terminal. macSCP opens no connection of its own here; the program it
     /// launches does.
     case selectAndOpenExternalTerminal
+    /// The selection, then the same connection with the create-bucket sheet
+    /// to follow once the tab is connected and its bucket list has loaded.
+    case selectAndCreateBucket
 
     /// Whether this activation changes anything at all.
     var acts: Bool { self != .doNothing }
     /// Whether macSCP itself opens a connection — a tab of its own, a
     /// keychain read, a TOFU prompt. False for the external terminal, where
     /// another program dials.
-    var connects: Bool { self == .selectAndConnect || self == .selectAndOpenTerminal }
+    var connects: Bool {
+        self == .selectAndConnect || self == .selectAndOpenTerminal
+            || self == .selectAndCreateBucket
+    }
     /// Whether the user's host is contacted at all, by macSCP or by the
     /// program it hands a configuration to. This is the predicate the "a
     /// single click must not connect" property is stated over: from the
     /// pointer's side the external terminal is the same surprise.
     var reachesTheHost: Bool { connects || self == .selectAndOpenExternalTerminal }
 
-    /// The three menu entries answer unconditionally: they are not gestures
+    /// The menu entries answer unconditionally: they are not gestures
     /// whose meaning has to be inferred but entries the user read and chose,
     /// so neither the rename guard nor the selection rule applies to them. A
     /// menu item that silently did nothing because the row happened to be in
@@ -255,6 +291,8 @@ enum SessionRowActivation: Equatable {
             return .selectAndOpenTerminal
         case .externalTerminalMenuEntry:
             return .selectAndOpenExternalTerminal
+        case .newBucketMenuEntry:
+            return .selectAndCreateBucket
         case .singleClick:
             return isRenaming ? .doNothing : .select
         case .doubleClick:
@@ -290,7 +328,8 @@ enum SessionRowActivation: Equatable {
         onSelect: SessionRowSelectEffect<Value>,
         onConnect: SessionRowConnectEffect<Value>,
         onOpenTerminal: SessionRowTerminalEffect<Value>,
-        onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>
+        onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>,
+        onCreateBucket: SessionRowCreateBucketEffect<Value>
     ) -> Bool {
         switch self {
         case .doNothing:
@@ -309,6 +348,10 @@ enum SessionRowActivation: Equatable {
         case .selectAndOpenExternalTerminal:
             onSelect.run(value)
             onOpenExternalTerminal.run(value)
+            return true
+        case .selectAndCreateBucket:
+            onSelect.run(value)
+            onCreateBucket.run(value)
             return true
         }
     }
@@ -335,12 +378,14 @@ func performSessionRowInput<Value>(
     onSelect: SessionRowSelectEffect<Value>,
     onConnect: SessionRowConnectEffect<Value>,
     onOpenTerminal: SessionRowTerminalEffect<Value>,
-    onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>
+    onOpenExternalTerminal: SessionRowExternalTerminalEffect<Value>,
+    onCreateBucket: SessionRowCreateBucketEffect<Value>
 ) -> Bool {
     SessionRowActivation.build(for: input, isRenaming: isRenaming, isSelected: isSelected)
         .apply(
             to: value, onSelect: onSelect, onConnect: onConnect,
-            onOpenTerminal: onOpenTerminal, onOpenExternalTerminal: onOpenExternalTerminal)
+            onOpenTerminal: onOpenTerminal, onOpenExternalTerminal: onOpenExternalTerminal,
+            onCreateBucket: onCreateBucket)
 }
 
 /// Which background a session row draws, and in what order the three

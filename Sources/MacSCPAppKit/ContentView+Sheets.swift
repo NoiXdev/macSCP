@@ -115,11 +115,16 @@ extension ContentView {
                     // answering an "Open Terminal" this way still opens the
                     // terminal — and so does the session overview's pending
                     // snippet, so answering a "Run" this way still runs it
-                    // (session overview plan, Task 3, fix round 1). Both are
-                    // the same rule: this answer starts what was asked for.
+                    // (session overview plan, Task 3, fix round 1), and so does
+                    // the connection manager's create-bucket request (S3
+                    // metadata plan, Task 6). All three are the same rule:
+                    // this answer starts what was asked for. Nothing here
+                    // builds the sheet -- that is the route's, reached from
+                    // `deliverPendingCreateBucket(on:)` once the tab is up.
                     startWithoutAsking(
                         request.stored, paneVisibility: request.paneVisibility,
-                        pendingSnippet: request.pendingSnippet)
+                        pendingSnippet: request.pendingSnippet,
+                        createsBucket: request.createsBucket)
                 }
             }
             Button(L10n.string("common.cancel", "Cancel"), role: .cancel) {

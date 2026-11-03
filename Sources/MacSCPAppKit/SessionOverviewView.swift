@@ -278,9 +278,10 @@ struct SessionOverviewView: View {
     /// `.contextMenuEntry` is the input: the user did not make a gesture
     /// whose meaning has to be inferred, they read a button and pressed it —
     /// which is exactly what that case is for
-    /// (`SessionRowInput.isMenuEntry`). The three other effect slots are
+    /// (`SessionRowInput.isMenuEntry`). The other effect slots are
     /// no-ops constructed right here rather than parameters of this view, so
-    /// this surface HOLDS no way to open a terminal, local or external, and
+    /// this surface HOLDS no way to open a terminal, local or external, or to
+    /// open the create-bucket sheet, and
     /// `onSelect` has nothing to do: the overview is on screen because this
     /// row is already the selection.
     private func openConnection() {
@@ -289,7 +290,8 @@ struct SessionOverviewView: View {
             onSelect: SessionRowSelectEffect { _ in },
             onConnect: onConnectSession,
             onOpenTerminal: SessionRowTerminalEffect { _ in },
-            onOpenExternalTerminal: SessionRowExternalTerminalEffect { _ in })
+            onOpenExternalTerminal: SessionRowExternalTerminalEffect { _ in },
+            onCreateBucket: SessionRowCreateBucketEffect { _ in })
     }
 
     // MARK: - Facts

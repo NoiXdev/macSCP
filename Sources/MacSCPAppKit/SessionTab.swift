@@ -496,6 +496,35 @@ final class SessionTab: Identifiable {
     ///   caller of that function is leaving this connection on purpose.
     var pendingSnippetRun: PendingSnippetRun?
 
+    /// A request for the create-bucket sheet, made by the connection
+    /// manager's "Connect and Create Bucket…" entry (S3 metadata plan, Task 6;
+    /// spec 6.6): "open this sheet on this tab once it is connected and
+    /// showing its bucket list". `nil` for every tab that was not opened for
+    /// that, which is every tab but the one such a start picked.
+    ///
+    /// It lives on the TAB, for the reason `pendingSnippetRun` does: the
+    /// connect it belongs to is one tab's, and a window-wide value would open
+    /// the sheet over whichever tab happened to finish first. It carries the
+    /// stored session it was armed for, so a tab that ends up connected to
+    /// something else drops it rather than offer to create a bucket in an
+    /// account the user did not pick.
+    ///
+    /// Three writers:
+    /// - `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:
+    ///   createsBucket:)` SETS it, on the tab the tab rule just picked, and
+    ///   only when that tab is not already dialling.
+    /// - `ContentView.deliverPendingCreateBucket(on:)` clears it -- before the
+    ///   hand-off, so a repeated observation cannot open a second sheet, and
+    ///   on every outcome that is not a hand-off (no session, another
+    ///   session, a bucket list that failed to load).
+    /// - `TabTeardown.run(_:reason:)` clears it, because every route into the
+    ///   teardown is leaving this connection on purpose.
+    var pendingCreateBucket: PendingCreateBucket?
+
+    struct PendingCreateBucket: Equatable {
+        let storedSessionID: UUID
+    }
+
     /// "Connected or not": the connected name, or "New Connection". The
     /// tab strip and the window title no longer read this — they draw
     /// `ContentView.tabTitle(for:)`, which also names a tab that is

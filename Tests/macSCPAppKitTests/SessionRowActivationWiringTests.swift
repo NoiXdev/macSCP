@@ -8,7 +8,7 @@ import Testing
 /// parts that could be made impossible have been.
 ///
 /// The property: **the user's host is reached only for `.doubleClick`,
-/// `.returnKey` on the selected row, and the three menu entries the user
+/// `.returnKey` on the selected row, and the menu entries the user
 /// picks by name — never for a single click, and never for a hover.**
 /// "Host", not "connection": "Open in External Terminal" opens no
 /// connection macSCP holds and reaches the server all the same.
@@ -85,7 +85,7 @@ struct SessionRowActivationWiringTests {
     private static let detailFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
 
-    /// Which site is allowed to name which input. The three menu entries are
+    /// Which site is allowed to name which input. The menu entries are
     /// in the table for the same reason the gestures are: each is an input
     /// now, not a connect path of its own.
     private static let inputRoutes: [(input: String, site: String)] = [
@@ -95,6 +95,7 @@ struct SessionRowActivationWiringTests {
         (".contextMenuEntry", "\"sidebar.connect\""),
         (".terminalMenuEntry", "Button(openTerminalTitle)"),
         (".externalTerminalMenuEntry", "Button(externalTerminalTitle)"),
+        (".newBucketMenuEntry", "\"sidebar.connectAndCreateBucket\""),
     ]
 
     /// Every callback of this sidebar whose far end reaches the user's host,
@@ -113,9 +114,10 @@ struct SessionRowActivationWiringTests {
         "let onConnect: SessionRowConnectEffect<StoredSession>",
         "let onOpenTerminal: SessionRowTerminalEffect<StoredSession>",
         "let onOpenExternalTerminal: SessionRowExternalTerminalEffect<StoredSession>",
+        "let onCreateBucket: SessionRowCreateBucketEffect<StoredSession>",
     ]
 
-    /// The three host-reaching callbacks this suite is about — NOT every
+    /// The four host-reaching callbacks this suite is about — NOT every
     /// host-reaching callback the sidebar has.
     ///
     /// Counted 2026-09-06: `SessionSidebar` holds five, and the two the
@@ -132,8 +134,15 @@ struct SessionRowActivationWiringTests {
     /// guarded elsewhere; leaving them unmentioned would make this list
     /// claim more than it checks, which is the failure this comment exists
     /// to prevent.
+    ///
+    /// Recounted 2026-11-04, when the S3 metadata plan's Task 6 added
+    /// `onCreateBucket`: six, of which the four listed here are the ones the
+    /// row must not hold. The command is `grep -n '^    let on[A-Za-z]*:
+    /// SessionRow[A-Za-z]*Effect' Sources/MacSCPAppKit/SessionSidebar.swift`,
+    /// which prints eight lines: the first six are `SessionSidebar`'s, the
+    /// last two are `SessionRow`'s own two tunnel effects.
     private static let hostReachingNames = [
-        "onConnect", "onOpenTerminal", "onOpenExternalTerminal",
+        "onConnect", "onOpenTerminal", "onOpenExternalTerminal", "onCreateBucket",
     ]
 
     /// The far end of each host-reaching effect, as `ContentView+Detail.swift`
@@ -145,6 +154,7 @@ struct SessionRowActivationWiringTests {
             "onOpenExternalTerminal: SessionRowExternalTerminalEffect",
             "openExternalTerminalFromSidebar("
         ),
+        ("onCreateBucket: SessionRowCreateBucketEffect", "createBucketFromSidebar("),
     ]
 
     /// The table is hand-written while `SessionRowInput` is `CaseIterable`;
@@ -662,6 +672,7 @@ struct SessionRowActivationWiringTests {
             "            Button(L10n.string(\"sidebar.connect\", \"Connect\")) { _ = onInput(.contextMenuEntry, session) }",
             "                Button(openTerminalTitle) { _ = onInput(.terminalMenuEntry, session) }",
             "                Button(externalTerminalTitle) { _ = onInput(.externalTerminalMenuEntry, session) }",
+            "                Button(L10n.string(\"sidebar.connectAndCreateBucket\", \"Connect and Create Bucket…\")) { _ = onInput(.newBucketMenuEntry, session) }",
         ]
         for route in Self.inputRoutes {
             let carriers = body.filter { $0.contains(route.input) }
