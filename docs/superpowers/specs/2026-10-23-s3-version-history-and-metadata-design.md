@@ -6,6 +6,14 @@ opened were answered by the maintainer on 2026-10-23 and are recorded as §11.
 Not committed yet — it is committed onto the second half's own branch once
 `s3-bucket-settings` has landed in `develop`, so the tree handed over for that
 merge stays untouched.
+**Corrected 2026-11-03.** The sentence "Not committed yet — it is committed
+onto the second half's own branch once `s3-bucket-settings` has landed in
+`develop`, so the tree handed over for that merge stays untouched." is
+withdrawn. It was committed on 2026-10-26 by the commit whose subject is
+"docs(s3): commit the second half's design and both plans", which
+`git branch --contains 4a05c6aa` lists on `develop` and on
+`s3-version-history`. Section 4.11 is the only addition to the body of this
+document; nothing in sections 4.1 to 4.10 was changed.
 **Predecessor:** `docs/superpowers/specs/2026-10-19-s3-bucket-settings-design.md`
 (the first half). Its §10 records this half in one paragraph; this document is
 that paragraph worked out.
@@ -297,6 +305,103 @@ An 8 MiB object, then a metadata `REPLACE` copy onto itself: **200**, and
 
 **Not measured:** anything near the 5 GiB single-part ceiling AWS documents.
 §3 names the consequence.
+
+### 4.11 The carried measurements — taken 2026-11-03
+
+Seven questions the first ten tasks of the plan had to decide without a store,
+each named in `docs/superpowers/plans/2026-10-23-s3-version-history.md` (Task
+11) with the decision that depends on it. Same store as above: RustFS 1.0.0,
+`127.0.0.1:19000`, **nothing here is a claim about AWS**. They are cases of
+`Tests/macSCPCoreTests/S3VersionsGatedTests.swift`, and every figure below is
+printed by that suite as a `[S3VersionsGated]` line:
+
+```sh
+MACSCP_ITEST=1 swift test --filter S3VersionsGatedTests
+```
+
+Run three times in a row on 2026-11-03 against the final code, 10 tests, all green
+each time (the figures below are those three runs unless a range says otherwise); the
+buckets it makes are `macscp-vg-<purpose>-<hex>` and are gone afterwards
+(`GET /` lists only `macscp-seed` and `macscp-second`).
+
+1. **A copy source naming a version copies that version** (§4.4). A raw
+   `PUT` with `x-amz-copy-source: /<bucket>/<key>?versionId=<v1>` onto a key
+   whose current version was a different, longer body answered **200**
+   `CopyObjectResult`, and a `GET` of the key afterwards returned v1's bytes,
+   not the current content; the history then held three entries. The weak
+   confirmation path was run too, because it is the one where a store
+   ignoring the id would read as "done": a source written as a two-part
+   multipart upload (5 MiB + 1 KiB; its ETag read back as a multipart
+   composite, which is the control that this was the weak path) was restored
+   through `S3FileSystem.restore`, which returned without error, and the
+   key's bytes equalled the source's and not the current body's. **Nothing
+   about another store follows.**
+2. **A self-copy naming a source version is accepted:** **200**. The same
+   copy with no `versionId` and no metadata directive is refused with **400**
+   `InvalidRequest`, so on this store the self-copy the design depends on is
+   legal exactly when it names a version. (The second figure is printed, not
+   asserted: nothing in macSCP sends it.)
+3. **A version delete is visible to the read that follows it.** Over 20
+   rounds each of a raw `DELETE ?versionId=` read back at once, of
+   `deleteVersion` and of `liftDeleteMarker`: 0 still listed, 0 unconfirmed,
+   0 keys unreadable after a lift. Twenty successes show no race on this
+   store; they do not show there is none.
+4. **`delimiter=/` on `?versions`** with prefix `d/` over a fixture holding
+   three keys with a delete marker on top (`d/top.txt`, `d/sub/deep.txt`,
+   `d/sub/deeper/x.txt`) beside one live key: with the delimiter 2 `Version`,
+   1 `DeleteMarker`, 1 `CommonPrefixes`; without it 4 `Version`, 3
+   `DeleteMarker`, 0 `CommonPrefixes`. So the delimiter does roll nested keys
+   up and the response is smaller by what they contribute; `deletedEntries`
+   answers `d/top.txt` alone in both cases.
+5. **A last page carries no `NextKeyMarker`.** Three keys walked with
+   `max-keys=1`: three pages, the last `IsTruncated=false` with no
+   `NextKeyMarker` element at all (not an empty one); `versions(ofKey:)` on a
+   three-entry key took **1** version-listing request, counted through a
+   transport wrapper that records query-item names. The extra request the
+   paging loop prices has not been needed against this store.
+6. **A version download's extra listing costs one request.** `stat` through
+   `VersionDownloadSource` took 1 request at a one-entry history (2 to 3 ms,
+   584 response bytes) and 1 request at a 200-entry history (9 ms in each of
+   the three runs, 55108 response bytes); the 1 MiB read after it took 1 request,
+   about 85 ms. Durations are printed, never asserted.
+7. **A deleted-rows tick is two requests, and neither is cacheable.** Over a
+   bucket of 100 keys with 20 deleted, one tick (`list(path:)` then
+   `deletedEntries`) sent `GET delimiter&list-type&prefix` and `GET
+   delimiter&prefix&versions` and nothing else: 2 requests, the first of
+   which is all a tick sends with the switch off (by construction, not measured
+   separately); 10 ticks took 41 to 68 ms each over the three runs; the listing
+   answered 15482 bytes and the version listing 31201. Neither response
+   carries `Cache-Control`, `Expires`, `Last-Modified`, `ETag` or `Age`, so
+   the in-memory cache of the connection's session has nothing to serve a
+   later tick from. At the default interval of 5 s that is 12 ticks a minute,
+   24 requests where there were 12. A bucket that never kept versions reads
+   `.never` from one `GET ?versioning`; a `?versions` probe on it would have
+   answered **200** with 1 entry, so it is the per-bucket versioning cache that
+   keeps the switch from costing that request; a versioning read of a bucket that is not there
+   failed after **1** request and 1 to 2 ms.
+
+**One finding nobody asked for.** On the connection's default session
+(`.ephemeral`, which keeps an in-memory `URLCache`), a buffered `GET` of an
+object followed by a `DELETE` of the SAME url was answered with the GET's 200
+and body, the `DELETE` never reached the store, and the version stayed listed;
+the same two requests on a session with no cache gave **204** and the version
+was gone. The case that pins it is:
+
+```
+theDefaultSessionAnswersADeleteFromItsCacheAfterAGetOfTheSameUrl
+```
+
+It does not reach production today. Two observations, both cases of the same
+file: the object-content `GET` in `S3FileSystem` streams, and a streamed
+version download followed by `deleteVersion` of that version, on the default
+session, succeeded
+(`aStreamedVersionDownloadDoesNotStandInTheWayOfDeletingThatVersion`). The
+`GET`s of `?retention` and `?legal-hold` carry the subresource in the url, so
+they are never the url of a `DELETE ?versionId=`. **Not measured:** whether a
+`HEAD` (what `stat` sends, if it does) is cached the same way, and whether a
+cache can answer any other write. The backlog row "A DELETE sent after a
+buffered GET of the same url is answered from the session's cache" carries it
+forward.
 
 ---
 
