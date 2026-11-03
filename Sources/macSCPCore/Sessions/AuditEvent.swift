@@ -94,7 +94,11 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// `RemoteBrowserViewModel`, so its `auditSink` never carries them.
         /// The kinds after `objectLockChanged` come with the version-history
         /// work and are recorded through their own methods (see
-        /// `versionRestored`; `metadataChanged` has no recorder yet).
+        /// `versionRestored` and `metadataChanged`).
+        ///
+        /// (Withdrawn wording, verbatim: "(see `versionRestored`;
+        /// `metadataChanged` has no recorder yet)". The metadata sheet's
+        /// recorder, `AuditRecorder.recordMetadataChanged`, exists now.)
         ///
         /// (Withdrawn wording, verbatim: "The four kinds from here on are
         /// recorded by the sheets that apply them, through
@@ -145,15 +149,21 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         /// wires it." and "Recorded through
         /// `AuditRecorder.recordDeleteMarkerLifted`.")
         case deleteMarkerLifted
-        /// An object's metadata was rewritten. **Nothing produces this kind
-        /// yet.** It belongs to Plan B, "S3 Metadata, ACL Display and the
+        /// An object's metadata was rewritten, recorded through
+        /// `AuditRecorder.recordMetadataChanged` by the metadata sheet
+        /// (`ObjectMetadataModel.save`). It was declared with the
+        /// version-history kinds so that the switches that must name every
+        /// kind (`AuditLogSheet.Filter.segment(of:)`,
+        /// `ConnectionHistory.rows`) were extended once, and the recorder and
+        /// the producer came with Plan B, "S3 Metadata, ACL Display and the
         /// Connection Manager's Bucket Implementation"
-        /// (`docs/superpowers/plans/2026-10-23-s3-metadata-and-acls.md`), and
-        /// is declared here so that the switches that must name every kind
-        /// (`AuditLogSheet.Filter.segment(of:)`, `ConnectionHistory.rows`)
-        /// are extended once, with the version-history kinds. It has its
-        /// catalogue labels and its switch arms and no recorder: that plan
-        /// writes the recorder and the producer.
+        /// (`docs/superpowers/plans/2026-10-23-s3-metadata-and-acls.md`).
+        ///
+        /// (Withdrawn wording, verbatim: "**Nothing produces this kind
+        /// yet.** It belongs to Plan B" and "It has its catalogue labels and
+        /// its switch arms and no recorder: that plan writes the recorder and
+        /// the producer." Both stopped being true when that plan's Task 4
+        /// wrote them.)
         case metadataChanged
     }
 }

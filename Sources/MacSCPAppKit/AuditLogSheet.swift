@@ -92,7 +92,9 @@ struct AuditLogSheet: BoundedView {
             // unverified; verified, the hedge is dropped.)
             // The version-history kinds (the S3 version-history plan, Task 4)
             // are listed here too: they are writes to files, and
-            // `metadataChanged` is among them although nothing records it yet.
+            // `metadataChanged` is among them. (Withdrawn wording, verbatim:
+            // "`metadataChanged` is among them although nothing records it yet."
+            // The metadata sheet records it now.)
             // Unlike the four above, they cost the user documentation nothing
             // to move today: read on 2026-11-02 in the user-docs worktree
             // `noix-docs-s3-bucket-settings`, the audit log page names only the
@@ -103,7 +105,11 @@ struct AuditLogSheet: BoundedView {
             // `versionDeleted`, `deleteMarkerLifted`) into that page, on the
             // user-docs branch `docs/macscp-s3-version-history`, as File Ops
             // entries. Moving them now costs a change to that page too;
-            // `metadataChanged` is still named nowhere, having no recorder.
+            // `metadataChanged` is still named nowhere: it had no recorder
+            // on that date, and has one now, but the page has not been
+            // written for it (the metadata plan's closeout task does that).
+            // (Withdrawn wording, verbatim: "`metadataChanged` is still named
+            // nowhere, having no recorder.")
             case .rename, .delete, .permissions, .newFolder, .newFile,
                 .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
                 .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged:
