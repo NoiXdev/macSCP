@@ -547,14 +547,28 @@ struct S3VersionsGatedTests {
 
     // MARK: The session cache
 
-    /// A finding of the first run of this file, kept as a case because the
-    /// helper design above rests on it. A `DELETE` naming a version whose
-    /// content a buffered `GET` had just fetched was answered from the
-    /// session's cache. The control is the same sequence on a session with no
-    /// cache, which the store answers `204` and executes. **Not a statement
-    /// about macSCP**: nothing in production sends that `GET` buffered.
-    @Test func theDefaultSessionAnswersADeleteFromItsCacheAfterAGetOfTheSameUrl() async throws {
-        let cached = try await S3FileSystem.connect(S3SettingsRig.config)
+    /// A finding of the first run of this file. A `DELETE` naming a version
+    /// whose content a buffered `GET` had just fetched, on a session that
+    /// keeps the default cache, came back `200` with the object and removed
+    /// nothing. The control is the same sequence on the connection's own
+    /// session (`S3FileSystem.connect` with no transport), which the store
+    /// answers `204` and executes. **Not a statement about the product's
+    /// reads**: its only object `GET` streams.
+    ///
+    /// **Withdrawn, verbatim:** this case was first named
+    /// `theDefaultSessionAnswersADeleteFromItsCacheAfterAGetOfTheSameUrl` and
+    /// read "was answered from the session's cache" and "the DELETE never
+    /// reached the store". Not so: the DELETE reached the store carrying the
+    /// cache's validators, which the ungated `S3StateChangeNeverFromCacheTests`
+    /// reads off the request head, and each repeated DELETE came back with its
+    /// own `x-request-id`. What the RIG does with a DELETE that carries
+    /// `If-None-Match` is to answer it as a read; another store may do
+    /// otherwise, which is unmeasured. The outcome asserted below is the rig's.
+    @Test func aDeleteOnASessionWithTheDefaultCacheIsAnsweredWithTheObjectAndDeletesNothing() async throws {
+        let cached = try await S3FileSystem.connect(
+            S3SettingsRig.config,
+            transport: URLSessionHTTPTransport(session: URLSession(configuration: .ephemeral)))
+        let production = try await S3FileSystem.connect(S3SettingsRig.config)
         let setUp = try await RigBucket.make(purpose: "cache")
         guard let rig = setUp else { return }
         var failure: (any Error)?
@@ -580,9 +594,14 @@ struct S3VersionsGatedTests {
             cachedBodyBytes = answer.0.count
             stillListedAfterCached = try await rig.fs.versions(ofKey: "c.txt", inBucket: rig.bucket)
                 .contains { $0.versionId == victim }
-            // The control: no cache.
-            _ = try await rig.get("c2.txt", versionId: other)
-            freshStatus = try await rig.deleteVersion("c2.txt", other).statusCode
+            // The control: the connection's own session.
+            _ = try await S3SettingsRig.objectRequest(
+                "GET", bucket: rig.bucket, key: "c2.txt", query: [(name: "versionId", value: other)],
+                in: production)
+            freshStatus = try await S3SettingsRig.objectRequest(
+                "DELETE", bucket: rig.bucket, key: "c2.txt", query: [(name: "versionId", value: other)],
+                in: production
+            ).1.statusCode
             goneAfterFresh = try await !rig.fs.versions(ofKey: "c2.txt", inBucket: rig.bucket)
                 .contains { $0.versionId == other }
         } catch {
@@ -590,29 +609,30 @@ struct S3VersionsGatedTests {
         }
         let cleaned = await rig.teardown()
         await cached.disconnect()
+        await production.disconnect()
 
         print(
-            "[S3VersionsGated] cache: DELETE after GET of the same url, default session: status="
+            "[S3VersionsGated] cache: DELETE after GET of the same url, default-cache session: status="
                 + "\(cachedStatus.map(String.init) ?? "-") bodyBytes=\(cachedBodyBytes.map(String.init) ?? "-")"
                 + " versionStillListed=\(stillListedAfterCached.map(String.init) ?? "-");"
-                + " session without a cache: status=\(freshStatus.map(String.init) ?? "-")"
+                + " the connection's own session: status=\(freshStatus.map(String.init) ?? "-")"
                 + " versionGone=\(goneAfterFresh.map(String.init) ?? "-")")
         #expect(failure == nil)
-        // The control first: the uncached sequence is what a delete should be.
+        // The control first: the connection's own session deletes.
         #expect(freshStatus == 204)
         #expect(goneAfterFresh == true)
         // The measurement.
-        #expect(cachedStatus == 200, "the default session no longer answers a DELETE from its cache")
+        #expect(cachedStatus == 200, "the rig no longer answers that DELETE with the object")
         #expect(cachedBodyBytes != 0)
         #expect(stillListedAfterCached == true)
         #expect(cleaned == true, "the throwaway bucket was left behind")
     }
 
-    /// The reach of the finding above, measured on the DEFAULT session and not
-    /// the suite's uncached one: the streamed download is the only way
-    /// production reads an object's content, and deleting that version
-    /// afterwards must work. (A buffered raw `GET`, which production never
-    /// sends, is what the previous case shows being answered from the cache.)
+    /// The reach of the finding above, on the connection's own session: the
+    /// streamed download is the only way production reads an object's content,
+    /// and deleting that version afterwards must work. (Measured the same way
+    /// before the connection's session lost its cache, 2026-11-03, when it was
+    /// the case that showed production was not exposed.)
     @Test func aStreamedVersionDownloadDoesNotStandInTheWayOfDeletingThatVersion() async throws {
         let fs = try await S3FileSystem.connect(S3SettingsRig.config)
         let setUp = try await RigBucket.make(purpose: "stream")
@@ -643,7 +663,7 @@ struct S3VersionsGatedTests {
         await fs.disconnect()
 
         print(
-            "[S3VersionsGated] cache: streamed download of a version then deleteVersion, default session:"
+            "[S3VersionsGated] cache: streamed download of a version then deleteVersion:"
                 + " bytes=\(received) deleteThrew=\(deleteError != nil) versionStillListed=\(stillListed.map(String.init) ?? "-")")
         #expect(failure == nil)
         #expect(received == 6)
@@ -704,7 +724,7 @@ private struct RigBucket {
         purpose: String, versioned: Bool = true, transport: (any HTTPTransport)? = nil
     ) async throws -> RigBucket? {
         let fs = try await S3FileSystem.connect(
-            S3SettingsRig.config, transport: transport ?? UncachedTransport.make())
+            S3SettingsRig.config, transport: transport)
         let bucket = S3SettingsRig.throwawayBucketName(purpose: "vg-" + purpose)
         precondition(bucket.hasPrefix(namePrefix) && !reserved.contains(bucket))
         let created = try await S3SettingsRig.bucketRequest("PUT", bucket, in: fs)
@@ -872,17 +892,18 @@ private struct RigBucket {
 
 // MARK: - Transports
 
-/// A session with NO response cache, for every request this suite sends by
-/// hand. **Why this exists, measured 2026-11-03**: on the connection's default
-/// session (`.ephemeral`, which keeps an in-memory `URLCache`), a buffered
-/// `GET` of an object followed by a `DELETE` of the SAME url was answered with
-/// the GET's `200` and its body, the `DELETE` never reached the store, and the
-/// version stayed listed. `theDefaultSessionAnswersADeleteFromItsCache...`
-/// below pins that, with its control. Production is not exposed to it: its
-/// only object `GET` streams (`streamObject`), and the streamed download
-/// followed by `deleteVersion` was measured to work. A raw `GET` here is what
-/// would have been.
-enum UncachedTransport {
+/// A session with NO response cache, for the one place this suite needs a
+/// transport of its own: `CountingTransport` has to wrap something, to see
+/// what is sent. It is a second copy of what `S3HTTPChannel.ownSession` builds
+/// (no `URLCache`, `reloadIgnoringLocalCacheData`) and exists for the count
+/// alone; the requests that need no count run on the connection's own session
+/// (`RigBucket.make` with no transport), which is what the product uses.
+/// **Why that session has no cache, measured 2026-11-03**: on one that kept
+/// the default, a write to a url an earlier buffered `GET` had left an entry
+/// for was sent with that entry's validators and, on the rig, answered as a
+/// read (`aDeleteOnASessionWithTheDefaultCacheIsAnswered...` below;
+/// `S3StateChangeNeverFromCacheTests` holds the behaviour).
+private enum UncachedTransport {
     static func make() -> URLSessionHTTPTransport {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil

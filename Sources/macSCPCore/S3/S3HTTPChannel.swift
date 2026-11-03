@@ -43,10 +43,30 @@ struct S3HTTPChannel: S3AbortChannel {
     /// endpoint's origin with `config` and refuses one that leaves it. The
     /// connection and every abort get their session from here, so an abort
     /// is signed with the same credentials under the same redirect policy.
+    ///
+    /// **No response cache at all** (`urlCache = nil`, 2026-11-03). Ephemeral
+    /// hands out a fresh cache per session, which isolates dials from each
+    /// other, but a cache of ONE session's own is still keyed by url, and a
+    /// write to a url that an earlier read had left an entry for is sent with
+    /// that entry's validators copied onto it (`If-None-Match`,
+    /// `If-Modified-Since`). Measured against the Docker rig: a `DELETE
+    /// ?versionId=` after a buffered `GET` of the same url came back as `200`
+    /// with the object and deleted nothing. The same copying happens to a
+    /// `PUT`, measured on a loopback stub (`S3StateChangeNeverFromCacheTests`,
+    /// which holds this behaviour, not this line). What it costs: nothing a
+    /// path here used. Listings carry no validator, a streamed read is not
+    /// stored (a read after an overwrite returned the new content, measured
+    /// before this change), and the one object `GET` that is buffered is a
+    /// test's. A store whose responses carry `Cache-Control` would no longer
+    /// have them reused within a session, which for a client whose subject is
+    /// the store's current state is the intent.
     static func ownSession(for config: S3ConnectionConfig) -> S3HTTPChannel {
         let redirectPolicy = S3RedirectSessionDelegate(config: config)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(
-            configuration: .ephemeral, delegate: redirectPolicy, delegateQueue: nil)
+            configuration: configuration, delegate: redirectPolicy, delegateQueue: nil)
         return S3HTTPChannel(
             transport: URLSessionHTTPTransport(session: session), redirectPolicy: redirectPolicy,
             cancel: { session.invalidateAndCancel() },
