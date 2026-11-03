@@ -27,7 +27,7 @@ import macSCPCore
 /// 4. The section holds no control: not as a rule written down, but as what
 ///    the hosted view contains.
 ///
-/// ## How sensitive these are: ten plants, committed with their commands
+/// ## How sensitive these are: sixteen plants, committed with their commands
 ///
 /// The commit that introduced this file has a compile failure as its red (the
 /// tests were written before the types they name), so the behavioural weight
@@ -35,22 +35,39 @@ import macSCPCore
 /// `scripts/mutation-probe` from the repository root on a clean tree, which
 /// refuses a dirty one and reverts index-safely; each printed, verbatim, the
 /// control line (the unplanted tree's run) and the verdict below it. Run
-/// 2026-11-03 on the tree of `test(app): the access-list section's no-control
-/// check also reads the type of the view it builds`.
+/// 2026-11-03 on the tree of `fix(app): access-list section review round 1,
+/// the re-read is pinned and hedged, the form scrolls`.
 ///
-/// **P5 is the one that changed the suite.** Run first against the tree of the
-/// commit before it, it was caught by `theSectionsSourceDeclaresNoWayToChangeAnything()`
-/// alone: the hosted-view walk stayed green with a Button planted, because a
-/// default-styled SwiftUI Button is not an AppKit control. The type read in
-/// `theSectionOffersNoControlThatWrites` was added because of it, and the
-/// block below is the re-run.
+/// **P5 is the one that changed the suite.** Run first against the tree before
+/// the type read existed, it was caught by
+/// `theSectionsSourceDeclaresNoWayToChangeAnything()` alone: the hosted-view
+/// walk stayed green with a Button planted, because a default-styled SwiftUI
+/// Button is not an AppKit control. The type read in
+/// `theSectionOffersNoControlThatWrites` was added because of it.
+///
+/// **P11 and P12 pin the condition the re-read was accepted on**, that it runs
+/// after a CONFIRMED write and nowhere else. Before
+/// `theListIsReadAgainAfterAConfirmedWriteAndOnlyThen` existed, adding the call
+/// to the write's `catch`, or to the COMPLIANCE refusal, was GREEN across 62
+/// tests.
+///
+/// **P15's first attempt was GREEN and was a bad plant, not a blind test.** Its
+/// perl removed the FIRST `ProgressView().controlSize(.small)` in the file,
+/// which is the sheet's own reading line, not the section's (the pattern had
+/// no `g` and two lines match it). The block below is the second, anchored
+/// attempt.
+///
+/// **Not pinned, deliberately:** that the list is read LAST in `load()`
+/// (review item 8). It is latency only (`readLockBeforeTheWrite` keeps the
+/// acknowledgement correct whatever the order), and a test of the order would
+/// assert the shape of the code and not a behaviour.
 ///
 /// ```
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P1 a storage with no access lists is shown as a policy with no entries' \
 ///   --apply "perl -0pi -e 's/                accessList = \.notOffered\n/                accessList = .policy(ObjectACL(ownerID: nil, ownerDisplayName: nil, grants: []))\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aStoreWithoutAclsSaysSoInsteadOfShowingNoGrants()
 /// ```
 ///
@@ -58,8 +75,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P2 an unnamed holder is drawn as an empty line' \
 ///   --apply "perl -0pi -e 's/return lines\.isEmpty \? \[whenUnnamed\.text\] : lines/return lines.isEmpty ? [\"\"] : lines/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/anOwnerTheStoreDidNotNameIsSaidToo()
 ///   macSCPAppKitTests.ObjectACLSectionTests/anUnnamedHolderIsSaidRatherThanDrawnBlank()
 ///   macSCPAppKitTests.ObjectACLSectionTests/theUnnamedSentenceIsTheOneForTheShapeCoreReports()
@@ -69,8 +86,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P3 the identifier is labelled ID in the English catalogue' \
 ///   --apply "perl -pi -e 's/^(\"s3\.acl\.identifier %@\" = )\"Identifier: %@\"/\$1\"ID: %@\"/' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aHolderIdentifierIsLabelledAsAnIdentifierWhetherItIsAnIdOrAUrl()
 ///   macSCPAppKitTests.ObjectACLSectionTests/aHolderThatHasANameShowsTheNameFirstAndTheIdentifierBeneathIt()
 ///   macSCPAppKitTests.ObjectACLSectionTests/aPolicyWithNoGrantsStillNamesItsOwner()
@@ -81,8 +98,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P4 a failed read quotes the error' \
 ///   --apply "perl -0pi -e 's/        default:\n            return readFailed\.text\n        \}\n    \}\n\}\n\n\/\/\/ What the access-list section shows/        default:\n            return \"\\\\(error)\"\n        }\n    }\n}\n\n\/\/\/ What the access-list section shows/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt()
 /// ```
 ///
@@ -90,8 +107,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P5 the section offers a button' \
 ///   --apply "perl -0pi -e 's/(            Text\(ObjectACLLines\.heading\.text\)\.font\(\.subheadline\)\n)/\$1            Button(\"Make public\") {}\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/theSectionOffersNoControlThatWrites()
 ///   macSCPAppKitTests.ObjectACLSectionTests/theSectionsSourceDeclaresNoWayToChangeAnything()
 /// ```
@@ -100,8 +117,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P6 the entries no longer sit behind a height of their own' \
 ///   --apply "perl -0pi -e 's/                \.frame\(maxHeight: Self\.listHeight\)\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aLongListSitsBehindAScrollBecauseABoundedSheetClipsInsteadOfGrowing()
 /// ```
 ///
@@ -109,17 +126,18 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P7 no re-read of the list after a confirmed write' \
 ///   --apply "perl -0pi -e 's/            await readAccessList\(\)\n            return \.written/            return .written/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/theAccessListIsReadForTheFileWhenTheSheetOpensAndAgainAfterASave()
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
 /// ```
 ///
 /// ```
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P8 a failed list read takes the whole sheet down with it' \
 ///   --apply "perl -0pi -e 's/            accessList = \.failed\(ObjectACLLines\.readMessage\(for: error\)\)\n/            accessList = .failed(ObjectACLLines.readMessage(for: error))\n            phase = .failed(ObjectACLLines.readMessage(for: error))\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt()
 /// ```
 ///
@@ -127,8 +145,8 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P9 the permission is changed on its way to the row' \
 ///   --apply "perl -0pi -e 's/                permission: \\\$0\.permission\)/                permission: \\\$0.permission.lowercased())/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aPermissionTheStoreSpellsInAWayNobodyHasSeenIsShownAsSpelled()
 ///   macSCPAppKitTests.ObjectACLSectionTests/anUnnamedHolderIsSaidRatherThanDrawnBlank()
 /// ```
@@ -137,9 +155,64 @@ import macSCPCore
 /// scripts/mutation-probe --filter ObjectACLSectionTests \
 ///   --label 'P10 a holder identified by a URL is not shown' \
 ///   --apply "perl -0pi -e 's/        if let identifier \{\n/        if let identifier, !identifier.hasPrefix(\"http\") {\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
-/// ── control: 23 test(s) ran, 0 pre-existing failures
-/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.ObjectACLSectionTests/aHolderIdentifierIsLabelledAsAnIdentifierWhetherItIsAnIdOrAUrl()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P11 the list is read again after a write the store refused' \
+///   --apply "perl -0pi -e 's/(            applyFailure = ObjectLockLines\.message\(for: error, during: \.applyingDefault\)\n)/\$1            await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P12 the list is read again after a save refused for the acknowledgement' \
+///   --apply "perl -0pi -e 's/(            if !acknowledged \{\n                refusedSaves \+= 1\n)/\$1                await readAccessList()\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theListIsReadAgainAfterAConfirmedWriteAndOnlyThen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P13 the form no longer scrolls behind a height of its own' \
+///   --apply "perl -0pi -e 's/            \.frame\(maxHeight: Self\.formHeight\)\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theTallestStateStaysWithinTheTallestBoundInTheApp()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P14 the section says the shared denied sentence again' \
+///   --apply "perl -0pi -e 's/            return denied\.text\n/            return ObjectLockLines.denied.text\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aMissingPermissionIsSaidInTheSectionsOwnWordsAndPromisesNoChange()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P15 the access-list reading line loses its spinner' \
+///   --apply "perl -0pi -e 's/                ProgressView\(\)\.controlSize\(\.small\)\n(                Text\(ObjectACLLines\.reading)/\$1/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theReadingStateIsOnScreenWhileTheListIsBeingRead()
+///   macSCPAppKitTests.ObjectACLSectionTests/theTypeReadSeesWhatTheSectionIsMadeOfAndAControlWhenThereIsOne()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P16 a catalogue key is spelled exactly as the sub-resource' \
+///   --apply "perl -0pi -e 's/\z/\"acl\" = \"x\";\n/' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"
+/// ── control: 28 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 28 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/noCatalogueKeyAnywhereIsSpelledExactlyAsTheSubresourceName()
 /// ```
 ///
 @Suite("Object access-list section")
