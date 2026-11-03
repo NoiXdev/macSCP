@@ -561,10 +561,15 @@ struct S3ObjectLockTests {
         // name case-insensitively, which subscripting `allHTTPHeaderFields` does
         // not): both writes were really sent and signed, and the bypass name
         // resolves when a request carries it, in another case. Without them a write
-        // that sent nothing passes the loop below for want of anything to look
-        // at: the connection's own opening request sits ahead of the two writes,
-        // so `suffix(2)` is never empty and the count alone would not notice a
-        // missing write. The two are therefore named by what they are.
+        // that sent nothing passes the loop below, and not for want of anything
+        // to look at: the connection's own opening request sits ahead of the two
+        // writes, so the loop finds THAT request in the missing write's place and
+        // no bypass header on it. A bare count of requests would not notice
+        // either (the opening request plus the one write that was sent already
+        // make two), so the two writes are named by what they are.
+        // (Withdrawn wording, verbatim: "that sent nothing passes the loop below
+        // for want of anything to look at" -- it does look, at the opening
+        // request.)
         #expect(writes.count == 2)
         #expect(writes.map { $0.httpMethod ?? "" } == ["PUT", "PUT"])
         #expect(writes.map { $0.url?.query ?? "" } == ["retention=", "legal-hold="])
