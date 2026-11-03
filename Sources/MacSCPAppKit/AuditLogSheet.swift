@@ -98,6 +98,12 @@ struct AuditLogSheet: BoundedView {
             // `noix-docs-s3-bucket-settings`, the audit log page names only the
             // four bucket-settings events. That stops being true when the
             // plan's closeout task documents these.
+            // **Stopped being true on 2026-11-03**: the closeout wrote the
+            // three events that have a recorder (`versionRestored`,
+            // `versionDeleted`, `deleteMarkerLifted`) into that page, on the
+            // user-docs branch `docs/macscp-s3-version-history`, as File Ops
+            // entries. Moving them now costs a change to that page too;
+            // `metadataChanged` is still named nowhere, having no recorder.
             case .rename, .delete, .permissions, .newFolder, .newFile,
                 .bucketCreated, .versioningChanged, .corsChanged, .objectLockChanged,
                 .versionRestored, .versionDeleted, .deleteMarkerLifted, .metadataChanged:

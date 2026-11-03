@@ -42,7 +42,9 @@ enum S3VersionsXML {
     ///   flag's value per page and does not record it, so no claim is made
     ///   here about what a store sends on a last page beyond the flag. The
     ///   opposite disagreement, a marker beside `IsTruncated=false`, is left
-    ///   to the caller's paging loop.
+    ///   to the caller's paging loop. (Measured 2026-11-03, RustFS 1.0.0
+    ///   only, `S3VersionsGatedTests`: its last page carries no
+    ///   `NextKeyMarker` element. Still unmeasured for any other store.)
     /// - A document whose root is not `ListVersionsResult` (a proxy's error
     ///   page, say), one that is not well-formed, an entry with no `Key` or no
     ///   `VersionId`, and a `Size` that is not a non-negative integer are
