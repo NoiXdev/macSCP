@@ -62,6 +62,14 @@ struct S3ObjectMetadataTests {
         "ETag": "\"5d41402abc4b2a76b9719d911017c592\"",
     ]
 
+    /// The lower-cased names of the `x-amz-meta-*` headers a built request
+    /// carries: what its custom pairs imply, read off the request itself.
+    static func customHeaderNames(of request: URLRequest) -> Set<String> {
+        Set(
+            (request.allHTTPHeaderFields ?? [:]).keys.map { $0.lowercased() }
+                .filter { $0.hasPrefix("x-amz-meta-") })
+    }
+
     // MARK: - Reading
 
     @Test func aHeadResponseBecomesMetadataWithTheEntityTagAsReceived() async throws {
@@ -138,6 +146,9 @@ struct S3ObjectMetadataTests {
         await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.metadataKeyRequiredReason)) {
             try await fs.setMetadata(Self.wanted, ofKey: "", inBucket: Self.bucket)
         }
+        await #expect(throws: RemoteFSError.protocolError(reason: S3FileSystem.metadataKeyRequiredReason)) {
+            _ = try await fs.acl(ofKey: "", inBucket: Self.bucket)
+        }
         #expect(await Self.sent(transport).isEmpty)
     }
 
@@ -184,27 +195,50 @@ struct S3ObjectMetadataTests {
         let put = try #require(await Self.sent(transport).first)
         #expect(put.value(forHTTPHeaderField: "cache-control") == nil)
         #expect(put.value(forHTTPHeaderField: "content-disposition") == nil)
-        let sentCustom = (put.allHTTPHeaderFields ?? [:]).keys.contains { $0.lowercased().hasPrefix("x-amz-meta-") }
-        #expect(sentCustom == false)
+        #expect(Self.customHeaderNames(of: put).isEmpty)
         #expect(put.value(forHTTPHeaderField: "x-amz-metadata-directive") == "REPLACE")
     }
 
-    @Test func aCustomKeyIsSentWithTheTransportPrefixAddedOnce() async throws {
-        let one = ObjectMetadata(
+    /// Exact, not "not doubled": the custom headers on the wire are the pairs
+    /// given, prefixed once, lower-cased, and nothing more or less.
+    @Test func theCustomHeadersOnTheWireAreExactlyThePairsGivenPrefixedOnce() async throws {
+        let pairs = ObjectMetadata(
             contentType: nil, cacheControl: nil, contentDisposition: nil,
-            custom: ["note": "x"], entityTag: nil)
+            custom: ["note": "x", "Owner-Team": "y", "k.v": "z"], entityTag: nil)
         let (fs, transport) = try await S3SettingsFake.connect(responses: [
-            Self.copied, Self.head(["x-amz-meta-note": "x"]),
+            Self.copied, Self.head(["x-amz-meta-note": "x", "x-amz-meta-owner-team": "y", "x-amz-meta-k.v": "z"]),
         ])
 
-        try await fs.setMetadata(one, ofKey: "a.txt", inBucket: Self.bucket)
+        try await fs.setMetadata(pairs, ofKey: "a.txt", inBucket: Self.bucket)
 
         let put = try #require(await Self.sent(transport).first)
-        #expect(put.value(forHTTPHeaderField: "x-amz-meta-note") == "x")
-        let doubled = (put.allHTTPHeaderFields ?? [:]).keys.contains {
-            $0.lowercased().hasPrefix("x-amz-meta-x-amz-meta-")
+        #expect(
+            Self.customHeaderNames(of: put)
+                == ["x-amz-meta-note", "x-amz-meta-owner-team", "x-amz-meta-k.v"])
+        #expect(put.value(forHTTPHeaderField: "x-amz-meta-owner-team") == "y")
+    }
+
+    /// `ObjectMetadata.custom` says its keys carry no transport prefix. A key
+    /// that does is refused before anything is sent, in any case, and the
+    /// refusal does not carry the key.
+    @Test func aCustomKeyThatAlreadyCarriesTheTransportPrefixIsRefusedAndNothingIsSent() async throws {
+        let prefixedKeys = ["x-amz-meta-note", "X-Amz-Meta-note", "X-AMZ-META-"]
+        for key in prefixedKeys {
+            let metadata = ObjectMetadata(
+                contentType: nil, cacheControl: nil, contentDisposition: nil,
+                custom: [key: "v"], entityTag: nil)
+            let (fs, transport) = try await S3SettingsFake.connect(responses: [])
+            var thrown: RemoteFSError?
+            do {
+                try await fs.setMetadata(metadata, ofKey: "a.txt", inBucket: Self.bucket)
+            } catch let error as RemoteFSError {
+                thrown = error
+            }
+            #expect(thrown == RemoteFSError.protocolError(reason: S3FileSystem.metadataFieldRefusedReason))
+            let reasonCarriesKey = S3FileSystem.metadataFieldRefusedReason.lowercased().contains(key.lowercased())
+            #expect(reasonCarriesKey == false)
+            #expect(await Self.sent(transport).isEmpty)
         }
-        #expect(doubled == false)
     }
 
     @Test func aFieldThatCouldBreakTheHeaderBlockIsRefusedAndNothingIsSent() async throws {

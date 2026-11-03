@@ -7,8 +7,10 @@ import Foundation
 /// **This type only reads.** Core has no ACL write (see
 /// `ObjectMetadataProvider`), and nothing here builds a policy.
 ///
-/// Written against the body spec section 4.6.1 took from the rig. Four things
-/// that body does, and what this parser does about each:
+/// Written against spec section 4.6.1, which took an object's ACL body from
+/// the rig (a `200`) and lists the properties a parser has to handle. Three
+/// are properties of that body, and a fourth is about a status answered by a
+/// neighbouring call, not by this one. What this parser does about each:
 ///
 /// - **An empty `Grantee` is a grant with no named holder.** The element is
 ///   present, not self-closing, and carries an `xsi:type` attribute of
@@ -21,8 +23,11 @@ import Foundation
 ///   position.
 /// - **No whitespace between elements.** No text node is relied on for
 ///   structure; text is read only where a leaf element ends.
-/// - **A `501` is an `<Error>` document, not a policy.** `parse` decides that
-///   on the status alone.
+/// - **A `501` is an `<Error>` document, not a policy.** Section 4.6.1
+///   measured that for the neighbouring ownership-controls call; the ACL read
+///   itself answered `200` there, so a `501` for the ACL read is NOT
+///   measured. `parse` decides it on the status alone and so never has to
+///   guess from a body.
 enum S3ACLXML {
     /// Reads one answer to a read of an object's ACL.
     ///
@@ -46,7 +51,9 @@ enum S3ACLXML {
     ///   the `URI` as its `granteeID`, because `ACLGrant` has no field of its
     ///   own for it; reading it as "unnamed" would present a group grant as a
     ///   grant whose holder the store did not say. An `ID`, where there is
-    ///   one, wins.
+    ///   one, wins. **This group mapping is inferred, not measured:** section
+    ///   4.6.1 measured only the empty `Grantee`, and no group grantee has
+    ///   been seen from this store.
     static func parse(_ body: Data, status: Int, path: String = "") throws -> ObjectACL? {
         if status == 501 { return nil }
         guard (200..<300).contains(status) else {

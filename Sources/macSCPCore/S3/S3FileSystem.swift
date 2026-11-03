@@ -2718,6 +2718,20 @@ extension S3FileSystem: ObjectMetadataProvider {
         try Self.requireObjectKey(key, reason: Self.metadataKeyRequiredReason)
         let headers = try Self.replacementHeaders(for: metadata)
         let path = Self.objectLockPath(bucket: bucket, key: key)
+        // `copyObject` puts the store's whole answer body into the reason of
+        // the error it throws for a 2xx answer that carries an `<Error>` or
+        // no `<CopyObjectResult>`, and this is the first caller that sends
+        // content a person typed. A store that echoed a request header back
+        // in such a body would therefore surface a metadata value in that
+        // reason. What was measured, on rustfs 1.0.4 on 2026-11-03: a
+        // `REPLACE` copy of a key that does not exist answered 404 with an
+        // error body that did not contain the custom value sent. That
+        // answer is not a 2xx, so it goes through `mapErrorStatus`, which
+        // reads the code and not the body: the measurement shows the store
+        // did not echo on that failure, and does not exercise the
+        // interpolating path itself. Every other failure mode, and every
+        // other store, is unmeasured. This is not a claim that the path is
+        // safe.
         try await copyObject(
             sourceBucket: bucket, fromKey: key, destinationBucket: bucket, toKey: key,
             reportedAs: path, extraHeaders: headers)
@@ -2746,7 +2760,11 @@ extension S3FileSystem: ObjectMetadataProvider {
     ///
     /// Refused with `metadataFieldRefusedReason`, before anything is sent: a
     /// value with a control character (a line break would end the header and
-    /// start another) and a custom name that is empty or is not an HTTP token.
+    /// start another), a custom name that is empty or is not an HTTP token,
+    /// and a custom name that already carries the transport prefix in any
+    /// case (`ObjectMetadata.custom` says its keys do not; sent as it is, the
+    /// key would be prefixed twice and read back under another name than the
+    /// one sent). The reason is fixed text and never carries the key.
     private static func replacementHeaders(for metadata: ObjectMetadata) throws -> [String: String] {
         var headers = ["x-amz-metadata-directive": "REPLACE"]
         let standard = [
@@ -2762,7 +2780,9 @@ extension S3FileSystem: ObjectMetadataProvider {
             headers[name] = value
         }
         for (name, value) in metadata.custom {
-            guard headerNameIsToken(name), headerValueIsSendable(value) else {
+            guard headerNameIsToken(name), !name.lowercased().hasPrefix(customMetadataHeaderPrefix),
+                headerValueIsSendable(value)
+            else {
                 throw RemoteFSError.protocolError(reason: metadataFieldRefusedReason)
             }
             headers[customMetadataHeaderPrefix + name.lowercased()] = value
