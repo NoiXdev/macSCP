@@ -40,10 +40,11 @@ public struct ACLGrant: Sendable, Equatable {
     /// not mapped to an enum: a store may report one this project has not
     /// seen, and a closed set would have to drop it or lie about it.
     public let permission: String
-    /// True when the store named a grant but no holder (measured on the rig,
-    /// spec section 4.6: the one `FULL_CONTROL` grant's `Grantee` element
-    /// is empty, with neither `ID` nor `DisplayName`). A UI must say so
-    /// rather than draw a blank row.
+    /// True when the store named a grant but no holder. Spec section 4.6
+    /// measured that on a bucket's ACL (the one `FULL_CONTROL` grant's
+    /// `Grantee` element is empty, with neither `ID` nor `DisplayName`);
+    /// section 4.6.1 measured it on an object's, which 4.6 had left open.
+    /// A UI must say so rather than draw a blank row.
     public var holderIsUnnamed: Bool { granteeID == nil && granteeDisplayName == nil }
 
     public init(granteeID: String?, granteeDisplayName: String?, permission: String) {

@@ -227,6 +227,40 @@ AWS refuses `PutObjectAcl` outright on a bucket with Object Ownership set to
 `BucketOwnerEnforced`, and that Hetzner's object storage honours ACLs. Both are
 reasons the feature was wanted; neither is evidence this project holds.
 
+### 4.6.1 The object ACL's empty `Grantee` — taken 2026-11-03
+
+§4.6 measured the empty `Grantee` on the **bucket** (`GET "/$B?acl"`) and said
+only "the same single owner grant" of the object. This re-observes it on both,
+on `rustfs/rustfs:1.0.4`, the image `docker/test-server/compose.yml` pins (line
+60 at the time), eleven days after §4.6's own run; **nothing here is a claim
+about AWS**. This section is additive: it withdraws nothing from §4.6.
+
+- `s3 GET "/$B?acl"` and `s3 GET "/$B/a.txt?acl"` → both **200**, with
+  **byte-identical** bodies. The object ACL does carry the empty `Grantee`.
+  The body, one line in the response, with the `Owner/ID` (64 lowercase hex
+  characters, a canonical user id) written as a placeholder:
+
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?><AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList><Owner><DisplayName>rustfs</DisplayName><ID>[64 lowercase hex characters]</ID></Owner></AccessControlPolicy>
+  ```
+
+- `s3 GET "/$B?ownershipControls"` → **501**, body
+  `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message>GetBucketOwnershipControls is not implemented yet</Message></Error>`
+  — re-confirming §4.6.
+
+Four properties a parser has to handle, none of which §4.6's prose mentions:
+
+1. **`Grantee` is present and not self-closing, and carries
+   `xsi:type="CanonicalUser"`.** The emptiness is in its children: no `ID`
+   and no `DisplayName` inside it. A parser that reads `xsi:type` and
+   concludes a canonical user was named has it backwards.
+2. **`DisplayName` comes before `ID` inside `Owner`**, the reverse of AWS's
+   documented order. A parser must not depend on element order.
+3. **The document is one line with no whitespace between elements**, so there
+   are no text nodes to key on.
+4. **A 501 is an `<Error>` document** (the bullet above), so a parser can
+   decide on the status alone and never has to guess from the body.
+
 ### 4.7 A GOVERNANCE retention on one version blocks that version's delete
 
 With a lock-enabled bucket, an object written, and a GOVERNANCE retention set
