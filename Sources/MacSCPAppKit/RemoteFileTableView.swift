@@ -346,6 +346,15 @@ struct RemoteFileTableView: NSViewRepresentable {
         L10n.string("filetable.bucketTooltip", "Bucket")
     }
 
+    /// What a screen reader is told about a cell beyond its text: the
+    /// deleted row's words on its name cell, and nothing for any other cell.
+    /// A deleted row has no glyph (see `deletedDescription`), so this is the
+    /// non-visual counterpart of the dimmed name that `bucketDescription` and
+    /// `symlinkDescription` have in their markers' accessibility descriptions.
+    static func cellAccessibilityHelp(for column: FileColumn, item: RemoteFileItem) -> String? {
+        column == .name && item.isDeleted ? deletedDescription : nil
+    }
+
     /// The words for a deleted row (S3 version history, Task 10): the key is
     /// hidden by a delete marker and "Restore" brings it back. The name cell's
     /// tooltip. The row has no glyph of its own, deliberately: a third marker
@@ -959,6 +968,10 @@ struct RemoteFileTableView: NSViewRepresentable {
             }
             cell.toolTip = RemoteFileTableView.cellToolTip(
                 for: column, item: item, text: text)
+            // Set on every pass, `nil` included, like the tooltip: a reused
+            // cell must not keep a deleted row's help.
+            cell.setAccessibilityHelp(
+                RemoteFileTableView.cellAccessibilityHelp(for: column, item: item))
             cell.textField?.stringValue = text
             // Typed and exhaustive, like `cellText(for:)` above (review I1):
             // this used to switch on the identifier STRING and end in a

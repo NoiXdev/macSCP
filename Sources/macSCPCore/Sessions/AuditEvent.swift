@@ -136,11 +136,13 @@ public struct AuditEvent: Codable, Equatable, Sendable, Identifiable {
         case versionDeleted
         /// A delete marker was removed, so the version beneath it is the
         /// object's current content again. Has a recorder,
-        /// `AuditRecorder.recordDeleteMarkerLifted`, and no caller yet: the
-        /// deleted-files row of the browser (a later task of the version
-        /// history plan) wires it. The version sheet does NOT: its delete
-        /// refuses a marker. (Withdrawn wording, verbatim: "and no caller yet:
-        /// the version sheet task wires it." and "Recorded through
+        /// `AuditRecorder.recordDeleteMarkerLifted`, called by the browser's
+        /// Restore on a deleted row (`DeletedFileRestorer`). The version
+        /// sheet does NOT call it: its delete refuses a marker. (Withdrawn
+        /// wording, verbatim: "and no caller yet: the deleted-files row of the
+        /// browser (a later task of the version history plan) wires it." Also
+        /// withdrawn, verbatim: "and no caller yet: the version sheet task
+        /// wires it." and "Recorded through
         /// `AuditRecorder.recordDeleteMarkerLifted`.")
         case deleteMarkerLifted
         /// An object's metadata was rewritten. **Nothing produces this kind

@@ -144,37 +144,35 @@ struct ShowDeletedFilesTests {
     @Test(arguments: CannotApply.allCases)
     func togglingWhereItCannotApplyNeitherReListsNorErrors(place: CannotApply) async throws {
         let counters = ListingCounters()
+        // EVERY case holds a settings stub and a versioning cache over it, so
+        // that the versioning-read assertion below compares two real lists
+        // and not `nil == nil`, and ends with a read the stub counts.
+        let seeded: BucketVersioning = place == .versioningOff ? .never : .enabled
+        let settings = FakeBucketSettings(versioning: seeded)
+        let cache = BucketVersioningCache(settings: settings)
         let vm: RemoteBrowserViewModel
-        var settingsReads: (() -> [String])?
         switch place {
         case .localPane:
             // The real local file system has no history, so no source is made.
             #expect(
                 S3DeletedFileSource.make(
-                    for: LocalFileSystem(), versioning: nil, configuredBucket: { "" }) == nil)
+                    for: LocalFileSystem(), versioning: cache, configuredBucket: { "" }) == nil)
             vm = RemoteBrowserViewModel(
                 fs: PlainListingFS(counters: counters, tree: Self.versionedTree), startPath: "/bucket/docs")
         case .nonS3Backend:
             let fs = PlainListingFS(counters: counters, tree: Self.versionedTree)
-            let source = S3DeletedFileSource.make(for: fs, versioning: nil, configuredBucket: { "" })
+            let source = S3DeletedFileSource.make(for: fs, versioning: cache, configuredBucket: { "" })
             #expect(source == nil)
             vm = RemoteBrowserViewModel(fs: fs, startPath: "/bucket/docs")
             vm.deletedFileSource = source
         case .bucketListRoot:
-            let settings = FakeBucketSettings(versioning: .enabled)
-            settingsReads = { settings.reads }
             let fs = HistoryListingFS(
                 counters: counters, tree: Self.versionedTree, rootIsContainerList: true)
-            let made = S3DeletedFileSource.make(
-                for: fs, versioning: BucketVersioningCache(settings: settings),
-                configuredBucket: { "" })
+            let made = S3DeletedFileSource.make(for: fs, versioning: cache, configuredBucket: { "" })
             let source = try #require(made)
             vm = RemoteBrowserViewModel(fs: fs, startPath: "/")
             vm.deletedFileSource = source
         case .versioningOff:
-            let settings = FakeBucketSettings(versioning: .never)
-            settingsReads = { settings.reads }
-            let cache = BucketVersioningCache(settings: settings)
             // Read earlier in the session, as the menu or a sheet would have.
             #expect(try await cache.versioning("bucket") == .never)
             let fs = HistoryListingFS(
@@ -188,25 +186,32 @@ struct ShowDeletedFilesTests {
         await vm.load()
         let itemsBefore = vm.items
         let plainBefore = counters.plain.count
-        let readsBefore = settingsReads?()
+        let readsBefore = settings.reads
+        // Only the versioning-off case read before the toggle (the seed).
+        #expect(readsBefore == (place == .versioningOff ? ["bucket"] : []))
 
         await vm.setShowDeletedFiles(true)
 
         // Zero extra requests of any kind, state unchanged, nothing said.
         #expect(counters.plain.count == plainBefore)
         #expect(counters.deleted.isEmpty)
-        #expect(settingsReads?() == readsBefore)
+        #expect(settings.reads == readsBefore)
         #expect(vm.items == itemsBefore)
         #expect(vm.state == .loaded)
-        #expect(vm.lastLoadError == nil)
+        let keptNoError = vm.lastLoadError == nil
+        #expect(keptNoError)
         #expect(vm.deletedFilesNotice == nil)
 
-        // The positive beside the zero: this stub counts a listing, and with
-        // the switch on a listing here still shows no deleted row.
+        // The positives beside the zeros: this stub counts a listing, and with
+        // the switch on a listing here still shows no deleted row...
         await vm.load()
         #expect(counters.plain.count == plainBefore + 1)
         #expect(counters.deleted.isEmpty)
         #expect(vm.items.contains { $0.isDeleted } == false)
+        // ...and this settings stub counts a versioning read: the cache asked
+        // for a bucket nobody has read yet adds exactly one to the list.
+        _ = try await cache.versioning("other-bucket")
+        #expect(settings.reads == readsBefore + ["other-bucket"])
     }
 
     /// The positive control for the table above, on the same stub and the same
@@ -216,9 +221,12 @@ struct ShowDeletedFilesTests {
         let pane = Pane()
         await pane.vm.load()
         let before = pane.counters.plain.count
+        #expect(pane.settings.reads.isEmpty)
         await pane.vm.setShowDeletedFiles(true)
         #expect(pane.counters.plain.count == before + 1)
         #expect(pane.counters.deleted.count == 1)
+        // And the toggle is what asked the store about versioning: once.
+        #expect(pane.settings.reads == ["bucket"])
     }
 
     // MARK: A state that was not read is not a state that was
@@ -248,6 +256,51 @@ struct ShowDeletedFilesTests {
             provider: fs, rootIsContainerList: true, configuredBucket: { "" }, versioning: nil)
         #expect(await source.availability(inDirectory: "/bucket/docs") == .notConfirmed)
         #expect(counters.deleted.isEmpty)
+    }
+
+    // MARK: A failing request is not repeated by every silent refresh
+
+    /// The auto-refresh calls `refreshQuietly()` every few seconds.
+    /// `BucketVersioningCache` rightly keeps no failure, so before the pane
+    /// stopped asking, a bucket whose `GET ?versioning` failed cost one failing
+    /// request per tick for as long as the pane sat there.
+    @Test func aFailingVersioningReadIsNotRetriedByEveryAutoRefresh() async {
+        let pane = Pane(readError: RemoteFSError.finding(.operationNotSupported))
+        pane.vm.showDeletedFiles = true
+        await pane.vm.load()
+        // Positive: the stub counts the one read the load made.
+        #expect(pane.settings.reads == ["bucket"])
+        for _ in 0..<5 { await pane.vm.refreshQuietly() }
+        #expect(pane.settings.reads == ["bucket"])
+        // The silent refresh still does its own job: it listed each time.
+        #expect(pane.counters.plain.count == 6)
+        // A manual refresh asks again, and the stub counts it.
+        await pane.vm.refresh()
+        #expect(pane.settings.reads == ["bucket", "bucket"])
+    }
+
+    @Test func aFailingDeletedListingIsNotRetriedByEveryAutoRefresh() async {
+        let pane = Pane()
+        pane.counters.setDeletedError(RemoteFSError.finding(.operationNotSupported))
+        pane.vm.showDeletedFiles = true
+        await pane.vm.load()
+        #expect(pane.counters.deleted.count == 1)
+        for _ in 0..<5 { await pane.vm.refreshQuietly() }
+        #expect(pane.counters.deleted.count == 1)
+        await pane.vm.refresh()
+        #expect(pane.counters.deleted.count == 2)
+    }
+
+    /// The containment must not reach the healthy path: with nothing failing,
+    /// every tick asks for the deleted keys, which is what keeps a row that
+    /// someone else restored from lingering.
+    @Test func aHealthyAutoRefreshStillAsksForTheDeletedKeysEveryTime() async {
+        let pane = Pane()
+        pane.vm.showDeletedFiles = true
+        await pane.vm.load()
+        for _ in 0..<3 { await pane.vm.refreshQuietly() }
+        #expect(pane.counters.deleted.count == 4)
+        #expect(pane.settings.reads == ["bucket"])
     }
 
     // MARK: Which bucket and which folder
@@ -291,6 +344,9 @@ struct ShowDeletedFilesTests {
         #expect(pane.vm.state == .loaded)
         #expect(pane.vm.items.map(\.name) == ["kept.txt"])
         #expect(pane.vm.deletedFilesNotice == .listingFailed)
+        // Computed first: the error value this pane might have kept carries the canary.
+        let keptNoError = pane.vm.lastLoadError == nil
+        #expect(keptNoError)
         let shown = DeletedFilesNotice.listingFailed.line.text
         let leaked = shown.contains("SECRETCANARY") || shown.contains("AKIACANARYKEY")
         #expect(leaked == false)
@@ -390,7 +446,12 @@ struct ShowDeletedFilesTests {
         #expect(trail.events.count == 1)
         #expect(event.kind == .deleteMarkerLifted)
         #expect(event.isError)
-        #expect(event.errorMessage == expected.line.text)
+        // The comparison is computed first: `#expect` prints the evaluated
+        // subexpressions, so `event.errorMessage == expected.line.text` inside
+        // it printed the error's own words (the endpoint canary, 12 times)
+        // under exactly the regression this test is here to catch.
+        let trailSaysTheFixedSentence = event.errorMessage == expected.line.text
+        #expect(trailSaysTheFixedSentence)
         let recorded = "\(event.detail) \(event.errorMessage ?? "")"
         let leaked = recorded.contains("SECRETCANARY") || recorded.contains("AKIACANARYKEY")
         #expect(leaked == false)
@@ -446,6 +507,24 @@ struct ShowDeletedFilesTests {
         #expect(
             Set(pane.counters.lifts.map { "\($0.key)=\($0.markerVersionId)" })
                 == ["docs/a.txt=ma", "docs/b.txt=mb"])
+    }
+
+    // MARK: What a screen reader is told
+
+    @Test func aDeletedRowsNameCellCarriesAnAccessibilityHelpAndNoOtherCellDoes() {
+        let deleted = RemoteFileItem(
+            name: "gone.txt", path: "/gone.txt", kind: .file, deleteMarkerVersionID: "m")
+        let present = RemoteFileItem(name: "kept.txt", path: "/kept.txt", kind: .file)
+        let help = RemoteFileTableView.cellAccessibilityHelp(for: .name, item: deleted)
+        #expect(help == RemoteFileTableView.deletedDescription)
+        #expect(help?.isEmpty == false)
+        // The negatives, each beside the positive above: a present file, and
+        // the deleted row's other columns.
+        #expect(RemoteFileTableView.cellAccessibilityHelp(for: .name, item: present) == nil)
+        for column in FileColumn.allCases where column != .name {
+            #expect(RemoteFileTableView.cellAccessibilityHelp(for: column, item: deleted) == nil)
+        }
+        #expect(RemoteFileTableView.cellToolTip(for: .name, item: deleted, text: "gone.txt") == help)
     }
 
     // MARK: The sentences
@@ -507,6 +586,34 @@ struct ShowDeletedFilesTests {
         }
         #expect(name.isEmpty == false)
         #expect(text.contains(name), "\(locale): \(text)")
+    }
+
+    /// The five new keys that are not `CatalogueLine`s are bare
+    /// `L10n.string(key, default)` calls, where a typo falls back to the English
+    /// default in every language and the catalogues still agree with each other.
+    /// So each is held twice: the source file that spells it spells exactly this
+    /// key, and the key resolves to a translation in all four languages.
+    nonisolated static let bareKeys: [(key: String, file: String)] = [
+        ("settings.general.showDeleted", "SettingsView.swift"),
+        ("settings.general.showDeletedHint", "SettingsView.swift"),
+        ("menu.toggleDeleted", "MacSCPCommands.swift"),
+        ("menu.restoreDeleted", "RemoteFileTableView.swift"),
+        ("filetable.deletedTooltip", "RemoteFileTableView.swift"),
+    ]
+
+    @Test(arguments: bareKeys.map(\.key))
+    func everyBareKeyResolvesInEveryLanguageAndIsSpelledWhereItIsUsed(key: String) throws {
+        let file = try #require(Self.bareKeys.first { $0.key == key }?.file)
+        let url = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit/\(file)")
+        let source = try SourceCorpus.commentFree(of: url)
+        #expect(source.contains("\"\(key)\""), "\(file) does not spell \(key)")
+        let english = L10n.$localeOverride.withValue("en") { L10n.string(key, "ZZ-UNRESOLVED-ZZ") }
+        #expect(english != "ZZ-UNRESOLVED-ZZ")
+        for locale in ["de", "fr", "pl"] {
+            let resolved = L10n.$localeOverride.withValue(locale) { L10n.string(key, "ZZ-UNRESOLVED-ZZ") }
+            #expect(resolved != "ZZ-UNRESOLVED-ZZ", "\(key) in \(locale)")
+            #expect(resolved != english, "\(key) in \(locale)")
+        }
     }
 
     /// The keys the new source files spell are the keys the checks above walk.
