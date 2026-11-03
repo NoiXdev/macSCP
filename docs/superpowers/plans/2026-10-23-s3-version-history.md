@@ -830,6 +830,14 @@ Behind `MACSCP_ITEST=1`, against the rig started **from the main checkout**. One
 5. **Does a last page carry a `NextKeyMarker`?** The paging loop FOLLOWS a marker beside `IsTruncated=false`, which costs one extra request per listing. Measure whether that request is ever needed here.
 6. **What does a version download's extra `ListObjectVersions` cost?** (added after Task 5) `VersionDownloadSource.stat` reads the history to size the transfer, so every version download pays one listing request before a byte moves. Unmeasured against a real store.
 
+7. **What does the deleted-rows switch cost per auto-refresh tick?** (added after Task 10)
+   With `showDeletedFiles` on and a versioned bucket, the silent refresh makes TWO requests
+   per tick where it made one, and turning the switch on where versioning is unconfirmed costs
+   one failing request before the suspension takes hold (counted in tests as 0 after the
+   toggle, 1 after four ticks). `autoRefreshIntervalSeconds` defaults to 5 and the refresh is
+   on by default, so this is the one carried measurement that multiplies by elapsed time
+   rather than by user actions. Unmeasured against a real store.
+
 Buckets the suite creates and deletes itself; never `macscp-seed`, `macscp-second` or `macscp-probe-lock`; and **no COMPLIANCE retention on any bucket the suite means to delete.**
 
 - [ ] **Step 3: Run it**
@@ -849,6 +857,58 @@ plan declined to add unmeasured — and names the cheaper half-measure too: seed
 the answer the Versioning sheet already reads.
 
 **Amended 2026-11-02, after Task 5.** One row for `TransferFailureLabel`'s counted comment: Task 5's recount was its **seventh**, and the figure has been wrong on arrival every time (68, 69, 63, 57, 81, 78, now 91/29). CLAUDE.md's own answer to a property that keeps buying one spelling and revealing another is a structural boundary rather than another anchor, so the row argues for a TEST that counts those call sites — or for dropping the figure and keeping the recipes — not for an eighth recount. The row is the place to decide that; this plan does not.
+
+**Amended 2026-11-03, after Task 10 closed.** Step 4's second sentence above — `One row for
+anything this plan's reviews parked.` — is kept and not withdrawn, but it was a promise with no
+list, and the list now exists. Six more rows, each with the task that produced it, because a
+row named only in the SDD ledger dies with that gitignored workspace:
+
+1. **The `//`-key path model.** `RemoteFileItem.normalizedAbsolute` splits with
+   `omittingEmptySubsequences: true`, so a key containing `//` collapses. Ruled a single row
+   covering the path model (Task 8, reasoned and marked as unmeasured; the review then measured
+   the collapse happening twice over). Task 10's name-collision edge below is the same question.
+2. **A deleted key whose path equals a listed folder is dropped from the listing** (`a` deleted
+   while `a/x` exists), because the table identifies rows by path. Dropping is the safe
+   direction — the alternative is two rows with one identity — but a file the user cannot see is
+   a gap. A test pins the behaviour so it cannot change silently. Belongs with row 1: a key is
+   not a path, and this tree treats it as one.
+3. **The audit trail stores LOCALISED text at write time**, so a locale switch leaves a
+   multilingual record. Pre-existing and project-wide, not made worse by this plan; surfaced by
+   Task 9's ruling that the version-action failure sentences follow the two existing house
+   callers rather than stay English.
+4. **A plan's Interfaces block and Files list are claims about the tree that nobody measured.**
+   Six occurrences in THIS plan: Task 6's `titleKey`, Task 6's Files block, Tasks 7, 9 and 10's
+   file lists, and Task 10's Interfaces block naming `BrowserContextMenu.Entry` for a type that
+   is `BrowserMenuEntry` and has never carried the plan's spelling. The row's remedy is not "be
+   careful": it is that both blocks are CHECKED against the tree at dispatch, which caught three
+   of the six and missed the type name in a file that was open at the time.
+5. **"Show Versions…" is not offered on a deleted row** (Task 10's review). A deleted key's
+   history is exactly what the version sheet exists to show, so offering it is probably right —
+   but it is a feature decision, and deciding it inside a fix round would be designing in the
+   narrowest seat available.
+6. **A retry sentence is false for a model with no versioning cache** (Task 10's re-review, N6).
+   "Open the history again to retry" cannot help a model that has no cache; no production path
+   was found that builds one that way, so the reach is unconfirmed and the row says so.
+
+**The maintainer's sight check is a list, not a sentence.** Nothing in this plan has been seen
+on a screen, and five things are legible only there. They are not backlog rows — they are one
+pass in front of a running app, and each names what it would mean if it is wrong:
+
+- **The refusal reason on a version row has exactly ONE surface**, a `.help` tooltip on a
+  DISABLED context-menu item, and the status line that could be the second is structurally
+  unreachable because the same gate that makes a refusal disables the control that would
+  produce the outcome. If a disabled SwiftUI context-menu item does not render its `.help`,
+  then "the user asking deserves the reason" is not delivered at all.
+- **`downloadVersion` presents a free-floating `NSSavePanel`** (`panel.begin`) while a
+  window-modal sheet is up. It is the tree's only `NSSavePanel`, so there is no house pattern
+  to measure it against.
+- **The status line's height inside the 640x480 sheet bound.** The layout guard is green but it
+  measures the state-built sheet, not a rendered one.
+- **A `confirmationDialog` presented from inside a sheet**, which is the restore and delete
+  question.
+- **A deleted row carries no glyph** — a trash icon pushed the bucket glyph's tooltip past
+  `IconTooltipLintTests`' 12-line window and the icon was dropped rather than the guard
+  widened. The row is dimmed and carries an accessibility help, and neither has been seen.
 
 - [ ] **Step 5: User documentation**
 
