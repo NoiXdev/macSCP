@@ -2,12 +2,17 @@ import Foundation
 import MacSCPTestSupport
 import Testing
 
-/// Holds the decision that there is NO object-ACL write anywhere in Core.
+/// Holds the decision that there is NO object-ACL write anywhere in the
+/// package's sources.
 ///
-/// Spec section 3 removed the control because the rig's store answers
-/// `PUT ?acl` with `200` and keeps nothing, which is the one failure mode a
-/// later contributor cannot see by testing against the rig. A source scan is
-/// the only thing that notices a write coming back.
+/// **If this suite is red:** a source file now names the ACL sub-resource, an
+/// ACL header, or an acl/grant-named function or enum case that the lists
+/// below do not know. If it is another ACL READER (a display, a second
+/// conformer), update the expected set in
+/// `theAclAndGrantNamedDeclarationsAreExactlyTheKnownReaders` on purpose,
+/// in the same change. If it is a WRITE, that is what this suite exists to
+/// hold against: spec section 3 removed the control because the rig's
+/// store answers `PUT ?acl` with `200` and keeps nothing.
 ///
 /// ## Why this is a count and a derivation rather than a search for `?acl`
 ///
@@ -20,55 +25,61 @@ import Testing
 /// name and the header name are both literals: a scan for either over that
 /// view looks at spaces. So the scans here read the comment-blanked view
 /// (`commentFree(of:)`), which keeps literals, and take their STRUCTURE
-/// (parentheses, `func` names) from the strict view, which shares its
+/// (parentheses, declaration names) from the strict view, which shares its
 /// indexing (both views preserve length).
 ///
-/// What each check holds, and the positive beside it (CLAUDE.md, "Guards
-/// that name what they watch": only a NEGATIVE check can go stale in
-/// silence):
+/// ## What each check holds, and the positive beside it
 ///
-/// 1. The literal `"acl"` appears exactly once under `Sources/macSCPCore/S3/`.
-///    A count, so a second one fails loudly and names its file. Beside it:
-///    the scan reaches the S3 files, and the one it finds is in
-///    `S3FileSystem.swift`.
-/// 2. That one occurrence sits in a call whose `method:` is the literal
-///    `"GET"`, inside a function named `acl`. Both are DERIVED from the code
-///    around the occurrence, and both are asserted as values, not as
-///    absences.
-/// 3. No `amz-acl` or `amz-grant` header spelling, and no `?acl` / `&acl` /
-///    `acl=` inside a literal, under that directory. This one IS negative;
-///    its positive is that the same view still holds other header literals,
+/// CLAUDE.md, "Guards that name what they watch": only a NEGATIVE check can
+/// go stale in silence. Every scan below runs over ALL of `Sources/`, the
+/// four targets, because the request builder is public Core API
+/// (`S3RequestBuilder`: `signedRequest(...)` and `perform(_:)`), so a write
+/// is two lines in the App, the CLI or the entry point as much as in Core.
+///
+/// 1. The literal `"acl"` appears exactly once in `Sources/`, in
+///    `S3FileSystem.swift`. A count, so a second one fails loudly and names
+///    its file. Positive: the scan reaches every target's files.
+/// 2. That occurrence sits in a call whose `method:` is the literal `"GET"`,
+///    inside a function named `acl`. Both are DERIVED from the code around
+///    the occurrence and asserted as values, not as absences.
+/// 3. No `amz-acl` / `amz-grant` header name and no `?acl`, `&acl` or `acl=`
+///    inside a literal anywhere in `Sources/`. This one IS negative; its
+///    positive is that the same view still holds other header literals,
 ///    which the strict view would have blanked.
-/// 4. `RemoteFS/ObjectMetadataProvider.swift` lives outside the directory the
-///    checks above scan, so a `setACL` requirement on the protocol is
-///    invisible to them. Checked over every file in Core: no function whose
-///    name reads as writing an ACL or a grant, with the positive that
-///    exactly the two files that declare `acl` are found.
+/// 4. The EXACT set of function and enum-case declarations in `Sources/`
+///    whose names mention `acl` or `grant`. An exact set fails loudly on an
+///    addition whatever it is called; a list of write verbs cannot, because
+///    it is out-thought by the next verb (the first version of this check
+///    was such a list, and `overwriteACL` was not on it).
 /// 5. Each scan function is driven over fixtures that are not under any
 ///    scanned directory, both ways.
 ///
-/// What this does not see, stated so nobody reads more into it than is
-/// there: a request built without the literal (a name assembled from parts
-/// at run time; a split-off prefix such as `"x-amz-" + "acl"` is caught only
-/// because the `"acl"` literal count in check 1 goes to two), a write in
-/// `Sources/MacSCPAppKit`, and a protocol member that is not a `func`.
+/// ## What this does not see
+///
+/// A write that spells none of the above: a sub-resource name taken from
+/// somewhere that is not a literal `"acl"` and not an enum case or function
+/// named for acl/grant (a name assembled from parts at run time other than a
+/// split-off literal, which check 1's count catches); a variable, type or
+/// property named for acl/grant, since only functions and enum cases are
+/// pinned; a store reached by a request that never names the ACL at all; and
+/// anything outside `Sources/` (resource files, the Tests tree).
 @Suite("No object-ACL write guard")
 struct NoACLWriteGuardTests {
-    private static var coreRoot: URL {
-        SourceCorpus.url(of: .sources).appendingPathComponent("macSCPCore", isDirectory: true)
+    private static var sourcesRoot: URL { SourceCorpus.url(of: .sources) }
+
+    private static var s3FileSystem: URL {
+        sourcesRoot.appendingPathComponent("macSCPCore/S3/S3FileSystem.swift")
     }
 
-    private static var s3Directory: URL { coreRoot.appendingPathComponent("S3", isDirectory: true) }
-
-    private static func swiftFiles(under directory: URL) throws -> [URL] {
-        try SourceCorpus.files(under: directory).filter { $0.pathExtension == "swift" }
+    private static func allSwiftSources() throws -> [URL] {
+        try SourceCorpus.files(under: sourcesRoot).filter { $0.pathExtension == "swift" }
     }
 
     // MARK: - Check 1: the sub-resource name appears exactly once
 
-    @Test func theAclQueryNameAppearsExactlyOnceUnderS3() throws {
+    @Test func theAclQueryNameAppearsExactlyOnceInSources() throws {
         var found: [String] = []
-        for file in try Self.swiftFiles(under: Self.s3Directory) {
+        for file in try Self.allSwiftSources() {
             let view = try SourceCorpus.commentFree(of: file)
             for _ in ACLWriteScan.queryNameOffsets(inCommentFree: view) {
                 found.append(file.lastPathComponent)
@@ -77,17 +88,22 @@ struct NoACLWriteGuardTests {
         #expect(found == ["S3FileSystem.swift"], "\(found)")
     }
 
-    @Test func theScanUnderS3ReachesTheFilesThatWouldCarryAWrite() throws {
-        let files = try Self.swiftFiles(under: Self.s3Directory)
-        #expect(files.count >= 10, "\(files.count)")
+    @Test func theScanReachesEveryTargetAndTheFilesThatWouldCarryAWrite() throws {
+        let files = try Self.allSwiftSources()
+        #expect(files.count >= 100, "\(files.count)")
+        for target in ["macSCPCore", "MacSCPAppKit", "MacSCPCLI", "MacSCPMain"] {
+            let prefix = Self.sourcesRoot.appendingPathComponent(target).path + "/"
+            #expect(files.contains { $0.path.hasPrefix(prefix) }, "no file under \(target)")
+        }
         #expect(files.contains { $0.lastPathComponent == "S3FileSystem.swift" })
         #expect(files.contains { $0.lastPathComponent == "S3Uploader.swift" })
+        #expect(files.contains { $0.lastPathComponent == "ObjectMetadataProvider.swift" })
     }
 
     // MARK: - Check 2: that one occurrence is a GET, in a function named acl
 
     @Test func theOneAclRequestIsAGetInsideTheFunctionNamedAcl() throws {
-        let file = Self.s3Directory.appendingPathComponent("S3FileSystem.swift")
+        let file = Self.s3FileSystem
         let inspections = try ACLWriteScan.inspect(
             code: SourceCorpus.code(of: file), commentFree: SourceCorpus.commentFree(of: file))
         #expect(inspections.count == 1, "\(inspections)")
@@ -97,9 +113,9 @@ struct NoACLWriteGuardTests {
 
     // MARK: - Check 3: no ACL header name, in any spelling
 
-    @Test func noS3SourceNamesAnAclOrGrantHeader() throws {
+    @Test func noSourceNamesAnAclOrGrantHeader() throws {
         var offenders: [String] = []
-        for file in try Self.swiftFiles(under: Self.s3Directory) {
+        for file in try Self.allSwiftSources() {
             let view = try SourceCorpus.commentFree(of: file)
             if !ACLWriteScan.headerSpellings(inCommentFree: view).isEmpty {
                 offenders.append(file.lastPathComponent)
@@ -112,46 +128,47 @@ struct NoACLWriteGuardTests {
         // The positive beside the negative above. A header name is a string
         // literal; the strict view blanks it, so a scan over that view finds
         // nothing whether or not a violation is there.
-        let file = Self.s3Directory.appendingPathComponent("S3FileSystem.swift")
-        let kept = try SourceCorpus.commentFree(of: file)
-        let blanked = try SourceCorpus.code(of: file)
+        let kept = try SourceCorpus.commentFree(of: Self.s3FileSystem)
+        let blanked = try SourceCorpus.code(of: Self.s3FileSystem)
         #expect(kept.contains("x-amz-metadata-directive"))
         #expect(!blanked.contains("x-amz-metadata-directive"))
     }
 
-    // MARK: - Check 4: no write-shaped ACL member anywhere in Core
+    // MARK: - Check 4: the exact set of acl/grant-named declarations
 
-    @Test func noFunctionInCoreIsShapedLikeAnAclWrite() throws {
-        var offenders: [String] = []
-        for file in try Self.swiftFiles(under: Self.coreRoot) {
+    /// Every function and enum case in `Sources/` whose name mentions `acl`
+    /// or `grant`, as `file: name`. Another reader is added HERE, on purpose.
+    private static let knownAclAndGrantDeclarations = [
+        "ObjectMetadataProvider.swift: acl",
+        "ProtocolCapabilities.swift: acl",
+        "S3ACLXML.swift: finishGrant",
+        "S3FileSystem.swift: acl",
+    ]
+
+    @Test func theAclAndGrantNamedDeclarationsAreExactlyTheKnownReaders() throws {
+        var found: [String] = []
+        for file in try Self.allSwiftSources() {
             let code = try SourceCorpus.code(of: file)
-            for name in ACLWriteScan.writeShapedACLFunctionNames(inCode: code) {
-                offenders.append("\(file.lastPathComponent): \(name)")
+            for name in ACLWriteScan.aclOrGrantDeclarations(inCode: code) {
+                found.append("\(file.lastPathComponent): \(name)")
             }
         }
-        #expect(offenders.isEmpty, "\(offenders)")
+        #expect(
+            found.sorted() == Self.knownAclAndGrantDeclarations,
+            """
+            The set of acl/grant-named functions and enum cases changed. Another \
+            ACL reader: update knownAclAndGrantDeclarations on purpose. A write: \
+            this guard holds against it. Found: \(found.sorted())
+            """)
     }
 
-    @Test func theProviderProtocolDeclaresTheAclReadAndNoOtherAclMember() throws {
-        let file = Self.coreRoot.appendingPathComponent("RemoteFS/ObjectMetadataProvider.swift")
+    @Test func theProviderFileDeclaresTheAclReadAndNoOtherAclNamedFunction() throws {
+        let file = Self.sourcesRoot.appendingPathComponent(
+            "macSCPCore/RemoteFS/ObjectMetadataProvider.swift")
         let names = ACLWriteScan.functionNames(inCode: try SourceCorpus.code(of: file))
         #expect(names.contains("acl"), "\(names)")
         let aclShaped = names.filter(ACLWriteScan.mentionsAclOrGrant)
         #expect(aclShaped == ["acl"], "\(aclShaped)")
-    }
-
-    @Test func exactlyTheProtocolAndTheS3ConformerDeclareAnAclFunction() throws {
-        // The positive that proves the Core-wide walk above reached the
-        // places an ACL function lives.
-        var declaring: [String] = []
-        for file in try Self.swiftFiles(under: Self.coreRoot) {
-            let code = try SourceCorpus.code(of: file)
-            if ACLWriteScan.functionNames(inCode: code).contains("acl") {
-                declaring.append(file.lastPathComponent)
-            }
-        }
-        #expect(
-            Set(declaring) == ["ObjectMetadataProvider.swift", "S3FileSystem.swift"], "\(declaring)")
     }
 
     // MARK: - Check 5: the scans, driven over fixtures outside any scanned directory
@@ -266,27 +283,41 @@ struct NoACLWriteGuardTests {
         }
     }
 
-    @Test func theFunctionNameScanFlagsWriteShapesAndSparesReadsAndParsers() throws {
-        let flagged = [
-            "setACL", "setObjectACL", "putAcl", "putObjectAcl", "writeACL", "aclSet",
-            "applyACL", "replaceGrants", "grantRead", "updateAclGrants",
+    @Test func theDeclarationScanFlagsEveryAclOrGrantNamedFunctionWhateverItsVerb() throws {
+        // Including the verbs a denylist did not list, and a name that is
+        // only a read: the set is exact, so the scan reports all of them and
+        // the suite decides.
+        let names = [
+            "setACL", "overwriteACL", "uploadACL", "copyACL", "clearACL", "attachGrants",
+            "makePublicACL", "acl", "finishGrant",
         ]
-        for name in flagged {
+        for name in names {
             let code = try SwiftSource.blankingCommentsAndStrings("func \(name)(key: String) {}")
-            #expect(
-                ACLWriteScan.writeShapedACLFunctionNames(inCode: code) == [name],
-                "not flagged: \(name)")
+            #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: code) == [name], "missed: \(name)")
         }
-        let spared = ["acl", "finishGrant", "aclFromXML", "metadata", "setMetadata", "parseGrants"]
-        for name in spared {
-            let code = try SwiftSource.blankingCommentsAndStrings("func \(name)(key: String) {}")
-            #expect(
-                ACLWriteScan.writeShapedACLFunctionNames(inCode: code).isEmpty,
-                "wrongly flagged: \(name)")
-        }
+        let unrelated = try SwiftSource.blankingCommentsAndStrings(
+            "func setMetadata() {}\nfunc makePublic() {}\nfunc aclide() {}")
+        #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: unrelated).isEmpty)
     }
 
-    @Test func aWriteRequirementOnTheProviderProtocolIsFlagged() throws {
+    @Test func theDeclarationScanSeesAnAclEnumCaseInEveryShapeItCanTake() throws {
+        let shapes = [
+            "enum PlantSubresource: String { case acl }",
+            "enum Model { case posixMode, acl, none }",
+            "enum Sub: String {\n    case acl = \"acl\"\n}",
+            "enum Sub {\n    case aclSub(name: String)\n}",
+            "enum Sub {\n    case none, grantRead\n}",
+        ]
+        for source in shapes {
+            let code = try SwiftSource.blankingCommentsAndStrings(source)
+            #expect(!ACLWriteScan.aclOrGrantDeclarations(inCode: code).isEmpty, "missed: \(source)")
+        }
+        let notDeclarations = try SwiftSource.blankingCommentsAndStrings(
+            "switch x {\ncase .acl:\n    break\ncase .none, .other:\n    break\n}")
+        #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: notDeclarations).isEmpty)
+    }
+
+    @Test func aWriteRequirementOnTheProviderProtocolIsSeen() throws {
         let code = try SwiftSource.blankingCommentsAndStrings(
             """
             public protocol ObjectMetadataProvider: Sendable {
@@ -294,7 +325,7 @@ struct NoACLWriteGuardTests {
                 func setACL(_ acl: ObjectACL, ofKey key: String, inBucket bucket: String) async throws
             }
             """)
-        #expect(ACLWriteScan.writeShapedACLFunctionNames(inCode: code) == ["setACL"])
+        #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: code) == ["acl", "setACL"])
     }
 }
 
@@ -368,25 +399,27 @@ enum ACLWriteScan {
         ((try? regexMatches(#"\bfunc\s+(\w+)"#, in: code)) ?? []).map(\.group)
     }
 
-    /// Function names that read as writing an ACL or a grant: they mention
-    /// one, and either carry a write verb as a word or open with `grant`.
-    static func writeShapedACLFunctionNames(inCode code: String) -> [String] {
-        functionNames(inCode: code).filter { name in
-            guard mentionsAclOrGrant(name) else { return false }
-            return words(of: name).enumerated().contains { position, word in
-                writeVerbs.contains(word) || (word == "grant" && position == 0)
+    /// Every function and enum-case name in `code` that mentions `acl` or
+    /// `grant` as a camelCase word, in source order. Enum cases are read
+    /// from `case` lists that carry no pattern syntax: `case .acl:` of a
+    /// `switch` starts with a dot and is skipped.
+    static func aclOrGrantDeclarations(inCode code: String) -> [String] {
+        let cases = ((try? regexMatches(#"\bcase\s+([^\n:{}]*)"#, in: code)) ?? []).flatMap {
+            match -> [Match] in
+            match.group.split(separator: ",").compactMap { piece in
+                let trimmed = piece.trimmingCharacters(in: .whitespaces)
+                guard let name = (try? regexMatches(#"^([A-Za-z_]\w*)"#, in: trimmed))?.first
+                else { return nil }
+                return Match(offset: match.offset, group: name.group)
             }
         }
+        let declarations = ((try? regexMatches(#"\bfunc\s+(\w+)"#, in: code)) ?? []) + cases
+        return declarations.sorted { $0.offset < $1.offset }.map(\.group).filter(mentionsAclOrGrant)
     }
 
     static func mentionsAclOrGrant(_ name: String) -> Bool {
         words(of: name).contains { ["acl", "acls", "grant", "grants"].contains($0) }
     }
-
-    private static let writeVerbs: Set<String> = [
-        "set", "put", "write", "apply", "replace", "update", "change", "modify", "revoke",
-        "add", "save", "store", "post", "make", "create", "remove", "delete", "send", "edit",
-    ]
 
     /// camelCase split, lower-cased: `setObjectACL` -> set, object, acl.
     private static func words(of name: String) -> [String] {
