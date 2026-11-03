@@ -445,6 +445,14 @@ final class ObjectVersionsModel {
     /// A restore or a delete is running, or its confirmation is on screen.
     private(set) var writeInProgress = false
 
+    /// How many times `rowState` has been worked out, and how many times a row
+    /// had to be FOUND in `versions` by searching for its id. Counters and not a
+    /// clock: they pin the cost of building the table (`rows(...)`) as a figure
+    /// a slow machine cannot change. Not observed, so reading or bumping them
+    /// from a view's body tracks nothing.
+    @ObservationIgnored private(set) var rowStateEvaluations = 0
+    @ObservationIgnored private(set) var positionLookups = 0
+
     @ObservationIgnored private let provider: (any ObjectVersionProvider)?
     @ObservationIgnored private let versioningCache: BucketVersioningCache?
     /// Where a restore's and a delete's outcome is written. **Required, with
@@ -653,6 +661,16 @@ final class ObjectVersionsModel {
     // MARK: - What a row is
 
     func rowState(of version: ObjectVersion) -> RowState {
+        rowState(of: version, at: nil)
+    }
+
+    /// `rowState(of:)` for a caller that already knows where `version` sits in
+    /// `versions` (`rows(...)` walks them in order). **Only the search is
+    /// saved**: a position that does not name `version` is not trusted
+    /// (`isMetadataOnly(_:at:)`), so a wrong one costs a lookup and not a wrong
+    /// answer.
+    func rowState(of version: ObjectVersion, at position: Int?) -> RowState {
+        rowStateEvaluations += 1
         if version.isDeleteMarker { return .deleteMarker }
         switch bucketLock {
         case .notAsked, .asking:
@@ -676,7 +694,7 @@ final class ObjectVersionsModel {
             }
         }
         if version.isLatest { return .current }
-        return isMetadataOnly(version) ? .metadataOnly : .plain
+        return isMetadataOnly(version, at: position) ? .metadataOnly : .plain
     }
 
     /// Whether `version` carries the same entity tag as the entry written just
@@ -687,11 +705,29 @@ final class ObjectVersionsModel {
     /// beneath looks the same, and a delete marker has no tag, so a marker
     /// between two versions breaks the pair.
     func isMetadataOnly(_ version: ObjectVersion) -> Bool {
-        guard !version.isDeleteMarker, let tag = version.entityTag,
-            let position = versions.firstIndex(where: { $0.versionId == version.versionId }),
-            versions.indices.contains(position + 1)
-        else { return false }
-        let before = versions[position + 1]
+        isMetadataOnly(version, at: nil)
+    }
+
+    /// `isMetadataOnly(_:)` for a caller that knows where `version` sits. The
+    /// row is otherwise FOUND by searching `versions` for its id, which is a
+    /// walk of string comparisons per row and so quadratic over a history that
+    /// nothing caps. A position is used only if it names `version`; otherwise
+    /// the search runs as before.
+    func isMetadataOnly(_ version: ObjectVersion, at position: Int?) -> Bool {
+        guard !version.isDeleteMarker, let tag = version.entityTag else { return false }
+        let found: Int
+        if let position, versions.indices.contains(position),
+            versions[position].versionId == version.versionId
+        {
+            found = position
+        } else {
+            positionLookups += 1
+            guard let searched = versions.firstIndex(where: { $0.versionId == version.versionId })
+            else { return false }
+            found = searched
+        }
+        guard versions.indices.contains(found + 1) else { return false }
+        let before = versions[found + 1]
         return !before.isDeleteMarker && before.entityTag == tag
     }
 
@@ -720,8 +756,20 @@ final class ObjectVersionsModel {
     /// so "Locked until <date>" alone would promise a date it will not be
     /// deletable on.
     func stateText(of version: ObjectVersion, localeCode: String? = L10n.localeOverride) -> String {
+        stateText(
+            of: version, state: rowState(of: version), metadataOnly: isMetadataOnly(version),
+            localeCode: localeCode)
+    }
+
+    /// The text for a row whose state and metadata-only fact the caller has
+    /// already worked out. **`rows(...)` is that caller**: asking
+    /// `stateText(of:localeCode:)` for every row would work each row's state out
+    /// a second time, and search for it a third.
+    func stateText(
+        of version: ObjectVersion, state: RowState, metadataOnly: Bool,
+        localeCode: String? = L10n.localeOverride
+    ) -> String {
         L10n.$localeOverride.withValue(localeCode) {
-            let state = rowState(of: version)
             if state == .deleteMarker {
                 return ObjectVersionsLines.deleteMarker.text
             }
@@ -748,7 +796,7 @@ final class ObjectVersionsModel {
             case .lockUnreadable:
                 parts.append(ObjectVersionsLines.lockUnreadable.text)
             }
-            if isMetadataOnly(version) { parts.append(ObjectVersionsLines.metadataOnly.text) }
+            if metadataOnly { parts.append(ObjectVersionsLines.metadataOnly.text) }
             return parts.joined(separator: " · ")
         }
     }
@@ -1100,10 +1148,16 @@ extension ObjectVersionsModel {
         filter: Filter, matching predicate: FileSearch.FileSearchPredicate,
         localeCode: String? = L10n.localeOverride
     ) -> [ObjectVersionRow] {
+        // Each row's state is worked out ONCE, with the position the walk
+        // already has, and handed to the text: the sheet's body evaluates this on
+        // every render, and every recorded lock reading re-renders it.
         let all = versions.enumerated().map { position, version in
-            ObjectVersionRow(
-                version: version, state: rowState(of: version),
-                stateText: stateText(of: version, localeCode: localeCode),
+            let state = rowState(of: version, at: position)
+            return ObjectVersionRow(
+                version: version, state: state,
+                stateText: stateText(
+                    of: version, state: state,
+                    metadataOnly: isMetadataOnly(version, at: position), localeCode: localeCode),
                 modifiedText: ObjectVersionsFormat.date(version.modifiedAt, localeCode: localeCode),
                 sizeText: ObjectVersionsFormat.size(version.size), position: position)
         }
