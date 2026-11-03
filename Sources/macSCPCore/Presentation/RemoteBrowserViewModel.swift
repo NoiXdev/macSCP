@@ -749,7 +749,20 @@ public final class RemoteBrowserViewModel {
         // pane already shows: like the plain listing's own failure above, a
         // silent refresh keeps what it has rather than paint a gap. It does
         // stop asking, silently: the notice is a `load()`'s to show.
-        if fetched.notice != nil { deletedRefreshSuspended = true }
+        if let failure = fetched.notice {
+            deletedRefreshSuspended = true
+            // The rows kept below are the last good read's, and nothing marks
+            // them as such unless the pane says so: an unread state is not
+            // reported as one that was read. With rows held, that is the
+            // notice (it stays until a `load()` replaces it, the same event
+            // that ends the suspension, so it is on screen for as long as the
+            // rows are frozen and is said once, by the one request that
+            // failed). With none held there is nothing frozen, and the notice
+            // is what went wrong. It replaces any other notice on purpose: it
+            // describes what the rows ARE now.
+            deletedFilesNotice = displayedAll.contains(where: \.isDeleted)
+                ? .deletedRowsNotRefreshed : failure
+        }
         let deleted = deletedRefreshSuspended ? displayedAll.filter(\.isDeleted) : fetched.rows
         // Rebuild the selection FROM the fresh items rather than filtering
         // the old structs (M9c final review): membership semantics are the

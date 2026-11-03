@@ -246,20 +246,43 @@ struct DeletedEntryListingTests {
         await vm.refreshQuietly()
         #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
         #expect(source.listed.count == 2)
+        // The rows on screen are the old ones, and the pane SAYS so, now and
+        // on every look after: the notice stays until a `load()` replaces it,
+        // which is also what ends the suspension.
+        #expect(vm.deletedFilesNotice == .deletedRowsNotRefreshed)
         // The request that failed is not repeated on every tick after it.
         await vm.refreshQuietly()
         await vm.refreshQuietly()
         await vm.refreshQuietly()
         #expect(source.listed.count == 2)
         #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
+        #expect(vm.deletedFilesNotice == .deletedRowsNotRefreshed)
         // A `load()` asks again, and so ends the suspension: the positive
         // beside the three silent ticks above.
         source.error = nil
         source.answer = .rows([])
         await vm.load()
+        #expect(vm.deletedFilesNotice == nil)
         #expect(source.listed.count == 3)
         await vm.refreshQuietly()
         #expect(source.listed.count == 4)
+    }
+
+    /// With no deleted row held there is nothing frozen to warn about, and the
+    /// pane says what actually went wrong instead; a healthy refresh says
+    /// nothing at all.
+    @Test func aSilentRefreshThatFailsWithNoDeletedRowsHeldNamesTheFailureItself() async {
+        let source = FakeDeletedFileSource()
+        source.answer = .rows([])
+        let vm = RemoteBrowserViewModel(fs: makeFS())
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        await vm.refreshQuietly()
+        #expect(vm.deletedFilesNotice == nil)
+        source.error = RemoteFSError.protocolError(reason: "x")
+        await vm.refreshQuietly()
+        #expect(vm.deletedFilesNotice == .listingFailed)
     }
 
     /// The case behind the rule: a versioning state that cannot be read comes

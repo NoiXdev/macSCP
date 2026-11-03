@@ -449,6 +449,7 @@
 "browser.deleted.notice.listingFailed" = "Les fichiers supprimés n’ont pas pu être listés. Les fichiers présents sont affichés.";
 "browser.deleted.notice.restoreNotConfirmed" = "La restauration n’a pas pu être confirmée. La liste a été relue : vérifiez si le fichier est de retour avant de réessayer.";
 "browser.deleted.notice.restoreGone" = "Ce fichier n’est plus supprimé. La liste a été relue.";
+"browser.deleted.notice.notRefreshed" = "Les fichiers supprimés affichés n’ont pas pu être actualisés ; ils peuvent donc être obsolètes. Actualisez pour réessayer.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Actions de connexion";

@@ -446,6 +446,7 @@
 "browser.deleted.notice.listingFailed" = "Die gelöschten Dateien konnten nicht aufgelistet werden. Angezeigt werden die vorhandenen Dateien.";
 "browser.deleted.notice.restoreNotConfirmed" = "Die Wiederherstellung konnte nicht bestätigt werden. Die Liste wurde neu gelesen: Prüfe, ob die Datei wieder da ist, bevor du es erneut versuchst.";
 "browser.deleted.notice.restoreGone" = "Diese Datei ist nicht mehr gelöscht. Die Liste wurde neu gelesen.";
+"browser.deleted.notice.notRefreshed" = "Die angezeigten gelöschten Dateien konnten nicht aktualisiert werden und sind möglicherweise veraltet. Lade die Ansicht neu, um es erneut zu versuchen.";
 
 /* Connection-level actions (S3 bucket settings, Task 7) */
 "connection.actions.menu" = "Verbindungsaktionen";
