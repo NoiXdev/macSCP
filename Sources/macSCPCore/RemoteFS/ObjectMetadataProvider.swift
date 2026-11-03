@@ -75,23 +75,22 @@ public struct ObjectACL: Sendable, Equatable {
 /// spec section 4.6 measured `s3 PUT "/$B/doc.txt?acl" -H 'x-amz-acl:
 /// public-read'` -> `200`, and the following `s3 GET "/$B/doc.txt?acl"` ->
 /// `200` with the policy "unchanged: the same single owner grant. The public
-/// grant was accepted and not kept." Under the read-back rule every write
-/// here obeys (a write is read back, and a change the read does not show is
-/// not reported as made), a control for that write could only ever report
-/// "not confirmed", and no store available to this project would let a test
-/// prove otherwise. The maintainer removed it from this half on 2026-10-23
-/// (spec section 3). The same section records what the measurement does NOT
-/// establish: "that AWS refuses `PutObjectAcl` outright on a bucket with
-/// Object Ownership set to `BucketOwnerEnforced`, and that Hetzner's object
-/// storage honours ACLs. Both are reasons the feature was wanted; neither is
-/// evidence this project holds." A guard test holds this protocol to having
-/// no ACL write, so one cannot arrive here unnoticed.
+/// grant was accepted and not kept." (All of that is section 4.6.)
+///
+/// Spec section 3 draws the consequence, and says that the maintainer removed
+/// the control on 2026-10-23: "Under the first half's read-back rule the
+/// control could only ever report "not confirmed", and no store available to
+/// this project would let a test prove otherwise." Section 4.6 also records
+/// what its measurement does NOT establish: "that AWS refuses `PutObjectAcl`
+/// outright on a bucket with Object Ownership set to `BucketOwnerEnforced`,
+/// and that Hetzner's object storage honours ACLs. Both are reasons the
+/// feature was wanted; neither is evidence this project holds." Task 3's
+/// guard test is where this protocol gets held to having no ACL write, so
+/// one cannot arrive here unnoticed.
 ///
 /// **Reading the ACL lives here rather than in a third protocol** because it
 /// is the same subject as the metadata (one object's attributes) reached
-/// from the same sheet (spec section 5). A backend that can answer one of
-/// these questions about an object can answer the other, and a caller asking
-/// `as? ObjectMetadataProvider` is asking exactly that.
+/// from the same sheet (spec section 5).
 ///
 /// Every method names its bucket, for the reason `S3BucketSettings` gives:
 /// the connection's own bucket is a property of how it was opened, and a
@@ -109,6 +108,11 @@ public protocol ObjectMetadataProvider: Sendable {
     /// person editing it.
     func setMetadata(_ metadata: ObjectMetadata, ofKey key: String, inBucket bucket: String) async throws
 
-    /// `nil` when the store does not offer ACLs at all (`501`).
+    /// `nil` means the store does not offer object ACLs at all. The `501`
+    /// shape this is meant for is what the rig's store returns for the
+    /// neighbouring `GET ?ownershipControls` call (spec section 4.6:
+    /// `501 NotImplemented`); for `?acl` itself that store answers `200` with
+    /// a policy. So the `501` here is generalised from a sibling call and has
+    /// NOT been measured for `?acl`.
     func acl(ofKey key: String, inBucket bucket: String) async throws -> ObjectACL?
 }
