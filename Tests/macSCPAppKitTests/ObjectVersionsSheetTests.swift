@@ -644,6 +644,74 @@ struct ObjectVersionsSheetTests {
         #expect(ObjectVersionsTarget.resolve(file: bucketRow, in: list) == nil)
     }
 
+    // MARK: - The cost of building the table
+
+    /// A history long enough that a per-row search shows: `count` versions, the
+    /// first the current one, and every second one carrying the entity tag of
+    /// the one beneath it (a metadata-only pair), plus a delete marker.
+    private static func longHistory(_ count: Int) -> [ObjectVersion] {
+        (0..<count).map { index in
+            if index == 3 {
+                return version("m\(index)", marker: true, at: TimeInterval(1000 - index))
+            }
+            return version(
+                "v\(index)", latest: index == 0, at: TimeInterval(1000 - index),
+                etag: "E\(index / 2)")
+        }
+    }
+
+    /// Building the table's rows works out each row's state ONCE and finds no
+    /// row by searching for it. Counted, not timed: before this was pinned,
+    /// `rows(...)` worked each state out twice (the row's own, and again inside
+    /// the state text) and searched `versions` for the row's id up to three
+    /// times per row, which is quadratic in a history that nothing caps.
+    @Test func buildingTheRowsWorksEachStateOutOnceAndSearchesForNoRow() async {
+        let history = Self.longHistory(40)
+        let (model, _) = Self.model(history, settings: Self.noLock())
+        await model.load()
+        let rowCount = model.versions.count
+        #expect(rowCount == 40)
+
+        let evaluationsBefore = model.rowStateEvaluations
+        let lookupsBefore = model.positionLookups
+        let rows = model.rows(filter: .all, matching: Self.everything)
+        let evaluations = model.rowStateEvaluations - evaluationsBefore
+        let lookups = model.positionLookups - lookupsBefore
+
+        // The positive: the rows were built (all of them), so the counts below
+        // are about a real build and not about an empty one.
+        #expect(rows.count == rowCount)
+        #expect(evaluations == rowCount)
+        #expect(lookups == 0)
+    }
+
+    /// The same rows, row for row, as asking each one on its own: the cheaper
+    /// build changes the cost and nothing the person sees.
+    @Test func theBuiltRowsAreWhatAskingEachRowOnItsOwnAnswers() async {
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.retentionByVersion = [
+            "v5": ObjectRetention(mode: .governance, retainUntil: Self.at(600))
+        ]
+        fixture.legalHoldByVersion = ["v6": true]
+        let settings = FakeBucketSettings(lock: fixture)
+        let (model, _) = Self.model(Self.longHistory(12), settings: settings)
+        await model.load()
+        await model.readLockStates(of: model.versions.filter { $0.versionId != "v8" })
+        let rows = model.rows(filter: .all, matching: Self.everything)
+        #expect(rows.count == 12)
+        // The premises: the history really holds each kind of row.
+        let states = Set(rows.map { String(describing: $0.state) })
+        #expect(rows.contains { $0.state == .deleteMarker })
+        #expect(rows.contains { $0.state == .metadataOnly })
+        #expect(rows.contains { $0.state == .legalHold })
+        #expect(rows.contains { $0.state == .lockUnknown })
+        #expect(states.count >= 5)
+        for row in rows {
+            #expect(row.state == model.rowState(of: row.version), "\(row.id)")
+            #expect(row.stateText == model.stateText(of: row.version), "\(row.id)")
+        }
+    }
+
     // MARK: - Catalogue
 
     private static let locales = ["en", "de", "fr", "pl"]
