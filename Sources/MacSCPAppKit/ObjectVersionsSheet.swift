@@ -479,9 +479,16 @@ final class ObjectVersionsModel {
     @ObservationIgnored var lockReadRecorded: (@MainActor () -> Void)?
 
     /// A sheet that has not read anything yet.
+    ///
+    /// **`versioning` is required, with no default, like `recorder`.** `nil` is a
+    /// real answer (a backend with no bucket settings has no cache), but it means
+    /// the restore gate can never learn that versioning is on, so Restore is
+    /// refused for the life of the sheet. A default would let a caller that
+    /// merely forgot the argument ship exactly that, with no compiler complaint.
+    /// (Withdrawn wording: the parameter was declared `versioning: … = nil`.)
     init(
         target: ObjectVersionsTarget, provider: any ObjectVersionProvider,
-        recorder: AuditRecorder?, locks: LockBacking?, versioning: BucketVersioningCache? = nil,
+        recorder: AuditRecorder?, locks: LockBacking?, versioning: BucketVersioningCache?,
         handlers: VersionActionHandlers = VersionActionHandlers(),
         now: @escaping () -> Date = { Date() }
     ) {

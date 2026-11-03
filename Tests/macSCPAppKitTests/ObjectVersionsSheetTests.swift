@@ -59,7 +59,8 @@ struct ObjectVersionsSheetTests {
             ObjectVersionsModel.LockBacking(settings: $0, cache: ObjectLockStateCache(settings: $0))
         }
         let model = ObjectVersionsModel(
-            target: target, provider: provider, recorder: nil, locks: locks, now: { epoch })
+            target: target, provider: provider, recorder: nil, locks: locks, versioning: nil,
+            now: { epoch })
         return (model, provider)
     }
 
@@ -875,7 +876,8 @@ struct ObjectVersionsSheetHostedTests {
             target: ObjectVersionsTarget(
                 bucket: "b", key: "a.txt", displayName: "a.txt", displayPath: "/b/a.txt"),
             provider: FakeVersionProvider(versions: history), recorder: nil,
-            locks: .init(settings: settings, cache: ObjectLockStateCache(settings: settings)))
+            locks: .init(settings: settings, cache: ObjectLockStateCache(settings: settings)),
+            versioning: nil)
         await model.load()
         #expect(model.bucketLock == .applies)
         #expect(settings.versionReads.isEmpty, "nothing is read until a row is on screen")
