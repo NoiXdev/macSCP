@@ -1138,7 +1138,8 @@ extension ObjectVersionsModel {
     /// may well be locked is absent from it with no note saying so. Whether that
     /// should change (a third segment, a count of unconfirmed rows, a note under
     /// the table) is a design call for the maintainer and nothing here makes it:
-    /// no measurement says people are misled.
+    /// no measurement says people are misled, and the behaviour is pinned by
+    /// `theLockedFilterLeavesOutARowWhoseLockIsUnknownOrUnreadable`.
     enum Filter: CaseIterable {
         case all, versions, deleteMarkers, locked
 

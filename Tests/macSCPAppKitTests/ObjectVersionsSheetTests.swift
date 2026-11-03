@@ -570,6 +570,29 @@ struct ObjectVersionsSheetTests {
         #expect(ObjectVersionsModel.Filter.allCases.count == 4)
     }
 
+    /// The decision the `Filter` doc records: "Locked" is the versions KNOWN to
+    /// be locked. A row whose lock was never read, and one whose read failed, are
+    /// not in it, and are still in "All" as themselves. The premises are
+    /// asserted (the two rows really are in those two states, and the locked row
+    /// really is listed) so the exclusion is not an empty filter.
+    @Test func theLockedFilterLeavesOutARowWhoseLockIsUnknownOrUnreadable() async {
+        var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
+        fixture.retentionByVersion = ["v2": ObjectRetention(mode: .governance, retainUntil: Self.at(60))]
+        fixture.failingVersions = ["v3"]
+        let (model, _) = Self.model(Self.threeVersions, settings: FakeBucketSettings(lock: fixture))
+        await model.load()
+        // v1 is not read at all; v2 and v3 are.
+        await model.readLockStates(of: model.versions.filter { $0.versionId != "v1" })
+        let byId = Dictionary(uniqueKeysWithValues: model.versions.map { ($0.versionId, $0) })
+        #expect(model.rowState(of: byId["v3"]!) == .lockUnreadable)
+        #expect(model.rowState(of: byId["v1"]!) == .lockUnknown)
+        #expect(model.rowState(of: byId["v2"]!) == .locked(until: Self.at(60), mode: .governance))
+
+        #expect(model.rows(filter: .locked, matching: Self.everything).map(\.id) == ["v2"])
+        #expect(
+            Set(model.rows(filter: .all, matching: Self.everything).map(\.id)) == ["v1", "v2", "v3"])
+    }
+
     @Test func theSearchMatchesWhatTheRowShows() async {
         let (model, _) = Self.model(Self.threeVersions, settings: Self.noLock())
         await model.load()
