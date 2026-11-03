@@ -108,8 +108,18 @@ struct ObjectVersionActionsTests {
         return Rig(model: model, provider: provider, settings: settings, calls: calls)
     }
 
-    private static func row(_ id: String, in rig: Rig) -> ObjectVersion {
-        rig.model.versions.first { $0.versionId == id }!
+    /// The listed row `id`. A listing that lost it is a failure NAMING the row
+    /// (recorded here), not a trap that takes the target's other cases with it;
+    /// the stand-in it answers with is a row that exists nowhere, so the
+    /// assertions that follow fail too and say so.
+    private static func row(
+        _ id: String, in rig: Rig, sourceLocation: SourceLocation = #_sourceLocation
+    ) -> ObjectVersion {
+        if let found = rig.model.versions.first(where: { $0.versionId == id }) { return found }
+        Issue.record("the listing has no row \(id)", sourceLocation: sourceLocation)
+        return ObjectVersion(
+            versionId: id, key: "", isLatest: false, isDeleteMarker: false, size: nil,
+            modifiedAt: nil, entityTag: nil)
     }
 
     // MARK: - The enum is not empty
@@ -450,7 +460,10 @@ struct ObjectVersionActionsTests {
             locks: .init(settings: settings, cache: ObjectLockStateCache(settings: settings)),
             versioning: BucketVersioningCache(settings: settings), now: { Self.epoch })
         await model.load()
-        let v2 = model.versions.first { $0.versionId == "v2" }!
+        guard let v2 = model.versions.first(where: { $0.versionId == "v2" }) else {
+            Issue.record("the listing has no row v2")
+            return
+        }
         #expect(model.isEnabled(.restore, on: v2))
         let outcome = await model.action(.restore, on: v2)
         #expect(outcome == .cancelled)

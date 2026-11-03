@@ -575,7 +575,7 @@ struct ObjectVersionsSheetTests {
     /// not in it, and are still in "All" as themselves. The premises are
     /// asserted (the two rows really are in those two states, and the locked row
     /// really is listed) so the exclusion is not an empty filter.
-    @Test func theLockedFilterLeavesOutARowWhoseLockIsUnknownOrUnreadable() async {
+    @Test func theLockedFilterLeavesOutARowWhoseLockIsUnknownOrUnreadable() async throws {
         var fixture = FakeBucketSettings.ObjectLockFixture(hasLock: true)
         fixture.retentionByVersion = ["v2": ObjectRetention(mode: .governance, retainUntil: Self.at(60))]
         fixture.failingVersions = ["v3"]
@@ -584,9 +584,14 @@ struct ObjectVersionsSheetTests {
         // v1 is not read at all; v2 and v3 are.
         await model.readLockStates(of: model.versions.filter { $0.versionId != "v1" })
         let byId = Dictionary(uniqueKeysWithValues: model.versions.map { ($0.versionId, $0) })
-        #expect(model.rowState(of: byId["v3"]!) == .lockUnreadable)
-        #expect(model.rowState(of: byId["v1"]!) == .lockUnknown)
-        #expect(model.rowState(of: byId["v2"]!) == .locked(until: Self.at(60), mode: .governance))
+        // `#require`, not a force-unwrap: a listing that lost a row fails this
+        // case by name instead of ending the runner with a trap.
+        let v1 = try #require(byId["v1"], "the listing has no row v1")
+        let v2 = try #require(byId["v2"], "the listing has no row v2")
+        let v3 = try #require(byId["v3"], "the listing has no row v3")
+        #expect(model.rowState(of: v3) == .lockUnreadable)
+        #expect(model.rowState(of: v1) == .lockUnknown)
+        #expect(model.rowState(of: v2) == .locked(until: Self.at(60), mode: .governance))
 
         #expect(model.rows(filter: .locked, matching: Self.everything).map(\.id) == ["v2"])
         #expect(
