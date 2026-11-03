@@ -553,8 +553,30 @@ struct S3ObjectLockTests {
             ObjectRetention(mode: .governance, retainUntil: Date(timeIntervalSince1970: 1_800_000_000)),
             ofKey: "k", inBucket: "other", versionId: nil)
         try await fs.setLegalHold(false, ofKey: "k", inBucket: "other", versionId: nil)
-        for sent in await transport.requests.suffix(2) {
-            #expect(sent.value(forHTTPHeaderField: "x-amz-bypass-governance-retention") == nil)
+        let bypassHeader = "x-amz-bypass-governance-retention"
+        let writes = await transport.requests.suffix(2)
+
+        // Positive controls, through the SAME accessor and BEFORE its `nil` is
+        // believed (`URLRequest.value(forHTTPHeaderField:)` matches a header
+        // name case-insensitively, which subscripting `allHTTPHeaderFields` does
+        // not): both writes were really sent and signed, and the bypass name
+        // resolves when a request carries it, in another case. Without them a write
+        // that sent nothing passes the loop below for want of anything to look
+        // at: the connection's own opening request sits ahead of the two writes,
+        // so `suffix(2)` is never empty and the count alone would not notice a
+        // missing write. The two are therefore named by what they are.
+        #expect(writes.count == 2)
+        #expect(writes.map { $0.httpMethod ?? "" } == ["PUT", "PUT"])
+        #expect(writes.map { $0.url?.query ?? "" } == ["retention=", "legal-hold="])
+        #expect(writes.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") != nil })
+        var control = URLRequest(url: try #require(URL(string: "http://127.0.0.1:9000/control")))
+        control.setValue("true", forHTTPHeaderField: bypassHeader)
+        let accessorResolvesTheName =
+            control.value(forHTTPHeaderField: bypassHeader.uppercased()) == "true"
+        #expect(accessorResolvesTheName)
+
+        for sent in writes {
+            #expect(sent.value(forHTTPHeaderField: bypassHeader) == nil)
         }
     }
 
