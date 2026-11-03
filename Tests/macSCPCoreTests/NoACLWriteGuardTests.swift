@@ -47,10 +47,16 @@ import Testing
 ///    positive is that the same view still holds other header literals,
 ///    which the strict view would have blanked.
 /// 4. The EXACT set of function and enum-case declarations in `Sources/`
-///    whose names mention `acl` or `grant`. An exact set fails loudly on an
-///    addition whatever it is called; a list of write verbs cannot, because
-///    it is out-thought by the next verb (the first version of this check
-///    was such a list, and `overwriteACL` was not on it).
+///    whose names CONTAIN `acl` or `grant`, as a case-insensitive substring
+///    of the raw identifier. An exact set fails loudly on an addition
+///    whatever it is called; a list of write verbs cannot, because it is
+///    out-thought by the next verb (the first version was such a list, and
+///    `overwriteACL` was not on it); and a word splitter cannot either (the
+///    second version split `setACLs` into `set, ac, ls`, so it never
+///    entered the set). A substring admits false positives (`oracle`); that
+///    is the direction to be wrong in, and a real one is added to the
+///    expected set as a named, commented member rather than by weakening the
+///    predicate. None exists in this tree today.
 /// 5. Each scan function is driven over fixtures that are not under any
 ///    scanned directory, both ways.
 ///
@@ -58,11 +64,15 @@ import Testing
 ///
 /// A write that spells none of the above: a sub-resource name taken from
 /// somewhere that is not a literal `"acl"` and not an enum case or function
-/// named for acl/grant (a name assembled from parts at run time other than a
-/// split-off literal, which check 1's count catches); a variable, type or
-/// property named for acl/grant, since only functions and enum cases are
-/// pinned; a store reached by a request that never names the ACL at all; and
-/// anything outside `Sources/` (resource files, the Tests tree).
+/// named for acl/grant. In particular a name assembled from parts at run
+/// time is NOT seen: `"ac" + "l"` leaves no `"acl"` literal behind, so check
+/// 1's count stays at one and passes (planted, GREEN, in a function named
+/// for neither). A split-off PREFIX such as `"x-amz-" + "acl"` is caught
+/// only because it still leaves an `"acl"` literal, which takes the count to
+/// two. Also not seen: a variable, type or property named for acl/grant,
+/// since only functions and enum cases are pinned; a store reached by a
+/// request that never names the ACL at all; and anything outside `Sources/`
+/// (resource files, the Tests tree).
 @Suite("No object-ACL write guard")
 struct NoACLWriteGuardTests {
     private static var sourcesRoot: URL { SourceCorpus.url(of: .sources) }
@@ -283,21 +293,41 @@ struct NoACLWriteGuardTests {
         }
     }
 
-    @Test func theDeclarationScanFlagsEveryAclOrGrantNamedFunctionWhateverItsVerb() throws {
-        // Including the verbs a denylist did not list, and a name that is
-        // only a read: the set is exact, so the scan reports all of them and
-        // the suite decides.
+    @Test func theDeclarationScanFlagsEveryNameContainingAclOrGrantInAnySpelling() throws {
+        // Verbs a denylist did not list, a name that is only a read, and the
+        // plural and acronym spellings a word splitter mangles: `setACLs`
+        // splits into `set, ac, ls` under a caps-run rule, which is how a
+        // complete write once passed.
         let names = [
             "setACL", "overwriteACL", "uploadACL", "copyACL", "clearACL", "attachGrants",
             "makePublicACL", "acl", "finishGrant",
+            "setACLs", "setAcls", "writeACLS", "ACLWriter", "aclsForKey", "putACLs2", "GRANTS",
+            "grantRead",
         ]
         for name in names {
             let code = try SwiftSource.blankingCommentsAndStrings("func \(name)(key: String) {}")
             #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: code) == [name], "missed: \(name)")
         }
         let unrelated = try SwiftSource.blankingCommentsAndStrings(
-            "func setMetadata() {}\nfunc makePublic() {}\nfunc aclide() {}")
+            "func setMetadata() {}\nfunc makePublic() {}\nfunc replaceHeaders() {}")
         #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: unrelated).isEmpty)
+    }
+
+    @Test func aSubstringFalsePositiveIsFlaggedOnPurpose() throws {
+        // The direction to be wrong in: `oracle` contains `acl`, fails loudly,
+        // and is answered by a named member of the expected set.
+        let code = try SwiftSource.blankingCommentsAndStrings("func oracle() {}")
+        #expect(ACLWriteScan.aclOrGrantDeclarations(inCode: code) == ["oracle"])
+    }
+
+    @Test func theDeclarationScanSeesPluralAndAcronymEnumCases() throws {
+        for source in [
+            "enum E { case first, acl, last }", "enum E { case first, ACLs, last }",
+            "enum E { case writeACLS }", "enum E { case first, grantRead, last }",
+        ] {
+            let code = try SwiftSource.blankingCommentsAndStrings(source)
+            #expect(!ACLWriteScan.aclOrGrantDeclarations(inCode: code).isEmpty, "missed: \(source)")
+        }
     }
 
     @Test func theDeclarationScanSeesAnAclEnumCaseInEveryShapeItCanTake() throws {
@@ -399,8 +429,8 @@ enum ACLWriteScan {
         ((try? regexMatches(#"\bfunc\s+(\w+)"#, in: code)) ?? []).map(\.group)
     }
 
-    /// Every function and enum-case name in `code` that mentions `acl` or
-    /// `grant` as a camelCase word, in source order. Enum cases are read
+    /// Every function and enum-case name in `code` that contains `acl` or
+    /// `grant` anywhere, case-insensitively, in source order. Enum cases are read
     /// from `case` lists that carry no pattern syntax: `case .acl:` of a
     /// `switch` starts with a dot and is skipped.
     static func aclOrGrantDeclarations(inCode code: String) -> [String] {
@@ -418,13 +448,8 @@ enum ACLWriteScan {
     }
 
     static func mentionsAclOrGrant(_ name: String) -> Bool {
-        words(of: name).contains { ["acl", "acls", "grant", "grants"].contains($0) }
-    }
-
-    /// camelCase split, lower-cased: `setObjectACL` -> set, object, acl.
-    private static func words(of name: String) -> [String] {
-        let pieces = (try? regexMatches(#"([A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+)"#, in: name)) ?? []
-        return pieces.map { $0.group.lowercased() }
+        let lowered = name.lowercased()
+        return lowered.contains("acl") || lowered.contains("grant")
     }
 
     private struct Match {
