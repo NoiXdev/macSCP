@@ -443,7 +443,7 @@
 "browser.action.legalHold" = "Blokada prawna…";
 "browser.action.versions" = "Pokaż wersje…";
 "browser.action.versions.neverVersioned" = "W tym buckecie wersjonowanie nigdy nie było włączone, więc nie ma historii do wyświetlenia.";
-"menu.s3.metadata" = "Metadane…";
+"browser.action.metadata" = "Metadane…";
 "browser.deleted.notice.versioningNotConfirmed" = "Usunięte pliki nie są wyświetlane: macSCP nie mógł potwierdzić, czy ten bucket przechowuje wersje.";
 "browser.deleted.notice.listingFailed" = "Nie udało się wyświetlić listy usuniętych plików. Widoczne są pliki, które istnieją.";
 "browser.deleted.notice.restoreNotConfirmed" = "Nie udało się potwierdzić przywrócenia. Lista została odczytana ponownie: sprawdź, czy plik wrócił, zanim spróbujesz ponownie.";

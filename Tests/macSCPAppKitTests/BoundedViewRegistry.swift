@@ -256,14 +256,14 @@ enum BoundedViewRegistry {
     ) -> ObjectMetadataModel {
         let settings = FakeBucketSettings()
         return ObjectMetadataModel(
-            target: target,
+            target: target, recorder: nil,
             provider: FakeObjectMetadataProvider(
                 stored: stored
                     ?? ObjectMetadata(
                         contentType: nil, cacheControl: nil, contentDisposition: nil, custom: [:],
                         entityTag: nil)),
             settings: settings, locks: ObjectLockStateCache(settings: settings),
-            versioning: BucketVersioningCache(settings: settings), recorder: nil,
+            versioning: BucketVersioningCache(settings: settings),
             now: { lockNow }, phase: phase, loaded: stored, bucketLock: lock,
             bucketDefault: bucketDefault, versioningReading: versioning)
     }

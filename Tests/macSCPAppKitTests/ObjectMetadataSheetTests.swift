@@ -134,10 +134,10 @@ struct ObjectMetadataSheetTests {
             self.trail = trail
             self.clock = clock
             model = ObjectMetadataModel(
-                target: ObjectMetadataSheetTests.target, provider: provider, settings: settings,
+                target: ObjectMetadataSheetTests.target, recorder: trail?.recorder,
+                provider: provider, settings: settings,
                 locks: ObjectLockStateCache(settings: settings),
-                versioning: BucketVersioningCache(settings: settings),
-                recorder: trail?.recorder, now: { clock.date })
+                versioning: BucketVersioningCache(settings: settings), now: { clock.date })
         }
     }
 
@@ -193,9 +193,10 @@ struct ObjectMetadataSheetTests {
             versioning: .enabled, readError: RemoteFSError.protocolError(reason: Self.storeWords),
             lock: .init(hasLock: false))
         let model = ObjectMetadataModel(
-            target: Self.target, provider: FakeObjectMetadataProvider(stored: Self.stored),
+            target: Self.target, recorder: nil,
+            provider: FakeObjectMetadataProvider(stored: Self.stored),
             settings: settings, locks: ObjectLockStateCache(settings: settings),
-            versioning: BucketVersioningCache(settings: settings), recorder: nil)
+            versioning: BucketVersioningCache(settings: settings))
         await model.load()
         #expect(model.versionNote?.key == ObjectMetadataLines.versionUnknown.key)
         #expect(model.phase == .ready, "the metadata was read, and stays editable")
@@ -224,7 +225,7 @@ struct ObjectMetadataSheetTests {
         let leaked = sentence.contains(Self.storeWords)
         #expect(leaked == false)
         #expect(rig.model.canSave == false)
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .blocked)
         #expect(rig.provider.writes.isEmpty)
     }
 
@@ -237,7 +238,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         #expect(rig.model.canSave == false)
         #expect(rig.model.explanation?.key == BucketObjectLockModel.notAcknowledgedLine.key)
-        #expect(await rig.model.save() == .complianceNotAcknowledged)
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         #expect(rig.provider.writes.isEmpty, "a COMPLIANCE-default bucket was written without the tick")
     }
 
@@ -265,13 +266,13 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         rig.model.acknowledged = true
         #expect(rig.model.canSave)
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
         #expect(rig.model.isSaved)
         #expect(rig.model.acknowledged == false, "the tick was spent by the write")
         // A second change needs a new tick.
         rig.model.cacheControl = "max-age=5"
-        #expect(await rig.model.save() == .complianceNotAcknowledged)
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         #expect(rig.provider.writes.count == 1)
     }
 
@@ -292,7 +293,7 @@ struct ObjectMetadataSheetTests {
         #expect(rig.model.acknowledgementDate != named)
         #expect(rig.model.activeBlockers == [.acknowledgementStale])
         #expect(rig.model.explanation?.key == BucketObjectLockModel.staleLine.key)
-        #expect(await rig.model.save() == .acknowledgementStale)
+        #expect(await rig.model.save() == .refused(.acknowledgementStale))
         #expect(rig.provider.writes.isEmpty, "a tick for another day wrote a COMPLIANCE-default bucket")
         #expect(rig.model.acknowledged, "the tick stands: it is not taken away unexplained")
 
@@ -300,7 +301,7 @@ struct ObjectMetadataSheetTests {
         rig.model.acknowledged = false
         #expect(rig.model.explanation?.key == BucketObjectLockModel.notAcknowledgedLine.key)
         rig.model.acknowledged = true
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
     }
 
@@ -319,7 +320,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         #expect(rig.model.defaultIsCompliance == false)
         #expect(rig.model.canSave)
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
     }
 
@@ -327,7 +328,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig(lock: .init(hasLock: true, bucketDefault: nil))
         await rig.model.load()
         rig.model.cacheControl = "no-cache"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
     }
 
@@ -338,7 +339,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig(lock: .init(hasLock: false))
         await rig.model.load()
         rig.model.cacheControl = "no-cache"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
         #expect(rig.settings.defaultReads.isEmpty, "a default was read for a bucket with no Object Lock")
         // The positive control: the question that IS asked was asked.
@@ -361,7 +362,7 @@ struct ObjectMetadataSheetTests {
             #expect(readsAfterLoad == 1)
             rig.model.cacheControl = "no-cache"
             rig.model.acknowledged = rig.model.defaultIsCompliance
-            #expect(await rig.model.save() == nil)
+            #expect(await rig.model.save() == .written)
             #expect(rig.provider.writes.count == 1)
             #expect(rig.provider.observationAtFirstWrite == readsAfterLoad + 1)
         }
@@ -373,7 +374,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         #expect(rig.model.canSave, "the sheet believes the default is GOVERNANCE")
         try await rig.settings.setObjectLockDefault(days: 90, mode: .compliance, ofBucket: Self.target.bucket)
-        #expect(await rig.model.save() == .complianceNotAcknowledged)
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         #expect(rig.provider.writes.isEmpty)
         #expect(rig.model.defaultIsCompliance, "the sheet now shows the acknowledgement")
         #expect(rig.model.bucketDefault == .init(days: 90, mode: .compliance))
@@ -385,7 +386,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         rig.model.acknowledged = true
         try await rig.settings.setObjectLockDefault(days: 365, mode: .compliance, ofBucket: Self.target.bucket)
-        #expect(await rig.model.save() == .complianceNotAcknowledged)
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         #expect(rig.provider.writes.isEmpty, "a tick for 30 days stood for 365")
         #expect(rig.model.acknowledged == false)
     }
@@ -403,7 +404,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-cache"
         #expect(rig.model.canSave == false)
         // Straight to save(), past the button: it reads again, fails again, writes nothing.
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .failed)
         #expect(rig.provider.writes.isEmpty)
         #expect(rig.model.applyFailure == ObjectLockLines.readFailed.text)
         let leaked = (rig.model.applyFailure ?? "").contains(Self.storeWords)
@@ -421,7 +422,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "max-age=60"
         #expect(rig.model.hasChanges == false)
         let defaultReads = rig.settings.defaultReads.count
-        #expect(await rig.model.save() == .nothingChanged)
+        #expect(await rig.model.save() == .refused(.nothingChanged))
         #expect(rig.provider.writes.isEmpty)
         #expect(rig.settings.defaultReads.count == defaultReads, "a save that writes nothing asked the store something")
         #expect(rig.model.explanation?.key == ObjectMetadataLines.unchangedLine.key)
@@ -431,7 +432,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig()
         await rig.model.load()
         #expect(rig.model.canSave == false)
-        #expect(await rig.model.save() == .nothingChanged)
+        #expect(await rig.model.save() == .refused(.nothingChanged))
         #expect(rig.provider.writes.isEmpty)
     }
 
@@ -440,7 +441,7 @@ struct ObjectMetadataSheetTests {
         await rig.model.load()
         rig.model.contentType = "  text/plain "
         #expect(rig.model.hasChanges == false)
-        #expect(await rig.model.save() == .nothingChanged)
+        #expect(await rig.model.save() == .refused(.nothingChanged))
     }
 
     // MARK: - What is sent
@@ -451,7 +452,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig()
         await rig.model.load()
         rig.model.cacheControl = "no-store"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         let sent = rig.provider.writes.first
         #expect(rig.provider.writes.count == 1)
         #expect(sent?.key == Self.target.key)
@@ -468,7 +469,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig()
         await rig.model.load()
         rig.model.contentDisposition = ""
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.first?.metadata.contentDisposition == nil)
         #expect(rig.provider.writes.first?.metadata.contentType == "text/plain")
     }
@@ -484,7 +485,7 @@ struct ObjectMetadataSheetTests {
         if let team = rig.model.custom.first(where: { $0.name == "team" }) {
             rig.model.removeCustomRow(team.id)
         }
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(added != nil)
         // The name is sent in the lower case the store keeps it in.
         #expect(rig.provider.writes.first?.metadata.custom == ["author": "Ada", "reviewed": "yes"])
@@ -494,9 +495,9 @@ struct ObjectMetadataSheetTests {
         let rig = Rig()
         await rig.model.load()
         rig.model.cacheControl = "no-store"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.model.hasChanges == false)
-        #expect(await rig.model.save() == .nothingChanged)
+        #expect(await rig.model.save() == .refused(.nothingChanged))
         #expect(rig.provider.writes.count == 1)
     }
 
@@ -529,7 +530,7 @@ struct ObjectMetadataSheetTests {
                 case .customNameDuplicated: ObjectMetadataLines.customNameDuplicatedLine
                 }
             #expect(line == expectedLine, "\(item.expected)")
-            #expect(await rig.model.save() == nil)
+            #expect(await rig.model.save() == .blocked)
             #expect(rig.provider.writes.isEmpty, "\(item.expected) was sent")
         }
         #expect(cases.count == 7)
@@ -542,7 +543,7 @@ struct ObjectMetadataSheetTests {
         await rig.model.load()
         rig.model.cacheControl = "no-store"
         rig.model.acknowledged = true
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         let events = rig.trail?.events ?? []
         #expect(events.count == 1)
         #expect(events.first?.kind == .metadataChanged)
@@ -558,7 +559,7 @@ struct ObjectMetadataSheetTests {
             writeError: RemoteFSError.protocolError(reason: Self.storeWords), recording: true)
         await rig.model.load()
         rig.model.cacheControl = "no-store"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .failed)
         #expect(rig.provider.writes.count == 1)
         #expect(rig.model.applyFailure == ObjectLockLines.applyFailed.text)
         #expect(rig.model.isSaved == false)
@@ -582,7 +583,7 @@ struct ObjectMetadataSheetTests {
         await rig.model.load()
         rig.model.cacheControl = Self.secretLookingValue
         rig.model.acknowledged = true
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
         let events = rig.trail?.events ?? []
         #expect(events.count == 1, "nothing was recorded, so nothing was checked")
@@ -607,14 +608,14 @@ struct ObjectMetadataSheetTests {
         let rig = Rig(lock: Self.complianceLock(), recording: true)
         await rig.model.load()
         rig.model.cacheControl = "no-store"
-        #expect(await rig.model.save() == .complianceNotAcknowledged)
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         rig.model.cacheControl = "max-age=60"
-        #expect(await rig.model.save() == .nothingChanged)
+        #expect(await rig.model.save() == .refused(.nothingChanged))
         #expect(rig.trail?.events.isEmpty == true)
         // The positive control: the same recorder records a write that goes through.
         rig.model.cacheControl = "no-store"
         rig.model.acknowledged = true
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.trail?.events.count == 1)
     }
 
@@ -622,7 +623,7 @@ struct ObjectMetadataSheetTests {
         let rig = Rig()
         await rig.model.load()
         rig.model.cacheControl = "no-store"
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .written)
         #expect(rig.provider.writes.count == 1)
         #expect(rig.model.isSaved)
     }
@@ -639,10 +640,10 @@ struct ObjectMetadataSheetTests {
         _ = await entered.wait()
         #expect(rig.model.isApplying)
         #expect(rig.model.canSave == false)
-        #expect(await rig.model.save() == nil)
+        #expect(await rig.model.save() == .blocked)
         #expect(rig.provider.writes.count == 1, "a second save was sent while the first was in flight")
         release.signal()
-        _ = await first.value
+        #expect(await first.value == .written)
         #expect(rig.provider.writes.count == 1)
         #expect(rig.model.isSaved)
     }
@@ -802,7 +803,7 @@ struct ObjectMetadataSheetTests {
 
     @Test func theDescriptorOffersTheRowAndTheWindowRoutesIt() {
         let action = BackendDescriptor.descriptor(for: .s3).fileActions.first { $0.id == "s3.metadata" }
-        #expect(action?.titleKey == "menu.s3.metadata")
+        #expect(action?.titleKey == "browser.action.metadata")
         #expect(action?.titleDefault == "Metadata…")
         if let action {
             #expect(BackendFileActionRoute(action: action) == .metadata)

@@ -568,6 +568,10 @@ struct BucketSettingsAuditTests {
             // Task 9) are writes of the same weight: the delete is the one
             // thing macSCP does here that leaves nothing to undo it with.
             String(describing: ContentView.ObjectVersionsSheetItem.self),
+            // The metadata sheet (S3 metadata, Task 4): a metadata write on a
+            // bucket whose default retention is COMPLIANCE mints a version
+            // nobody can erase, so it is in the trail like the writes above.
+            String(describing: ContentView.ObjectMetadataSheetItem.self),
         ]
         for item in items {
             let at = try #require(Self.firstUse(of: item, in: dispatchers), "\(item) is built nowhere")
@@ -589,6 +593,9 @@ struct BucketSettingsAuditTests {
             // The version sheet is built through its model, which carries the
             // recorder (`ContentView.objectVersionsModel(for:)`).
             String(describing: ObjectVersionsModel.self),
+            // The metadata sheet is built through its model too
+            // (`ContentView.objectMetadataModel(for:)`).
+            String(describing: ObjectMetadataModel.self),
         ]
         for name in names {
             let at = try #require(Self.firstUse(of: name, in: sheets), "\(name) is built nowhere")
