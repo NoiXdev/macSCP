@@ -380,28 +380,43 @@ buckets it makes are `macscp-vg-<purpose>-<hex>` and are gone afterwards
    keeps the switch from costing that request; a versioning read of a bucket that is not there
    failed after **1** request and 1 to 2 ms.
 
-**One finding nobody asked for.** On the connection's default session
-(`.ephemeral`, which keeps an in-memory `URLCache`), a buffered `GET` of an
-object followed by a `DELETE` of the SAME url was answered with the GET's 200
-and body, the `DELETE` never reached the store, and the version stayed listed;
-the same two requests on a session with no cache gave **204** and the version
-was gone. The case that pins it is:
+**One finding nobody asked for, corrected the same day.** On a session that
+keeps the default `URLCache`, a buffered `GET` of an object version followed
+by a `DELETE ?versionId=` of the SAME url came back from the rig as **200**
+with the object's body, and the version stayed listed; the same two requests
+on a session with no cache gave **204** and the version was gone. The case
+that pins the rig's answer is:
 
 ```
-theDefaultSessionAnswersADeleteFromItsCacheAfterAGetOfTheSameUrl
+aDeleteOnASessionWithTheDefaultCacheIsAnsweredWithTheObjectAndDeletesNothing
 ```
 
-It does not reach production today. Two observations, both cases of the same
-file: the object-content `GET` in `S3FileSystem` streams, and a streamed
-version download followed by `deleteVersion` of that version, on the default
-session, succeeded
-(`aStreamedVersionDownloadDoesNotStandInTheWayOfDeletingThatVersion`). The
+**Withdrawn, verbatim:** "was answered with the GET's 200
+and body, the `DELETE` never reached the store, and the version stayed listed"
+(this section's first version) and "A DELETE sent after a buffered GET of the
+same url is answered from the session's cache" (the backlog row's title). The first version of this paragraph, the commit body of
+`test(s3): the version-history assumptions, measured against the Docker rig`
+and the backlog row all read the 200 as a replayed cache entry. It was not.
+The `DELETE` reached the store: read off the request head on a loopback stub
+(`S3StateChangeNeverFromCacheTests`), it carries `If-None-Match` and
+`If-Modified-Since`, which the cache copied from the entry the earlier `GET`
+left under the same url, and each repeated `DELETE` of the run came back with
+its own `x-request-id`, which a replayed response cannot do. What the rig does
+with a `DELETE` that carries those headers is to answer it as a read and
+delete nothing. The same stub shows a `PUT` carries them too. **Not measured:**
+what any other store does with either, so whether this reaches a user on a
+store other than the rig is open.
+
+Production did not send the sequence (its object-content `GET` streams, and a
+streamed version download followed by `deleteVersion` worked, case
+`aStreamedVersionDownloadDoesNotStandInTheWayOfDeletingThatVersion`), but that
+was a property of one call site. It is fixed at the channel: the connection's
+session (`S3HTTPChannel.ownSession`) keeps no response cache, and
+`S3StateChangeNeverFromCacheTests` requires that the write which follows a
+read of the same url reaches the store with no conditional header. The
 `GET`s of `?retention` and `?legal-hold` carry the subresource in the url, so
-they are never the url of a `DELETE ?versionId=`. **Not measured:** whether a
-`HEAD` (what `stat` sends, if it does) is cached the same way, and whether a
-cache can answer any other write. The backlog row "A DELETE sent after a
-buffered GET of the same url is answered from the session's cache" carries it
-forward.
+they were never the url of a `DELETE ?versionId=`. **Not measured:** whether a
+`HEAD` leaves an entry that does the same.
 
 ---
 
