@@ -219,7 +219,16 @@ struct DeletedFileRestorer {
     /// confirmed**: a lost connection, a cancelled request or Core's own "the
     /// history still lists it" leave the marker possibly gone, and "failed"
     /// would be a claim nobody checked. The same sort as
-    /// `ObjectVersionsModel.outcome(of:for:)`.
+    /// `ObjectVersionsModel.outcome(of:for:)` **except for one arm this one does
+    /// not have**: that function sends `.finding(.objectUnderRetention)` and
+    /// `.finding(.objectUnderLegalHold)` to a refusal that says the version is
+    /// locked and nothing was changed, and here they fall to `default:` and read
+    /// as "could not be confirmed". Whether a lock refusal can reach a lift is
+    /// UNCONFIRMED: it would need the store to answer `?retention` for a delete
+    /// marker's version id, and a conforming store answers 405 there. So the arm
+    /// is not added; a comment that claims a parity the code lacks is the defect
+    /// this note corrects. (Withdrawn wording, verbatim: "The same sort as
+    /// `ObjectVersionsModel.outcome(of:for:)`." -- with nothing after it.)
     static func notice(of error: any Error) -> DeletedFilesNotice {
         switch error {
         case RemoteFSError.notFound:
