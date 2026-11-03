@@ -270,12 +270,9 @@ extension ContentView {
     /// is looking at. A backend that contributes no such action gets nothing,
     /// which is also why this cannot be reached on the local pane.
     func openCreateContainerSheet(in tab: SessionTab, session: BrowserSession) {
-        let actions = BackendDescriptor.descriptor(for: tab.connectionViewModel.kind)
-            .connectionActions
         guard
-            let action = actions.first(where: {
-                ConnectionActionRoute(action: $0) == .createBucket
-            })
+            let action = ConnectionActionRoute.contribution(
+                of: .createBucket, for: tab.connectionViewModel.kind)
         else { return }
         handleConnectionAction(action, in: tab, session: session)
     }

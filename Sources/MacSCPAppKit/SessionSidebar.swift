@@ -283,6 +283,19 @@ struct SessionSidebar: View {
     /// `onOpenTerminal`, and the same effect-value rule: the dialling
     /// program differs, the host reached does not.
     let onOpenExternalTerminal: SessionRowExternalTerminalEffect<StoredSession>
+    /// Session-row "Connect and Create Bucket…" entry (S3 metadata plan,
+    /// Task 6; spec 6.6) -- connects exactly the way `onConnect` does, in a
+    /// tab of the window's, and arranges for the create-bucket sheet to open
+    /// on that tab once it is connected. Only ever offered on a stored S3
+    /// connection that starts at the bucket list -- see
+    /// `ConnectionActionRoute.isOffered(onStored:)`. Because it connects, it
+    /// is an effect value under the rule stated at `onConnect`, and the entry
+    /// that runs it is an input (`.newBucketMenuEntry`).
+    ///
+    /// The sidebar holds no connection for it: this is the whole of what the
+    /// sidebar can do about a bucket, and the connection, the sheet and the
+    /// teardown all belong to the tab the window opens.
+    let onCreateBucket: SessionRowCreateBucketEffect<StoredSession>
     /// Sidebar export entries (M9a/T3): session/group/background context
     /// menus all funnel into this one callback with the scope they cover.
     let onExport: (SessionListViewModel.ExportScope) -> Void
@@ -1065,7 +1078,8 @@ struct SessionSidebar: View {
             onSelect: SessionRowSelectEffect(moveSelection(to:)),
             onConnect: onConnect,
             onOpenTerminal: onOpenTerminal,
-            onOpenExternalTerminal: onOpenExternalTerminal)
+            onOpenExternalTerminal: onOpenExternalTerminal,
+            onCreateBucket: onCreateBucket)
     }
 
     /// Stores a copy of one connection and points at it.
@@ -1558,6 +1572,13 @@ private struct SessionRow: View {
         L10n.string("sidebar.openExternalTerminal", "Open in External Terminal")
     }
 
+    /// Whether this row offers "Connect and Create Bucket…": the route's
+    /// answer about a stored connection, not a rule of this view. Hidden
+    /// rather than disabled, as every entry here that cannot act is.
+    private var newBucketOffered: Bool {
+        ConnectionActionRoute.createBucket.isOffered(onStored: session)
+    }
+
     /// The row's background — which of the reasons to draw one wins and
     /// which colour that is are both `SessionRowHighlight`'s, so this view
     /// decides nothing about its own highlight.
@@ -1745,6 +1766,15 @@ private struct SessionRow: View {
             if terminalPlan.isShown {
                 Button(openTerminalTitle) { _ = onInput(.terminalMenuEntry, session) }
                 Button(externalTerminalTitle) { _ = onInput(.externalTerminalMenuEntry, session) }
+            }
+            // Under the entries that connect, because it is one: it dials the
+            // same way "Connect" does, and what it adds is a sheet at the
+            // end. The title says both halves (spec 6.6: connecting is not
+            // silent -- it can raise a host-key or a credential prompt).
+            // Whether it appears is the route's answer about this stored
+            // record (`newBucketOffered`), not an `if` of this view's own.
+            if newBucketOffered {
+                Button(L10n.string("sidebar.connectAndCreateBucket", "Connect and Create Bucket…")) { _ = onInput(.newBucketMenuEntry, session) }
             }
             Button(L10n.string("sidebar.edit", "Edit…")) { onEdit() }
             Button(L10n.string("export.menu.single", "Export…")) { onExport() }

@@ -165,7 +165,16 @@ struct EmptyContainerListTests {
         let actions = try Self.commentFree("MacSCPAppKit/ContentView+MenuActions.swift")
         #expect(actions.contains("func openCreateContainerSheet("))
         #expect(actions.contains("handleConnectionAction("))
-        #expect(actions.contains("ConnectionActionRoute(action: $0) == .createBucket"))
+        // The lookup moved into the route when the connection manager's entry
+        // needed the same one (S3 metadata plan, Task 6): it read, inline here,
+        // `ConnectionActionRoute(action: $0) == .createBucket`. Both halves are
+        // still pinned, one file apart: this site asks the route, and the route
+        // reads the backend's own descriptor by id.
+        #expect(actions.contains("ConnectionActionRoute.contribution("))
+        #expect(actions.contains("of: .createBucket"))
+        let route = try Self.commentFree("MacSCPAppKit/ConnectionActionRoute.swift")
+        #expect(route.contains("BackendDescriptor.descriptor(for: kind).connectionActions.first"))
+        #expect(route.contains("ConnectionActionRoute(action: $0) == route"))
         let detail = try Self.commentFree("MacSCPAppKit/ContentView+Detail.swift")
         #expect(detail.contains("onCreateContainer:"))
         #expect(detail.contains("openCreateContainerSheet("))

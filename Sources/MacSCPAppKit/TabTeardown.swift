@@ -111,6 +111,19 @@ enum TabTeardown {
         tab.tearDownsInFlight += 1
         defer { tab.tearDownsInFlight -= 1 }
         tab.editErrorMessage = nil
+        // The create-bucket request (S3 metadata plan, Task 6), dropped FIRST
+        // and outside the `if let session` below, for the two reasons the
+        // snippet's clear (further down) gives for its position, which are
+        // both true here. The hand-off needs a session, a bucket list that
+        // has loaded and the front tab, and the session stays attached
+        // through every suspension point below, so a request still armed
+        // while the terminal shuts down and the connection closes is one the
+        // runner could act on mid-teardown -- presenting a sheet over a
+        // connection this function is taking down. And a request is armed
+        // BEFORE the dial, so a tab can be torn down with no session yet; one
+        // left behind would open the sheet on whatever the tab connects to
+        // next.
+        tab.pendingCreateBucket = nil
         if let session = tab.session {
             // MUST run before `cancelAll(reason:)`: an open conflict sheet would
             // otherwise keep the decider prompt open, which `cancelAll`

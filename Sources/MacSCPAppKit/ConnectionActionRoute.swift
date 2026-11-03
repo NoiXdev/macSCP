@@ -90,6 +90,49 @@ enum ConnectionActionRoute: String, CaseIterable {
         }
     }
 
+    /// The contribution `route` has in the backend `kind` speaks, or `nil`
+    /// when that backend contributes none.
+    ///
+    /// **The one place a route is looked up by backend.** The id is the key
+    /// and the descriptor is the author: nothing here asks which kind it is.
+    /// `ContentView.openCreateContainerSheet(in:session:)` and `isOffered
+    /// (onStored:)` below both read it, so "does this backend have such an
+    /// action" has one spelling.
+    static func contribution(
+        of route: ConnectionActionRoute, for kind: ConnectionKind
+    ) -> ConnectionActionContribution? {
+        BackendDescriptor.descriptor(for: kind).connectionActions.first {
+            ConnectionActionRoute(action: $0) == route
+        }
+    }
+
+    /// Whether the connection manager offers this action on a STORED
+    /// connection, which has no tab, no session and no listing to ask.
+    ///
+    /// **This is not `isAvailable(in:)` and does not repeat it.** That one
+    /// answers a question about a live connection, from a context that needs
+    /// a session. This one can only read what a stored record says, so it
+    /// supplies those facts to the same rule: the backend contributes the
+    /// action (the descriptor, by id), and the model's `isOffered` decides --
+    /// a freshly opened connection stands at the root, so the pane is inside
+    /// no bucket (`paneBucket: nil`), and what is left to read from the
+    /// record is whether its root is the bucket list.
+    ///
+    /// A `switch` with no `default`, so a route added later has to say
+    /// whether it belongs on this surface. The three bucket-level actions do
+    /// not: they need a bucket, and a stored connection stands in none.
+    func isOffered(onStored session: StoredSession) -> Bool {
+        switch self {
+        case .versioning, .cors, .objectLock:
+            false
+        case .createBucket:
+            Self.contribution(of: self, for: session.kind) != nil
+                && CreateBucketModel.isOffered(
+                    rootIsContainerList: session.s3?.startsAtBucketList ?? false,
+                    paneBucket: nil)
+        }
+    }
+
     /// The one question the menu asks of a row: `false` for an id this table
     /// has no case for.
     static func isAvailable(

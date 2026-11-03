@@ -115,6 +115,9 @@ struct SessionRowActivationTests {
         #expect(SessionRowActivation.build(
             for: .externalTerminalMenuEntry, isRenaming: false, isSelected: false)
             == .selectAndOpenExternalTerminal)
+        #expect(SessionRowActivation.build(
+            for: .newBucketMenuEntry, isRenaming: false, isSelected: false)
+            == .selectAndCreateBucket)
     }
 
     /// What each predicate answers per case is part of the contract, not a
@@ -133,18 +136,23 @@ struct SessionRowActivationTests {
         #expect(SessionRowActivation.selectAndConnect.acts)
         #expect(SessionRowActivation.selectAndOpenTerminal.acts)
         #expect(SessionRowActivation.selectAndOpenExternalTerminal.acts)
+        #expect(SessionRowActivation.selectAndCreateBucket.acts)
 
         #expect(!SessionRowActivation.doNothing.connects)
         #expect(!SessionRowActivation.select.connects)
         #expect(SessionRowActivation.selectAndConnect.connects)
         #expect(SessionRowActivation.selectAndOpenTerminal.connects)
         #expect(!SessionRowActivation.selectAndOpenExternalTerminal.connects)
+        // macSCP itself dials for this one -- a tab of its own, a keychain
+        // read, a TOFU prompt -- before the sheet has anything to open on.
+        #expect(SessionRowActivation.selectAndCreateBucket.connects)
 
         #expect(!SessionRowActivation.doNothing.reachesTheHost)
         #expect(!SessionRowActivation.select.reachesTheHost)
         #expect(SessionRowActivation.selectAndConnect.reachesTheHost)
         #expect(SessionRowActivation.selectAndOpenTerminal.reachesTheHost)
         #expect(SessionRowActivation.selectAndOpenExternalTerminal.reachesTheHost)
+        #expect(SessionRowActivation.selectAndCreateBucket.reachesTheHost)
     }
 
     /// A `build` that answered `.selectAndConnect` for everything would pass
@@ -164,7 +172,7 @@ struct SessionRowActivationTests {
         }
         #expect(answers == [
             .doNothing, .select, .selectAndConnect,
-            .selectAndOpenTerminal, .selectAndOpenExternalTerminal,
+            .selectAndOpenTerminal, .selectAndOpenExternalTerminal, .selectAndCreateBucket,
         ])
     }
 
@@ -224,11 +232,12 @@ struct PerformSessionRowInputTests {
         func connect(_ value: String) { log.append("connect(\(value))") }
         func openTerminal(_ value: String) { log.append("terminal(\(value))") }
         func openExternalTerminal(_ value: String) { log.append("external(\(value))") }
+        func createBucket(_ value: String) { log.append("createBucket(\(value))") }
     }
 
     /// The log entries that mean the user's host was reached — everything
     /// but the selection.
-    private static let hostReaches = ["connect", "terminal", "external"]
+    private static let hostReaches = ["connect", "terminal", "external", "createBucket"]
 
     private func run(
         _ input: SessionRowInput, isRenaming: Bool = false, isSelected: Bool = false
@@ -240,7 +249,8 @@ struct PerformSessionRowInputTests {
             onConnect: SessionRowConnectEffect(effects.connect(_:)),
             onOpenTerminal: SessionRowTerminalEffect(effects.openTerminal(_:)),
             onOpenExternalTerminal:
-                SessionRowExternalTerminalEffect(effects.openExternalTerminal(_:)))
+                SessionRowExternalTerminalEffect(effects.openExternalTerminal(_:)),
+            onCreateBucket: SessionRowCreateBucketEffect(effects.createBucket(_:)))
         return (effects.log, applied)
     }
 
@@ -282,6 +292,7 @@ struct PerformSessionRowInputTests {
         #expect(run(.contextMenuEntry, isRenaming: true).log == ["select(row)", "connect(row)"])
         #expect(run(.terminalMenuEntry).log == ["select(row)", "terminal(row)"])
         #expect(run(.externalTerminalMenuEntry).log == ["select(row)", "external(row)"])
+        #expect(run(.newBucketMenuEntry).log == ["select(row)", "createBucket(row)"])
     }
 
     @Test(arguments: SessionRowInput.allCases.filter(\.isMenuEntry))
