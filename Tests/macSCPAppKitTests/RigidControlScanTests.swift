@@ -409,6 +409,15 @@ struct RigidControlScanTests {
     /// 29 lines in all, and the counts below sum to 28 (the same one line of
     /// header prose is the difference). The Task 10 paragraph is left as it
     /// stands: it records what the commands printed when it was written.
+    ///
+    /// **Corrected 2026-11-03 (S3 metadata, Task 4).** The Task 11 paragraph
+    /// directly above read, verbatim: "print 13, 4 and 12: 29 lines in all, and
+    /// the counts below sum to 28". The metadata sheet adds one `CheckboxRow`
+    /// site (its COMPLIANCE acknowledgement), so the same three commands, run
+    /// again under `/usr/bin/grep`, print 13, 4 and 13: 30 lines in all, and
+    /// the counts below sum to 29 (the same one line of header prose is the
+    /// difference). The Task 11 paragraph is left as it stands: it records
+    /// what the commands printed when it was written.
     fileprivate struct Component: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String
@@ -449,6 +458,7 @@ struct RigidControlScanTests {
                 "CreateBucketSheet.swift": 2,
                 "FileActionEditor.swift": 2,
                 "ObjectLockSheet.swift": 2,
+                "ObjectMetadataSheet.swift": 1,
                 "SheetSearchField.swift": 1,
                 "SnippetsSheet.swift": 2,
             ]),
@@ -819,12 +829,20 @@ struct RigidControlScanTests {
     /// (`ObjectLockSheet.swift`, `BucketObjectLockSheet.swift`), one site each.
     /// Each is a sentence too long for one line, and it is the line that must
     /// not be cut.
+    ///
+    /// **Corrected 2026-11-03 (S3 metadata, Task 4).** The paragraph above read,
+    /// verbatim: "The same command now prints 7" and "one site each". It now
+    /// prints 8 (`grep -rn 'wraps:' Sources/MacSCPAppKit | wc -l`, under
+    /// `/usr/bin/grep`): the metadata sheet's COMPLIANCE acknowledgement
+    /// (`ObjectMetadataSheet.swift`) is the third sheet to carry one, for the
+    /// same reason.
     @Test func onlyTheListedSitesOptIntoWrapping() throws {
         let sources = try Self.blankedSources().filter { $0.key != Self.componentFile }
         let labelled = Self.counts(#"(?:^|\W)wraps\s*:"#, in: sources)
         let wrapping = Self.counts(#"(?:^|\W)wraps\s*:\s*true(?!\w)"#, in: sources)
         let expected = [
-            "BucketObjectLockSheet.swift": 1, "ObjectLockSheet.swift": 1, "SnippetsSheet.swift": 1,
+            "BucketObjectLockSheet.swift": 1, "ObjectLockSheet.swift": 1,
+            "ObjectMetadataSheet.swift": 1, "SnippetsSheet.swift": 1,
         ]
         #expect(wrapping == expected, "wraps: true at [\(Self.describe(wrapping))]")
         // Every use of the label is the literal `true`; a variable or a `false`

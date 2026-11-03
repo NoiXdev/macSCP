@@ -239,6 +239,35 @@ enum BoundedViewRegistry {
         return model
     }
 
+    /// A metadata sheet already in a state, over a fake provider that is
+    /// never asked: the registry measures how it is drawn, not what it reads.
+    static func metadataModel(
+        target: ObjectLockTarget = lockTarget,
+        phase: ObjectMetadataModel.Phase = .ready,
+        stored: ObjectMetadata? = ObjectMetadata(
+            contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            cacheControl: "public, max-age=31536000, immutable",
+            contentDisposition: "attachment; filename=\"quarterly-summary-2026.xlsx\"",
+            custom: ["author": "Ada Lovelace", "department": "Finance", "reviewed-by": "Grace Hopper"],
+            entityTag: nil),
+        versioning: ObjectMetadataModel.VersioningReading,
+        lock: ObjectMetadataModel.BucketLock,
+        bucketDefault: ObjectMetadataModel.LockDefault? = nil
+    ) -> ObjectMetadataModel {
+        let settings = FakeBucketSettings()
+        return ObjectMetadataModel(
+            target: target,
+            provider: FakeObjectMetadataProvider(
+                stored: stored
+                    ?? ObjectMetadata(
+                        contentType: nil, cacheControl: nil, contentDisposition: nil, custom: [:],
+                        entityTag: nil)),
+            settings: settings, locks: ObjectLockStateCache(settings: settings),
+            versioning: BucketVersioningCache(settings: settings), recorder: nil,
+            now: { lockNow }, phase: phase, loaded: stored, bucketLock: lock,
+            bucketDefault: bucketDefault, versioningReading: versioning)
+    }
+
     /// A store over the temporary directory: these sheets read it to render,
     /// and none of them is asked to write during a measurement.
     private static var temporaryDirectory: URL { FileManager.default.temporaryDirectory }
@@ -670,6 +699,57 @@ enum BoundedViewRegistry {
                     bucket: "macscp-seed", settings: FakeBucketSettings(), cache: Self.lockCache,
                     model: BucketObjectLockModel(
                         loadFailure: ObjectLockLines.denied.text, now: { Self.lockNow }))
+            },
+
+            // The metadata sheet (S3 metadata, Task 4). The widest text is the
+            // values a person has really typed: a long content type, a cache
+            // directive list and a disposition with a file name, in fields the
+            // bound has to hold in every language. The tallest state is the
+            // COMPLIANCE default with a bound-wide acknowledgement under the
+            // date, in a language whose month is long; the longest red
+            // sentences are the prefixed custom name and the unconfirmed
+            // versioning. Every model is handed in already in its state, so no
+            // measurement waits on a read; the capabilities are never called.
+            BoundedViewEntry("metadata of a file on a versioned bucket, three headers and three pairs") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent))
+            },
+            BoundedViewEntry("metadata under a COMPLIANCE default, the acknowledgement shown") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .present,
+                        bucketDefault: .init(days: 3650, mode: .compliance)))
+            },
+            BoundedViewEntry("metadata under a GOVERNANCE default, a file with no custom pairs") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        stored: ObjectMetadata(
+                            contentType: "text/plain", cacheControl: nil, contentDisposition: nil,
+                            custom: [:], entityTag: nil),
+                        versioning: .known(.suspended), lock: .present,
+                        bucketDefault: .init(days: 30, mode: .governance)))
+            },
+            BoundedViewEntry("metadata whose versioning could not be confirmed, a prefixed pair typed") {
+                let model = Self.metadataModel(versioning: .unreadable, lock: .absent)
+                model.addCustomRow()
+                model.custom[model.custom.count - 1].name = "x-amz-meta-reviewed"
+                model.custom[model.custom.count - 1].value = "yes"
+                return ObjectMetadataSheet(model: model)
+            },
+            BoundedViewEntry("metadata of a file whose name is very long") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        target: ObjectLockTarget(
+                            bucket: "macscp-seed",
+                            key: "photos/" + String(repeating: "W", count: 400) + ".jpg"),
+                        versioning: .known(.never), lock: .absent))
+            },
+            BoundedViewEntry("metadata the store would not let the key read") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        phase: .failed(ObjectLockLines.denied.text), stored: nil,
+                        versioning: .reading, lock: .reading))
             },
 
             // Eight states (counted 2026-10-21 with

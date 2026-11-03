@@ -141,6 +141,31 @@ extension ContentView {
                         locks: locks, versioning: session.bucketVersioning, tab: tab,
                         session: session)
                 }
+            case .metadata:
+                // The metadata sheet (S3 metadata, Task 4). It needs BOTH
+                // capabilities and a target, with no fallback for either: the
+                // write adds a version, and a version on a bucket whose
+                // default retention is COMPLIANCE is one nobody can erase, so
+                // a sheet that could not read the bucket's lock default must
+                // not exist (spec section 11.2), the way a COMPLIANCE write
+                // is never reachable from a half-resolved path above. The two
+                // caches are the session's, shared with the other S3 sheets;
+                // the fallback is a cache of the sheet's own over the same
+                // capability.
+                if side == .remote, selection.count == 1, let file = selection.first,
+                    let provider = session.remoteFS as? any ObjectMetadataProvider,
+                    let settings = session.remoteFS as? any S3BucketSettings,
+                    let target = ObjectLockTarget.resolve(
+                        path: file.path, in: connectionActionContext(in: tab, session: session))
+                {
+                    objectMetadataSheetItem = ObjectMetadataSheetItem(
+                        model: ObjectMetadataModel(
+                            target: target, provider: provider, settings: settings,
+                            locks: session.objectLockStates ?? ObjectLockStateCache(settings: settings),
+                            versioning: session.bucketVersioning
+                                ?? BucketVersioningCache(settings: settings),
+                            recorder: tab.auditRecorder))
+                }
             }
         }
     }

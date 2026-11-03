@@ -445,6 +445,7 @@
 "browser.action.legalHold" = "Conservation légale…";
 "browser.action.versions" = "Afficher les versions…";
 "browser.action.versions.neverVersioned" = "La gestion des versions n’a jamais été activée sur ce bucket : il n’y a aucun historique à afficher.";
+"menu.s3.metadata" = "Métadonnées…";
 "browser.deleted.notice.versioningNotConfirmed" = "Les fichiers supprimés ne sont pas affichés : macSCP n’a pas pu confirmer si ce bucket conserve des versions.";
 "browser.deleted.notice.listingFailed" = "Les fichiers supprimés n’ont pas pu être listés. Les fichiers présents sont affichés.";
 "browser.deleted.notice.restoreNotConfirmed" = "La restauration n’a pas pu être confirmée. La liste a été relue : vérifiez si le fichier est de retour avant de réessayer.";
@@ -531,6 +532,31 @@
 "s3.versions.outcome.gone" = "Cette version ne figure plus dans l’historique. Rien n’a été modifié.";
 "s3.versions.outcome.denied" = "Votre clé d’accès n’y est pas autorisée. Rien n’a été modifié.";
 "s3.versions.outcome.unsupported" = "Ce stockage ne prend pas cela en charge. Rien n’a été modifié.";
+
+/* S3 object metadata (S3 metadata, Task 4) */
+"s3.metadata.title %@" = "Métadonnées de « %@ »";
+"s3.metadata.reading" = "Lecture des métadonnées du fichier…";
+"s3.metadata.error.read" = "Les métadonnées du fichier n’ont pas pu être lues.";
+"s3.metadata.field.contentType" = "Content-Type";
+"s3.metadata.field.cacheControl" = "Cache-Control";
+"s3.metadata.field.contentDisposition" = "Content-Disposition";
+"s3.metadata.custom.heading" = "Métadonnées personnalisées";
+"s3.metadata.custom.none" = "Ce fichier n’a pas de métadonnées personnalisées.";
+"s3.metadata.custom.name" = "Nom";
+"s3.metadata.custom.value" = "Valeur";
+"s3.metadata.custom.add" = "Ajouter une paire";
+"s3.metadata.custom.remove" = "Supprimer la paire";
+"s3.metadata.replaceNote" = "L’enregistrement remplace toutes les métadonnées de ce fichier par ce qui est affiché ici. Un champ vide est supprimé.";
+"s3.metadata.versionNote.added" = "Ce bucket conserve les versions : l’enregistrement ajoute donc une nouvelle version de ce fichier. Les versions précédentes restent telles quelles.";
+"s3.metadata.versionNote.unknown" = "macSCP n’a pas pu confirmer si ce bucket conserve les versions. Si c’est le cas, l’enregistrement ajoute une nouvelle version de ce fichier.";
+"s3.metadata.complianceWarning" = "La rétention par défaut de ce bucket est en mode Conformité, et la nouvelle version qu’ajoute cette modification la reçoit. Personne ne peut effacer les données stockées de cette version ni raccourcir sa rétention avant la date indiquée ci-dessous — ni vous, ni le titulaire du compte, ni un administrateur. Cela est irréversible.";
+"s3.metadata.complianceAcknowledgement %@" = "Je comprends que personne, moi y compris, ne peut effacer les données stockées de la nouvelle version qu’ajoute cette modification, et que cela est irréversible. La nouvelle version reste verrouillée jusqu’au %@.";
+"s3.metadata.action.save" = "Enregistrer";
+"s3.metadata.blocked.unchanged" = "Rien n’a changé, il n’y a donc rien à enregistrer.";
+"s3.metadata.blocked.customNameMissing" = "Donnez un nom à chaque paire personnalisée.";
+"s3.metadata.blocked.customNameInvalid" = "Un nom personnalisé ne peut contenir que des lettres, des chiffres et ces caractères : ! # $ % & ' * + - . ^ _ ` | ~";
+"s3.metadata.blocked.customNamePrefixed" = "macSCP ajoute lui-même le préfixe dont un nom personnalisé a besoin. Saisissez le nom sans « x-amz-meta- ».";
+"s3.metadata.blocked.customNameDuplicated" = "Deux paires personnalisées portent le même nom. Les noms ne distinguent pas les majuscules des minuscules.";
 
 /* Règles CORS du bucket (réglages de bucket S3, Task 9) */
 "s3.cors.title %@" = "Règles CORS du bucket « %@ »";

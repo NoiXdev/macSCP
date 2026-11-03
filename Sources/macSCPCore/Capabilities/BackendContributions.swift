@@ -3,15 +3,21 @@ import Foundation
 /// A protocol-specific FILE-level action a backend contributes to the context
 /// menu (M12 seam). The list a backend contributes is its descriptor's
 /// `fileActions`; S3's holds `s3.presignedURL`, `s3.retention`,
-/// `s3.legalHold` and `s3.versions`. (This line used to end, verbatim: "S3's
-/// holds `s3.presignedURL`." The two Object Lock actions were added by the S3
-/// bucket settings work, Task 10. It then read, verbatim: "S3's holds
-/// `s3.presignedURL`, `s3.retention` and `s3.legalHold`." -- three, which
-/// stopped being the count when the version history's `s3.versions` row was
-/// added, Task 6 of `docs/superpowers/plans/2026-10-23-s3-version-history.md`.
-/// Counted in the same pass with `grep -c -e '(id: "s3\.'
-/// Sources/macSCPCore/Capabilities/BackendDescriptor.swift`, which prints 4
-/// and matches only the four file-action lines -- the connection actions put
+/// `s3.legalHold`, `s3.versions` and `s3.metadata`.
+///
+/// (Withdrawn wording, verbatim, in the order it was withdrawn. "S3's holds
+/// `s3.presignedURL`." -- the two Object Lock actions were added by the S3
+/// bucket settings work, Task 10. Then "S3's holds `s3.presignedURL`,
+/// `s3.retention` and `s3.legalHold`." -- three, which stopped being the count
+/// when the version history's `s3.versions` row was added, Task 6 of
+/// `docs/superpowers/plans/2026-10-23-s3-version-history.md`. Then "S3's holds
+/// `s3.presignedURL`, `s3.retention`, `s3.legalHold` and `s3.versions`." --
+/// four, which stopped being the count when the metadata sheet's
+/// `s3.metadata` row was added, Task 4 of
+/// `docs/superpowers/plans/2026-10-23-s3-metadata-and-acls.md`. Counted in
+/// that pass with `grep -c -e '(id: "s3\.'
+/// Sources/macSCPCore/Capabilities/BackendDescriptor.swift`, which prints 5
+/// and matches only the five file-action lines -- the connection actions put
 /// their `id:` on a line of its own -- and the SSH and WebDAV lists are `[]`.)
 ///
 /// This comment used to end "(M12 seam; empty for ssh/s3 now — S3 presigned

@@ -839,6 +839,20 @@ struct ContentView: View {
     }
 
     @State var objectVersionsSheetItem: ObjectVersionsSheetItem?
+
+    // MARK: - Object metadata (S3 metadata, Task 4)
+
+    /// The file whose metadata the sheet edits, with what it reads and writes
+    /// through, captured at presentation time for the reason
+    /// `BucketVersioningSheetItem` gives. The model is built by the menu
+    /// action, where the capabilities are in hand, so the sheet is handed a
+    /// model and not the pieces to make one.
+    struct ObjectMetadataSheetItem: Identifiable {
+        let id = UUID()
+        let model: ObjectMetadataModel
+    }
+
+    @State var objectMetadataSheetItem: ObjectMetadataSheetItem?
     /// Set by `performExport` right before `showExportFileExporter`, and
     /// cleared by the `fileExporter` completion handler — which decides
     /// whether the "exported without password" alert is needed (spec M9a

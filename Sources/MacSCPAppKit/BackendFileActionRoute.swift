@@ -39,6 +39,7 @@ enum BackendFileActionRoute: String, CaseIterable {
     case retention = "s3.retention"
     case legalHold = "s3.legalHold"
     case versions = "s3.versions"
+    case metadata = "s3.metadata"
 
     init?(action: FileActionContribution) {
         self.init(rawValue: action.id)
@@ -58,10 +59,13 @@ enum BackendFileActionRoute: String, CaseIterable {
     /// the pane enters a bucket, one `GET ?versioning` per navigation) is
     /// Task 11 of the version-history plan's backlog row, not this code.
     ///
-    /// Only the history row has a condition. The `switch` has no `default`.
+    /// Only the history row has a condition: the metadata row is offered
+    /// whatever the bucket's versioning is (a write to an unversioned bucket
+    /// replaces the file's metadata in place), and its sheet says which it is.
+    /// The `switch` has no `default`.
     func verdict(bucketVersioning: BucketVersioning?) -> FileActionVerdict {
         switch self {
-        case .presignedURL, .retention, .legalHold:
+        case .presignedURL, .retention, .legalHold, .metadata:
             return .available
         case .versions:
             guard let bucketVersioning else { return .available }
