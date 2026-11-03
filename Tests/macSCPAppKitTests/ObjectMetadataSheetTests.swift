@@ -435,7 +435,7 @@ struct ObjectMetadataSheetTests {
         await rig.model.load()
         rig.model.cacheControl = "no-cache"
         let before = rig.model.refusedSaves
-        _ = await rig.model.save()
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
         #expect(rig.model.refusedSaves == before + 1)
     }
 
@@ -795,7 +795,17 @@ struct ObjectMetadataSheetTests {
                     let allowed = rig.model.canSave
                     let expected = changed && (lock != .compliance || ticked)
                     #expect(allowed == expected, "\(lock) changed:\(changed) ticked:\(ticked)")
-                    _ = await rig.model.save()
+                    // The outcome is the oracle's too: what canSave refused is
+                    // refused for the reason the state has, and what it allowed
+                    // is written.
+                    let outcome: ObjectMetadataModel.SaveOutcome =
+                        !changed
+                        ? .refused(.nothingChanged)
+                        : (lock == .compliance && !ticked
+                            ? .refused(.complianceNotAcknowledged) : .written)
+                    #expect(
+                        await rig.model.save() == outcome,
+                        "\(lock) changed:\(changed) ticked:\(ticked)")
                     #expect(
                         rig.provider.writes.count == (allowed ? 1 : 0),
                         "\(lock) changed:\(changed) ticked:\(ticked)")

@@ -597,7 +597,6 @@ final class ObjectMetadataModel {
     ///    default's sheet leaves it, because the only sentence otherwise would
     ///    be an instruction to redo what the person has just done.
     /// 4. The write, then one line in the trail either way.
-    @discardableResult
     func save() async -> SaveOutcome {
         guard phase == .ready, !isApplying else { return .blocked }
         // A pair that cannot be sent comes first: a nameless pair is left out
@@ -704,7 +703,11 @@ struct ObjectMetadataSheet: BoundedView {
                 Button(L10n.string("common.close", "Close")) { dismiss() }
                     .buttonStyle(.polished)
                 Button(ObjectMetadataLines.saveAction.text) {
-                    Task { await model.save() }
+                    // The outcome is not read here: every one of its cases
+                    // is already on the model (`isSaved`, `applyFailure`,
+                    // `explanation`, `refusedSaves`), which is what the sheet
+                    // draws from.
+                    Task { _ = await model.save() }
                 }
                 .buttonStyle(.polishedProminent)
                 .disabled(!model.canSave)
