@@ -340,7 +340,59 @@ struct ObjectACLSectionTests {
         #expect(outcome == .written)
         #expect(
             rig.provider.aclReads == [Self.target.key, Self.target.key],
-            "a write adds a version, and the new version's list is the one on screen")
+            "the list is read again after a confirmed write: defensive, since whether a write changes it is unmeasured")
+    }
+
+    /// The re-read is accepted on one condition, that it runs after a
+    /// CONFIRMED write and nowhere else. It is structurally true of the code
+    /// today, and a condition nothing holds is one that evaporates: adding the
+    /// call to the write's `catch`, or to the COMPLIANCE refusal, was GREEN
+    /// across 62 tests before this test existed (measured 2026-11-03).
+    @MainActor @Test func theListIsReadAgainAfterAConfirmedWriteAndOnlyThen() async {
+        let compliance = FakeBucketSettings.ObjectLockFixture(
+            hasLock: true, bucketDefault: .init(days: 30, mode: .compliance))
+
+        // A confirmed write: read at open, read again.
+        let written = ObjectMetadataSheetTests.Rig(stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
+        await written.model.load()
+        written.model.contentType = "text/markdown"
+        #expect(await written.model.save() == .written)
+        #expect(written.provider.aclReads.count == 2)
+
+        // A write the store refused: not read again.
+        let failed = ObjectMetadataSheetTests.Rig(
+            stored: Self.stored, writeError: RemoteFSError.protocolError(reason: Self.storeWords),
+            aclAnswer: .policy(Self.theRigsPolicy))
+        await failed.model.load()
+        failed.model.contentType = "text/markdown"
+        #expect(await failed.model.save() == .failed)
+        #expect(failed.provider.writes.count == 1, "the write was attempted")
+        #expect(failed.provider.aclReads.count == 1, "a failed write read the list again")
+
+        // A save refused for the acknowledgement: nothing was sent, not read again.
+        let refused = ObjectMetadataSheetTests.Rig(
+            stored: Self.stored, lock: compliance, aclAnswer: .policy(Self.theRigsPolicy))
+        await refused.model.load()
+        refused.model.contentType = "text/markdown"
+        #expect(await refused.model.save() == .refused(.complianceNotAcknowledged))
+        #expect(refused.provider.writes.isEmpty)
+        #expect(refused.provider.aclReads.count == 1, "a refused save read the list again")
+
+        // A save with nothing changed: not read again.
+        let unchanged = ObjectMetadataSheetTests.Rig(
+            stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
+        await unchanged.model.load()
+        #expect(await unchanged.model.save() == .refused(.nothingChanged))
+        #expect(unchanged.provider.aclReads.count == 1, "a save that wrote nothing read the list again")
+
+        // A draft that cannot be sent: blocked, not read again.
+        let blocked = ObjectMetadataSheetTests.Rig(
+            stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
+        await blocked.model.load()
+        blocked.model.addCustomRow()
+        blocked.model.custom[blocked.model.custom.count - 1].value = "no name"
+        #expect(await blocked.model.save() == .blocked)
+        #expect(blocked.provider.aclReads.count == 1)
     }
 
     @MainActor @Test func aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt() async {
@@ -359,9 +411,22 @@ struct ObjectACLSectionTests {
         #expect(model.hasChanges, "the form is still editable")
     }
 
-    @MainActor @Test func aMissingPermissionIsSaidWithTheSheetsOwnPermissionSentence() async {
+    /// The sheet's shared denied sentence says the key may not "read or
+    /// change" the file; this section's own note says macSCP changes nothing
+    /// here, so the section says only what the read needed.
+    @MainActor @Test func aMissingPermissionIsSaidInTheSectionsOwnWordsAndPromisesNoChange() async {
         let (model, _) = await Self.loadedModel(.failure(RemoteFSError.permissionDenied(path: "k")))
-        #expect(model.accessList == .failed(Self.inEnglish { ObjectLockLines.denied.text }))
+        #expect(model.accessList == .failed(Self.inEnglish { ObjectACLLines.denied.text }))
+        for locale in Self.locales {
+            let (own, shared) = L10n.$localeOverride.withValue(locale) {
+                (ObjectACLLines.denied.text, ObjectLockLines.denied.text)
+            }
+            #expect(own != shared, "\(locale)")
+        }
+        let english = Self.inEnglish { ObjectACLLines.denied.text.lowercased() }
+        let mentionsChange = english.contains("change")
+        #expect(!mentionsChange)
+        #expect(english.contains("read"))
     }
 
     @MainActor @Test func anAccessListIsNotAskedForWhenTheMetadataCouldNotBeRead() async {
@@ -441,10 +506,28 @@ struct ObjectACLSectionTests {
         }
     }
 
-    /// The control types named in the compiled type of the section's body.
-    /// A view's body type spells every view it can build, in every branch of
-    /// every `switch` and every closure of every `ForEach`, so this reads what
-    /// the section is made of and not what one state happens to show.
+    /// The control types named in the STATIC type of the section's body: the
+    /// views the section's own `body`, its `@ViewBuilder` branches and its
+    /// `ForEach` closures spell, whatever state is shown.
+    ///
+    /// **It is a secondary net, not the primary one.** The property that
+    /// nothing here writes is held structurally by `NoACLWriteGuardTests`: no
+    /// setter, no function that takes a policy, and the only store call a
+    /// GET. This check reads what the section is made of, and it has limits
+    /// that were measured (2026-11-03, by a reviewer planting ten kinds of
+    /// control; eight were caught):
+    ///
+    /// - `AnyView` erases the body type, so a control wrapped in one is not
+    ///   spelled here (the source scan below still sees it).
+    /// - A named child view in the same file holding the control is spelled
+    ///   as its own name, not its contents, and the source scan's span stops
+    ///   at `struct ObjectACLSection`: widening it would start reporting the
+    ///   metadata sheet's own legitimate controls in the rest of the file.
+    /// - Gesture coverage is the list of names below; `.gesture(DragGesture()
+    ///   .onEnded { ... })` is not on it.
+    ///
+    /// A contributor extending this section should treat all three as limits
+    /// of this check and not as properties of the section.
     @MainActor private static func controlTypes(in section: ObjectACLSection) -> [String] {
         let tree = String(reflecting: type(of: section.body))
         return [
@@ -515,6 +598,95 @@ struct ObjectACLSectionTests {
         #expect(body.contains("maxHeight"))
     }
 
+    // MARK: - The sheet around it
+
+    /// The registry's list of findings is the whole of Core's, so "the
+    /// longest sentence a failed read can carry" is measured over all of them.
+    @MainActor @Test func theRegistrysFindingsAreEveryFindingCoreHas() {
+        let named = Set(BoundedViewRegistry.everyFinding.map(\.name))
+        #expect(named == Set(RemoteFSFinding.Name.allCases))
+        #expect(BoundedViewRegistry.everyFinding.count == RemoteFSFinding.Name.allCases.count)
+    }
+
+    @MainActor @Test func theLongestFailureSentenceIsAtLeastAsLongAsTheSectionsOwn() {
+        for locale in Self.locales {
+            let (longest, own) = L10n.$localeOverride.withValue(locale) {
+                (BoundedViewRegistry.longestAccessListFailure.count, ObjectACLLines.readFailed.text.count)
+            }
+            #expect(longest >= own, "\(locale)")
+        }
+    }
+
+    /// The whole sheet at its tallest, every optional line and a long access
+    /// list at once, holds within the tallest bound any sheet in the app is
+    /// granted (`BucketCORSSheet.bound`): the form scrolls past
+    /// `ObjectMetadataSheet`'s own cap so that content past a bound is
+    /// reachable and not clipped. Measured with the same instrument the layout
+    /// guard uses; the figure is printed so it travels with this command:
+    /// `swift test --filter theTallestStateStaysWithinTheTallestBoundInTheApp`.
+    @MainActor @Test func theTallestStateStaysWithinTheTallestBoundInTheApp() throws {
+        let ceiling = try #require(BucketCORSSheet.bound.grantedHeight)
+        let entry = try #require(
+            BoundedViewRegistry.all.first {
+                $0.stateName.hasPrefix("metadata at its tallest")
+            })
+        var figures: [String] = []
+        for locale in LayoutMeasure.shippedLocales {
+            let height = SheetBound.$isSuspendedForMeasurement.withValue(true) {
+                LayoutMeasure.minimumHeight(locale: locale, at: entry.bound.grantedWidth) {
+                    entry.content().fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            figures.append("\(locale) \(height)")
+            #expect(height <= ceiling, "\(locale): \(height) pt against \(ceiling) pt")
+        }
+        print("tallest metadata sheet, height at \(entry.bound.grantedWidth) pt wide: \(figures.joined(separator: ", ")); ceiling \(ceiling)")
+    }
+
+    /// The reading line is the first state every opened sheet shows (the form
+    /// is ready before the list is read). It is on screen when, and only when,
+    /// the list is being read: the spinner is a real AppKit view, so it can be
+    /// found in the hosted sheet where plain text cannot.
+    @MainActor @Test func theReadingStateIsOnScreenWhileTheListIsBeingRead() {
+        func spinners(_ reading: ObjectMetadataModel.AccessListReading) -> Int {
+            let rig = ObjectMetadataSheetTests.Rig(stored: Self.stored)
+            let model = ObjectMetadataModel(
+                target: Self.target, recorder: nil,
+                provider: rig.provider, settings: rig.settings,
+                locks: ObjectLockStateCache(settings: rig.settings),
+                versioning: BucketVersioningCache(settings: rig.settings),
+                phase: .ready, loaded: Self.stored, bucketLock: .absent,
+                versioningReading: .known(.never), accessList: reading)
+            return SheetBound.$isSuspendedForMeasurement.withValue(true) {
+                Self.count(NSProgressIndicator.self, in: ObjectMetadataSheet(model: model))
+            }
+        }
+        #expect(spinners(.reading) == 1)
+        // The positive beside it: no other state shows one.
+        #expect(spinners(.notOffered) == 0)
+        #expect(spinners(.policy(Self.theRigsPolicy)) == 0)
+    }
+
+    @MainActor private static func count<V: NSView, Content: View>(
+        _ type: V.Type, in content: Content
+    ) -> Int {
+        let host = NSHostingView(rootView: content)
+        host.frame = CGRect(x: 0, y: 0, width: 560, height: 900)
+        let window = NSWindow(
+            contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        var found = 0
+        @MainActor func walk(_ view: NSView) {
+            if view is V { found += 1 }
+            for child in view.subviews { walk(child) }
+        }
+        walk(host)
+        return found
+    }
+
     // MARK: - The catalogue
 
     @MainActor @Test func everyLineResolvesInEveryLanguageAndTheEnglishIsTheSourceText() {
@@ -537,7 +709,7 @@ struct ObjectACLSectionTests {
     /// `all.count` is a map of the thing it checks. The command that produces
     /// it, from the repository root:
     /// `grep -o '"s3\.acl\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l`.
-    static let lineCount = 10
+    static let lineCount = 11
 
     @Test func theFamilyHasTheLinesItIsWrittenDownToHave() throws {
         #expect(ObjectACLLines.all.count == Self.lineCount)
@@ -552,10 +724,36 @@ struct ObjectACLSectionTests {
         }
     }
 
-    @Test func noKeyIsSpelledExactlyAsTheSubresourceNameTheWriteGuardWatchesFor() {
-        for line in ObjectACLLines.all {
-            #expect(line.key.lowercased() != "acl", "\(line.key)")
+    /// Every key of a `.strings` catalogue, without its quotes.
+    private static func catalogueKeys(in catalogue: String) -> [String] {
+        catalogue.matches(of: #/(?m)^"([^"]+)" *=/#).map { String($0.output.1) }
+    }
+
+    /// The keys spelled exactly as the sub-resource name, which
+    /// `NoACLWriteGuardTests` counts as a second use of it, with a message
+    /// about query names that reads as nonsense for a catalogue key.
+    private static func keysSpelledAsTheSubresource(_ keys: [String]) -> [String] {
+        keys.filter { $0.lowercased() == "acl" }
+    }
+
+    /// Scans the catalogue FILES, not the keys this type declares: a key
+    /// declared here is prefixed `s3.acl.` and cannot be spelled `acl`, so a
+    /// test over them could never fail (the first version of this test).
+    @Test func noCatalogueKeyAnywhereIsSpelledExactlyAsTheSubresourceName() throws {
+        let catalogues = try SourceCorpus.files(under: SourceCorpus.url(of: .sources))
+            .filter { $0.pathExtension == "strings" }
+        // The positive: the scan reaches the four App catalogues and the four
+        // Core ones, and reads real keys out of each.
+        #expect(catalogues.count == 8, "\(catalogues.count)")
+        for url in catalogues {
+            let keys = Self.catalogueKeys(
+                in: try String(contentsOf: url, encoding: .utf8))
+            #expect(keys.count > 100, "\(url.lastPathComponent): \(keys.count) keys")
+            #expect(Self.keysSpelledAsTheSubresource(keys).isEmpty, "\(url.path)")
         }
+        // And the scan can fail: driven over a catalogue that does it.
+        let planted = Self.catalogueKeys(in: "\"s3.acl.heading\" = \"x\";\n\"ACL\" = \"y\";\n")
+        #expect(Self.keysSpelledAsTheSubresource(planted) == ["ACL"])
     }
 
     @Test func everyTranslationKeepsTheSpecifiersOfTheEnglish() {

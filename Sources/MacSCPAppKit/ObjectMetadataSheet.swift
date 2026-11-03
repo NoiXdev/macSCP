@@ -141,6 +141,12 @@ enum ObjectACLLines {
     /// Core answered a policy, and it holds no entries.
     static let noEntries = CatalogueLine(
         key: "s3.acl.none", english: "The access list has no entries.")
+    /// The section's own sentence for a missing permission. The sheet's shared
+    /// one (`ObjectLockLines.denied`) says the key may not "read or change"
+    /// the file, and this section's own note says macSCP changes nothing here.
+    static let denied = CatalogueLine(
+        key: "s3.acl.error.denied",
+        english: "Your access key is not allowed to read this list.")
     static let owner = CatalogueLine(key: "s3.acl.owner", english: "Owner")
     static let ownerUnnamed = CatalogueLine(
         key: "s3.acl.owner.unnamed", english: "The storage did not name an owner.")
@@ -158,7 +164,7 @@ enum ObjectACLLines {
 
     /// Every line above, in one place.
     static let all: [CatalogueLine] = [
-        heading, readOnlyNote, reading, readFailed, notOffered, noEntries, owner,
+        heading, readOnlyNote, reading, readFailed, denied, notOffered, noEntries, owner,
         ownerUnnamed, holderUnnamed, identifier,
     ]
 
@@ -169,7 +175,7 @@ enum ObjectACLLines {
         case RemoteFSError.finding(let finding):
             return finding.message
         case RemoteFSError.permissionDenied, RemoteFSError.authenticationFailed:
-            return ObjectLockLines.denied.text
+            return denied.text
         default:
             return readFailed.text
         }
@@ -701,12 +707,18 @@ final class ObjectMetadataModel {
         acknowledged = false
         do {
             adopt(try await provider.metadata(ofKey: target.key, inBucket: target.bucket))
+            // Ready BEFORE the other reads, on purpose: the fields are the
+            // sheet's point and are editable as soon as they are read, and the
+            // three reads after them each show their own "reading" state in
+            // their own place (the versioning note is absent, the lock section
+            // is empty, the access list says it is being read). So a person
+            // sees the access list's reading line every time the sheet opens,
+            // and `ObjectACLSectionTests` / the registry hold that state.
             phase = .ready
         } catch {
             phase = .failed(ObjectMetadataLines.readMessage(for: error))
             return
         }
-        await readAccessList()
         do {
             versioningReading = .known(try await versioning.versioning(target.bucket))
         } catch {
@@ -722,6 +734,10 @@ final class ObjectMetadataModel {
         } catch {
             bucketLock = .failed(ObjectLockLines.message(for: error, during: .reading))
         }
+        // Last of the three: the list is the one of them that decides nothing
+        // about saving, and the other two decide the acknowledgement, so they
+        // are not made to wait for it.
+        await readAccessList()
     }
 
     /// Reads who holds which permission on the file. **A failure here is the
@@ -812,9 +828,15 @@ final class ObjectMetadataModel {
             baseline = written
             acknowledged = false
             isSaved = true
-            // The write is done and confirmed whatever this read says. A
-            // write adds a version (spec section 4.5), and the list on
-            // screen is the one for the file as it is now, not as it was.
+            // The write is done and confirmed whatever this read says. This
+            // re-read is DEFENSIVE, not a measured need: a write is a REPLACE
+            // copy of the file onto itself (spec section 4.5), and whether
+            // that changes the file's access list is NOT measured on the rig
+            // (the measurement is carried to Task 7). It runs here, after a
+            // confirmed write and nowhere else, so the list on screen is not
+            // one read before a write that may have changed it.
+            // `ObjectACLSectionTests.theListIsReadAgainAfterAConfirmedWriteAndOnlyThen`
+            // holds "only then".
             await readAccessList()
             return .written
         } catch {
@@ -908,9 +930,33 @@ struct ObjectMetadataSheet: BoundedView {
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         case .ready:
-            form
+            // The form scrolls behind a height of its own. The sheet is bounded
+            // in width and not in height, a bounded sheet clips instead of
+            // growing, and the form's tallest state (a COMPLIANCE default, an
+            // unconfirmed versioning, a pair that cannot be sent and a long
+            // access list at once) is taller than a screen holds. The buttons
+            // stay outside it, so Close and Save are always reachable. The
+            // horizontal padding keeps a focused field's ring inside the
+            // scroll view's clip.
+            ScrollView(.vertical) {
+                form
+                    .padding(.horizontal, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: Self.formHeight)
+            .scrollBounceBehavior(.basedOnSize)
         }
     }
+
+    /// The tallest the form grows before it scrolls: 490 pt, so that the whole
+    /// sheet stays within the 620 pt `BucketCORSSheet.bound` grants, the tallest
+    /// sheet in the app. The 130 pt left over covers the sheet's own chrome (the
+    /// title, which may take two lines, the buttons and the padding), measured
+    /// 2026-11-03 as 125 pt, the difference between the sheet's height and the
+    /// form's 460 pt cap when the file name is long enough to wrap (German,
+    /// 585 pt). `ObjectACLSectionTests.theTallestStateStaysWithinTheTallestBoundInTheApp`
+    /// holds the sum.
+    private static let formHeight: CGFloat = 490
 
     @ViewBuilder private var form: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1043,7 +1089,12 @@ struct ObjectMetadataSheet: BoundedView {
 struct ObjectACLSection: View {
     let display: ObjectACLDisplay
 
-    /// The tallest the entries grow before they scroll.
+    /// The tallest the entries grow before they scroll: 130 pt. An entry that
+    /// names its holder and an identifier is 30 pt tall with 6 pt between
+    /// entries (measured 2026-11-03 as the 36 pt step from one to two to three
+    /// entries in the section alone), so three entries take 102 pt and a
+    /// fourth would take 138. 130 shows three in full and 22 pt of the fourth,
+    /// which is what tells a person there is more below.
     private static let listHeight: CGFloat = 130
 
     var body: some View {

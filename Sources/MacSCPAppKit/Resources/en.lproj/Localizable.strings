@@ -566,6 +566,7 @@
 "s3.acl.readOnlyNote" = "macSCP shows this list but does not change it.";
 "s3.acl.reading" = "Reading the access list…";
 "s3.acl.error.read" = "The access list could not be read.";
+"s3.acl.error.denied" = "Your access key is not allowed to read this list.";
 "s3.acl.notOffered" = "This storage does not offer access lists for files.";
 "s3.acl.none" = "The access list has no entries.";
 "s3.acl.owner" = "Owner";
