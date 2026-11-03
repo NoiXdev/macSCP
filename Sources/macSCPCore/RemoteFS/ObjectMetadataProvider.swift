@@ -34,6 +34,14 @@ public struct ObjectMetadata: Sendable, Equatable {
 
 /// One grant of an object's ACL: who holds which permission.
 public struct ACLGrant: Sendable, Equatable {
+    /// Who holds the grant, when the store named one. Usually a canonical
+    /// user id, but it MAY hold a group URI instead: `ACLGrant` has no field
+    /// of its own for one, and a group grant read as "unnamed" would present
+    /// a public grant as a holder the store did not say. **That group shape
+    /// is unmeasured on this store.** Spec section 4.6.1 measured only the
+    /// empty `Grantee`; mapping a group's URI into this field is an
+    /// inference from the documented policy format, not an observation. A UI
+    /// that shows this value must not assume it is an id.
     public let granteeID: String?
     public let granteeDisplayName: String?
     /// The permission as the store spells it (`FULL_CONTROL`, `READ`, ...),

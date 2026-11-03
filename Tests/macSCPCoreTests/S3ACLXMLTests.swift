@@ -125,6 +125,18 @@ struct S3ACLXMLTests {
         #expect(acl.grants[0].holderIsUnnamed == false)
     }
 
+    /// A swap in how the two are combined would show a group's URI in place
+    /// of a named holder.
+    @Test func anIdWinsOverAUriWhenAGranteeCarriesBoth() throws {
+        let body = Self.policy(
+            owner: "<Owner><ID>\(Self.ownerID)</ID></Owner>",
+            grants:
+                "<Grant><Grantee><ID>\(Self.otherID)</ID><URI>http://example.invalid/group</URI></Grantee>"
+                + "<Permission>READ</Permission></Grant>")
+        let acl = try #require(try S3ACLXML.parse(body, status: 200))
+        #expect(acl.grants[0].granteeID == Self.otherID)
+    }
+
     @Test func anEmptyIdElementNamesNobody() throws {
         let body = Self.policy(
             owner: "<Owner><ID></ID><DisplayName></DisplayName></Owner>",
