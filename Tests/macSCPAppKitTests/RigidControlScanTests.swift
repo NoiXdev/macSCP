@@ -51,7 +51,12 @@ import Testing
 /// moves — measured by
 /// `RigidControlTests.aWidthOrMinWidthFrameCollapsesTheMinimum`, and watched by
 /// `noRigidComponentIsHeldToAWidthFrame`, which reads the modifier chain on
-/// each of the 19 component calls. **Corrected 2026-10-18:** this paragraph
+/// each of the 19 component calls. **Corrected 2026-11-03 (S3 metadata, Task
+/// 4):** "19" was true when this paragraph was written and has not been since;
+/// the dated corrections at `Component` below carry the figure forward, and the
+/// latest of them says the call lines sum to 29 (counted by the three commands
+/// named there). The figure is not repeated here, so it cannot go stale a
+/// second time. **Corrected 2026-10-18:** this paragraph
 /// said those calls are "where both instances this branch deleted stood". One
 /// of the two stood there. `SnippetsSheet`'s `.frame(width: 150)` sits on a
 /// component call and is watched; `FileSearchBar`'s `.frame(width: 118)` was

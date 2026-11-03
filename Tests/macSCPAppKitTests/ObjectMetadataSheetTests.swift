@@ -81,6 +81,131 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
 
 /// The metadata sheet's decisions: what it says, what it sends, and the
 /// acknowledgement a COMPLIANCE-default bucket requires before it writes.
+///
+/// ## How sensitive these are: ten plants, committed with their commands
+///
+/// The commit that introduced this file has a compile failure as its red (the
+/// sheet was drafted before its tests and moved out of `Sources/` for one
+/// build), so the behavioural weight of "these tests would notice" is carried
+/// by plants. Each ran through `scripts/mutation-probe` from the repository
+/// root on a clean tree, which refuses a dirty one and reverts index-safely;
+/// each printed, verbatim, the control line (the unplanted tree's run) and the
+/// verdict below it. P1 to P7 and P10 plant into the sheet's model and are
+/// read by this suite (P1 and P5 to P7 were the implementer's, and the review
+/// re-ran P1; P2 to P4 were the review's); P8 and P9 plant into the wiring
+/// and are read by the audit-wiring guard in `BucketSettingsAuditTests`; P10
+/// makes a refused write report `.written`. Run 2026-11-03 on the tree of the round-1 fix commit,
+/// `fix(app): metadata sheet review round 1, a save says whether it wrote, and
+/// the audit guard sees the sheet`.
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P1 a stale acknowledgement no longer refuses' \
+///   --apply "perl -0pi -e 's/            if acknowledgementIsStale \{\n                refusedSaves \+= 1\n                return \.refused\(\.acknowledgementStale\)\n            \}\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aTickGivenForOneDayDoesNotStandForAnother()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P2 an ungiven acknowledgement no longer refuses' \
+///   --apply "perl -0pi -e 's/            if !acknowledged \{\n                refusedSaves \+= 1\n                return \.refused\(\.complianceNotAcknowledged\)\n            \}\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aComplianceDefaultBucketRefusesToSaveWithoutAnAcknowledgement()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aDefaultThatBecameComplianceWhileTheSheetWasOpenIsNotWrittenUnder()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aRefusedSaveIsSomethingTheSheetCanSee()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aSaveTheSheetRefusedRecordsNothing()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aTickIsNotCarriedOverToADifferentDefault()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aTickedComplianceDefaultBucketIsWrittenOnceAndTheTickIsSpent()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/inNoStateDoesSaveWriteWhatCanSaveRefused()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P3 the pre-write read asks for a default on a bucket with no lock' \
+///   --apply "perl -0pi -e 's/            present \? try await Self\.lockDefault\(of: target\.bucket, via: settings\) : nil/            try await Self.lockDefault(of: target.bucket, via: settings)/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aBucketWithoutObjectLockReadsNoDefaultAtAll()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P4 the audit line carries the typed Cache-Control value' \
+///   --apply "perl -0pi -e 's/key: target\.key, bucket: target\.bucket, standardFieldCount: standardFieldCount,\n                customPairCount: written\.custom\.count, complianceDefaultDays: complianceDays,\n                failure: nil\)/key: target.key + \" \" + (written.cacheControl ?? \"\"), bucket: target.bucket, standardFieldCount: standardFieldCount,\n                customPairCount: written.custom.count, complianceDefaultDays: complianceDays,\n                failure: nil)/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aWriteLeavesOneLineOfItsOwnKind()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/theAuditLineForAMetadataChangeCarriesNoCredential()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P5 no lock re-read before the write' \
+///   --apply "perl -0pi -e 's/            try await readLockBeforeTheWrite\(\)\n/            _ = 0\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aDefaultThatBecameComplianceWhileTheSheetWasOpenIsNotWrittenUnder()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aLockReadThatFailsBeforeTheWriteWritesNothingAndSaysSo()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aTickIsNotCarriedOverToADifferentDefault()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/theDefaultIsReadAgainImmediatelyBeforeEveryWrite()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P6 a draft equal to the store is no longer refused' \
+///   --apply "perl -0pi -e 's/        guard hasChanges else \{ return \.refused\(\.nothingChanged\) \}\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aSaveRightAfterOpeningWritesNothing()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aSaveTheSheetRefusedRecordsNothing()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/afterASaveTheSavedValuesAreWhatTheSheetCompares()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/changingAFieldBackBeforeSavingWritesNothing()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/inNoStateDoesSaveWriteWhatCanSaveRefused()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/spacesAroundAValueAreNotAChange()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P7 the content type is dropped from what is sent' \
+///   --apply "perl -0pi -e 's/        let written = draftMetadata\n/        var written = draftMetadata\n        written.contentType = nil\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aFieldClearedByThePersonIsSentAsNone()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aWriteLeavesOneLineOfItsOwnKind()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/afterASaveTheSavedValuesAreWhatTheSheetCompares()
+///   macSCPAppKitTests.ObjectMetadataSheetTests/savingSendsEveryFieldThatWasLoadedAndNotOnlyTheOneThatChanged()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter BucketSettingsAuditTests \
+///   --label 'P8 the menu arm builds the metadata item with recorder: nil' \
+///   --apply "perl -0pi -e 's/ObjectMetadataSheetItem\(\n                        recorder: tab\.auditRecorder,/ObjectMetadataSheetItem(\n                        recorder: nil,/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// ── control: 16 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 16 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.BucketSettingsAuditTests/everySheetItemIsBuiltWithTheTabsRecorder()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter BucketSettingsAuditTests \
+///   --label 'P9 the model is built without the item recorder' \
+///   --apply "perl -0pi -e 's/target: item\.target, recorder: item\.recorder, provider: item\.provider,/target: item.target, recorder: nil, provider: item.provider,/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// ── control: 16 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 16 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.BucketSettingsAuditTests/everySheetIsBuiltWithItsItemsRecorder()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectMetadataSheetTests \
+///   --label 'P10 a refused write is reported as written' \
+///   --apply "perl -0pi -e 's/                failure: applyFailure\)\n            return \.failed/                failure: applyFailure)\n            return .written/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 39 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 39 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectMetadataSheetTests/aRefusedWriteIsRecordedAsAFailureWithAFixedSentence()
+/// ```
+///
 @Suite("Object metadata sheet")
 struct ObjectMetadataSheetTests {
     private static let locales = ["en", "de", "fr", "pl"]
