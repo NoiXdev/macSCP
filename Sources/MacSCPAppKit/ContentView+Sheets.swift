@@ -184,6 +184,11 @@ extension ContentView {
         .sheet(item: $objectVersionsSheetItem) { item in
             ObjectVersionsSheet(model: objectVersionsModel(for: item))
         }
+        // Metadata of one file (S3 metadata, Task 4): opened from the file
+        // context menu's "Metadata…", see `handleBrowserMenuEntry`.
+        .sheet(item: $objectMetadataSheetItem) { item in
+            ObjectMetadataSheet(model: item.model)
+        }
         // Audit log sheet (M9b/T3): opened from the sidebar context menu,
         // available whether or not the session is currently connected — it
         // reads straight from `auditStore`, independent of any tab.

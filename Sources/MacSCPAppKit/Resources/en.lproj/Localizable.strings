@@ -448,6 +448,7 @@
 "browser.action.legalHold" = "Legal Hold…";
 "browser.action.versions" = "Show Versions…";
 "browser.action.versions.neverVersioned" = "This bucket has never had versioning turned on, so there is no history to show.";
+"menu.s3.metadata" = "Metadata…";
 "browser.deleted.notice.versioningNotConfirmed" = "Deleted files are not shown: macSCP could not confirm whether this bucket keeps versions.";
 "browser.deleted.notice.listingFailed" = "The deleted files could not be listed. The files that are there are shown.";
 "browser.deleted.notice.restoreNotConfirmed" = "The restore could not be confirmed. The listing was read again: check whether the file is back before trying again.";
@@ -534,6 +535,31 @@
 "s3.versions.outcome.gone" = "This version is no longer in the history. Nothing was changed.";
 "s3.versions.outcome.denied" = "Your access key is not allowed to do this. Nothing was changed.";
 "s3.versions.outcome.unsupported" = "This store does not support that. Nothing was changed.";
+
+/* S3 object metadata (S3 metadata, Task 4) */
+"s3.metadata.title %@" = "Metadata of “%@”";
+"s3.metadata.reading" = "Reading the file's metadata…";
+"s3.metadata.error.read" = "The file's metadata could not be read.";
+"s3.metadata.field.contentType" = "Content-Type";
+"s3.metadata.field.cacheControl" = "Cache-Control";
+"s3.metadata.field.contentDisposition" = "Content-Disposition";
+"s3.metadata.custom.heading" = "Custom metadata";
+"s3.metadata.custom.none" = "This file has no custom metadata.";
+"s3.metadata.custom.name" = "Name";
+"s3.metadata.custom.value" = "Value";
+"s3.metadata.custom.add" = "Add Pair";
+"s3.metadata.custom.remove" = "Remove Pair";
+"s3.metadata.replaceNote" = "Saving replaces all of this file's metadata with what is shown here. An empty field is removed.";
+"s3.metadata.versionNote.added" = "This bucket keeps versions, so saving adds a new version of this file. The earlier versions stay as they are.";
+"s3.metadata.versionNote.unknown" = "macSCP could not confirm whether this bucket keeps versions. If it does, saving adds a new version of this file.";
+"s3.metadata.complianceWarning" = "This bucket's default retention is Compliance, and the new version this change adds receives it. Nobody can erase that version's stored data or shorten its retention before the date below — not you, not the account owner, not an administrator. This cannot be undone.";
+"s3.metadata.complianceAcknowledgement %@" = "I understand that nobody, including me, can erase the stored data of the new version this change adds, and that this cannot be undone. The new version stays locked until %@.";
+"s3.metadata.action.save" = "Save";
+"s3.metadata.blocked.unchanged" = "Nothing has changed, so there is nothing to save.";
+"s3.metadata.blocked.customNameMissing" = "Give every custom pair a name.";
+"s3.metadata.blocked.customNameInvalid" = "A custom name may use only letters, digits and these characters: ! # $ % & ' * + - . ^ _ ` | ~";
+"s3.metadata.blocked.customNamePrefixed" = "macSCP adds the prefix a custom name needs on its own. Type the name without “x-amz-meta-”.";
+"s3.metadata.blocked.customNameDuplicated" = "Two custom pairs have the same name. Names do not distinguish upper and lower case.";
 
 /* Bucket CORS rules (S3 bucket settings, Task 9) */
 "s3.cors.title %@" = "CORS rules for “%@”";

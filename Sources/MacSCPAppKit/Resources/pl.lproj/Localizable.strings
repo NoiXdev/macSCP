@@ -443,6 +443,7 @@
 "browser.action.legalHold" = "Blokada prawna…";
 "browser.action.versions" = "Pokaż wersje…";
 "browser.action.versions.neverVersioned" = "W tym buckecie wersjonowanie nigdy nie było włączone, więc nie ma historii do wyświetlenia.";
+"menu.s3.metadata" = "Metadane…";
 "browser.deleted.notice.versioningNotConfirmed" = "Usunięte pliki nie są wyświetlane: macSCP nie mógł potwierdzić, czy ten bucket przechowuje wersje.";
 "browser.deleted.notice.listingFailed" = "Nie udało się wyświetlić listy usuniętych plików. Widoczne są pliki, które istnieją.";
 "browser.deleted.notice.restoreNotConfirmed" = "Nie udało się potwierdzić przywrócenia. Lista została odczytana ponownie: sprawdź, czy plik wrócił, zanim spróbujesz ponownie.";
@@ -529,6 +530,31 @@
 "s3.versions.outcome.gone" = "Tej wersji nie ma już w historii. Nic nie zostało zmienione.";
 "s3.versions.outcome.denied" = "Twój klucz dostępu nie ma na to uprawnień. Nic nie zostało zmienione.";
 "s3.versions.outcome.unsupported" = "Ten magazyn tego nie obsługuje. Nic nie zostało zmienione.";
+
+/* S3 object metadata (S3 metadata, Task 4) */
+"s3.metadata.title %@" = "Metadane pliku „%@”";
+"s3.metadata.reading" = "Odczytywanie metadanych pliku…";
+"s3.metadata.error.read" = "Nie udało się odczytać metadanych pliku.";
+"s3.metadata.field.contentType" = "Content-Type";
+"s3.metadata.field.cacheControl" = "Cache-Control";
+"s3.metadata.field.contentDisposition" = "Content-Disposition";
+"s3.metadata.custom.heading" = "Metadane niestandardowe";
+"s3.metadata.custom.none" = "Ten plik nie ma metadanych niestandardowych.";
+"s3.metadata.custom.name" = "Nazwa";
+"s3.metadata.custom.value" = "Wartość";
+"s3.metadata.custom.add" = "Dodaj parę";
+"s3.metadata.custom.remove" = "Usuń parę";
+"s3.metadata.replaceNote" = "Zapisanie zastępuje wszystkie metadane tego pliku tym, co widać tutaj. Puste pole jest usuwane.";
+"s3.metadata.versionNote.added" = "Ten bucket przechowuje wersje, więc zapisanie dodaje nową wersję tego pliku. Wcześniejsze wersje pozostają bez zmian.";
+"s3.metadata.versionNote.unknown" = "macSCP nie mógł potwierdzić, czy ten bucket przechowuje wersje. Jeśli tak, zapisanie dodaje nową wersję tego pliku.";
+"s3.metadata.complianceWarning" = "Domyślne przechowywanie w tym bucketcie ma tryb Compliance i otrzymuje je nowa wersja, którą dodaje ta zmiana. Do daty podanej poniżej nikt nie może usunąć zapisanych danych tej wersji ani skrócić jej okresu przechowywania — ani Ty, ani właściciel konta, ani administrator. Nie można tego cofnąć.";
+"s3.metadata.complianceAcknowledgement %@" = "Rozumiem, że nikt, łącznie ze mną, nie może usunąć zapisanych danych nowej wersji dodawanej przez tę zmianę i że nie można tego cofnąć. Nowa wersja pozostaje zablokowana do %@.";
+"s3.metadata.action.save" = "Zapisz";
+"s3.metadata.blocked.unchanged" = "Nic się nie zmieniło, więc nie ma czego zapisywać.";
+"s3.metadata.blocked.customNameMissing" = "Nadaj nazwę każdej parze niestandardowej.";
+"s3.metadata.blocked.customNameInvalid" = "Nazwa niestandardowa może zawierać tylko litery, cyfry i te znaki: ! # $ % & ' * + - . ^ _ ` | ~";
+"s3.metadata.blocked.customNamePrefixed" = "macSCP sam dodaje przedrostek, którego potrzebuje nazwa niestandardowa. Wpisz nazwę bez „x-amz-meta-”.";
+"s3.metadata.blocked.customNameDuplicated" = "Dwie pary niestandardowe mają tę samą nazwę. Wielkość liter nie odróżnia nazw.";
 
 /* Reguły CORS bucketa (ustawienia bucketów S3, Task 9) */
 "s3.cors.title %@" = "Reguły CORS bucketa „%@”";
