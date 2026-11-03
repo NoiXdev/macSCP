@@ -329,7 +329,12 @@ struct BrowserPane: View {
             // restore ended (S3 version history, Task 10): a fixed sentence,
             // present only while there is something to say.
             if let notice = viewModel.deletedFilesNotice {
-                DeletedFilesNoticeRow(notice: notice)
+                DeletedFilesNoticeRow(line: notice.line)
+            }
+            // Beside it and not instead of it: the rows on screen are the last
+            // good read's, and a restore's outcome must stay readable too.
+            if viewModel.deletedRowsAreStale {
+                DeletedFilesNoticeRow(line: DeletedFilesLines.notRefreshed)
             }
 
             ZStack {

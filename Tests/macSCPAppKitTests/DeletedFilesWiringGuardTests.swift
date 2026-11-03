@@ -55,6 +55,23 @@ struct DeletedFilesWiringGuardTests {
                 from: ".onChange(of: settingsStore.showDeletedFiles)",
                 to: "setShowDeletedFiles(newValue)", in: code))
         #expect(observer.contains("session.remote.setShowDeletedFiles(newValue)"))
+        // EVERY tab: the loop is over the window's whole tab list, and nothing
+        // narrows it. A tab moves between windows carrying its connection, so
+        // a pane that missed the switch is a pane that shows a different
+        // answer from the one the setting gives. (A reviewer's plant, a
+        // `prefix(1)` on the list, left the earlier body green.)
+        #expect(observer.contains("for tab in tabsModel.tabs {"))
+        #expect(observer.contains("guard let session = tab.session else { continue }"))
+        #expect(!observer.contains(".prefix("))
+        #expect(!observer.contains(".first"))
+        #expect(!observer.contains("break"))
+        // The positive beside those negatives: the hidden-files observer, the
+        // sibling this one copies, loops the same list the same way.
+        let hidden = try #require(
+            Self.span(
+                from: ".onChange(of: settingsStore.showHiddenFiles)",
+                to: "session.remote.showHiddenFiles = newValue", in: code))
+        #expect(hidden.contains("for tab in tabsModel.tabs {"))
         // Negative: the local pane is never given the switch; positive beside
         // it: the hidden-files observer, which does name both panes, is there.
         #expect(!code.contains("local.setShowDeletedFiles"))
@@ -124,6 +141,11 @@ struct DeletedFilesWiringGuardTests {
         #expect(Self.occurrences(of: "if let notice = viewModel.deletedFilesNotice {", in: pane) == 1)
         let row = try #require(
             Self.span(from: "if let notice = viewModel.deletedFilesNotice {", to: "}", in: pane))
-        #expect(row.contains("DeletedFilesNoticeRow(notice: notice)"))
+        #expect(row.contains("DeletedFilesNoticeRow(line: notice.line)"))
+        // The stale line has its own slot beside it, so neither displaces the other.
+        #expect(Self.occurrences(of: "if viewModel.deletedRowsAreStale {", in: pane) == 1)
+        let stale = try #require(
+            Self.span(from: "if viewModel.deletedRowsAreStale {", to: "}", in: pane))
+        #expect(stale.contains("DeletedFilesNoticeRow(line: DeletedFilesLines.notRefreshed)"))
     }
 }

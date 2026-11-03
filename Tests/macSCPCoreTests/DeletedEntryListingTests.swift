@@ -247,25 +247,89 @@ struct DeletedEntryListingTests {
         #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
         #expect(source.listed.count == 2)
         // The rows on screen are the old ones, and the pane SAYS so, now and
-        // on every look after: the notice stays until a `load()` replaces it,
-        // which is also what ends the suspension.
-        #expect(vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        // on every look after: the flag stays until a `load()` replaces it,
+        // which is also what ends the suspension. It is not a notice, so it
+        // displaces none.
+        #expect(vm.deletedRowsAreStale)
+        #expect(vm.deletedFilesNotice == nil)
         // The request that failed is not repeated on every tick after it.
         await vm.refreshQuietly()
         await vm.refreshQuietly()
         await vm.refreshQuietly()
         #expect(source.listed.count == 2)
         #expect(vm.items.filter(\.isDeleted).map(\.name) == ["gone.txt"])
-        #expect(vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        #expect(vm.deletedRowsAreStale)
         // A `load()` asks again, and so ends the suspension: the positive
         // beside the three silent ticks above.
         source.error = nil
         source.answer = .rows([])
         await vm.load()
+        #expect(vm.deletedRowsAreStale == false)
         #expect(vm.deletedFilesNotice == nil)
         #expect(source.listed.count == 3)
         await vm.refreshQuietly()
         #expect(source.listed.count == 4)
+    }
+
+    /// A notice that reports the outcome of the user's own action is not
+    /// displaced by one the background raised. The restore handler loads and
+    /// only then sets its notice, so a silent tick can land after it; with the
+    /// rows frozen, the stale line is raised beside the notice, and with none
+    /// held the failure waits behind it.
+    @Test func aSilentRefreshNeverDisplacesAnAccountOfTheUsersOwnAction() async {
+        let source = FakeDeletedFileSource()
+        source.answer = .rows([deletedRow("gone.txt")])
+        let vm = RemoteBrowserViewModel(fs: makeFS())
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        vm.deletedFilesNotice = .restoreNotConfirmed
+        source.error = RemoteFSError.protocolError(reason: "x")
+        await vm.refreshQuietly()
+        #expect(vm.deletedFilesNotice == .restoreNotConfirmed)
+        #expect(vm.deletedRowsAreStale)
+
+        // None held: the restore notice stands and the failure is not said.
+        let none = FakeDeletedFileSource()
+        none.answer = .rows([])
+        let bare = RemoteBrowserViewModel(fs: makeFS())
+        bare.deletedFileSource = none
+        bare.showDeletedFiles = true
+        await bare.load()
+        bare.deletedFilesNotice = .restoreGone
+        none.error = RemoteFSError.protocolError(reason: "x")
+        await bare.refreshQuietly()
+        #expect(bare.deletedFilesNotice == .restoreGone)
+        #expect(bare.deletedRowsAreStale == false)
+    }
+
+    /// The stale flag goes with the rows: a listing that fails clears it (the
+    /// rows are gone), and so does turning the switch off.
+    @Test func theStaleFlagEndsWhenTheRowsDo() async {
+        let fs = makeFS()
+        let source = FakeDeletedFileSource()
+        source.answer = .rows([deletedRow("gone.txt")])
+        let vm = RemoteBrowserViewModel(fs: fs)
+        vm.deletedFileSource = source
+        vm.showDeletedFiles = true
+        await vm.load()
+        source.error = RemoteFSError.protocolError(reason: "x")
+        await vm.refreshQuietly()
+        #expect(vm.deletedRowsAreStale)
+
+        await fs.setListFailure(RemoteFSError.protocolError(reason: "x"))
+        await vm.load()
+        #expect(vm.state != .loaded)
+        #expect(vm.deletedRowsAreStale == false)
+
+        await fs.setListFailure(nil)
+        source.error = nil
+        await vm.load()
+        source.error = RemoteFSError.protocolError(reason: "x")
+        await vm.refreshQuietly()
+        #expect(vm.deletedRowsAreStale)
+        await vm.setShowDeletedFiles(false)
+        #expect(vm.deletedRowsAreStale == false)
     }
 
     /// With no deleted row held there is nothing frozen to warn about, and the

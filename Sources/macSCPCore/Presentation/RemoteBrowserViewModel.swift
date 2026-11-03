@@ -88,9 +88,22 @@ public final class RemoteBrowserViewModel {
     /// again from the top of every `load()`. See `DeletedFilesNotice`.
     public var deletedFilesNotice: DeletedFilesNotice?
 
+    /// Whether the deleted rows on screen are the last good read's because a
+    /// silent refresh could not re-read them, so they may be out of date. A
+    /// flag of its own and not a `deletedFilesNotice`: a notice that reports
+    /// the outcome of the user's own action (a restore) must not be displaced
+    /// by one the background raised, so the two are shown side by side. It
+    /// stays until a `load()` replaces the rows, which is also what lets the
+    /// silent refresh ask again, so it is on screen for as long as the rows
+    /// are frozen and is raised once, by the one request that failed.
+    public private(set) var deletedRowsAreStale = false
+
     /// Set when a request for the deleted keys ended in a notice (the
-    /// versioning state could not be read, or the listing failed), and clear
-    /// again at the top of every `load()`. While it is set the SILENT refresh
+    /// versioning state could not be read, or the listing failed), and
+    /// assigned afresh by every `load()` that lists (the only writer besides
+    /// the silent refresh; a `load()` that ends early leaves `state` out of
+    /// `.loaded`, where the silent refresh does not run, or is followed by one
+    /// that assigns). While it is set the SILENT refresh
     /// (`refreshQuietly()`) asks no more: `BucketVersioningCache` rightly
     /// keeps no failure, so without this a bucket whose `GET ?versioning`
     /// fails would cost one failing request every auto-refresh tick (5
@@ -438,7 +451,9 @@ public final class RemoteBrowserViewModel {
         state = .loading
         lastLoadError = nil
         deletedFilesNotice = nil
-        deletedRefreshSuspended = false
+        // Not `deletedRefreshSuspended`: see that property. This one is read
+        // by the pane while the listing is failing, when no `load()` assigns it.
+        deletedRowsAreStale = false
         selectedItems = []
         let path = currentPath
         let clock = ContinuousClock()
@@ -454,6 +469,7 @@ public final class RemoteBrowserViewModel {
             displayedAll = displayItems(from: listed, deleted: deleted.rows)
             deletedFilesNotice = deleted.notice
             deletedRefreshSuspended = deleted.notice != nil
+            deletedRowsAreStale = false
             applySearch()
             state = .loaded
             // Its own line, one layer above `LocalFileSystem.list`'s own
@@ -686,8 +702,9 @@ public final class RemoteBrowserViewModel {
         showDeletedFiles = newValue
         guard changed else { return }
         if !newValue {
-            deletedRefreshSuspended = false
-            guard displayedAll.contains(where: \.isDeleted) || deletedFilesNotice != nil else { return }
+            guard displayedAll.contains(where: \.isDeleted) || deletedFilesNotice != nil
+                || deletedRowsAreStale
+            else { return }
             let selectedPaths = Set(selectedItems.map(\.path))
             displayedAll = displayedAll.filter { !$0.isDeleted }
             // Rows left `displayedAll`, so every later row moved up. The
@@ -698,6 +715,7 @@ public final class RemoteBrowserViewModel {
             // not about this method: rebuilt here, so it does not matter.
             if !mergePathIndex.isEmpty { mergePathIndex = Self.pathIndex(for: displayedAll) }
             deletedFilesNotice = nil
+            deletedRowsAreStale = false
             applySearch()
             selectedItems = items.filter { selectedPaths.contains($0.path) }
             return
@@ -753,15 +771,19 @@ public final class RemoteBrowserViewModel {
             deletedRefreshSuspended = true
             // The rows kept below are the last good read's, and nothing marks
             // them as such unless the pane says so: an unread state is not
-            // reported as one that was read. With rows held, that is the
-            // notice (it stays until a `load()` replaces it, the same event
-            // that ends the suspension, so it is on screen for as long as the
-            // rows are frozen and is said once, by the one request that
-            // failed). With none held there is nothing frozen, and the notice
-            // is what went wrong. It replaces any other notice on purpose: it
-            // describes what the rows ARE now.
-            deletedFilesNotice = displayedAll.contains(where: \.isDeleted)
-                ? .deletedRowsNotRefreshed : failure
+            // reported as one that was read. With rows held, that is
+            // `deletedRowsAreStale`. With none held there is nothing frozen,
+            // and what went wrong is the notice. **Neither displaces a notice
+            // already showing**: that one may be the account of the user's own
+            // action (a restore that did not end plainly), which is the only
+            // on-screen word on it, and the stale line has a slot of its own.
+            // The cost: with none held, a background failure is not said while
+            // another notice stands, and nothing is frozen to be misread.
+            if displayedAll.contains(where: \.isDeleted) {
+                deletedRowsAreStale = true
+            } else if deletedFilesNotice == nil {
+                deletedFilesNotice = failure
+            }
         }
         let deleted = deletedRefreshSuspended ? displayedAll.filter(\.isDeleted) : fetched.rows
         // Rebuild the selection FROM the fresh items rather than filtering

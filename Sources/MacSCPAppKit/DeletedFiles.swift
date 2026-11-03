@@ -40,7 +40,6 @@ extension DeletedFilesNotice {
         case .versioningNotConfirmed: DeletedFilesLines.versioningNotConfirmed
         case .listingFailed: DeletedFilesLines.listingFailed
         case .restoreNotConfirmed: DeletedFilesLines.restoreNotConfirmed
-        case .deletedRowsNotRefreshed: DeletedFilesLines.notRefreshed
         case .restoreGone: DeletedFilesLines.restoreGone
         case .restoreDenied: ObjectVersionsLines.outcomeDenied
         case .restoreUnsupported: ObjectVersionsLines.outcomeUnsupported
@@ -236,13 +235,14 @@ struct DeletedFileRestorer {
 }
 
 /// The line under a pane's header that says what the pane could not do about
-/// deleted files, or how a restore ended.
+/// deleted files, how a restore ended, or (`DeletedFilesLines.notRefreshed`,
+/// from `deletedRowsAreStale`) that the deleted rows may be out of date.
 struct DeletedFilesNoticeRow: View {
-    let notice: DeletedFilesNotice
+    let line: CatalogueLine
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(notice.line.text)
+            Text(line.text)
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

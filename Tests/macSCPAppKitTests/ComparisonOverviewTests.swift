@@ -335,7 +335,14 @@ struct ComparisonOverviewTests {
         let code = try SourceCorpus.code(
             of: Self.core.appendingPathComponent("Compare/ComparisonState.swift"))
         let start = try #require(code.range(of: "enum UndeterminedReason"))
-        let end = try #require(code.range(of: "enum ComparisonState"))
+        // Searched for AFTER the first anchor, so a second match that comes
+        // earlier in the file (any `enum ComparisonState…` declared above)
+        // cannot put the bounds out of order: the earlier form searched the
+        // whole file twice and sliced between the answers, which traps
+        // (`Range requires lowerBound <= upperBound`, signal 5, no verdict
+        // lines for the whole target) instead of failing by name.
+        let end = try #require(
+            code.range(of: "enum ComparisonState", range: start.upperBound..<code.endIndex))
         let body = String(code[start.upperBound..<end.lowerBound])
         let declared = Self.caseNames(inEnumBody: body)
         // Positive half first: the scan found the enum at all.

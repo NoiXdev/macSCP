@@ -144,12 +144,18 @@ struct ShowDeletedFilesTests {
     @Test(arguments: CannotApply.allCases)
     func togglingWhereItCannotApplyNeitherReListsNorErrors(place: CannotApply) async throws {
         let counters = ListingCounters()
-        // EVERY case holds a settings stub and a versioning cache over it, so
-        // that the versioning-read assertion below compares two real lists
-        // and not `nil == nil`, and ends with a read the stub counts.
+        // The two cases whose source can ask the store about versioning (the
+        // bucket-list root and versioning off) hold a settings stub and a
+        // cache over it, so that the versioning-read assertions below compare
+        // two real lists and end with a read the stub counts. The local pane
+        // and the non-S3 backend get NO cache: `make` answers `nil` for them,
+        // no source exists, and nothing there can ask the store anything, so
+        // an assertion on a settings stub they cannot reach could not fail.
+        // What pins those two is `make(...) == nil` and the listing counters.
         let seeded: BucketVersioning = place == .versioningOff ? .never : .enabled
+        let reachable = place == .bucketListRoot || place == .versioningOff
         let settings = FakeBucketSettings(versioning: seeded)
-        let cache = BucketVersioningCache(settings: settings)
+        let cache: BucketVersioningCache? = reachable ? BucketVersioningCache(settings: settings) : nil
         let vm: RemoteBrowserViewModel
         switch place {
         case .localPane:
@@ -174,7 +180,7 @@ struct ShowDeletedFilesTests {
             vm.deletedFileSource = source
         case .versioningOff:
             // Read earlier in the session, as the menu or a sheet would have.
-            #expect(try await cache.versioning("bucket") == .never)
+            #expect(try await cache?.versioning("bucket") == .never)
             let fs = HistoryListingFS(
                 counters: counters, tree: Self.versionedTree, rootIsContainerList: true)
             let made = S3DeletedFileSource.make(for: fs, versioning: cache, configuredBucket: { "" })
@@ -187,15 +193,17 @@ struct ShowDeletedFilesTests {
         let itemsBefore = vm.items
         let plainBefore = counters.plain.count
         let readsBefore = settings.reads
-        // Only the versioning-off case read before the toggle (the seed).
-        #expect(readsBefore == (place == .versioningOff ? ["bucket"] : []))
+        if reachable {
+            // Only the versioning-off case read before the toggle (the seed).
+            #expect(readsBefore == (place == .versioningOff ? ["bucket"] : []))
+        }
 
         await vm.setShowDeletedFiles(true)
 
         // Zero extra requests of any kind, state unchanged, nothing said.
         #expect(counters.plain.count == plainBefore)
         #expect(counters.deleted.isEmpty)
-        #expect(settings.reads == readsBefore)
+        if reachable { #expect(settings.reads == readsBefore) }
         #expect(vm.items == itemsBefore)
         #expect(vm.state == .loaded)
         let keptNoError = vm.lastLoadError == nil
@@ -210,8 +218,10 @@ struct ShowDeletedFilesTests {
         #expect(vm.items.contains { $0.isDeleted } == false)
         // ...and this settings stub counts a versioning read: the cache asked
         // for a bucket nobody has read yet adds exactly one to the list.
-        _ = try await cache.versioning("other-bucket")
-        #expect(settings.reads == readsBefore + ["other-bucket"])
+        if let cache {
+            _ = try await cache.versioning("other-bucket")
+            #expect(settings.reads == readsBefore + ["other-bucket"])
+        }
     }
 
     /// The positive control for the table above, on the same stub and the same
@@ -304,17 +314,17 @@ struct ShowDeletedFilesTests {
         pane.counters.setDeletedError(RemoteFSError.finding(.operationNotSupported))
         await pane.vm.refreshQuietly()
         #expect(pane.vm.items.contains { $0.isDeleted })
-        #expect(pane.vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        #expect(pane.vm.deletedRowsAreStale)
         for _ in 0..<3 { await pane.vm.refreshQuietly() }
-        #expect(pane.vm.deletedFilesNotice == .deletedRowsNotRefreshed)
+        #expect(pane.vm.deletedRowsAreStale)
         #expect(pane.counters.deleted.count == 2)
-        let line = DeletedFilesNotice.deletedRowsNotRefreshed.line
+        let line = DeletedFilesLines.notRefreshed
         #expect(line.english.contains("could not be refreshed"))
         #expect(line.english.lowercased().contains("lost") == false)
         // A load that can read again replaces it.
         pane.counters.setDeletedError(nil)
         await pane.vm.refresh()
-        #expect(pane.vm.deletedFilesNotice == nil)
+        #expect(pane.vm.deletedRowsAreStale == false)
     }
 
     /// The containment must not reach the healthy path: with nothing failing,
@@ -582,7 +592,6 @@ struct ShowDeletedFilesTests {
         for notice in [
             DeletedFilesNotice.versioningNotConfirmed, .listingFailed, .restoreNotConfirmed,
             .restoreGone, .restoreDenied, .restoreUnsupported, .restoreUnavailable,
-            .deletedRowsNotRefreshed,
         ] {
             let resolved = L10n.$localeOverride.withValue("de") {
                 L10n.string(notice.line.key, "ZZ-UNRESOLVED-ZZ")
