@@ -561,7 +561,8 @@
 "s3.acl.readOnlyNote" = "macSCP wyświetla tę listę, ale jej nie zmienia.";
 "s3.acl.reading" = "Odczytywanie listy dostępu…";
 "s3.acl.error.read" = "Nie udało się odczytać listy dostępu.";
-"s3.acl.notOffered" = "To miejsce przechowywania nie udostępnia list dostępu dla plików.";
+"s3.acl.error.denied" = "Twój klucz dostępu nie ma uprawnień do odczytu tej listy.";
+"s3.acl.notOffered" = "Ten magazyn nie udostępnia list dostępu dla plików.";
 "s3.acl.none" = "Lista dostępu nie zawiera żadnych wpisów.";
 "s3.acl.owner" = "Właściciel";
 "s3.acl.owner.unnamed" = "Magazyn nie podał właściciela.";

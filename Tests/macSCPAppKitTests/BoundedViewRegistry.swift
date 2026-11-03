@@ -278,6 +278,32 @@ enum BoundedViewRegistry {
         ownerID: String(repeating: "0123456789abcdef", count: 4), ownerDisplayName: "rustfs",
         grants: [ACLGrant(granteeID: nil, granteeDisplayName: nil, permission: "FULL_CONTROL")])
 
+    /// One finding of every kind Core has, so that "the longest sentence the
+    /// access list's failed read can say" is measured over all of them and not
+    /// over the shortest. A test (`ObjectACLSectionTests`) holds this list to
+    /// `RemoteFSFinding.Name.allCases`, so a new finding cannot be left out.
+    static let everyFinding: [RemoteFSFinding] = [
+        .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus(code: 503),
+        .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
+        .uploadStreamUnavailable, .pathExistsAndIsNotADirectory(path: "photos/2026/report.txt"),
+        .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
+        .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
+        .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged(part: 12),
+        .requestBodyUnencodable, .objectUnderLegalHold(path: "photos/2026/report.txt"),
+        .objectUnderRetention(path: "photos/2026/report.txt"), .objectLockNotConfigured,
+        .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid, .bucketNameTaken,
+        .bucketAlreadyOwnedByYou,
+    ]
+
+    /// The longest sentence a failed access-list read can carry in the current
+    /// language: the longest finding message, or the section's own denied and
+    /// generic sentences, whichever is longest. Computed where the entry is
+    /// built, so it follows the catalogue under measurement.
+    static var longestAccessListFailure: String {
+        (everyFinding.map(\.message) + [ObjectACLLines.denied.text, ObjectACLLines.readFailed.text])
+            .max { $0.count < $1.count } ?? ""
+    }
+
     /// A policy with `count` entries, each holder named with a long display
     /// name and a group's URL as its identifier (an inferred shape, see
     /// `ACLGrant.granteeID`), so that both lines wrap and the list has to
@@ -775,11 +801,16 @@ enum BoundedViewRegistry {
             // shows the rig's own shape, one unnamed holder. These are the
             // others: a long list, which must scroll behind its own height
             // because a bounded sheet clips instead of growing; a storage
-            // with none (`nil`); and a policy with no entries. A read that
-            // failed is not registered: its red sentence measured the same as
-            // the storage-with-none note in every catalogue
-            // (`entriesOfOneTypeMeasureDifferentStates`, 2026-11-03), so it
-            // was one state entered twice.
+            // with none (`nil`); and a policy with no entries. The reading
+            // state is registered because it is the first thing every opened
+            // sheet shows (the form is ready before the list is read). A failed
+            // read is registered with the LONGEST sentence it can carry (the
+            // longest finding message over every finding Core has, or the
+            // section's own): a first version of this entry used the sheet's
+            // shared denied sentence alone and measured the same as the
+            // storage-with-none note in every catalogue, which is a figure for
+            // one short sentence and not for the longest. The last entry is
+            // the sheet at its tallest, every optional line at once.
             BoundedViewEntry("metadata with an access list of twelve long-named holders") {
                 ObjectMetadataSheet(
                     model: Self.metadataModel(
@@ -797,6 +828,30 @@ enum BoundedViewRegistry {
                         versioning: .known(.enabled), lock: .absent,
                         accessList: .policy(
                             ObjectACL(ownerID: nil, ownerDisplayName: nil, grants: []))))
+            },
+            BoundedViewEntry("metadata whose access list is still being read") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent, accessList: .reading))
+            },
+            BoundedViewEntry("metadata whose access list failed with the longest sentence it can carry") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent,
+                        accessList: .failed(Self.longestAccessListFailure)))
+            },
+            BoundedViewEntry("metadata at its tallest, every optional line and a long access list at once") {
+                let model = Self.metadataModel(
+                    target: ObjectLockTarget(
+                        bucket: "macscp-seed",
+                        key: "photos/" + String(repeating: "W", count: 400) + ".jpg"),
+                    versioning: .unreadable, lock: .present,
+                    bucketDefault: .init(days: 3650, mode: .compliance),
+                    accessList: .policy(Self.crowdedAccessList(count: 12)))
+                model.addCustomRow()
+                model.custom[model.custom.count - 1].name = "x-amz-meta-reviewed"
+                model.custom[model.custom.count - 1].value = "yes"
+                return ObjectMetadataSheet(model: model)
             },
             BoundedViewEntry("metadata the store would not let the key read") {
                 ObjectMetadataSheet(
