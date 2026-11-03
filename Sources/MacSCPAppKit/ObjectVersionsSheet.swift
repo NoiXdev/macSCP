@@ -1122,6 +1122,23 @@ enum ObjectVersionsFormat {
 
 extension ObjectVersionsModel {
     /// A single-selection filter dimension, like the audit log's segments.
+    ///
+    /// **What "Locked" means, decided here and on purpose: the versions KNOWN to
+    /// be locked.** It includes `.locked` (a retention in force) and
+    /// `.legalHold`, and nothing else. `.lockUnknown` (the read has not come
+    /// back) and `.lockUnreadable` (it came back and could not be completed) are
+    /// left out, because including them would call a version locked on the
+    /// strength of not knowing, the mirror image of the mistake the sheet's
+    /// wording rule forbids (saying "unlocked", or "off", for a state that was
+    /// never measured). Those two states are shown, as themselves, in the state
+    /// column and under "All".
+    ///
+    /// **The cost, stated:** the filter is incomplete while lock reads are still
+    /// in flight, and permanently so for a row whose read failed; a version that
+    /// may well be locked is absent from it with no note saying so. Whether that
+    /// should change (a third segment, a count of unconfirmed rows, a note under
+    /// the table) is a design call for the maintainer and nothing here makes it:
+    /// no measurement says people are misled.
     enum Filter: CaseIterable {
         case all, versions, deleteMarkers, locked
 
