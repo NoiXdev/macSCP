@@ -344,6 +344,31 @@ struct SidebarNewBucketTests {
         #expect(tab.pendingCreateBucket == nil)
     }
 
+    /// A bucket list that FAILED to load drops the request instead of waiting
+    /// for ever: nothing will make it `.loaded` by itself, the pane says why,
+    /// and the toolbar's menu is still there. The `.waiting` before the load is
+    /// this test's control.
+    @Test func aBucketListThatFailedToLoadDropsTheRequest() async throws {
+        let workDir = makeTempDirectory("new-bucket-list-failed")
+        defer { try? FileManager.default.removeItem(at: workDir) }
+        let (view, secrets, cleanup) = makeContentView(storeDirectory: workDir)
+        defer { cleanup() }
+        let (tab, _) = installControlledTab(in: view, dialing: BucketListFileSystem(listFails: true))
+        let stored = storeSession(in: workDir, view: view, secrets: secrets)
+
+        view.createBucketFromSidebar(stored)
+        try await pollUntil("the tab to hold a session") { tab.session != nil }
+        #expect(view.deliverPendingCreateBucket(on: tab) == .waiting)
+
+        await tab.session?.remote.load()
+        guard case .failed = tab.session?.remote.state else {
+            Issue.record("the control: the list was supposed to fail to load")
+            return
+        }
+        #expect(view.deliverPendingCreateBucket(on: tab) == .dropped)
+        #expect(tab.pendingCreateBucket == nil)
+    }
+
     /// A tab that ends up on a different stored connection than the one the
     /// request was made for drops it, rather than offering to create a bucket
     /// in an account the user did not pick.
@@ -534,6 +559,49 @@ struct SidebarNewBucketTests {
             armed by the sidebar entry would connect and then never open the sheet.
             """)
         #expect(detail.contains("deliverPendingCreateBucket(on: $0)"))
+        // What wakes the runner is what the delivery reads. The one fact the
+        // snippet runner does not carry is the pane's load state, and without
+        // it a request waiting for the list would never be woken by the list.
+        let runner = try Self.functionBody(named: "struct PendingCreateBucketRunner: View {", in: detail)
+        for fact in [
+            "tab.pendingCreateBucket", "tab.session?.remote.state", "tab.session?.id",
+            "tab.isReconnecting", "tab.activeStoredSessionID", "activeTabID: activeTabID",
+        ] {
+            #expect(runner.contains(fact), "the runner's signal no longer carries `\(fact)`")
+        }
+    }
+
+    /// "Open Anyway" starts what was asked for. The answer lives in a view
+    /// modifier no test can press, so the pass-through is read from source:
+    /// the dialog hands `request.createsBucket` on, and builds no sheet.
+    @Test func openAnywayPassesTheRequestOnAndBuildsNoSheet() throws {
+        let sheets = try SourceCorpus.text(of: Self.sheetsFile)
+        let answer = try Self.functionBody(
+            named: "Button(L10n.string(\"tabs.alreadyOpen.openAnyway\"", in: sheets)
+        #expect(answer.contains("createsBucket: request.createsBucket"), """
+            the "Open Anyway" answer no longer hands the create-bucket request on -- it \
+            would start a plain connect and the sheet would never open.
+            """)
+        #expect(!answer.contains("CreateBucketSheetItem("))
+        // The control: the scan found the answer it was meant to read.
+        #expect(answer.contains("startWithoutAsking("))
+    }
+
+    /// The row offers the entry only where the route says so. The `if` and the
+    /// question it asks are both read: a row that showed the entry on every
+    /// connection would dial an account that has nothing to create a bucket in.
+    @Test func theRowOffersTheEntryOnlyWhereTheRouteSaysSo() throws {
+        let sidebar = try SourceCorpus.text(of: Self.sidebarFile)
+        let lines = sidebar.components(separatedBy: "\n")
+        let carrier = try #require(lines.firstIndex { line in
+            !line.trimmingCharacters(in: .whitespaces).hasPrefix("//")
+                && line.contains(".newBucketMenuEntry")
+        }, "no line forwards `.newBucketMenuEntry`")
+        #expect(
+            lines[carrier - 1].trimmingCharacters(in: .whitespaces) == "if newBucketOffered {",
+            "the entry is not directly inside `if newBucketOffered {`")
+        let question = try Self.functionBody(named: "private var newBucketOffered: Bool {", in: sidebar)
+        #expect(question.contains("ConnectionActionRoute.createBucket.isOffered(onStored: session)"))
     }
 
     private static let repoRoot: URL = URL(fileURLWithPath: #filePath)
@@ -542,6 +610,8 @@ struct SidebarNewBucketTests {
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView.swift")
     private static let menuActionsFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+MenuActions.swift")
+    private static let sheetsFile = repoRoot
+        .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Sheets.swift")
     private static let sidebarFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/SessionSidebar.swift")
     private static let detailFile = repoRoot
@@ -589,6 +659,7 @@ private final class BucketListFileSystem: RemoteFileSystem, S3BucketSettings, Se
     private let settings = FakeBucketSettings()
     private let closed = Mutex(0)
     private let holdsDisconnect: Bool
+    private let listFails: Bool
     /// Raised when `disconnect()` is entered; only meaningful when it holds.
     let disconnectEntered = AsyncSignal()
     /// Releases a held `disconnect()`.
@@ -597,14 +668,20 @@ private final class BucketListFileSystem: RemoteFileSystem, S3BucketSettings, Se
     /// `holdsDisconnect` parks `disconnect()` until the test releases it, so a
     /// test can stand between the start of a teardown and its end without a
     /// clock.
-    init(holdsDisconnect: Bool = false) { self.holdsDisconnect = holdsDisconnect }
+    ///
+    /// `listFails` makes the bucket list itself fail to load.
+    init(holdsDisconnect: Bool = false, listFails: Bool = false) {
+        self.holdsDisconnect = holdsDisconnect
+        self.listFails = listFails
+    }
 
     var disconnects: Int { closed.withLock { $0 } }
 
     nonisolated var rootIsContainerList: Bool { true }
 
     func list(path: String) async throws -> [RemoteFileItem] {
-        [
+        if listFails { throw RemoteFSError.protocolError(reason: "list refused") }
+        return [
             RemoteFileItem(name: "first-bucket", path: "/first-bucket", kind: .directory, isBucket: true),
             RemoteFileItem(name: "second-bucket", path: "/second-bucket", kind: .directory, isBucket: true),
         ]
