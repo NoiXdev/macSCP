@@ -714,6 +714,38 @@ struct ObjectVersionsSheetTests {
         #expect(lookups == 0)
     }
 
+    /// A position that does not name the row is not trusted: the answer is the
+    /// one the position-less call gives, whatever the position is. Defensive and
+    /// unreachable today (`rows()` always passes the true position), which is
+    /// exactly why it needs a test of its own: it is held by this and by nothing
+    /// else. Every row against 17 positions: none, two negative, each index of
+    /// the 12 rows, one past the end, and one far past it.
+    @Test func aPositionThatDoesNotNameTheRowCostsALookupAndNeverAWrongAnswer() async {
+        let (model, _) = Self.model(Self.longHistory(12), settings: Self.noLock())
+        await model.load()
+        let rowCount = model.versions.count
+        #expect(rowCount == 12)
+        let positions: [Int?] = [nil, -2, -1] + (0..<rowCount).map { Optional($0) } + [rowCount, 100]
+        #expect(positions.count == 17)
+
+        var metadataOnly = 0
+        for row in model.versions {
+            let truth = model.isMetadataOnly(row)
+            if truth { metadataOnly += 1 }
+            let truthState = model.rowState(of: row)
+            for position in positions {
+                let asked = model.isMetadataOnly(row, at: position)
+                let state = model.rowState(of: row, at: position)
+                #expect(asked == truth, "\(row.versionId) at \(String(describing: position))")
+                #expect(state == truthState, "\(row.versionId) at \(String(describing: position))")
+            }
+        }
+        // The premise: the history holds both answers, so "the same" is not a
+        // comparison of one constant with itself.
+        #expect(metadataOnly > 0)
+        #expect(metadataOnly < rowCount)
+    }
+
     /// The same rows, row for row, as asking each one on its own: the cheaper
     /// build changes the cost and nothing the person sees.
     @Test func theBuiltRowsAreWhatAskingEachRowOnItsOwnAnswers() async {
