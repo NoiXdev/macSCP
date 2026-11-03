@@ -26,6 +26,122 @@ import macSCPCore
 ///    label that said "ID" would be false of a group.
 /// 4. The section holds no control: not as a rule written down, but as what
 ///    the hosted view contains.
+///
+/// ## How sensitive these are: ten plants, committed with their commands
+///
+/// The commit that introduced this file has a compile failure as its red (the
+/// tests were written before the types they name), so the behavioural weight
+/// of "these tests would notice" is carried by plants. Each ran through
+/// `scripts/mutation-probe` from the repository root on a clean tree, which
+/// refuses a dirty one and reverts index-safely; each printed, verbatim, the
+/// control line (the unplanted tree's run) and the verdict below it. Run
+/// 2026-11-03 on the tree of `test(app): the access-list section's no-control
+/// check also reads the type of the view it builds`.
+///
+/// **P5 is the one that changed the suite.** Run first against the tree of the
+/// commit before it, it was caught by `theSectionsSourceDeclaresNoWayToChangeAnything()`
+/// alone: the hosted-view walk stayed green with a Button planted, because a
+/// default-styled SwiftUI Button is not an AppKit control. The type read in
+/// `theSectionOffersNoControlThatWrites` was added because of it, and the
+/// block below is the re-run.
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P1 a storage with no access lists is shown as a policy with no entries' \
+///   --apply "perl -0pi -e 's/                accessList = \.notOffered\n/                accessList = .policy(ObjectACL(ownerID: nil, ownerDisplayName: nil, grants: []))\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aStoreWithoutAclsSaysSoInsteadOfShowingNoGrants()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P2 an unnamed holder is drawn as an empty line' \
+///   --apply "perl -0pi -e 's/return lines\.isEmpty \? \[whenUnnamed\.text\] : lines/return lines.isEmpty ? [\"\"] : lines/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/anOwnerTheStoreDidNotNameIsSaidToo()
+///   macSCPAppKitTests.ObjectACLSectionTests/anUnnamedHolderIsSaidRatherThanDrawnBlank()
+///   macSCPAppKitTests.ObjectACLSectionTests/theUnnamedSentenceIsTheOneForTheShapeCoreReports()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P3 the identifier is labelled ID in the English catalogue' \
+///   --apply "perl -pi -e 's/^(\"s3\.acl\.identifier %@\" = )\"Identifier: %@\"/\$1\"ID: %@\"/' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aHolderIdentifierIsLabelledAsAnIdentifierWhetherItIsAnIdOrAUrl()
+///   macSCPAppKitTests.ObjectACLSectionTests/aHolderThatHasANameShowsTheNameFirstAndTheIdentifierBeneathIt()
+///   macSCPAppKitTests.ObjectACLSectionTests/aPolicyWithNoGrantsStillNamesItsOwner()
+///   macSCPAppKitTests.ObjectACLSectionTests/everyLineResolvesInEveryLanguageAndTheEnglishIsTheSourceText()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P4 a failed read quotes the error' \
+///   --apply "perl -0pi -e 's/        default:\n            return readFailed\.text\n        \}\n    \}\n\}\n\n\/\/\/ What the access-list section shows/        default:\n            return \"\\\\(error)\"\n        }\n    }\n}\n\n\/\/\/ What the access-list section shows/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P5 the section offers a button' \
+///   --apply "perl -0pi -e 's/(            Text\(ObjectACLLines\.heading\.text\)\.font\(\.subheadline\)\n)/\$1            Button(\"Make public\") {}\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theSectionOffersNoControlThatWrites()
+///   macSCPAppKitTests.ObjectACLSectionTests/theSectionsSourceDeclaresNoWayToChangeAnything()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P6 the entries no longer sit behind a height of their own' \
+///   --apply "perl -0pi -e 's/                \.frame\(maxHeight: Self\.listHeight\)\n//' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aLongListSitsBehindAScrollBecauseABoundedSheetClipsInsteadOfGrowing()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P7 no re-read of the list after a confirmed write' \
+///   --apply "perl -0pi -e 's/            await readAccessList\(\)\n            return \.written/            return .written/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/theAccessListIsReadForTheFileWhenTheSheetOpensAndAgainAfterASave()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P8 a failed list read takes the whole sheet down with it' \
+///   --apply "perl -0pi -e 's/            accessList = \.failed\(ObjectACLLines\.readMessage\(for: error\)\)\n/            accessList = .failed(ObjectACLLines.readMessage(for: error))\n            phase = .failed(ObjectACLLines.readMessage(for: error))\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P9 the permission is changed on its way to the row' \
+///   --apply "perl -0pi -e 's/                permission: \\\$0\.permission\)/                permission: \\\$0.permission.lowercased())/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aPermissionTheStoreSpellsInAWayNobodyHasSeenIsShownAsSpelled()
+///   macSCPAppKitTests.ObjectACLSectionTests/anUnnamedHolderIsSaidRatherThanDrawnBlank()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter ObjectACLSectionTests \
+///   --label 'P10 a holder identified by a URL is not shown' \
+///   --apply "perl -0pi -e 's/        if let identifier \{\n/        if let identifier, !identifier.hasPrefix(\"http\") {\n/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+/// ── control: 23 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 23 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.ObjectACLSectionTests/aHolderIdentifierIsLabelledAsAnIdentifierWhetherItIsAnIdOrAUrl()
+/// ```
+///
 @Suite("Object access-list section")
 struct ObjectACLSectionTests {
     private static let locales = ["en", "de", "fr", "pl"]
