@@ -561,6 +561,18 @@
 "s3.metadata.blocked.customNamePrefixed" = "macSCP adds the prefix a custom name needs on its own. Type the name without “x-amz-meta-”.";
 "s3.metadata.blocked.customNameDuplicated" = "Two custom pairs have the same name. Names do not distinguish upper and lower case.";
 
+/* S3 object access list, read-only (S3 metadata, Task 5) */
+"s3.acl.heading" = "Access list";
+"s3.acl.readOnlyNote" = "macSCP shows this list but does not change it.";
+"s3.acl.reading" = "Reading the access list…";
+"s3.acl.error.read" = "The access list could not be read.";
+"s3.acl.notOffered" = "This storage does not offer access lists for files.";
+"s3.acl.none" = "The access list has no entries.";
+"s3.acl.owner" = "Owner";
+"s3.acl.owner.unnamed" = "The storage did not name an owner.";
+"s3.acl.holder.unnamed" = "The storage did not name who holds this permission.";
+"s3.acl.identifier %@" = "Identifier: %@";
+
 /* Bucket CORS rules (S3 bucket settings, Task 9) */
 "s3.cors.title %@" = "CORS rules for “%@”";
 "s3.cors.intro" = "CORS rules decide which websites may use this bucket's files from a browser.";

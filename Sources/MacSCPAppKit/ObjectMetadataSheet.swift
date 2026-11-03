@@ -114,6 +114,143 @@ enum ObjectMetadataLines {
     }
 }
 
+/// Every sentence the read-only access-list section has of its own, as data,
+/// so the tests can hold each one to all four languages.
+///
+/// **The section only reads.** The store accepts an access-list write and
+/// keeps nothing (spec section 4.6), so there is no control here and no
+/// sentence offering one; `readOnlyNote` says why the list cannot be changed
+/// from this sheet without saying how the store works.
+///
+/// No sentence uses the acronym, and none is keyed exactly as the sub-resource
+/// it reads (`NoACLWriteGuardTests` watches for that literal).
+enum ObjectACLLines {
+    static let heading = CatalogueLine(key: "s3.acl.heading", english: "Access list")
+    static let readOnlyNote = CatalogueLine(
+        key: "s3.acl.readOnlyNote", english: "macSCP shows this list but does not change it.")
+    static let reading = CatalogueLine(
+        key: "s3.acl.reading", english: "Reading the access list…")
+    static let readFailed = CatalogueLine(
+        key: "s3.acl.error.read", english: "The access list could not be read.")
+    /// Core answered `nil`: the storage has no access lists for files at all.
+    /// **Not the same thing as `noEntries`**, and the two must never share a
+    /// sentence.
+    static let notOffered = CatalogueLine(
+        key: "s3.acl.notOffered",
+        english: "This storage does not offer access lists for files.")
+    /// Core answered a policy, and it holds no entries.
+    static let noEntries = CatalogueLine(
+        key: "s3.acl.none", english: "The access list has no entries.")
+    static let owner = CatalogueLine(key: "s3.acl.owner", english: "Owner")
+    static let ownerUnnamed = CatalogueLine(
+        key: "s3.acl.owner.unnamed", english: "The storage did not name an owner.")
+    /// An entry whose holder the store did not name: the shape the rig returns
+    /// (spec section 4.6.1). Said, never drawn as an empty cell.
+    static let holderUnnamed = CatalogueLine(
+        key: "s3.acl.holder.unnamed",
+        english: "The storage did not name who holds this permission.")
+    /// **"Identifier", not "ID".** `ACLGrant.granteeID` holds a canonical user
+    /// id or, for a group, its URL, and Core cannot say which; a label that
+    /// said "ID" would be false of a group. The group shape is inferred, not
+    /// measured, which is a reason to keep the label true of both.
+    static let identifier = CatalogueLine(
+        key: "s3.acl.identifier %@", english: "Identifier: %@")
+
+    /// Every line above, in one place.
+    static let all: [CatalogueLine] = [
+        heading, readOnlyNote, reading, readFailed, notOffered, noEntries, owner,
+        ownerUnnamed, holderUnnamed, identifier,
+    ]
+
+    /// The sentence for a failure to read the list. Never quotes the error,
+    /// for the reason `ObjectMetadataLines.readMessage(for:)` gives.
+    static func readMessage(for error: any Error) -> String {
+        switch error {
+        case RemoteFSError.finding(let finding):
+            return finding.message
+        case RemoteFSError.permissionDenied, RemoteFSError.authenticationFailed:
+            return ObjectLockLines.denied.text
+        default:
+            return readFailed.text
+        }
+    }
+}
+
+/// What the access-list section shows, as data, apart from how it is drawn.
+///
+/// Four answers, because Core gives four: not read yet, the storage offers
+/// none (`nil`), a policy (which may hold zero entries), and a failed read.
+/// **`nil` and zero entries are different cases on purpose**: one says the
+/// storage cannot do this, the other says it can and the list is empty.
+enum ObjectACLDisplay: Equatable {
+    case reading
+    case notOffered
+    case failed(String)
+    /// `owner` and each row's `holder` are lines of text, top to bottom.
+    case policy(owner: [String], rows: [Row])
+
+    struct Row: Equatable {
+        let holder: [String]
+        /// As the store spells it (`FULL_CONTROL`, `READ`, ...): Core does not
+        /// map it to a closed set, because a store may report one this
+        /// project has not seen.
+        let permission: String
+    }
+
+    static func of(_ reading: ObjectMetadataModel.AccessListReading) -> ObjectACLDisplay {
+        switch reading {
+        case .reading:
+            .reading
+        case .notOffered:
+            .notOffered
+        case .failed(let sentence):
+            .failed(sentence)
+        case .policy(let policy):
+            .policy(
+                owner: holderLines(
+                    name: policy.ownerDisplayName, identifier: policy.ownerID,
+                    whenUnnamed: ObjectACLLines.ownerUnnamed),
+                rows: rows(of: policy.grants))
+        }
+    }
+
+    /// One row per entry, in the order the store gave them.
+    static func rows(of entries: [ACLGrant]) -> [Row] {
+        entries.map {
+            Row(
+                holder: holderLines(
+                    name: $0.granteeDisplayName, identifier: $0.granteeID,
+                    whenUnnamed: ObjectACLLines.holderUnnamed),
+                permission: $0.permission)
+        }
+    }
+
+    /// The name first, the identifier beneath it, and a sentence where the
+    /// store gave neither. **Never empty**: an unnamed holder is said.
+    ///
+    /// The identifier is labelled as one (`ObjectACLLines.identifier`) and
+    /// not as an id, because it may be a group's URL.
+    static func holderLines(
+        name: String?, identifier: String?, whenUnnamed: CatalogueLine
+    ) -> [String] {
+        let name = nonBlank(name)
+        let identifier = nonBlank(identifier)
+        var lines: [String] = []
+        if let name { lines.append(name) }
+        if let identifier {
+            lines.append(String(format: ObjectACLLines.identifier.text, identifier))
+        }
+        return lines.isEmpty ? [whenUnnamed.text] : lines
+    }
+
+    private static func nonBlank(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return text
+    }
+}
+
 /// What the metadata sheet knows and decides, apart from how it is drawn.
 ///
 /// **Saving sends every field the sheet holds, not only the one that changed.**
@@ -167,6 +304,17 @@ final class ObjectMetadataModel {
         case reading
         case known(BucketVersioning)
         case unreadable
+    }
+
+    /// What the file's access list says, as far as the sheet knows. Read-only:
+    /// nothing in the model writes it back.
+    enum AccessListReading: Equatable {
+        case reading
+        /// Core answered `nil`: the storage offers no access lists for files.
+        case notOffered
+        /// A policy, which may hold no entries.
+        case policy(ObjectACL)
+        case failed(String)
     }
 
     /// The bucket's default retention, as `S3BucketSettings.objectLockDefault`
@@ -250,6 +398,7 @@ final class ObjectMetadataModel {
     private(set) var bucketLock: BucketLock
     private(set) var bucketDefault: LockDefault?
     private(set) var versioningReading: VersioningReading
+    private(set) var accessList: AccessListReading
     private(set) var isApplying = false
     private(set) var applyFailure: String?
     private(set) var isSaved = false
@@ -309,7 +458,8 @@ final class ObjectMetadataModel {
         now: @escaping () -> Date = { Date() },
         phase: Phase = .reading, loaded: ObjectMetadata? = nil,
         bucketLock: BucketLock = .reading, bucketDefault: LockDefault? = nil,
-        versioningReading: VersioningReading = .reading
+        versioningReading: VersioningReading = .reading,
+        accessList: AccessListReading = .reading
     ) {
         self.target = target
         self.provider = provider
@@ -322,6 +472,7 @@ final class ObjectMetadataModel {
         self.bucketLock = bucketLock
         self.bucketDefault = bucketDefault
         self.versioningReading = versioningReading
+        self.accessList = accessList
         if let loaded { adopt(loaded) }
     }
 
@@ -542,6 +693,7 @@ final class ObjectMetadataModel {
         bucketLock = .reading
         bucketDefault = nil
         versioningReading = .reading
+        accessList = .reading
         applyFailure = nil
         isSaved = false
         // A read starts the decision over, failed or not, as the bucket
@@ -554,6 +706,7 @@ final class ObjectMetadataModel {
             phase = .failed(ObjectMetadataLines.readMessage(for: error))
             return
         }
+        await readAccessList()
         do {
             versioningReading = .known(try await versioning.versioning(target.bucket))
         } catch {
@@ -568,6 +721,22 @@ final class ObjectMetadataModel {
             }
         } catch {
             bucketLock = .failed(ObjectLockLines.message(for: error, during: .reading))
+        }
+    }
+
+    /// Reads who holds which permission on the file. **A failure here is the
+    /// section's, not the sheet's**: the metadata was read and stays editable,
+    /// and the section says its own sentence. `nil` from Core is kept apart
+    /// from a policy with no entries (`AccessListReading`).
+    private func readAccessList() async {
+        do {
+            if let policy = try await provider.acl(ofKey: target.key, inBucket: target.bucket) {
+                accessList = .policy(policy)
+            } else {
+                accessList = .notOffered
+            }
+        } catch {
+            accessList = .failed(ObjectACLLines.readMessage(for: error))
         }
     }
 
@@ -643,6 +812,10 @@ final class ObjectMetadataModel {
             baseline = written
             acknowledged = false
             isSaved = true
+            // The write is done and confirmed whatever this read says. A
+            // write adds a version (spec section 4.5), and the list on
+            // screen is the one for the file as it is now, not as it was.
+            await readAccessList()
             return .written
         } catch {
             // Any phase but `.reading` and `.applyingRetention` gives the
@@ -755,6 +928,7 @@ struct ObjectMetadataSheet: BoundedView {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            ObjectACLSection(display: ObjectACLDisplay.of(model.accessList))
             lockSection
             if let why = model.explanation {
                 Text(why.text)
@@ -849,6 +1023,100 @@ struct ObjectMetadataSheet: BoundedView {
                     .foregroundStyle(Color.red)
                     .fixedSize(horizontal: false, vertical: true)
                 CheckboxRow(model.acknowledgementSentence, isOn: $model.acknowledged, wraps: true)
+            }
+        }
+    }
+}
+
+/// The read-only access-list section of the metadata sheet (spec section
+/// 6.5): who holds which permission on the file, and who owns it.
+///
+/// **It holds no control and takes no binding.** It is handed what to show
+/// and shows it; there is nothing here to click, type into or choose, because
+/// the store would accept a change and keep nothing (spec section 4.6).
+/// `ObjectACLSectionTests` holds that against the hosted view and against this
+/// type's source.
+///
+/// The list scrolls behind a height of its own (`listHeight`): the sheet is
+/// bounded in width and not in height, a bounded sheet clips instead of
+/// growing, and a file can carry many entries.
+struct ObjectACLSection: View {
+    let display: ObjectACLDisplay
+
+    /// The tallest the entries grow before they scroll.
+    private static let listHeight: CGFloat = 130
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(ObjectACLLines.heading.text).font(.subheadline)
+            Text(ObjectACLLines.readOnlyNote.text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            content
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch display {
+        case .reading:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(ObjectACLLines.reading.text).font(.caption).foregroundStyle(.secondary)
+            }
+        case .notOffered:
+            note(ObjectACLLines.notOffered.text)
+        case .failed(let sentence):
+            Text(sentence)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        case .policy(let owner, let rows):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(ObjectACLLines.owner.text).font(.caption).foregroundStyle(.secondary)
+                holder(owner)
+            }
+            if rows.isEmpty {
+                note(ObjectACLLines.noEntries.text)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                holder(row.holder)
+                                Spacer(minLength: 8)
+                                Text(row.permission)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: Self.listHeight)
+                .scrollBounceBehavior(.basedOnSize)
+            }
+        }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A holder's lines, the first in the body font and the rest beneath it.
+    /// Selectable, so an identifier can be copied.
+    private func holder(_ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                Text(line)
+                    .font(index == 0 ? .callout : .caption)
+                    .foregroundStyle(index == 0 ? .primary : .secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

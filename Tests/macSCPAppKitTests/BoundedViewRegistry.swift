@@ -252,7 +252,8 @@ enum BoundedViewRegistry {
             entityTag: nil),
         versioning: ObjectMetadataModel.VersioningReading,
         lock: ObjectMetadataModel.BucketLock,
-        bucketDefault: ObjectMetadataModel.LockDefault? = nil
+        bucketDefault: ObjectMetadataModel.LockDefault? = nil,
+        accessList: ObjectMetadataModel.AccessListReading = .policy(rigAccessList)
     ) -> ObjectMetadataModel {
         let settings = FakeBucketSettings()
         return ObjectMetadataModel(
@@ -265,7 +266,32 @@ enum BoundedViewRegistry {
             settings: settings, locks: ObjectLockStateCache(settings: settings),
             versioning: BucketVersioningCache(settings: settings),
             now: { lockNow }, phase: phase, loaded: stored, bucketLock: lock,
-            bucketDefault: bucketDefault, versioningReading: versioning)
+            bucketDefault: bucketDefault, versioningReading: versioning,
+            accessList: accessList)
+    }
+
+    /// The policy the rig's store returns for any object (spec section
+    /// 4.6.1): the owner, and one grant whose holder is not named. Every
+    /// metadata entry below shows it unless it says otherwise, so the section
+    /// is measured in the shape a person will most often see.
+    static let rigAccessList = ObjectACL(
+        ownerID: String(repeating: "0123456789abcdef", count: 4), ownerDisplayName: "rustfs",
+        grants: [ACLGrant(granteeID: nil, granteeDisplayName: nil, permission: "FULL_CONTROL")])
+
+    /// A policy with `count` entries, each holder named with a long display
+    /// name and a group's URL as its identifier (an inferred shape, see
+    /// `ACLGrant.granteeID`), so that both lines wrap and the list has to
+    /// scroll.
+    static func crowdedAccessList(count: Int) -> ObjectACL {
+        ObjectACL(
+            ownerID: String(repeating: "0123456789abcdef", count: 4),
+            ownerDisplayName: "Quarterly finance reporting team of the Hamburg office",
+            grants: (0..<count).map {
+                ACLGrant(
+                    granteeID: "http://acs.amazonaws.com/groups/global/AuthenticatedUsers/\($0)",
+                    granteeDisplayName: "Reviewer \($0) of the quarterly finance reporting team",
+                    permission: "FULL_CONTROL")
+            })
     }
 
     /// A store over the temporary directory: these sheets read it to render,
@@ -744,6 +770,33 @@ enum BoundedViewRegistry {
                             bucket: "macscp-seed",
                             key: "photos/" + String(repeating: "W", count: 400) + ".jpg"),
                         versioning: .known(.never), lock: .absent))
+            },
+            // The access-list section (S3 metadata, Task 5). Every entry above
+            // shows the rig's own shape, one unnamed holder. These are the
+            // others: a long list, which must scroll behind its own height
+            // because a bounded sheet clips instead of growing; a storage
+            // with none (`nil`); and a policy with no entries. A read that
+            // failed is not registered: its red sentence measured the same as
+            // the storage-with-none note in every catalogue
+            // (`entriesOfOneTypeMeasureDifferentStates`, 2026-11-03), so it
+            // was one state entered twice.
+            BoundedViewEntry("metadata with an access list of twelve long-named holders") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent,
+                        accessList: .policy(Self.crowdedAccessList(count: 12))))
+            },
+            BoundedViewEntry("metadata on a storage that offers no access lists") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent, accessList: .notOffered))
+            },
+            BoundedViewEntry("metadata whose access list holds no entries") {
+                ObjectMetadataSheet(
+                    model: Self.metadataModel(
+                        versioning: .known(.enabled), lock: .absent,
+                        accessList: .policy(
+                            ObjectACL(ownerID: nil, ownerDisplayName: nil, grants: []))))
             },
             BoundedViewEntry("metadata the store would not let the key read") {
                 ObjectMetadataSheet(
