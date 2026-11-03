@@ -331,7 +331,9 @@ final class ObjectMetadataModel {
     }
 
     /// Why `save()` wrote nothing and has an answer for the person.
-    enum SaveRefusal: Equatable {
+    /// `CaseIterable` so that a test can range over every refusal and not over
+    /// the ones its author remembered (`ObjectACLSectionTests`).
+    enum SaveRefusal: Equatable, CaseIterable {
         case complianceNotAcknowledged
         case acknowledgementStale
         case nothingChanged
@@ -836,7 +838,8 @@ final class ObjectMetadataModel {
             // confirmed write and nowhere else, so the list on screen is not
             // one read before a write that may have changed it.
             // `ObjectACLSectionTests.theListIsReadAgainAfterAConfirmedWriteAndOnlyThen`
-            // holds "only then".
+            // holds "only then" over every exit of `SaveOutcome` and of
+            // `SaveRefusal`, derived from the declarations.
             await readAccessList()
             return .written
         } catch {
@@ -1089,13 +1092,18 @@ struct ObjectMetadataSheet: BoundedView {
 struct ObjectACLSection: View {
     let display: ObjectACLDisplay
 
-    /// The tallest the entries grow before they scroll: 130 pt. An entry that
-    /// names its holder and an identifier is 30 pt tall with 6 pt between
-    /// entries (measured 2026-11-03 as the 36 pt step from one to two to three
-    /// entries in the section alone), so three entries take 102 pt and a
-    /// fourth would take 138. 130 shows three in full and 22 pt of the fourth,
-    /// which is what tells a person there is more below.
-    private static let listHeight: CGFloat = 130
+    /// The tallest the entries grow before they scroll: 130 pt, so that three
+    /// entries show in full and part of a fourth, which is what tells a person
+    /// there is more below. Held by
+    /// `ObjectACLSectionTests.theListShowsThreeEntriesAndPartOfAFourth`, which
+    /// measures the section alone with three, four and five entries and prints
+    /// the figures (run it with `swift test --filter
+    /// theListShowsThreeEntriesAndPartOfAFourth`). Measured 2026-11-03, English, 480 pt
+    /// wide, the section with one to five entries: 90, 126, 162, 190 and 190 pt.
+    /// So an entry steps the section by 36 pt (30 pt tall and the 6 pt spacing the
+    /// stack declares), three take 102 pt of list, and 130 pt shows 22 pt of the
+    /// fourth: the fourth adds 28 pt (190 minus 162) and the fifth nothing.
+    static let listHeight: CGFloat = 130
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1147,6 +1155,13 @@ struct ObjectACLSection: View {
                 }
                 .frame(maxHeight: Self.listHeight)
                 .scrollBounceBehavior(.basedOnSize)
+                // Focusable so that arrow keys scroll the list past its
+                // visible entries: the rows are selectable text and take no
+                // tab stop of their own, and a person without a pointer would
+                // otherwise not reach the entries below the clip. UNVERIFIED
+                // on screen (nothing can render a sheet in the test process);
+                // it is on the closeout sight-check list.
+                .focusable()
             }
         }
     }

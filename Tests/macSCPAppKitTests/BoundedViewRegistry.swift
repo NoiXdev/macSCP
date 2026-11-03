@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import MacSCPTestSupport
 import SwiftUI
 import macSCPCore
 
@@ -295,12 +296,52 @@ enum BoundedViewRegistry {
         .bucketAlreadyOwnedByYou,
     ]
 
-    /// The longest sentence a failed access-list read can carry in the current
-    /// language: the longest finding message, or the section's own denied and
-    /// generic sentences, whichever is longest. Computed where the entry is
-    /// built, so it follows the catalogue under measurement.
-    static var longestAccessListFailure: String {
-        (everyFinding.map(\.message) + [ObjectACLLines.denied.text, ObjectACLLines.readFailed.text])
+    /// The one value a finding's sentence is filled with, or `nil` for a
+    /// sentence with no placeholder. `default` is deliberate and held:
+    /// `theFindingsPayloadsMatchTheirSentences` fails when a finding gains a
+    /// payload this switch does not know.
+    static func argument(of finding: RemoteFSFinding) -> String? {
+        switch finding {
+        case .unexpectedStatus(let code): String(code)
+        case .uploadPartUnacknowledged(let part): String(part)
+        case .pathExistsAndIsNotADirectory(let path), .objectUnderLegalHold(let path),
+            .objectUnderRetention(let path):
+            path
+        default: nil
+        }
+    }
+
+    /// `finding`'s sentence in the catalogue of `locale`, read from Core's own
+    /// `<locale>.lproj/Localizable.strings` file.
+    ///
+    /// **Not `RemoteFSFinding.message`**, which goes through `CoreL10n` and
+    /// that ignores `L10n.localeOverride`: it answers in the PROCESS language,
+    /// so every locale of a measurement would get the host's sentence. (Found
+    /// 2026-11-03: on a Mac set to German every locale was measured with the
+    /// German finding, 135 characters, where English is 103.)
+    static func findingMessage(_ finding: RemoteFSFinding, locale: String) -> String {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/Resources/\(locale).lproj/Localizable.strings")
+        guard let table = NSDictionary(contentsOf: url) as? [String: String],
+            let template = table[finding.messageKey]
+        else { return finding.messageKey }
+        guard let argument = argument(of: finding) else { return template }
+        return String(format: template, argument)
+    }
+
+    /// The longest sentence a failed access-list read can carry in `locale`:
+    /// the longest finding message of that catalogue (`findingMessage`), or the
+    /// section's own denied and generic sentences in that same catalogue,
+    /// whichever is longest. `locale` is the catalogue under measurement
+    /// (`L10n.localeOverride`; English when none is set).
+    static func longestAccessListFailure(
+        locale: String? = L10n.localeOverride
+    ) -> String {
+        let code = locale ?? "en"
+        let own = L10n.$localeOverride.withValue(code) {
+            [ObjectACLLines.denied.text, ObjectACLLines.readFailed.text]
+        }
+        return (everyFinding.map { findingMessage($0, locale: code) } + own)
             .max { $0.count < $1.count } ?? ""
     }
 
@@ -838,7 +879,7 @@ enum BoundedViewRegistry {
                 ObjectMetadataSheet(
                     model: Self.metadataModel(
                         versioning: .known(.enabled), lock: .absent,
-                        accessList: .failed(Self.longestAccessListFailure)))
+                        accessList: .failed(Self.longestAccessListFailure())))
             },
             BoundedViewEntry("metadata at its tallest, every optional line and a long access list at once") {
                 let model = Self.metadataModel(

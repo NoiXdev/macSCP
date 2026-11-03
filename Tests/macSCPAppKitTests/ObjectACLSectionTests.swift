@@ -416,56 +416,137 @@ struct ObjectACLSectionTests {
             "the list is read again after a confirmed write: defensive, since whether a write changes it is unmeasured")
     }
 
-    /// The re-read is accepted on one condition, that it runs after a
-    /// CONFIRMED write and nowhere else. It is structurally true of the code
-    /// today, and a condition nothing holds is one that evaporates: adding the
-    /// call to the write's `catch`, or to the COMPLIANCE refusal, was GREEN
-    /// across 62 tests before this test existed (measured 2026-11-03).
-    @MainActor @Test func theListIsReadAgainAfterAConfirmedWriteAndOnlyThen() async {
+    /// How many access-list requests a rig has made after `save()` ended in
+    /// `outcome`: two after a confirmed write (the read at open, and the read
+    /// after the write) and one after every other exit. **The switch has no
+    /// `default`**, so a case added to `SaveOutcome` does not compile until
+    /// someone has said what the list does after it.
+    private static func expectedAccessListReads(
+        after outcome: ObjectMetadataModel.SaveOutcome
+    ) -> Int {
+        switch outcome {
+        case .written: 2
+        case .refused, .blocked, .failed: 1
+        }
+    }
+
+    /// One way of leaving `save()`: a name, and what running it gave (how it
+    /// ended, and how many access-list requests the rig had made by then).
+    private typealias Scenario = (
+        name: String,
+        run: @MainActor () async -> (outcome: ObjectMetadataModel.SaveOutcome, reads: Int)
+    )
+
+    @MainActor private static var saveScenarios: [Scenario] {
         let compliance = FakeBucketSettings.ObjectLockFixture(
             hasLock: true, bucketDefault: .init(days: 30, mode: .compliance))
+        let unreadableLock = FakeBucketSettings.ObjectLockFixture(
+            hasLock: true, bucketDefault: .init(days: 30, mode: .governance),
+            readError: RemoteFSError.protocolError(reason: storeWords))
+        return [
+            ("a confirmed write", {
+                let rig = ObjectMetadataSheetTests.Rig(stored: stored, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.contentType = "text/markdown"
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("a write the store refused", {
+                let rig = ObjectMetadataSheetTests.Rig(
+                    stored: stored, writeError: RemoteFSError.protocolError(reason: storeWords),
+                    aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.contentType = "text/markdown"
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("a lock read that failed before the write", {
+                let rig = ObjectMetadataSheetTests.Rig(
+                    stored: stored, lock: unreadableLock, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.contentType = "text/markdown"
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("a COMPLIANCE default nobody acknowledged", {
+                let rig = ObjectMetadataSheetTests.Rig(
+                    stored: stored, lock: compliance, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.contentType = "text/markdown"
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("an acknowledgement given for another day", {
+                let rig = ObjectMetadataSheetTests.Rig(
+                    stored: stored, lock: compliance, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.contentType = "text/markdown"
+                rig.model.acknowledged = true
+                rig.clock.date = rig.clock.date.addingTimeInterval(2 * 86_400)
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("a save that changed nothing", {
+                let rig = ObjectMetadataSheetTests.Rig(stored: stored, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+            ("a draft that cannot be sent", {
+                let rig = ObjectMetadataSheetTests.Rig(stored: stored, aclAnswer: .policy(theRigsPolicy))
+                await rig.model.load()
+                rig.model.addCustomRow()
+                rig.model.custom[rig.model.custom.count - 1].value = "no name"
+                return (await rig.model.save(), rig.provider.aclReads.count)
+            }),
+        ]
+    }
 
-        // A confirmed write: read at open, read again.
-        let written = ObjectMetadataSheetTests.Rig(stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
-        await written.model.load()
-        written.model.contentType = "text/markdown"
-        #expect(await written.model.save() == .written)
-        #expect(written.provider.aclReads.count == 2)
+    /// The names of the cases `SaveOutcome` declares, read from its
+    /// declaration in the sheet's source and not written out here.
+    private static func declaredSaveOutcomeCases() throws -> Set<String> {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("MacSCPAppKit/ObjectMetadataSheet.swift")
+        let code = try SourceCorpus.code(of: url)
+        let body = try #require(SourceSpan.body(after: "enum SaveOutcome", in: code))
+        return Set(body.matches(of: #/\bcase\s+(\w+)/#).map { String($0.output.1) })
+    }
 
-        // A write the store refused: not read again.
-        let failed = ObjectMetadataSheetTests.Rig(
-            stored: Self.stored, writeError: RemoteFSError.protocolError(reason: Self.storeWords),
-            aclAnswer: .policy(Self.theRigsPolicy))
-        await failed.model.load()
-        failed.model.contentType = "text/markdown"
-        #expect(await failed.model.save() == .failed)
-        #expect(failed.provider.writes.count == 1, "the write was attempted")
-        #expect(failed.provider.aclReads.count == 1, "a failed write read the list again")
+    private static func kind(of outcome: ObjectMetadataModel.SaveOutcome) -> String {
+        switch outcome {
+        case .written: "written"
+        case .refused: "refused"
+        case .blocked: "blocked"
+        case .failed: "failed"
+        }
+    }
 
-        // A save refused for the acknowledgement: nothing was sent, not read again.
-        let refused = ObjectMetadataSheetTests.Rig(
-            stored: Self.stored, lock: compliance, aclAnswer: .policy(Self.theRigsPolicy))
-        await refused.model.load()
-        refused.model.contentType = "text/markdown"
-        #expect(await refused.model.save() == .refused(.complianceNotAcknowledged))
-        #expect(refused.provider.writes.isEmpty)
-        #expect(refused.provider.aclReads.count == 1, "a refused save read the list again")
+    /// The list is read again after a confirmed write and after NO other exit
+    /// of `save()`. That is the condition the re-read was accepted on.
+    ///
+    /// **Every exit, not the ones its author thought of.** The first version
+    /// of this test enumerated five by hand and a reviewer found two
+    /// reachable exits it missed (a re-read after the pre-write lock read
+    /// fails, and one on `.refused(.acknowledgementStale)`), both GREEN. It
+    /// now drives a scenario to each exit and compares what it reached with
+    /// what the types declare: the cases of `SaveOutcome` from its source,
+    /// and the refusals from `SaveRefusal.allCases`. An exit added later has
+    /// no scenario that reaches it, so this test is red until one is added.
+    @MainActor @Test func theListIsReadAgainAfterAConfirmedWriteAndOnlyThen() async throws {
+        var reachedKinds: Set<String> = []
+        var reachedRefusals: Set<String> = []
+        for scenario in Self.saveScenarios {
+            let (outcome, reads) = await scenario.run()
+            #expect(
+                reads == Self.expectedAccessListReads(after: outcome),
+                "\(scenario.name) ended in \(outcome) with \(reads) access-list requests")
+            reachedKinds.insert(Self.kind(of: outcome))
+            if case .refused(let reason) = outcome { reachedRefusals.insert("\(reason)") }
+        }
+        #expect(reachedKinds == (try Self.declaredSaveOutcomeCases()), "an exit of save() has no scenario")
+        #expect(
+            reachedRefusals == Set(ObjectMetadataModel.SaveRefusal.allCases.map { "\($0)" }),
+            "a refusal has no scenario")
+    }
 
-        // A save with nothing changed: not read again.
-        let unchanged = ObjectMetadataSheetTests.Rig(
-            stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
-        await unchanged.model.load()
-        #expect(await unchanged.model.save() == .refused(.nothingChanged))
-        #expect(unchanged.provider.aclReads.count == 1, "a save that wrote nothing read the list again")
-
-        // A draft that cannot be sent: blocked, not read again.
-        let blocked = ObjectMetadataSheetTests.Rig(
-            stored: Self.stored, aclAnswer: .policy(Self.theRigsPolicy))
-        await blocked.model.load()
-        blocked.model.addCustomRow()
-        blocked.model.custom[blocked.model.custom.count - 1].value = "no name"
-        #expect(await blocked.model.save() == .blocked)
-        #expect(blocked.provider.aclReads.count == 1)
+    /// The positive beside the derivation above: the scan reads real cases.
+    @Test func theDeclaredExitsAreTheOnesTheRefusalsAndOutcomesNameToday() throws {
+        #expect(try Self.declaredSaveOutcomeCases() == ["written", "refused", "blocked", "failed"])
+        #expect(ObjectMetadataModel.SaveRefusal.allCases.count == 3)
     }
 
     @MainActor @Test func aFailedAccessListReadIsSaidInAFixedSentenceAndTakesNothingElseWithIt() async {
@@ -681,13 +762,104 @@ struct ObjectACLSectionTests {
         #expect(BoundedViewRegistry.everyFinding.count == RemoteFSFinding.Name.allCases.count)
     }
 
-    @MainActor @Test func theLongestFailureSentenceIsAtLeastAsLongAsTheSectionsOwn() {
+    /// What can turn this red: building the sentence through
+    /// `RemoteFSFinding.message`, which answers in the PROCESS language. Then
+    /// every locale gets the same sentence, and the English and German
+    /// catalogues (103 and 135 characters on the longest finding) stop
+    /// differing. Measured 2026-11-03: that was the first version of the
+    /// registry's helper, and nothing noticed.
+    @MainActor @Test func theLongestFailureSentenceFollowsTheCatalogueUnderMeasurement() {
+        var longest: [String: String] = [:]
         for locale in Self.locales {
-            let (longest, own) = L10n.$localeOverride.withValue(locale) {
-                (BoundedViewRegistry.longestAccessListFailure.count, ObjectACLLines.readFailed.text.count)
+            longest[locale] = L10n.$localeOverride.withValue(locale) {
+                BoundedViewRegistry.longestAccessListFailure()
             }
-            #expect(longest >= own, "\(locale)")
         }
+        // Each is the longest of THAT catalogue's own sentences: read the
+        // catalogue file again, independently of the helper.
+        for locale in Self.locales {
+            let url = SourceCorpus.url(of: .sources)
+                .appendingPathComponent("macSCPCore/Resources/\(locale).lproj/Localizable.strings")
+            let table = NSDictionary(contentsOf: url) as? [String: String] ?? [:]
+            let findings = table.filter { $0.key.hasPrefix("core.finding.") }
+            #expect(findings.count == RemoteFSFinding.Name.allCases.count, "\(locale)")
+            let widest = findings.values.map(\.count).max() ?? 0
+            // A placeholder is replaced by a path or a number, so allow its
+            // difference: the sentence is at least the widest template minus
+            // the two characters of `%@`.
+            #expect((longest[locale]?.count ?? 0) >= widest - 2, "\(locale)")
+        }
+        // And the catalogues differ, which a host-language read cannot show.
+        #expect(Set(longest.values).count == Self.locales.count, "\(longest)")
+    }
+
+    /// A finding's payload and its sentence's placeholder agree: a finding that
+    /// gains a payload the registry's `argument(of:)` does not know would be
+    /// measured with a raw `%@` in it.
+    @MainActor @Test func theFindingsPayloadsMatchTheirSentences() {
+        for finding in BoundedViewRegistry.everyFinding {
+            let url = SourceCorpus.url(of: .sources)
+                .appendingPathComponent("macSCPCore/Resources/en.lproj/Localizable.strings")
+            let table = NSDictionary(contentsOf: url) as? [String: String] ?? [:]
+            let template = table[finding.messageKey] ?? ""
+            #expect(!template.isEmpty, "\(finding.messageKey)")
+            #expect(
+                template.contains("%@") == (BoundedViewRegistry.argument(of: finding) != nil),
+                "\(finding.messageKey)")
+            let filled = BoundedViewRegistry.findingMessage(finding, locale: "en")
+            let unfilled = filled.contains("%@")
+            #expect(!unfilled, "\(finding.messageKey)")
+        }
+    }
+
+    // MARK: - The entries' reach
+
+    /// Three entries show in full and part of a fourth, which is what 130 pt
+    /// (`ObjectACLSection.listHeight`) was chosen for. Measured on the section
+    /// alone with three, four and five entries: a fourth adds SOME height
+    /// (the clip shows part of it) but less than a whole entry's step, and a
+    /// fifth adds none (the list scrolls). The figures are printed so they
+    /// travel with this command:
+    /// `swift test --filter theListShowsThreeEntriesAndPartOfAFourth`.
+    @MainActor @Test func theListShowsThreeEntriesAndPartOfAFourth() {
+        func height(_ count: Int) -> CGFloat {
+            let grants = (0..<count).map {
+                ACLGrant(
+                    granteeID: Self.groupURI, granteeDisplayName: "Reviewer \($0)",
+                    permission: "READ")
+            }
+            return LayoutMeasure.minimumHeight(locale: "en", at: 480) {
+                ObjectACLSection(
+                    display: L10n.$localeOverride.withValue("en") {
+                        ObjectACLDisplay.of(
+                            .policy(ObjectACL(ownerID: nil, ownerDisplayName: "Owner", grants: grants)))
+                    }
+                ).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        let (one, two, three, four, five) = (height(1), height(2), height(3), height(4), height(5))
+        print("access-list section, en, 480 pt wide, entries 1 to 5: \(one), \(two), \(three), \(four), \(five); listHeight \(ObjectACLSection.listHeight)")
+        let step = two - one
+        #expect(step > 0)
+        #expect(three - two == step, "entries are not a constant step: \(one) \(two) \(three)")
+        #expect(four > three, "a fourth entry shows no part of itself")
+        #expect(four - three < step, "a fourth entry shows in full, so three is not what the cap shows")
+        #expect(five == four, "a fifth entry grows the list: it does not scroll")
+    }
+
+    /// The entries' scroll view takes keyboard focus, so arrow keys can scroll
+    /// it. **This pins that the attempt is made, not that it works:** whether
+    /// arrow keys scroll a focusable `ScrollView` of selectable text on screen
+    /// is unverified (no sheet can be rendered in the test process) and is on
+    /// the closeout sight-check list. The change that turns this red is
+    /// removing the modifier.
+    @Test func theEntriesListIsFocusableSoTheKeyboardCanScrollIt() throws {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("MacSCPAppKit/ObjectMetadataSheet.swift")
+        let code = try SourceCorpus.code(of: url)
+        let body = try #require(SourceSpan.body(after: "struct ObjectACLSection", in: code))
+        let scroll = try #require(body.range(of: "ScrollView("))
+        #expect(body[scroll.lowerBound...].contains(".focusable()"))
     }
 
     /// The whole sheet at its tallest, every optional line and a long access
