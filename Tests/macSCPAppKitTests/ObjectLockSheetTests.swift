@@ -1053,10 +1053,20 @@ struct ObjectLockSheetTests {
     @Test func theFileActionArmAssignsAnItemTheWindowPresents() throws {
         let dispatcher = try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
         let sheets = try Self.code("MacSCPAppKit/ContentView+Sheets.swift")
-        let router = try #require(dispatcher.range(of: "func handleBrowserMenuEntry("))
-        let rest = dispatcher[router.upperBound...]
-        let end = rest.range(of: "\n    func ")?.lowerBound ?? rest.endIndex
-        let body = String(rest[..<end])
+        // The body up to its own closing brace (`SourceSpans.functionBody`). It
+        // was read up to "the next `\n    func `" until fix round 4 of the
+        // new-bucket task, which is a boundary a `private func` does not carry:
+        // with the `ObjectLockFileAction(action:)` conversion parked in one
+        // between this function and `restoreDeletedFiles`, the first check
+        // below passed (plant S2 of that round, GREEN then, RED now). Parking
+        // the WHOLE arm there instead is caught by
+        // `theSheetIsOpenedAndRunForTheFileThatWasChosen` below, which reads
+        // from the first `ObjectLockTarget.resolve(` in the file, so that plant
+        // (S1) measures nothing about this span. A span bounded by a brace
+        // cannot be satisfied by text that is not in the function it names.
+        let body = try #require(
+            SourceSpans.functionBody(named: "handleBrowserMenuEntry", in: dispatcher),
+            "func handleBrowserMenuEntry not found")
         #expect(body.contains(String(describing: ObjectLockFileAction.self) + "("))
         #expect(body.contains(String(describing: ObjectLockTarget.self) + ".resolve("))
         let assigned = try #require(
