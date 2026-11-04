@@ -1159,6 +1159,147 @@ import Testing
 /// arm, which is the reason it should always have had
 /// ```
 ///
+/// ## Task 6 closeout: a span that ended at a name, and one that ended too wide
+///
+/// The five-round cap tripped with two silent holes open, each measured GREEN on a
+/// real violation by round 5's re-review. Both are closed here, and both fixes are
+/// one line.
+///
+/// X1: `theRetentionFormDrawsTheLineUnderTheModeChoice` read the `retentionForm`
+/// body up to the NAME of the next declaration, so anything DECLARED between the
+/// two forms was inside the span -- the per-file retention sheet drawing no form,
+/// no mode choice, no date picker and no COMPLIANCE acknowledgement passed, with
+/// the mode-detail line parked in an unused view in that gap. It now reads
+/// `views.block(openedBy: "private var retentionForm: some View")`.
+///
+/// U2: fix round 5 replaced that test's sibling's 900-character window with the
+/// WHOLE body of `handleBrowserMenuEntry`, which spans the Object Lock arm AND the
+/// `.metadata` arm, both spelling `path: file.path`. That fixed the two directions
+/// it was aimed at (U1, V2-style comment brittleness) and made the guard weaker in
+/// this one: a violation in the real arm, answered for by the other arm, passed.
+/// It now reads `SourceSpans.switchArm("case .retention, .legalHold:", in: body)`.
+///
+/// **Reading these verdicts.** Control 3150 throughout, 0 pre-existing failures,
+/// every run `scripts/mutation-probe --filter 'macSCPAppKitTests'` in the
+/// FOREGROUND, one at a time. "Before" is `0bbeff1b`, round 5's final tree.
+/// "After" is named by its commit SUBJECT and not by a hash: this repo allows only
+/// rebase merges, so a hash this branch's own work created stops resolving the
+/// moment the work lands (CLAUDE.md, "prefer the run or the subject to a hash from
+/// your own branch"). U1, U1c, U1b and S1 are round 5's commands, extracted from
+/// the blocks above rather than retyped; X1, X1c and U2 are new. Every command here
+/// was generated FROM the script the probe was invoked with, and every verdict line
+/// is copied from the probe's own output.
+///
+/// U2's "before" is a RUN and not the re-review's arithmetic. The re-review derived
+/// it from the old window's reach (`the .metadata arm starts 1971 characters after
+/// the first ObjectLockTarget.resolve(`, against a 900-character window) and said so.
+/// The probe below measures it instead, by restoring `ObjectLockSheetTests.swift` to
+/// `b85de102` in the `--apply` before planting: the only other file that differs
+/// between those two trees is this one, whose round-5 change reads
+/// `ContentView+Detail.swift` and cannot see the plant. It is also the one command
+/// in this block that a rebase can stop from running, because it names `b85de102`
+/// as a git OBJECT and not as a citation; that commit's subject, which a rebase
+/// does preserve, is "test(app): fix round 4's eight plants are committed with
+/// their commands".
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'X1 the COMPLIANCE mode-detail line is removed from retentionForm and parked in an unused view declared between the two forms' \
+///   --apply "perl -0pi -e 's/            if let detail = model\.modeDetailLine \{\n                Text\(detail\.text\)\n                    \.font\(\.caption\)\n                    \.foregroundStyle\(model\.mode == \.compliance \? Color\.red : Color\.secondary\)\n                    \.fixedSize\(horizontal: false, vertical: true\)\n            \}\n// or die \"X1 step 1: the mode-detail block is not in retentionForm\"' Sources/MacSCPAppKit/ObjectLockSheet.swift && perl -0pi -e 's/    \@ViewBuilder private var legalHoldForm: some View \{\n/    \@ViewBuilder private var parkedLine: some View {\n        if let detail = model.modeDetailLine {\n            Text(detail.text)\n        }\n    }\n\n    \@ViewBuilder private var legalHoldForm: some View {\n/ or die \"X1 step 2: the legalHoldForm declaration is not there\"' Sources/MacSCPAppKit/ObjectLockSheet.swift"
+/// at `0bbeff1b`, before the closeout:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theRetentionFormDrawsTheLineUnderTheModeChoice()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'X1c benign control for X1: 25 comment lines (1425 characters, no code) at the top of retentionForm, the mode-detail line untouched' \
+///   --apply "perl -0pi -e 's/(\@ViewBuilder private var retentionForm: some View \{\n)/\$1 . (\"            \/\/ harmless growth, no code: a comment line.\n\" x 25)/e or die \"X1c: the retentionForm declaration is not there\"' Sources/MacSCPAppKit/ObjectLockSheet.swift"
+/// before: not run (a GREEN there says nothing the GREEN here does not)
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U2 the Object Lock arm hands the sheet focus: .retention while the .metadata arm spells path: file.path and focus: lockAction.focus' \
+///   --apply "perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/ or die \"U2 step 1: the sheet item is not built as expected\"' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/                    objectMetadataSheetItem = ObjectMetadataSheetItem\(\n/                    let lockAction = (focus: 0, other: 0)\n                    _ = (path: file.path, focus: lockAction.focus)\n                    objectMetadataSheetItem = ObjectMetadataSheetItem(\n/ or die \"U2 step 2: the metadata sheet item is not built as expected\"' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `0bbeff1b`, before the closeout:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U2 at b85de102: the same plant with ObjectLockSheetTests.swift restored to round 4 final, where the guard read 900 characters from the first ObjectLockTarget.resolve(' \
+///   --apply "git show b85de102:Tests/macSCPAppKitTests/ObjectLockSheetTests.swift > Tests/macSCPAppKitTests/ObjectLockSheetTests.swift && perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/ or die \"U2 step 1: the sheet item is not built as expected\"' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/                    objectMetadataSheetItem = ObjectMetadataSheetItem\(\n/                    let lockAction = (focus: 0, other: 0)\n                    _ = (path: file.path, focus: lockAction.focus)\n                    objectMetadataSheetItem = ObjectMetadataSheetItem(\n/ or die \"U2 step 2: the metadata sheet item is not built as expected\"' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the guard at `b85de102`, this tree with that file restored:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1 U1c plus a decoy function above handleBrowserMenuEntry that spells the correct call' \
+///   --apply "perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/\/\/\/ that caught it is unchanged\.\nextension ContentView \{\n/\/\/\/ that caught it is unchanged.\nextension ContentView {\n    private func parkedLockItem(\n        _ action: FileActionContribution, _ file: RemoteFileItem, in tab: SessionTab,\n        session: BrowserSession\n    ) -> ObjectLockSheetItem? {\n        guard let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        else { return nil }\n        return ObjectLockSheetItem(\n            recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n            settings: settings, states: states)\n    }\n\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: round 5's block above (GREEN at `b85de102`, RED at its own tree)
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1c the file-action arm hands the sheet focus: .retention instead of the focus the chosen action maps to' \
+///   --apply "perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: round 5's block above (RED at both of its trees)
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1b benign control for U1: the decoy function above handleBrowserMenuEntry alone, no violation anywhere' \
+///   --apply "perl -0pi -e 's/\/\/\/ that caught it is unchanged\.\nextension ContentView \{\n/\/\/\/ that caught it is unchanged.\nextension ContentView {\n    private func parkedLockItem(\n        _ action: FileActionContribution, _ file: RemoteFileItem, in tab: SessionTab,\n        session: BrowserSession\n    ) -> ObjectLockSheetItem? {\n        guard let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        else { return nil }\n        return ObjectLockSheetItem(\n            recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n            settings: settings, states: states)\n    }\n\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: not run (a GREEN there says nothing the GREEN here does not)
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'S1 the retention arm parked in a private func between handleBrowserMenuEntry and restoreDeletedFiles' \
+///   --apply "perl -0pi -e 's/                if side == \.remote, selection\.count == 1, let file = selection\.first,\n                    let lockAction = ObjectLockFileAction\(action: action\),\n                    let target = ObjectLockTarget\.resolve\(\n                        path: file\.path, in: connectionActionContext\(in: tab, session: session\)\),\n                    let settings = session\.remoteFS as\? any S3BucketSettings,\n                    let states = session\.objectLockStates\n                \{\n                    objectLockSheetItem = ObjectLockSheetItem\(\n                        recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,\n                        settings: settings, states: states\)\n                \}\n/                parkedLock(action, selection, side, tab, session)\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/    \/\/\/ The \"Restore\" entry of a deleted row/    private func parkedLock(\n        _ action: FileActionContribution, _ selection: [RemoteFileItem], _ side: BrowserPaneSide,\n        _ tab: SessionTab, _ session: BrowserSession\n    ) {\n        if side == .remote, selection.count == 1, let file = selection.first,\n            let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        {\n            objectLockSheetItem = ObjectLockSheetItem(\n                recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n                settings: settings, states: states)\n        }\n    }\n\n    \/\/\/ The \"Restore\" entry of a deleted row/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: round 5's block above (RED at `b85de102` and at its own tree)
+/// at "test(app): the retention form's span ends at its brace, the router's at its arm":
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// S1's verdict is unchanged, by both guards, and that supersedes one clause of
+/// round 5's own S1 block, which read, verbatim: "-- the sibling now catches it
+/// because the ROUTER'S BODY no longer holds the arm, which is the reason it should
+/// always have had". The sibling no longer reads the router's body; it reads the
+/// Object Lock arm inside it, and S1 is red by it for the stronger reason that
+/// parking the arm EMPTIES the arm. Nothing in round 5's block is withdrawn beyond
+/// that clause's present tense.
+///
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
