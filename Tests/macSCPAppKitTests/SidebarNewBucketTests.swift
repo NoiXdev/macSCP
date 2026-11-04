@@ -866,8 +866,14 @@ import Testing
 /// its comment said the body calls the one from the other -- and R3, the call
 /// kept in a method of the runner nobody calls, passed. The bounded span makes
 /// the real property expressible, so the call is read from the `.onChange`'s own
-/// block now; the two `contains` checks stay as the positive control that the
-/// anchor is spelled as the block is found by.
+/// block now -- and, since fix round 5, from the view where string literals are
+/// blanked (plant T1 of that round: an `onChange` body whose whole content was
+/// `_ = "onDeliver(tab)"` delivered nothing and passed). The one `contains` left
+/// on the runner's own text stays as the positive control that the anchor is
+/// spelled as the block is found by. This passage read, verbatim: "the two
+/// `contains` checks stay as the positive control that the anchor is spelled as
+/// the block is found by" -- the round deleted the other one, so there was one
+/// and not two.
 ///
 /// **A third suite had the shape round 3 replaced.**
 /// `ObjectLockSheetTests.theFileActionArmAssignsAnItemTheWindowPresents` read
@@ -962,12 +968,18 @@ import Testing
 ///   ── control: 3150 test(s) ran, 0 pre-existing failures
 ///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
 ///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
-/// So S1 measures NOTHING about the span it was written for: the sibling guard
-/// reads 900 characters from the FIRST `ObjectLockTarget.resolve(` in the file, and
-/// parking the arm moves that occurrence into the `.metadata` arm, whose next 900
-/// characters carry no `focus: lockAction.focus`. Not re-run at the final tree: a
-/// plant another guard already catches cannot show this one blind, in either
-/// direction. S2 is its replacement.
+/// So AT `e26a116e` S1 measured nothing about the span it was written for: the
+/// sibling guard read 900 characters from the FIRST `ObjectLockTarget.resolve(`
+/// in the file, and parking the arm moves that occurrence into the `.metadata`
+/// arm, whose next 900 characters carry no `focus: lockAction.focus`. Not re-run
+/// at round 4's final tree: a plant another guard already catches cannot show
+/// this one blind, in either direction. S2 is its replacement. This sentence
+/// read, verbatim: "So S1 measures NOTHING about the span it was written for"
+/// -- present tense and undated, where the non-measurement belongs to
+/// `e26a116e` and not to S1. Round 4's re-review ran S1 at `b85de102` and the
+/// span guard fixed here was RED on it too; fix round 5 bounded the sibling to
+/// the same function body, and its verdict on S1 at that tree is in round 5's
+/// own plant block below.
 /// ```
 ///
 /// ```
@@ -1642,11 +1654,24 @@ struct SidebarNewBucketTests {
         // Four checks, with different jobs:
         // 1. Over the whole App target, the runner's NAME appears exactly twice,
         //    both in `ContentView+Detail.swift`: its declaration and the one
-        //    mount. Every way of building a value names its type, so this does
-        //    not buy a spelling at a time the way a count of `Runner(` and
-        //    `Runner.init(` did (a call through the metatype, and an
-        //    initialiser declared in an extension in another file, both passed
-        //    that). The figure: `/usr/bin/grep -r -n -F PendingCreateBucketRunner
+        //    mount. Those two mentions ARE the argument that the count is
+        //    enough here: they are the declaration and the mount, so there is no
+        //    third one for a state, a property, a parameter or a return type of
+        //    this type to be -- and a contextual `.init(...)` needs a context
+        //    that is one. So this does not buy a spelling at a time the way a
+        //    count of `Runner(` and `Runner.init(` did (a call through the
+        //    metatype, and an initialiser declared in an extension in another
+        //    file, both passed that). This passage used to open "Every way of
+        //    building a value names its type", which is false in general: a
+        //    contextually typed `createBucketSheetItem = .init(...)` names the
+        //    STATE and not the type. What catches that shape is a count of the
+        //    STATE's name, which is why
+        //    `theCreateBucketSheetIsConstructedInExactlyOnePlace` keeps one
+        //    beside its type count (plants Q14 and Q19 of the re-reviews are red
+        //    through the state's name alone). The day a state of the runner's
+        //    type exists, this check needs that second count too; today there is
+        //    none, which is why the general rule being false costs nothing here.
+        //    The figure: `/usr/bin/grep -r -n -F PendingCreateBucketRunner
         //    Sources/MacSCPAppKit` prints 3 lines, one a comment, so 2 in code;
         //    this test reads `SourceCorpus.commentFree`, which blanks comments
         //    structurally. The name is read off the type, not written here.
@@ -1743,13 +1768,25 @@ struct SidebarNewBucketTests {
         // nobody calls and the `onChange` body `_ = tab` (plant R3 of the
         // third re-review). The `contains` below is the positive control that
         // the anchor the block is found by is present as spelled, and the one
-        // that fails with a message rather than a thrown `ScanFailure`.
+        // that fails with a message rather than a thrown `ScanFailure`; it
+        // stays on the literal-keeping view, which is where an anchor somebody
+        // spells inside a literal would have to be found.
+        //
+        // The CALL is read from `delivery.code`, the view where string literals
+        // are blanked, and not from the literal-keeping one `contains(_:)`
+        // reads: an `onChange` body whose whole content is
+        // `_ = "onDeliver(tab)"` delivers nothing and satisfied the
+        // literal-keeping read (plant T1 of fix round 5, GREEN before this and
+        // RED after; T1c, the same literal beside the real call, is GREEN). The
+        // whole-struct `contains` this replaced had the same hole, so round 4
+        // did not open it -- round 4 is where the bounded block first made the
+        // right view available to close it.
         #expect(
             runner.contains(".onChange(of: signal, initial: true)"),
             "the runner no longer watches its signal with `initial: true`")
         let delivery = try Self.functionBody(named: ".onChange(of: signal, initial: true)", in: runner)
         #expect(
-            delivery.contains("onDeliver(tab)"),
+            delivery.code.contains("onDeliver(tab)"),
             "the runner's `.onChange(of: signal, initial: true)` no longer calls `onDeliver(tab)`")
     }
 
