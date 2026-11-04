@@ -34,6 +34,78 @@ struct SigV4SignerTests {
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     }
 
+    /// SigV4's canonical header value is the value TRIMMED **and** with
+    /// sequential spaces inside it collapsed to one. A signer that only trims
+    /// signs a canonical request no verifier that applies the documented
+    /// collapse can reproduce, and the answer is 403 `SignatureDoesNotMatch`,
+    /// which `S3FileSystem.mapErrorStatus` turns into `.authenticationFailed`
+    /// — "check your access key", for a value with two spaces in it.
+    ///
+    /// Reachable with ordinary input only since the object-metadata sheet:
+    /// `Cache-Control: max-age=60,  must-revalidate` and
+    /// `Content-Disposition: attachment;  filename="report.pdf"` are values a
+    /// person types, and every other `extraHeaders` value in Core is a fixed
+    /// literal, a digest, or percent-encoded.
+    ///
+    /// **Four readings, not one.** The first is the property; the other three
+    /// are what stops a green here from being an artefact:
+    ///
+    /// - `twoSpacesSignAsOne` and `threeSpacesSignAsOne` are the collapse.
+    /// - `oneSpaceIsNotNoSpace` says the collapsed form is a single space and
+    ///   not none: a "fix" that stripped every space would make the first two
+    ///   true and this one false.
+    /// - `leadingAndTrailingSpacesAreTrimmed` is the trim, which this signer
+    ///   has always done.
+    /// - `theHeaderReachesTheSignature` is the control for all of them: two
+    ///   values that differ in a letter sign differently, so an equality above
+    ///   is the canonicalization and not a header the signature never saw.
+    ///
+    /// **No signature and no key is written into an expectation.** `#expect`
+    /// reports the source text of the expression it checks, so every reading
+    /// is a `Bool` computed before the expectation and the signatures stay in
+    /// local constants (`CLAUDE.md`, "A value a test must not leak has two
+    /// exits, not one"). The credentials are the suite's, which are AWS's own
+    /// published example values.
+    ///
+    /// **Not measured here:** whether any store enforces the collapse. AWS
+    /// documents it; this pins the signer against the specification, not
+    /// against a store's answer.
+    @Test func sequentialSpacesInsideACanonicalHeaderValueCollapseToOne() {
+        let field = "content-disposition"
+        func signature(of value: String) -> String {
+            signer.authorizationHeader(
+                method: "PUT", host: "example.amazonaws.com", path: "/bucket/doc.txt",
+                query: [], headers: ["host": "example.amazonaws.com", field: value],
+                payloadHash: SigV4Signer.emptyPayloadHash, date: date
+            ).authorization
+        }
+        let oneSpace = signature(of: #"attachment; filename="a b.pdf""#)
+        let twoSpaces = signature(of: #"attachment; filename="a  b.pdf""#)
+        let threeSpaces = signature(of: #"attachment; filename="a   b.pdf""#)
+        let noSpace = signature(of: #"attachment; filename="ab.pdf""#)
+        let padded = signature(of: #"  attachment; filename="a b.pdf"  "#)
+        let otherValue = signature(of: #"attachment; filename="z b.pdf""#)
+
+        let twoSpacesSignAsOne = twoSpaces == oneSpace
+        let threeSpacesSignAsOne = threeSpaces == oneSpace
+        let oneSpaceIsNotNoSpace = oneSpace != noSpace
+        let leadingAndTrailingSpacesAreTrimmed = padded == oneSpace
+        let theHeaderReachesTheSignature = otherValue != oneSpace
+
+        #expect(twoSpacesSignAsOne, "two spaces inside the value signed differently from one")
+        #expect(threeSpacesSignAsOne, "three spaces inside the value signed differently from one")
+        #expect(oneSpaceIsNotNoSpace, "the space was removed rather than collapsed")
+        #expect(leadingAndTrailingSpacesAreTrimmed, "the value is no longer trimmed")
+        #expect(theHeaderReachesTheSignature, "the header is not in the signature at all")
+        // And it is in the signed-header list, which is the other half of that
+        // control and carries no value.
+        #expect(signer.authorizationHeader(
+            method: "PUT", host: "example.amazonaws.com", path: "/bucket/doc.txt",
+            query: [], headers: ["host": "example.amazonaws.com", field: "x  y"],
+            payloadHash: SigV4Signer.emptyPayloadHash, date: date
+        ).authorization.contains("SignedHeaders=\(field);host;x-amz-date"))
+    }
+
     @Test func presignedQueryMatchesAWSVector() {
         // AWS docs "Example: GET Object (query parameters)". Secret is the docs'
         // query-params example secret (note the '/' — distinct from get-vanilla).

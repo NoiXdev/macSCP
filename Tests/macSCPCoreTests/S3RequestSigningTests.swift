@@ -82,6 +82,30 @@ struct S3RequestSigningTests {
             == SigV4Signer.emptyPayloadHash)
     }
 
+    /// The other half of the SigV4 space collapse
+    /// (`SigV4Signer.collapsingSequentialSpaces`, and
+    /// `SigV4SignerTests.sequentialSpacesInsideACanonicalHeaderValueCollapseToOne`):
+    /// the collapse is of the CANONICAL value, and the value that goes out
+    /// stays exactly as it was handed over. A "fix" applied to the sent
+    /// header instead would rewrite what the person typed into the metadata
+    /// sheet — their `Content-Disposition` would be stored with one space
+    /// where they put two — and it would be invisible from the signer's own
+    /// tests, which never see a `URLRequest`.
+    @Test func signingDoesNotRewriteTheHeaderValueItSends() throws {
+        let typed = #"attachment; filename="a  b.pdf""#
+        let request = try S3RequestSigning.signedRequest(
+            url: try url("https://s3.example.com/bucket/key"), method: "PUT",
+            canonicalPath: "/bucket/key", query: [],
+            extraHeaders: ["content-disposition": typed], body: nil,
+            payloadHash: SigV4Signer.emptyPayloadHash, config: Self.config)
+
+        #expect(request.value(forHTTPHeaderField: "content-disposition") == typed)
+        // The control: the header really was signed, so there was something
+        // whose canonical form could have been written back over this one.
+        let authorization = try #require(request.value(forHTTPHeaderField: "Authorization"))
+        #expect(authorization.contains("SignedHeaders=content-disposition;host;"))
+    }
+
     /// `Range` is set on a download AFTER signing, on purpose. Carried the
     /// same way here, it reaches the new target without joining the signed
     /// header set.
