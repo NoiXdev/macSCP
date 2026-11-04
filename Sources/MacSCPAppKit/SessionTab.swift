@@ -484,9 +484,9 @@ final class SessionTab: Identifiable {
     /// `jumpToOpenSession`'s clear went away with the reason for it — a
     /// snippet asked for while the already-open query is up rides on the
     /// REQUEST until an answer, so no tab holds one to clear):
-    /// - `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:)`
-    ///   SETS it, on the tab the tab rule just picked, and only when that
-    ///   tab is not already dialling.
+    /// - `ContentView.startWithoutAsking(_:paneVisibility:pendingSnippet:
+    ///   createsBucket:)` SETS it, on the tab the tab rule just picked, and
+    ///   only when that tab is not already dialling.
     /// - `ContentView.deliverPendingSnippetRun(on:)` clears it — before the
     ///   send, so a repeated observation cannot repeat the command, and on
     ///   every outcome that is not a send (no session, another session, a

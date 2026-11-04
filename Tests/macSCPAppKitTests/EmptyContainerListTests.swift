@@ -134,6 +134,32 @@ struct EmptyContainerListTests {
 
     // MARK: - Wiring
 
+    private struct BodyNotFound: Error { let marker: String }
+
+    /// The text of the `{ ... }` block opened by the first line of `text`
+    /// containing `marker`, by brace counting. Fails closed: a marker that is
+    /// not there throws, so a renamed function reads as a failure and never as
+    /// an empty body that a `!contains` then passes.
+    private static func body(of marker: String, in text: String) throws -> String {
+        let lines = text.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.contains(marker) }) else {
+            throw BodyNotFound(marker: marker)
+        }
+        var depth = 0
+        var opened = false
+        var collected: [String] = []
+        for line in lines[start...] {
+            collected.append(line)
+            for character in line {
+                if character == "{" { depth += 1; opened = true }
+                if character == "}" { depth -= 1 }
+            }
+            if opened && depth <= 0 { break }
+        }
+        guard opened else { throw BodyNotFound(marker: marker) }
+        return collected.joined(separator: "\n")
+    }
+
     private static func commentFree(_ relativePath: String) throws -> String {
         try SourceCorpus.commentFree(
             of: SourceCorpus.url(of: .sources).appendingPathComponent(relativePath))
@@ -163,8 +189,25 @@ struct EmptyContainerListTests {
     /// each spelled once.
     @Test func theButtonIsRoutedThroughTheConnectionAction() throws {
         let actions = try Self.commentFree("MacSCPAppKit/ContentView+MenuActions.swift")
-        #expect(actions.contains("func openCreateContainerSheet("))
-        #expect(actions.contains("handleConnectionAction("))
+        // The CALL is read inside the body of `openCreateContainerSheet`, and
+        // never in the file at large: the file also holds the declaration
+        // `func handleConnectionAction(`, which contains the very substring a
+        // file-wide `contains("handleConnectionAction(")` looks for. That is
+        // how this check once passed with the call replaced by a sheet built
+        // on the spot -- the declaration satisfied it, and was its own control.
+        let body = try Self.body(of: "func openCreateContainerSheet(", in: actions)
+        #expect(body.contains("handleConnectionAction(action, in: tab, session: session)"), """
+            `openCreateContainerSheet` no longer hands the contribution to \
+            `handleConnectionAction` -- a sheet built here is a second copy of the rule that \
+            decides whether it is possible.
+            """)
+        #expect(!body.contains("CreateBucketSheetItem("))
+        #expect(!body.contains("createBucketSheetItem"))
+        // The controls, none of them the string checked above: the body that
+        // was read is the one that looks the contribution up by id, and the
+        // function it must call exists as a declaration elsewhere in the file.
+        #expect(body.contains("ConnectionActionRoute.contribution("))
+        #expect(actions.contains("func handleConnectionAction("))
         // The lookup moved into the route when the connection manager's entry
         // needed the same one (S3 metadata plan, Task 6): it read, inline here,
         // `ConnectionActionRoute(action: $0) == .createBucket`. Both halves are

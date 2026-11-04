@@ -15,9 +15,11 @@ import Testing
 /// has no tab and no listing to ask. It is `ConnectionActionRoute.isOffered
 /// (onStored:)`, and the rule inside it is not spelled again there: the
 /// contribution is found in the backend's own descriptor (never by
-/// `ConnectionKind`) and `CreateBucketModel.isOffered` supplies the verdict, so
-/// "a bucket made in a connection rooted in one bucket would be invisible" has
-/// one author.
+/// `ConnectionKind`) and `CreateBucketModel.isOffered` is asked for the
+/// verdict, so "a bucket made in a connection rooted in one bucket would be
+/// invisible" has one author. Only the root half of that rule varies for a
+/// stored record: the pane half is `nil` by construction, a freshly opened
+/// connection standing at the root.
 ///
 /// **What choosing it does** is driven on a REAL `ContentView`, with a
 /// connector that hands back a bucket-list file system. The sheet itself is
@@ -784,10 +786,47 @@ struct SidebarNewBucketTests {
         #expect(actions.contains("createBucketSheetItem = CreateBucketSheetItem("))
     }
 
+    /// The sheet is built in exactly one place in the App target, and the
+    /// state that presents it is written in exactly one place.
+    ///
+    /// **A count that must match, over every file of the target, and not a
+    /// `!contains` over the places someone thought of.** The first form of this
+    /// guard scanned the hand-off's own body; a second construction planted in
+    /// the sibling "Go to Existing Tab" answer, which is where the next one is
+    /// likely to be written, passed. A count fails loudly the moment a site is
+    /// added OR removed -- removing the one is red too, so the scan cannot go
+    /// quiet by no longer finding it. Occurrences are counted, not lines.
+    @Test func theCreateBucketSheetIsConstructedInExactlyOnePlace() throws {
+        let directory = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
+        var constructions: [String] = []
+        var assignments: [String] = []
+        for url in try SourceCorpus.files(under: directory) where url.pathExtension == "swift" {
+            let code = try SourceCorpus.commentFree(of: url)
+            let built = code.components(separatedBy: "CreateBucketSheetItem(").count - 1
+            let written = code.components(separatedBy: "createBucketSheetItem = ").count - 1
+            constructions += Array(repeating: url.lastPathComponent, count: built)
+            assignments += Array(repeating: url.lastPathComponent, count: written)
+        }
+        #expect(constructions == ["ContentView+MenuActions.swift"], """
+            `CreateBucketSheetItem(` is constructed at \(constructions) -- expected exactly one \
+            site, in ContentView+MenuActions.swift (`handleConnectionAction`'s create-bucket \
+            arm). A second copy is how the rule that says the action is possible and the sheet \
+            it opens come to disagree about a bucket nobody is looking at.
+            """)
+        #expect(assignments == ["ContentView+MenuActions.swift"], """
+            `createBucketSheetItem = ` is written at \(assignments) -- expected exactly one \
+            site, the same arm.
+            """)
+    }
+
     /// The sidebar holds no connection of its own: it names no file system,
     /// no connector and no session, only the effect value and the input.
     @Test func theSidebarOwnsNoConnection() throws {
-        let sidebar = try SourceCorpus.text(of: Self.sidebarFile)
+        // Comment-free: a doc comment explaining why the sidebar holds no
+        // connection has to be free to name the types it does not hold, and
+        // this file carries hundreds of `///` lines. Not `code(of:)`, which
+        // also blanks string literals this scan has no reason to ignore.
+        let sidebar = try SourceCorpus.commentFree(of: Self.sidebarFile)
         for forbidden in ["BrowserSession", "RemoteFileSystem", "ConnectionViewModel", "S3FileSystem"] {
             #expect(!sidebar.contains(forbidden), "SessionSidebar.swift names \(forbidden)")
         }
@@ -799,11 +838,33 @@ struct SidebarNewBucketTests {
     /// armed on a tab that is not in front is still delivered when it comes
     /// forward.
     @Test func theRunnerIsMountedPerTab() throws {
-        let detail = try SourceCorpus.text(of: Self.detailFile)
-        #expect(detail.contains("PendingCreateBucketRunner("), """
-            ContentView+Detail.swift no longer mounts PendingCreateBucketRunner( -- a request \
-            armed by the sidebar entry would connect and then never open the sheet.
+        let detail = try SourceCorpus.commentFree(of: Self.detailFile)
+        let lines = detail.components(separatedBy: "\n")
+        let mounts = lines.indices.filter { lines[$0].contains("PendingCreateBucketRunner(") }
+        #expect(mounts.count == 1, """
+            ContentView+Detail.swift mounts PendingCreateBucketRunner( \(mounts.count) times, \
+            expected exactly once -- a request armed by the sidebar entry would connect and \
+            then never open the sheet.
             """)
+        // The property is "one runner per tab", and what states it is the
+        // `ForEach` over every tab around the mount, handing each tab to its
+        // own runner. A single runner on the active tab reads the same words
+        // and would miss a request armed on a tab that is not in front.
+        if let mount = mounts.first, mount > 0, mount + 1 < lines.count {
+            #expect(
+                lines[mount - 1].trimmingCharacters(in: .whitespaces)
+                    == "ForEach(tabsModel.tabs) { tab in",
+                "the runner is not mounted inside `ForEach(tabsModel.tabs) { tab in`")
+            #expect(
+                lines[mount + 1].trimmingCharacters(in: .whitespaces).hasPrefix("tab: tab,"),
+                "the runner is not handed the tab the `ForEach` hands it")
+        }
+        // The control for both: the snippet runner's mount reads the same way,
+        // so the scan is looking at the shape it was written for.
+        let snippetMount = try #require(lines.firstIndex { $0.contains("PendingSnippetRunner(") })
+        #expect(
+            lines[snippetMount - 1].trimmingCharacters(in: .whitespaces)
+                == "ForEach(tabsModel.tabs) { tab in")
         #expect(detail.contains("deliverPendingCreateBucket(on: $0)"))
         // What wakes the runner is what the delivery reads. The one fact the
         // snippet runner does not carry is the pane's load state, and without

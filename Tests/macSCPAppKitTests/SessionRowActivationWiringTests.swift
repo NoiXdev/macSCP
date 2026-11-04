@@ -137,10 +137,11 @@ struct SessionRowActivationWiringTests {
     ///
     /// Recounted 2026-11-04, when the S3 metadata plan's Task 6 added
     /// `onCreateBucket`: six, of which the four listed here are the ones the
-    /// row must not hold. The command is `grep -n '^    let on[A-Za-z]*:
-    /// SessionRow[A-Za-z]*Effect' Sources/MacSCPAppKit/SessionSidebar.swift`,
-    /// which prints eight lines: the first six are `SessionSidebar`'s, the
-    /// last two are `SessionRow`'s own two tunnel effects.
+    /// row must not hold. From the repository root, this prints eight lines,
+    /// the first six `SessionSidebar`'s and the last two `SessionRow`'s own two
+    /// tunnel effects:
+    ///
+    ///     /usr/bin/grep -n '^    let on[A-Za-z]*: SessionRow[A-Za-z]*Effect' Sources/MacSCPAppKit/SessionSidebar.swift
     private static let hostReachingNames = [
         "onConnect", "onOpenTerminal", "onOpenExternalTerminal", "onCreateBucket",
     ]

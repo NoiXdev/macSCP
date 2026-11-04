@@ -113,10 +113,17 @@ enum ConnectionActionRoute: String, CaseIterable {
     /// answers a question about a live connection, from a context that needs
     /// a session. This one can only read what a stored record says, so it
     /// supplies those facts to the same rule: the backend contributes the
-    /// action (the descriptor, by id), and the model's `isOffered` decides --
-    /// a freshly opened connection stands at the root, so the pane is inside
-    /// no bucket (`paneBucket: nil`), and what is left to read from the
-    /// record is whether its root is the bucket list.
+    /// action (the descriptor, by id), and the model's `isOffered` is asked.
+    ///
+    /// **Only one half of that rule varies here.** `CreateBucketModel
+    /// .isOffered` is a conjunction of the root being a list of buckets and the
+    /// pane standing inside none. A freshly opened connection stands at the
+    /// root, so the second half is `paneBucket: nil` BY CONSTRUCTION -- a
+    /// literal passed in, not something read from the record and not something
+    /// this function asks of anything -- and the verdict varies with
+    /// `rootIsContainerList` alone, which is the record's `startsAtBucketList`.
+    /// The call is still made, so a later change to the model's rule is seen
+    /// here; what it cannot see is a change to WHICH half is constant.
     ///
     /// A `switch` with no `default`, so a route added later has to say
     /// whether it belongs on this surface. The three bucket-level actions do
