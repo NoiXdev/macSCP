@@ -87,8 +87,8 @@ enum ObjectMetadataLines {
     /// states for a read and which holds for this write too: Core throws only
     /// after the copy has returned, so the storage answered and the object has
     /// changed. `ObjectLockLines.applyFailed` — "The change could not be
-    /// saved." — is false of it, and that is the sentence this arm said until
-    /// 2026-11-04.
+    /// saved." — is false of it, and that is the sentence `save()`'s catch
+    /// arm said for this error until 2026-11-04.
     static let saveUnconfirmed = CatalogueLine(
         key: "s3.metadata.saveUnconfirmed",
         english: "The storage accepted the change, and macSCP could not confirm it: the file does not report the values that were sent. Check the file's metadata again to see what it holds now.")
@@ -892,11 +892,13 @@ final class ObjectMetadataModel {
             await readAccessList()
             return .written
         } catch {
-            // Three ways in, and only one of them is a change that did not
-            // happen. `saveMessage(for:)` tells the storage's refusal (the
-            // generic sentence, or the permission one) from a change the
-            // storage ACCEPTED whose read-back did not show it, which is not a
-            // failure and is not said as one.
+            // Three errors arrive here and they are not the same news: the
+            // storage refused the write, the storage ACCEPTED it and the
+            // read-back did not show it, or the request went out and nothing
+            // usable came back. Only the middle one is a change that HAPPENED,
+            // and `saveMessage(for:)` is where it stops being called a
+            // failure; the other two keep the generic sentence, or the
+            // permission one.
             applyFailure = ObjectMetadataLines.saveMessage(for: error)
             // The acknowledgement is spent by a request that LEFT, not by one
             // that is known to have landed: this arm is also where a
