@@ -1,8 +1,10 @@
 import Foundation
+import MacSCPTestSupport
 import Testing
 
-/// The two spans a source-scanning guard reads out of a file: the body of a
-/// function, and one arm of a `switch`. Both END AT A BRACE, not at the next
+/// The spans a source-scanning guard reads out of a file: the body of a
+/// function, one arm of a `switch`, and the block an arbitrary anchor opens
+/// (`Views.block(openedBy:)`). All of them END AT A BRACE, not at the next
 /// thing that looks like a sibling.
 ///
 /// **Why this exists.** `ConnectionActionRouteTests` and `CreateBucketSheetTests`
@@ -17,9 +19,12 @@ import Testing
 /// much cannot go quiet by matching nothing; it is satisfied by something that
 /// is not the thing it is named for.
 ///
-/// The text handed in should be the string-and-comment-blanked view
-/// (`SourceCorpus.code(of:)`), so a brace inside a literal or a comment does not
-/// count. Both helpers return `nil` rather than a span they could not bound.
+/// The text handed to `functionBody` and `switchArm` should be the
+/// string-and-comment-blanked view (`SourceCorpus.code(of:)`), so a brace
+/// inside a literal or a comment does not count — nothing here checks that it
+/// is, which is why `Views` below takes BOTH views and leaves the choice to
+/// neither caller nor chance. Every helper here returns `nil` rather than a
+/// span it could not bound.
 enum SourceSpans {
     /// From `func <name>(` to its matching closing brace, inclusive.
     static func functionBody(named name: String, in source: String) -> String? {
@@ -63,6 +68,84 @@ enum SourceSpans {
             collected.append(line)
         }
         return collected.joined(separator: "\n")
+    }
+
+    /// One file's two blanked views, side by side in one indexing: `content`
+    /// is what an anchor is searched in and what a span hands back, `code` is
+    /// where every brace that bounds that span is counted.
+    ///
+    /// **Why both.** `code` (`SourceCorpus.code(of:)`) blanks comments AND
+    /// string literals, so a brace inside a literal cannot decide where a span
+    /// ends — which is the defect this type exists for. `content`
+    /// (`SourceCorpus.commentFree(of:)`) keeps literals, which some anchors and
+    /// some checks are written in: `Button(L10n.string("tabs.alreadyOpen.openAnyway"`
+    /// is an anchor that does not occur in `code` at all, and a guard that
+    /// scans for a type name a doc comment may legitimately mention needs the
+    /// literals its subject spells. So the two views are not interchangeable
+    /// and the brace counting is what moves, not the content matching.
+    ///
+    /// Measured 2026-11-04, plants R1 and R2b of the third re-review:
+    /// `SidebarNewBucketTests` counted braces over `commentFree`, a
+    /// `private let bracePad = "{"` planted in the create-bucket runner and in
+    /// the sheet item raised the depth, each span ran past its own closing
+    /// brace to the end of the file, and both guards were GREEN on a violation
+    /// parked there.
+    ///
+    /// **One indexing, and it is a `Character` offset, never a `String.Index`.**
+    /// Both views are blanked in place, so they hold the same number of
+    /// `Character`s and offset *n* addresses the same character in both;
+    /// `SourceCorpus.lengthCheckedView` refuses a view that is not as long as
+    /// the text it came from, on every read of every file. Their UTF-8 lengths
+    /// can differ — a multi-byte character kept inside a literal in `content`
+    /// is a one-byte space in `code` — so a `String.Index` of one view means
+    /// nothing in the other, and every position here is an offset into a
+    /// `[Character]`.
+    struct Views {
+        /// Comments blanked, string literals kept.
+        let content: String
+        /// Comments and string literals blanked.
+        let code: String
+        private let contentCharacters: [Character]
+        private let codeCharacters: [Character]
+
+        /// `nil` when the two views are not the same length in `Character`s —
+        /// two views of different files, or a stripper that stopped preserving
+        /// length — rather than a read of one view by the other's offsets.
+        init?(content: String, code: String) {
+            let contentCharacters = Array(content)
+            let codeCharacters = Array(code)
+            guard contentCharacters.count == codeCharacters.count else { return nil }
+            self.content = content
+            self.code = code
+            self.contentCharacters = contentCharacters
+            self.codeCharacters = codeCharacters
+        }
+
+        /// `content.contains(text)`. Every check a caller writes is about the
+        /// view literals survive in; `code` exists to bound a span, not to be
+        /// matched against.
+        func contains(_ text: String) -> Bool { content.contains(text) }
+
+        /// The brace-balanced block `anchor` opens: from the start of the first
+        /// occurrence of `anchor` in `content`, to the `}` that balances the
+        /// first `{` at or after it IN `code`, both ends included, as the same
+        /// slice of both views — so the result nests (the `.onChange` block
+        /// inside a view struct's block).
+        ///
+        /// `nil`, never an unbounded span, when `anchor` is not in `content`,
+        /// when no `{` follows it in `code`, or when that brace never closes.
+        func block(openedBy anchor: String) -> Views? {
+            guard
+                let start = SourceSpan.firstOffset(
+                    of: Array(anchor), in: contentCharacters, from: 0),
+                let open = codeCharacters[start...].firstIndex(of: "{"),
+                let close = SourceSpan.closingOffset(
+                    from: open, in: codeCharacters, open: "{", close: "}")
+            else { return nil }
+            return Views(
+                content: String(contentCharacters[start...close]),
+                code: String(codeCharacters[start...close]))
+        }
     }
 }
 
@@ -127,5 +210,84 @@ struct SourceSpansTests {
 
     @Test func anArmThatIsNotThereIsNil() {
         #expect(SourceSpans.switchArm("case .four:", in: Self.source) == nil)
+    }
+
+    // MARK: - Two views, one indexing
+
+    /// A `{` inside a string literal, in a block that is NOT the last thing in
+    /// the text, and a `}` in a literal further down that balances it: plants
+    /// R1 and R2b of the third re-review, in miniature. Counted over one view,
+    /// the first block runs past its own closing brace to the end of
+    /// `parked()`. It also carries an anchor spelled in a literal, which the
+    /// blanked view does not hold at all.
+    private static let literalBrace = """
+        struct Inner {
+            let pad = "{"
+            func handle() {
+                mark("inner")
+            }
+
+            func labelled() {
+                button(key("inner.title")) {
+                    mark("pressed")
+                }
+            }
+        }
+
+        func parked() {
+            let closer = "}"
+            mark("parked")
+        }
+        """
+
+    private static func views(of source: String) throws -> SourceSpans.Views? {
+        SourceSpans.Views(
+            content: try SwiftSource.blankingComments(source),
+            code: try SwiftSource.blankingCommentsAndStrings(source))
+    }
+
+    @Test func aBlockEndsAtItsBraceThoughAStringLiteralHoldsAnOpeningBrace() throws {
+        let views = try #require(try Self.views(of: Self.literalBrace))
+        let block = try #require(views.block(openedBy: "struct Inner {"))
+        #expect(block.contains("mark(\"inner\")"))
+        #expect(!block.contains("mark(\"parked\")"))
+        // The positive control for that negative: the same walk with the
+        // literal-keeping view in BOTH places — which is what this type
+        // replaced — reads past the struct and down to the end of `parked()`,
+        // so the check above can see an over-read when there is one.
+        let oneView = try #require(SourceSpans.Views(content: views.content, code: views.content))
+        let overRead = try #require(oneView.block(openedBy: "struct Inner {"))
+        #expect(overRead.contains("mark(\"parked\")"))
+    }
+
+    @Test func anAnchorSpelledInAStringLiteralIsFoundAndTheBlankedViewHasNone() throws {
+        let views = try #require(try Self.views(of: Self.literalBrace))
+        let anchor = "button(key(\"inner.title\"))"
+        let block = try #require(
+            views.block(openedBy: anchor), "the anchor is not in the literal-keeping view")
+        #expect(block.contains("mark(\"pressed\")"))
+        #expect(!block.contains("mark(\"inner\")"))
+        // Why the anchor is searched in `content` and not in `code`: the
+        // blanked view does not hold it, so a walk handed only `code` could
+        // not find this block at all.
+        let blanked = try #require(SourceSpans.Views(content: views.code, code: views.code))
+        #expect(blanked.block(openedBy: anchor) == nil)
+    }
+
+    @Test func twoViewsOfDifferentLengthsAreRefusedRatherThanReadByEachOthersOffsets() throws {
+        #expect(SourceSpans.Views(content: "struct A { }", code: "struct A {}") == nil)
+        // The control: the same pair, equal in length, is accepted and reads.
+        let pair = try #require(SourceSpans.Views(content: "struct A { }", code: "struct A { }"))
+        #expect(pair.block(openedBy: "struct A") != nil)
+    }
+
+    @Test func aBlockThatNeverClosesIsNilAndNotTheRestOfTheText() throws {
+        let unclosed = "struct A {\n    let a = 1\n"
+        let views = try #require(SourceSpans.Views(content: unclosed, code: unclosed))
+        // The control: the text is there, and it is what an unbounded read
+        // would have handed back.
+        #expect(views.contains("let a = 1"))
+        #expect(views.block(openedBy: "struct A") == nil)
+        #expect(views.block(openedBy: "struct B") == nil)
     }
 }
