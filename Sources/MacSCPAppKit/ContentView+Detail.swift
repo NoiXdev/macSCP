@@ -3260,6 +3260,19 @@ struct PendingCreateBucketRunner: View {
     /// because this type has no access to `ContentView`'s own state.
     let onDeliver: (SessionTab) -> Void
 
+    /// `fileprivate`, so that the one mount in this file is the only one there
+    /// can be: no other file can construct a runner, under any spelling. Where
+    /// that mount sits, and that it is inside a `ForEach` over every tab, is a
+    /// view-structure property no test here can execute; it is pinned by a
+    /// whole-region equality in `SidebarNewBucketTests`.
+    fileprivate init(
+        tab: SessionTab, activeTabID: UUID, onDeliver: @escaping (SessionTab) -> Void
+    ) {
+        self.tab = tab
+        self.activeTabID = activeTabID
+        self.onDeliver = onDeliver
+    }
+
     /// Everything `ContentView.deliverPendingCreateBucket(on:)` reads, as one
     /// `Equatable` value. A fact that method starts reading and this struct
     /// does not carry is a wake-up that will not happen.
