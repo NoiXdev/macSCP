@@ -278,6 +278,112 @@ import Testing
 /// RESULT: RED — 88 test(s) ran, and the plant was caught by:
 ///   macSCPAppKitTests.SidebarNewBucketTests/theTitleNamesTheConnectingAsWellAsTheCreating()
 /// ```
+///
+/// ## Fix round 1: the review's plants, which the twenty-two did not contain
+///
+/// The review planted five plants of its own. Three were real violations and
+/// came back GREEN against a control of 88 tests: R1, R2 and R3 below. (A
+/// fourth, R4, was not a violation: the tab rule makes the tab a request is
+/// armed on the active tab or a fresh one that is made active at once, so a
+/// request cannot reach another connection, and nothing here pins it.) All
+/// three were one shape, a source scan that could not match the violation it is named for
+/// (the declaration `func handleConnectionAction(` satisfied a file-wide check
+/// for the call and was also its control; a `!contains` over one function body
+/// cannot see a second construction site in another file; a scan for the words
+/// `PendingCreateBucketRunner(` cannot see how many runners there are). The
+/// plants below are re-created from the diffs the review printed and were run
+/// on the tree before the fix first (R1, R2, R3 and R5: GREEN, GREEN, GREEN, RED,
+/// reproducing the review) and on the tree of `fix(app): new-bucket review round
+/// 1, the source scans express the properties they are named for` after it.
+/// R1b, R2b and R3b are variants of mine, run after the fix only.
+///
+/// **R5 is the one that must go GREEN after the fix.** It is a comment that
+/// names a type, with no code change; the guard it turned RED was reading prose.
+/// R5b is its control, the same name written as code, which must stay RED, so
+/// the GREEN of R5 cannot be a guard that stopped matching anything.
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R1 the runner is mounted once for the active tab, not per tab' \
+///   --apply "perl -0pi -e 's/        ForEach\(tabsModel\.tabs\) \{ tab in\n            (PendingCreateBucketRunner\(\n)                tab: tab, (activeTabID: tabsModel\.activeTab\.id,\n)                (onDeliver: \{ deliverPendingCreateBucket\(on: [^)]*\) \}\))\n        \}\n/        \$1                tab: tabsModel.activeTab, \$2                \$3\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// before the fix: ── control: 88 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 88 test(s) ran and NONE of them noticed the plant.
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R2 a second create-bucket sheet construction site, in the Go to Existing Tab answer' \
+///   --apply "perl -0pi -e 's/(                    jumpToOpenSession\(request\)\n)/\$1                    if request.createsBucket, let tab = tabsModel.tabs.first(where: { tab in tab.id == request.existingTabID }), let session = tab.session, let settings = session.remoteFS as? any S3BucketSettings {\n                        createBucketSheetItem = CreateBucketSheetItem(recorder: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n                    }\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// before the fix: ── control: 88 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 88 test(s) ran and NONE of them noticed the plant.
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R3 openCreateContainerSheet builds the sheet itself instead of handing it to handleConnectionAction' \
+///   --apply "perl -0pi -e 's/        handleConnectionAction\(action, in: tab, session: session\)\n    \}\n\n    \/\/\/ Whether the menu row for/        _ = action\n        if let settings = session.remoteFS as? any S3BucketSettings {\n            createBucketSheetItem = CreateBucketSheetItem(recorder: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n        }\n    }\n\n    \/\/\/ Whether the menu row for/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before the fix: ── control: 88 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 88 test(s) ran and NONE of them noticed the plant.
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.EmptyContainerListTests/theButtonIsRoutedThroughTheConnectionAction()
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'R5 a doc comment in SessionSidebar.swift names ConnectionViewModel; no code change' \
+///   --apply "perl -0pi -e 's/(    \/\/\/ teardown all belong to the tab the window opens\.\n)/\$1    \/\/\/ Nothing here is a ConnectionViewModel: the window holds that.\n/' Sources/MacSCPAppKit/SessionSidebar.swift"
+/// before the fix: ── control: 24 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 24 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theSidebarOwnsNoConnection()
+/// after the fix: ── control: 25 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 25 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R1b the runner is mounted for the active tab only, through a one-element ForEach' \
+///   --apply "perl -0pi -e 's/        ForEach\(tabsModel\.tabs\) \{ tab in\n(            PendingCreateBucketRunner\()/        ForEach([tabsModel.activeTab]) { tab in\n\$1/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R2b the hand-off function builds a second sheet beside its call to the route' \
+///   --apply "perl -0pi -e 's/(        openCreateContainerSheet\(in: tab, session: session\)\n        return \.handedToTheRoute)/        createBucketSheetItem = CreateBucketSheetItem(recorder: tab.auditRecorder, settings: session.remoteFS as! any S3BucketSettings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n\$1/' Sources/MacSCPAppKit/ContentView.swift"
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+///     macSCPAppKitTests.SidebarNewBucketTests/theHandOffGoesThroughTheRouteAndBuildsNoSheetOfItsOwn()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R3b openCreateContainerSheet builds a second sheet beside its call to handleConnectionAction' \
+///   --apply "perl -0pi -e 's/(        handleConnectionAction\(action, in: tab, session: session\)\n)(    \}\n\n    \/\/\/ Whether the menu row for)/\$1        if let settings = session.remoteFS as? any S3BucketSettings {\n            createBucketSheetItem = CreateBucketSheetItem(recorder: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n        }\n\$2/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// after the fix: ── control: 89 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 89 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.EmptyContainerListTests/theButtonIsRoutedThroughTheConnectionAction()
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests' \
+///   --label 'R5b the sidebar declares a ConnectionViewModel in code (the control for R5)' \
+///   --apply "perl -0pi -e 's/(    let onCreateBucket: SessionRowCreateBucketEffect<StoredSession>\n)/\$1    var heldConnection: ConnectionViewModel? { nil }\n/' Sources/MacSCPAppKit/SessionSidebar.swift"
+/// after the fix: ── control: 25 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 25 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theSidebarOwnsNoConnection()
+/// ```
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
