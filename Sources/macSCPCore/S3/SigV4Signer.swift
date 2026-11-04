@@ -62,7 +62,7 @@ public struct SigV4Signer: Sendable {
         let canonicalHeadersBlock = sortedKeys
             .map { key -> String in
                 let trimmedValue = mergedHeaders[key]!.trimmingCharacters(in: .whitespaces)
-                return "\(key):\(trimmedValue)\n"
+                return "\(key):\(Self.collapsingSequentialSpaces(trimmedValue))\n"
             }
             .joined()
         let signedHeaders = sortedKeys.joined(separator: ";")
@@ -182,6 +182,44 @@ public struct SigV4Signer: Sendable {
     }
 
     // MARK: - Canonicalization
+
+    /// Runs of spaces in a canonical header value, collapsed to one space.
+    ///
+    /// SigV4 canonicalization of a header value is two steps, not one: trim
+    /// the leading and trailing white space, **and** convert sequential
+    /// spaces inside the value to a single space. This signer did only the
+    /// first until 2026-11-04, so a value with two spaces in it was signed
+    /// uncollapsed and a verifier that applies the documented collapse
+    /// computes a different canonical request: 403 `SignatureDoesNotMatch`,
+    /// which `S3FileSystem.mapErrorStatus` reports as
+    /// `.authenticationFailed` — the person is told to check their access key
+    /// because they typed two spaces.
+    ///
+    /// **This is the CANONICAL value only.** The value that goes on the wire
+    /// is set from the caller's own dictionary
+    /// (`S3RequestSigning.signedRequest`'s `request.setValue(value, …)`) and
+    /// is not touched here, which is what the specification asks for: the
+    /// verifier collapses the value it received before checking the
+    /// signature, so the two sides agree on the canonical form while the
+    /// stored header stays as the person typed it. Collapsing the sent value
+    /// instead would silently rewrite their input.
+    ///
+    /// Spaces, not white space in general: the documented rule names
+    /// sequential SPACES, and a tab is a byte a header value may carry
+    /// (`S3FileSystem.headerValueIsSendable` admits `\t`), so nothing here
+    /// touches one.
+    private static func collapsingSequentialSpaces(_ value: String) -> String {
+        guard value.contains("  ") else { return value }
+        var result = ""
+        result.reserveCapacity(value.count)
+        var previousWasSpace = false
+        for character in value {
+            if character == " " && previousWasSpace { continue }
+            previousWasSpace = character == " "
+            result.append(character)
+        }
+        return result
+    }
 
     /// Widened to `internal` (like `canonicalQueryString`) so `S3FileSystem`
     /// can percent-encode an OBJECT KEY path segment-by-segment with the
