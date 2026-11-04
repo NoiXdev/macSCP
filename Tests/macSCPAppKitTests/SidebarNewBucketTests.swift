@@ -1069,6 +1069,36 @@ struct SidebarNewBucketTests {
     /// state that presents it is named in exactly three: where it is declared,
     /// where it is presented, and where the one construction is stored.
     ///
+    /// **Three counts, and the name of this test is true of them together and
+    /// not of any one.** The literal `CreateBucketSheetItem(`; every mention of
+    /// the state's name; and every mention of the TYPE's name. The last is the
+    /// one that does not buy a spelling: every way of building a value names its
+    /// type (a literal, a metatype, an annotation, a typealias, and an
+    /// initialiser declared in an extension, which the `fileprivate` initialiser
+    /// does not reach). An extra internal initialiser nobody calls constructs
+    /// nothing, so its existence is not the violation -- its USE is, and a use
+    /// is one more mention of the name; that disposes of the plant that added
+    /// one (Q7 of the re-review).
+    ///
+    /// **The figures, with the commands that produced them** (from the
+    /// repository root, 2026-11-04, `/usr/bin/grep`):
+    ///
+    ///     /usr/bin/grep -r -o -F createBucketSheetItem Sources/MacSCPAppKit
+    ///
+    /// prints 4 occurrences, of which one is in a `///` line, so the count in code
+    /// is 3 (it printed 5, two of them in `///` lines, before this round
+    /// shortened the item's own doc comment; the code count did not move). A
+    /// reader who sees 5 or 4 has not excluded comments, and should not
+    /// "correct" the 3: this test reads `SourceCorpus.commentFree`, which blanks
+    /// them structurally;
+    ///
+    ///     /usr/bin/grep -r -n -F CreateBucketSheetItem Sources/MacSCPAppKit
+    ///
+    /// prints 4 lines, one of them a comment, so the type's name appears 3 times
+    /// in code: its declaration, the state's annotation, the one construction.
+    /// The type name is read off the type (`String(describing:)`) and not
+    /// written here, so a rename moves the scan with it.
+    ///
     /// **A count that must match, over every file of the target, and not a
     /// `!contains` over the places someone thought of.** The first form of this
     /// guard scanned the hand-off's own body; a second construction planted in
@@ -1078,8 +1108,10 @@ struct SidebarNewBucketTests {
     /// quiet by no longer finding it. Occurrences are counted, not lines.
     @Test func theCreateBucketSheetIsConstructedInExactlyOnePlace() throws {
         let directory = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
+        let itemName = String(describing: ContentView.CreateBucketSheetItem.self)
         var constructions: [String] = []
         var mentions: [String] = []
+        var typeMentions: [String] = []
         for url in try SourceCorpus.files(under: directory) where url.pathExtension == "swift" {
             let code = try SourceCorpus.commentFree(of: url)
             let built = code.components(separatedBy: "CreateBucketSheetItem(").count - 1
@@ -1090,8 +1122,10 @@ struct SidebarNewBucketTests {
             // one more mention. (A `.init(` behind a factory in that file is
             // invisible to a count of the literal and was GREEN until this.)
             let named = code.components(separatedBy: "createBucketSheetItem").count - 1
+            let typed = code.components(separatedBy: itemName).count - 1
             constructions += Array(repeating: url.lastPathComponent, count: built)
             mentions += Array(repeating: url.lastPathComponent, count: named)
+            typeMentions += Array(repeating: url.lastPathComponent, count: typed)
         }
         #expect(constructions == ["ContentView+MenuActions.swift"], """
             `CreateBucketSheetItem(` is constructed at \(constructions) -- expected exactly one \
@@ -1107,27 +1141,39 @@ struct SidebarNewBucketTests {
             the declaration (ContentView.swift), the presentation (ContentView+Sheets.swift) and \
             the one store (ContentView+MenuActions.swift, the create-bucket arm).
             """)
+        #expect(
+            typeMentions.sorted()
+                == ["ContentView+MenuActions.swift", "ContentView+MenuActions.swift", "ContentView.swift"],
+            """
+            the type `\(itemName)` is named at \(typeMentions.sorted()) -- expected exactly three: \
+            its declaration and the one construction (ContentView+MenuActions.swift) and the \
+            state's annotation (ContentView.swift). A fourth is a use the other two counts \
+            have no spelling for, such as an initialiser declared in an extension elsewhere.
+            """)
     }
 
-    /// The boundary behind the count above: `CreateBucketSheetItem` is declared
-    /// in `ContentView+MenuActions.swift` with a `fileprivate` initialiser, so
-    /// no other file can construct one under ANY spelling. The count is the
-    /// second line of defence now, not the only one -- it still fails if the one
-    /// site moves or a second appears in that file, which the access level
-    /// cannot see.
+    /// What the access level contributes, and nothing more: `CreateBucketSheetItem`
+    /// is declared in `ContentView+MenuActions.swift`, once, with a `fileprivate`
+    /// initialiser. That makes the literal call and the call through the metatype
+    /// fail to compile in any other file. It does NOT confine construction to
+    /// this file -- a struct extension elsewhere can declare an initialiser that
+    /// assigns the stored properties directly, and that compiles (measured as
+    /// plant Q8 of the re-review) -- which is what the type-name count in
+    /// `theCreateBucketSheetIsConstructedInExactlyOnePlace` stands beside it for.
     ///
-    /// Read from source because a violation here does not compile, which is the
-    /// point, and a test that tried to write one would not build. The access
-    /// level is pinned on the INITIALISER: on the type it would stop the other
-    /// files holding the item, which they must (`ContentView.createBucketSheetItem`).
-    @Test func theSheetItemCannotBeConstructedOutsideTheFileThatBuildsIt() throws {
+    /// The access level is pinned on the INITIALISER: on the type it would stop
+    /// the other files holding the item, which they must
+    /// (`ContentView.createBucketSheetItem`). This test is presence, and only
+    /// that: an additional internal initialiser in the type passes it, by
+    /// design, because an initialiser nobody calls constructs nothing.
+    @Test func theSheetItemIsDeclaredOnceBesideItsBuilderWithAFileprivateInitialiser() throws {
         let actions = try SourceCorpus.commentFree(of: Self.menuActionsFile)
         let item = try Self.functionBody(named: "struct CreateBucketSheetItem: Identifiable {", in: actions)
         #expect(item.contains("fileprivate init("), "the item's initialiser is no longer `fileprivate`")
         let contentView = try SourceCorpus.commentFree(of: Self.contentViewFile)
         #expect(!contentView.contains("struct CreateBucketSheetItem"), """
-            ContentView.swift declares the item again -- a second declaration is a second, \
-            unconfined initialiser.
+            ContentView.swift declares the item again -- a second declaration is a second \
+            initialiser the access level on the first says nothing about.
             """)
         // The controls, not the strings checked above: the state that holds the
         // item is still declared, in ContentView.swift, with the type's name.
@@ -1162,12 +1208,17 @@ struct SidebarNewBucketTests {
         // under another spelling, a mount in another file, and the whole
         // `ForEach` wrapped in an `if` that is never true all passed it.
         //
-        // Three checks, with different jobs:
-        // 1. Over the whole App target, every construction of the runner
-        //    under either spelling is in `ContentView+Detail.swift`, once. It
-        //    cannot see a spelling nobody listed (a call through the type's
-        //    metatype was GREEN against checks 1 and 2 alone), which is what
-        //    3 is for.
+        // Four checks, with different jobs:
+        // 1. Over the whole App target, the runner's NAME appears exactly twice,
+        //    both in `ContentView+Detail.swift`: its declaration and the one
+        //    mount. Every way of building a value names its type, so this does
+        //    not buy a spelling at a time the way a count of `Runner(` and
+        //    `Runner.init(` did (a call through the metatype, and an
+        //    initialiser declared in an extension in another file, both passed
+        //    that). The figure: `/usr/bin/grep -r -n -F PendingCreateBucketRunner
+        //    Sources/MacSCPAppKit` prints 3 lines, one a comment, so 2 in code;
+        //    this test reads `SourceCorpus.commentFree`, which blanks comments
+        //    structurally. The name is read off the type, not written here.
         // 2. The region of that one mount -- from its `.background {` to the
         //    closing brace, and the modifier that follows it -- is EQUAL to the
         //    expected lines. An equality over a small region cannot go quiet:
@@ -1176,22 +1227,36 @@ struct SidebarNewBucketTests {
         //    region is seven lines, so that is the right trade; the line that
         //    follows is in it so a modifier added after the block (a
         //    `.hidden()`, say) is seen too.
-        // 3. The runner's initialiser is `fileprivate`, so no other file can
-        //    construct one under any spelling: a boundary that does not compile
-        //    the violation, where 1 is a scan that buys one spelling at a time.
-        //    It does not confine this file, which 2 does.
+        // 3. The runner's initialiser is `fileprivate`, which makes the literal
+        //    call and the call through the metatype fail to compile in another
+        //    file. That is all it does: an initialiser declared in an extension
+        //    elsewhere compiles (plant Q9 of the re-review), which is what 1 is
+        //    for; and it does not confine this file, which 2 does.
+        // 4. The runner does its one job: its body calls `onDeliver(tab)` from an
+        //    `.onChange(of: signal, initial: true)`. A mount that is present
+        //    and inert (the body never calls it, the `onChange` watches a
+        //    constant, the body is an `EmptyView`) satisfies 1 to 3.
+        //
+        // **Not closed, on purpose.** A region that compiles out -- `#if false`
+        // around the whole layer, with every byte of the region unchanged (plant
+        // Q1b) -- passes all four, and no source scan closes that family: what
+        // separates a live mount from a compiled-out one is execution, and
+        // nothing in this project executes a view. The check that stands against
+        // it is a person opening the app and watching the sheet appear
+        // (sight-check item 8). Another anchor here would be one more spelling.
         let appKit = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
-        var constructions: [String] = []
+        let runnerName = String(describing: PendingCreateBucketRunner.self)
+        var named: [String] = []
         for url in try SourceCorpus.files(under: appKit) where url.pathExtension == "swift" {
             let code = try SourceCorpus.commentFree(of: url)
-            let built = code.components(separatedBy: "PendingCreateBucketRunner(").count - 1
-                + code.components(separatedBy: "PendingCreateBucketRunner.init(").count - 1
-            constructions += Array(repeating: url.lastPathComponent, count: built)
+            let count = code.components(separatedBy: runnerName).count - 1
+            named += Array(repeating: url.lastPathComponent, count: count)
         }
-        #expect(constructions == ["ContentView+Detail.swift"], """
-            the create-bucket runner is constructed at \(constructions) (either spelling), \
-            expected exactly one construction, in ContentView+Detail.swift -- a request armed \
-            by the sidebar entry would connect and then never open the sheet.
+        #expect(named == ["ContentView+Detail.swift", "ContentView+Detail.swift"], """
+            the create-bucket runner `\(runnerName)` is named at \(named), expected exactly \
+            twice, both in ContentView+Detail.swift (its declaration and the one mount) -- a \
+            second use is a second mount, or a construction the spellings of a call do not \
+            show, and a request armed by the sidebar entry may then never open the sheet.
             """)
 
         let detail = try SourceCorpus.commentFree(of: Self.detailFile)
@@ -1233,6 +1298,13 @@ struct SidebarNewBucketTests {
             #expect(runner.contains(fact), "the runner's signal no longer carries `\(fact)`")
         }
         #expect(runner.contains("fileprivate init("), "the runner's initialiser is no longer `fileprivate`")
+        // Check 4: the runner does its job. Present-but-inert is the shape these
+        // pin, and `initial: true` is what delivers a request armed before this
+        // view was mounted (no later change would, when the list is loaded).
+        #expect(runner.contains("onDeliver(tab)"), "the runner no longer calls `onDeliver(tab)`")
+        #expect(
+            runner.contains(".onChange(of: signal, initial: true)"),
+            "the runner no longer watches its signal with `initial: true`")
     }
 
     /// "Open Anyway" starts what was asked for. The answer lives in a view
