@@ -557,6 +557,279 @@ import Testing
 ///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
 ///     ContentView+Sheets.swift:795:27: error: 'PendingCreateBucketRunner' initializer is inaccessible due to 'fileprivate' protection level
 /// ```
+///
+/// ## Fix round 3: a correction of the access-level claim, and spans that read too far
+///
+/// **The correction.** Round 2 adopted `fileprivate` on an initialiser as a
+/// structural boundary and wrote, in three comments and this suite, that no
+/// other file can construct the type "under any spelling". That is true of the
+/// literal call and the call through the metatype, which is what was measured,
+/// and false in general: a struct extension in another file can declare an
+/// initialiser of its own that assigns the stored properties directly (they are
+/// internal), and that compiles (Q8 for the sheet item, Q9 for the runner; both
+/// GREEN in the re-review). For the runner that was a real hole; for the sheet
+/// item a use is still one more mention of the state's name (Q14), so only the
+/// words were wrong. The comments now say what the access level does, the test
+/// that overstated it is renamed to what it checks, and the TYPE's name is
+/// counted over the App target for both types, read off the type with
+/// `String(describing:)`: every way of building a value names its type, so the
+/// count does not buy a spelling at a time (it reddens Q5, Q8 and Q9).
+///
+/// **Q7 is GREEN on purpose.** An extra internal initialiser nobody calls
+/// constructs nothing. The property is that construction happens in one place;
+/// the initialiser's existence is not the violation and its USE is, and a use
+/// names the type. **Q1b is GREEN on purpose, and stays open**: `#if false`
+/// around the whole layer with every byte of the region unchanged. What
+/// separates a live mount from a compiled-out one is execution, nothing in this
+/// project executes a view, and another anchor would be one more spelling; the
+/// check that stands against it is a person watching the sheet appear
+/// (sight-check item 8).
+///
+/// **The spans.** `ConnectionActionRouteTests` and `CreateBucketSheetTests` read
+/// a function body to "the next `func` at the same indent" and an arm to "the
+/// next `case .`", both of which run to the end of the file when what is read
+/// is the last of its kind. Q10 (a dead `.cors` arm with its store parked in a
+/// private function after `handleConnectionAction`) was GREEN, and so were Q16,
+/// Q17 and Q18, which I planted into the three `CreateBucketSheetTests` reads
+/// the re-review had only read: text the guard looks for, parked after the
+/// thing it is named for, satisfied it. `SourceSpans` ends both at a brace.
+/// **Q15 goes the other way, on purpose:** it appends a harmless struct and used
+/// to turn the guard RED (a false alarm from the same too-wide span); with the
+/// span bounded it is GREEN, which is the fix and not a lost catch.
+///
+/// **Reading these verdicts.**
+/// - Filter the plants of any file under `Sources/MacSCPAppKit` by the module
+///   (`macSCPAppKitTests`, control 3141 functions at the first commit of the
+///   round and 3146 after `SourceSpans` brought its five), not by a list of
+///   suites: the five-suite filter of the earlier rounds did not contain
+///   `ConnectionActionRouteTests`, and Q15 was GREEN under it and RED under the
+///   module. End the round with a plain `swift test`. The price measured by the
+///   re-review was about 3:34 to 4:16 per plant against 2:17 to 2:31.
+/// - N1cm and R2 of the earlier rounds are BUILD FAILED now where they were
+///   RED: the build refuses what the tests used to catch. That is a stronger
+///   verdict, but it means those two no longer measure what they measured, and
+///   the literal count is exercised only by in-file plants (N2a, N3a, R3).
+/// - Q5, Q9 and Q1b show PLANT FAILED at the first commit of the round: the
+///   command I generated carried an apostrophe inside its own single quotes
+///   ("manager's"). The regenerated command printed below ran at the final tree.
+/// - The re-review's `Q-` definitions are executed from its own `gen.py`, and
+///   every command below was compared, byte for byte, with the plain
+///   `str.replace` semantics of those steps on copies of the tree's files;
+///   Q16, Q17 and Q18 are mine, and were compared the same way.
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q2 the runner body never calls onDeliver (mounted, inert)' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)            \.onChange\(of: signal, initial: true\) \{ _, _ in\n                onDeliver\(tab\)\n            \}\n/\$1            .onChange(of: signal, initial: true) { _, _ in\n                _ = tab\n            }\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q3 the runner watches a constant, not its signal (mounted, never fires after first)' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)            \.onChange\(of: signal, initial: true\) \{ _, _ in\n/\$1            .onChange(of: false, initial: false) { _, _ in\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q4 the runner body is EmptyView (mounted, inert)' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)        Color\.clear\n            \.frame\(width: 0, height: 0\)\n            \.allowsHitTesting\(false\)\n            \.onChange\(of: signal, initial: true\) \{ _, _ in\n                onDeliver\(tab\)\n            \}\n/\$1        EmptyView()\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q5 a second per-tab mount in the same file, through the metatype' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView {\n    func extraRunner(_ tab: SessionTab) -> some View {\n        let runnerType = PendingCreateBucketRunner.self\n        return runnerType.init(tab: tab, activeTabID: tab.id, onDeliver: { _ in })\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/    \/\/ The create-bucket sheet after the connection manager\x27s \"Connect and\n/    .background {\n        ForEach(tabsModel.tabs) { tab in\n            extraRunner(tab)\n        }\n    }\n    \/\/ The create-bucket sheet after the connection manager\x27s \"Connect and\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: PLANT FAILED — the --apply command exited non-zero. Nothing was measured.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q8 an initialiser of the sheet item in an extension in ContentView+Sheets.swift' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView.CreateBucketSheetItem {\n    init(viaExtension recorder: AuditRecorder?, settings: any S3BucketSettings, listing: CreateBucketModel.Listing, onCreated: \@escaping () -> Void) {\n        self.recorder = recorder\n        self.settings = settings\n        self.listing = listing\n        self.onCreated = onCreated\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q9 a runner initialiser in an extension in ContentView+Sheets.swift, mounted per tab from ContentView+Detail.swift' \
+///   --apply "perl -0pi -e 's/\z/\nextension PendingCreateBucketRunner {\n    init(viaExtension tab: SessionTab, activeTabID: UUID, onDeliver: \@escaping (SessionTab) -> Void) {\n        self.tab = tab\n        self.activeTabID = activeTabID\n        self.onDeliver = onDeliver\n    }\n}\n\nextension ContentView {\n    func extraRunner(_ tab: SessionTab) -> some View {\n        let runner: PendingCreateBucketRunner = .init(viaExtension: tab, activeTabID: tab.id, onDeliver: { _ in })\n        return runner\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift && perl -0pi -e 's/    \/\/ The create-bucket sheet after the connection manager\x27s \"Connect and\n/    .background {\n        ForEach(tabsModel.tabs) { tab in\n            extraRunner(tab)\n        }\n    }\n    \/\/ The create-bucket sheet after the connection manager\x27s \"Connect and\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: PLANT FAILED — the --apply command exited non-zero. Nothing was measured.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q14 the extension initialiser of Q8 used in ContentView+Sheets.swift (store through the state'\''s name)' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView.CreateBucketSheetItem {\n    init(viaExtension recorder: AuditRecorder?, settings: any S3BucketSettings, listing: CreateBucketModel.Listing, onCreated: \@escaping () -> Void) {\n        self.recorder = recorder\n        self.settings = settings\n        self.listing = listing\n        self.onCreated = onCreated\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift && perl -0pi -e 's/                    jumpToOpenSession\(request\)\n/                    jumpToOpenSession(request)\n                    if let tab = tabsModel.tabs.first(where: { tab in tab.id == request.existingTabID }), let session = tab.session, let settings = session.remoteFS as? any S3BucketSettings {\n                        createBucketSheetItem = .init(viaExtension: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n                    }\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// the re-review, at the tree before this round (not re-run by me): RED
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q6 control: .hidden() added after the mount block' \
+///   --apply "perl -0pi -e 's/    \.backgroundPreferenceValue\(SidebarMeasuredWidthKey\.self\) \{ measuredSidebarWidth in\n/    .hidden()\n    .backgroundPreferenceValue(SidebarMeasuredWidthKey.self) { measuredSidebarWidth in\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): RED
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q7 an internal convenience init added next to the fileprivate one' \
+///   --apply "perl -0pi -e 's/            self\.onCreated = onCreated\n        \}\n    \}\n\}\n/            self.onCreated = onCreated\n        }\n\n        init(unchecked recorder: AuditRecorder?, settings: any S3BucketSettings, listing: CreateBucketModel.Listing, onCreated: \@escaping () -> Void) {\n            self.init(recorder: recorder, settings: settings, listing: listing, onCreated: onCreated)\n        }\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3141 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3146 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q1b the snippet, create-bucket and width layers behind #if false, both regions'\'' bytes unchanged' \
+///   --apply "perl -0pi -e 's/    \/\/ The session overview\x27s \"Run\" on a snippet \(session overview plan,\n/#if false\n    \/\/ The session overview\x27s \"Run\" on a snippet (session overview plan,\n/' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/                    container: proxy\.size\.width, sidebar: measuredSidebarWidth\)\)\n        \}\n    \}\n    \}\n/                    container: proxy.size.width, sidebar: measuredSidebarWidth))\n        }\n    }\n#endif\n    }\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: PLANT FAILED — the --apply command exited non-zero. Nothing was measured.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3146 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q10 the cors arm is dead; its store sits in a private func after handleConnectionAction' \
+///   --apply "perl -0pi -e 's/                corsSheetItem = BucketCORSSheetItem\(\n                    recorder: tab\.auditRecorder, bucket: bucket, settings: settings\)\n/                _ = (bucket, settings)\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/            \}\n        \}\n    \}\n\}\n/            }\n        }\n    }\n\n    private func parkedCorsStore(_ tab: SessionTab, _ bucket: String, _ settings: any S3BucketSettings) {\n        corsSheetItem = BucketCORSSheetItem(recorder: tab.auditRecorder, bucket: bucket, settings: settings)\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the re-review, at the tree before this round (not re-run by me): GREEN
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3141 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ConnectionActionRouteTests/theStateTheDispatcherSetsIsTheOneASheetIsPresentedFor()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q15 a struct with `let id = UUID()` after handleConnectionAction, at the end of the file' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView {\n    struct SpareItem: Identifiable {\n        let id = UUID()\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the re-review, at the tree before this round (not re-run by me): RED
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3141 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ConnectionActionRouteTests/theStateTheDispatcherSetsIsTheOneASheetIsPresentedFor()
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3146 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q16 the sheet is handed an empty listing; the pane listing sits in a private func after handleConnectionAction' \
+///   --apply "perl -0pi -e 's/                    listing: CreateBucketModel\.listing\(of: session\.remote\),\n/                    listing: CreateBucketModel.Listing(names: [], isKnown: true),\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/            \}\n        \}\n    \}\n\}\n/            }\n        }\n    }\n\n    private func parkedListing(_ session: BrowserSession) -> CreateBucketModel.Listing {\n        CreateBucketModel.listing(of: session.remote)\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the re-review: not planted
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3141 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.CreateBucketSheetTests/theDispatcherHandsTheSheetTheRemotePanesListing()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q17 a made bucket no longer refreshes the pane; the refresh sits in a private func after handleConnectionAction' \
+///   --apply "perl -0pi -e 's/                    onCreated: \{ \[remote = session\.remote\] in\n                        Task \{ await remote\.refresh\(\) \}\n                    \}\)\n/                    onCreated: { [remote = session.remote] in\n                        _ = remote\n                    })\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/            \}\n        \}\n    \}\n\}\n/            }\n        }\n    }\n\n    private func parkedRefresh(_ remote: RemoteBrowserViewModel) async {\n        await remote.refresh()\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the re-review: not planted
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3141 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.CreateBucketSheetTests/aMadeBucketRefreshesThePaneThatListsIt()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'Q18 the route'\''s createBucket gate no longer asks the model; the model'\''s call sits in a private func after isAvailable(in:)' \
+///   --apply "perl -0pi -e 's/            context\.settings != nil\n                && CreateBucketModel\.isOffered\(\n                    rootIsContainerList: context\.rootIsContainerList, paneBucket: context\.bucket\)\n        \}\n    \}\n/            context.settings != nil && context.rootIsContainerList && context.bucket == nil\n        }\n    }\n\n    private func parkedGate(_ context: ConnectionActionContext) -> Bool {\n        CreateBucketModel.isOffered(\n            rootIsContainerList: context.rootIsContainerList, paneBucket: context.bucket)\n    }\n/' Sources/MacSCPAppKit/ConnectionActionRoute.swift"
+/// the re-review: not planted
+/// at the first commit of this round (the two guards still read to the end of the file):
+///   ── control: 3141 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3141 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3146 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.CreateBucketSheetTests/theRoutesGateAsksTheModelsRule()
+/// ```
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
