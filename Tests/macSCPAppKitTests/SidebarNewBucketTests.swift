@@ -1324,8 +1324,8 @@ struct SidebarNewBucketTests {
     /// control beside every negative: a scan for an absent thing that cannot
     /// find the present one is a comment that runs.
     @Test func theHandOffGoesThroughTheRouteAndBuildsNoSheetOfItsOwn() throws {
-        let contentView = try SourceCorpus.text(of: Self.contentViewFile)
-        let body = try Self.functionBody(named: "func deliverPendingCreateBucket(", in: contentView)
+        let body = try Self.functionBody(
+            named: "func deliverPendingCreateBucket(", in: Self.contentViewFile)
         #expect(body.contains("openCreateContainerSheet(in: tab, session: session)"), """
             the hand-off no longer calls `openCreateContainerSheet(in:session:)` -- a sheet \
             presented any other way is a second copy of the rule that decides whether it is \
@@ -1345,13 +1345,19 @@ struct SidebarNewBucketTests {
     /// **Three counts, and the name of this test is true of them together and
     /// not of any one.** The literal `CreateBucketSheetItem(`; every mention of
     /// the state's name; and every mention of the TYPE's name. The last is the
-    /// one that does not buy a spelling: every way of building a value names its
-    /// type (a literal, a metatype, an annotation, a typealias, and an
-    /// initialiser declared in an extension, which the `fileprivate` initialiser
-    /// does not reach). An extra internal initialiser nobody calls constructs
-    /// nothing, so its existence is not the violation -- its USE is, and a use
-    /// is one more mention of the name; that disposes of the plant that added
-    /// one (Q7 of the re-review).
+    /// one that does not buy a spelling at a time: a literal, a metatype, an
+    /// annotation, a typealias and an initialiser declared in an extension (the
+    /// spelling the `fileprivate` initialiser does not reach) each name the
+    /// type, so each is one of its mentions. It does not catch every
+    /// construction on its own, and the sentence here used to claim it did --
+    /// "every way of building a value names its type": a contextually typed
+    /// `createBucketSheetItem = .init(...)` names the STATE and not the type,
+    /// and that is the count which catches that one (plants Q14 and Q19 of the
+    /// re-reviews, both red through the state's name with no new mention of the
+    /// type). An extra internal initialiser nobody calls constructs nothing, so
+    /// its existence is not the violation -- its USE is, and a use is one more
+    /// mention of the type's name or of the state's; that disposes of the plant
+    /// that added one (Q7 of the re-review).
     ///
     /// **The figures, with the commands that produced them** (from the
     /// repository root, 2026-11-04, `/usr/bin/grep`):
@@ -1440,8 +1446,8 @@ struct SidebarNewBucketTests {
     /// that: an additional internal initialiser in the type passes it, by
     /// design, because an initialiser nobody calls constructs nothing.
     @Test func theSheetItemIsDeclaredOnceBesideItsBuilderWithAFileprivateInitialiser() throws {
-        let actions = try SourceCorpus.commentFree(of: Self.menuActionsFile)
-        let item = try Self.functionBody(named: "struct CreateBucketSheetItem: Identifiable {", in: actions)
+        let item = try Self.functionBody(
+            named: "struct CreateBucketSheetItem: Identifiable {", in: Self.menuActionsFile)
         #expect(item.contains("fileprivate init("), "the item's initialiser is no longer `fileprivate`")
         let contentView = try SourceCorpus.commentFree(of: Self.contentViewFile)
         #expect(!contentView.contains("struct CreateBucketSheetItem"), """
@@ -1508,7 +1514,11 @@ struct SidebarNewBucketTests {
         // 4. The runner does its one job: its body calls `onDeliver(tab)` from an
         //    `.onChange(of: signal, initial: true)`. A mount that is present
         //    and inert (the body never calls it, the `onChange` watches a
-        //    constant, the body is an `EmptyView`) satisfies 1 to 3.
+        //    constant, the body is an `EmptyView`) satisfies 1 to 3. The call
+        //    is read from that `.onChange`'s OWN block: until fix round 4 this
+        //    asked only that the struct's text held both strings somewhere,
+        //    which the call parked in a method of the runner nobody calls
+        //    satisfied (plant R3 of the third re-review).
         //
         // **Not closed, on purpose.** A region that compiles out -- `#if false`
         // around the whole layer, with every byte of the region unchanged (plant
@@ -1563,7 +1573,8 @@ struct SidebarNewBucketTests {
         // What wakes the runner is what the delivery reads. The one fact the
         // snippet runner does not carry is the pane's load state, and without
         // it a request waiting for the list would never be woken by the list.
-        let runner = try Self.functionBody(named: "struct PendingCreateBucketRunner: View {", in: detail)
+        let runner = try Self.functionBody(
+            named: "struct PendingCreateBucketRunner: View {", in: Self.detailFile)
         for fact in [
             "tab.pendingCreateBucket", "tab.session?.remote.state", "tab.session?.id",
             "tab.isReconnecting", "tab.activeStoredSessionID", "activeTabID: activeTabID",
@@ -1571,22 +1582,34 @@ struct SidebarNewBucketTests {
             #expect(runner.contains(fact), "the runner's signal no longer carries `\(fact)`")
         }
         #expect(runner.contains("fileprivate init("), "the runner's initialiser is no longer `fileprivate`")
-        // Check 4: the runner does its job. Present-but-inert is the shape these
-        // pin, and `initial: true` is what delivers a request armed before this
-        // view was mounted (no later change would, when the list is loaded).
-        #expect(runner.contains("onDeliver(tab)"), "the runner no longer calls `onDeliver(tab)`")
+        // Check 4: the runner does its job, and does it FROM the `onChange`.
+        // Present-but-inert is the shape these pin, and `initial: true` is what
+        // delivers a request armed before this view was mounted (no later
+        // change would, when the list is loaded). The call is read from the
+        // `.onChange`'s own block: asking that the struct's text contains it
+        // somewhere passed with the call sitting in a method of the runner
+        // nobody calls and the `onChange` body `_ = tab` (plant R3 of the
+        // third re-review). The `contains` below is the positive control that
+        // the anchor the block is found by is present as spelled, and the one
+        // that fails with a message rather than a thrown `ScanFailure`.
         #expect(
             runner.contains(".onChange(of: signal, initial: true)"),
             "the runner no longer watches its signal with `initial: true`")
+        let delivery = try Self.functionBody(named: ".onChange(of: signal, initial: true)", in: runner)
+        #expect(
+            delivery.contains("onDeliver(tab)"),
+            "the runner's `.onChange(of: signal, initial: true)` no longer calls `onDeliver(tab)`")
     }
 
     /// "Open Anyway" starts what was asked for. The answer lives in a view
     /// modifier no test can press, so the pass-through is read from source:
     /// the dialog hands `request.createsBucket` on, and builds no sheet.
     @Test func openAnywayPassesTheRequestOnAndBuildsNoSheet() throws {
-        let sheets = try SourceCorpus.text(of: Self.sheetsFile)
+        // The literal-keeping view, which is the one the anchor is spelled in:
+        // `code(of:)` blanks `"tabs.alreadyOpen.openAnyway"` and would not
+        // hold this anchor at all (`SourceSpans.Views`).
         let answer = try Self.functionBody(
-            named: "Button(L10n.string(\"tabs.alreadyOpen.openAnyway\"", in: sheets)
+            named: "Button(L10n.string(\"tabs.alreadyOpen.openAnyway\"", in: Self.sheetsFile)
         #expect(answer.contains("createsBucket: request.createsBucket"), """
             the "Open Anyway" answer no longer hands the create-bucket request on -- it \
             would start a plain connect and the sheet would never open.
@@ -1609,7 +1632,8 @@ struct SidebarNewBucketTests {
         #expect(
             lines[carrier - 1].trimmingCharacters(in: .whitespaces) == "if newBucketOffered {",
             "the entry is not directly inside `if newBucketOffered {`")
-        let question = try Self.functionBody(named: "private var newBucketOffered: Bool {", in: sidebar)
+        let question = try Self.functionBody(
+            named: "private var newBucketOffered: Bool {", in: Self.sidebarFile)
         #expect(question.contains("ConnectionActionRoute.createBucket.isOffered(onStored: session)"))
     }
 
@@ -1653,27 +1677,48 @@ struct SidebarNewBucketTests {
     }
 
     private struct ScanFailure: Error { let anchor: String }
+    private struct ViewsNotInLockstep: Error { let file: String }
 
-    /// The comment-free text of the `{ ... }` block opened by the first line
-    /// containing `marker`, by brace counting.
-    private static func functionBody(named marker: String, in text: String) throws -> String {
-        let lines = text.components(separatedBy: "\n")
-        guard let start = lines.firstIndex(where: { $0.contains(marker) }) else {
-            throw ScanFailure(anchor: marker)
-        }
-        var depth = 0
-        var opened = false
-        var collected: [String] = []
-        for line in lines[start...] {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.hasPrefix("//") { collected.append(line) }
-            for character in line {
-                if character == "{" { depth += 1; opened = true }
-                if character == "}" { depth -= 1 }
-            }
-            if opened && depth <= 0 { break }
-        }
-        return collected.joined(separator: "\n")
+    /// The file's two blanked views as one `SourceSpans.Views`: comments
+    /// blanked and literals kept for what is matched on, literals blanked too
+    /// for the braces that bound a span.
+    private static func views(of file: URL) throws -> SourceSpans.Views {
+        guard
+            let views = SourceSpans.Views(
+                content: try SourceCorpus.commentFree(of: file),
+                code: try SourceCorpus.code(of: file))
+        else { throw ViewsNotInLockstep(file: file.lastPathComponent) }
+        return views
+    }
+
+    /// The `{ ... }` block the first occurrence of `marker` opens: the marker
+    /// and the text handed back come from the literal-keeping view, every
+    /// brace that bounds the block is counted in the blanked one
+    /// (`SourceSpans.Views.block(openedBy:)`). Throws, never an unbounded
+    /// span, when the marker is not there or the braces do not balance.
+    ///
+    /// **It counted braces over the literal-keeping view until fix round 4**,
+    /// so a `{` inside a string literal raised the depth and the block ran
+    /// past its own closing brace to the end of the file. Both guards below
+    /// were GREEN on a violation parked there: plant R1 (check 4 of
+    /// `theRunnerIsMountedPerTab`, a `private let bracePad = "{"` in the runner
+    /// and the `onDeliver(tab)` call parked after the struct) and plant R2b
+    /// (`theSheetItemIsDeclaredOnceBesideItsBuilderWithAFileprivateInitialiser`,
+    /// the same brace in the item and a `fileprivate init` decoy in the same
+    /// extension). It is the defect `SourceSpans` fixed in two neighbouring
+    /// suites one round earlier, through a different door.
+    private static func functionBody(named marker: String, in file: URL) throws -> SourceSpans.Views {
+        try functionBody(named: marker, in: try views(of: file))
+    }
+
+    /// The same read, inside a block already found — the `.onChange`'s own
+    /// body inside the runner's. Both views are sliced together, so a nested
+    /// read is bounded exactly as the outer one is.
+    private static func functionBody(
+        named marker: String, in views: SourceSpans.Views
+    ) throws -> SourceSpans.Views {
+        guard let block = views.block(openedBy: marker) else { throw ScanFailure(anchor: marker) }
+        return block
     }
 }
 
