@@ -51,6 +51,32 @@ import Testing
 /// **Figures go to standard output** as `[S3MetadataGated] ...` lines, beside
 /// the assertion that does not depend on them. No case asserts a wall-clock
 /// ceiling: a duration is printed, never bounded.
+///
+/// **The plants that measured these cases' sensitivity**, run 2026-11-04 with
+/// the rig up and the tree clean, each reported `RED` and named the case that
+/// caught it. They are written here in the form they were run, so a later
+/// reader lands on the same result rather than on a retyped approximation
+/// (`scripts/mutation-probe` reverts index-safely and refuses a dirty tree,
+/// and reports `PLANT CHANGED NOTHING` when an anchor has moved — which is the
+/// loud miss a hand-rolled plant does not give you):
+///
+/// ```
+/// MACSCP_ITEST=1 scripts/mutation-probe --filter 'S3MetadataGatedTests/(anObjectACLWriteIsAcceptedAndTheStoreKeepsNothing|whetherAMetadataReplaceCopyChangesTheObjectsACL)' --label 'PA the policy read back differs' --apply "sed -i '' 's/unchanged = before.1 == after.1\$/unchanged = false/' Tests/macSCPCoreTests/S3MetadataGatedTests.swift"
+/// MACSCP_ITEST=1 scripts/mutation-probe --filter S3MetadataGatedTests/aMetadataReplaceAddsOneVersionWhoseEntityTagIsTheOneItWasCopiedFrom --label 'PB the tags disagree' --apply "sed -i '' 's/tagsAgree = sourceTag != nil \&\& sourceTag == newTag/tagsAgree = false/' Tests/macSCPCoreTests/S3MetadataGatedTests.swift"
+/// MACSCP_ITEST=1 scripts/mutation-probe --filter S3MetadataGatedTests/theLiveObjectACLBodyHasTheFourPropertiesTheParserWasWrittenFor --label 'PC the policy came back with text nodes' --apply "sed -i '' 's/whitespaceBetweenElements = Self.hasWhitespaceBetweenElements(body)\$/whitespaceBetweenElements = true/' Tests/macSCPCoreTests/S3MetadataGatedTests.swift"
+/// ```
+///
+/// PA reddened BOTH cases it filtered, which is the point of running it as one
+/// plant: the same comparison carries the canary and the ruling-5.2
+/// measurement. Four earlier plants of the same cases, applied by script
+/// rather than by a committed command line, each also came back RED: the
+/// policy after the write made to differ by appending `<Grant/>` (the canary),
+/// the same in the copy case, `newTag` made to carry a minted suffix, and the
+/// body handed to `hasWhitespaceBetweenElements` with `"> <"` appended.
+///
+/// What no plant here establishes: SCOPE. These probes show the cases notice
+/// the answers changing; they say nothing about an answer this file never
+/// asks for.
 @Suite(
     "S3 object metadata and ACLs against the Docker S3 rig",
     .enabled(if: ProcessInfo.processInfo.environment["MACSCP_ITEST"] == "1"),
