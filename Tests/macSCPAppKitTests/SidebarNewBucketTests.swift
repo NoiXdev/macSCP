@@ -572,8 +572,16 @@ import Testing
 /// words were wrong. The comments now say what the access level does, the test
 /// that overstated it is renamed to what it checks, and the TYPE's name is
 /// counted over the App target for both types, read off the type with
-/// `String(describing:)`: every way of building a value names its type, so the
-/// count does not buy a spelling at a time (it reddens Q5, Q8 and Q9).
+/// `String(describing:)`, which does not buy a spelling at a time the way a
+/// count of the literal and of the metatype did (it reddens Q5, Q8 and Q9).
+/// This sentence read, verbatim: "every way of building a value names its type,
+/// so the count does not buy a spelling at a time" -- false of
+/// `createBucketSheetItem = .init(...)`, which names the STATE, so it is the
+/// state's count standing beside the type's that catches that shape. Round 4
+/// corrected the premise in the test's own doc and in
+/// `ContentView+MenuActions.swift` and recorded that as "One loose sentence, in
+/// two places"; this occurrence and check 1's were the other two, and fix round
+/// 5 corrected both.
 ///
 /// **Q7 is GREEN on purpose.** An extra internal initialiser nobody calls
 /// constructs nothing. The property is that construction happens in one place;
@@ -994,6 +1002,163 @@ import Testing
 ///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
 ///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
 /// ```
+///
+/// ## Fix round 5: the view a check reads, and the window it reads it in
+///
+/// Three guards read the wrong thing: one the view where string literals
+/// survive, two a window bounded by a character count rather than by the code
+/// it means to cover. All three were blind in the silent direction AND brittle
+/// in the loud one -- a comment with no code change reddens two of them.
+///
+/// **One of the three needed no decoy planted.** The 1500-character window in
+/// `theRetentionFormDrawsTheLineUnderTheModeChoice` over-read `present`'s own
+/// block by 144 characters and reached the `private var retentionForm: some
+/// View` declaration 1388 characters after its anchor, so plant V1 -- a sheet
+/// that shows `EmptyView()` where the retention form belongs -- was satisfied by
+/// the DECLARATION of the form it no longer shows. The guard was already
+/// satisfied by its neighbour in the tree as committed. Its other check,
+/// `legalHoldForm`, has no such neighbour inside the window, which is how a
+/// half-blind guard stayed green for four rounds. The figures travel with their
+/// commands at the two windows in `ObjectLockSheetTests.swift`.
+///
+/// **Reading these verdicts.** Control 3150 throughout, 0 pre-existing
+/// failures, every run `scripts/mutation-probe --filter 'macSCPAppKitTests'`.
+/// "Before" is `b85de102`, round 4's final tree; "after" is `61ef3dbd`, this
+/// round's. Every plant below was run at BOTH trees except the two benign
+/// controls (T1c, U1b) and S1, whose before is round 4's re-review. Each
+/// command is committed as it ran: these blocks were generated FROM the scripts
+/// the probe was invoked with, not retyped. Every verdict line is copied from
+/// the probe's output.
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'T1 the onChange body keeps onDeliver(tab) only as a string literal, so the runner never delivers' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)                onDeliver\(tab\)\n/\$1                _ = \"onDeliver(tab)\"\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// at `b85de102`, before this round's one-word fix:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'T1c benign control for T1: the onChange body keeps the real call AND gains a string literal spelling it' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)                onDeliver\(tab\)\n/\$1                _ = \"onDeliver(tab)\"\n                onDeliver(tab)\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// before: not run (a GREEN there says nothing the GREEN here does not)
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1 U1c plus a decoy function above handleBrowserMenuEntry that spells the correct call' \
+///   --apply "perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/\/\/\/ that caught it is unchanged\.\nextension ContentView \{\n/\/\/\/ that caught it is unchanged.\nextension ContentView {\n    private func parkedLockItem(\n        _ action: FileActionContribution, _ file: RemoteFileItem, in tab: SessionTab,\n        session: BrowserSession\n    ) -> ObjectLockSheetItem? {\n        guard let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        else { return nil }\n        return ObjectLockSheetItem(\n            recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n            settings: settings, states: states)\n    }\n\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1c the file-action arm hands the sheet focus: .retention instead of the focus the chosen action maps to' \
+///   --apply "perl -0pi -e 's/recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,/recorder: tab.auditRecorder, focus: .retention, target: target,/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'U1b benign control for U1: the decoy function above handleBrowserMenuEntry alone, no violation anywhere' \
+///   --apply "perl -0pi -e 's/\/\/\/ that caught it is unchanged\.\nextension ContentView \{\n/\/\/\/ that caught it is unchanged.\nextension ContentView {\n    private func parkedLockItem(\n        _ action: FileActionContribution, _ file: RemoteFileItem, in tab: SessionTab,\n        session: BrowserSession\n    ) -> ObjectLockSheetItem? {\n        guard let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        else { return nil }\n        return ObjectLockSheetItem(\n            recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n            settings: settings, states: states)\n    }\n\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: not run (a GREEN there says nothing the GREEN here does not)
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'V1 the sheet no longer shows the retention form; the retentionForm declaration below present sits inside the 1500-character window' \
+///   --apply "perl -0pi -e 's/            case \.retention: retentionForm\n/            case .retention: EmptyView()\n/' Sources/MacSCPAppKit/ObjectLockSheet.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theRetentionFormDrawsTheLineUnderTheModeChoice()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'V2 harmless growth: 25 comment lines (1325 characters, no code) at the top of present, pushing both forms out of the 1500-character window' \
+///   --apply "perl -0pi -e 's/(private var present: some View \{\n)/\$1 . (\"        \/\/ harmless growth, no code: a comment line.\n\" x 25)/e' Sources/MacSCPAppKit/ObjectLockSheet.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theRetentionFormDrawsTheLineUnderTheModeChoice()
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'W1 the Object Lock sheet presents an EmptyView and the sheet is built in an overlay 127 characters past the presentation anchor' \
+///   --apply "perl -0pi -e 's/            ObjectLockSheet\(\n                recorder: item\.recorder, focus: item\.focus, target: item\.target,\n                settings: item\.settings, cache: item\.states\)\n        \}\n/            EmptyView()\n        }\n        .overlay {\n            if let item = objectLockSheetItem {\n                ObjectLockSheet(\n                    recorder: item.recorder, focus: item.focus, target: item.target,\n                    settings: item.settings, cache: item.states)\n            }\n        }\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'W2 harmless growth: 9 comment lines (513 characters, no code) above the sheet call, pushing it out of the 400-character window' \
+///   --apply "perl -0pi -e 's/(            ObjectLockSheet\(\n)/(\"            \/\/ harmless growth, no code: a comment line.\n\" x 9) . \$1/e' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// at `b85de102`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'S1 the retention arm parked in a private func between handleBrowserMenuEntry and restoreDeletedFiles' \
+///   --apply "perl -0pi -e 's/                if side == \.remote, selection\.count == 1, let file = selection\.first,\n                    let lockAction = ObjectLockFileAction\(action: action\),\n                    let target = ObjectLockTarget\.resolve\(\n                        path: file\.path, in: connectionActionContext\(in: tab, session: session\)\),\n                    let settings = session\.remoteFS as\? any S3BucketSettings,\n                    let states = session\.objectLockStates\n                \{\n                    objectLockSheetItem = ObjectLockSheetItem\(\n                        recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,\n                        settings: settings, states: states\)\n                \}\n/                parkedLock(action, selection, side, tab, session)\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/    \/\/\/ The \"Restore\" entry of a deleted row/    private func parkedLock(\n        _ action: FileActionContribution, _ selection: [RemoteFileItem], _ side: BrowserPaneSide,\n        _ tab: SessionTab, _ session: BrowserSession\n    ) {\n        if side == .remote, selection.count == 1, let file = selection.first,\n            let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        {\n            objectLockSheetItem = ObjectLockSheetItem(\n                recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n                settings: settings, states: states)\n        }\n    }\n\n    \/\/\/ The \"Restore\" entry of a deleted row/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `b85de102`, by round 4's re-review: RED, caught by BOTH guards --
+/// `theFileActionArmAssignsAnItemTheWindowPresents()` through its own bounded
+/// span, and the sibling only because parking the arm moved the first
+/// `ObjectLockTarget.resolve(` into the `.metadata` arm, whose next 900
+/// characters carry no `focus: lockAction.focus`
+/// at `61ef3dbd`:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// -- the sibling now catches it because the ROUTER'S BODY no longer holds the
+/// arm, which is the reason it should always have had
+/// ```
+///
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
