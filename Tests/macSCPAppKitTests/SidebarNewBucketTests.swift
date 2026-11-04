@@ -384,6 +384,179 @@ import Testing
 ///   RESULT: RED — 25 test(s) ran, and the plant was caught by:
 ///     macSCPAppKitTests.SidebarNewBucketTests/theSidebarOwnsNoConnection()
 /// ```
+///
+/// ## Fix round 2: the re-review's plants, and what each guard is made of now
+///
+/// The re-review planted ten more violations and four came back GREEN. Round 1
+/// had answered each GREEN with a scan for one more spelling; this round answers
+/// with a boundary where one exists and an equality where one does not.
+///
+/// - **The sheet item** (`N1m`, `N2b`): `CreateBucketSheetItem` is declared in
+///   `ContentView+MenuActions.swift` with a `fileprivate` initialiser (on the
+///   initialiser, not the type: every file still holds and presents the item).
+///   `N1m`, a factory with `.init(` written through
+///   `$createBucketSheetItem.wrappedValue` in another file, no longer compiles:
+///   `'ContentView.CreateBucketSheetItem' initializer is inaccessible due to
+///   'fileprivate' protection level`. The boundary cannot see inside the one
+///   file that may construct, and `N2b` is exactly that: it stayed GREEN with the
+///   boundary and the literal count, so the count now counts EVERY mention of
+///   `createBucketSheetItem` over the App target (three: declaration,
+///   presentation, the one store), which any write has to add to.
+/// - **The runner** (`R1`, `N4a`-`N4d`): a view-structure property nothing here
+///   can execute, so the test compares the WHOLE region of the one mount, from
+///   its `.background {` to the closing brace and the modifier after it, with
+///   the expected lines, and counts constructions of the runner over the App
+///   target under both spellings. That reddened all five. It did not redden
+///   `N4e`, a runner built through its metatype in another file, so the runner's
+///   initialiser is `fileprivate` too. The equality is the right trade over the
+///   alternatives measured here: the region is seven lines, it cannot go quiet,
+///   and its price is brittleness to a reformat of that block, which is a
+///   one-line edit of the expectation. The access level alone could not have
+///   done the job, because the in-file plants (`N4a`, `N4b`, `N4d`, `R1`) are
+///   in the one file the initialiser is visible from.
+///
+/// **Reading the BUILD FAILED lines.** A plant that does not compile measured
+/// nothing about the tests, and here that is the intended outcome for a plant the
+/// type system now refuses. `N4f` and `N4g` are the clean demonstrations: the
+/// same violation placed in a function of its own, so the only error is the
+/// access level. `N4c` and `N4e` also came back BUILD FAILED on the final tree,
+/// but with `the compiler is unable to type-check this expression in reasonable
+/// time` at the surrounding `body` (`ContentView+Sheets.swift:451:13` and
+/// `:446:13`), which I did NOT trace to the access level; their verdict on the
+/// earlier tree (RED, and GREEN) is the evidence about them. The re-review's
+/// `N4a`, `N4b`, `N4c`, `N4d`, `N1m` and `N2b` are reproduced byte for byte by
+/// the perl programs below (compared on copies of the files against its own
+/// plant files); `R1` is round 1's, `N4e`, `N4f` and `N4g` are mine. The
+/// re-review's verdicts at the tree before this round, which I did not re-run:
+/// `N4a`-`N4d`, `N1m` and `N2b` GREEN, `R1` RED.
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'R1 the runner is mounted once for the active tab, not per tab' \
+///   --apply "perl -0pi -e 's/        ForEach\(tabsModel\.tabs\) \{ tab in\n            (PendingCreateBucketRunner\(\n)                tab: tab, (activeTabID: tabsModel\.activeTab\.id,\n)                (onDeliver: \{ deliverPendingCreateBucket\(on: [^)]*\) \}\))\n        \}\n/        \$1                tab: tabsModel.activeTab, \$2                \$3\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4a a second mount, literal, inside the same ForEach' \
+///   --apply "perl -0pi -e 's/(            PendingCreateBucketRunner)(\(\n(?:.*\n){2})/\$1\$2\$1\$2/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4b a second mount spelled PendingCreateBucketRunner.init( inside the same ForEach' \
+///   --apply "perl -0pi -e 's/(            PendingCreateBucketRunner)(\(\n(?:.*\n){2})/\$1\$2\$1.init\$2/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4c a second mount in another file (ContentView+Sheets.swift)' \
+///   --apply "perl -0pi -e 's/(        content\n)(        \/\/ \(M8a\/T4\))/\$1        .background {\n            ForEach(tabsModel.tabs) { tab in\n                PendingCreateBucketRunner(\n                    tab: tab, activeTabID: tabsModel.activeTab.id,\n                    onDeliver: { deliverPendingCreateBucket(on: \\\$0) })\n            }\n        }\n\$2/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4d the ForEach kept verbatim but gated by an if that is never true' \
+///   --apply "perl -0pi -e 's/(        ForEach\(tabsModel\.tabs\) \{ tab in\n            PendingCreateBucketRunner\((?:.*\n){3}        \}\n)/        if tabsModel.tabs.count > 99 {\n\$1        }\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4e a runner constructed through its metatype in another file' \
+///   --apply "perl -0pi -e 's/(                    jumpToOpenSession\(request\)\n)/\$1                    let runnerType = PendingCreateBucketRunner.self\n                    _ = runnerType.init(tab: tabsModel.activeTab, activeTabID: tabsModel.activeTab.id, onDeliver: { _ in })\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 90 test(s) ran and NONE of them noticed the plant.
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N1m a sheet item built by a factory with .init( and written through $createBucketSheetItem.wrappedValue, in ContentView+Sheets.swift' \
+///   --apply "perl -0pi -e 's/(                    jumpToOpenSession\(request\)\n)/\$1                    \@MainActor func make(_ tab: SessionTab, _ session: BrowserSession, _ settings: any S3BucketSettings) -> CreateBucketSheetItem {\n                        .init(recorder: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n                    }\n                    if let tab = tabsModel.tabs.first(where: { tab in tab.id == request.existingTabID }), let session = tab.session, let settings = session.remoteFS as? any S3BucketSettings {\n                        \\\$createBucketSheetItem.wrappedValue = make(tab, session, settings)\n                    }\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+///         |                          `- error: 'ContentView.CreateBucketSheetItem' initializer is inaccessible due to 'fileprivate' protection level
+///     ContentView+Sheets.swift:110:26: error: 'ContentView.CreateBucketSheetItem' initializer is inaccessible due to 'fileprivate' protection level
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+///         |                          `- error: 'ContentView.CreateBucketSheetItem' initializer is inaccessible due to 'fileprivate' protection level
+///     ContentView+Sheets.swift:110:26: error: 'ContentView.CreateBucketSheetItem' initializer is inaccessible due to 'fileprivate' protection level
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N2b a helper called from openCreateContainerSheet builds the item with .init( and $createBucketSheetItem.wrappedValue, same file' \
+///   --apply "perl -0pi -e 's/(        else \{ return \}\n        handleConnectionAction\(action, in: tab, session: session\)\n)(    \}\n)/\$1        buildExtraSheet(in: tab, session: session)\n    }\n\n    func buildExtraSheet(in tab: SessionTab, session: BrowserSession) {\n        func make(_ settings: any S3BucketSettings) -> CreateBucketSheetItem {\n            .init(recorder: tab.auditRecorder, settings: settings, listing: CreateBucketModel.listing(of: session.remote), onCreated: {})\n        }\n        if let settings = session.remoteFS as? any S3BucketSettings {\n            \\\$createBucketSheetItem.wrappedValue = make(settings)\n        }\n\$2/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// with the region equality and the count, before the initialisers were confined:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 90 test(s) ran and NONE of them noticed the plant.
+/// on the final tree:
+///   ── control: 90 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 90 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theCreateBucketSheetIsConstructedInExactlyOnePlace()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4f a runner constructed by its literal in a function of its own in ContentView+Sheets.swift' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView {\n    func extraRunner(_ tab: SessionTab) -> some View {\n        PendingCreateBucketRunner(tab: tab, activeTabID: tab.id, onDeliver: { _ in })\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// on the final tree:
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+///     ContentView+Sheets.swift:794:9: error: 'PendingCreateBucketRunner' initializer is inaccessible due to 'fileprivate' protection level
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'N4g a runner constructed through its metatype in a function of its own in ContentView+Sheets.swift' \
+///   --apply "perl -0pi -e 's/\z/\nextension ContentView {\n    func extraRunner(_ tab: SessionTab) -> some View {\n        let runnerType = PendingCreateBucketRunner.self\n        return runnerType.init(tab: tab, activeTabID: tab.id, onDeliver: { _ in })\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// on the final tree:
+///   RESULT: BUILD FAILED — no test ran, so this probe measured NOTHING.
+///     ContentView+Sheets.swift:795:27: error: 'PendingCreateBucketRunner' initializer is inaccessible due to 'fileprivate' protection level
+/// ```
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
