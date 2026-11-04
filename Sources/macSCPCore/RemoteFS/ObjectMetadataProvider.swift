@@ -125,3 +125,39 @@ public protocol ObjectMetadataProvider: Sendable {
     /// NOT been measured for `?acl`.
     func acl(ofKey key: String, inBucket bucket: String) async throws -> ObjectACL?
 }
+
+/// The one failure of `setMetadata` after which the object HAS changed.
+///
+/// `setMetadata` reads back only once the write has gone out, and throws
+/// rather than report a change it could not confirm. For every other failure
+/// nothing was written; for this one the store accepted the change — with S3
+/// that means the copy answered 2xx with a `<CopyObjectResult>` — and on a
+/// versioned bucket there is a new version. So it is the one write failure a
+/// caller must not describe as a change that could not be saved, and nothing
+/// else in the error tells it apart.
+///
+/// It lives beside the protocol rather than inside a backend for two
+/// reasons. The App layer has to ask, and may not name a concrete backend to
+/// do it (`ReconnectWiringGuardTests.everyChokePointInTheAppLayerIsSanctioned`
+/// refuses any `…FileSystem` type in `Sources/MacSCPAppKit`, which is how
+/// the first draft of this was caught). And a second conformer has one
+/// spelling to throw rather than a sentence to copy.
+///
+/// The text is a fixed English diagnostic and reaches no person: the sentence
+/// shown for this is the App's (`ObjectMetadataLines.saveUnconfirmed`), in
+/// all four languages.
+public enum UnconfirmedMetadataWrite {
+    /// The `reason` the `.protocolError` carries. Names nothing the store
+    /// wrote.
+    public static let reason =
+        "S3 metadata change could not be confirmed: the object does not report the values that were sent"
+
+    /// The error itself, for a conformer to throw.
+    public static let error = RemoteFSError.protocolError(reason: reason)
+
+    /// Whether `error` is that one.
+    public static func describes(_ error: any Error) -> Bool {
+        guard case RemoteFSError.protocolError(let reason) = error else { return false }
+        return reason == Self.reason
+    }
+}

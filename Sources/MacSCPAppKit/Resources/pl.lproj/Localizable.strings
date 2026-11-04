@@ -550,6 +550,7 @@
 "s3.metadata.versionNote.unknown" = "macSCP nie mógł potwierdzić, czy ten bucket przechowuje wersje. Jeśli tak, zapisanie dodaje nową wersję tego pliku.";
 "s3.metadata.complianceWarning" = "Domyślne przechowywanie w tym bucketcie ma tryb Compliance i otrzymuje je nowa wersja, którą dodaje ta zmiana. Do daty podanej poniżej nikt nie może usunąć zapisanych danych tej wersji ani skrócić jej okresu przechowywania — ani Ty, ani właściciel konta, ani administrator. Nie można tego cofnąć.";
 "s3.metadata.complianceAcknowledgement %@" = "Rozumiem, że nikt, łącznie ze mną, nie może usunąć zapisanych danych nowej wersji dodawanej przez tę zmianę i że nie można tego cofnąć. Nowa wersja pozostaje zablokowana do %@.";
+"s3.metadata.saveUnconfirmed" = "Magazyn przyjął zmianę, a macSCP nie mógł jej potwierdzić: plik nie zgłasza wartości, które zostały wysłane. Sprawdź ponownie metadane pliku, aby zobaczyć, co teraz zawiera.";
 "s3.metadata.action.save" = "Zapisz";
 "s3.metadata.blocked.unchanged" = "Nic się nie zmieniło, więc nie ma czego zapisywać.";
 "s3.metadata.blocked.customNameMissing" = "Nadaj nazwę każdej parze niestandardowej.";
