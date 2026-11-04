@@ -30,7 +30,11 @@ extension ContentView {
     /// name to appear exactly three times over the App target (this declaration,
     /// the state's annotation, the one construction) and the state's name
     /// exactly three. An initialiser nobody calls constructs nothing, so its
-    /// existence is not the violation; its USE is, and a use names the type.
+    /// existence is not the violation; its USE is. A use need not name the type,
+    /// though -- this sentence used to end "and a use names the type", which is
+    /// false of `createBucketSheetItem = .init(...)`: that names the STATE. It
+    /// is the state's count that catches that shape, and it does (plants Q14 and
+    /// Q19 of the re-reviews are red through the state's name alone).
     /// The access level is on the initialiser and not on the type, because every
     /// other file still has to HOLD the item (`ContentView.createBucketSheetItem`)
     /// and present it.
