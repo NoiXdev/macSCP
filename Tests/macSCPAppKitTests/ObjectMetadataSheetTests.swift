@@ -1195,8 +1195,11 @@ struct ObjectMetadataSheetTests {
     /// ```
     ///
     /// **GREEN before, RED after.** The same recipe, with the same filter, was
-    /// run first on `5ade00fa` with this test and its sibling absent from the
-    /// file and nothing else changed:
+    /// run first on this wave's base — `5ade00fa`, subject
+    /// `docs(backlog): the metadata sheet's remaining findings, measured and
+    /// bounded`, which is the citation that survives the rebase this repo
+    /// merges with — with this test and its sibling absent from the file and
+    /// nothing else changed:
     ///
     /// ```
     /// ── control: 3153 test(s) ran, 0 pre-existing failures
