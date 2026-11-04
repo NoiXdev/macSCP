@@ -231,6 +231,23 @@ final class FakeObjectMetadataProvider: ObjectMetadataProvider, Sendable {
 ///   macSCPAppKitTests.ObjectMetadataSheetTests/aRefusedWriteIsRecordedAsAFailureWithAFixedSentence()
 /// ```
 ///
+/// **P10's anchor no longer exists, 2026-11-04.** The recipe above is kept as
+/// the record of the run it reports, not as one to re-run: the line it
+/// matches moved when the catch arm stopped carrying two kinds of news in
+/// `applyFailure`. Re-run as written, the `perl` matches nothing, the tree is
+/// unchanged, and the probe reports a GREEN that is a false all-clear.
+///
+///     /usr/bin/grep -c -F 'failure: applyFailure)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///
+/// prints 0 and exits 1, with the positive control
+///
+///     /usr/bin/grep -c -F 'failure: applyNotice?.text)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///
+/// printing 1 and exiting 0 — so the zero above is a moved line and not an
+/// unopened file. Substituting `applyNotice?.text` for `applyFailure` in the
+/// recipe makes it plant again; the figures beside it would then be a claim
+/// about a run nobody made.
+///
 @Suite("Object metadata sheet")
 struct ObjectMetadataSheetTests {
     private static let locales = ["en", "de", "fr", "pl"]
@@ -557,8 +574,8 @@ struct ObjectMetadataSheetTests {
         // Straight to save(), past the button: it reads again, fails again, writes nothing.
         #expect(await rig.model.save() == .failed)
         #expect(rig.provider.writes.isEmpty)
-        #expect(rig.model.applyFailure == ObjectLockLines.readFailed.text)
-        let leaked = (rig.model.applyFailure ?? "").contains(Self.storeWords)
+        #expect(rig.model.applyNotice == .failed(ObjectLockLines.readFailed.text))
+        let leaked = (rig.model.applyNotice?.text ?? "").contains(Self.storeWords)
         #expect(leaked == false)
     }
 
@@ -712,7 +729,7 @@ struct ObjectMetadataSheetTests {
         rig.model.cacheControl = "no-store"
         #expect(await rig.model.save() == .failed)
         #expect(rig.provider.writes.count == 1)
-        #expect(rig.model.applyFailure == ObjectLockLines.applyFailed.text)
+        #expect(rig.model.applyNotice == .failed(ObjectLockLines.applyFailed.text))
         #expect(rig.model.isSaved == false)
         let events = rig.trail?.events ?? []
         #expect(events.count == 1)
@@ -727,13 +744,19 @@ struct ObjectMetadataSheetTests {
         #expect(rig.model.hasChanges)
     }
 
-    /// A write the storage TOOK, whose read-back did not show it, is said to
-    /// be unconfirmed and never as a failure — the rule
+    /// A write the storage TOOK, whose read-back did not confirm it, is said
+    /// to be unconfirmed and never as a failure — the rule
     /// `ObjectMetadataLines.versionUnknown` states for a read holds for this
     /// write, because the change was sent and accepted. Core throws
     /// `setMetadataUnconfirmedReason` only after `copyObject` has returned,
     /// which means a 2xx with a `<CopyObjectResult>`: the object has changed,
     /// and on a versioned bucket there is a new version.
+    ///
+    /// **Both ways out of Core's read-back arrive as this one error** — the
+    /// read answered and disagreed, and the read itself failed — so this case
+    /// covers both by feeding the error rather than a store's answer; the
+    /// Core side of the second is
+    /// `S3ObjectMetadataTests.aReadBackThatFailsAfterAnAcceptedCopyIsAnUnconfirmedWrite`.
     ///
     /// **And the acknowledgement is spent.** The arm used to leave the tick
     /// standing, so on a bucket whose default retention is COMPLIANCE one
@@ -753,10 +776,17 @@ struct ObjectMetadataSheetTests {
         // storage could have taken.
         #expect(rig.provider.writes.count == 1)
         #expect(rig.model.isSaved == false)
-        #expect(rig.model.applyFailure == ObjectMetadataLines.saveUnconfirmed.text)
+        #expect(rig.model.applyNotice == .unconfirmed(ObjectMetadataLines.saveUnconfirmed.text))
         // And not the sentence this arm used to say, which is false of a
         // change the storage took: "The change could not be saved."
-        #expect(rig.model.applyFailure != ObjectLockLines.applyFailed.text)
+        #expect(rig.model.applyNotice?.text != ObjectLockLines.applyFailed.text)
+        // **And not in the failure's slot either.** The sentence is careful,
+        // and the sheet drew it in `.red` directly above the missing
+        // "Saved." until 2026-11-04 — so the answer to an accepted change
+        // was read as a failure before a word of it. `isFailure` is the one
+        // thing that becomes a colour (`ObjectMetadataModel.SaveNotice`), and
+        // this is where it is held to being false for this error.
+        #expect(rig.model.applyNotice?.isFailure == false)
         #expect(rig.model.acknowledged == false, "the tick was spent by the write")
         #expect(rig.model.activeBlockers.contains(.complianceNotAcknowledged))
         // So a second click asks for the ceremony again instead of writing.
@@ -784,9 +814,14 @@ struct ObjectMetadataSheetTests {
         rig.model.acknowledged = true
         #expect(await rig.model.save() == .failed)
         #expect(rig.provider.writes.count == 1)
-        #expect(rig.model.applyFailure == ObjectLockLines.applyFailed.text)
+        // The failure slot, drawn in red: the positive control for the
+        // reading above it, which says the unconfirmed one is NOT drawn that
+        // way. A `SaveNotice` that answered `isFailure` the same for both
+        // would fail one of the two.
+        #expect(rig.model.applyNotice == .failed(ObjectLockLines.applyFailed.text))
+        #expect(rig.model.applyNotice?.isFailure == true)
         #expect(rig.model.acknowledged == false)
-        let leaked = (rig.model.applyFailure ?? "").contains(Self.storeWords)
+        let leaked = (rig.model.applyNotice?.text ?? "").contains(Self.storeWords)
         #expect(leaked == false)
     }
 

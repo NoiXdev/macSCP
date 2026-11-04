@@ -328,6 +328,40 @@ import macSCPCore
 ///   macSCPAppKitTests.ObjectACLSectionTests/theEntriesListIsFocusableSoTheKeyboardCanScrollIt()
 /// ```
 ///
+/// **Three of the recipes above no longer have an anchor, 2026-11-04**, and
+/// they are kept as the record of the runs they report rather than as recipes
+/// to re-run. Both spellings of `applyFailure = ObjectLockLines.message(…)`
+/// in `save()` are gone: the catch arm's (P11, twice — the two copies of that
+/// block in this comment) went when the arm stopped saying "could not be
+/// saved" about a change the storage took, and the lock-read arm's (P17) went
+/// when the sheet's one news variable became `applyNotice`, which is a
+/// `SaveNotice` and not a `String?`. Re-run as written, each `perl` matches
+/// nothing, the tree is unchanged, and the probe reports a GREEN that is a
+/// false all-clear — which is why this paragraph exists and the recipes were
+/// not quietly repaired.
+///
+///     /usr/bin/grep -c -F 'applyFailure = ObjectLockLines.message(for: error, during: .applyingDefault)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///     /usr/bin/grep -c -F 'applyFailure = ObjectLockLines.message(for: error, during: .reading)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///
+/// each print 0 and exit 1, against the positive controls
+///
+///     /usr/bin/grep -c -F 'applyNotice = ObjectMetadataLines.saveNotice(for: error)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///     /usr/bin/grep -c -F 'applyNotice = .failed(ObjectLockLines.message(for: error, during: .reading))' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+///
+/// which print 1 and exit 0 — the lines the two plants would attach to today.
+/// Three recipes, counted in this file rather than from memory:
+///
+///     /usr/bin/grep -o -F -e "--label 'P11" Tests/macSCPAppKitTests/ObjectACLSectionTests.swift | wc -l
+///     /usr/bin/grep -o -F -e "--label 'P17" Tests/macSCPAppKitTests/ObjectACLSectionTests.swift | wc -l
+///
+/// print **3 and 2**, and each includes the command line above that searches
+/// for it: 2 + 1 recipes, and 1 + 1 commands. The first draft of this
+/// paragraph wrote 2 and 1, which is what the same commands printed before
+/// the paragraph existed — re-running them afterwards is what caught it. The
+/// `-e` is not decoration either: the pattern begins with `--`, and without
+/// it grep reads it as an option, prints a usage message to stderr and counts
+/// 0 — which is the shape of zero this paragraph is about.
+///
 @Suite("Object access-list section")
 struct ObjectACLSectionTests {
     private static let locales = ["en", "de", "fr", "pl"]
