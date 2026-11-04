@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
-// The sheet item sits at the TOP of this file, ahead of every function, and not
-// at the end where it was first put: `ConnectionActionRouteTests` reads the
-// body of `handleConnectionAction` as "from its declaration to the next
-// function at the same indent, or the end of the file", and that function is
-// the last in the file, so anything appended after it is read as part of its
-// arms.
+// The sheet item sits at the TOP of this file, ahead of every function. It was
+// first put at the end, after the last function, and `ConnectionActionRouteTests`
+// then read it as part of that function's arms, because the span it read ran to
+// the end of the file. That span now ends at the function's closing brace
+// (`SourceSpans.functionBody`), so the position no longer matters to it; the item
+// stays here because moving it back would be churn with nothing to show.
 
 extension ContentView {
     /// The capability and the bucket list the sheet checks a name against,

@@ -210,13 +210,20 @@ struct ConnectionActionRouteTests {
         return String(source[start.lowerBound..<end.lowerBound])
     }
 
-    /// The body of a `func` in the dispatcher file: from its declaration to the
-    /// next function declaration at the same indent, or the end of the file.
+    /// The body of a `func` in the dispatcher file: from its declaration to its
+    /// matching closing brace (`SourceSpans.functionBody`).
+    ///
+    /// **Changed 2026-11-04 (S3 metadata plan, Task 6, fix round 3).** This
+    /// read, verbatim: "from its declaration to the next function declaration
+    /// at the same indent, or the end of the file", ending at the next
+    /// `"\n    func "`. `handleConnectionAction` is the last function in its
+    /// file, so its span ran to the end of the file and anything appended after
+    /// it joined the arms: a struct (three issues, found by a plain run) and,
+    /// worse, a dead `.cors` arm whose store sat in a `private func` after it
+    /// (GREEN, measured as plant Q10). A span that reads too much is satisfied
+    /// by something that is not the thing it is named for.
     private static func body(ofFunction name: String, in source: String) throws -> String {
-        let declaration = try #require(source.range(of: "func \(name)("), "func \(name) not found")
-        let rest = source[declaration.upperBound...]
-        let end = rest.range(of: "\n    func ")?.lowerBound ?? rest.endIndex
-        return String(rest[..<end])
+        try #require(SourceSpans.functionBody(named: name, in: source), "func \(name) not found")
     }
 
     /// The name of the function a labelled closure argument calls first.
