@@ -30,6 +30,252 @@ import Testing
 ///
 /// **No clock decides anything.** Every wait is a `pollUntil` on a fact the tab
 /// itself publishes, and nothing asserts how long anything took.
+///
+/// ## How sensitive these are: twenty-two plants, committed with their commands
+///
+/// The first commit's red is a compile failure (the tests name members that did
+/// not exist yet), so the behavioural weight of "these tests would notice" is
+/// carried by plants. Each ran through `scripts/mutation-probe` from the
+/// repository root on a clean tree, which refuses a dirty one and reverts
+/// index-safely; each printed, verbatim, the control line (the unplanted tree's
+/// run) and the verdict below it. Run 2026-11-04 on the tree of `test(app): the
+/// new-bucket entry's row gate, the Open Anyway pass-through and a failed list
+/// are pinned`. The filter spans the five suites a plant can reach, which is why
+/// the control counts 88 tests and not this suite's 24. Every plant was RED,
+/// each by the test it was aimed at; none was `BUILD FAILED`, `PLANT FAILED` or
+/// `PLANT CHANGED`, which would have been a verdict about the plant and not
+/// about the tests.
+///
+/// **Three tests exist because their plant was chosen and no test read the
+/// place it changes:** the row's gate (P16), the "Open Anyway" pass-through
+/// (P14) and a bucket list that fails to load (P6). Not run against the commit
+/// before them; established by reading the suite for a test that touched each
+/// place.
+///
+/// **P15 is the one that fixes the order of the teardown's first line.** The
+/// request is cleared before the teardown's first suspension point, not after
+/// the connection has closed, and only a test that reads the tab while
+/// `disconnect()` is parked can tell the two apart.
+///
+/// Not pinned, deliberately: that the sheet then APPEARS, which is `@State` and
+/// the one part no test of this project can see.
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P1 a stored connection is offered the entry whatever its mode' \
+///   --apply "perl -0pi -e 's/rootIsContainerList: session\.s3\?\.startsAtBucketList \?\? false,/rootIsContainerList: true,/' Sources/MacSCPAppKit/ConnectionActionRoute.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theEntryIsNotOfferedForAnS3ConnectionWithNoS3Block()
+///   macSCPAppKitTests.SidebarNewBucketTests/theEntryIsNotOfferedInSingleBucketMode()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P2 a record with no S3 block is read as starting at the bucket list' \
+///   --apply "perl -0pi -e 's/startsAtBucketList \?\? false/startsAtBucketList ?? true/' Sources/MacSCPAppKit/ConnectionActionRoute.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theEntryIsNotOfferedForAnS3ConnectionWithNoS3Block()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P3 the entry is offered by the record carrying an S3 block, not by the backend' \
+///   --apply "perl -0pi -e 's/Self\.contribution\(of: self, for: session\.kind\) != nil/session.s3 != nil/' Sources/MacSCPAppKit/ConnectionActionRoute.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aBucketListBlockOnAnotherKindOfRecordDoesNotOfferIt()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P4 a bucket-level action is offered on a stored connection' \
+///   --apply "perl -0pi -e 's/(case \.versioning, \.cors, \.objectLock:\n            )false/\${1}true/' Sources/MacSCPAppKit/ConnectionActionRoute.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/onlyCreateBucketIsOfferedOnAStoredConnection()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P5 the hand-off does not wait for the bucket list' \
+///   --apply "perl -0pi -e 's/(switch session\.remote\.state \{\n        case \.loading:\n            )return \.waiting/\${1}break/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aBucketListThatFailedToLoadDropsTheRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/theHandOffWaitsForTheBucketListAndIsMadeOnce()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P6 a bucket list that failed to load keeps the request armed' \
+///   --apply "perl -0pi -e 's/(        case \.failed:\n)            tab\.pendingCreateBucket = nil\n            return \.dropped/\${1}            return .waiting/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aBucketListThatFailedToLoadDropsTheRequest()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P7 the request is not cleared before the hand-off' \
+///   --apply "perl -0pi -e 's/        tab\.pendingCreateBucket = nil\n(        openCreateContainerSheet\(in: tab, session: session\))/\$1/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/cancellingTheSheetLeavesAnOrdinaryConnectedTab()
+///   macSCPAppKitTests.SidebarNewBucketTests/theHandOffWaitsForTheBucketListAndIsMadeOnce()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P8 the hand-off bypasses the route' \
+///   --apply "perl -0pi -e 's/        openCreateContainerSheet\(in: tab, session: session\)\n        return \.handedToTheRoute/        createBucketSheetItem = nil\n        return .handedToTheRoute/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theHandOffGoesThroughTheRouteAndBuildsNoSheetOfItsOwn()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P9 the hand-off is made on a tab that is not in front' \
+///   --apply "perl -0pi -e 's/        guard tabsModel\.activeTab\.id == tab\.id else \{ return \.waiting \}\n        switch session\.remote\.state/        switch session.remote.state/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aRequestOnABackgroundTabWaitsUntilItIsInFront()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P10 the hand-off is made on a tab connected to another stored connection' \
+///   --apply "perl -0pi -e 's/        guard tab\.activeStoredSessionID == pending\.storedSessionID else \{\n            tab\.pendingCreateBucket = nil\n            return \.dropped\n        \}\n//' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aTabConnectedToAnotherStoredConnectionDropsTheRequest()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P11 the request is armed for a stored connection the user did not pick' \
+///   --apply "perl -0pi -e 's/SessionTab\.PendingCreateBucket\(\n                storedSessionID: stored\.id\)/SessionTab.PendingCreateBucket(\n                storedSessionID: UUID())/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aBucketListThatFailedToLoadDropsTheRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/aRequestOnABackgroundTabWaitsUntilItIsInFront()
+///   macSCPAppKitTests.SidebarNewBucketTests/cancellingTheSheetLeavesAnOrdinaryConnectedTab()
+///   macSCPAppKitTests.SidebarNewBucketTests/theHandOffWaitsForTheBucketListAndIsMadeOnce()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P12 the entry arms nothing' \
+///   --apply "perl -0pi -e 's/sidebarStart\(stored, paneVisibility: nil, createsBucket: true\)/sidebarStart(stored, paneVisibility: nil, createsBucket: false)/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/aBucketListThatFailedToLoadDropsTheRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/aConnectedFrontTabIsLeftAloneAndAFreshOneIsOpened()
+///   macSCPAppKitTests.SidebarNewBucketTests/aFailedConnectDropsTheRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/aRequestOnABackgroundTabWaitsUntilItIsInFront()
+///   macSCPAppKitTests.SidebarNewBucketTests/aTabConnectedToAnotherStoredConnectionDropsTheRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/anArmedRequestIsGoneBeforeTheConnectionStartsClosing()
+///   macSCPAppKitTests.SidebarNewBucketTests/cancellingTheSheetLeavesAnOrdinaryConnectedTab()
+///   macSCPAppKitTests.SidebarNewBucketTests/choosingItOpensATabRatherThanAnOwnerlessConnection()
+///   macSCPAppKitTests.SidebarNewBucketTests/teardownDropsAnArmedRequest()
+///   macSCPAppKitTests.SidebarNewBucketTests/theAlreadyOpenQuestionCarriesTheRequestAndOpenAnywayArmsIt()
+///   macSCPAppKitTests.SidebarNewBucketTests/theHandOffWaitsForTheBucketListAndIsMadeOnce()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P13 the already-open question forgets what was asked for' \
+///   --apply "perl -0pi -e 's/pendingSnippet: pendingSnippet, createsBucket: createsBucket\)/pendingSnippet: pendingSnippet, createsBucket: false)/' Sources/MacSCPAppKit/ContentView.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theAlreadyOpenQuestionCarriesTheRequestAndOpenAnywayArmsIt()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P14 Open Anyway starts a plain connect' \
+///   --apply "perl -0pi -e 's/createsBucket: request\.createsBucket/createsBucket: false/' Sources/MacSCPAppKit/ContentView+Sheets.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/openAnywayPassesTheRequestOnAndBuildsNoSheet()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P15 the teardown clears the request after the connection has closed' \
+///   --apply "perl -0pi -e 's/        tab\.pendingCreateBucket = nil\n(        if let session = tab\.session \{\n            \/\/ MUST run before)/\$1/; s/(        tab\.liveness = nil\n)(        \/\/ Same rule, same sentence, for the lost-connection record)/\${1}        tab.pendingCreateBucket = nil\n\$2/' Sources/MacSCPAppKit/TabTeardown.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/anArmedRequestIsGoneBeforeTheConnectionStartsClosing()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P16 the row offers the entry on every connection' \
+///   --apply "perl -0pi -e 's/ConnectionActionRoute\.createBucket\.isOffered\(onStored: session\)/true/' Sources/MacSCPAppKit/SessionSidebar.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theRowOffersTheEntryOnlyWhereTheRouteSaysSo()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P17 the menu entry maps to a plain connect' \
+///   --apply "perl -0pi -e 's/(case \.newBucketMenuEntry:\n            return )\.selectAndCreateBucket/\${1}.selectAndConnect/' Sources/MacSCPAppKit/SessionRowActivation.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.PerformSessionRowInputTests/eachMenuEntryRunsItsOwnEffectAndNoOther()
+///   macSCPAppKitTests.SessionRowActivationTests/eachMenuEntryReachesItsOwnFarEnd()
+///   macSCPAppKitTests.SessionRowActivationTests/everyActivationIsReachableFromSomeInput()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P18 the activation runs the connect effect, not the create-bucket one' \
+///   --apply "perl -0pi -e 's/(        case \.selectAndCreateBucket:\n            onSelect\.run\(value\)\n            )onCreateBucket\.run\(value\)/\${1}onConnect.run(value)/' Sources/MacSCPAppKit/SessionRowActivation.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.PerformSessionRowInputTests/eachMenuEntryRunsItsOwnEffectAndNoOther()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P19 the create-bucket activation is not counted as macSCP dialling' \
+///   --apply "perl -0pi -e 's/\n            \|\| self == \.selectAndCreateBucket//' Sources/MacSCPAppKit/SessionRowActivation.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SessionRowActivationTests/aMenuEntryActsEvenWhileTheRowIsBeingRenamed(input:)
+///   macSCPAppKitTests.SessionRowActivationTests/theThreePredicatesAnswerPerCase()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P20 the sidebar hands the window a plain connect for the entry' \
+///   --apply "perl -0pi -e 's/SessionRowCreateBucketEffect \{ stored in createBucketFromSidebar\(stored\) \}/SessionRowCreateBucketEffect { stored in connectFromSidebar(stored) }/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SessionRowActivationWiringTests/theSidebarIsHandedEffectsThatActuallyReachTheHost()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P21 the runner is not woken by the bucket list loading' \
+///   --apply "perl -0pi -e 's/remoteState: tab\.session\?\.remote\.state,/remoteState: nil,/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'SidebarNewBucketTests|SessionRowActivationTests|PerformSessionRowInputTests|SessionRowActivationWiringTests|EmptyContainerListTests' \
+///   --label 'P22 the German title does not say it connects' \
+///   --apply "perl -pi -e 's/^(\"sidebar\.connectAndCreateBucket\" = )\"Verbinden und /\$1\"/' Sources/MacSCPAppKit/Resources/de.lproj/Localizable.strings"
+/// ── control: 88 test(s) ran, 0 pre-existing failures
+/// RESULT: RED — 88 test(s) ran, and the plant was caught by:
+///   macSCPAppKitTests.SidebarNewBucketTests/theTitleNamesTheConnectingAsWellAsTheCreating()
+/// ```
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
