@@ -2695,8 +2695,12 @@ extension S3FileSystem: ObjectMetadataProvider {
     /// The `reason` of the `.protocolError` `setMetadata` throws when the
     /// copy was accepted and the `HEAD` afterwards does not show what was
     /// sent. Carries nothing the store wrote.
-    static let setMetadataUnconfirmedReason =
-        "S3 metadata change could not be confirmed: the object does not report the values that were sent"
+    ///
+    /// Spelled by `UnconfirmedMetadataWrite.reason`, which is where the
+    /// recognisable form of this one failure lives: the App has to tell it
+    /// from a write that did not happen, and must not name a backend to do
+    /// so.
+    static let setMetadataUnconfirmedReason = UnconfirmedMetadataWrite.reason
 
     public func metadata(ofKey key: String, inBucket bucket: String) async throws -> ObjectMetadata {
         try Self.requireObjectKey(key, reason: Self.metadataKeyRequiredReason)

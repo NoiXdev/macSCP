@@ -555,6 +555,7 @@
 "s3.metadata.versionNote.unknown" = "macSCP could not confirm whether this bucket keeps versions. If it does, saving adds a new version of this file.";
 "s3.metadata.complianceWarning" = "This bucket's default retention is Compliance, and the new version this change adds receives it. Nobody can erase that version's stored data or shorten its retention before the date below — not you, not the account owner, not an administrator. This cannot be undone.";
 "s3.metadata.complianceAcknowledgement %@" = "I understand that nobody, including me, can erase the stored data of the new version this change adds, and that this cannot be undone. The new version stays locked until %@.";
+"s3.metadata.saveUnconfirmed" = "The storage accepted the change, and macSCP could not confirm it: the file does not report the values that were sent. Check the file's metadata again to see what it holds now.";
 "s3.metadata.action.save" = "Save";
 "s3.metadata.blocked.unchanged" = "Nothing has changed, so there is nothing to save.";
 "s3.metadata.blocked.customNameMissing" = "Give every custom pair a name.";

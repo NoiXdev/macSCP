@@ -62,6 +62,17 @@ enum ObjectMetadataLines {
     static let complianceAcknowledgement = CatalogueLine(
         key: "s3.metadata.complianceAcknowledgement %@",
         english: "I understand that nobody, including me, can erase the stored data of the new version this change adds, and that this cannot be undone. The new version stays locked until %@.")
+    /// A write the storage ACCEPTED whose read-back did not show it.
+    ///
+    /// **Not said as a failure**, which is the rule `versionUnknown` above
+    /// states for a read and which holds for this write too: Core throws only
+    /// after the copy has returned, so the storage answered and the object has
+    /// changed. `ObjectLockLines.applyFailed` — "The change could not be
+    /// saved." — is false of it, and that is the sentence this arm said until
+    /// 2026-11-04.
+    static let saveUnconfirmed = CatalogueLine(
+        key: "s3.metadata.saveUnconfirmed",
+        english: "The storage accepted the change, and macSCP could not confirm it: the file does not report the values that were sent. Check the file's metadata again to see what it holds now.")
     static let saveAction = CatalogueLine(key: "s3.metadata.action.save", english: "Save")
     static let unchangedLine = CatalogueLine(
         key: "s3.metadata.blocked.unchanged",
@@ -84,7 +95,7 @@ enum ObjectMetadataLines {
         title, reading, readFailed, contentTypeLabel, cacheControlLabel, contentDispositionLabel,
         customHeading, customNone, customNameLabel, customValueLabel, addPair, removePair,
         replaceNote, versionAdded, versionUnknown, complianceWarning, complianceAcknowledgement,
-        saveAction, unchangedLine, customNameMissingLine, customNameInvalidLine,
+        saveUnconfirmed, saveAction, unchangedLine, customNameMissingLine, customNameInvalidLine,
         customNamePrefixedLine, customNameDuplicatedLine,
     ]
 
@@ -111,6 +122,21 @@ enum ObjectMetadataLines {
         default:
             return readFailed.text
         }
+    }
+
+    /// The sentence for a write that did not end in a confirmed change.
+    ///
+    /// **One of them is not a failure.** Core throws for a change the storage
+    /// accepted whose read-back afterwards did not show it
+    /// (`UnconfirmedMetadataWrite.describes`), and the object has
+    /// changed by then; `saveUnconfirmed` says that, rather than the generic
+    /// "could not be saved" the rest of this arm keeps. Everything else is
+    /// `ObjectLockLines.message(for:during:)`'s answer for a write that is
+    /// none of the three Object Lock writes, which is the permission sentence
+    /// or the fixed one, and never the error's own text.
+    static func saveMessage(for error: any Error) -> String {
+        if UnconfirmedMetadataWrite.describes(error) { return saveUnconfirmed.text }
+        return ObjectLockLines.message(for: error, during: .applyingDefault)
     }
 }
 
@@ -354,9 +380,13 @@ final class ObjectMetadataModel {
         /// asked of the store, and `explanation` carries the reason where
         /// there is one. The Save button is off in each of these states.
         case blocked
-        /// Tried and did not end in a write: the lock could not be read before
-        /// the write, or the store refused it. `applyFailure` carries the
-        /// fixed sentence. A refused write is also recorded in the trail.
+        /// Tried and did not end in a CONFIRMED write: the lock could not be
+        /// read before the write, the store refused it, or the store accepted
+        /// it and the read-back did not show it. `applyFailure` carries the
+        /// sentence, which for the last of the three says the change was
+        /// accepted and could not be confirmed and not that it failed
+        /// (`ObjectMetadataLines.saveMessage(for:)`). A write that reached the
+        /// store is also recorded in the trail.
         case failed
     }
 
@@ -843,10 +873,22 @@ final class ObjectMetadataModel {
             await readAccessList()
             return .written
         } catch {
-            // Any phase but `.reading` and `.applyingRetention` gives the
-            // generic "could not be saved" sentence, or the permission one;
-            // this is a write that is none of the three Object Lock writes.
-            applyFailure = ObjectLockLines.message(for: error, during: .applyingDefault)
+            // Three ways in, and only one of them is a change that did not
+            // happen. `saveMessage(for:)` tells the storage's refusal (the
+            // generic sentence, or the permission one) from a change the
+            // storage ACCEPTED whose read-back did not show it, which is not a
+            // failure and is not said as one.
+            applyFailure = ObjectMetadataLines.saveMessage(for: error)
+            // The acknowledgement is spent by a request that LEFT, not by one
+            // that is known to have landed: this arm is also where a
+            // connection lost after the request went out arrives, and there
+            // macSCP does not know whether anything was written. On a
+            // COMPLIANCE-default bucket the cost of guessing wrong is a
+            // version nobody can erase, so the tick goes back to the person
+            // and the next click asks for the ceremony again. A refusal
+            // BEFORE the write leaves it standing (step 3 above): nothing was
+            // sent.
+            acknowledged = false
             recorder?.recordMetadataChanged(
                 key: target.key, bucket: target.bucket, standardFieldCount: standardFieldCount,
                 customPairCount: written.custom.count, complianceDefaultDays: complianceDays,

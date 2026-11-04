@@ -727,6 +727,69 @@ struct ObjectMetadataSheetTests {
         #expect(rig.model.hasChanges)
     }
 
+    /// A write the storage TOOK, whose read-back did not show it, is said to
+    /// be unconfirmed and never as a failure — the rule
+    /// `ObjectMetadataLines.versionUnknown` states for a read holds for this
+    /// write, because the change was sent and accepted. Core throws
+    /// `setMetadataUnconfirmedReason` only after `copyObject` has returned,
+    /// which means a 2xx with a `<CopyObjectResult>`: the object has changed,
+    /// and on a versioned bucket there is a new version.
+    ///
+    /// **And the acknowledgement is spent.** The arm used to leave the tick
+    /// standing, so on a bucket whose default retention is COMPLIANCE one
+    /// more click was a second version nobody can erase, with no second
+    /// ceremony. The tick goes back to the person for the same reason the
+    /// `.written` arm takes it: a request left for the storage.
+    @MainActor @Test func aWriteTheStorageTookWhoseReadBackFailedIsSaidToBeUnconfirmed() async {
+        let rig = Rig(
+            lock: Self.complianceLock(),
+            writeError: UnconfirmedMetadataWrite.error,
+            recording: true)
+        await rig.model.load()
+        rig.model.cacheControl = "no-store"
+        rig.model.acknowledged = true
+        #expect(await rig.model.save() == .failed)
+        // The control: the write really was sent, so there was something the
+        // storage could have taken.
+        #expect(rig.provider.writes.count == 1)
+        #expect(rig.model.isSaved == false)
+        #expect(rig.model.applyFailure == ObjectMetadataLines.saveUnconfirmed.text)
+        // And not the sentence this arm used to say, which is false of a
+        // change the storage took: "The change could not be saved."
+        #expect(rig.model.applyFailure != ObjectLockLines.applyFailed.text)
+        #expect(rig.model.acknowledged == false, "the tick was spent by the write")
+        #expect(rig.model.activeBlockers.contains(.complianceNotAcknowledged))
+        // So a second click asks for the ceremony again instead of writing.
+        #expect(await rig.model.save() == .refused(.complianceNotAcknowledged))
+        #expect(rig.provider.writes.count == 1)
+    }
+
+    /// The other exit of the same arm: a write the storage REFUSED keeps the
+    /// generic sentence, and spends the acknowledgement too.
+    ///
+    /// Spending it there is deliberate and is the conservative half of the
+    /// rule: the request left, and for a failure that is not the unconfirmed
+    /// one macSCP does not know whether the storage wrote anything (a
+    /// connection lost after the request went out is this arm as much as a
+    /// refusal is). One ceremony per request that leaves, not per request
+    /// that is known to have landed. A refusal the sheet makes BEFORE the
+    /// write leaves the tick standing — `aTickGivenForOneDayDoesNotStandForAnother`
+    /// holds that — because nothing was sent.
+    @MainActor @Test func aWriteTheStorageRefusedKeepsTheGenericSentenceAndSpendsTheTick() async {
+        let rig = Rig(
+            lock: Self.complianceLock(),
+            writeError: RemoteFSError.protocolError(reason: Self.storeWords), recording: true)
+        await rig.model.load()
+        rig.model.cacheControl = "no-store"
+        rig.model.acknowledged = true
+        #expect(await rig.model.save() == .failed)
+        #expect(rig.provider.writes.count == 1)
+        #expect(rig.model.applyFailure == ObjectLockLines.applyFailed.text)
+        #expect(rig.model.acknowledged == false)
+        let leaked = (rig.model.applyFailure ?? "").contains(Self.storeWords)
+        #expect(leaked == false)
+    }
+
     @MainActor @Test func theAuditLineForAMetadataChangeCarriesNoCredential() async {
         var secretStored = Self.stored
         secretStored.custom["api-token"] = Self.secretLookingValue
@@ -878,8 +941,11 @@ struct ObjectMetadataSheetTests {
     /// (`all.count` is a map of the thing it checks and can never disagree
     /// with it). The command that produces it, from the repository root:
     /// `grep -o '"s3\.metadata\.' Sources/MacSCPAppKit/Resources/en.lproj/Localizable.strings | wc -l`.
-    /// Adding a line means changing this figure, which is the point.
-    static let lineCount = 23
+    /// Adding a line means changing this figure, which is the point. It was
+    /// 23 until `ObjectMetadataLines.saveUnconfirmed` arrived; the command
+    /// above printed 24 on 2026-11-04, for `en` and for each of the three
+    /// other catalogues with its path substituted.
+    static let lineCount = 24
 
     @Test func theFamilyHasTheLinesItIsWrittenDownToHave() throws {
         #expect(ObjectMetadataLines.all.count == Self.lineCount)

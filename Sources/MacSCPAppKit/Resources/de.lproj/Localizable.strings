@@ -549,6 +549,7 @@
 "s3.metadata.versionNote.unknown" = "macSCP konnte nicht bestätigen, ob dieser Bucket Versionen aufbewahrt. Falls ja, legt das Speichern eine neue Version dieser Datei an.";
 "s3.metadata.complianceWarning" = "Die Standard-Aufbewahrung dieses Buckets ist Compliance, und die neue Version, die diese Änderung anlegt, erhält sie. Bis zum unten genannten Datum kann niemand die gespeicherten Daten dieser Version löschen oder ihre Aufbewahrung verkürzen – weder du noch der Kontoinhaber noch ein Administrator. Das lässt sich nicht rückgängig machen.";
 "s3.metadata.complianceAcknowledgement %@" = "Mir ist klar, dass niemand – auch ich nicht – die gespeicherten Daten der neuen Version, die diese Änderung anlegt, löschen kann und dass sich das nicht rückgängig machen lässt. Die neue Version bleibt bis zum %@ gesperrt.";
+"s3.metadata.saveUnconfirmed" = "Der Speicher hat die Änderung angenommen, und macSCP konnte sie nicht bestätigen: Die Datei meldet nicht die Werte, die gesendet wurden. Prüfe die Metadaten der Datei erneut, um zu sehen, was sie jetzt enthält.";
 "s3.metadata.action.save" = "Speichern";
 "s3.metadata.blocked.unchanged" = "Es hat sich nichts geändert, also gibt es nichts zu speichern.";
 "s3.metadata.blocked.customNameMissing" = "Gib jedem eigenen Paar einen Namen.";
