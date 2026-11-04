@@ -1108,4 +1108,186 @@ struct ObjectMetadataSheetTests {
             #expect(!ids.contains("s3.metadata"), "\(kind)")
         }
     }
+
+    // MARK: - The notice's colour
+
+    private struct SheetViewsNotInLockstep: Error {}
+
+    private static var sheetURL: URL {
+        SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit/ObjectMetadataSheet.swift")
+    }
+
+    /// The sheet's two blanked views in lockstep (`SourceSpans.Views`):
+    /// `content` keeps string literals and is what an anchor is matched in,
+    /// `code` blanks them too and is where the braces that bound a span are
+    /// counted. Throws rather than hand back a pair of two different lengths,
+    /// which would be a read of one view by the other's offsets.
+    private static func sheetViews() throws -> SourceSpans.Views {
+        guard
+            let views = SourceSpans.Views(
+                content: try SourceCorpus.commentFree(of: sheetURL),
+                code: try SourceCorpus.code(of: sheetURL))
+        else { throw SheetViewsNotInLockstep() }
+        return views
+    }
+
+    /// The notice's own block in `form`, which is the whole of the span the
+    /// colour guard reads. A rename of `applyNotice` does not match it, and
+    /// `block(openedBy:)` answers `nil` rather than a span it could not
+    /// bound, so the scan fails loudly instead of going quiet.
+    private static let noticeBlockAnchor = "if let notice = model.applyNotice {"
+
+    /// The name of the single `Bool` `SaveNotice` declares, read out of its
+    /// own declaration rather than spelled where it is used: the scan below
+    /// searches for this name, and a literal is a second copy of one.
+    private static func declaredFailureFlag() throws -> String {
+        let code = try SourceCorpus.code(of: sheetURL)
+        let body = try #require(SourceSpan.body(after: "enum SaveNotice", in: code))
+        let flags = body.matches(of: #/var\s+(\w+)\s*:\s*Bool/#).map { String($0.output.1) }
+        #expect(flags.count == 1, "\(flags)")
+        return try #require(flags.first)
+    }
+
+    /// The positive beside the derivation above: the name that scan reads is
+    /// the one this suite means, it is a real member of the type, and the two
+    /// cases answer it the two ways the colour depends on. A rename the scan
+    /// would otherwise follow in silence stops this file compiling.
+    @MainActor @Test func theFlagTheColourScanReadsIsTheOneSaveNoticeDeclares() throws {
+        #expect(try Self.declaredFailureFlag() == "isFailure")
+        #expect(ObjectMetadataModel.SaveNotice.failed("x").isFailure)
+        #expect(ObjectMetadataModel.SaveNotice.unconfirmed("x").isFailure == false)
+    }
+
+    /// **The one line that turns a `SaveNotice` into a colour**, which is
+    /// this distinction as the person experiences it.
+    ///
+    /// The flag is read in exactly one place and that place is the view body,
+    /// so nothing that drives the model can see it: with the notice's colour
+    /// fixed to the failure's red, 3153 AppKit tests were GREEN (plant V-R2b
+    /// of the final verification, re-run in the record below). That plant
+    /// reinstates the defect
+    /// `aWriteTheStorageTookWhoseReadBackFailedIsSaidToBeUnconfirmed` exists
+    /// for, one layer further out: a change the storage accepted, announced
+    /// in red above a missing "Saved.".
+    ///
+    /// Four things, in the order they have to hold. The positives: the span
+    /// is the notice's own line and really holds it, and there is exactly one
+    /// styling in it to judge. The styling's condition names the flag. And
+    /// the direction — the failure is the red one — because a check for the
+    /// flag alone buys an inversion of it.
+    ///
+    /// **Why the span is that block and not `form`'s body.** `form` styles
+    /// two other lines without consulting any flag, the version note above
+    /// the notice and "Saved." below it, so over the whole body "something
+    /// here reads the flag" is satisfied by the line this guard is about
+    /// being deleted. The span ends at the brace that closes the `if let`
+    /// (`SourceSpans.Views.block(openedBy:)`), and both siblings are asserted
+    /// to be outside it, with the whole-file view beside that as the control
+    /// that they are in the file at all.
+    ///
+    /// ```
+    /// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+    ///   --label 'V-R2b the view draws every notice in the failure colour again' \
+    ///   --apply "perl -0pi -e 's/\.foregroundStyle\(notice\.isFailure \? Color\.red : Color\.secondary\)/.foregroundStyle(Color.red)/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+    /// ── control: 3155 test(s) ran, 0 pre-existing failures
+    /// RESULT: RED — 3155 test(s) ran, and the plant was caught by:
+    ///   macSCPAppKitTests.ObjectMetadataSheetTests/theNoticeIsDrawnInAColourItsOwnFailureFlagDecides()
+    /// ```
+    ///
+    /// **GREEN before, RED after.** The same recipe, with the same filter, was
+    /// run first on `5ade00fa` with this test and its sibling absent from the
+    /// file and nothing else changed:
+    ///
+    /// ```
+    /// ── control: 3153 test(s) ran, 0 pre-existing failures
+    /// RESULT: GREEN — 3153 test(s) ran and NONE of them noticed the plant.
+    ///   Either the guard is insensitive to this violation, or the plant is not one.
+    ///   ('swift test' exited 0.)
+    /// ```
+    ///
+    /// 3155 is 3153 plus the two tests of this section, so the control's own
+    /// delta is accounted for and the verdict is the only thing that moved.
+    ///
+    /// **Two more plants, because a green is only evidence when what would
+    /// redden it can be named.** Both on the staged tree with this test
+    /// present, filter `ObjectMetadataSheetTests`, control 44 tests, 0
+    /// pre-existing failures, each caught by this test alone:
+    ///
+    /// ```
+    /// scripts/mutation-probe --filter 'ObjectMetadataSheetTests' \
+    ///   --label 'N2 the two colours are swapped, so an accepted change is the red one' \
+    ///   --apply "perl -0pi -e 's/\.foregroundStyle\(notice\.isFailure \? Color\.red : Color\.secondary\)/.foregroundStyle(notice.isFailure ? Color.secondary : Color.red)/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+    /// ── control: 44 test(s) ran, 0 pre-existing failures
+    /// RESULT: RED — 44 test(s) ran, and the plant was caught by:
+    ///   macSCPAppKitTests.ObjectMetadataSheetTests/theNoticeIsDrawnInAColourItsOwnFailureFlagDecides()
+    /// ```
+    ///
+    /// N2 is the plant a check for the flag alone buys: the condition still
+    /// names it, and the colours are the wrong way round. N3 is the one the
+    /// span bound exists for — the notice fixed to red, and the flag read on
+    /// the version note instead, which is inside `form` and outside this
+    /// span. Over `form`'s body "something here reads the flag" would have
+    /// been satisfied by it.
+    ///
+    /// ```
+    /// scripts/mutation-probe --filter 'ObjectMetadataSheetTests' \
+    ///   --label 'N3 the notice is fixed red and the flag is read on the version note instead' \
+    ///   --apply "perl -0pi -e 's/Text\(note\.text\)\n                    \.font\(\.caption\)\n                    \.foregroundStyle\(\.secondary\)/Text(note.text)\n                    .font(.caption)\n                    .foregroundStyle(model.applyNotice?.isFailure == true ? Color.red : Color.secondary)/; s/\.foregroundStyle\(notice\.isFailure \? Color\.red : Color\.secondary\)/.foregroundStyle(Color.red)/' Sources/MacSCPAppKit/ObjectMetadataSheet.swift"
+    /// ── control: 44 test(s) ran, 0 pre-existing failures
+    /// RESULT: RED — 44 test(s) ran, and the plant was caught by:
+    ///   macSCPAppKitTests.ObjectMetadataSheetTests/theNoticeIsDrawnInAColourItsOwnFailureFlagDecides()
+    /// ```
+    ///
+    /// The anchors of all three, so that a reader can see whether a recipe is
+    /// still live without running it:
+    ///
+    ///     /usr/bin/grep -c -F '.foregroundStyle(notice.isFailure ? Color.red : Color.secondary)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+    ///     /usr/bin/grep -c -F '.foregroundStyle(.secondary)' Sources/MacSCPAppKit/ObjectMetadataSheet.swift
+    ///
+    /// print 1 and 11, both exit 0. The first is the anchor V-R2b and N2
+    /// share and the second half of N3's; N3's first half is three lines, so
+    /// `-c` is not the tool for it and its own figure is
+    ///
+    ///     python3 -I -c "print(open('Sources/MacSCPAppKit/ObjectMetadataSheet.swift').read().count('Text(note.text)\n                    .font(.caption)\n                    .foregroundStyle(.secondary)'))"
+    ///
+    /// which prints 1. The positive control for the two greps,
+    /// `/usr/bin/grep -c -F '.foregroundStyle(' Sources/MacSCPAppKit/ObjectMetadataSheet.swift`,
+    /// prints 17 and exits 0 — lines, which is what `-c` counts, and
+    /// `/usr/bin/grep -o -F '.foregroundStyle(' … | wc -l` prints 17 too, so
+    /// on this file the two agree. A 0 above would therefore be a moved line
+    /// and not an unopened file. A recipe whose pattern has moved is
+    /// `PLANT CHANGED NOTHING` from the probe, not a GREEN.
+    @Test func theNoticeIsDrawnInAColourItsOwnFailureFlagDecides() throws {
+        let views = try Self.sheetViews()
+        let flag = try Self.declaredFailureFlag()
+        let block = try #require(
+            views.block(openedBy: Self.noticeBlockAnchor),
+            "the notice's block is not in the sheet's source")
+        // The positives: the span holds the notice's own line, and exactly
+        // one styling, so the checks below have something to be false of.
+        #expect(block.contains("Text(notice.text)"))
+        let styles = block.content.matches(of: #/\.foregroundStyle\(([^)]*)\)/#)
+            .map { String($0.output.1) }
+        #expect(styles.count == 1, "\(styles)")
+        let style = try #require(styles.first)
+        // A choice of two colours, and the flag is what chooses.
+        let choice = try #require(
+            style.firstMatch(of: #/^(.*)\?(.*):(.*)$/#),
+            "the notice's colour is not a choice of two: \(style)")
+        let (condition, whenFailure, otherwise) =
+            (String(choice.output.1), String(choice.output.2), String(choice.output.3))
+        #expect(condition.contains(flag), "\(style)")
+        // The direction: red on the failure and not on the other one.
+        #expect(whenFailure.contains("red"), "\(style)")
+        let otherwiseIsRedToo = otherwise.contains("red")
+        #expect(!otherwiseIsRedToo, "\(style)")
+        // The span's own bound, each sibling with the whole file as its
+        // control: the two lines `form` styles without any flag are in the
+        // file and are not in this span.
+        for sibling in ["ObjectLockLines.saved", "model.versionNote"] {
+            #expect(views.contains(sibling), "\(sibling)")
+            let inSpan = block.contains(sibling)
+            #expect(!inSpan, "\(sibling)")
+        }
+    }
 }
