@@ -2693,8 +2693,14 @@ extension S3FileSystem: ObjectMetadataProvider {
     static let metadataFieldRefusedReason =
         "S3 object metadata: a field cannot be sent as a header"
     /// The `reason` of the `.protocolError` `setMetadata` throws when the
-    /// copy was accepted and the `HEAD` afterwards does not show what was
-    /// sent. Carries nothing the store wrote.
+    /// copy was accepted and the `HEAD` afterwards did not confirm what was
+    /// sent — because it disagreed, or because it failed. Carries nothing
+    /// the store wrote.
+    ///
+    /// **Corrected 2026-11-04**, with the sentence it spells. This read,
+    /// verbatim: "when the copy was accepted and the `HEAD` afterwards does
+    /// not show what was sent", which names only the first of the two ways
+    /// that reach this error.
     ///
     /// Spelled by `UnconfirmedMetadataWrite.reason`, which is where the
     /// recognisable form of this one failure lives: the App has to tell it
