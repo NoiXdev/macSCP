@@ -800,18 +800,9 @@ struct ContentView: View {
 
     // MARK: - Create bucket (S3 bucket settings, Task 11)
 
-    /// The capability and the bucket list the sheet checks a name against,
-    /// captured at presentation time for the reason
-    /// `BucketVersioningSheetItem` gives, and the refresh to run when the
-    /// sheet made a bucket.
-    struct CreateBucketSheetItem: Identifiable {
-        let id = UUID()
-        let recorder: AuditRecorder?
-        let settings: any S3BucketSettings
-        let listing: CreateBucketModel.Listing
-        let onCreated: () -> Void
-    }
-
+    /// The item is declared in `ContentView+MenuActions.swift`, beside the one
+    /// place that builds it, and its initialiser is `fileprivate` there: any
+    /// file may hold and present one, and none but that file can make one.
     @State var createBucketSheetItem: CreateBucketSheetItem?
 
     /// The file whose retention or legal hold the sheet is about: which of the
