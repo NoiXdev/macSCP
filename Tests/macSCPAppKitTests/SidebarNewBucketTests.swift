@@ -830,6 +830,158 @@ import Testing
 ///   RESULT: RED — 3146 test(s) ran, and the plant was caught by:
 ///     macSCPAppKitTests.CreateBucketSheetTests/theRoutesGateAsksTheModelsRule()
 /// ```
+/// ## Fix round 4: a brace in a string literal, and the third suite's span
+///
+/// **The defect, and a figure the brief got wrong in the safe direction.** This
+/// suite's own `functionBody(named:in:)` counted `{` and `}` over the raw
+/// characters of the text it was handed, so a brace that was not code decided
+/// where a span ended. The brief said "all four of its callers hand it
+/// `SourceCorpus.commentFree(of:)`"; there were FIVE, and only two were handed
+/// that view -- the other three were handed the RAW text, where a brace in a
+/// COMMENT counts as well. One command, from the repository root:
+///
+///     git show ffbd0678:Tests/macSCPAppKitTests/SidebarNewBucketTests.swift | /usr/bin/grep -n -e 'Self\.functionBody(' -e 'SourceCorpus\.text(of:' -e 'SourceCorpus\.commentFree(of:'
+///
+/// prints 15 lines at that commit: the five calls (1328, 1444, 1566, 1588,
+/// 1612), the five reads that feed them -- `SourceCorpus.text` at 1327, 1587
+/// and 1603 (the hand-off, the Open Anyway answer, the row gate), `commentFree`
+/// at 1443 and 1535 (the sheet item, the runner) -- and five more reads this
+/// helper is not handed at all (1389 and 1524, the per-file reads of the two
+/// walks; 1337, the hand-off's control read; 1446 and 1463, the second
+/// `ContentView.swift` read and the sidebar scan). 5 + 5 + 5; the first draft
+/// of this paragraph said "the other four lines are per-file reads inside the
+/// two walks", which was wrong in the count and in the attribution, and
+/// re-running the command after writing the sentence is what caught it.
+///
+/// It is the defect round 3 fixed in `ConnectionActionRouteTests` and
+/// `CreateBucketSheetTests` with `SourceSpans`, left in the file round 3 was
+/// editing most, reached through a different door: not "the next sibling never
+/// comes" but "the brace that would have ended the span was counted inside a
+/// sentence". The helper now goes through `SourceSpans.Views`, which counts
+/// braces in the string-and-comment-blanked view and slices the literal-keeping
+/// one, and it throws rather than return an unbounded span.
+///
+/// **Check 4 claimed more than it checked.** It asked that the runner's text
+/// contain `onDeliver(tab)` and `.onChange(of: signal, initial: true)`, while
+/// its comment said the body calls the one from the other -- and R3, the call
+/// kept in a method of the runner nobody calls, passed. The bounded span makes
+/// the real property expressible, so the call is read from the `.onChange`'s own
+/// block now; the two `contains` checks stay as the positive control that the
+/// anchor is spelled as the block is found by.
+///
+/// **A third suite had the shape round 3 replaced.**
+/// `ObjectLockSheetTests.theFileActionArmAssignsAnItemTheWindowPresents` read
+/// `handleBrowserMenuEntry` up to the next `\n    func `, which a `private func`
+/// does not end; it reads `SourceSpans.functionBody` now.
+///
+/// **One loose sentence, in two places**, corrected rather than appended to:
+/// "every way of building a value names its type" (this file) and "a use names
+/// the type" (`ContentView+MenuActions.swift`) are both false of
+/// `createBucketSheetItem = .init(...)`, which names the STATE. It is the state's
+/// count that catches that shape, and Q14 and Q19 are red through it with no new
+/// mention of the type.
+///
+/// **Reading these verdicts.** Control 3150 functions throughout: 3146 of round
+/// 3 plus the four new `SourceSpans` controls. "Before" is the tree with this
+/// round's fix absent. For R1, R1c, R2, R2b and R3 that is the third re-review's
+/// own measurement at `ffbd0678`, which I did not re-run; for S1 and S2 it is my
+/// run at `e26a116e`, this round's second commit, where `ObjectLockSheetTests`
+/// was still unfixed. L4 is the benign control and was run at the final tree
+/// only. Every verdict line below is copied from the probe's output.
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'R1 Q2 (the runner never calls onDeliver) plus an opening brace in a string in the runner, the call parked after the struct at the end of the file' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)            \.onChange\(of: signal, initial: true\) \{ _, _ in\n                onDeliver\(tab\)\n            \}\n/\$1            .onChange(of: signal, initial: true) { _, _ in\n                _ = tab\n            }\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)    let onDeliver: \(SessionTab\) -> Void\n/\$1    let onDeliver: (SessionTab) -> Void\n    private let bracePad = \"{\"\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/\z/\nprivate func parkedDeliver(_ tab: SessionTab, _ onDeliver: (SessionTab) -> Void) {\n    onDeliver(tab)\n}\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the third re-review, at `ffbd0678` (not re-run by me): GREEN
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'R1c control for R1: Q2 with the call parked after the struct, NO brace in a string' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)            \.onChange\(of: signal, initial: true\) \{ _, _ in\n                onDeliver\(tab\)\n            \}\n/\$1            .onChange(of: signal, initial: true) { _, _ in\n                _ = tab\n            }\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/\z/\nprivate func parkedDeliver(_ tab: SessionTab, _ onDeliver: (SessionTab) -> Void) {\n    onDeliver(tab)\n}\n/' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the third re-review, at `ffbd0678` (not re-run by me): RED
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'R2b the item initialiser loses fileprivate, an opening brace in a string in the item, a fileprivate init in a second struct inside the same extension' \
+///   --apply "perl -0pi -e 's/        fileprivate init\(\n            recorder: AuditRecorder\?/        init(\n            recorder: AuditRecorder?/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/        let onCreated: \(\) -> Void\n\n        init\(/        let onCreated: () -> Void\n        let bracePad = \"{\"\n\n        init(/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/            self\.onCreated = onCreated\n        \}\n    \}\n\}\n/            self.onCreated = onCreated\n        }\n    }\n\n    struct SpareDecoy {\n        fileprivate init() {}\n    }\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the third re-review, at `ffbd0678` (not re-run by me): GREEN
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theSheetItemIsDeclaredOnceBesideItsBuilderWithAFileprivateInitialiser()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'R2 the item initialiser loses fileprivate, a brace in a string in the item, a fileprivate init parked in a struct at the END of the file' \
+///   --apply "perl -0pi -e 's/        fileprivate init\(\n            recorder: AuditRecorder\?/        init(\n            recorder: AuditRecorder?/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/        let onCreated: \(\) -> Void\n\n        init\(/        let onCreated: () -> Void\n        let bracePad = \"{\"\n\n        init(/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/\z/\nstruct SpareDecoy {\n    fileprivate init() {}\n}\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// the third re-review, at `ffbd0678` (not re-run by me): RED (the over-read stopped at the extension’s brace, short of the decoy)
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theSheetItemIsDeclaredOnceBesideItsBuilderWithAFileprivateInitialiser()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'R3 Q2 (the onChange no longer delivers) with the onDeliver call kept in a method of the runner nobody calls' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)            \.onChange\(of: signal, initial: true\) \{ _, _ in\n                onDeliver\(tab\)\n            \}\n/\$1            .onChange(of: signal, initial: true) { _, _ in\n                _ = tab\n            }\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)    private var signal: Signal \{\n/\$1    private func neverCalled() {\n        onDeliver(tab)\n    }\n\n    private var signal: Signal {\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift"
+/// the third re-review, at `ffbd0678` (not re-run by me): GREEN
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.SidebarNewBucketTests/theRunnerIsMountedPerTab()
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'L4 benign control: a closing and an opening brace in string literals inside the runner and inside the sheet item, no violation anywhere' \
+///   --apply "perl -0pi -e 's/(struct PendingCreateBucketRunner: View \{.*?)    let onDeliver: \(SessionTab\) -> Void\n/\$1    let onDeliver: (SessionTab) -> Void\n    private let braceCloser = \"}\"\n    private let bracePad = \"{\"\n/s' Sources/MacSCPAppKit/ContentView+Detail.swift && perl -0pi -e 's/        let onCreated: \(\) -> Void\n\n        fileprivate init\(/        let onCreated: () -> Void\n        let braceCloser = \"}\"\n        let bracePad = \"{\"\n\n        fileprivate init(/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// before: not run (a GREEN there says nothing the GREEN here does not)
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'S1 the retention arm parked in a private func between handleBrowserMenuEntry and restoreDeletedFiles' \
+///   --apply "perl -0pi -e 's/                if side == \.remote, selection\.count == 1, let file = selection\.first,\n                    let lockAction = ObjectLockFileAction\(action: action\),\n                    let target = ObjectLockTarget\.resolve\(\n                        path: file\.path, in: connectionActionContext\(in: tab, session: session\)\),\n                    let settings = session\.remoteFS as\? any S3BucketSettings,\n                    let states = session\.objectLockStates\n                \{\n                    objectLockSheetItem = ObjectLockSheetItem\(\n                        recorder: tab\.auditRecorder, focus: lockAction\.focus, target: target,\n                        settings: settings, states: states\)\n                \}\n/                parkedLock(action, selection, side, tab, session)\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/    \/\/\/ The \"Restore\" entry of a deleted row/    private func parkedLock(\n        _ action: FileActionContribution, _ selection: [RemoteFileItem], _ side: BrowserPaneSide,\n        _ tab: SessionTab, _ session: BrowserSession\n    ) {\n        if side == .remote, selection.count == 1, let file = selection.first,\n            let lockAction = ObjectLockFileAction(action: action),\n            let target = ObjectLockTarget.resolve(\n                path: file.path, in: connectionActionContext(in: tab, session: session)),\n            let settings = session.remoteFS as? any S3BucketSettings,\n            let states = session.objectLockStates\n        {\n            objectLockSheetItem = ObjectLockSheetItem(\n                recorder: tab.auditRecorder, focus: lockAction.focus, target: target,\n                settings: settings, states: states)\n        }\n    }\n\n    \/\/\/ The \"Restore\" entry of a deleted row/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `e26a116e` (ObjectLockSheetTests still unfixed):
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theSheetIsOpenedAndRunForTheFileThatWasChosen()
+/// So S1 measures NOTHING about the span it was written for: the sibling guard
+/// reads 900 characters from the FIRST `ObjectLockTarget.resolve(` in the file, and
+/// parking the arm moves that occurrence into the `.metadata` arm, whose next 900
+/// characters carry no `focus: lockAction.focus`. Not re-run at the final tree: a
+/// plant another guard already catches cannot show this one blind, in either
+/// direction. S2 is its replacement.
+/// ```
+///
+/// ```
+/// scripts/mutation-probe --filter 'macSCPAppKitTests' \
+///   --label 'S2 the ObjectLockFileAction conversion parked in a private func between handleBrowserMenuEntry and restoreDeletedFiles' \
+///   --apply "perl -0pi -e 's/                    let lockAction = ObjectLockFileAction\(action: action\),\n/                    let lockAction = parkedLockAction(action),\n/' Sources/MacSCPAppKit/ContentView+MenuActions.swift && perl -0pi -e 's/    \/\/\/ The \"Restore\" entry of a deleted row/    private func parkedLockAction(_ action: FileActionContribution) -> ObjectLockFileAction? {\n        ObjectLockFileAction(action: action)\n    }\n\n    \/\/\/ The \"Restore\" entry of a deleted row/' Sources/MacSCPAppKit/ContentView+MenuActions.swift"
+/// at `e26a116e` (ObjectLockSheetTests still unfixed):
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: GREEN — 3150 test(s) ran and NONE of them noticed the plant.
+/// at the final tree:
+///   ── control: 3150 test(s) ran, 0 pre-existing failures
+///   RESULT: RED — 3150 test(s) ran, and the plant was caught by:
+///     macSCPAppKitTests.ObjectLockSheetTests/theFileActionArmAssignsAnItemTheWindowPresents()
+/// ```
 @Suite("Sidebar: connect and create bucket", .timeLimit(.minutes(5)))
 @MainActor
 struct SidebarNewBucketTests {
