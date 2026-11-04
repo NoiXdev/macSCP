@@ -15,18 +15,25 @@ extension ContentView {
     /// `BucketVersioningSheetItem` gives, and the refresh to run when the
     /// sheet made a bucket.
     ///
-    /// **Its initialiser is `fileprivate`, and this file is the only one that
-    /// can call it: that is the boundary, not a convention.** The rule is that
-    /// the sheet is built in exactly one place -- `handleConnectionAction`'s
-    /// create-bucket arm, after it has re-asked availability -- so that the
-    /// rule deciding whether the action is possible and the sheet it opens
-    /// cannot come to disagree about a bucket nobody is looking at. A source
-    /// scan for that kept buying one spelling and revealing another (a literal
-    /// call, then a `.init(` behind a factory written through
-    /// `$createBucketSheetItem.wrappedValue`); a type another file cannot
-    /// construct does not have spellings. The access level is on the
-    /// initialiser and not on the type, because every other file still has to
-    /// HOLD the item (`ContentView.createBucketSheetItem`) and present it.
+    /// **Its initialiser is `fileprivate`, which removes two spellings and
+    /// confines nothing more.** The rule is that the sheet is built in exactly
+    /// one place -- `handleConnectionAction`'s create-bucket arm, after it has
+    /// re-asked availability -- so that the rule deciding whether the action is
+    /// possible and the sheet it opens cannot come to disagree about a bucket
+    /// nobody is looking at. A source scan for that kept buying one spelling and
+    /// revealing another, so the literal call and the call through the metatype
+    /// are refused by the compiler in any other file instead. That is the whole
+    /// of it: a struct extension in another file can declare an initialiser of
+    /// its own that assigns the stored properties directly (they are internal),
+    /// and that compiles. The spelling the access level does not reach is what a
+    /// count stands beside it for: `SidebarNewBucketTests` requires this type's
+    /// name to appear exactly three times over the App target (this declaration,
+    /// the state's annotation, the one construction) and the state's name
+    /// exactly three. An initialiser nobody calls constructs nothing, so its
+    /// existence is not the violation; its USE is, and a use names the type.
+    /// The access level is on the initialiser and not on the type, because every
+    /// other file still has to HOLD the item (`ContentView.createBucketSheetItem`)
+    /// and present it.
     struct CreateBucketSheetItem: Identifiable {
         let id = UUID()
         let recorder: AuditRecorder?

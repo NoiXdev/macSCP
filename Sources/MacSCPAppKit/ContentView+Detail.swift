@@ -3260,11 +3260,19 @@ struct PendingCreateBucketRunner: View {
     /// because this type has no access to `ContentView`'s own state.
     let onDeliver: (SessionTab) -> Void
 
-    /// `fileprivate`, so that the one mount in this file is the only one there
-    /// can be: no other file can construct a runner, under any spelling. Where
-    /// that mount sits, and that it is inside a `ForEach` over every tab, is a
-    /// view-structure property no test here can execute; it is pinned by a
-    /// whole-region equality in `SidebarNewBucketTests`.
+    /// `fileprivate`, which removes two spellings of construction from every
+    /// other file (a literal call and a call through the metatype no longer
+    /// compile there) and confines nothing more than that. In particular it does
+    /// NOT make this file the only one that can construct a runner: a struct
+    /// extension in another file can declare an initialiser of its own that
+    /// assigns the stored properties directly, because they are internal, and
+    /// that compiles. The spelling the access level does not reach is the one a
+    /// count stands beside it for: `SidebarNewBucketTests` requires the type's
+    /// name to appear exactly twice over the App target (this declaration and
+    /// the one mount), so a second use of any initialiser is a third mention.
+    /// Where that mount sits, and that it is inside a `ForEach` over every tab,
+    /// is a view-structure property no test here can execute; it is pinned by a
+    /// whole-region equality in the same suite.
     fileprivate init(
         tab: SessionTab, activeTabID: UUID, onDeliver: @escaping (SessionTab) -> Void
     ) {

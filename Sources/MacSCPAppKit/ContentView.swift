@@ -802,7 +802,10 @@ struct ContentView: View {
 
     /// The item is declared in `ContentView+MenuActions.swift`, beside the one
     /// place that builds it, and its initialiser is `fileprivate` there: any
-    /// file may hold and present one, and none but that file can make one.
+    /// file may hold and present one, and the literal and metatype spellings of
+    /// making one do not compile elsewhere. An initialiser declared in an
+    /// extension in another file would; see the item's own doc comment for the
+    /// count that stands beside the access level.
     @State var createBucketSheetItem: CreateBucketSheetItem?
 
     /// The file whose retention or legal hold the sheet is about: which of the
