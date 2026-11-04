@@ -2,6 +2,50 @@ import AppKit
 import SwiftUI
 import macSCPCore
 
+// The sheet item sits at the TOP of this file, ahead of every function, and not
+// at the end where it was first put: `ConnectionActionRouteTests` reads the
+// body of `handleConnectionAction` as "from its declaration to the next
+// function at the same indent, or the end of the file", and that function is
+// the last in the file, so anything appended after it is read as part of its
+// arms.
+
+extension ContentView {
+    /// The capability and the bucket list the sheet checks a name against,
+    /// captured at presentation time for the reason
+    /// `BucketVersioningSheetItem` gives, and the refresh to run when the
+    /// sheet made a bucket.
+    ///
+    /// **Its initialiser is `fileprivate`, and this file is the only one that
+    /// can call it: that is the boundary, not a convention.** The rule is that
+    /// the sheet is built in exactly one place -- `handleConnectionAction`'s
+    /// create-bucket arm, after it has re-asked availability -- so that the
+    /// rule deciding whether the action is possible and the sheet it opens
+    /// cannot come to disagree about a bucket nobody is looking at. A source
+    /// scan for that kept buying one spelling and revealing another (a literal
+    /// call, then a `.init(` behind a factory written through
+    /// `$createBucketSheetItem.wrappedValue`); a type another file cannot
+    /// construct does not have spellings. The access level is on the
+    /// initialiser and not on the type, because every other file still has to
+    /// HOLD the item (`ContentView.createBucketSheetItem`) and present it.
+    struct CreateBucketSheetItem: Identifiable {
+        let id = UUID()
+        let recorder: AuditRecorder?
+        let settings: any S3BucketSettings
+        let listing: CreateBucketModel.Listing
+        let onCreated: () -> Void
+
+        fileprivate init(
+            recorder: AuditRecorder?, settings: any S3BucketSettings,
+            listing: CreateBucketModel.Listing, onCreated: @escaping () -> Void
+        ) {
+            self.recorder = recorder
+            self.settings = settings
+            self.listing = listing
+            self.onCreated = onCreated
+        }
+    }
+}
+
 /// The ONE router every pane's context menu sends through (diff view fix
 /// round 3, N1): one switch over `BrowserMenuEntry`, with the side the pane
 /// handed over.
@@ -352,43 +396,6 @@ extension ContentView {
                         Task { await remote.refresh() }
                     })
             }
-        }
-    }
-}
-
-extension ContentView {
-    /// The capability and the bucket list the sheet checks a name against,
-    /// captured at presentation time for the reason
-    /// `BucketVersioningSheetItem` gives, and the refresh to run when the
-    /// sheet made a bucket.
-    ///
-    /// **Its initialiser is `fileprivate`, and this file is the only one that
-    /// can call it: that is the boundary, not a convention.** The rule is that
-    /// the sheet is built in exactly one place -- `handleConnectionAction`'s
-    /// create-bucket arm, after it has re-asked availability -- so that the
-    /// rule deciding whether the action is possible and the sheet it opens
-    /// cannot come to disagree about a bucket nobody is looking at. A source
-    /// scan for that kept buying one spelling and revealing another (a literal
-    /// call, then a `.init(` behind a factory written through
-    /// `$createBucketSheetItem.wrappedValue`); a type another file cannot
-    /// construct does not have spellings. The access level is on the
-    /// initialiser and not on the type, because every other file still has to
-    /// HOLD the item (`ContentView.createBucketSheetItem`) and present it.
-    struct CreateBucketSheetItem: Identifiable {
-        let id = UUID()
-        let recorder: AuditRecorder?
-        let settings: any S3BucketSettings
-        let listing: CreateBucketModel.Listing
-        let onCreated: () -> Void
-
-        fileprivate init(
-            recorder: AuditRecorder?, settings: any S3BucketSettings,
-            listing: CreateBucketModel.Listing, onCreated: @escaping () -> Void
-        ) {
-            self.recorder = recorder
-            self.settings = settings
-            self.listing = listing
-            self.onCreated = onCreated
         }
     }
 }
