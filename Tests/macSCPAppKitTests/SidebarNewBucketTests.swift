@@ -925,6 +925,31 @@ struct SidebarNewBucketTests {
             """)
     }
 
+    /// The boundary behind the count above: `CreateBucketSheetItem` is declared
+    /// in `ContentView+MenuActions.swift` with a `fileprivate` initialiser, so
+    /// no other file can construct one under ANY spelling. The count is the
+    /// second line of defence now, not the only one -- it still fails if the one
+    /// site moves or a second appears in that file, which the access level
+    /// cannot see.
+    ///
+    /// Read from source because a violation here does not compile, which is the
+    /// point, and a test that tried to write one would not build. The access
+    /// level is pinned on the INITIALISER: on the type it would stop the other
+    /// files holding the item, which they must (`ContentView.createBucketSheetItem`).
+    @Test func theSheetItemCannotBeConstructedOutsideTheFileThatBuildsIt() throws {
+        let actions = try SourceCorpus.commentFree(of: Self.menuActionsFile)
+        let item = try Self.functionBody(named: "struct CreateBucketSheetItem: Identifiable {", in: actions)
+        #expect(item.contains("fileprivate init("), "the item's initialiser is no longer `fileprivate`")
+        let contentView = try SourceCorpus.commentFree(of: Self.contentViewFile)
+        #expect(!contentView.contains("struct CreateBucketSheetItem"), """
+            ContentView.swift declares the item again -- a second declaration is a second, \
+            unconfined initialiser.
+            """)
+        // The controls, not the strings checked above: the state that holds the
+        // item is still declared, in ContentView.swift, with the type's name.
+        #expect(contentView.contains("var createBucketSheetItem: CreateBucketSheetItem?"))
+    }
+
     /// The sidebar holds no connection of its own: it names no file system,
     /// no connector and no session, only the effect value and the input.
     @Test func theSidebarOwnsNoConnection() throws {
@@ -944,33 +969,67 @@ struct SidebarNewBucketTests {
     /// armed on a tab that is not in front is still delivered when it comes
     /// forward.
     @Test func theRunnerIsMountedPerTab() throws {
+        // **What this pins, and what it cannot.** "One runner per tab" is a
+        // view-structure property: whether the mount is reachable, and whether
+        // it sits in a `ForEach` over every tab, is something nothing in this
+        // project can execute. So the scan reads the STRUCTURE and not the
+        // vocabulary. The first form counted one spelling in one file and
+        // pinned the line above and the line below the mount; a second mount
+        // under another spelling, a mount in another file, and the whole
+        // `ForEach` wrapped in an `if` that is never true all passed it.
+        //
+        // Two checks, with different jobs:
+        // 1. Over the whole App target, every construction of the runner
+        //    under either spelling is in `ContentView+Detail.swift`, once.
+        // 2. The region of that one mount -- from its `.background {` to the
+        //    closing brace, and the modifier that follows it -- is EQUAL to the
+        //    expected lines. An equality over a small region cannot go quiet:
+        //    it fails the moment anything inside it moves, including an
+        //    enclosing `if`. Its price is brittleness to a reformat, and the
+        //    region is seven lines, so that is the right trade; the line that
+        //    follows is in it so a modifier added after the block (a
+        //    `.hidden()`, say) is seen too.
+        let appKit = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
+        var constructions: [String] = []
+        for url in try SourceCorpus.files(under: appKit) where url.pathExtension == "swift" {
+            let code = try SourceCorpus.commentFree(of: url)
+            let built = code.components(separatedBy: "PendingCreateBucketRunner(").count - 1
+                + code.components(separatedBy: "PendingCreateBucketRunner.init(").count - 1
+            constructions += Array(repeating: url.lastPathComponent, count: built)
+        }
+        #expect(constructions == ["ContentView+Detail.swift"], """
+            the create-bucket runner is constructed at \(constructions) (either spelling), \
+            expected exactly one construction, in ContentView+Detail.swift -- a request armed \
+            by the sidebar entry would connect and then never open the sheet.
+            """)
+
         let detail = try SourceCorpus.commentFree(of: Self.detailFile)
         let lines = detail.components(separatedBy: "\n")
-        let mounts = lines.indices.filter { lines[$0].contains("PendingCreateBucketRunner(") }
-        #expect(mounts.count == 1, """
-            ContentView+Detail.swift mounts PendingCreateBucketRunner( \(mounts.count) times, \
-            expected exactly once -- a request armed by the sidebar entry would connect and \
-            then never open the sheet.
+        let region = try Self.mountRegion(of: "PendingCreateBucketRunner(", in: lines)
+        #expect(region == [
+            ".background {",
+            "ForEach(tabsModel.tabs) { tab in",
+            "PendingCreateBucketRunner(",
+            "tab: tab, activeTabID: tabsModel.activeTab.id,",
+            "onDeliver: { deliverPendingCreateBucket(on: $0) })",
+            "}",
+            "}",
+            ".backgroundPreferenceValue(SidebarMeasuredWidthKey.self) { measuredSidebarWidth in",
+        ], """
+            the region around the create-bucket runner's mount is not the expected one: \(region). \
+            It must be a `.background` holding a `ForEach` over every tab that hands each tab to \
+            its own runner, with nothing around the `ForEach` and nothing added after the block.
             """)
-        // The property is "one runner per tab", and what states it is the
-        // `ForEach` over every tab around the mount, handing each tab to its
-        // own runner. A single runner on the active tab reads the same words
-        // and would miss a request armed on a tab that is not in front.
-        if let mount = mounts.first, mount > 0, mount + 1 < lines.count {
-            #expect(
-                lines[mount - 1].trimmingCharacters(in: .whitespaces)
-                    == "ForEach(tabsModel.tabs) { tab in",
-                "the runner is not mounted inside `ForEach(tabsModel.tabs) { tab in`")
-            #expect(
-                lines[mount + 1].trimmingCharacters(in: .whitespaces).hasPrefix("tab: tab,"),
-                "the runner is not handed the tab the `ForEach` hands it")
-        }
-        // The control for both: the snippet runner's mount reads the same way,
-        // so the scan is looking at the shape it was written for.
-        let snippetMount = try #require(lines.firstIndex { $0.contains("PendingSnippetRunner(") })
-        #expect(
-            lines[snippetMount - 1].trimmingCharacters(in: .whitespaces)
-                == "ForEach(tabsModel.tabs) { tab in")
+        // The controls, none of them the region checked above: the same
+        // extraction on the snippet runner's mount, which is built the same
+        // way, yields the same shape (so the extraction finds a mount and its
+        // block, and does not return something that happens to be empty) and
+        // is followed by the next modifier, which here is the create-bucket one.
+        let snippetRegion = try Self.mountRegion(of: "PendingSnippetRunner(", in: lines)
+        #expect(snippetRegion.count == 8)
+        #expect(snippetRegion.first == ".background {")
+        #expect(snippetRegion[1] == "ForEach(tabsModel.tabs) { tab in")
+        #expect(snippetRegion.last == ".background {")
         #expect(detail.contains("deliverPendingCreateBucket(on: $0)"))
         // What wakes the runner is what the delivery reads. The one fact the
         // snippet runner does not carry is the pane's load state, and without
@@ -1029,6 +1088,32 @@ struct SidebarNewBucketTests {
         .appendingPathComponent("Sources/MacSCPAppKit/SessionSidebar.swift")
     private static let detailFile = repoRoot
         .appendingPathComponent("Sources/MacSCPAppKit/ContentView+Detail.swift")
+
+    private struct MountNotFound: Error { let runner: String }
+
+    /// The trimmed lines of the block that mounts `runner`: from the nearest
+    /// `.background {` above its mount to that block's closing brace, and then
+    /// the next line that holds code. Throws, rather than returning an empty
+    /// region, when there is no such mount or no such block.
+    private static func mountRegion(of runner: String, in lines: [String]) throws -> [String] {
+        let trimmed = lines.map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let mount = trimmed.firstIndex(where: { $0.contains(runner) }),
+            let start = trimmed[..<mount].lastIndex(of: ".background {")
+        else { throw MountNotFound(runner: runner) }
+        var depth = 0
+        var end = start
+        for index in start..<trimmed.count {
+            for character in trimmed[index] {
+                if character == "{" { depth += 1 }
+                if character == "}" { depth -= 1 }
+            }
+            if depth <= 0 { end = index; break }
+        }
+        guard end > mount else { throw MountNotFound(runner: runner) }
+        var region = Array(trimmed[start...end])
+        if let next = trimmed[(end + 1)...].first(where: { !$0.isEmpty }) { region.append(next) }
+        return region
+    }
 
     private struct ScanFailure: Error { let anchor: String }
 
