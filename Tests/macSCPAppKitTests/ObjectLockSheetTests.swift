@@ -188,13 +188,56 @@ struct ObjectLockSheetTests {
     /// focus. Deleting the `Text` that draws the warning left the model right
     /// and the screen without it (fix round 1, I-1, the second probe).
     @Test func theRetentionFormDrawsTheLineUnderTheModeChoice() throws {
-        let source = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
-        let form = try #require(source.range(of: "private var retentionForm: some View"))
-        let rest = source[form.upperBound...]
-        let end = try #require(rest.range(of: "private var legalHoldForm: some View"))
-        let body = String(rest[..<end.lowerBound])
-        #expect(body.contains("model.modeDetailLine"))
-        #expect(body.contains(".text"))
+        let views = try Self.views("MacSCPAppKit/ObjectLockSheet.swift")
+        // `retentionForm`'s own block, ending at the brace that closes it
+        // (`SourceSpans.Views.block(openedBy:)`), read in the view where
+        // string literals are blanked.
+        //
+        // **It ended at the NAME of the next declaration,
+        // `private var legalHoldForm: some View`, until this closeout**, so
+        // anything DECLARED between the two forms was inside the span. Round 5
+        // left the read alone and argued it was safe; that argument is
+        // withdrawn. It read, verbatim: "It is not in the family item 3 names:
+        // both of its failure directions are loud, because a missing or moved
+        // anchor makes the `#require` fail rather than widen the span." The
+        // `#require` is indeed loud about an anchor that MOVES. It says nothing
+        // about text that JOINS the span from outside the form, and that is the
+        // silent direction: plant X1 deletes the
+        // `if let detail = model.modeDetailLine` block from `retentionForm` --
+        // no COMPLIANCE warning under the mode choice at all -- and parks an
+        // unused `@ViewBuilder private var parkedLine: some View` spelling it
+        // between the two forms. X1 was GREEN before this fix and is RED after,
+        // 3150 tests both times; X1c, 25 comment lines at the top of
+        // `retentionForm` with no code touched, is GREEN, so the narrower read
+        // is not a stricter guard. Both commands and both verdicts are in
+        // `SidebarNewBucketTests.swift`'s header.
+        //
+        // What the old boundary left open, from the repository root:
+        //
+        //     python3 -I -c 'import itertools
+        //     s=open("Sources/MacSCPAppKit/ObjectLockSheet.swift").read()
+        //     a="private var retentionForm: some View"
+        //     up=s.index(a)+len(a)
+        //     i=s.index("{",up)
+        //     d=list(itertools.accumulate((c=="{")-(c=="}") for c in s[i:]))
+        //     end=i+d.index(0)-up
+        //     name=s.index("private var legalHoldForm: some View",up)-up
+        //     print("block ends at",end,"| the name read ends at",name,"| it over-reads by",name-end)'
+        //
+        // prints `block ends at 1061 | the name read ends at 1081 | it
+        // over-reads by 20`. Twenty characters is not the measurement that
+        // matters here, and this is where the `present` window below differs:
+        // that one over-reads a FIXED 144 characters, so what falls inside it
+        // is whatever the file happens to hold; this one over-read whatever was
+        // declared in the gap, which is nothing today and the whole of
+        // `parkedLine` under X1. The command counts braces in the RAW text
+        // where the guard counts them in the blanked view; the two agree here
+        // because the region holds no brace inside a literal or a comment.
+        let form = try #require(
+            views.block(openedBy: "private var retentionForm: some View"),
+            "`private var retentionForm: some View` is not there, or its braces do not balance")
+        #expect(form.code.contains("model.modeDetailLine"))
+        #expect(form.code.contains(".text"))
         // `present`'s own block, ending at the brace that closes it
         // (`SourceSpans.Views.block(openedBy:)`), and both names read in the
         // view where string literals are blanked.
@@ -227,8 +270,7 @@ struct ObjectLockSheetTests {
         // at the top of `present`, no code changed, pushed both forms out of the
         // window and turned this red (plant V2, RED then, GREEN now).
         let presentBlock = try #require(
-            Self.views("MacSCPAppKit/ObjectLockSheet.swift")
-                .block(openedBy: "private var present: some View"),
+            views.block(openedBy: "private var present: some View"),
             "`private var present: some View` is not there, or its braces do not balance")
         #expect(presentBlock.code.contains("retentionForm"))
         #expect(presentBlock.code.contains("legalHoldForm"))
@@ -1110,8 +1152,13 @@ struct ObjectLockSheetTests {
         // between this function and `restoreDeletedFiles`, the first check
         // below passed (plant S2 of that round, GREEN then, RED now). Parking
         // the WHOLE arm there instead is caught by
-        // `theSheetIsOpenedAndRunForTheFileThatWasChosen` below, which reads
-        // the same function body since fix round 5. This comment read, verbatim:
+        // `theSheetIsOpenedAndRunForTheFileThatWasChosen` below, which reads the
+        // Object Lock ARM inside this same function body since the Task 6
+        // closeout. This clause read, verbatim: "which reads the same function
+        // body since fix round 5" -- true of round 5's tree, where the sibling
+        // read the whole body; the closeout narrowed it to the arm, and S1 stays
+        // red by it either way, because parking the arm empties the arm. This
+        // comment read, verbatim:
         // "which reads from the first `ObjectLockTarget.resolve(` in the file,
         // so that plant (S1) measures nothing about this span" -- true of
         // `e26a116e`, where that sibling was still a 900-character window; at
@@ -1190,12 +1237,62 @@ struct ObjectLockSheetTests {
         // The `resolve(` check is the positive control that took the place of
         // the `#require` on that range: without it a body that resolves no
         // path at all would be read by two `contains` that name neither.
-        let around = try #require(
+        //
+        // **Fix round 5 replaced that window with the WHOLE body of
+        // `handleBrowserMenuEntry`, and that traded one direction away while
+        // fixing the two it was aimed at.** The body spans the Object Lock arm
+        // AND the `.metadata` arm, and both spell `path: file.path`, so both
+        // `contains` below could be satisfied by the other arm: plant U2 -- the
+        // real arm handing the sheet `focus: .retention`, with
+        // `let lockAction = (focus: 0, other: 0)` and
+        // `_ = (path: file.path, focus: lockAction.focus)` parked in the
+        // `.metadata` arm -- was GREEN on the function body. The 900-character
+        // window round 5 replaced could not reach that arm, so the SAME plant
+        // was RED before round 5. Both of those are runs and not arithmetic:
+        // GREEN at `0bbeff1b`, RED at round 4's final guard (this tree with
+        // `ObjectLockSheetTests.swift` restored to `b85de102`; the only other
+        // file differing between the two trees is `SidebarNewBucketTests.swift`,
+        // whose round-5 change is a check that reads `ContentView+Detail.swift`
+        // and cannot see this plant). Round 5's own report named this closer and
+        // recorded that its brief had specified the function body; the closeout
+        // takes the closer. Narrowing it drops nothing the body read caught --
+        // U1, U1c and S1 are still RED, U1b still GREEN -- and the figures, from
+        // the repository root:
+        //
+        //     python3 -I -c 'import itertools
+        //     s=open("Sources/MacSCPAppKit/ContentView+MenuActions.swift").read()
+        //     d=s.index("func handleBrowserMenuEntry(")
+        //     i=s.index("{",d)
+        //     acc=list(itertools.accumulate((c=="{")-(c=="}") for c in s[i:]))
+        //     body=s[d:i+acc.index(0)+1]
+        //     a=body.index("case .retention, .legalHold:")
+        //     arm=body[a:body.index("case .versions:",a)]
+        //     print("body",len(body),"| arm",len(arm),"| the read drops",len(body)-len(arm),"| path: file.path in body",body.count("path: file.path"),"in arm",arm.count("path: file.path"))'
+        //
+        // prints `body 8423 | arm 1273 | the read drops 7150 | path: file.path
+        // in body 2 in arm 1`, and
+        //
+        //     python3 -I -c 's=open("Sources/MacSCPAppKit/ContentView+MenuActions.swift").read()
+        //     a=s.index("ObjectLockTarget.resolve(")
+        //     print("the .metadata arm starts",s.index("case .metadata:",a)-a,"characters after the first ObjectLockTarget.resolve(")'
+        //
+        // prints `the .metadata arm starts 1971 characters after the first
+        // ObjectLockTarget.resolve(`. Raw text in both, where the guard reads
+        // the blanked view; they agree here because neither region holds a brace
+        // or one of these phrases inside a literal.
+        //
+        // The arm is read INSIDE the body rather than from the file, so a
+        // second `switch` that grows the same label elsewhere cannot answer for
+        // this one, and the `#require` is loud if the label moves.
+        let body = try #require(
             SourceSpans.functionBody(named: "handleBrowserMenuEntry", in: dispatcher),
             "func handleBrowserMenuEntry not found")
-        #expect(around.contains(String(describing: ObjectLockTarget.self) + ".resolve("))
-        #expect(around.contains("path: file.path"))
-        #expect(around.contains("focus: lockAction.focus"))
+        let arm = try #require(
+            SourceSpans.switchArm("case .retention, .legalHold:", in: body),
+            "the Object Lock arm is not in handleBrowserMenuEntry's body")
+        #expect(arm.contains(String(describing: ObjectLockTarget.self) + ".resolve("))
+        #expect(arm.contains("path: file.path"))
+        #expect(arm.contains("focus: lockAction.focus"))
         let sheet = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
         let runs = sheet.matches(of: #/model\.run\(([^)]*)\)/#).map {
             String($0.output.1).split(whereSeparator: \.isWhitespace).joined(separator: " ")
