@@ -2740,8 +2740,25 @@ extension S3FileSystem: ObjectMetadataProvider {
             sourceBucket: bucket, fromKey: key, destinationBucket: bucket, toKey: key,
             reportedAs: path, extraHeaders: headers)
 
-        let after = try await self.metadata(ofKey: key, inBucket: bucket)
-        guard Self.metadata(after, confirms: metadata) else {
+        // **The read-back's OWN failure is an unconfirmed write, not a failed
+        // one**, which is why this is `try?` and not `try`. The copy above
+        // has returned 2xx with a `<CopyObjectResult>` by the time this runs:
+        // the store took the change, and on a versioned bucket a version now
+        // exists. A `HEAD` that then fails — a non-2xx, a transport error, a
+        // dropped connection — says nothing about that, so throwing ITS error
+        // would hand the caller an error that
+        // `UnconfirmedMetadataWrite.describes` returns false for, and the App
+        // would report a change the storage accepted as one that could not be
+        // saved (which it did until 2026-11-04;
+        // `S3ObjectMetadataTests.aReadBackThatFailsAfterAnAcceptedCopyIsAnUnconfirmedWrite`
+        // is the red that was fixed). Both ways out of the read-back are the
+        // same news — accepted, not confirmed — and they share one error.
+        // Discarding the read's error loses no diagnostic the caller may show:
+        // the sentence for this is fixed text either way, and a `reason` can
+        // carry the endpoint the user typed. `BucketObjectLockModel.apply`
+        // reads its own write back the same way, `(try? …) ?? written`.
+        let after = try? await self.metadata(ofKey: key, inBucket: bucket)
+        guard let after, Self.metadata(after, confirms: metadata) else {
             throw RemoteFSError.protocolError(reason: Self.setMetadataUnconfirmedReason)
         }
     }

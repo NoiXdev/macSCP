@@ -126,15 +126,25 @@ public protocol ObjectMetadataProvider: Sendable {
     func acl(ofKey key: String, inBucket bucket: String) async throws -> ObjectACL?
 }
 
-/// The one failure of `setMetadata` after which the object HAS changed.
+/// The failure of `setMetadata` after which the object HAS changed.
 ///
 /// `setMetadata` reads back only once the write has gone out, and throws
-/// rather than report a change it could not confirm. For every other failure
-/// nothing was written; for this one the store accepted the change — with S3
-/// that means the copy answered 2xx with a `<CopyObjectResult>` — and on a
-/// versioned bucket there is a new version. So it is the one write failure a
-/// caller must not describe as a change that could not be saved, and nothing
-/// else in the error tells it apart.
+/// rather than report a change it could not confirm. **Two ways out of that
+/// read-back arrive here and they share this one error**: the read answered
+/// and disagreed, and the read itself failed. For this error the store
+/// accepted the change — with S3 that means the copy answered 2xx with a
+/// `<CopyObjectResult>` — and on a versioned bucket there is a new version.
+/// So it is the write failure a caller must not describe as a change that
+/// could not be saved, and nothing else in the error tells it apart.
+///
+/// **Corrected 2026-11-04.** The first line read, verbatim: "The one failure
+/// of `setMetadata` after which the object HAS changed.", and the paragraph
+/// above carried "For every other failure nothing was written". Both were
+/// false of the read-back's own failure, which until the same day threw the
+/// read's error instead of this one — so a change the storage had taken was
+/// reported as one that could not be saved. The conformer now throws this for
+/// both (`S3FileSystem.setMetadata`'s `try?`), which is what makes the
+/// sentence above true rather than what the code was asked to be.
 ///
 /// It lives beside the protocol rather than inside a backend for two
 /// reasons. The App layer has to ask, and may not name a concrete backend to
