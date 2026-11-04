@@ -1280,9 +1280,12 @@ struct CreateBucketSheetTests {
     /// with no caller, which is the defect this task's brief was amended for.
     @Test func theRoutesGateAsksTheModelsRule() throws {
         let source = try Self.code("Sources/MacSCPAppKit/ConnectionActionRoute.swift")
-        let start = try #require(source.range(of: "case .createBucket:"))
-        let rest = source[start.upperBound...]
-        let arm = rest[..<(rest.range(of: "case .")?.lowerBound ?? rest.endIndex)]
+        // The arm up to its own end (`SourceSpans.switchArm`). It used to be read up
+        // to the next `case .` ANYWHERE after it, or to the end of the file when
+        // it was the last, so text parked after the arm satisfied the checks
+        // below (measured 2026-11-04, plants Q16, Q17 and Q18 of the third round
+        // of `SidebarNewBucketTests`: all GREEN before, RED after).
+        let arm = try #require(SourceSpans.switchArm("case .createBucket:", in: source))
         #expect(arm.contains("CreateBucketModel.isOffered("))
         // The arm supplies BOTH facts the rule is made of: the connection's
         // root and the bucket the pane is inside. Handing it only the first
@@ -1306,9 +1309,7 @@ struct CreateBucketSheetTests {
     /// that is not an empty array.
     @Test func theDispatcherHandsTheSheetTheRemotePanesListing() throws {
         let dispatcher = try Self.code("Sources/MacSCPAppKit/ContentView+MenuActions.swift")
-        let start = try #require(dispatcher.range(of: "case .createBucket:"))
-        let rest = dispatcher[start.upperBound...]
-        let arm = rest[..<(rest.range(of: "case .")?.lowerBound ?? rest.endIndex)]
+        let arm = try #require(SourceSpans.switchArm("case .createBucket:", in: dispatcher))
         #expect(arm.contains("CreateBucketModel.listing(of: session.remote)"))
         // The sheet is presented with the same listing and refreshes the pane
         // when it made a bucket.
@@ -1327,9 +1328,7 @@ struct CreateBucketSheetTests {
     /// exist (also after a partial failure, when the bucket is there).
     @Test func aMadeBucketRefreshesThePaneThatListsIt() throws {
         let dispatcher = try Self.code("Sources/MacSCPAppKit/ContentView+MenuActions.swift")
-        let start = try #require(dispatcher.range(of: "case .createBucket:"))
-        let rest = dispatcher[start.upperBound...]
-        let arm = rest[..<(rest.range(of: "case .")?.lowerBound ?? rest.endIndex)]
+        let arm = try #require(SourceSpans.switchArm("case .createBucket:", in: dispatcher))
         #expect(arm.contains("onCreated:"))
         #expect(arm.contains("remote.refresh()"))
         let sheet = try Self.code("Sources/MacSCPAppKit/CreateBucketSheet.swift")
