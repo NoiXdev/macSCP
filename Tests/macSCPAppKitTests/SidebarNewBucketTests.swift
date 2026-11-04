@@ -1830,16 +1830,33 @@ struct SidebarNewBucketTests {
     /// that added one (Q7 of the re-review).
     ///
     /// **The figures, with the commands that produced them** (from the
-    /// repository root, 2026-11-04, `/usr/bin/grep`):
+    /// repository root, 2026-11-04, `/usr/bin/grep`, on the final fix wave's
+    /// tree — a hash is not cited because it would be one from this branch,
+    /// which a rebase merge rewrites: see `CLAUDE.md`, "prefer the run or the
+    /// subject to a hash from your own branch"):
     ///
     ///     /usr/bin/grep -r -o -F createBucketSheetItem Sources/MacSCPAppKit
     ///
-    /// prints 4 occurrences, of which one is in a `///` line, so the count in code
-    /// is 3 (it printed 5, two of them in `///` lines, before this round
-    /// shortened the item's own doc comment; the code count did not move). A
-    /// reader who sees 5 or 4 has not excluded comments, and should not
-    /// "correct" the 3: this test reads `SourceCorpus.commentFree`, which blanks
-    /// them structurally;
+    /// prints 5 occurrences, of which TWO are in `///` lines — both in
+    /// `CreateBucketSheetItem`'s own doc comment in
+    /// ContentView+MenuActions.swift — so the count in code is 3. A reader who
+    /// sees 5 has not excluded comments, and should not "correct" the 3: this
+    /// test reads `SourceCorpus.commentFree`, which blanks them structurally;
+    ///
+    /// **Corrected 2026-11-04.** The sentence above read, verbatim: "prints 4
+    /// occurrences, of which one is in a `///` line, so the count in code is 3
+    /// (it printed 5, two of them in `///` lines, before this round shortened
+    /// the item's own doc comment; the code count did not move). A reader who
+    /// sees 5 or 4 has not excluded comments, and should not "correct" the 3".
+    /// Withdrawn: the round did not shorten that comment past the two
+    /// mentions, so 4-and-one was never true of the tree it was committed
+    /// with, and the parenthesis presented the right answer (5, two of them in
+    /// `///` lines) as the superseded one. The assertions were and are
+    /// correct — 3 in code, one per file — and nothing about them changed
+    /// here; what changed is the record beside them, which told the next
+    /// reader to distrust the one number that was right. The remaining "5" in
+    /// the corrected sentence is now a figure the command prints rather than a
+    /// state the tree has left behind.
     ///
     ///     /usr/bin/grep -r -n -F CreateBucketSheetItem Sources/MacSCPAppKit
     ///
