@@ -967,9 +967,22 @@ final class ObjectMetadataModel {
             // Three KINDS of news arrive here: the storage refused the write,
             // the storage ACCEPTED it and macSCP could not confirm it, or the
             // request went out and nothing usable came back. Only the middle
-            // one is a change that HAPPENED, and `saveMessage(for:)` is where
+            // one is a change that HAPPENED, and `saveNotice(for:)` is where
             // it stops being called a failure; the other two keep the generic
             // sentence, or the permission one.
+            //
+            // **Those are KINDS of news and not paths: at least eight ways
+            // reach this arm.** Counted 2026-11-04 by reading
+            // `S3FileSystem.setMetadata` and the `copyObject` it awaits and
+            // naming every `throw`, because a count of throw sites is not
+            // something to grep for: `requireObjectKey`,
+            // `replacementHeaders(for:)` and `copyObject`'s
+            // `buildSignedRequest` refuse before anything leaves; `send`
+            // throwing, a non-2xx through `mapErrorStatus`, and a 2xx
+            // carrying an `<Error>` or no `<CopyObjectResult>` are three that
+            // a request left for; and the single unconfirmed `throw` has the
+            // two causes named below. "At least", because `setMetadata` is a
+            // protocol method and a second conformer brings its own ways in.
             //
             // **The middle one is two paths, not one**, and both are
             // `UnconfirmedMetadataWrite`: the read-back answered and
@@ -992,6 +1005,22 @@ final class ObjectMetadataModel {
             // and the next click asks for the ceremony again. A refusal
             // BEFORE the write leaves it standing (step 3 above): nothing was
             // sent.
+            //
+            // **Core's PRE-SEND refusals clear it as well, and that is a
+            // decision rather than an accident.** The parenthesis in the
+            // sentence above scopes it to the SHEET's own refusals, which
+            // `return` before this `do` block ever runs; three of the eight
+            // ways in — `requireObjectKey`, `replacementHeaders(for:)`,
+            // `buildSignedRequest` — are Core's, and they arrive HERE with
+            // nothing sent. One of them is live from this sheet:
+            // `replacementHeaders` refuses a value carrying a control
+            // character, which `draftProblem` does not pre-validate, so Save
+            // is enabled for it and Core says no. Clearing the tick there
+            // costs the person one re-tick and cannot spend a ceremony on a
+            // write that happened; leaving it standing would need this arm to
+            // know which of the eight it is, and being wrong about that on a
+            // COMPLIANCE-default bucket is a version nobody can erase. So the
+            // cheap direction is the chosen one, not the overlooked one.
             acknowledged = false
             recorder?.recordMetadataChanged(
                 key: target.key, bucket: target.bucket, standardFieldCount: standardFieldCount,
