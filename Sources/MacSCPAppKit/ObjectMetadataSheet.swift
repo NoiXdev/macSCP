@@ -155,19 +155,26 @@ enum ObjectMetadataLines {
         }
     }
 
-    /// The sentence for a write that did not end in a confirmed change.
+    /// The news about a write that did not end in a confirmed change: the
+    /// sentence, and which of the two kinds of news it is
+    /// (`ObjectMetadataModel.SaveNotice`).
     ///
     /// **One of them is not a failure.** Core throws for a change the storage
-    /// accepted whose read-back afterwards did not show it
+    /// accepted whose read-back afterwards did not confirm it
     /// (`UnconfirmedMetadataWrite.describes`), and the object has
     /// changed by then; `saveUnconfirmed` says that, rather than the generic
     /// "could not be saved" the rest of this arm keeps. Everything else is
     /// `ObjectLockLines.message(for:during:)`'s answer for a write that is
     /// none of the three Object Lock writes, which is the permission sentence
     /// or the fixed one, and never the error's own text.
-    static func saveMessage(for error: any Error) -> String {
-        if UnconfirmedMetadataWrite.describes(error) { return saveUnconfirmed.text }
-        return ObjectLockLines.message(for: error, during: .applyingDefault)
+    ///
+    /// The kind travels WITH the sentence because the sheet draws the two
+    /// differently, and a caller that had to ask a second time could draw an
+    /// accepted change in the failure's colour — which is what it did until
+    /// 2026-11-04, when this returned a bare `String` named `saveMessage`.
+    static func saveNotice(for error: any Error) -> ObjectMetadataModel.SaveNotice {
+        if UnconfirmedMetadataWrite.describes(error) { return .unconfirmed(saveUnconfirmed.text) }
+        return .failed(ObjectLockLines.message(for: error, during: .applyingDefault))
     }
 }
 
@@ -413,12 +420,61 @@ final class ObjectMetadataModel {
         case blocked
         /// Tried and did not end in a CONFIRMED write: the lock could not be
         /// read before the write, the store refused it, or the store accepted
-        /// it and the read-back did not show it. `applyFailure` carries the
-        /// sentence, which for the last of the three says the change was
-        /// accepted and could not be confirmed and not that it failed
-        /// (`ObjectMetadataLines.saveMessage(for:)`). A write that reached the
+        /// it and macSCP could not confirm it. `applyNotice` carries the
+        /// sentence, and for the last of the three it carries it as
+        /// `.unconfirmed` — the change was accepted and could not be
+        /// confirmed, which is not a failure and is not drawn as one
+        /// (`ObjectMetadataLines.saveNotice(for:)`). A write that reached the
         /// store is also recorded in the trail.
+        ///
+        /// **This case stays one case on purpose.** `.written` is still the
+        /// only outcome that means the store was changed, and a caller that
+        /// has to know whether the change landed reads `applyNotice`.
+        /// `theDeclaredExitsAreTheOnesTheRefusalsAndOutcomesNameToday` holds
+        /// the declared set.
         case failed
+    }
+
+    /// What the sheet has to say about a save that did not end in a confirmed
+    /// write — and which KIND of news it is, because the two are not drawn
+    /// the same.
+    ///
+    /// **One variable carried both until 2026-11-04**, and the sheet drew it
+    /// in `.red` above the "Saved." line: so a change the storage had
+    /// ACCEPTED was answered with red text and no "Saved.", which reads as
+    /// failure before a word of the sentence is read. Colour is the channel
+    /// people read first.
+    ///
+    /// A two-case value rather than a second optional string: the two kinds
+    /// are mutually exclusive, so no state of this sheet can say both, and
+    /// the sheet already models news with more than one value this way
+    /// (`Phase`, `BucketLock`, `VersioningReading`, `AccessListReading`) and
+    /// keeps a plain `String?` for news with only one.
+    enum SaveNotice: Equatable {
+        /// Nothing is confirmed to have landed: the store refused the write,
+        /// the lock could not be read before it, or the request left and
+        /// nothing usable came back. Drawn as a failure.
+        case failed(String)
+        /// The storage ACCEPTED the change and macSCP could not confirm it
+        /// (`UnconfirmedMetadataWrite`). The object HAS changed, so this is
+        /// not drawn as a failure — the rule `ObjectMetadataLines.versionAdded`
+        /// and `versionUnknown` follow for a read, applied to a write.
+        case unconfirmed(String)
+
+        var text: String {
+            switch self {
+            case .failed(let text), .unconfirmed(let text): return text
+            }
+        }
+
+        /// Whether the sheet draws this as a failure. The one place the
+        /// distinction becomes a colour.
+        var isFailure: Bool {
+            switch self {
+            case .failed: return true
+            case .unconfirmed: return false
+            }
+        }
     }
 
     /// A custom pair that cannot be sent, and which way.
@@ -469,7 +525,11 @@ final class ObjectMetadataModel {
     private(set) var versioningReading: VersioningReading
     private(set) var accessList: AccessListReading
     private(set) var isApplying = false
-    private(set) var applyFailure: String?
+    /// What the last save has to say, where it has something to say that
+    /// "Saved." does not cover. **Not named `applyFailure`** — the three
+    /// sibling sheets' variable of that name carries failures only, and this
+    /// one also carries a change the storage took (`SaveNotice`).
+    private(set) var applyNotice: SaveNotice?
     private(set) var isSaved = false
     /// How many saves were refused. Read by the stale blocker so that a click
     /// on a stale tick redraws the sheet: the clock is not observable, so
@@ -763,7 +823,7 @@ final class ObjectMetadataModel {
         bucketDefault = nil
         versioningReading = .reading
         accessList = .reading
-        applyFailure = nil
+        applyNotice = nil
         isSaved = false
         // A read starts the decision over, failed or not, as the bucket
         // default's sheet does: a tick from before must not stand after it.
@@ -854,7 +914,7 @@ final class ObjectMetadataModel {
         guard draftProblem == nil else { return .blocked }
         guard hasChanges else { return .refused(.nothingChanged) }
         isApplying = true
-        applyFailure = nil
+        applyNotice = nil
         isSaved = false
         defer { isApplying = false }
 
@@ -863,7 +923,7 @@ final class ObjectMetadataModel {
         } catch {
             // Nothing was sent, so nothing is recorded: the trail is for
             // writes and for the attempts that reached the store.
-            applyFailure = ObjectLockLines.message(for: error, during: .reading)
+            applyNotice = .failed(ObjectLockLines.message(for: error, during: .reading))
             return .failed
         }
         if defaultIsCompliance {
@@ -920,7 +980,9 @@ final class ObjectMetadataModel {
             // sentence above said "Three errors arrive here" and "Only the
             // middle one is a change that HAPPENED" while that was still
             // true of only one of the two.
-            applyFailure = ObjectMetadataLines.saveMessage(for: error)
+            // The slot travels with the sentence: the unconfirmed one is not
+            // drawn in the failure's colour (`SaveNotice`).
+            applyNotice = ObjectMetadataLines.saveNotice(for: error)
             // The acknowledgement is spent by a request that LEFT, not by one
             // that is known to have landed: this arm is also where a
             // connection lost after the request went out arrives, and there
@@ -934,7 +996,11 @@ final class ObjectMetadataModel {
             recorder?.recordMetadataChanged(
                 key: target.key, bucket: target.bucket, standardFieldCount: standardFieldCount,
                 customPairCount: written.custom.count, complianceDefaultDays: complianceDays,
-                failure: applyFailure)
+                // The trail records every attempt that LEFT with the sentence
+                // the person was shown, whichever slot it went into: an
+                // accepted-but-unconfirmed write is the one a later reader
+                // most needs to find.
+                failure: applyNotice?.text)
             return .failed
         }
     }
@@ -986,7 +1052,7 @@ struct ObjectMetadataSheet: BoundedView {
                     .buttonStyle(.polished)
                 Button(ObjectMetadataLines.saveAction.text) {
                     // The outcome is not read here: every one of its cases
-                    // is already on the model (`isSaved`, `applyFailure`,
+                    // is already on the model (`isSaved`, `applyNotice`,
                     // `explanation`, `refusedSaves`), which is what the sheet
                     // draws from.
                     Task { _ = await model.save() }
@@ -1069,10 +1135,14 @@ struct ObjectMetadataSheet: BoundedView {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let failure = model.applyFailure {
-                Text(failure)
+            // One line, in the place the person already reads it, and the
+            // colour follows the KIND of news: a change the storage accepted
+            // is not drawn in the failure's red above a missing "Saved."
+            // (`ObjectMetadataModel.SaveNotice`).
+            if let notice = model.applyNotice {
+                Text(notice.text)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(notice.isFailure ? Color.red : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.isSaved {
