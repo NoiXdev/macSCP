@@ -47,8 +47,11 @@ struct SigV4SignerTests {
     /// person types, and every other `extraHeaders` value in Core is a fixed
     /// literal, a digest, or percent-encoded.
     ///
-    /// **Four readings, not one.** The first is the property; the other three
-    /// are what stops a green here from being an artefact:
+    /// **Six `Bool` readings, not one**, and they are named one by one below
+    /// so the number is an enumeration rather than a claim. The first two are
+    /// the property; the four after them are what stops a green here from
+    /// being an artefact. (A seventh expectation, inline at the end, reads the
+    /// signed-header list.)
     ///
     /// - `twoSpacesSignAsOne` and `threeSpacesSignAsOne` are the collapse.
     /// - `oneSpaceIsNotNoSpace` says the collapsed form is a single space and
@@ -56,9 +59,25 @@ struct SigV4SignerTests {
     ///   true and this one false.
     /// - `leadingAndTrailingSpacesAreTrimmed` is the trim, which this signer
     ///   has always done.
+    /// - `theTabAndItsNeighbourSpaceBothSurvive` is the character class, and
+    ///   it is the reading added on 2026-11-04. The helper's comment states
+    ///   "Spaces, not white space in general … so nothing here touches one"
+    ///   as a DECISION, and nothing held it: widening the collapse to
+    ///   `Character.isWhitespace` — three lines, the kind of edit a tidying
+    ///   pass makes — reddened nothing across 549 `SigV4|S3` tests
+    ///   (`scripts/mutation-probe`, foreground, plant R3a). Both values here
+    ///   carry a doubled space, so both enter the loop whatever the guard is
+    ///   widened to; they differ only in the space that FOLLOWS a tab, which
+    ///   a whitespace collapse eats and a space collapse does not.
     /// - `theHeaderReachesTheSignature` is the control for all of them: two
     ///   values that differ in a letter sign differently, so an equality above
     ///   is the canonicalization and not a header the signature never saw.
+    ///
+    /// **Corrected 2026-11-04**: the paragraph above read, verbatim, "**Four
+    /// readings, not one.** The first is the property; the other three are
+    /// what stops a green here from being an artefact" — a count of the four
+    /// bullets over a body that made five `Bool` readings, before this round
+    /// made it six.
     ///
     /// **No signature and no key is written into an expectation.** `#expect`
     /// reports the source text of the expression it checks, so every reading
@@ -85,17 +104,29 @@ struct SigV4SignerTests {
         let noSpace = signature(of: #"attachment; filename="ab.pdf""#)
         let padded = signature(of: #"  attachment; filename="a b.pdf"  "#)
         let otherValue = signature(of: #"attachment; filename="z b.pdf""#)
+        // Both of these carry the doubled space after the semicolon, so the
+        // helper's `contains("  ")` guard lets both into the loop however it
+        // is spelled; the only difference between them is the space that
+        // FOLLOWS the tab. A collapse of spaces leaves that pair alone and
+        // the two sign differently; a collapse of white space eats the space
+        // after the tab in the first and they sign the same.
+        let tabThenSpace = signature(of: "attachment;  filename=\"a\t b.pdf\"")
+        let tabAlone = signature(of: "attachment;  filename=\"a\tb.pdf\"")
 
         let twoSpacesSignAsOne = twoSpaces == oneSpace
         let threeSpacesSignAsOne = threeSpaces == oneSpace
         let oneSpaceIsNotNoSpace = oneSpace != noSpace
         let leadingAndTrailingSpacesAreTrimmed = padded == oneSpace
+        let theTabAndItsNeighbourSpaceBothSurvive = tabThenSpace != tabAlone
         let theHeaderReachesTheSignature = otherValue != oneSpace
 
         #expect(twoSpacesSignAsOne, "two spaces inside the value signed differently from one")
         #expect(threeSpacesSignAsOne, "three spaces inside the value signed differently from one")
         #expect(oneSpaceIsNotNoSpace, "the space was removed rather than collapsed")
         #expect(leadingAndTrailingSpacesAreTrimmed, "the value is no longer trimmed")
+        #expect(
+            theTabAndItsNeighbourSpaceBothSurvive,
+            "the collapse reached a tab, or the space beside one")
         #expect(theHeaderReachesTheSignature, "the header is not in the signature at all")
         // And it is in the signed-header list, which is the other half of that
         // control and carries no value.
