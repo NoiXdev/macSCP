@@ -35,8 +35,16 @@ import Testing
 /// the rig's `macscp-seed`, `macscp-second` and `macscp-probe-lock` are never
 /// named by a request. That is why the connection is opened in bucket-list
 /// mode (`startsAtBucketList`): `connect` in bucket mode probes with a listing
-/// of the config's own bucket, which is `macscp-seed`, and the sibling gated
-/// suites do send that read-only probe. **No retention of any kind is ever set
+/// of the config's own bucket, which is `macscp-seed`, and the FIVE sibling
+/// gated suites do send that read-only probe — counted 2026-11-04 with
+/// `/usr/bin/grep -rln 'S3FileSystem.connect(S3SettingsRig.config' Tests/macSCPCoreTests/S3*GatedTests.swift`,
+/// which names `S3BucketSettingsGatedTests`, `S3CORSGatedTests`,
+/// `S3CreateBucketGatedTests`, `S3ObjectLockGatedTests` and
+/// `S3VersionsGatedTests` — and, since this sentence quotes the pattern, THIS
+/// file as a sixth, which is this line and not a call. Re-run after writing
+/// it: the listing is six files and `-rno … | wc -l` counts 12 occurrences,
+/// of which 11 are call sites in the five suites and the twelfth is the
+/// sentence you are reading. **No retention of any kind is ever set
 /// here**, and COMPLIANCE least of all: a bucket this suite means to delete
 /// must stay deletable, and a COMPLIANCE retention on one it created could not
 /// be lifted by anyone. The cleanup removes every version and delete marker
