@@ -893,7 +893,8 @@ struct SidebarNewBucketTests {
     }
 
     /// The sheet is built in exactly one place in the App target, and the
-    /// state that presents it is written in exactly one place.
+    /// state that presents it is named in exactly three: where it is declared,
+    /// where it is presented, and where the one construction is stored.
     ///
     /// **A count that must match, over every file of the target, and not a
     /// `!contains` over the places someone thought of.** The first form of this
@@ -905,13 +906,19 @@ struct SidebarNewBucketTests {
     @Test func theCreateBucketSheetIsConstructedInExactlyOnePlace() throws {
         let directory = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
         var constructions: [String] = []
-        var assignments: [String] = []
+        var mentions: [String] = []
         for url in try SourceCorpus.files(under: directory) where url.pathExtension == "swift" {
             let code = try SourceCorpus.commentFree(of: url)
             let built = code.components(separatedBy: "CreateBucketSheetItem(").count - 1
-            let written = code.components(separatedBy: "createBucketSheetItem = ").count - 1
+            // EVERY mention of the state's name, not only `createBucketSheetItem = `:
+            // the state is reachable only through its name, so a write through
+            // `$createBucketSheetItem.wrappedValue`, in the file whose
+            // `fileprivate` initialiser the access level cannot confine, is still
+            // one more mention. (A `.init(` behind a factory in that file is
+            // invisible to a count of the literal and was GREEN until this.)
+            let named = code.components(separatedBy: "createBucketSheetItem").count - 1
             constructions += Array(repeating: url.lastPathComponent, count: built)
-            assignments += Array(repeating: url.lastPathComponent, count: written)
+            mentions += Array(repeating: url.lastPathComponent, count: named)
         }
         #expect(constructions == ["ContentView+MenuActions.swift"], """
             `CreateBucketSheetItem(` is constructed at \(constructions) -- expected exactly one \
@@ -919,9 +926,13 @@ struct SidebarNewBucketTests {
             arm). A second copy is how the rule that says the action is possible and the sheet \
             it opens come to disagree about a bucket nobody is looking at.
             """)
-        #expect(assignments == ["ContentView+MenuActions.swift"], """
-            `createBucketSheetItem = ` is written at \(assignments) -- expected exactly one \
-            site, the same arm.
+        #expect(
+            mentions.sorted()
+                == ["ContentView+MenuActions.swift", "ContentView+Sheets.swift", "ContentView.swift"],
+            """
+            `createBucketSheetItem` is named at \(mentions.sorted()) -- expected exactly three: \
+            the declaration (ContentView.swift), the presentation (ContentView+Sheets.swift) and \
+            the one store (ContentView+MenuActions.swift, the create-bucket arm).
             """)
     }
 
@@ -978,9 +989,12 @@ struct SidebarNewBucketTests {
         // under another spelling, a mount in another file, and the whole
         // `ForEach` wrapped in an `if` that is never true all passed it.
         //
-        // Two checks, with different jobs:
+        // Three checks, with different jobs:
         // 1. Over the whole App target, every construction of the runner
-        //    under either spelling is in `ContentView+Detail.swift`, once.
+        //    under either spelling is in `ContentView+Detail.swift`, once. It
+        //    cannot see a spelling nobody listed (a call through the type's
+        //    metatype was GREEN against checks 1 and 2 alone), which is what
+        //    3 is for.
         // 2. The region of that one mount -- from its `.background {` to the
         //    closing brace, and the modifier that follows it -- is EQUAL to the
         //    expected lines. An equality over a small region cannot go quiet:
@@ -989,6 +1003,10 @@ struct SidebarNewBucketTests {
         //    region is seven lines, so that is the right trade; the line that
         //    follows is in it so a modifier added after the block (a
         //    `.hidden()`, say) is seen too.
+        // 3. The runner's initialiser is `fileprivate`, so no other file can
+        //    construct one under any spelling: a boundary that does not compile
+        //    the violation, where 1 is a scan that buys one spelling at a time.
+        //    It does not confine this file, which 2 does.
         let appKit = SourceCorpus.url(of: .sources).appendingPathComponent("MacSCPAppKit")
         var constructions: [String] = []
         for url in try SourceCorpus.files(under: appKit) where url.pathExtension == "swift" {
@@ -1041,6 +1059,7 @@ struct SidebarNewBucketTests {
         ] {
             #expect(runner.contains(fact), "the runner's signal no longer carries `\(fact)`")
         }
+        #expect(runner.contains("fileprivate init("), "the runner's initialiser is no longer `fileprivate`")
     }
 
     /// "Open Anyway" starts what was asked for. The answer lives in a view
