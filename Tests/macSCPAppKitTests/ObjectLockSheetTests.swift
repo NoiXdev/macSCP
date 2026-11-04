@@ -195,10 +195,43 @@ struct ObjectLockSheetTests {
         let body = String(rest[..<end.lowerBound])
         #expect(body.contains("model.modeDetailLine"))
         #expect(body.contains(".text"))
-        let present = try #require(source.range(of: "private var present: some View"))
-        let presentBody = String(source[present.upperBound...].prefix(1500))
-        #expect(presentBody.contains("retentionForm"))
-        #expect(presentBody.contains("legalHoldForm"))
+        // `present`'s own block, ending at the brace that closes it
+        // (`SourceSpans.Views.block(openedBy:)`), and both names read in the
+        // view where string literals are blanked.
+        //
+        // **It was 1500 characters from "private var present: some View" until
+        // fix round 5 of the new-bucket task, and that window was already
+        // satisfied by neighbouring code with nothing planted.** The block ends
+        // 1356 characters after the anchor, so the window over-read it by 144,
+        // and the `private var retentionForm: some View` declaration below sits
+        // 1388 characters after the anchor -- 32 characters inside the
+        // over-read. So `case .retention: EmptyView()` in `present`, a sheet
+        // that shows no retention form at all, was satisfied by the DECLARATION
+        // of the form it no longer shows (plant V1 of that round, GREEN then,
+        // RED now). The figure, from the repository root:
+        //
+        //     python3 -I -c 'import itertools
+        //     s=open("Sources/MacSCPAppKit/ObjectLockSheet.swift").read()
+        //     up=s.index("private var present: some View")+len("private var present: some View")
+        //     i=s.index("{",up)
+        //     d=list(itertools.accumulate((c=="{")-(c=="}") for c in s[i:]))
+        //     end=i+d.index(0)-up
+        //     print("present block ends at",end,"| window 1500 over-reads by",1500-end,"| second retentionForm at",s.index("retentionForm",s.index("retentionForm",up)+1)-up)'
+        //
+        // prints `present block ends at 1356 | window 1500 over-reads by 144 |
+        // second retentionForm at 1388`. It counts braces in the RAW text where
+        // the guard counts them in the blanked view; the two agree here because
+        // the region holds no brace inside a literal or a comment.
+        //
+        // The other direction cost 1039 characters of slack: 25 comment lines
+        // at the top of `present`, no code changed, pushed both forms out of the
+        // window and turned this red (plant V2, RED then, GREEN now).
+        let presentBlock = try #require(
+            Self.views("MacSCPAppKit/ObjectLockSheet.swift")
+                .block(openedBy: "private var present: some View"),
+            "`private var present: some View` is not there, or its braces do not balance")
+        #expect(presentBlock.code.contains("retentionForm"))
+        #expect(presentBlock.code.contains("legalHoldForm"))
     }
 
     // MARK: - What the governance note promises
@@ -1046,13 +1079,30 @@ struct ObjectLockSheetTests {
         try SourceCorpus.code(of: SourceCorpus.url(of: .sources).appendingPathComponent(relativePath))
     }
 
+    private struct ViewsNotInLockstep: Error { let file: String }
+
+    /// One file's two blanked views, in lockstep, so a span here can end at the
+    /// brace that closes the thing it is named for instead of at a character
+    /// count (`SourceSpans.Views`): `content` keeps string literals and is what
+    /// an anchor is matched in, `code` blanks them too and is where the braces
+    /// are counted. Throws rather than hand back a view pair of two different
+    /// lengths, which would be a read of one view by the other's offsets.
+    private static func views(_ relativePath: String) throws -> SourceSpans.Views {
+        let url = SourceCorpus.url(of: .sources).appendingPathComponent(relativePath)
+        guard
+            let views = SourceSpans.Views(
+                content: try SourceCorpus.commentFree(of: url),
+                code: try SourceCorpus.code(of: url))
+        else { throw ViewsNotInLockstep(file: relativePath) }
+        return views
+    }
+
     /// The file-action arm reaches the sheet through the id-keyed enum and the
     /// path resolver, and the window presents the item it assigns. Without the
     /// presentation the menu row would be live and inert, which is the failure
     /// the connection menu's guard exists for.
     @Test func theFileActionArmAssignsAnItemTheWindowPresents() throws {
         let dispatcher = try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
-        let sheets = try Self.code("MacSCPAppKit/ContentView+Sheets.swift")
         // The body up to its own closing brace (`SourceSpans.functionBody`). It
         // was read up to "the next `\n    func `" until fix round 4 of the
         // new-bucket task, which is a boundary a `private func` does not carry:
@@ -1061,9 +1111,13 @@ struct ObjectLockSheetTests {
         // below passed (plant S2 of that round, GREEN then, RED now). Parking
         // the WHOLE arm there instead is caught by
         // `theSheetIsOpenedAndRunForTheFileThatWasChosen` below, which reads
-        // from the first `ObjectLockTarget.resolve(` in the file, so that plant
-        // (S1) measures nothing about this span. A span bounded by a brace
-        // cannot be satisfied by text that is not in the function it names.
+        // the same function body since fix round 5. This comment read, verbatim:
+        // "which reads from the first `ObjectLockTarget.resolve(` in the file,
+        // so that plant (S1) measures nothing about this span" -- true of
+        // `e26a116e`, where that sibling was still a 900-character window; at
+        // `b85de102` the span guard here was red on S1 too, and since fix round
+        // 5 so is the sibling. A span bounded by a brace cannot be satisfied by
+        // text that is not in the function it names.
         let body = try #require(
             SourceSpans.functionBody(named: "handleBrowserMenuEntry", in: dispatcher),
             "func handleBrowserMenuEntry not found")
@@ -1072,9 +1126,35 @@ struct ObjectLockSheetTests {
         let assigned = try #require(
             body.firstMatch(of: #/(\w+)\s*=\s*ObjectLockSheetItem\(/#), "no ObjectLockSheetItem assignment")
         let state = String(assigned.output.1)
-        let presentation = try #require(sheets.range(of: ".sheet(item: $\(state))"), "\(state) is never presented")
-        let closure = sheets[presentation.upperBound...].prefix(400)
-        #expect(closure.contains(String(describing: ObjectLockSheet.self) + "("))
+        // The presentation's own closure, ending at the brace that closes it.
+        // It was 400 characters from `.sheet(item: $<state>)` until fix round 5
+        // of the new-bucket task: the closure ends 190 characters after that
+        // anchor and the sheet call sits 23 characters into it, so the window
+        // over-read the closure by 210 and left 377 characters of slack. Unlike
+        // `present` above, nothing in that over-read satisfies the check today
+        // (the next two sheets build `ObjectVersionsSheet(` and
+        // `ObjectMetadataSheet(`), so the decoy had to be planted: an
+        // `EmptyView()` in the sheet with the real sheet built in an `.overlay`
+        // 127 characters further on passed (plant W1 of that round, GREEN then,
+        // RED now), and 9 comment lines above the call, no code changed, turned
+        // it red (plant W2, RED then, GREEN now). The figure, from the
+        // repository root:
+        //
+        //     python3 -I -c 'import itertools
+        //     t=open("Sources/MacSCPAppKit/ContentView+Sheets.swift").read()
+        //     up=t.index(".sheet(item: $objectLockSheetItem)")+len(".sheet(item: $objectLockSheetItem)")
+        //     i=t.index("{",up)
+        //     d=list(itertools.accumulate((c=="{")-(c=="}") for c in t[i:]))
+        //     end=i+d.index(0)-up
+        //     print("closure ends at",end,"| window 400 over-reads by",400-end,"| the sheet call sits at",t.index("ObjectLockSheet(",up)-up)'
+        //
+        // prints `closure ends at 190 | window 400 over-reads by 210 | the sheet
+        // call sits at 23`.
+        let closure = try #require(
+            Self.views("MacSCPAppKit/ContentView+Sheets.swift")
+                .block(openedBy: ".sheet(item: $\(state))"),
+            "\(state) is never presented")
+        #expect(closure.code.contains(String(describing: ObjectLockSheet.self) + "("))
     }
 
     /// `startSession` is where a session is built, and it is where the cache is
@@ -1095,8 +1175,25 @@ struct ObjectLockSheetTests {
     /// none would turn another check here red.
     @Test func theSheetIsOpenedAndRunForTheFileThatWasChosen() throws {
         let dispatcher = try Self.code("MacSCPAppKit/ContentView+MenuActions.swift")
-        let arm = try #require(dispatcher.range(of: "ObjectLockTarget.resolve("))
-        let around = String(dispatcher[arm.lowerBound...].prefix(900))
+        // The router's own body, ending at the brace that closes it
+        // (`SourceSpans.functionBody`, as the sibling above uses). It was 900
+        // characters from the FIRST `ObjectLockTarget.resolve(` in the file
+        // until fix round 5 of the new-bucket task -- a window a decoy can be
+        // put in FRONT of rather than behind: with the real arm handing the
+        // sheet `focus: .retention` and a private function ABOVE
+        // `handleBrowserMenuEntry` spelling the correct call, the first
+        // `resolve(` in the file was the decoy's and both checks below passed
+        // (plant U1 of that round, GREEN then, RED now). U1c, the same
+        // violation with no decoy, was RED either way, which is what makes
+        // U1's GREEN a blind guard and not a harmless plant.
+        //
+        // The `resolve(` check is the positive control that took the place of
+        // the `#require` on that range: without it a body that resolves no
+        // path at all would be read by two `contains` that name neither.
+        let around = try #require(
+            SourceSpans.functionBody(named: "handleBrowserMenuEntry", in: dispatcher),
+            "func handleBrowserMenuEntry not found")
+        #expect(around.contains(String(describing: ObjectLockTarget.self) + ".resolve("))
         #expect(around.contains("path: file.path"))
         #expect(around.contains("focus: lockAction.focus"))
         let sheet = try Self.code("MacSCPAppKit/ObjectLockSheet.swift")
