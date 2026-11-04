@@ -958,6 +958,29 @@ struct ObjectMetadataSheetTests {
         #expect(keys.count == Self.lineCount)
     }
 
+    /// The figure and the order `ObjectMetadataLines.borrowed`'s doc comment
+    /// states, held to the array.
+    ///
+    /// It existed because the two disagreed from the commit that wrote the
+    /// file until 2026-11-04: the comment counted "Three lines", enumerated
+    /// five, and the array held six. Nothing was red, because nothing read
+    /// the comment — and the line the enumeration omitted,
+    /// `ObjectLockLines.readFailed`, is one the sheet really draws, so the
+    /// sentence nobody checked was in all four catalogues was the one the
+    /// count hid. Each key is read off the type that owns it, so a rename
+    /// moves this with it rather than leaving a literal behind.
+    @MainActor @Test func theBorrowedLinesAreTheSixTheCommentNames() {
+        let borrowed = ObjectMetadataLines.borrowed
+        #expect(borrowed.count == 6)
+        #expect(
+            borrowed.map(\.key) == [
+                ObjectLockLines.denied.key, ObjectLockLines.applyFailed.key,
+                ObjectLockLines.readFailed.key, ObjectLockLines.saved.key,
+                BucketObjectLockModel.notAcknowledgedLine.key,
+                BucketObjectLockModel.staleLine.key,
+            ])
+    }
+
     @Test func everyTranslationKeepsTheSpecifiersOfTheEnglish() {
         let specifier = #/%(\d+\$)?(lld|@|d)/#
         var withSpecifiers = 0

@@ -4,12 +4,31 @@ import macSCPCore
 /// Every sentence the metadata sheet has of its own, as data, so the tests can
 /// hold each one to all four languages.
 ///
-/// Three lines are not here because another sheet already says them and this
-/// one reuses the sentence and its key: the generic failures
-/// (`ObjectLockLines.denied`, `ObjectLockLines.applyFailed`), "Saved." and the
+/// Six lines are not here because another sheet already says them and this
+/// one reuses the sentence and its key, and they are the six of `borrowed`:
+/// the two generic failures (`ObjectLockLines.denied`,
+/// `ObjectLockLines.applyFailed`), the Object Lock read failure
+/// (`ObjectLockLines.readFailed`), "Saved." (`ObjectLockLines.saved`) and the
 /// two refusals of the date-naming acknowledgement
 /// (`BucketObjectLockModel.notAcknowledgedLine` and `.staleLine`), which say
 /// nothing that depends on which sheet shows them.
+///
+/// **Corrected 2026-11-04.** This paragraph read, verbatim: "Three lines are
+/// not here because another sheet already says them and this one reuses the
+/// sentence and its key: the generic failures (`ObjectLockLines.denied`,
+/// `ObjectLockLines.applyFailed`), "Saved." and the two refusals of the
+/// date-naming acknowledgement (`BucketObjectLockModel.notAcknowledgedLine`
+/// and `.staleLine`), which say nothing that depends on which sheet shows
+/// them." — a count of three over an enumeration of five, against an array
+/// of six. The array was the one that was right, and the line the
+/// enumeration left out is live: `load()` sets `bucketLock` to a failure
+/// whose sentence comes from `ObjectLockLines.message(for:during:)` with the
+/// reading phase, which is `readFailed`. Comment and array arrived in the
+/// same commit, subject `feat(app): the metadata sheet, with the COMPLIANCE
+/// acknowledgement`, so it was wrong from the start and six fix rounds read
+/// past it. `ObjectMetadataSheetTests.theBorrowedLinesAreTheSixTheCommentNames`
+/// now holds the figure and the order, so the next reader finds a red
+/// instead of a plausible number.
 ///
 /// **No sentence names how the store works**, with one exception that is the
 /// person's own input: `customNamePrefixedLine` quotes the prefix a custom
