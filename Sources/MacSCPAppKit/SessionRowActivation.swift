@@ -83,8 +83,9 @@ enum SessionRowInput: Equatable, CaseIterable {
 /// `SessionRowStartTunnelEffect` and `SessionRowStartAllTunnelsEffect`.
 /// Recounted 2026-11-04, when the S3 metadata plan's Task 6 added
 /// `SessionRowCreateBucketEffect`: six, every `struct SessionRow…Effect` in
-/// this file but this one (`grep -n '^struct SessionRow[A-Za-z]*Effect'
-/// Sources/MacSCPAppKit/SessionRowActivation.swift` lists seven lines).
+/// this file but this one. From the repository root, this prints seven lines:
+///
+///     /usr/bin/grep -n '^struct SessionRow[A-Za-z]*Effect' Sources/MacSCPAppKit/SessionRowActivation.swift
 struct SessionRowSelectEffect<Value> {
     fileprivate let run: (Value) -> Void
 
