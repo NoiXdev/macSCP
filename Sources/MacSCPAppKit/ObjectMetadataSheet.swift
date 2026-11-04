@@ -81,7 +81,8 @@ enum ObjectMetadataLines {
     static let complianceAcknowledgement = CatalogueLine(
         key: "s3.metadata.complianceAcknowledgement %@",
         english: "I understand that nobody, including me, can erase the stored data of the new version this change adds, and that this cannot be undone. The new version stays locked until %@.")
-    /// A write the storage ACCEPTED whose read-back did not show it.
+    /// A write the storage ACCEPTED whose read-back did not confirm it —
+    /// because it disagreed, or because it failed.
     ///
     /// **Not said as a failure**, which is the rule `versionUnknown` above
     /// states for a read and which holds for this write too: Core throws only
@@ -89,9 +90,20 @@ enum ObjectMetadataLines {
     /// changed. `ObjectLockLines.applyFailed` — "The change could not be
     /// saved." — is false of it, and that is the sentence `save()`'s catch
     /// arm said for this error until 2026-11-04.
+    ///
+    /// **The sentence says no more than the error carries, corrected
+    /// 2026-11-04.** It read, verbatim: "The storage accepted the change, and
+    /// macSCP could not confirm it: the file does not report the values that
+    /// were sent. Check the file's metadata again to see what it holds now."
+    /// Core now throws this one error for both ways out of its read-back
+    /// (`UnconfirmedMetadataWrite`), so the App cannot tell a read that
+    /// disagreed from a read that failed — and the middle clause claimed what
+    /// the file reports, which on the second of the two macSCP never found
+    /// out. The clause is gone in all four catalogues; the action, which is
+    /// the same either way, stayed.
     static let saveUnconfirmed = CatalogueLine(
         key: "s3.metadata.saveUnconfirmed",
-        english: "The storage accepted the change, and macSCP could not confirm it: the file does not report the values that were sent. Check the file's metadata again to see what it holds now.")
+        english: "The storage accepted the change, and macSCP could not confirm it. Check the file's metadata again to see what it holds now.")
     static let saveAction = CatalogueLine(key: "s3.metadata.action.save", english: "Save")
     static let unchangedLine = CatalogueLine(
         key: "s3.metadata.blocked.unchanged",
@@ -892,13 +904,22 @@ final class ObjectMetadataModel {
             await readAccessList()
             return .written
         } catch {
-            // Three errors arrive here and they are not the same news: the
-            // storage refused the write, the storage ACCEPTED it and the
-            // read-back did not show it, or the request went out and nothing
-            // usable came back. Only the middle one is a change that HAPPENED,
-            // and `saveMessage(for:)` is where it stops being called a
-            // failure; the other two keep the generic sentence, or the
-            // permission one.
+            // Three KINDS of news arrive here: the storage refused the write,
+            // the storage ACCEPTED it and macSCP could not confirm it, or the
+            // request went out and nothing usable came back. Only the middle
+            // one is a change that HAPPENED, and `saveMessage(for:)` is where
+            // it stops being called a failure; the other two keep the generic
+            // sentence, or the permission one.
+            //
+            // **The middle one is two paths, not one**, and both are
+            // `UnconfirmedMetadataWrite`: the read-back answered and
+            // disagreed, and the read-back itself failed after a copy the
+            // storage had already answered. Until 2026-11-04 the second threw
+            // the read's own error and landed on the generic sentence, which
+            // is the defect this arm was rewritten for in the first place; the
+            // sentence above said "Three errors arrive here" and "Only the
+            // middle one is a change that HAPPENED" while that was still
+            // true of only one of the two.
             applyFailure = ObjectMetadataLines.saveMessage(for: error)
             // The acknowledgement is spent by a request that LEFT, not by one
             // that is known to have landed: this arm is also where a

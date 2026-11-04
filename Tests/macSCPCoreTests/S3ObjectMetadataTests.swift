@@ -310,6 +310,41 @@ struct S3ObjectMetadataTests {
         }
     }
 
+    /// The second way the read-back can leave the write unconfirmed: the
+    /// `HEAD` **fails** instead of answering and disagreeing.
+    ///
+    /// The three cases above all feed a `HEAD` that answers. This one feeds
+    /// one that does not, after a copy the store has already answered `200`
+    /// with a `<CopyObjectResult>` — so the write HAPPENED, and on a
+    /// versioned bucket a version now exists. Until 2026-11-04 the read's own
+    /// error came out of `setMetadata` unchanged:
+    /// `UnconfirmedMetadataWrite.describes` returns false for it, so the
+    /// App's sheet showed "The change could not be saved." about a change the
+    /// storage had taken. Both ways out of the read-back are the same news to
+    /// a caller — accepted, not confirmed — and neither is a write that
+    /// failed.
+    @Test func aReadBackThatFailsAfterAnAcceptedCopyIsAnUnconfirmedWrite() async throws {
+        let (fs, transport) = try await S3SettingsFake.connect(responses: [
+            Self.copied, Self.head([:], status: 500),
+        ])
+
+        var thrown: (any Error)?
+        do {
+            try await fs.setMetadata(Self.wanted, ofKey: "docs/a.md", inBucket: Self.bucket)
+        } catch {
+            thrown = error
+        }
+        // The error the App asks about by name. Anything else — including the
+        // read's own `.finding(.unexpectedStatus(code: 500))`, which is what
+        // this threw before — lands on the generic sentence.
+        let reportedAsUnconfirmed = thrown.map { UnconfirmedMetadataWrite.describes($0) } ?? false
+        #expect(reportedAsUnconfirmed)
+        // The control: both requests really were sent, so there was an
+        // accepted write for the read-back to fail after.
+        let methods = await Self.sent(transport).map(\.httpMethod)
+        #expect(methods == ["PUT", "HEAD"])
+    }
+
     /// Spec section 4.5: the new version's ETag is IDENTICAL to the one it was
     /// copied from, the bytes being unchanged. A read-back that expected the
     /// tag to change would fail every real write.

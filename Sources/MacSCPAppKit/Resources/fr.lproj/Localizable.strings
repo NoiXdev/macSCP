@@ -552,7 +552,7 @@
 "s3.metadata.versionNote.unknown" = "macSCP n’a pas pu confirmer si ce bucket conserve les versions. Si c’est le cas, l’enregistrement ajoute une nouvelle version de ce fichier.";
 "s3.metadata.complianceWarning" = "La rétention par défaut de ce bucket est en mode Conformité, et la nouvelle version qu’ajoute cette modification la reçoit. Personne ne peut effacer les données stockées de cette version ni raccourcir sa rétention avant la date indiquée ci-dessous — ni vous, ni le titulaire du compte, ni un administrateur. Cela est irréversible.";
 "s3.metadata.complianceAcknowledgement %@" = "Je comprends que personne, moi y compris, ne peut effacer les données stockées de la nouvelle version qu’ajoute cette modification, et que cela est irréversible. La nouvelle version reste verrouillée jusqu’au %@.";
-"s3.metadata.saveUnconfirmed" = "Le stockage a accepté la modification, et macSCP n’a pas pu la confirmer : le fichier ne renvoie pas les valeurs envoyées. Vérifiez à nouveau les métadonnées du fichier pour voir ce qu’il contient désormais.";
+"s3.metadata.saveUnconfirmed" = "Le stockage a accepté la modification, et macSCP n’a pas pu la confirmer. Vérifiez à nouveau les métadonnées du fichier pour voir ce qu’il contient désormais.";
 "s3.metadata.action.save" = "Enregistrer";
 "s3.metadata.blocked.unchanged" = "Rien n’a changé, il n’y a donc rien à enregistrer.";
 "s3.metadata.blocked.customNameMissing" = "Donnez un nom à chaque paire personnalisée.";
