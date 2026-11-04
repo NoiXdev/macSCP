@@ -159,8 +159,22 @@ public protocol ObjectMetadataProvider: Sendable {
 public enum UnconfirmedMetadataWrite {
     /// The `reason` the `.protocolError` carries. Names nothing the store
     /// wrote.
+    ///
+    /// **Corrected 2026-11-04**, the same day the App withdrew the same
+    /// clause from its four catalogues. This read, verbatim:
+    /// "S3 metadata change could not be confirmed: the object does not
+    /// report the values that were sent" — which is false on the second of
+    /// the two ways named above, the read-back that never answered: nothing
+    /// was learned about what the object reports. The wording below is true
+    /// of both, because a read that failed confirmed nothing either.
+    ///
+    /// Cosmetic, and corrected anyway: the string is compared by equality in
+    /// `describes`, it is this error's only payload, and the trail records
+    /// the App's localized sentence rather than this one. Leaving a clause
+    /// the App had just withdrawn as false standing in the tree is how the
+    /// next contributor reinstates it.
     public static let reason =
-        "S3 metadata change could not be confirmed: the object does not report the values that were sent"
+        "S3 metadata change could not be confirmed: the storage accepted the change and the read-back did not confirm the values that were sent"
 
     /// The error itself, for a conformer to throw.
     public static let error = RemoteFSError.protocolError(reason: reason)

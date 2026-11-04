@@ -971,18 +971,72 @@ final class ObjectMetadataModel {
             // it stops being called a failure; the other two keep the generic
             // sentence, or the permission one.
             //
-            // **Those are KINDS of news and not paths: at least eight ways
-            // reach this arm.** Counted 2026-11-04 by reading
+            // **Those are KINDS of news and not paths: at least nine CAUSES
+            // reach this arm**, where a cause is a condition a caller can be
+            // told about and not a `throw` statement. The two units give
+            // different figures here, so the unit is named rather than left
+            // to the reader. Counted 2026-11-04 by reading
+            // `S3FileSystem.setMetadata` and the `copyObject` it awaits,
+            // because a count like this is not something to grep for:
+            //
+            //   - three refuse before anything leaves — `requireObjectKey`,
+            //     `replacementHeaders(for:)`, and `copyObject`'s
+            //     `buildSignedRequest`;
+            //   - four once the request has left — `send` throwing, a non-2xx
+            //     through `mapErrorStatus`, a 2xx body carrying an `<Error>`,
+            //     and a 2xx body carrying no `<CopyObjectResult>`;
+            //   - two for the unconfirmed write, named below.
+            //
+            // The other two units, so that a reader who counts differently
+            // lands on the same starting set: those two bodies hold **3**
+            // `throw` statements (one in `setMetadata`, two in `copyObject`)
+            // and **4** propagating throwing calls that bring causes in from
+            // elsewhere — the four named above, the `try?` read-back
+            // excluded, and `copyObject`'s own call site being the
+            // delegation rather than a cause. 4 + 1 (`mapErrorStatus`) + 2
+            // (the copy-body `throw`'s two conditions) + 2 (the unconfirmed
+            // `throw`'s two) is the nine. "At least", because `setMetadata`
+            // is a protocol method and a second conformer brings its own
+            // causes in.
+            //
+            // The two mechanical figures travel with the command that
+            // produced them. From the repository root:
+            //
+            //     python3 -I -c "
+            //     import re
+            //     s = open('Sources/macSCPCore/S3/S3FileSystem.swift').read()
+            //     def body(a):
+            //         j = s.index('{', s.index(a)); d = 0; k = j
+            //         while True:
+            //             d += (s[k] == '{') - (s[k] == '}')
+            //             if d == 0: return s[j:k+1]
+            //             k += 1
+            //     for a in ['public func setMetadata(', 'private func copyObject(']:
+            //         b = '\n'.join(re.sub(r'//.*$', '', l) for l in body(a).split('\n'))
+            //         print(a, 'throw:', len(re.findall(r'\bthrow\b', b)), 'try:', len(re.findall(r'\btry\b', b)))
+            //     "
+            //
+            // prints `public func setMetadata( throw: 1 try: 4` and
+            // `private func copyObject( throw: 2 try: 2`: 1 + 2 = 3 `throw`
+            // statements, and 4 + 2 = 6 `try` sites of which the `try?`
+            // read-back and the `copyObject` delegation are not causes,
+            // leaving the 4. Comments are stripped from each body before the
+            // count, because both bodies carry comments that spell `throw`
+            // and `try` in prose; the two `func` anchors are searched for in
+            // `S3FileSystem.swift`, not in this file, and each occurs once
+            // there —
+            // `/usr/bin/grep -c -F 'public func setMetadata(' Sources/macSCPCore/S3/S3FileSystem.swift`
+            // and the same for `'private func copyObject('` each print 1 and
+            // exit 0.
+            //
+            // **Corrected 2026-11-04.** This read, verbatim: "at least eight
+            // ways reach this arm.** Counted 2026-11-04 by reading
             // `S3FileSystem.setMetadata` and the `copyObject` it awaits and
-            // naming every `throw`, because a count of throw sites is not
-            // something to grep for: `requireObjectKey`,
-            // `replacementHeaders(for:)` and `copyObject`'s
-            // `buildSignedRequest` refuse before anything leaves; `send`
-            // throwing, a non-2xx through `mapErrorStatus`, and a 2xx
-            // carrying an `<Error>` or no `<CopyObjectResult>` are three that
-            // a request left for; and the single unconfirmed `throw` has the
-            // two causes named below. "At least", because `setMetadata` is a
-            // protocol method and a second conformer brings its own ways in.
+            // naming every `throw`" — and eight was reachable only by
+            // counting the unconfirmed `throw` as two while counting the
+            // 2xx-body `throw`'s two conditions as one, which is not the
+            // stated method. The enumeration itself was right; the figure
+            // and the unit it was derived in were not the same thing.
             //
             // **The middle one is two paths, not one**, and both are
             // `UnconfirmedMetadataWrite`: the read-back answered and
