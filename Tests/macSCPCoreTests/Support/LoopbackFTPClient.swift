@@ -24,6 +24,9 @@ final class LoopbackLineSource: @unchecked Sendable {
         iterator = stream.makeAsyncIterator()
     }
 
+    /// A read is in flight. For the tests that drive an overlap on purpose.
+    var isReading: Bool { reader.isBusy }
+
     func next() async -> ByteBuffer? {
         reader.enter("control line source")
         defer { reader.leave() }
@@ -43,6 +46,9 @@ final class LoopbackChunkSource: @unchecked Sendable {
     init(_ stream: AsyncStream<ByteBuffer>) {
         iterator = stream.makeAsyncIterator()
     }
+
+    /// A read is in flight. For the tests that drive an overlap on purpose.
+    var isReading: Bool { reader.isBusy }
 
     /// Everything until the stream ends.
     func drain() async -> Data {
@@ -79,8 +85,16 @@ final class LoopbackClientEnd: Sendable {
     }
 
     private let cause = NIOLockedValueBox(Cause.none)
+    private let bytes = NIOLockedValueBox(0)
 
     var value: Cause { cause.withLockedValue { $0 } }
+
+    /// How many bytes the sink has delivered so far.
+    var bytesDelivered: Int { bytes.withLockedValue { $0 } }
+
+    func noteBytes(_ count: Int) {
+        bytes.withLockedValue { $0 += count }
+    }
 
     func noteError(_ error: Error) {
         cause.withLockedValue { if $0 == .none { $0 = .failed("\(error)") } }
@@ -138,15 +152,29 @@ actor LoopbackFTPClient {
     /// **A constraint on where this client may be used: a suite that uses it
     /// must be bounded ABOVE 180 s.** In a suite bounded below that, the
     /// `.timeLimit` fires first, the step may be killed and the test's name is
-    /// lost -- the failure this bound exists to prevent. The tree is not
-    /// uniform: on 2026-11-05 `/usr/bin/grep -ro 'timeLimit(\.minutes(2))' Tests/ | wc -l`
-    /// printed 27, the same with `minutes(1)` printed 2, and with `minutes(5)`
-    /// printed 157, so 29 suites sit below this bound (CLAUDE.md records the 27
-    /// two-minute ones as deliberately left alone). The client is used today
-    /// only by `LoopbackFTPServerTests`, which is at five minutes
-    /// (`/usr/bin/grep -rl 'LoopbackFTPClient\.' Tests/` lists the files that
-    /// call it), so the bound is attributable today and this is the rule for
-    /// the suites added later.
+    /// lost -- the failure this bound exists to prevent.
+    ///
+    /// How many suites that is, measured 2026-11-05 on this tree. Withdrawn
+    /// wording, verbatim: "so 29 suites sit below this bound". The 29 was a count
+    /// of matching LINES (`/usr/bin/grep -rn -e 'timeLimit(\.minutes(2))' -e 'timeLimit(\.minutes(1))' Tests | wc -l`
+    /// prints 29), not of suites: 18 of those lines carry an `@Suite`, 3 an
+    /// `@Test`, 2 are continuation lines of a multi-line `@Suite(` and 6 are
+    /// comments, which is 29. Suites, by two commands that do not overlap:
+    /// `/usr/bin/grep -rn -e '@Suite(.*timeLimit(\.minutes([12]))' Tests | wc -l`
+    /// prints 18, and
+    /// `/usr/bin/grep -rn -B4 -e '^ *\.timeLimit(\.minutes([12]))' Tests | /usr/bin/grep -o '@Suite(' | wc -l`
+    /// prints 2 (both gated behind `MACSCP_ITEST=1`), so **20 suites** sit below
+    /// this bound, against 108 at five minutes
+    /// (`/usr/bin/grep -rn -e '@Suite(.*timeLimit(\.minutes(5))' Tests | wc -l`).
+    /// CLAUDE.md records the two-minute bounds as deliberately left alone, so
+    /// this is a constraint on where the client may be used, not an argument for
+    /// touching them.
+    ///
+    /// The client is called today only from `LoopbackFTPServerTests`, which is
+    /// bounded at five minutes: `/usr/bin/grep -rl 'LoopbackFTPClient\.connect(' Tests`
+    /// prints that one file (the client's own file is not listed, because it
+    /// defines `connect` and never spells the call). So the bound is attributable
+    /// today, and this is the rule for the suites added later.
     static func connect(
         host: String, port: Int, implicitTLS: Bool = false,
         replyBound: TimeAmount = .seconds(180)
@@ -186,6 +214,10 @@ actor LoopbackFTPClient {
         return try NIOSSLContext(configuration: configuration)
     }
 
+    /// The local port of this connection, which is the REMOTE port its peer sees:
+    /// how a test names "my connection" among whatever else reaches a server.
+    nonisolated var localPort: Int? { channel.localAddress?.port }
+
     // MARK: Control connection
 
     func send(_ command: String) async throws {
@@ -208,7 +240,24 @@ actor LoopbackFTPClient {
                 return reply
             }
         }
+        try Self.throwIfCancelledWithoutACause(end)
         throw Self.explain(end.value, bound: replyBound)
+    }
+
+    /// **Three ways a wait ends without a reply, and they must stay three:** the
+    /// peer closed (`connectionClosed`, or `connectionFailed` with the
+    /// transport's words), the hang bound fired (`noReplyWithin`), or the
+    /// awaiting task was cancelled (`CancellationError`, here).
+    ///
+    /// An `AsyncStream` iterator returns nil when its task is cancelled, which
+    /// is indistinguishable from the stream having finished, so a cancelled read
+    /// used to come out as `connectionClosed` with the peer still connected --
+    /// measured on a bare stream in the re-review of fix round 2. Reporting a
+    /// cancellation as a peer close makes every later hang in this client
+    /// unattributable, which is what the bound exists to prevent. A recorded
+    /// cause (an error, or the bound) outranks cancellation: it is the real end.
+    fileprivate static func throwIfCancelledWithoutACause(_ end: LoopbackClientEnd) throws {
+        if end.value == .none, Task.isCancelled { throw CancellationError() }
     }
 
     /// The error for a stream that ended: what ended it.
@@ -249,6 +298,7 @@ actor LoopbackFTPClient {
         }
         defer { timer.cancel() }
         guard await handshake.wait() else {
+            try Self.throwIfCancelledWithoutACause(end)
             // The recorded cause first, as the other two waits do: a handshake
             // that failed with an error says which, and only a bare close
             // (nothing recorded) is the generic `handshakeFailed`.
@@ -303,6 +353,9 @@ actor LoopbackFTPClient {
     }
 }
 
+/// The error `injectTransportError()` raises.
+struct LoopbackInjectedTransportError: Error {}
+
 /// The client end of one data connection.
 struct LoopbackFTPClientData: Sendable {
     fileprivate let channel: Channel
@@ -310,6 +363,9 @@ struct LoopbackFTPClientData: Sendable {
     fileprivate let deliver: AsyncStream<ByteBuffer>.Continuation
     fileprivate let end: LoopbackClientEnd
     fileprivate let bound: TimeAmount
+
+    /// The local port of this connection (see `LoopbackFTPClient.localPort`).
+    var localPort: Int? { channel.localAddress?.port }
 
     /// The transport error that ended the connection, if one did (read it after
     /// `readToEnd()`); nil for a clean close.
@@ -337,8 +393,26 @@ struct LoopbackFTPClientData: Sendable {
         defer { timer.cancel() }
 
         let data = await chunks.drain()
+        // A cancelled drain returns early with a PREFIX of the payload: that must
+        // not come back as if it were the whole of it.
+        try LoopbackFTPClient.throwIfCancelledWithoutACause(end)
         if end.value == .timedOut { throw LoopbackFTPClient.explain(.timedOut, bound: bound) }
         return data
+    }
+
+    /// Bytes the sink has delivered so far; a test waits on this instead of on
+    /// time (see `injectTransportError()`).
+    var bytesReceived: Int { end.bytesDelivered }
+
+    /// A transport error on this connection, as if the socket had failed, for
+    /// the test of what `readToEnd()` does when one follows delivered bytes.
+    /// Fired on the connection's own event loop so it reaches the sink the way a
+    /// real one would.
+    func injectTransportError() {
+        let channel = self.channel
+        channel.eventLoop.execute {
+            channel.pipeline.fireErrorCaught(LoopbackInjectedTransportError())
+        }
     }
 
     func write(_ data: Data) async throws {
@@ -390,7 +464,9 @@ final class LoopbackClientSink: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        deliver.yield(unwrapInboundIn(data))
+        let buffer = unwrapInboundIn(data)
+        end.noteBytes(buffer.readableBytes)
+        deliver.yield(buffer)
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {

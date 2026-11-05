@@ -188,11 +188,19 @@ actor LoopbackFTPServer {
     private let state = LoopbackFTPState()
 
     /// `idle` before the first `start()` and after a finished `stop()`; the only
-    /// state `start()` accepts. `stopping` exists so a `start()` that arrives
-    /// while a `stop()` is suspended (an actor is re-entrant at every `await`)
-    /// is refused instead of racing it.
-    private enum Lifecycle { case idle, running, stopping }
+    /// state `start()` accepts. An actor is re-entrant at every `await`, so a
+    /// second `start()` or a `stop()` can arrive while a first call is
+    /// suspended; `starting` and `stopping` exist so those are REFUSED LOUDLY
+    /// (both trap, with a message) instead of racing, or worse, doing nothing.
+    /// `starting` is entered before the first `await` of `start()`: it used to be
+    /// `running` only AFTER them, so two overlapping `start()` calls both passed
+    /// the check, and a `stop()` in that window found nothing running and
+    /// returned without a word.
+    private enum Lifecycle { case idle, starting, running, stopping }
     private var lifecycle = Lifecycle.idle
+
+    /// `start()` is in flight. For the tests that overlap a call with it.
+    var isStarting: Bool { lifecycle == .starting }
 
     private var group: MultiThreadedEventLoopGroup?
     private var listener: Channel?
@@ -242,13 +250,20 @@ actor LoopbackFTPServer {
     /// was the alternative, and is the polarity-reversed shape of the fail-open
     /// seam `requiresTLSSessionReuse` was changed to avoid.
     func start() async throws -> (host: String, port: Int) {
-        precondition(lifecycle == .idle, "start() on a server that is not idle (running or stopping)")
+        precondition(
+            lifecycle == .idle, "start() on a server that is not idle (starting, running or stopping)")
+        lifecycle = .starting
         state.reset()
 
         if security != .plain {
-            let minted = try await Self.mintContext(maximumTLSVersion: maximumTLSVersion)
-            context = minted.context
-            leafCertificateDERStorage = minted.certificateDER
+            do {
+                let minted = try await Self.mintContext(maximumTLSVersion: maximumTLSVersion)
+                context = minted.context
+                leafCertificateDERStorage = minted.certificateDER
+            } catch {
+                lifecycle = .idle
+                throw error
+            }
         }
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
@@ -302,6 +317,7 @@ actor LoopbackFTPServer {
         } catch {
             acceptedContinuation.finish()
             try? await group.shutdownGracefully()
+            lifecycle = .idle
             throw error
         }
         bound.closeFuture.whenComplete { _ in acceptedContinuation.finish() }
@@ -322,8 +338,11 @@ actor LoopbackFTPServer {
         return ("127.0.0.1", port)
     }
 
-    /// Idempotent. Closes the listener and every connection, waits for every
-    /// session to finish, and only then takes the event loops down.
+    /// Idempotent on an idle or already-stopping server. Closes the listener and
+    /// every connection, waits for every session to finish, and only then takes
+    /// the event loops down. Called while `start()` is in flight it traps: there
+    /// is nothing yet to stop, and returning would leave a server running that
+    /// the caller believes is stopped.
     ///
     /// The order is load-bearing, and was found by a hang: shutting the group
     /// down first closes the channels, the sessions notice and wind up, and
@@ -333,6 +352,7 @@ actor LoopbackFTPServer {
     /// a log line at each step: "session run returned" printed, "executeThenClose
     /// returned" never did.
     func stop() async {
+        precondition(lifecycle != .starting, "stop() while start() is in flight")
         guard lifecycle == .running, let group else { return }
         lifecycle = .stopping
         self.group = nil
@@ -383,6 +403,13 @@ actor LoopbackFTPServer {
     }
 
     // MARK: Content and observations
+
+    /// Registers `task` as a closer `stop()` must await, as `hand(...)` does for a
+    /// channel it cannot deliver. A seam for the test that `stop()` waits for
+    /// registered closers before it takes the event loops down.
+    func adoptCloser(_ task: Task<Void, Never>) {
+        state.addReaper(task)
+    }
 
     /// Creates `path` (and its parent directories) with `contents`.
     func seedFile(_ path: String, contents: Data) {
@@ -720,6 +747,9 @@ final class LoopbackSingleReaderGuard: Sendable {
     func leave() {
         busy.withLockedValue { $0 = false }
     }
+
+    /// A read is in flight. For the tests that drive an overlap on purpose.
+    var isBusy: Bool { busy.withLockedValue { $0 } }
 }
 
 /// The listener a `PASV` or `EPSV` opened: one connection is accepted from it.
@@ -746,6 +776,9 @@ final class LoopbackFTPPassiveListener: @unchecked Sendable {
         self.connections = connections.makeAsyncIterator()
         self.port = port
     }
+
+    /// A read is in flight. For the tests that drive an overlap on purpose.
+    var isReading: Bool { reader.isBusy }
 
     /// The next connection, or nil once the listener has closed.
     func next() async -> LoopbackFTPDataConnection? {

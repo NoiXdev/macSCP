@@ -707,20 +707,324 @@ struct LoopbackFTPServerTests {
         try await group.shutdownGracefully()
     }
 
-    /// G3 and G9. The guard behind each `@unchecked Sendable` reader traps, with
-    /// a message that names the cause, when two reads overlap.
+#if compiler(>=6.2)
+    // MARK: Exit tests
+    //
+    // `#expect(processExitsWith:)` needs the Swift 6.2-era Testing library, and
+    // the gate runs on `macos-latest`. `.github/workflows/ci.yml` records, in its
+    // own comment, that in run 40913494898 (2026-10-29) that label resolved to a
+    // runner with Xcode 16.4 / Swift 6.1.2 selected, and that the run went red
+    // because code a newer toolchain accepts can still fail the build there. An
+    // unwrapped exit test would not fail one test on such a runner; the whole
+    // Core test target would not compile, and all of its tests would be lost.
+    // The wrapper keeps the target building; on a toolchain that has the feature
+    // each of these is a real pin, and the guards they test stand regardless.
+    //
+    // `.signal(SIGTRAP)`, not `.failure`: the re-review of fix round 2 planted a
+    // disabled guard with the body `exit(3)` and `.failure` stayed green, because
+    // it pins only "the child exited non-zero"; it also measured a failed
+    // `precondition` as SIGTRAP in `-Onone` and `-O` alike. The message is
+    // checked in debug builds only (release strips it), and it is what tells the
+    // guard's trap from `AsyncStream`'s own. The waits for "a read is in flight"
+    // spin a bounded number of times (a count, not a clock): without the guard
+    // the first read never says it is in flight, and an unbounded wait would
+    // hang the child instead of failing the test.
+
+    /// What an exit test observes of the child, and whether it trapped in the
+    /// guard (the message names the cause) rather than anywhere else.
+    private static func trappedWith(_ message: String, _ result: ExitTest.Result?) -> Bool {
+        guard let result else { return false }
+        #if DEBUG
+        return String(decoding: result.standardErrorContent, as: UTF8.self).contains(message)
+        #else
+        return true
+        #endif
+    }
+
+    /// G3 and G9, the class. The guard behind each `@unchecked Sendable` reader
+    /// traps, with a message that names the cause, when two reads overlap.
     @Test func overlappingReadsOnASingleConsumerStreamTrap() async throws {
-        await #expect(processExitsWith: .failure) {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
             let guardUnderTest = LoopbackSingleReaderGuard()
             guardUnderTest.enter("test")
             guardUnderTest.enter("test")
         }
+        let trappedInTheGuard = Self.trappedWith("two reads overlapped", result)
+        #expect(trappedInTheGuard)
         // The positive beside it: sequential use does not trap.
         let sequential = LoopbackSingleReaderGuard()
         sequential.enter("test")
         sequential.leave()
         sequential.enter("test")
         sequential.leave()
+    }
+
+    /// H2. Each reader goes THROUGH the guard: the overlap, not the sequence. A
+    /// second read begun while a first is in flight traps with the guard's
+    /// message. Without `reader.enter` in the reader, a sequential test cannot
+    /// tell (a second iteration over a finished stream returns empty), and the
+    /// overlapping case ends in `AsyncStream`'s own trap or in nothing -- neither
+    /// of which carries this message. A task finishes the stream after half a
+    /// second so a reader without the guard ends the child instead of hanging it.
+    @Test func theDataChunkSourceTrapsOnOverlappingDrains() async throws {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
+            let (stream, continuation) = AsyncStream.makeStream(of: ByteBuffer.self)
+            let source = LoopbackChunkSource(stream)
+            Task { _ = await source.drain() }
+            var spins = 0
+            while !source.isReading, spins < 200_000 { spins += 1; await Task.yield() }
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                continuation.finish()
+            }
+            _ = await source.drain()
+        }
+        let trappedInTheGuard = Self.trappedWith("two reads overlapped", result)
+        #expect(trappedInTheGuard)
+    }
+
+    @Test func theControlLineSourceTrapsOnOverlappingReads() async throws {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
+            let (stream, continuation) = AsyncStream.makeStream(of: ByteBuffer.self)
+            let source = LoopbackLineSource(stream)
+            Task { _ = await source.next() }
+            var spins = 0
+            while !source.isReading, spins < 200_000 { spins += 1; await Task.yield() }
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                continuation.finish()
+            }
+            _ = await source.next()
+        }
+        let trappedInTheGuard = Self.trappedWith("two reads overlapped", result)
+        #expect(trappedInTheGuard)
+    }
+
+    @Test func thePassiveListenerTrapsOnOverlappingReads() async throws {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
+            let channel = try await awaitCancellably(
+                ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                    .bind(host: "127.0.0.1", port: 0))
+            let (stream, continuation) = AsyncStream.makeStream(of: LoopbackFTPDataConnection.self)
+            let listener = LoopbackFTPPassiveListener(channel: channel, connections: stream, port: 0)
+            Task { _ = await listener.next() }
+            var spins = 0
+            while !listener.isReading, spins < 200_000 { spins += 1; await Task.yield() }
+            Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                continuation.finish()
+            }
+            await listener.discard()
+        }
+        let trappedInTheGuard = Self.trappedWith("two reads overlapped", result)
+        #expect(trappedInTheGuard)
+    }
+
+    /// H6. Two overlapping `start()` calls: the second traps, loudly, instead of
+    /// both passing a check that only the first `await` had updated. An
+    /// explicit-TLS server, because minting its certificate (an `openssl` child
+    /// process) is the wide window during which `start()` is in flight.
+    @Test func aSecondStartWhileOneIsInFlightTraps() async throws {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
+            let server = LoopbackFTPServer(
+                security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+            Task { _ = try? await server.start() }
+            var spins = 0
+            while !(await server.isStarting), spins < 200_000 { spins += 1; await Task.yield() }
+            _ = try? await server.start()
+        }
+        let trappedInTheServer = Self.trappedWith("not idle", result)
+        #expect(trappedInTheServer)
+    }
+
+    /// H6. A `stop()` that arrives while `start()` is in flight traps, loudly.
+    /// It used to return without a word and leave the server running.
+    @Test func aStopWhileAStartIsInFlightTraps() async throws {
+        let result = await #expect(
+            processExitsWith: .signal(SIGTRAP), observing: [\.standardErrorContent]
+        ) {
+            let server = LoopbackFTPServer(
+                security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+            Task { _ = try? await server.start() }
+            var spins = 0
+            while !(await server.isStarting), spins < 200_000 { spins += 1; await Task.yield() }
+            await server.stop()
+        }
+        let trappedInTheServer = Self.trappedWith("in flight", result)
+        #expect(trappedInTheServer)
+    }
+#endif
+
+    /// H1. The three ways a wait ends without a reply stay three. Peer closed:
+    /// `theLoopbackServerCanBeToldToRefuseWith421` and
+    /// `stopClosesTheListenerAndCanBeCalledTwice` assert `.connectionClosed`. Bound
+    /// fired: `aSilentPeerEndsTheClientsWaitWithANamedError` asserts
+    /// `.noReplyWithin`. Cancelled, here: with the peer still connected, a read
+    /// whose task is cancelled throws `CancellationError`, not a close.
+    @Test func aCancelledReadIsNotReportedAsAClosedConnection() async throws {
+        let silent = try await SilentServer.start()
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let clientPort = try #require(client.localPort)
+        try await silent.waitUntilSettled(clientPort: clientPort)
+        let reading = Task { try await client.readReply() }
+        reading.cancel()
+        let outcome = await reading.result
+
+        var cancelled = false
+        var describedAsAClose = false
+        switch outcome {
+        case .failure(let error):
+            cancelled = error is CancellationError
+            describedAsAClose = (error as? LoopbackFTPClientError) == .connectionClosed
+        case .success:
+            break
+        }
+        let stillHeld = silent.isHolding(clientPort: clientPort)
+        await client.close()
+        await silent.stop()
+
+        #expect(cancelled)
+        #expect(describedAsAClose == false)
+        // The peer never closed anything: the cancellation was the whole story.
+        #expect(stillHeld)
+    }
+
+    /// H1. The fixture answers for ITS connection, not for everything that
+    /// reached the port. A second client connects to the same server and goes
+    /// away; the first connection is still reported held.
+    @Test func aForeignConnectionToTheSilentServerDoesNotSpeakForOurs() async throws {
+        let silent = try await SilentServer.start()
+        let ours = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let foreign = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let ourPort = try #require(ours.localPort)
+        let foreignPort = try #require(foreign.localPort)
+        try await silent.waitUntilSettled(clientPort: ourPort)
+        try await silent.waitUntilSettled(clientPort: foreignPort)
+        await foreign.close()
+        // The server sees the foreign connection close: wait for that, so the
+        // assertion below is about a server that HAS a closed connection in hand.
+        try await pollUntil("the foreign connection is closed on the server") {
+            !silent.isHolding(clientPort: foreignPort)
+        }
+        let oursStillHeld = silent.isHolding(clientPort: ourPort)
+        await ours.close()
+        await silent.stop()
+
+        #expect(oursStillHeld)
+    }
+
+    /// H1, the data reader: a cancelled `readToEnd()` must not hand back a prefix
+    /// of the payload as though it were all of it.
+    @Test func aCancelledDataReadThrowsInsteadOfReturningAPrefix() async throws {
+        let silent = try await SilentServer.start(sending: Data("0123456789".utf8))
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let data = try await client.openData(host: "127.0.0.1", port: silent.port, protected: false)
+        try await silent.waitUntilSettled(clientPort: try #require(data.localPort))
+        try await pollUntil("the payload has arrived") { data.bytesReceived >= 10 }
+        let reading = Task { try await data.readToEnd() }
+        reading.cancel()
+        let outcome = await reading.result
+
+        var cancelled = false
+        switch outcome {
+        case .failure(let error): cancelled = error is CancellationError
+        case .success: break
+        }
+        await client.close()
+        await silent.stop()
+        #expect(cancelled)
+    }
+
+    /// H3. `stop()` waits for the closers registered with it before it takes the
+    /// event loops down. The wait is observed with a FLOOR: `stop()` is started,
+    /// the test lets the scheduler run for a while, and `stop()` must still be
+    /// waiting -- a slow machine cannot make a blocked `stop()` finish early,
+    /// only a `stop()` that does not wait can. Then the closer is released and
+    /// `stop()` must finish having seen it complete.
+    @Test func stopWaitsForARegisteredCloserBeforeItReturns() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        _ = try await server.start()
+        let release = AsyncSignal()
+        let closerDone = AsyncSignal()
+        await server.adoptCloser(
+            Task {
+                _ = await release.wait()
+                closerDone.signal()
+            })
+
+        let stopped = AsyncSignal()
+        let closerHadFinished = NIOLockedValueBox(false)
+        let stopping = Task {
+            await server.stop()
+            closerHadFinished.withLockedValue { $0 = closerDone.isRaised }
+            stopped.signal()
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let stillWaiting = !stopped.isRaised
+        release.signal()
+        await stopping.value
+
+        #expect(stillWaiting)
+        #expect(closerHadFinished.withLockedValue { $0 })
+    }
+
+    /// H4. `readToEnd()` returns the bytes that arrived and records a transport
+    /// error that follows them; it does not throw the payload away.
+    @Test func readToEndReturnsTheBytesAndRecordsALaterTransportError() async throws {
+        let payload = Data("0123456789".utf8)
+        let silent = try await SilentServer.start(sending: payload)
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let data = try await client.openData(host: "127.0.0.1", port: silent.port, protected: false)
+        try await silent.waitUntilSettled(clientPort: try #require(data.localPort))
+        // Wait for delivery, not for time: the error must follow the bytes.
+        try await pollUntil("the payload has arrived") { data.bytesReceived >= payload.count }
+        data.injectTransportError()
+        let received = try await data.readToEnd()
+        let failure = data.transportFailure
+        await client.close()
+        await silent.stop()
+
+        #expect(received == payload)
+        #expect(failure != nil)
+    }
+
+    /// H4, the other half: the data reader's hang bound. Nothing arrives and the
+    /// connection stays up, so the bound is the only way the read can end.
+    @Test func aSilentDataConnectionEndsReadToEndWithTheNamedError() async throws {
+        let silent = try await SilentServer.start()
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .milliseconds(200))
+        let data = try await client.openData(host: "127.0.0.1", port: silent.port, protected: false)
+        let dataPort = try #require(data.localPort)
+        try await silent.waitUntilSettled(clientPort: dataPort)
+        var thrown: LoopbackFTPClientError?
+        do {
+            _ = try await data.readToEnd()
+        } catch {
+            thrown = error as? LoopbackFTPClientError
+        }
+        let stillHeld = silent.isHolding(clientPort: dataPort)
+        await client.close()
+        await silent.stop()
+
+        #expect(stillHeld)
+        #expect(thrown == .noReplyWithin(milliseconds: 200))
     }
 
     /// G3. A second `readToEnd()` on the same data connection reads the one
@@ -818,6 +1122,18 @@ struct LoopbackFTPServerTests {
             await silent.stop()
             throw error
         }
+        // Unconditional, not hoped for (fix round 3, H1): `connect` returning does
+        // not mean the server has accepted -- a plant that delayed the accept's
+        // bookkeeping by 400 ms made `stillHeld` itself lose the race to the
+        // 200 ms timer. Wait for the accept, then start the wait that is measured.
+        let clientPort = try #require(client.localPort)
+        do {
+            try await silent.waitUntilSettled(clientPort: clientPort)
+        } catch {
+            await client.close()
+            await silent.stop()
+            throw error
+        }
         var thrown: LoopbackFTPClientError?
         do {
             _ = try await client.readReply()
@@ -825,7 +1141,7 @@ struct LoopbackFTPServerTests {
             thrown = error as? LoopbackFTPClientError
         }
         // Read before anything is closed: the guarantee the outcome rests on.
-        let stillHeld = silent.isHoldingAnOpenConnection
+        let stillHeld = silent.isHolding(clientPort: clientPort)
         await client.close()
         await silent.stop()
 
@@ -892,37 +1208,88 @@ struct LoopbackFTPServerTests {
 final class SilentServer: Sendable {
     let port: Int
     private let listener: Channel
-    private let held: NIOLockedValueBox<[Channel]>
+    /// Every accepted connection, for `stop()` to close, whether or not it has
+    /// settled.
+    private let all: NIOLockedValueBox<[Channel]>
+    /// Settled connections by the client's port: the single source of truth for
+    /// "the server holds this connection". An entry appears when the connection
+    /// has become active (or been closed before it could), and not before.
+    private let entries: NIOLockedValueBox<[Int: Channel]>
 
-    private init(port: Int, listener: Channel, held: NIOLockedValueBox<[Channel]>) {
+    private init(
+        port: Int, listener: Channel, all: NIOLockedValueBox<[Channel]>,
+        entries: NIOLockedValueBox<[Int: Channel]>
+    ) {
         self.port = port
         self.listener = listener
-        self.held = held
+        self.all = all
+        self.entries = entries
     }
 
-    static func start() async throws -> SilentServer {
-        let held = NIOLockedValueBox<[Channel]>([])
+    /// `sending` is written to every accepted connection as soon as it is
+    /// active, and the connection is held open after it.
+    static func start(sending: Data = Data()) async throws -> SilentServer {
+        let all = NIOLockedValueBox<[Channel]>([])
+        let entries = NIOLockedValueBox<[Int: Channel]>([:])
         let listener = try await awaitCancellably(
             ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                 .childChannelInitializer { channel in
-                    held.withLockedValue { $0.append(channel) }
-                    return channel.eventLoop.makeSucceededVoidFuture()
+                    all.withLockedValue { $0.append(channel) }
+                    // Read now: a channel closed before it settles may no longer
+                    // know its peer.
+                    let peerPort = channel.remoteAddress?.port ?? -1
+                    // A child's initializer runs BEFORE the channel is registered
+                    // and active, so "it was accepted" is not "it is open": a
+                    // check made in between sees an inactive channel. The
+                    // announcer fires when the channel becomes active (or, if it
+                    // is closed first, when its handlers are removed), which is
+                    // the moment the connection's state is settled either way,
+                    // and the moment it gets an entry.
+                    return channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandler(
+                            LoopbackActivationAnnouncer {
+                                if !sending.isEmpty {
+                                    channel.writeAndFlush(ByteBuffer(bytes: sending), promise: nil)
+                                }
+                                entries.withLockedValue { $0[peerPort] = channel }
+                            })
+                    }
                 }
                 .bind(host: "127.0.0.1", port: 0))
         guard let port = listener.localAddress?.port else {
             _ = try? await awaitCancellably(listener.close())
             throw LoopbackFTPServerError.noLocalPort
         }
-        return SilentServer(port: port, listener: listener, held: held)
+        return SilentServer(port: port, listener: listener, all: all, entries: entries)
     }
 
-    /// At least one accepted connection exists and every one is still open.
-    var isHoldingAnOpenConnection: Bool {
-        held.withLockedValue { channels in !channels.isEmpty && channels.allSatisfy(\.isActive) }
+    /// Waits until the connection whose CLIENT port is `clientPort` has settled:
+    /// become active, or been closed before it could. A client's `connect`
+    /// returning means the TCP handshake finished in the kernel, not that this
+    /// process has accepted anything, and a connection in `held` may not be
+    /// registered yet. So the guarantee a test rests on -- the server holds ITS
+    /// connection -- is established before the wait it measures begins, by
+    /// waiting on state, never on time. A connection closed on arrival still
+    /// settles, so a server that misbehaves that way fails the test's assertion
+    /// instead of hanging it.
+    ///
+    /// By port, not by count: anything else that dials this port (the kernel
+    /// hands out ports other tests have just freed) makes a count, or "every
+    /// held connection is open", say something about a connection the test does
+    /// not own.
+    func waitUntilSettled(clientPort: Int) async throws {
+        try await pollUntil("the silent server has settled the connection from port \(clientPort)") {
+            self.entries.withLockedValue { $0[clientPort] != nil }
+        }
+    }
+
+    /// The connection from `clientPort` is held and still open.
+    func isHolding(clientPort: Int) -> Bool {
+        entries.withLockedValue { $0[clientPort]?.isActive ?? false }
     }
 
     func stop() async {
         _ = try? await awaitCancellably(listener.close())
-        for channel in held.withLockedValue({ $0 }) { _ = try? await awaitCancellably(channel.close()) }
+        for channel in all.withLockedValue({ $0 }) { _ = try? await awaitCancellably(channel.close()) }
     }
 }
