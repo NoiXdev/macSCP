@@ -256,8 +256,17 @@ actor LoopbackFTPClient {
     /// cancellation as a peer close makes every later hang in this client
     /// unattributable, which is what the bound exists to prevent. A recorded
     /// cause (an error, or the bound) outranks cancellation: it is the real end.
-    /// `aFiredBoundOutranksCancellationWhenBothEndTheSameRead` holds that
-    /// precedence; `aCancelledReadIsNotReportedAsAClosedConnection` and
+    /// That is two claims and each has its own test:
+    /// `aFiredBoundOutranksCancellationWhenBothEndTheSameRead` holds the bound's
+    /// half and `aRecordedErrorOutranksCancellationWhenBothEndTheSameRead` holds
+    /// the error's. Withdrawn wording, verbatim:
+    /// "`aFiredBoundOutranksCancellationWhenBothEndTheSameRead` holds that
+    /// precedence" -- it holds half of it, measured in the re-review of fix
+    /// round 4 by narrowing the condition below to `end.value != .timedOut`, so
+    /// that a recorded ERROR no longer outranked cancellation: the suite stayed
+    /// GREEN, 39 of 39 tests ran and none noticed. The error half has had a test
+    /// since fix round 5.
+    /// `aCancelledReadIsNotReportedAsAClosedConnection` and
     /// `aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake` hold the two
     /// callers.
     ///
@@ -270,8 +279,11 @@ actor LoopbackFTPClient {
     /// therefore answers `CancellationError`, and the close is not reported at
     /// all. That is deliberate (a cancelled read's caller is going away
     /// whatever the peer did) and it is the one combination no test pins,
-    /// because there is nothing to tell the two apart by. The other direction,
-    /// the bound against a cancellation, is pinned: the bound wins.
+    /// because there is nothing to tell the two apart by. The other direction, a
+    /// recorded cause against a cancellation, is pinned in both halves: the
+    /// cause wins. Withdrawn wording, verbatim: "The other direction, the bound
+    /// against a cancellation, is pinned: the bound wins." -- true when it was
+    /// written and the bound was the only half with a test.
     static func throwIfCancelledWithoutACause(_ end: LoopbackClientEnd) throws {
         if end.value == .none, Task.isCancelled { throw CancellationError() }
     }

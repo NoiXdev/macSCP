@@ -88,7 +88,10 @@ final class LoopbackFTPState: Sendable {
 
         /// The tasks that close channels nobody could be handed (see
         /// `LoopbackFTPServer.hand`), kept so `stop()` can await them before it
-        /// takes the event loops down.
+        /// RETURNS. Withdrawn wording, verbatim: "before it takes the event
+        /// loops down" -- that is where the drain stands, and nothing holds it
+        /// there: `stop()`'s comment at the drain carries the plant that swapped
+        /// the two statements and the GREEN it measured.
         var reapers: [Task<Void, Never>] = []
     }
 
@@ -340,17 +343,29 @@ actor LoopbackFTPServer {
 
     /// Idempotent on an idle or already-stopping server. Closes the listener and
     /// every connection, waits for every session to finish, and only then takes
-    /// the event loops down. Called while `start()` is in flight it traps: there
-    /// is nothing yet to stop, and returning would leave a server running that
-    /// the caller believes is stopped.
+    /// the event loops down -- the order the statements below stand in. Called
+    /// while `start()` is in flight it traps: there is nothing yet to stop, and
+    /// returning would leave a server running that the caller believes is
+    /// stopped.
     ///
-    /// The order is load-bearing, and was found by a hang: shutting the group
-    /// down first closes the channels, the sessions notice and wind up, and
-    /// `executeThenClose` then asks an event loop that has already been shut
-    /// down to close the channel it is holding -- a task that never runs, so
-    /// the session, and with it `stop()`, never returned. Measured by planting
-    /// a log line at each step: "session run returned" printed, "executeThenClose
-    /// returned" never did.
+    /// **That order is deliberate, and UNPINNED.** Withdrawn wording, verbatim:
+    /// "The order is load-bearing, and was found by a hang" -- the hang is
+    /// measured and is why the statements stand this way round; "load-bearing"
+    /// read as a property something enforces, and no test here holds `stop()` to
+    /// it. What WAS measured, in fix round 1, by planting a log line at each
+    /// step: shutting the group down first closes the channels, the sessions
+    /// notice and wind up, and `executeThenClose` then asks an event loop that
+    /// has already been shut down to close the channel it is holding -- a task
+    /// that never runs, so the session, and with it `stop()`, never returned.
+    /// "session run returned" printed, "executeThenClose returned" never did.
+    ///
+    /// What was NOT measured is whether a test would notice the swap, and this
+    /// round did not measure it either: the predicted symptom is that same hang,
+    /// and a planted run that hangs is not a verdict -- `scripts/mutation-probe`
+    /// would have to be killed rather than read, and a test that detected it
+    /// would be the wall-clock ceiling CLAUDE.md forbids. Of the two orders in
+    /// this function only the one at the reaper drain has been planted at all;
+    /// see the comment there for its command and its GREEN.
     func stop() async {
         precondition(lifecycle != .starting, "stop() while start() is in flight")
         guard lifecycle == .running, let group else { return }

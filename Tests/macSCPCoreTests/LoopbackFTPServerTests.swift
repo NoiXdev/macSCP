@@ -736,14 +736,26 @@ struct LoopbackFTPServerTests {
     // iterator in an `@unchecked Sendable` box -- the shape of
     // `LoopbackLineSource` with its guard removed -- and calling `next()` from
     // 2, then 3, concurrent tasks, each suspended inside it before anything is
-    // yielded, printed its "no trap" line and exited 0 in all four runs:
-    // `swiftc -swift-version 6 -Onone` and `swiftc -swift-version 6 -O`, 2 and
-    // 3 readers each.
+    // yielded, printed its "no trap" line and exited 0 every time.
     //
-    // What that does NOT cover: x86_64. A Swift runtime trap is reported there
-    // as SIGILL rather than SIGTRAP, and nothing here has been run on it, so
-    // whether these exit tests hold on an x86_64 runner is UNMEASURED -- neither
-    // shown nor ruled out.
+    // Withdrawn wording, verbatim: "in all four runs: `swiftc -swift-version 6
+    // -Onone` and `swiftc -swift-version 6 -O`, 2 and 3 readers each." The
+    // figure that travels is the re-review of fix round 4's own rebuild of the
+    // same program: **20 of 20 process runs exited 0 and printed "no trap"** --
+    // the four configurations above (2 and 3 readers x `-Onone` and `-O`), 5
+    // runs each. Neither program -- fix round 4's or that rebuild -- is in this
+    // tree, so the figure is cited with its configuration and its run count and
+    // is not re-runnable from here; the
+    // count it replaces was re-runnable from nowhere, and fix round 4's own
+    // report gave it as "four runs of four" where the comment said four.
+    //
+    // What that does NOT cover: x86_64. Nothing here has been run on it, so
+    // whether these exit tests hold on an x86_64 runner is UNMEASURED --
+    // neither shown nor ruled out, and this comment does not say what signal a
+    // trap is reported as there. Withdrawn wording, verbatim: "A Swift runtime
+    // trap is reported there as SIGILL rather than SIGTRAP" -- stated as fact,
+    // and the same sentence that marks the platform unmeasured cannot also
+    // answer for it.
     //
     // The waits for "a read is in flight"
     // spin a bounded number of times (a count, not a clock): without the guard
@@ -907,9 +919,26 @@ struct LoopbackFTPServerTests {
     /// What replaces it is a floor: after the cancellation the client writes one
     /// line on the SAME connection and the server must read those bytes. A
     /// loaded machine only makes them arrive later -- `bytesReceived` never
-    /// falls -- and the wait for them is a wait on state that BOTH worlds leave,
-    /// so a connection that did go away ends it too and the assertion says
-    /// which happened. The direction is the client's, not the server's, because
+    /// falls -- and the wait for them is a wait on state that both of the two
+    /// worlds this test models leave: the bytes arrive, or the server loses the
+    /// connection, and the assertion afterwards says which happened.
+    ///
+    /// **It can still park, and then the failure carries the wait's name.**
+    /// Withdrawn wording, verbatim: "and the wait for them is a wait on state
+    /// that BOTH worlds leave, so a connection that did go away ends it too and
+    /// the assertion says which happened" -- the clause read as a wait nothing
+    /// can park on, and that is wider than what was measured. Measured in the
+    /// re-review of fix round 4, with the byte counter planted to record
+    /// nothing: the test parks the whole bound and ends as a NAMED red,
+    /// `Time limit was exceeded: 300.000 seconds` with
+    /// `pollUntil: cancelled while waiting for the silent server reads the line
+    /// or loses the connection` printed beside it. That is the designed escape
+    /// rather than a silent hang, and it costs the full 300 s. A client write
+    /// that fails for an unrelated reason does not park at all:
+    /// `wroteAfterTheCancellation` is false, the poll is skipped, and the red is
+    /// the named assertion.
+    ///
+    /// The direction is the client's, not the server's, because
     /// the server's would be unreadable here: cancelling the task that is
     /// iterating an `AsyncStream` terminates the whole stream, not just that
     /// one `next()`, so this client can never read another line on this
@@ -997,9 +1026,18 @@ struct LoopbackFTPServerTests {
         #expect(describedAsAFailedHandshake == false)
     }
 
-    /// H1's precedence, which fix round 3 decided and nothing held it to: a
-    /// recorded cause outranks cancellation, so a read that ends with its bound
-    /// fired AND its task cancelled reports the bound.
+    /// H1's precedence, the BOUND's half of it: a read that ends with its bound
+    /// fired AND its task cancelled reports the bound. The error's half is the
+    /// test below, and this one does not hold it.
+    ///
+    /// Withdrawn wording, verbatim: "H1's precedence, which fix round 3 decided
+    /// and nothing held it to: a recorded cause outranks cancellation, so a read
+    /// that ends with its bound fired AND its task cancelled reports the bound."
+    /// -- "a recorded cause" is an error or the bound, and this test sees only
+    /// the bound. Measured in the re-review of fix round 4: narrowing
+    /// `throwIfCancelledWithoutACause` to `end.value != .timedOut`, so that a
+    /// recorded error no longer outranks cancellation, left the suite GREEN,
+    /// 39 of 39 tests ran and none noticed.
     ///
     /// Driven at the check rather than through a live read, because through one
     /// the two events would have to be made to land inside the few instructions
@@ -1028,6 +1066,46 @@ struct LoopbackFTPServerTests {
         // green `threw == false` is the precedence and not a probe that never
         // put the check in the position it is about.
         #expect(outcome.cancelled)
+        #expect(outcome.threw == false)
+    }
+
+    /// H1's precedence, the ERROR's half: a read that ends with a transport
+    /// error recorded AND its task cancelled reports the error, not the
+    /// cancellation. Same shape as the bound's half above, and for the same
+    /// reason -- the check is called directly, and a latch nothing raises until
+    /// `cancel()` has returned is what puts the cancellation before it.
+    ///
+    /// It is a second test rather than a second assertion in the first because
+    /// the two halves can be broken apart: `end.value != .timedOut` keeps the
+    /// bound's half and loses this one, and that plant was GREEN across the
+    /// whole suite in the re-review of fix round 4.
+    ///
+    /// The positive check is on the cause, not only on the cancellation: with a
+    /// `.timedOut` cause recorded here instead, `threw == false` would hold for
+    /// the bound's reason and say nothing about an error.
+    @Test func aRecordedErrorOutranksCancellationWhenBothEndTheSameRead() async throws {
+        struct ProbeTransportFailure: Error {}
+        let end = LoopbackClientEnd()
+        end.noteError(ProbeTransportFailure())
+        let go = AsyncSignal()
+        let probe = Task { () -> (cancelled: Bool, threw: Bool) in
+            _ = await go.wait()
+            do {
+                try LoopbackFTPClient.throwIfCancelledWithoutACause(end)
+                return (Task.isCancelled, false)
+            } catch {
+                return (Task.isCancelled, true)
+            }
+        }
+        probe.cancel()
+        go.signal()
+        let outcome = await probe.value
+
+        var recordedAnError = false
+        if case .failed = end.value { recordedAnError = true }
+
+        #expect(outcome.cancelled)
+        #expect(recordedAnError)
         #expect(outcome.threw == false)
     }
 
@@ -1080,8 +1158,14 @@ struct LoopbackFTPServerTests {
         #expect(cancelled)
     }
 
-    /// H3. `stop()` waits for the closers registered with it before it takes the
-    /// event loops down. The wait is observed with a FLOOR: `stop()` is started,
+    /// H3. `stop()` waits for the closers registered with it before it RETURNS.
+    /// Withdrawn wording, verbatim: "before it takes the event loops down" --
+    /// this test cannot tell those two orders apart, measured in fix round 4:
+    /// the closer it adopts is a plain Swift task that touches no event loop, so
+    /// it finishes whether the drain stands before or after
+    /// `group.shutdownGracefully()`, and the swap was GREEN across the suite,
+    /// 39 of 39 tests ran and none noticed.
+    /// The wait is observed with a FLOOR: `stop()` is started,
     /// the test lets the scheduler run for a while, and `stop()` must still be
     /// waiting -- a slow machine cannot make a blocked `stop()` finish early,
     /// only a `stop()` that does not wait can. Then the closer is released and
@@ -1145,9 +1229,28 @@ struct LoopbackFTPServerTests {
     /// close, so the read raced a FIN. Here nothing closes either end before it
     /// -- `readToEnd()` ends because the bound finishes the stream, which
     /// touches no channel, and `client.close()` comes after the read -- so
-    /// there is no FIN for it to race. What it is for is unchanged: the
-    /// load-bearing assertion is the positive one on the named error below, and
-    /// this says the error came from a silent peer rather than a vanished one.
+    /// there is no FIN for it to race. The load-bearing assertion is the
+    /// positive one on the named error below.
+    ///
+    /// **What this read claims is a SERVER-side property, and only that: this
+    /// server did not lose the connection.** Withdrawn wording, verbatim: "this
+    /// says the error came from a silent peer rather than a vanished one" --
+    /// that reads as a guard against the connection vanishing however it
+    /// vanishes, and it is not one. Measured in the re-review of fix round 4, by
+    /// planting a client-side close into this path (a close of the client's
+    /// channel inside `readToEnd`, above the cancellation check): the probe's
+    /// own run was GREEN and its leftover planted binary failed 11 of 40 runs,
+    /// 11 of 41 with the probe's -- a probability, not a guard, and the positive
+    /// assertion on the named error stayed green in every one of them. A
+    /// SERVER-side loss is the other case: a `SilentServer` planted to close the
+    /// held connection once it settles turned both assertions red here and in
+    /// `aSilentPeerEndsTheClientsWaitWithANamedError` -- one run each, and
+    /// deterministic by construction rather than by repetition, since that
+    /// side's `isActive` is read on the loop that closed it. Maintainer's
+    /// ruling of 2026-11-05: the read stays and says only the server-side
+    /// property, and no client-side-close guard is added. Cost if wrong: a
+    /// future change that puts a cancellation into this path will not be caught
+    /// by this read.
     @Test func aSilentDataConnectionEndsReadToEndWithTheNamedError() async throws {
         let silent = try await SilentServer.start()
         let client = try await LoopbackFTPClient.connect(
@@ -1252,8 +1355,7 @@ struct LoopbackFTPServerTests {
     /// scenario under 14 busy loops. What the fixture changes is therefore
     /// removed hypotheses, not a located cause: nothing that depends on the
     /// kernel's accept queue or on the listening descriptor's lifetime is left in
-    /// the path, and if the connection does go away, `stillHeld` says so and the
-    /// failure reads "the peer's connection was gone", not "the wrong error".
+    /// the path.
     ///
     /// Kept for the same reason as the data reader's, and not by analogy with
     /// it: the only thing that ends the read here is the 200 ms bound finishing
@@ -1261,6 +1363,28 @@ struct LoopbackFTPServerTests {
     /// read. Nothing in the path puts a FIN in flight, so the race that made
     /// `aCancelledReadIsNotReportedAsAClosedConnection`'s `isHolding` read
     /// insensitive cannot reach this one.
+    ///
+    /// **What this read claims is a SERVER-side property, and only that: this
+    /// server did not lose the connection.** Withdrawn wording, verbatim, which
+    /// closed the "cause was not determined" paragraph above:
+    ///
+    ///     and if the connection does go away, `stillHeld` says so and the
+    ///     failure reads "the peer's connection was gone", not "the wrong
+    ///     error".
+    ///
+    /// It says so for a loss on the server's side, not for a loss however it
+    /// happens. Measured in the re-review of fix round 4, by planting a
+    /// client-side close into this path (a close of the client's channel inside
+    /// `readReply`, above the cancellation check): the probe's own run was RED
+    /// and its leftover planted binary failed 5 of 20 and then 6 of 40 runs,
+    /// 12 of 61 with the probe's -- a probability, not a guard, and `thrown ==
+    /// .noReplyWithin(milliseconds: 200)` never failed under it. A SERVER-side
+    /// loss is the other case and is caught deterministically; see
+    /// `aSilentDataConnectionEndsReadToEndWithTheNamedError`, where the figures
+    /// for both plants are written down. Maintainer's ruling of 2026-11-05: the
+    /// read stays and says only the server-side property, and no
+    /// client-side-close guard is added. Cost if wrong: a future change that
+    /// puts a cancellation into this path will not be caught by this read.
     @Test func aSilentPeerEndsTheClientsWaitWithANamedError() async throws {
         let silent = try await SilentServer.start()
         let client: LoopbackFTPClient
@@ -1369,6 +1493,25 @@ final class SilentServer: Sendable {
     /// in flight has not reached yet; this is the other kind of answer, and the
     /// only one that says the peer was there -- see
     /// `aCancelledReadIsNotReportedAsAClosedConnection`.
+    ///
+    /// **A limit on the key, for the tasks that come after.** This box and
+    /// `entries` are keyed by the same `peerPort`, read once in the child
+    /// initializer, so the two cannot disagree about which connection a key
+    /// means. They differ in what a REUSED client port does: `entries` is
+    /// overwritten by the later connection, while this counter keeps
+    /// accumulating across both, so a server that sees two connections from one
+    /// client port reports the sum here against the second connection's entry.
+    /// No test reaches that today: `bytesReceived(fromClientPort:)` has two call
+    /// sites, both in `aCancelledReadIsNotReportedAsAClosedConnection`, which
+    /// opens one connection per client port. Counted with
+    ///
+    ///     /usr/bin/grep -rno 'silent\.bytesReceived(fromClientPort' Tests Sources
+    ///
+    /// which prints two lines, both inside that test, and cannot match this
+    /// comment (the pattern's `\.` is an escaped dot, the text here is a
+    /// backslash and a dot). Found by the re-review of fix round 4 and written down rather than
+    /// fixed: nothing needs the fix, and a change with no test is what this
+    /// fixture keeps paying for.
     private let received: NIOLockedValueBox<[Int: Int]>
 
     private init(
