@@ -258,10 +258,20 @@ enum URLText {
     /// typed URL has no counterpart here.
     ///
     /// It lives beside `withoutUserinfo` rather than in one backend's schema
-    /// because two generic layers ask it: `FieldFormat.hostWithoutUserinfo`,
-    /// for any field declaring that format, and the host-text fallbacks that
-    /// render what such a field holds. `FTPFieldSchema.hostCarriesUserinfo`
-    /// forwards to it and does not implement it.
+    /// because the generic field vocabulary asks it:
+    /// `FieldFormat.hostWithoutUserinfo`'s arm, for any field declaring that
+    /// format. The only other caller is `FTPFieldSchema.hostCarriesUserinfo`,
+    /// which forwards to it and does not implement it. Those are the two, and
+    /// this command, run from the repository root, prints exactly them --
+    /// the `-v` drops this comment line, which quotes the pattern:
+    /// `/usr/bin/grep -rn 'URLText.hostCarriesUserinfo(' --include='*.swift' Sources | /usr/bin/grep -v '///'`
+    ///
+    /// (Withdrawn wording, verbatim: "because two generic layers ask it:
+    /// `FieldFormat.hostWithoutUserinfo`, for any field declaring that
+    /// format, and the host-text fallbacks that render what such a field
+    /// holds." No fallback calls this function. The host-text fallback in
+    /// `FTPFieldSchema.displaySummary` calls `withoutUserinfo`, which is a
+    /// different function.)
     ///
     /// **A note for whoever plants a mutation here.** Deleting the `://`
     /// disjunct measures GREEN against `FTPFieldSchema.normalizedHost`, and

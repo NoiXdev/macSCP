@@ -297,16 +297,23 @@ public enum FTPFieldSchema {
     /// `@` is user-info with no tie to break.
     ///
     /// Its reach is why it is worth closing here: the sidebar row summary
-    /// (`SessionSidebar.swift`), the sidebar's search (`SidebarVisibility
-    /// .swift`), the audit summary and the stored tab's title
-    /// (`ContentView.swift`), and `SessionImportPlanner.displaySummary(for:)`,
-    /// which builds it from a FILE's raw fields -- the one input that reaches
-    /// here without ever passing the form that refuses user-info.
+    /// (`SessionSidebar.swift`), the sidebar's search
+    /// (`SidebarVisibility.swift`), the audit summary and the stored tab's
+    /// title (`ContentView.swift`), and
+    /// `SessionImportPlanner.displaySummary(for:)`, which builds it from a
+    /// FILE's raw fields -- the one input that reaches here without ever
+    /// passing the form that refuses user-info.
     public static func displaySummary(_ values: FieldValues) -> String {
         let mode = security(values)
-        // Trimmed before either branch: `normalizedHost` trims its own input,
-        // and a fallback that kept the raw padding would print it.
-        let typed = values[FTPField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+        // Not trimmed here. Both branches trim their own input: it is
+        // `normalizedHost`'s first statement, and `URLText.withoutUserinfo`'s
+        // too. An explicit trim stood here until fix round 5 under the
+        // comment, verbatim: "Trimmed before either branch: `normalizedHost`
+        // trims its own input, and a fallback that kept the raw padding would
+        // print it." Its second half was false once the fallback went through
+        // `withoutUserinfo`, which trims first -- the line claimed an effect
+        // it did not have.
+        let typed = values[FTPField.host]
         let host = normalizedHost(typed)
             ?? URLText.withoutUserinfo(typedURL: typed, atMayFollowHost: false)
         let user = values[FTPField.username]

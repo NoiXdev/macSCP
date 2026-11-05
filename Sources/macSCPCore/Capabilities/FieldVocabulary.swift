@@ -59,9 +59,10 @@ public enum FieldFormat: Sendable, Equatable {
     /// on SSH and FTP".
     ///
     /// (Withdrawn wording, verbatim: "so the field refuses it at the source
-    /// instead of each view filtering it (`FTPFieldSchema
-    /// .hostCarriesUserinfo`)." It read as though refusing a typed value here
-    /// made a view's own filter unnecessary. The form is not the only source.)
+    /// instead of each view filtering it
+    /// (`FTPFieldSchema.hostCarriesUserinfo`)." It read as though refusing a
+    /// typed value here made a view's own filter unnecessary. The form is not
+    /// the only source.)
     case hostWithoutUserinfo
 
     /// Whether `value` — already trimmed, and not blank — satisfies the rule.

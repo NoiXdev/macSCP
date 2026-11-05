@@ -121,10 +121,24 @@ struct FTPFieldSchemaTests {
 
     // MARK: - A host never carries user-info
 
-    /// One shape per refusal. A host that held `tim:secret@host` would be
-    /// stored and then printed raw by the sidebar row and the overview's host
-    /// fact, neither of which filters it; the schema refuses it so that
-    /// neither has to.
+    /// One shape per refusal. The refusals are the FORM's and the DIAL's:
+    /// `FieldFormat.hostWithoutUserinfo` on the host field, and
+    /// `normalizedHost` under `makeConfig`. They are not the STORE's --
+    /// `FTPFieldSchema.stored(from:)` only trims -- so this test is not
+    /// evidence that a render site can print a stored host as it is.
+    /// `displaySummary`'s fallback filters (fix round 4), which covers the
+    /// sidebar row and its search; `SessionCatalog.target(for:)` and the FTP
+    /// overview's host fact still print a stored host as stored, and that is
+    /// the `docs/BACKLOG.md` row beginning "A stored host can carry user-info
+    /// on SSH and FTP".
+    ///
+    /// (Withdrawn wording, verbatim: "A host that held `tim:secret@host`
+    /// would be stored and then printed raw by the sidebar row and the
+    /// overview's host fact, neither of which filters it; the schema refuses
+    /// it so that neither has to." Both halves are wrong. The sidebar row IS
+    /// filtered, since fix round 4 put `displaySummary`'s fallback through
+    /// `URLText.withoutUserinfo`. And the store path is still open, so the
+    /// schema's refusal does not mean no render site has to filter.)
     @Test(arguments: [
         "tim@files.example.com", "tim:secret@files.example.com", "@files.example.com",
         "files.example.com@", "ftp://files.example.com", "ftps://tim:secret@files.example.com/",
