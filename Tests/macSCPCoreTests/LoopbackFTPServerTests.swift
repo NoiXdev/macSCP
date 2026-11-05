@@ -1,5 +1,6 @@
 import Foundation
 import MacSCPTestSupport
+import NIOConcurrencyHelpers
 import NIOCore
 import NIOPosix
 import Testing
@@ -592,6 +593,14 @@ struct LoopbackFTPServerTests {
 
         let passRecords = commands.filter { $0.verb == "PASS" }
         // Computed first; a failed `#expect` on a record would print it.
+        //
+        // The marker is spelled as a LITERAL on purpose, and must stay one.
+        // Reading `LoopbackFTPReceivedCommand.redactedArgument` here would look
+        // tidier (a second copy of a name is a rename waiting to happen) and
+        // would make this pin satisfied by whatever value the symbol holds: a
+        // plant that changes the marker would then pass. The literal is what
+        // makes the pin bite -- measured in fix round 1, where the plant
+        // `redactedArgument = ""` was caught by this test and by nothing else.
         let allRedacted = passRecords.allSatisfy { $0.argument == "<redacted>" }
         let anyFieldCarriesIt = commands.contains {
             $0.argument.contains(credentials.password) || $0.verb.contains(credentials.password)
@@ -610,6 +619,133 @@ struct LoopbackFTPServerTests {
         // "no record carries the password" is a statement about redaction and
         // not about an empty log.
         #expect(usernameKept)
+    }
+
+    /// G5. A stopped server can be started again, and the second run serves.
+    /// `stopping` is irreversible in the state, so without `start()` clearing it
+    /// the second run would close every connection on arrival and the client
+    /// would see a bare close instead of a greeting.
+    @Test func aStoppedServerCanBeStartedAgainAndServesTheSecondRun() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        _ = try await server.start()
+        await server.stop()
+        let second = try await server.start()
+        let client = try await LoopbackFTPClient.connect(host: second.host, port: second.port)
+        let greeting = try await client.readReply()
+        await client.close()
+        await server.stop()
+        #expect(greeting.code == 220)
+        // The second run's connection is the only one it counted.
+        #expect(await server.controlConnectionCount == 1)
+    }
+
+    /// G6. A TLS handshake that fails with a transport error says so, as the
+    /// other two waits do. A plain server answers a TLS ClientHello with a
+    /// plaintext greeting, which the client's TLS layer cannot parse.
+    @Test func aFailedHandshakeSurfacesTheTransportsError() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let endpoint = try await server.start()
+        var surfaced = false
+        do {
+            _ = try await LoopbackFTPClient.connect(
+                host: endpoint.host, port: endpoint.port, implicitTLS: true, replyBound: .seconds(30))
+        } catch LoopbackFTPClientError.connectionFailed(let description) {
+            surfaced = !description.isEmpty
+        } catch {
+            surfaced = false
+        }
+        await server.stop()
+        #expect(surfaced)
+    }
+
+    /// G4. A channel nobody can be handed (the accept loop's stream has ended) is
+    /// closed by a closer that `stop()` can await, not by a detached task that
+    /// holds the channel, its descriptor and a loop reference for as long as it
+    /// lives. Real channels on a real loopback connection: a server whose
+    /// children are wrapped and announced exactly as `LoopbackFTPServer` does it,
+    /// against a stream that is already finished.
+    @Test func anUndeliverableChannelIsClosedByARegisteredCloser() async throws {
+        let state = LoopbackFTPState()
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let (_, continuation) = AsyncStream.makeStream(
+            of: NIOAsyncChannel<ByteBuffer, ByteBuffer>.self)
+        continuation.finish()
+        let listener = try await awaitCancellably(
+            ServerBootstrap(group: group)
+                .childChannelInitializer { channel in
+                    channel.eventLoop.makeCompletedFuture {
+                        let wrapped = try NIOAsyncChannel<ByteBuffer, ByteBuffer>(
+                            wrappingChannelSynchronously: channel)
+                        try channel.pipeline.syncOperations.addHandler(
+                            LoopbackActivationAnnouncer {
+                                LoopbackFTPServer.hand(wrapped, to: continuation, state: state)
+                            })
+                    }
+                }
+                .bind(host: "127.0.0.1", port: 0))
+        let port = try #require(listener.localAddress?.port)
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: port, replyBound: .seconds(30))
+
+        // The announcer fires on the server's loop, after the client's connect
+        // returned; wait for the registration, not for a time.
+        try await pollUntil("the closer is registered") {
+            state.box.withLockedValue { !$0.reapers.isEmpty }
+        }
+        let closers = state.takeReapers()
+        #expect(closers.count == 1)
+        for closer in closers { await closer.value }
+        // Awaiting the closer is what closed the channel: the client sees it.
+        await #expect(throws: LoopbackFTPClientError.connectionClosed) {
+            _ = try await client.readReply()
+        }
+
+        await client.close()
+        _ = try await awaitCancellably(listener.close())
+        try await group.shutdownGracefully()
+    }
+
+    /// G3 and G9. The guard behind each `@unchecked Sendable` reader traps, with
+    /// a message that names the cause, when two reads overlap.
+    @Test func overlappingReadsOnASingleConsumerStreamTrap() async throws {
+        await #expect(processExitsWith: .failure) {
+            let guardUnderTest = LoopbackSingleReaderGuard()
+            guardUnderTest.enter("test")
+            guardUnderTest.enter("test")
+        }
+        // The positive beside it: sequential use does not trap.
+        let sequential = LoopbackSingleReaderGuard()
+        sequential.enter("test")
+        sequential.leave()
+        sequential.enter("test")
+        sequential.leave()
+    }
+
+    /// G3. A second `readToEnd()` on the same data connection reads the one
+    /// iterator the connection owns, finds the stream ended, and returns
+    /// nothing; it does not start a second iteration over a unicast stream.
+    @Test func aDataConnectionCanBeReadToEndTwice() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let credentials = server.credentials
+        await server.seedFile("/f", contents: Data("abc".utf8))
+        try await Self.running(server) { host, port in
+            let client = try await LoopbackFTPClient.connect(host: host, port: port)
+            _ = try await client.readReply()
+            _ = try await client.login(credentials)
+            let endpoint = try Self.passiveEndpoint(try await client.command("PASV"))
+            let data = try await client.openData(host: host, port: endpoint.port, protected: false)
+            try await client.send("RETR /f")
+            #expect(try await client.readReply().code == 150)
+            let first = try await data.readToEnd()
+            let second = try await data.readToEnd()
+            #expect(first == Data("abc".utf8))
+            #expect(second.isEmpty)
+            #expect(data.transportFailure == nil)
+            await client.close()
+        }
     }
 
     /// F2, the deterministic half: the invariant lives in the state that owns
@@ -642,44 +778,59 @@ struct LoopbackFTPServerTests {
         try await group.shutdownGracefully()
     }
 
-    /// F2, the integration half. No deadline on `stop()`: if the race returns,
-    /// this hangs until the suite's limit and fails there, by name. It is not
-    /// reproduced to fail on the old code -- see the state test above for the
-    /// pin; this exercises the shape the review reasoned about.
-    @Test func stoppingWhileAPassiveTransferIsPipelinedReturns() async throws {
-        var stopped = 0
-        for _ in 0..<20 {
-            let server = LoopbackFTPServer(
-                security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
-            let credentials = server.credentials
-            await server.seedFile("/f", contents: Data("x".utf8))
-            let endpoint = try await server.start()
-            let client = try await LoopbackFTPClient.connect(host: endpoint.host, port: endpoint.port)
-            _ = try await client.readReply()
-            _ = try await client.login(credentials)
-            // Two commands in one write, so the session binds a listener and
-            // goes straight to waiting for a connection that will not come.
-            try await client.send("PASV\r\nRETR /f")
-            await server.stop()
-            await client.close()
-            stopped += 1
-        }
-        #expect(stopped == 20)
-    }
-
-    /// F3. The client's hang bound turns a silent peer into a named error.
-    /// A listening socket nobody accepts from completes the TCP handshake and
-    /// never speaks. The bound is short here because it is the thing tested;
-    /// what is asserted is the error, which lateness cannot change.
+    /// F3, with the fixture of fix round 2 (G1). The client's hang bound turns a
+    /// silent peer into a named error.
+    ///
+    /// **The peer is a server that ACCEPTS the connection, holds it open and
+    /// never writes** (`SilentServer`), and the test asserts that it was still
+    /// holding it when the wait ended. Before this round the peer was a
+    /// `LoopbackSocket.listening()` socket nobody accepts from, which completes
+    /// the TCP handshake in the kernel's backlog and leaves the connection's
+    /// life to the kernel and to the descriptor's owner.
+    ///
+    /// Withdrawn wording, verbatim: "what is asserted is the error, which
+    /// lateness cannot change." It was false. In the re-review of Task 4's fix
+    /// round 1 this test failed in 2 of 20 whole-suite runs, with
+    /// `.connectionClosed` where `.noReplyWithin` was expected, and the durations
+    /// did not separate the red runs from the green. `.connectionClosed` means the
+    /// stream ended with no cause recorded, i.e. the connection went inactive
+    /// before the 200 ms timer fired. An assertion on an error that only one side
+    /// of a timing race can produce is a ceiling in disguise: the test's outcome
+    /// depended on a 200 ms timer beating the transport.
+    ///
+    /// **The cause was not determined.** Measured in fix round 2, with the two
+    /// paths logged (client active / inactive / error, and the listening
+    /// descriptor's state on a failure): 0 reproductions in 38 whole-suite runs of
+    /// the Core suite (12 on an idle machine, 12 with two suite loops side by side,
+    /// 14 with 16 busy loops added) and in 400 isolated iterations of exactly this
+    /// scenario under 14 busy loops. What the fixture changes is therefore
+    /// removed hypotheses, not a located cause: nothing that depends on the
+    /// kernel's accept queue or on the listening descriptor's lifetime is left in
+    /// the path, and if the connection does go away, `stillHeld` says so and the
+    /// failure reads "the peer's connection was gone", not "the wrong error".
     @Test func aSilentPeerEndsTheClientsWaitWithANamedError() async throws {
-        let silent = try #require(LoopbackSocket.listening())
-        defer { silent.close() }
-        let client = try await LoopbackFTPClient.connect(
-            host: "127.0.0.1", port: silent.port, replyBound: .milliseconds(200))
-        await #expect(throws: LoopbackFTPClientError.noReplyWithin(milliseconds: 200)) {
-            _ = try await client.readReply()
+        let silent = try await SilentServer.start()
+        let client: LoopbackFTPClient
+        do {
+            client = try await LoopbackFTPClient.connect(
+                host: "127.0.0.1", port: silent.port, replyBound: .milliseconds(200))
+        } catch {
+            await silent.stop()
+            throw error
         }
+        var thrown: LoopbackFTPClientError?
+        do {
+            _ = try await client.readReply()
+        } catch {
+            thrown = error as? LoopbackFTPClientError
+        }
+        // Read before anything is closed: the guarantee the outcome rests on.
+        let stillHeld = silent.isHoldingAnOpenConnection
         await client.close()
+        await silent.stop()
+
+        #expect(stillHeld)
+        #expect(thrown == .noReplyWithin(milliseconds: 200))
     }
 
     /// F13. A transport error reaches the awaiting side as an error that says
@@ -730,5 +881,48 @@ struct LoopbackFTPServerTests {
         // the full-handshake refusal counter did not move.
         #expect(await server.handshakes == [.init(connection: .control, resumed: false)])
         #expect(await server.refusedDataConnectionCount == 0)
+    }
+}
+
+/// A server that accepts every connection, holds it open and never writes.
+/// Not `LoopbackSocket.listening()`: that leaves the connection in the kernel's
+/// accept queue, unaccepted, and its life is the kernel's and the descriptor
+/// owner's. Here the connection is established and owned by this object, so
+/// nothing but `stop()` can close it.
+final class SilentServer: Sendable {
+    let port: Int
+    private let listener: Channel
+    private let held: NIOLockedValueBox<[Channel]>
+
+    private init(port: Int, listener: Channel, held: NIOLockedValueBox<[Channel]>) {
+        self.port = port
+        self.listener = listener
+        self.held = held
+    }
+
+    static func start() async throws -> SilentServer {
+        let held = NIOLockedValueBox<[Channel]>([])
+        let listener = try await awaitCancellably(
+            ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+                .childChannelInitializer { channel in
+                    held.withLockedValue { $0.append(channel) }
+                    return channel.eventLoop.makeSucceededVoidFuture()
+                }
+                .bind(host: "127.0.0.1", port: 0))
+        guard let port = listener.localAddress?.port else {
+            _ = try? await awaitCancellably(listener.close())
+            throw LoopbackFTPServerError.noLocalPort
+        }
+        return SilentServer(port: port, listener: listener, held: held)
+    }
+
+    /// At least one accepted connection exists and every one is still open.
+    var isHoldingAnOpenConnection: Bool {
+        held.withLockedValue { channels in !channels.isEmpty && channels.allSatisfy(\.isActive) }
+    }
+
+    func stop() async {
+        _ = try? await awaitCancellably(listener.close())
+        for channel in held.withLockedValue({ $0 }) { _ = try? await awaitCancellably(channel.close()) }
     }
 }

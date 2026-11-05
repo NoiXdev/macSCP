@@ -9,16 +9,48 @@ import NIOTLS
 
 /// The reading end of a control connection: an async iterator kept in a class
 /// because an actor cannot call a mutating async method on a stored property.
-/// Only the owning client reads from it, one reply at a time.
+///
+/// **Why `@unchecked Sendable` is sound here.** The iterator is the only
+/// mutable state and every access to it is bracketed by `reader`, which traps
+/// on overlap. An actor does NOT give that guarantee for free: it is
+/// re-entrant at every `await`, so two concurrent `readReply()` calls on one
+/// client would both reach this iterator. With the guard that is a named trap;
+/// without it, a data race.
 final class LoopbackLineSource: @unchecked Sendable {
     private var iterator: AsyncStream<ByteBuffer>.Iterator
+    private let reader = LoopbackSingleReaderGuard()
 
     init(_ stream: AsyncStream<ByteBuffer>) {
         iterator = stream.makeAsyncIterator()
     }
 
     func next() async -> ByteBuffer? {
-        await iterator.next()
+        reader.enter("control line source")
+        defer { reader.leave() }
+        return await iterator.next()
+    }
+}
+
+/// The reading end of a data connection, with the same single iterator and the
+/// same soundness argument as `LoopbackLineSource`. `readToEnd()` used to
+/// iterate the stream directly, which makes a new iterator per call: a second
+/// call, or two overlapping ones, is the latent trap that round 1 closed on
+/// the server side only.
+final class LoopbackChunkSource: @unchecked Sendable {
+    private var iterator: AsyncStream<ByteBuffer>.Iterator
+    private let reader = LoopbackSingleReaderGuard()
+
+    init(_ stream: AsyncStream<ByteBuffer>) {
+        iterator = stream.makeAsyncIterator()
+    }
+
+    /// Everything until the stream ends.
+    func drain() async -> Data {
+        reader.enter("data chunk source")
+        defer { reader.leave() }
+        var data = Data()
+        while let chunk = await iterator.next() { data.append(contentsOf: chunk.readableBytesView) }
+        return data
     }
 }
 
@@ -99,9 +131,22 @@ actor LoopbackFTPClient {
     /// the server only after its body returns, so a parked read never reaches
     /// the thing that would unblock it, and a `.timeLimit` that fires on a
     /// saturated runner loses the test's name (CLAUDE.md, the 2026-10-30
-    /// update). The default sits under the suites' five-minute limit so the
-    /// named error arrives first, and above the 131 s a whole saturated suite
-    /// took on the three-core runner, so it measures a hang and not load.
+    /// update). The default sits under a five-minute `.timeLimit` so the named
+    /// error arrives first, and above the 131 s a whole saturated suite took on
+    /// the three-core runner, so it measures a hang and not load.
+    ///
+    /// **A constraint on where this client may be used: a suite that uses it
+    /// must be bounded ABOVE 180 s.** In a suite bounded below that, the
+    /// `.timeLimit` fires first, the step may be killed and the test's name is
+    /// lost -- the failure this bound exists to prevent. The tree is not
+    /// uniform: on 2026-11-05 `/usr/bin/grep -ro 'timeLimit(\.minutes(2))' Tests/ | wc -l`
+    /// printed 27, the same with `minutes(1)` printed 2, and with `minutes(5)`
+    /// printed 157, so 29 suites sit below this bound (CLAUDE.md records the 27
+    /// two-minute ones as deliberately left alone). The client is used today
+    /// only by `LoopbackFTPServerTests`, which is at five minutes
+    /// (`/usr/bin/grep -rl 'LoopbackFTPClient\.' Tests/` lists the files that
+    /// call it), so the bound is attributable today and this is the rule for
+    /// the suites added later.
     static func connect(
         host: String, port: Int, implicitTLS: Bool = false,
         replyBound: TimeAmount = .seconds(180)
@@ -204,10 +249,13 @@ actor LoopbackFTPClient {
         }
         defer { timer.cancel() }
         guard await handshake.wait() else {
-            if end.value == .timedOut {
-                throw Self.explain(.timedOut, bound: replyBound)
+            // The recorded cause first, as the other two waits do: a handshake
+            // that failed with an error says which, and only a bare close
+            // (nothing recorded) is the generic `handshakeFailed`.
+            switch end.value {
+            case .none: throw LoopbackFTPClientError.handshakeFailed
+            case .failed, .timedOut: throw Self.explain(end.value, bound: replyBound)
             }
-            throw LoopbackFTPClientError.handshakeFailed
         }
     }
 
@@ -250,20 +298,35 @@ actor LoopbackFTPClient {
                 }
                 .connect(host: host, port: port))
         return LoopbackFTPClientData(
-            channel: channel, chunks: chunks, deliver: continuation, end: end, bound: replyBound)
+            channel: channel, chunks: LoopbackChunkSource(chunks), deliver: continuation, end: end,
+            bound: replyBound)
     }
 }
 
 /// The client end of one data connection.
 struct LoopbackFTPClientData: Sendable {
     fileprivate let channel: Channel
-    fileprivate let chunks: AsyncStream<ByteBuffer>
+    fileprivate let chunks: LoopbackChunkSource
     fileprivate let deliver: AsyncStream<ByteBuffer>.Continuation
     fileprivate let end: LoopbackClientEnd
     fileprivate let bound: TimeAmount
 
-    /// Reads until the server closes the connection. Throws if the connection
-    /// failed rather than closed, or if the client's hang bound passed first.
+    /// The transport error that ended the connection, if one did (read it after
+    /// `readToEnd()`); nil for a clean close.
+    var transportFailure: String? {
+        if case .failed(let text) = end.value { return text }
+        return nil
+    }
+
+    /// Reads until the server closes the connection, and returns what arrived.
+    ///
+    /// **The bytes win over a transport error.** A transfer that completed and
+    /// was then reset, and one that was cut short, look the same from here (both
+    /// end the stream), so throwing would discard a complete payload to report
+    /// something that cannot be told apart from a truncation -- and a later
+    /// assertion on the payload would fail with nothing to say why. The error
+    /// is recorded instead (`transportFailure`). Only the hang bound throws:
+    /// then no end was observed at all, and there is nothing to return.
     func readToEnd() async throws -> Data {
         let end = self.end
         let deliver = self.deliver
@@ -273,9 +336,8 @@ struct LoopbackFTPClientData: Sendable {
         }
         defer { timer.cancel() }
 
-        var data = Data()
-        for await chunk in chunks { data.append(contentsOf: chunk.readableBytesView) }
-        if end.value != .none { throw LoopbackFTPClient.explain(end.value, bound: bound) }
+        let data = await chunks.drain()
+        if end.value == .timedOut { throw LoopbackFTPClient.explain(.timedOut, bound: bound) }
         return data
     }
 

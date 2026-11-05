@@ -83,7 +83,13 @@ final class LoopbackFTPState: Sendable {
 
         /// Set, under the same lock as the snapshot of `liveChannels`, by
         /// `beginStopping()`. From then on `track(_:)` closes what it is given.
+        /// Cleared by `reset()`, which `start()` calls: see there.
         var stopping = false
+
+        /// The tasks that close channels nobody could be handed (see
+        /// `LoopbackFTPServer.hand`), kept so `stop()` can await them before it
+        /// takes the event loops down.
+        var reapers: [Task<Void, Never>] = []
     }
 
     let box = NIOLockedValueBox(Inner())
@@ -128,6 +134,27 @@ final class LoopbackFTPState: Sendable {
             return Array(inner.liveChannels.values)
         }
     }
+
+    /// Ends the stopping state, so a server can be started again. `stopping` was
+    /// irreversible and `start()` did not clear it: start, stop, start would
+    /// have closed every connection of the second run on arrival, silently.
+    /// What the first run recorded (commands, handshakes, files) is kept on
+    /// purpose; only the flag is a lifecycle fact.
+    func reset() {
+        box.withLockedValue { $0.stopping = false }
+    }
+
+    func addReaper(_ task: Task<Void, Never>) {
+        box.withLockedValue { $0.reapers.append(task) }
+    }
+
+    func takeReapers() -> [Task<Void, Never>] {
+        box.withLockedValue { inner in
+            let taken = inner.reapers
+            inner.reapers = []
+            return taken
+        }
+    }
 }
 
 // MARK: - The server
@@ -159,6 +186,13 @@ actor LoopbackFTPServer {
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let state = LoopbackFTPState()
+
+    /// `idle` before the first `start()` and after a finished `stop()`; the only
+    /// state `start()` accepts. `stopping` exists so a `start()` that arrives
+    /// while a `stop()` is suspended (an actor is re-entrant at every `await`)
+    /// is refused instead of racing it.
+    private enum Lifecycle { case idle, running, stopping }
+    private var lifecycle = Lifecycle.idle
 
     private var group: MultiThreadedEventLoopGroup?
     private var listener: Channel?
@@ -200,8 +234,16 @@ actor LoopbackFTPServer {
     // MARK: Lifecycle
 
     /// Binds `127.0.0.1` on a port the kernel picks and starts accepting.
+    ///
+    /// **A server may be started again after `stop()`**, on a new port with a new
+    /// certificate; what it recorded and the files it holds carry over. Calling
+    /// it on a running or stopping server is a programmer error and traps with
+    /// a message that says so: a restart that silently refused every connection
+    /// was the alternative, and is the polarity-reversed shape of the fail-open
+    /// seam `requiresTLSSessionReuse` was changed to avoid.
     func start() async throws -> (host: String, port: Int) {
-        precondition(group == nil, "start() called twice")
+        precondition(lifecycle == .idle, "start() on a server that is not idle (running or stopping)")
+        state.reset()
 
         if security != .plain {
             let minted = try await Self.mintContext(maximumTLSVersion: maximumTLSVersion)
@@ -252,7 +294,7 @@ actor LoopbackFTPServer {
                             // had not yet seen the event.
                             try pipeline.addHandler(
                                 LoopbackActivationAnnouncer {
-                                    Self.hand(wrapped, to: acceptedContinuation)
+                                    Self.hand(wrapped, to: acceptedContinuation, state: state)
                                 })
                         }
                     }
@@ -266,6 +308,7 @@ actor LoopbackFTPServer {
 
         self.group = group
         self.listener = bound
+        lifecycle = .running
         self.acceptLoop = Task {
             await Self.serve(
                 accepted: accepted, configuration: configuration, state: state,
@@ -290,7 +333,8 @@ actor LoopbackFTPServer {
     /// a log line at each step: "session run returned" printed, "executeThenClose
     /// returned" never did.
     func stop() async {
-        guard let group else { return }
+        guard lifecycle == .running, let group else { return }
+        lifecycle = .stopping
         self.group = nil
         if let listener {
             self.listener = nil
@@ -299,7 +343,15 @@ actor LoopbackFTPServer {
         for channel in state.beginStopping() { _ = try? await awaitCancellably(channel.close()) }
         await acceptLoop?.value
         acceptLoop = nil
+        // The closers of channels that could not be handed to a session (see
+        // `hand`). By now every tracked channel has been closed and its
+        // handlers removed -- the announcer registers a closer from
+        // `handlerRemoved`, before the close future completes -- so none can
+        // be added after this drain; and it runs BEFORE the loops go down,
+        // because closing a channel through `executeThenClose` needs its loop.
+        for reaper in state.takeReapers() { await reaper.value }
         try? await group.shutdownGracefully()
+        lifecycle = .idle
     }
 
     // MARK: Seams
@@ -385,23 +437,34 @@ actor LoopbackFTPServer {
     /// already ended, consumes and closes it. A `NIOAsyncChannel` that is
     /// neither consumed nor closed through `executeThenClose` aborts the process
     /// when it deinitialises ("Deinited NIOAsyncWriter without calling
-    /// finish()"); measured on 2026-11-05 as a crash in about 1 whole-suite run
-    /// in 12 once `stop()` began closing channels still waiting to be announced.
-    fileprivate static func hand(
+    /// finish()"); measured on 2026-11-05 as a crash in 10 of 130 runs of the
+    /// server suite (9 of 100, then 1 of 30) once `stop()` began closing
+    /// channels still waiting to be announced, and in 0 of 120 runs after the
+    /// fix.
+    ///
+    /// **The closer is registered, not detached.** It is a `Task`, and a bare one
+    /// holds the channel, its descriptor and a reference to one loop of this
+    /// server's own group for as long as it lives; if it runs after
+    /// `group.shutdownGracefully()` it is the "task that never runs" that
+    /// `stop()`'s own comment describes, and it never ends. `state` keeps it so
+    /// `stop()` awaits it after the sessions and before the loops go down.
+    static func hand(
         _ channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>,
-        to continuation: AsyncStream<NIOAsyncChannel<ByteBuffer, ByteBuffer>>.Continuation
+        to continuation: AsyncStream<NIOAsyncChannel<ByteBuffer, ByteBuffer>>.Continuation,
+        state: LoopbackFTPState
     ) {
         if case .enqueued = continuation.yield(channel) { return }
-        Task { try? await channel.executeThenClose { _, _ in } }
+        state.addReaper(Task { try? await channel.executeThenClose { _, _ in } })
     }
 
     /// The same for a data connection.
-    fileprivate static func hand(
+    static func hand(
         _ connection: LoopbackFTPDataConnection,
-        to continuation: AsyncStream<LoopbackFTPDataConnection>.Continuation
+        to continuation: AsyncStream<LoopbackFTPDataConnection>.Continuation,
+        state: LoopbackFTPState
     ) {
         if case .enqueued = continuation.yield(connection) { return }
-        Task { try? await connection.channel.executeThenClose { _, _ in } }
+        state.addReaper(Task { try? await connection.channel.executeThenClose { _, _ in } })
     }
 
     private static func serve(
@@ -637,17 +700,46 @@ struct LoopbackFTPDataConnection: Sendable {
     let handshake: EventLoopFuture<Bool>?
 }
 
+/// Traps, with a message that names the cause, when two reads of a
+/// single-consumer `AsyncStream` iterator overlap. The iterator types are not
+/// `Sendable`, so each reader class below holds one behind `@unchecked
+/// Sendable`; this guard is what makes that sound instead of merely
+/// compiling (see each class).
+final class LoopbackSingleReaderGuard: Sendable {
+    private let busy = NIOLockedValueBox(false)
+
+    func enter(_ owner: String) {
+        let overlapped = busy.withLockedValue { flag -> Bool in
+            let was = flag
+            flag = true
+            return was
+        }
+        precondition(!overlapped, "\(owner): two reads overlapped on a single-consumer stream")
+    }
+
+    func leave() {
+        busy.withLockedValue { $0 = false }
+    }
+}
+
 /// The listener a `PASV` or `EPSV` opened: one connection is accepted from it.
 ///
 /// **One iterator, owned here.** The connections arrive on an `AsyncStream`,
 /// which has a single consumer; `next()` and `discard()` used to each make their
 /// own iterator over it, which is the documented way to a runtime trap if the
-/// two ever overlap. Both now go through the one stored iterator. They are only
-/// ever called one after the other, by the session that owns the listener.
+/// two ever overlap. Both now go through the one stored iterator.
+///
+/// **Why `@unchecked Sendable` is sound here, and not just needed.** The
+/// iterator is the only mutable state, and every access to it is bracketed by
+/// `reader`, which traps on overlap. Without it the guarantee would be a
+/// convention ("the owning session calls these one after the other"); with it a
+/// violation is a named trap instead of a data race on the iterator. The
+/// convention still holds: the session that owns the listener is a single task.
 final class LoopbackFTPPassiveListener: @unchecked Sendable {
     let channel: Channel
     let port: Int
     private var connections: AsyncStream<LoopbackFTPDataConnection>.Iterator
+    private let reader = LoopbackSingleReaderGuard()
 
     init(channel: Channel, connections: AsyncStream<LoopbackFTPDataConnection>, port: Int) {
         self.channel = channel
@@ -657,14 +749,20 @@ final class LoopbackFTPPassiveListener: @unchecked Sendable {
 
     /// The next connection, or nil once the listener has closed.
     func next() async -> LoopbackFTPDataConnection? {
-        await connections.next()
+        reader.enter("passive listener")
+        defer { reader.leave() }
+        return await connections.next()
     }
 
     /// Closes the listener and any connection that arrived and was never used.
     func discard() async {
+        reader.enter("passive listener")
+        defer { reader.leave() }
         _ = try? await awaitCancellably(channel.close())
         while let connection = await connections.next() {
-            _ = try? await awaitCancellably(connection.channel.channel.close())
+            // Through `executeThenClose`, like every other wrapper: a
+            // `NIOAsyncChannel` is consumed that way or it can trap.
+            try? await connection.channel.executeThenClose { _, _ in }
         }
     }
 }
@@ -1005,7 +1103,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
                         let connection = LoopbackFTPDataConnection(channel: wrapped, handshake: handshake)
                         try channel.pipeline.syncOperations.addHandler(
                             LoopbackActivationAnnouncer {
-                                LoopbackFTPServer.hand(connection, to: continuation)
+                                LoopbackFTPServer.hand(connection, to: continuation, state: state)
                             })
                     }
                 }
@@ -1078,13 +1176,13 @@ final class LoopbackFTPSession: @unchecked Sendable {
             do {
                 resumed = try await awaitCancellably(handshake)
             } catch {
-                _ = try? await awaitCancellably(data.channel.channel.close())
+                try? await data.channel.executeThenClose { _, _ in }
                 try await send(425, "The TLS handshake on the data connection failed.")
                 return .keepGoing
             }
             if configuration.requiresTLSSessionReuse, !resumed {
                 state.box.withLockedValue { $0.refusedDataConnections += 1 }
-                _ = try? await awaitCancellably(data.channel.channel.close())
+                try? await data.channel.executeThenClose { _, _ in }
                 try await send(522, "SSL connection failed; session reuse required.")
                 return .keepGoing
             }

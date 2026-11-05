@@ -1635,7 +1635,8 @@ ugrep, and none of them has a `$` in its pattern.
   (`/usr/bin/grep -n 'swift-tools-version' .build/checkouts/swift-nio-ssl/Package.swift | head -1`).
   SwiftPM does not fetch a package no built target uses, so it is NOT in the
   graph: `/usr/bin/grep -o 'swift-certificates' Package.resolved | wc -l`
-  prints 0, against 2 for `swift-nio-ssl` (identity and location), and
+  prints 0, against 2 for `/usr/bin/grep -o 'swift-nio-ssl' Package.resolved | wc -l`
+  (identity and location; the control for that zero), and
   `ls .build/checkouts | wc -l` prints 13. Two consequences. A future change
   that makes a target use it pulls `swift-certificates` in, and that is a
   second dependency decision, not a free one. And the tools-version means a
@@ -1705,9 +1706,10 @@ already suggests little, and that is an inference.
 ### Does the linker keep both BoringSSLs? Yes.
 
 Defined symbols carrying each copy's prefix, in the arm64 slice
-(`nm "$S/macSCP.arm64" | /usr/bin/grep -c ' [TtSsDdBb] .*CCryptoBoringSSL_'` and the
-same with `CNIOBoringSSL_`, `$S` as above; `nm` writes one symbol per line, so
-counting lines is counting symbols here):
+(`nm "$S/macSCP.arm64" | /usr/bin/grep -c ' [TtSsDdBb] .*CCryptoBoringSSL_'` prints 1042 and
+`nm "$S/macSCP.arm64" | /usr/bin/grep -c ' [TtSsDdBb] .*CNIOBoringSSL_'` prints 1234,
+`$S` as above; `nm` writes one symbol per line, so counting lines is counting
+symbols here):
 
 | | `CCryptoBoringSSL_` | `CNIOBoringSSL_` |
 |---|---|---|
@@ -1745,8 +1747,9 @@ opinion:
 3. **It cannot upgrade a connection.** `AUTH TLS` is a STARTTLS: TLS starts in
    the middle of an open connection.
    `/usr/bin/grep -o -i -e starttls -e upgrade "$H"/Network.framework/Headers/*.h | wc -l`
-   prints 0, against 72 for `-e tls` over the same files (the control; `$H` as
-   in point 1). An
+   prints 0, against 72 for
+   `/usr/bin/grep -o -i -e tls "$H"/Network.framework/Headers/*.h | wc -l`
+   (the control; `$H` as in point 1). An
    `NWListener` configured with TLS speaks it from the first byte, which is
    implicit FTPS and only that.
 
@@ -1768,8 +1771,9 @@ investigated.
 The design asked whether swift-nio-ssl offers client-side session resumption
 across connections ("not measured", section 7). **It does not offer it at all.**
 `/usr/bin/grep -rn -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET .build/checkouts/swift-nio-ssl/Sources/NIOSSL`
-prints nothing (exit 1), against 1 line for
-`-e SSL_CTX_set_min_proto_version` over the same directory (the control). A
+prints nothing (exit 1), against 1 for
+`/usr/bin/grep -rn -e SSL_CTX_set_min_proto_version .build/checkouts/swift-nio-ssl/Sources/NIOSSL | wc -l`
+(the control: the same directory, a symbol it does use). A
 BoringSSL client offers a session only when told to with `SSL_set_session`, so a
 swift-nio-ssl client always starts a full handshake. The server side is
 unaffected (BoringSSL server tickets and caching are on by default there).
@@ -1814,5 +1818,14 @@ Each quotes the wording it withdraws, verbatim.
   it now asserts the property, and the observation is stated as an observation.
 - Added, not withdrawn: the control beside the CNIOBoringSSL licence-file zero,
   and a second run of the "after" build time.
+
+### Corrections, Task 4 fix round 2
+
+- Added, not withdrawn: a committed command beside each of four figures that
+  stood without one in round 1 (the `CNIOBoringSSL_` symbol count, the 2
+  `swift-nio-ssl` occurrences, the 72 `tls` occurrences in the Network.framework
+  headers, the 1 `SSL_CTX_set_min_proto_version` line). Three of the four are
+  controls for a zero, the class round 1 opened F6 for. All four were run from
+  the committed text afterwards and printed 1234, 2, 72 and 1.
 
 **Review date:** at the next release, and when Task 5 reports.
