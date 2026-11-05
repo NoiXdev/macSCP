@@ -26,8 +26,37 @@ final class LoopbackLineSource: @unchecked Sendable {
 enum LoopbackFTPClientError: Error, Equatable {
     /// The peer closed the connection before a whole reply arrived.
     case connectionClosed
+    /// The connection failed with an error rather than closing. The text is the
+    /// transport's own description, never anything the server sent.
+    case connectionFailed(String)
     /// The TLS handshake did not complete.
     case handshakeFailed
+    /// Nothing that ended the wait arrived within the client's hang bound.
+    case noReplyWithin(milliseconds: Int64)
+}
+
+/// Why a client's stream ended, when it was not the peer closing cleanly:
+/// a transport error, or the hang bound firing. Written from event-loop
+/// callbacks, read by the awaiting side; without it a swallowed error and a
+/// quiet stream look the same from where the test is waiting.
+final class LoopbackClientEnd: Sendable {
+    enum Cause: Sendable, Equatable {
+        case none
+        case failed(String)
+        case timedOut
+    }
+
+    private let cause = NIOLockedValueBox(Cause.none)
+
+    var value: Cause { cause.withLockedValue { $0 } }
+
+    func noteError(_ error: Error) {
+        cause.withLockedValue { if $0 == .none { $0 = .failed("\(error)") } }
+    }
+
+    func noteTimeout() {
+        cause.withLockedValue { if $0 == .none { $0 = .timedOut } }
+    }
 }
 
 /// A minimal FTP client for the loopback server's own tests: just enough
@@ -41,22 +70,45 @@ enum LoopbackFTPClientError: Error, Equatable {
 actor LoopbackFTPClient {
     private let channel: Channel
     private let lines: LoopbackLineSource
+    private let deliver: AsyncStream<ByteBuffer>.Continuation
     private let handshake: LoopbackClientHandshake
+    private let end: LoopbackClientEnd
+    private let replyBound: TimeAmount
 
     private init(
-        channel: Channel, lines: AsyncStream<ByteBuffer>, handshake: LoopbackClientHandshake
+        channel: Channel, lines: AsyncStream<ByteBuffer>,
+        deliver: AsyncStream<ByteBuffer>.Continuation, handshake: LoopbackClientHandshake,
+        end: LoopbackClientEnd, replyBound: TimeAmount
     ) {
         self.channel = channel
         self.lines = LoopbackLineSource(lines)
+        self.deliver = deliver
         self.handshake = handshake
+        self.end = end
+        self.replyBound = replyBound
     }
 
     /// Connects to `host:port`. With `implicitTLS` the TLS handshake starts at
     /// once, as an implicit-FTPS client's does; the greeting is then the first
     /// thing `readReply()` returns.
-    static func connect(host: String, port: Int, implicitTLS: Bool = false) async throws -> LoopbackFTPClient {
+    ///
+    /// `replyBound` is a HANG bound, not an assertion about speed: a wait that
+    /// outlasts it throws `noReplyWithin` instead of parking the test. Nothing
+    /// asserts how long a reply took, so it is not the wall-clock ceiling the
+    /// project forbids; it exists because `LoopbackFTPServerTests.running` stops
+    /// the server only after its body returns, so a parked read never reaches
+    /// the thing that would unblock it, and a `.timeLimit` that fires on a
+    /// saturated runner loses the test's name (CLAUDE.md, the 2026-10-30
+    /// update). The default sits under the suites' five-minute limit so the
+    /// named error arrives first, and above the 131 s a whole saturated suite
+    /// took on the three-core runner, so it measures a hang and not load.
+    static func connect(
+        host: String, port: Int, implicitTLS: Bool = false,
+        replyBound: TimeAmount = .seconds(180)
+    ) async throws -> LoopbackFTPClient {
         let (lines, continuation) = AsyncStream.makeStream(of: ByteBuffer.self)
         let handshake = LoopbackClientHandshake()
+        let end = LoopbackClientEnd()
         let tlsContext = implicitTLS ? try Self.makeContext() : nil
 
         let channel = try await awaitCancellably(
@@ -70,11 +122,13 @@ actor LoopbackFTPClient {
                         }
                         try pipeline.addHandler(ByteToMessageHandler(CRLFLineDecoder()))
                         try pipeline.addHandler(
-                            LoopbackClientSink(deliver: continuation, handshake: handshake))
+                            LoopbackClientSink(deliver: continuation, handshake: handshake, end: end))
                     }
                 }
                 .connect(host: host, port: port))
-        let client = LoopbackFTPClient(channel: channel, lines: lines, handshake: handshake)
+        let client = LoopbackFTPClient(
+            channel: channel, lines: lines, deliver: continuation, handshake: handshake,
+            end: end, replyBound: replyBound)
         if implicitTLS { try await client.waitForHandshake() }
         return client
     }
@@ -95,13 +149,32 @@ actor LoopbackFTPClient {
 
     /// Reads one complete reply, joining a multiline one.
     func readReply() async throws -> FTPReply {
+        let end = self.end
+        let deliver = self.deliver
+        let timer = channel.eventLoop.scheduleTask(in: replyBound) {
+            end.noteTimeout()
+            deliver.finish()
+        }
+        defer { timer.cancel() }
+
         var partial: [String] = []
         while let buffer = await lines.next() {
             if let reply = try FTPReplyAccumulator.feed(String(buffer: buffer), into: &partial) {
                 return reply
             }
         }
-        throw LoopbackFTPClientError.connectionClosed
+        throw Self.explain(end.value, bound: replyBound)
+    }
+
+    /// The error for a stream that ended: what ended it.
+    fileprivate static func explain(
+        _ cause: LoopbackClientEnd.Cause, bound: TimeAmount
+    ) -> LoopbackFTPClientError {
+        switch cause {
+        case .none: return .connectionClosed
+        case .failed(let text): return .connectionFailed(text)
+        case .timedOut: return .noReplyWithin(milliseconds: bound.nanoseconds / 1_000_000)
+        }
     }
 
     /// `send` then `readReply`.
@@ -123,7 +196,19 @@ actor LoopbackFTPClient {
     }
 
     private func waitForHandshake() async throws {
-        guard await handshake.wait() else { throw LoopbackFTPClientError.handshakeFailed }
+        let end = self.end
+        let handshake = self.handshake
+        let timer = channel.eventLoop.scheduleTask(in: replyBound) {
+            end.noteTimeout()
+            handshake.settle(false)
+        }
+        defer { timer.cancel() }
+        guard await handshake.wait() else {
+            if end.value == .timedOut {
+                throw Self.explain(.timedOut, bound: replyBound)
+            }
+            throw LoopbackFTPClientError.handshakeFailed
+        }
     }
 
     /// Logs in with the credentials; returns the reply to `PASS`.
@@ -145,7 +230,10 @@ actor LoopbackFTPClient {
     /// "swift-nio-ssl").
     func openData(host: String, port: Int, protected: Bool) async throws -> LoopbackFTPClientData {
         let (chunks, continuation) = AsyncStream.makeStream(of: ByteBuffer.self)
+        // A data connection's handshake is observed from the server's side;
+        // the sink still wants an object to report to.
         let handshake = LoopbackClientHandshake()
+        let end = LoopbackClientEnd()
         let tlsContext = protected ? try Self.makeContext() : nil
         let channel = try await awaitCancellably(
             ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -157,12 +245,12 @@ actor LoopbackFTPClient {
                                 NIOSSLClientHandler(context: tlsContext, serverHostname: nil))
                         }
                         try pipeline.addHandler(
-                            LoopbackClientSink(deliver: continuation, handshake: handshake))
+                            LoopbackClientSink(deliver: continuation, handshake: handshake, end: end))
                     }
                 }
                 .connect(host: host, port: port))
         return LoopbackFTPClientData(
-            channel: channel, chunks: chunks, handshake: handshake, isProtected: protected)
+            channel: channel, chunks: chunks, deliver: continuation, end: end, bound: replyBound)
     }
 }
 
@@ -170,17 +258,24 @@ actor LoopbackFTPClient {
 struct LoopbackFTPClientData: Sendable {
     fileprivate let channel: Channel
     fileprivate let chunks: AsyncStream<ByteBuffer>
-    fileprivate let handshake: LoopbackClientHandshake
-    let isProtected: Bool
+    fileprivate let deliver: AsyncStream<ByteBuffer>.Continuation
+    fileprivate let end: LoopbackClientEnd
+    fileprivate let bound: TimeAmount
 
-    /// True once the TLS handshake finished; false if the connection ended
-    /// first. Meaningful for a protected connection only.
-    func handshakeCompleted() async -> Bool { await handshake.wait() }
+    /// Reads until the server closes the connection. Throws if the connection
+    /// failed rather than closed, or if the client's hang bound passed first.
+    func readToEnd() async throws -> Data {
+        let end = self.end
+        let deliver = self.deliver
+        let timer = channel.eventLoop.scheduleTask(in: bound) {
+            end.noteTimeout()
+            deliver.finish()
+        }
+        defer { timer.cancel() }
 
-    /// Reads until the server closes the connection.
-    func readToEnd() async -> Data {
         var data = Data()
         for await chunk in chunks { data.append(contentsOf: chunk.readableBytesView) }
+        if end.value != .none { throw LoopbackFTPClient.explain(end.value, bound: bound) }
         return data
     }
 
@@ -221,10 +316,15 @@ final class LoopbackClientSink: ChannelInboundHandler, @unchecked Sendable {
 
     private let deliver: AsyncStream<ByteBuffer>.Continuation
     private let handshake: LoopbackClientHandshake
+    private let end: LoopbackClientEnd
 
-    init(deliver: AsyncStream<ByteBuffer>.Continuation, handshake: LoopbackClientHandshake) {
+    init(
+        deliver: AsyncStream<ByteBuffer>.Continuation, handshake: LoopbackClientHandshake,
+        end: LoopbackClientEnd
+    ) {
         self.deliver = deliver
         self.handshake = handshake
+        self.end = end
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -245,6 +345,9 @@ final class LoopbackClientSink: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
+        // Recorded where the awaiting side can read it: swallowed, this is the
+        // same unattributable hang as a missing hang bound, by another route.
+        end.noteError(error)
         handshake.settle(false)
         deliver.finish()
         context.close(promise: nil)

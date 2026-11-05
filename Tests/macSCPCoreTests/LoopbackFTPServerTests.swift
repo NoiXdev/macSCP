@@ -1,4 +1,7 @@
 import Foundation
+import MacSCPTestSupport
+import NIOCore
+import NIOPosix
 import Testing
 
 @testable import macSCPCore
@@ -138,8 +141,12 @@ struct LoopbackFTPServerTests {
         }
 
         let commands = await server.receivedCommands
-        let password = try #require(commands.first { $0.verb == "PASS" })
-        #expect(password.overTLS)
+        // A Bool, computed first: a failed `#expect` on a record would print the
+        // record, and the record is what the redaction exists to keep clean.
+        let passwordsOverTLS = commands.filter { $0.verb == "PASS" }.allSatisfy(\.overTLS)
+        let passwordSeen = commands.contains { $0.verb == "PASS" }
+        #expect(passwordSeen)
+        #expect(passwordsOverTLS)
         // The upgrade happened exactly once, on the control connection, and
         // it was a full handshake (nothing to resume yet).
         #expect(await server.handshakes == [.init(connection: .control, resumed: false)])
@@ -166,8 +173,10 @@ struct LoopbackFTPServerTests {
         }
 
         let commands = await server.receivedCommands
-        let password = try #require(commands.first { $0.verb == "PASS" })
-        #expect(password.overTLS)
+        let passwordsOverTLS = commands.filter { $0.verb == "PASS" }.allSatisfy(\.overTLS)
+        let passwordSeen = commands.contains { $0.verb == "PASS" }
+        #expect(passwordSeen)
+        #expect(passwordsOverTLS)
         #expect(await server.handshakes.first == .init(connection: .control, resumed: false))
     }
 
@@ -284,7 +293,7 @@ struct LoopbackFTPServerTests {
             try await client.send("RETR big.bin")
             #expect(try await client.readReply().code == 150)
 
-            let received = await data.readToEnd()
+            let received = try await data.readToEnd()
             #expect(received.count == content.count / 2)
             await #expect(throws: LoopbackFTPClientError.connectionClosed) {
                 _ = try await client.readReply()
@@ -314,7 +323,7 @@ struct LoopbackFTPServerTests {
             let list = try await passive()
             try await client.send("LIST /docs")
             #expect(try await client.readReply().code == 150)
-            let listing = String(decoding: await list.readToEnd(), as: UTF8.self)
+            let listing = String(decoding: try await list.readToEnd(), as: UTF8.self)
             #expect(try await client.readReply().code == 226)
             #expect(listing.contains("readme.txt"))
             #expect(listing.contains("5 Jan"))
@@ -322,7 +331,7 @@ struct LoopbackFTPServerTests {
             let facts = try await passive()
             try await client.send("MLSD /docs")
             #expect(try await client.readReply().code == 150)
-            let mlsd = String(decoding: await facts.readToEnd(), as: UTF8.self)
+            let mlsd = String(decoding: try await facts.readToEnd(), as: UTF8.self)
             #expect(try await client.readReply().code == 226)
             #expect(mlsd.contains("type=file;size=5;"))
 
@@ -338,7 +347,7 @@ struct LoopbackFTPServerTests {
             let download = try await passive()
             try await client.send("RETR /docs/new.bin")
             #expect(try await client.readReply().code == 150)
-            #expect(await download.readToEnd() == Data([1, 2, 3, 4]))
+            #expect(try await download.readToEnd() == Data([1, 2, 3, 4]))
             #expect(try await client.readReply().code == 226)
 
             #expect(try await client.command("DELE /docs/new.bin").code == 250)
@@ -401,7 +410,7 @@ struct LoopbackFTPServerTests {
         try await client.send("LIST")
         let outcome = try await client.readReply()
         if outcome.code == 150 {
-            _ = await data.readToEnd()
+            _ = try await data.readToEnd()
             _ = try await client.readReply()
         }
         await data.close()
@@ -411,9 +420,9 @@ struct LoopbackFTPServerTests {
 
     /// The positive control for the whole seam: a client that DOES resume, and
     /// the server telling the two kinds of handshake apart. `openssl s_client
-    /// -reconnect` makes one full handshake and five that offer the first
-    /// session again; its own report ("New" once, "Reused" five times) is the
-    /// oracle, independent of the inspector under test. Pinned to TLS 1.2,
+    /// -reconnect` makes one full handshake and several that offer the first
+    /// session again; its own report ("New" once, "Reused" for each of the
+    /// others) is the oracle, independent of the inspector under test. Pinned to TLS 1.2,
     /// where LibreSSL's `-reconnect` completes (a TLS 1.3 run of the same
     /// command against a Network.framework listener was killed after 90 s
     /// without finishing and is not measured).
@@ -439,13 +448,17 @@ struct LoopbackFTPServerTests {
         let report = result.stdoutText.split(separator: "\n")
         let clientNew = report.filter { $0.hasPrefix("New,") }.count
         let clientReused = report.filter { $0.hasPrefix("Reused,") }.count
+        // The property, not the count `-reconnect` happens to use: the client
+        // made one full handshake and at least one resumption, and the server
+        // saw exactly the same split, in the same order.
         #expect(clientNew == 1)
-        #expect(clientReused == 5)
+        #expect(clientReused >= 1)
 
         let handshakes = await server.handshakes
-        #expect(handshakes.count == 6)
-        #expect(handshakes.first == .init(connection: .control, resumed: false))
-        #expect(handshakes.dropFirst().allSatisfy { $0 == .init(connection: .control, resumed: true) })
+        let expected =
+            [LoopbackFTPHandshake(connection: .control, resumed: false)]
+            + Array(repeating: LoopbackFTPHandshake(connection: .control, resumed: true), count: clientReused)
+        #expect(handshakes == expected)
     }
 
     /// The acceptance half of the `require_ssl_reuse` seam, which needs a client
@@ -557,5 +570,165 @@ struct LoopbackFTPServerTests {
         #expect(await server.refusedDataConnectionCount == 0)
         #expect(await server.handshakes.last == .init(connection: .data, resumed: false))
     }
-}
 
+    // MARK: Fix round 1
+
+    /// F11. `PASS`'s argument is what keeps a credential out of every record this
+    /// server hands back, and so out of any failure report that prints one.
+    @Test func thePASSArgumentIsRedactedInEveryRecordAndOnlyThatOne() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let credentials = server.credentials
+        try await Self.running(server) { host, port in
+            let client = try await LoopbackFTPClient.connect(host: host, port: port)
+            _ = try await client.readReply()
+            _ = try await client.login(credentials)
+            // A second attempt with a different secret: redaction must not
+            // depend on the attempt having succeeded.
+            _ = try await client.command("PASS another-attempt-value")
+            await client.close()
+        }
+        let commands = await server.receivedCommands
+
+        let passRecords = commands.filter { $0.verb == "PASS" }
+        // Computed first; a failed `#expect` on a record would print it.
+        let allRedacted = passRecords.allSatisfy { $0.argument == "<redacted>" }
+        let anyFieldCarriesIt = commands.contains {
+            $0.argument.contains(credentials.password) || $0.verb.contains(credentials.password)
+        }
+        let anyFieldCarriesTheOtherAttempt = commands.contains {
+            $0.argument.contains("another-attempt-value")
+        }
+        let usernameKept = commands.contains {
+            $0.verb == "USER" && $0.argument == credentials.username
+        }
+        #expect(passRecords.count == 2)
+        #expect(allRedacted)
+        #expect(anyFieldCarriesIt == false)
+        #expect(anyFieldCarriesTheOtherAttempt == false)
+        // The positive beside the negatives: the log does record arguments, so
+        // "no record carries the password" is a statement about redaction and
+        // not about an empty log.
+        #expect(usernameKept)
+    }
+
+    /// F2, the deterministic half: the invariant lives in the state that owns
+    /// the set. A channel is either in the snapshot `beginStopping()` returns or
+    /// is closed by the call that registers it; the window `stop()` used to
+    /// leave open between snapshot and shutdown does not exist.
+    @Test func aChannelTrackedAfterStoppingBeginsIsClosedByTheCall() async throws {
+        let state = LoopbackFTPState()
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let before = try await awaitCancellably(
+            ServerBootstrap(group: group).bind(host: "127.0.0.1", port: 0))
+        state.track(before)
+        let snapshot = state.beginStopping()
+        let after = try await awaitCancellably(
+            ServerBootstrap(group: group).bind(host: "127.0.0.1", port: 0))
+        state.track(after)
+
+        // `track` closes from outside the loop by scheduling onto it, so a
+        // task submitted to the same loop afterwards runs after that close.
+        let afterIsActive = try await awaitCancellably(after.eventLoop.submit { after.isActive })
+        let beforeIsActive = try await awaitCancellably(before.eventLoop.submit { before.isActive })
+
+        // The positive beside the negative: a channel tracked before the flag
+        // is in the snapshot and untouched -- closing it is `stop()`'s job.
+        #expect(snapshot.count == 1)
+        #expect(beforeIsActive)
+        #expect(afterIsActive == false)
+
+        _ = try await awaitCancellably(before.close())
+        try await group.shutdownGracefully()
+    }
+
+    /// F2, the integration half. No deadline on `stop()`: if the race returns,
+    /// this hangs until the suite's limit and fails there, by name. It is not
+    /// reproduced to fail on the old code -- see the state test above for the
+    /// pin; this exercises the shape the review reasoned about.
+    @Test func stoppingWhileAPassiveTransferIsPipelinedReturns() async throws {
+        var stopped = 0
+        for _ in 0..<20 {
+            let server = LoopbackFTPServer(
+                security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+            let credentials = server.credentials
+            await server.seedFile("/f", contents: Data("x".utf8))
+            let endpoint = try await server.start()
+            let client = try await LoopbackFTPClient.connect(host: endpoint.host, port: endpoint.port)
+            _ = try await client.readReply()
+            _ = try await client.login(credentials)
+            // Two commands in one write, so the session binds a listener and
+            // goes straight to waiting for a connection that will not come.
+            try await client.send("PASV\r\nRETR /f")
+            await server.stop()
+            await client.close()
+            stopped += 1
+        }
+        #expect(stopped == 20)
+    }
+
+    /// F3. The client's hang bound turns a silent peer into a named error.
+    /// A listening socket nobody accepts from completes the TCP handshake and
+    /// never speaks. The bound is short here because it is the thing tested;
+    /// what is asserted is the error, which lateness cannot change.
+    @Test func aSilentPeerEndsTheClientsWaitWithANamedError() async throws {
+        let silent = try #require(LoopbackSocket.listening())
+        defer { silent.close() }
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .milliseconds(200))
+        await #expect(throws: LoopbackFTPClientError.noReplyWithin(milliseconds: 200)) {
+            _ = try await client.readReply()
+        }
+        await client.close()
+    }
+
+    /// F13. A transport error reaches the awaiting side as an error that says
+    /// so, not as a quiet end of stream. Closing a listening socket resets the
+    /// connection nobody accepted from it; on macOS that surfaces to the client
+    /// as ECONNRESET (every one of the 6 probe runs that logged an outcome), which
+    /// is the platform dependence of this test.
+    @Test func aTransportErrorEndsTheClientsWaitAsAFailureNotAsAClose() async throws {
+        let silent = try #require(LoopbackSocket.listening())
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        silent.close()
+        var failed = false
+        do {
+            _ = try await client.readReply()
+        } catch let LoopbackFTPClientError.connectionFailed(description) {
+            failed = !description.isEmpty
+        } catch {
+            failed = false
+        }
+        #expect(failed)
+        await client.close()
+    }
+
+    /// F4. `requiresTLSSessionReuse` is paired with protected data: a session
+    /// that never issues `PROT P` is refused, not waved through.
+    @Test func aServerThatRequiresSessionReuseRefusesClearData() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
+        let credentials = server.credentials
+        let reply = try await Self.running(server) { host, port in
+            let client = try await LoopbackFTPClient.connect(host: host, port: port)
+            _ = try await client.readReply()
+            _ = try await client.command("AUTH TLS")
+            try await client.startTLS()
+            _ = try await client.command("PBSZ 0")
+            #expect(try await client.command("PROT C").code == 200)
+            _ = try await client.login(credentials)
+            let endpoint = try Self.passiveEndpoint(try await client.command("PASV"))
+            let data = try await client.openData(host: host, port: endpoint.port, protected: false)
+            let reply = try await client.command("LIST")
+            await data.close()
+            await client.close()
+            return reply
+        }
+        #expect(reply.code == 522)
+        // Refused before any data connection was used: no data handshake, and
+        // the full-handshake refusal counter did not move.
+        #expect(await server.handshakes == [.init(connection: .control, resumed: false)])
+        #expect(await server.refusedDataConnectionCount == 0)
+    }
+}

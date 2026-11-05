@@ -29,6 +29,21 @@ import Foundation
 ///   a `NewSessionTicket` (type 4) or, right away, a `ChangeCipherSpec`
 ///   record (content type 20).
 ///
+/// **The TLS 1.2 default is fail-open in direction, and has been reasoned
+/// through (review of Task 4, 2026-11-05).** Anything after a TLS 1.2
+/// `ServerHello` that is not a `Certificate` reads as "resumed". A full
+/// handshake the server performs always puts its `Certificate` next, so it
+/// cannot be misread that way; the `NewSessionTicket` of RFC 5077 comes in a
+/// full handshake only AFTER the `Certificate` and the key exchange, i.e. after
+/// this verdict is already fixed. TLS 1.3 cannot reach the default at all: a
+/// 1.3 `ServerHello` always carries `supported_versions` selecting 1.3, so it is
+/// decided on the 1.3 branch. The one gap is a certificate-less TLS 1.2 suite
+/// (anonymous or pre-shared-key), where a full handshake sends no `Certificate`
+/// and would read as resumed; swift-nio-ssl does not negotiate those, so it is
+/// unmeasured rather than reachable. The consequence of a misread in that
+/// direction is a refusal turned into an acceptance by the loopback server's
+/// gate, which is why it is written down and not left implicit.
+///
 /// A `HelloRetryRequest` is also shaped like a `ServerHello`; its fixed
 /// random (RFC 8446 section 4.1.3) is recognised and skipped, so a retried
 /// handshake is judged on the `ServerHello` that follows it.

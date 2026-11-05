@@ -1610,9 +1610,14 @@ connection, implicit FTPS wraps it from the first byte. Task 4 of the plan adds
 direct dependency, to `macSCPCore` and `macSCPCoreTests`. The in-process FTP
 server of the tests (`Tests/macSCPCoreTests/Support/LoopbackFTPServer.swift`)
 is built on it. Machine: macOS 27.0.1, Xcode 27.2 (Swift 6.4.2), 10 cores.
-Every figure below is followed by the command that produced it; the greps are
-`/usr/bin/grep` (BSD), not the session's ugrep, and none of them has a `$` in
-its pattern.
+Every figure below is followed by a command, written to run as committed from
+the repository root (fix round 1 of Task 4 re-ran each one; a placeholder in
+angle brackets had made three of them a shell parse error). Two kinds of figure
+cannot be re-derived from this tree alone, and say so where they stand: the
+"before" figures, which were taken on `48d1adb1` and need that tree checked out
+(and `scripts/package-app` or the build run on it), and the build times, which
+are a `time` of one run. The greps are `/usr/bin/grep` (BSD), not the session's
+ugrep, and none of them has a `$` in its pattern.
 
 ### The graph
 
@@ -1621,7 +1626,7 @@ its pattern.
   prints 8; `/usr/bin/grep -o 'package(url:' Package.swift | wc -l` prints 9.
 - Pinned identities: **12 before, 13 after**.
   `git show 48d1adb1:Package.resolved | /usr/bin/grep -o '"identity"' | wc -l`
-  prints 12; the same on `Package.resolved` prints 13.
+  prints 12; `/usr/bin/grep -o '"identity"' Package.resolved | wc -l` prints 13.
 - The brief said the 13th is "swift-nio-ssl, which depends on swift-nio, already
   there". Half of that is wrong. Resolved to **2.37.6**, swift-nio-ssl also
   DECLARES a dependency on `swift-certificates`
@@ -1643,19 +1648,30 @@ its pattern.
   `find .build/checkouts/swift-nio-ssl/Sources/CNIOBoringSSL -iname '*LICENSE*' -o -iname '*LICENCE*' -o -iname '*COPYING*' -o -iname '*NOTICE*' | wc -l`
   prints 0, the same shape as the swift-crypto finding of 2026-09-03
   above. The notices therefore hold swift-nio-ssl's own `LICENSE.txt` and do not
-  name BoringSSL separately.
+  name BoringSSL separately. **The control beside that zero** (a zero is believed
+  only after the pattern has been fed something it must match): the same four
+  `-iname` branches over the whole checkout,
+  `find .build/checkouts/swift-nio-ssl -iname '*LICENSE*' -o -iname '*LICENCE*' -o -iname '*COPYING*' -o -iname '*NOTICE*' | wc -l`,
+  prints 3 (`LICENSE.txt`, `NOTICE.txt` and a `.licenseignore`, all at the top), and all four branches
+  print on a directory built for the purpose:
+  `D=$(mktemp -d); touch "$D/LICENSE" "$D/LICENCE" "$D/COPYING" "$D/NOTICE" "$D/other"; find "$D" -iname '*LICENSE*' -o -iname '*LICENCE*' -o -iname '*COPYING*' -o -iname '*NOTICE*' | wc -l; rm -r "$D"`
+  prints 4.
 
 ### Clean build time
 
 Emptied scratch directory each time (`--scratch-path`, so the worktree's own
 `.build` stays usable), resolved first so the clone time is not in the figure:
-`swift package resolve --scratch-path S`, then `time swift build --scratch-path S`.
-Debug configuration, one run each, so **the run-to-run spread is not measured**.
+`S=$(mktemp -d); swift package resolve --scratch-path "$S"`, then
+`time swift build --scratch-path "$S"`. Debug configuration, one run each for
+the first two rows, so **the run-to-run spread was not measured for them**; a
+second run of "after" (fix round 1, same machine) is the third row, the only
+spread datum there is.
 
 | | real | user |
 |---|---|---|
 | before (48d1adb1) | 54.396 s | 4m52.273s |
 | after | 67.257 s | 6m26.460s |
+| after, second run | 69.480 s | 6m30.349s |
 
 That is +12.861 s real (+23.6 %) and +94.187 s of CPU (+32.2 %), for a package
 that compiles a second BoringSSL.
@@ -1671,9 +1687,14 @@ holds, `ls -l dist/macSCP.app/Contents/MacOS/`:
 | `macSCP` | 88,876,872 | 95,369,000 | +6,492,128 |
 | `macscp-cli` | 52,451,784 | 58,944,616 | +6,492,832 |
 
-One arm64 slice (`lipo dist/macSCP.app/Contents/MacOS/macSCP -thin arm64 -output S/macSCP.arm64`
-then `ls -l S/macSCP.arm64`): 43,984,712 to 47,085,352, +3,100,640 bytes; its
-`__TEXT` segment (`size -m S/macSCP.arm64`) 16,498,688 to 18,055,168. Not
+One arm64 slice
+(`S=$(mktemp -d); lipo dist/macSCP.app/Contents/MacOS/macSCP -thin arm64 -output "$S/macSCP.arm64"`
+then `ls -l "$S/macSCP.arm64"`): 43,984,712 to 47,085,352, +3,100,640 bytes; its
+`__TEXT` segment (`size -m "$S/macSCP.arm64" | /usr/bin/grep 'Segment __TEXT'`)
+16,498,688 to 18,055,168. The "after" figures reproduce from the `dist/` of a
+tree carrying this change (re-run in fix round 1: 151820, 95,369,000,
+58,944,616, 47,085,352, 18,055,168); the "before" ones need `48d1adb1` built.
+Not
 startling, and no reason to prefer Network.framework on this evidence. **What
 the figure is:** the product is DECLARED in `macSCPCore`, and nothing in
 `Sources/` imports it yet (Task 5 will), so this is the cost of linking it. The
@@ -1684,9 +1705,9 @@ already suggests little, and that is an inference.
 ### Does the linker keep both BoringSSLs? Yes.
 
 Defined symbols carrying each copy's prefix, in the arm64 slice
-(`nm S/macSCP.arm64 | /usr/bin/grep -c ' [TtSsDdBb] .*CCryptoBoringSSL_'` and the
-same with `CNIOBoringSSL_`; `nm` writes one symbol per line, so counting lines
-is counting symbols here):
+(`nm "$S/macSCP.arm64" | /usr/bin/grep -c ' [TtSsDdBb] .*CCryptoBoringSSL_'` and the
+same with `CNIOBoringSSL_`, `$S` as above; `nm` writes one symbol per line, so
+counting lines is counting symbols here):
 
 | | `CCryptoBoringSSL_` | `CNIOBoringSSL_` |
 |---|---|---|
@@ -1705,20 +1726,27 @@ connection's TLS session and (b) refuse it when it did not (vsftpd's
 `require_ssl_reuse`, which defaults to on). Three measurements, none of them an
 opinion:
 
-1. **The metadata has no such accessor.** The TLS metadata of a connection is
-   read through `sec_protocol_metadata_*`: `/usr/bin/grep -o 'sec_protocol_metadata_[a-z_]*(' <SecProtocolMetadata.h> | sort -u | wc -l`
-   prints 19 (header: `MacOSX27.2.sdk/System/Library/Frameworks/Security.framework/Headers/SecProtocolMetadata.h`
-   in Xcode.app), and `/usr/bin/grep -o -i -e resum -e ticket -e session <same header> | wc -l`
-   prints 0. The options header has setters only
-   (`sec_protocol_options_set_tls_tickets_enabled`, `..._resumption_enabled`).
+1. **The metadata has no such accessor.** With the SDK's frameworks directory in
+   a variable (one line, so every command below runs as written):
+   `H=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk/System/Library/Frameworks`.
+   The TLS metadata of a connection is read through `sec_protocol_metadata_*`:
+   `/usr/bin/grep -o 'sec_protocol_metadata_[a-z_]*(' "$H/Security.framework/Headers/SecProtocolMetadata.h" | sort -u | wc -l`
+   prints 19, and
+   `/usr/bin/grep -o -i -e resum -e ticket -e session "$H/Security.framework/Headers/SecProtocolMetadata.h" | wc -l`
+   prints 0. The control for that zero, the same words in the options header:
+   `/usr/bin/grep -o -i -e resum -e ticket "$H/Security.framework/Headers/SecProtocolOptions.h" | wc -l`
+   prints 12 (setters only: `sec_protocol_options_set_tls_tickets_enabled`,
+   `..._resumption_enabled`).
 2. **A probe agreed.** A throwaway `NWListener` with a TLS identity, driven by
    `openssl s_client -reconnect -tls1_2`, whose own report was one `New,` and
    five `Reused,` lines: the listener's metadata (version, ciphersuite, PSK count,
    early-data flag) was identical for all six connections. The probe source was
    not committed; it is described here, not reproducible from the tree.
 3. **It cannot upgrade a connection.** `AUTH TLS` is a STARTTLS: TLS starts in
-   the middle of an open connection. `/usr/bin/grep -o -i -e starttls -e upgrade <Network.framework/Headers/*.h> | wc -l`
-   prints 0, against 72 for `-e tls` over the same files (the control). An
+   the middle of an open connection.
+   `/usr/bin/grep -o -i -e starttls -e upgrade "$H"/Network.framework/Headers/*.h | wc -l`
+   prints 0, against 72 for `-e tls` over the same files (the control; `$H` as
+   in point 1). An
    `NWListener` configured with TLS speaks it from the first byte, which is
    implicit FTPS and only that.
 
@@ -1727,8 +1755,9 @@ reads the server's own `ServerHello` flight (pre_shared_key extension in TLS 1.3
 Certificate versus ChangeCipherSpec/NewSessionTicket in TLS 1.2). It is checked
 against a client that really resumes, `openssl s_client -reconnect`, whose
 "New"/"Reused" report is the oracle:
-`LoopbackFTPServerTests.theServerReadsAResumedHandshakeOffTheWire` (6 handshakes
-seen: one full, five resumed). TLS 1.3 is exercised by synthetic hellos in
+`LoopbackFTPServerTests.theServerReadsAResumedHandshakeOffTheWire` (observed on
+2026-11-05: one full handshake and five resumed; since fix round 1 the test
+asserts the split the client reports, not the number five). TLS 1.3 is exercised by synthetic hellos in
 `TLSResumptionInspectorTests` and by NIOSSL's own default, but NOT against a
 resuming TLS 1.3 client: LibreSSL's `s_client -reconnect -tls1_3` against the
 probe listener in (2) did not finish in 90 s and was killed, cause not
@@ -1767,5 +1796,23 @@ same flow, `522`).
 One limit of the server's check, stated so it is not read as more: it enforces
 "this data handshake resumed SOME session this server issued", which is all the
 wire shows. It does not check that the session is the control connection's own.
+
+### Corrections, Task 4 fix round 1
+
+Each quotes the wording it withdraws, verbatim.
+
+- Withdrawn: "Every figure below is followed by the command that produced it".
+  Three of the commands were not runnable (`<SecProtocolMetadata.h>`,
+  `<same header>`, `<Network.framework/Headers/*.h>`: an input redirection with
+  no target, so a parse error at the pipe, exit 2); the real paths are in point
+  1 and 3 above, and the lead sentence now names what cannot be re-derived.
+- Withdrawn: "the same on `Package.resolved` prints 13". It described a command
+  instead of giving one; it is now
+  `/usr/bin/grep -o '"identity"' Package.resolved | wc -l`.
+- Withdrawn: "(6 handshakes seen: one full, five resumed)" as a description of
+  what the test asserts. The test pinned LibreSSL's internal reconnect count;
+  it now asserts the property, and the observation is stated as an observation.
+- Added, not withdrawn: the control beside the CNIOBoringSSL licence-file zero,
+  and a second run of the "after" build time.
 
 **Review date:** at the next release, and when Task 5 reports.

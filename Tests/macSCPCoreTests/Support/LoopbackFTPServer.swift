@@ -70,7 +70,6 @@ final class LoopbackFTPState: Sendable {
         var commands: [LoopbackFTPReceivedCommand] = []
         var handshakes: [LoopbackFTPHandshake] = []
         var controlConnections = 0
-        var dataConnections = 0
         var refusedDataConnections = 0
 
         /// Absolute path to contents. Directories are a separate set so an
@@ -81,17 +80,52 @@ final class LoopbackFTPState: Sendable {
         /// Every channel this server opened or accepted and that has not
         /// closed yet, so `stop()` can close them itself.
         var liveChannels: [ObjectIdentifier: Channel] = [:]
+
+        /// Set, under the same lock as the snapshot of `liveChannels`, by
+        /// `beginStopping()`. From then on `track(_:)` closes what it is given.
+        var stopping = false
     }
 
     let box = NIOLockedValueBox(Inner())
 
-    /// Remembers `channel` until it closes. Call it from the event loop that
-    /// owns the channel, before anything else can use it.
-    func track(_ channel: Channel) {
+    /// Remembers `channel` until it closes -- or, once `beginStopping()` has
+    /// run, closes it at once.
+    ///
+    /// **Why the flag lives here.** `stop()` used to snapshot `liveChannels`
+    /// once, and a passive listener is tracked only after its `bind` resolves,
+    /// on a session task: one bound inside the window between the snapshot and
+    /// the end of `stop()` was never closed, its connection stream never
+    /// finished, and the session parked in `handleTransfer` on a connection
+    /// that could not arrive -- so `stop()` never reached the event-loop
+    /// shutdown. Reasoned from the code, not reproduced (a client pipelining
+    /// `PASV` and `RETR` against a `stop()`); the same class as the three
+    /// races measured on 2026-11-05. The invariant is local to the box that
+    /// owns the set: a channel is either in the snapshot `beginStopping()`
+    /// returns, or arrives after the flag and is closed by the call that
+    /// registers it. There is no window, so there is nothing to widen.
+    @discardableResult
+    func track(_ channel: Channel) -> Bool {
         let key = ObjectIdentifier(channel)
-        box.withLockedValue { $0.liveChannels[key] = channel }
+        let refused = box.withLockedValue { inner -> Bool in
+            if inner.stopping { return true }
+            inner.liveChannels[key] = channel
+            return false
+        }
+        if refused {
+            channel.close(promise: nil)
+            return false
+        }
         channel.closeFuture.whenComplete { [box] _ in
             box.withLockedValue { _ = $0.liveChannels.removeValue(forKey: key) }
+        }
+        return true
+    }
+
+    /// Marks the state stopping and returns everything live at that instant.
+    func beginStopping() -> [Channel] {
+        box.withLockedValue { inner in
+            inner.stopping = true
+            return Array(inner.liveChannels.values)
         }
     }
 }
@@ -132,9 +166,25 @@ actor LoopbackFTPServer {
     private var context: NIOSSLContext?
     private var leafCertificateDERStorage: Data?
 
-    /// `maximumTLSVersion` exists so a test can pin TLS 1.2, whose abbreviated
-    /// handshake is the one `openssl s_client -reconnect` of the LibreSSL on
-    /// macOS completes reliably; the default is the library's.
+    /// - Parameter requiresTLSSessionReuse: the `require_ssl_reuse` seam. When
+    ///   on, a transfer is served only over a data connection that is BOTH
+    ///   protected (`PROT P` was issued) AND whose handshake resumed a session
+    ///   this server issued. A session that never issued `PROT P` is refused
+    ///   with `522` before a data connection is used, and a protected data
+    ///   handshake that was a full one is refused with `522` after it. The
+    ///   first half is what a real server does: vsftpd's `require_ssl_reuse`
+    ///   is paired with `force_local_data_ssl`, which defaults on, so clear
+    ///   data is refused there too. Without that half the flag would be inert
+    ///   for a client that simply skips `PROT P` -- a fail-open seam, and a
+    ///   "pass" in a test against it would mean nothing. One more thing to
+    ///   know when reading a result: whether data is protected is decided when
+    ///   `PASV` or `EPSV` is issued (the listener is built then), not when the
+    ///   data connection arrives, so `PROT` must precede the passive command.
+    ///   The check is "resumed SOME session this server issued", not "the
+    ///   control connection's own": that is all the wire shows.
+    /// - Parameter maximumTLSVersion: exists so a test can pin TLS 1.2, whose
+    ///   abbreviated handshake is the one `openssl s_client -reconnect` of the
+    ///   LibreSSL on macOS completes reliably; the default is the library's.
     init(
         security: FTPSecurityMode,
         advertisesMLSD: Bool,
@@ -175,7 +225,10 @@ actor LoopbackFTPServer {
                     .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                     .childChannelInitializer { channel in
                         channel.eventLoop.makeCompletedFuture {
-                            state.track(channel)
+                            // Refused (the server is stopping): do not wrap it. A
+                            // `NIOAsyncChannel` that nothing ever consumes traps
+                            // in its writer's deinit.
+                            guard state.track(channel) else { return }
                             let pipeline = channel.pipeline.syncOperations
                             if configuration.security == .implicitTLS, let context {
                                 let tls = LoopbackTLSHandlers(
@@ -190,8 +243,17 @@ actor LoopbackFTPServer {
                             try pipeline.addHandler(ByteToMessageHandler(CRLFLineDecoder()))
                             let wrapped = try NIOAsyncChannel<ByteBuffer, ByteBuffer>(
                                 wrappingChannelSynchronously: channel)
+                            // After the `NIOAsyncChannel` handler, on purpose:
+                            // `channelActive` reaches the async handler first,
+                            // which detaches its writer reference there and
+                            // forwards the event, so by the time this fires
+                            // the wrapper is fully armed. Before it, the
+                            // consumer could be handed a channel whose wrapper
+                            // had not yet seen the event.
                             try pipeline.addHandler(
-                                LoopbackActivationAnnouncer { acceptedContinuation.yield(wrapped) })
+                                LoopbackActivationAnnouncer {
+                                    Self.hand(wrapped, to: acceptedContinuation)
+                                })
                         }
                     }
                     .bind(host: "127.0.0.1", port: 0))
@@ -234,8 +296,7 @@ actor LoopbackFTPServer {
             self.listener = nil
             _ = try? await awaitCancellably(listener.close())
         }
-        let open = state.box.withLockedValue { Array($0.liveChannels.values) }
-        for channel in open { _ = try? await awaitCancellably(channel.close()) }
+        for channel in state.beginStopping() { _ = try? await awaitCancellably(channel.close()) }
         await acceptLoop?.value
         acceptLoop = nil
         try? await group.shutdownGracefully()
@@ -318,6 +379,29 @@ actor LoopbackFTPServer {
         let advertisesMLSD: Bool
         let requiresTLSSessionReuse: Bool
         let credentials: LoopbackFTPCredentials
+    }
+
+    /// Delivers a control channel to the accept loop, or, if the loop's stream has
+    /// already ended, consumes and closes it. A `NIOAsyncChannel` that is
+    /// neither consumed nor closed through `executeThenClose` aborts the process
+    /// when it deinitialises ("Deinited NIOAsyncWriter without calling
+    /// finish()"); measured on 2026-11-05 as a crash in about 1 whole-suite run
+    /// in 12 once `stop()` began closing channels still waiting to be announced.
+    fileprivate static func hand(
+        _ channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>,
+        to continuation: AsyncStream<NIOAsyncChannel<ByteBuffer, ByteBuffer>>.Continuation
+    ) {
+        if case .enqueued = continuation.yield(channel) { return }
+        Task { try? await channel.executeThenClose { _, _ in } }
+    }
+
+    /// The same for a data connection.
+    fileprivate static func hand(
+        _ connection: LoopbackFTPDataConnection,
+        to continuation: AsyncStream<LoopbackFTPDataConnection>.Continuation
+    ) {
+        if case .enqueued = continuation.yield(connection) { return }
+        Task { try? await connection.channel.executeThenClose { _, _ in } }
     }
 
     private static func serve(
@@ -480,7 +564,9 @@ final class LoopbackHandshakeGate: ChannelInboundHandler, @unchecked Sendable {
     }
 }
 
-/// Runs `announce` when the channel becomes active, and not before.
+/// Runs `announce` when the channel becomes active, and not before -- or, if the
+/// channel is closed without ever becoming active, when the handler is removed,
+/// so whatever the closure hands over is always handed over exactly once.
 ///
 /// A child channel's initializer runs BEFORE the channel is registered with
 /// its event loop and active, so a `NIOAsyncChannel` handed to a consumer from
@@ -502,10 +588,18 @@ final class LoopbackActivationAnnouncer: ChannelInboundHandler, @unchecked Senda
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        runOnce()
+        context.fireChannelActive()
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        runOnce()
+    }
+
+    private func runOnce() {
         let pending = announce
         announce = nil
         pending?()
-        context.fireChannelActive()
     }
 }
 
@@ -544,21 +638,32 @@ struct LoopbackFTPDataConnection: Sendable {
 }
 
 /// The listener a `PASV` or `EPSV` opened: one connection is accepted from it.
-final class LoopbackFTPPassiveListener: Sendable {
+///
+/// **One iterator, owned here.** The connections arrive on an `AsyncStream`,
+/// which has a single consumer; `next()` and `discard()` used to each make their
+/// own iterator over it, which is the documented way to a runtime trap if the
+/// two ever overlap. Both now go through the one stored iterator. They are only
+/// ever called one after the other, by the session that owns the listener.
+final class LoopbackFTPPassiveListener: @unchecked Sendable {
     let channel: Channel
-    let connections: AsyncStream<LoopbackFTPDataConnection>
     let port: Int
+    private var connections: AsyncStream<LoopbackFTPDataConnection>.Iterator
 
     init(channel: Channel, connections: AsyncStream<LoopbackFTPDataConnection>, port: Int) {
         self.channel = channel
-        self.connections = connections
+        self.connections = connections.makeAsyncIterator()
         self.port = port
+    }
+
+    /// The next connection, or nil once the listener has closed.
+    func next() async -> LoopbackFTPDataConnection? {
+        await connections.next()
     }
 
     /// Closes the listener and any connection that arrived and was never used.
     func discard() async {
         _ = try? await awaitCancellably(channel.close())
-        for await connection in connections {
+        while let connection = await connections.next() {
             _ = try? await awaitCancellably(connection.channel.channel.close())
         }
     }
@@ -882,7 +987,7 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .childChannelInitializer { channel in
                     channel.eventLoop.makeCompletedFuture {
-                        state.track(channel)
+                        guard state.track(channel) else { return }
                         var handshake: EventLoopFuture<Bool>?
                         if let context {
                             let tls = LoopbackTLSHandlers(
@@ -899,7 +1004,9 @@ final class LoopbackFTPSession: @unchecked Sendable {
                             wrappingChannelSynchronously: channel)
                         let connection = LoopbackFTPDataConnection(channel: wrapped, handshake: handshake)
                         try channel.pipeline.syncOperations.addHandler(
-                            LoopbackActivationAnnouncer { continuation.yield(connection) })
+                            LoopbackActivationAnnouncer {
+                                LoopbackFTPServer.hand(connection, to: continuation)
+                            })
                     }
                 }
                 .bind(host: "127.0.0.1", port: 0))
@@ -920,6 +1027,15 @@ final class LoopbackFTPSession: @unchecked Sendable {
             return .keepGoing
         }
         passive = nil
+
+        // `require_ssl_reuse` is paired with protected data (see the
+        // `requiresTLSSessionReuse` parameter): clear data is refused, so the
+        // seam cannot be skipped by never issuing `PROT P`.
+        if configuration.requiresTLSSessionReuse, !dataProtected {
+            await listener.discard()
+            try await send(522, "Data connections must be encrypted.")
+            return .keepGoing
+        }
 
         // Everything that can be refused is refused before the data
         // connection is used, so a refused command never sends `150`.
@@ -950,14 +1066,12 @@ final class LoopbackFTPSession: @unchecked Sendable {
             payload = listing(of: directory, verb: verb)
         }
 
-        var arrivals = listener.connections.makeAsyncIterator()
-        let arrived = await arrivals.next()
+        let arrived = await listener.next()
         await listener.discard()
         guard let data = arrived else {
             try await send(425, "Cannot open the data connection.")
             return .keepGoing
         }
-        state.box.withLockedValue { $0.dataConnections += 1 }
 
         if let handshake = data.handshake {
             let resumed: Bool
