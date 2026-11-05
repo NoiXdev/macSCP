@@ -83,7 +83,7 @@
 
 /* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
 "core.connect.ftpNotAvailableYet" = "Les connexions FTP ne sont pas encore disponibles dans cette version.";
-"core.connect.ftpHostInvalid" = "Saisissez uniquement le nom d'hôte ou l'adresse, par exemple ftp.example.com — sans nom d'utilisateur, sans ftp:// et sans chemin. Le nom d'utilisateur a son propre champ.";
+"core.connect.ftpHostInvalid" = "Saisissez uniquement le nom d'hôte ou l'adresse, par exemple ftp.example.com — sans nom d'utilisateur, sans ftp://, sans port et sans chemin. Le nom d'utilisateur et le port ont chacun leur propre champ.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "L'hôte ne doit pas être vide.";

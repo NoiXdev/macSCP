@@ -88,6 +88,8 @@ struct FTPFieldSchemaTests {
         ("[2001:db8::1]", "2001:db8::1"),
         ("2001:db8::1", "2001:db8::1"),
         ("::1", "::1"),
+        ("[::1]", "::1"),
+        ("::ffff:192.0.2.7", "::ffff:192.0.2.7"),
     ])
     func aHostIsTrimmedAndAnIPv6LiteralLosesItsBrackets(raw: String, expected: String) {
         #expect(FTPFieldSchema.normalizedHost(raw) == expected)
@@ -96,6 +98,8 @@ struct FTPFieldSchemaTests {
     @Test(arguments: [
         "", "   ", "files example.com", "ftp://files.example.com", "files.example.com/pub",
         "tim@files.example.com", "[files.example.com]", "[]",
+        "files.example.com:21", "[files.example.com:21]", "2001:db8::g", "[2001:db8::g]",
+        "192.0.2.7:21", "beef:21",
         "files.example.com?x", "files.example.com#x", "a\u{0}b", "a\tb",
     ])
     func aHostThatIsNotAHostIsRefused(raw: String) {
@@ -141,14 +145,21 @@ struct FTPFieldSchemaTests {
             in: values, requireSecrets: false) == nil)
     }
 
-    /// A KNOWN GAP, pinned so it is a decision and not a surprise: a colon is
-    /// neither refused nor validated, because an IPv6 literal contains colons
-    /// and whether this project accepts one in a host field is not settled.
-    /// `host:21` therefore parses as a host and fails at the dial. FTP plan
-    /// Task 10 inherits this.
-    @Test func aColonInAHostIsAcceptedButNotValidated() {
-        #expect(FTPFieldSchema.normalizedHost("files.example.com:21") == "files.example.com:21")
-        #expect(FTPFieldSchema.normalizedHost("2001:db8::g") == "2001:db8::g")
+    /// The colon rule, both sides together: one colon is a port in the wrong
+    /// field and is refused (by `makeConfig`, with the host sentence), two or
+    /// more are an IPv6 literal and pass. The refusals and the positives sit
+    /// in one test so neither half can be satisfied by deleting the other.
+    @Test func oneColonIsAPortInTheWrongFieldAndSeveralAreIPv6() {
+        #expect(FTPFieldSchema.normalizedHost("files.example.com:21") == nil)
+        // Hex digits, dots and ONE colon: the content check alone would pass
+        // these, so only the colon count refuses them. The address-and-port
+        // is the commonest way to get this wrong.
+        #expect(FTPFieldSchema.normalizedHost("192.0.2.7:21") == nil)
+        #expect(FTPFieldSchema.normalizedHost("beef:21") == nil)
+        #expect(FTPFieldSchema.normalizedHost("[::1]") == "::1")
+        #expect(FTPFieldSchema.normalizedHost("::1") == "::1")
+        #expect(FTPFieldSchema.normalizedHost("files.example.com") == "files.example.com")
+
     }
 
     // MARK: - Registration
@@ -234,10 +245,10 @@ struct FTPFieldSchemaTests {
     }
 
     /// Each refusal is pinned to the sentence that names ITS problem: a blank
-    /// host, a host with user-info, a host with whitespace in it, and a port
-    /// that is not one. `(any Error).self` accepted any of them for any
-    /// reason, which is how a credential-shaped host once got the
-    /// blank-host sentence.
+    /// host, a host that is more than a name or an address (user-info, a
+    /// scheme, a port, whitespace), and a port that is not one.
+    /// `(any Error).self` accepted any of them for any reason, which is how a
+    /// credential-shaped host once got the blank-host sentence.
     @Test func makeConfigRefusesEachBadFieldWithItsOwnSentence() {
         func reason(host: String? = nil, port: String? = nil) -> String? {
             var values = filledValues()
@@ -248,14 +259,15 @@ struct FTPFieldSchemaTests {
         #expect(reason(host: "  ") == CoreL10n.string("core.connect.emptyHost"))
         #expect(reason(host: "tim@files.example.com") == CoreL10n.string("core.connect.ftpHostInvalid"))
         #expect(reason(host: "ftp://files.example.com") == CoreL10n.string("core.connect.ftpHostInvalid"))
-        #expect(reason(host: "files example.com") == CoreL10n.string("core.connect.hostInvalid"))
+        #expect(reason(host: "files example.com") == CoreL10n.string("core.connect.ftpHostInvalid"))
+        #expect(reason(host: "files.example.com:21") == CoreL10n.string("core.connect.ftpHostInvalid"))
         #expect(reason(port: "99999") == CoreL10n.string("core.connect.portNumeric"))
 
-        // Positive: the four sentences are four different, resolved texts, so
-        // the equalities above cannot all hold by every key being unresolved.
+        // Positive: the sentences are different, resolved texts, so the
+        // equalities above cannot all hold by every key being unresolved.
         let keys = ["core.connect.emptyHost", "core.connect.ftpHostInvalid",
-                    "core.connect.hostInvalid", "core.connect.portNumeric"]
-        #expect(Set(keys.map { CoreL10n.string($0) }).count == 4)
+                    "core.connect.portNumeric"]
+        #expect(Set(keys.map { CoreL10n.string($0) }).count == keys.count)
         #expect(keys.allSatisfy { CoreL10n.string($0) != $0 })
     }
 

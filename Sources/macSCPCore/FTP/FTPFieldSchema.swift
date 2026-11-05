@@ -111,11 +111,19 @@ public enum FTPFieldSchema {
     /// whitespace or control character, and the characters that make this a
     /// path or a URL (`/ ? #` and stray brackets).
     ///
-    /// **A `:` is deliberately NOT refused and not validated.** An IPv6
-    /// literal contains colons and whether this project accepts one in a host
-    /// field is not settled here, so `host:21` is accepted as a host and
-    /// fails at the dial. That is a known gap with a named reason, not a
-    /// decision that it is valid: FTP plan Task 10 inherits it.
+    /// Colons are counted. None: an ordinary name. Two or more: an IPv6
+    /// literal, which holds only hex digits, colons and (for an embedded IPv4
+    /// tail) dots. Exactly one: `host:21`, a port the port field owns, which
+    /// is refused here instead of failing later at the dial.
+    ///
+    /// **This colon logic is a RESTORATION.** It was written in the first
+    /// commit of this backend, deleted in fix round 2 on the controller's
+    /// ruling "Do not refuse a bare `:`. An IPv6 literal contains colons, and
+    /// whether this project accepts one in a host field is not a question this
+    /// round opens", and restored in fix round 3 when the controller withdrew
+    /// that clause: the colon arithmetic had already answered the IPv6
+    /// question, so the deletion was a controller error and not a design
+    /// decision. Do not remove it again for that reason.
     public static func normalizedHost(_ raw: String) -> String? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
@@ -136,9 +144,16 @@ public enum FTPFieldSchema {
             }
             if "/?#[]".unicodeScalars.contains(scalar) { return nil }
         }
-        // Brackets exist to hold an IPv6 literal; around anything else they
-        // are a typo.
-        if bracketed && !text.contains(":") { return nil }
+
+        let colons = text.filter { $0 == ":" }.count
+        if colons == 0 {
+            // Brackets exist to hold an IPv6 literal; around anything else
+            // they are a typo.
+            return bracketed ? nil : text
+        }
+        guard colons >= 2 else { return nil }
+        let allowed = Set("0123456789abcdefABCDEF:.")
+        guard text.allSatisfy({ allowed.contains($0) }) else { return nil }
         return text
     }
 
@@ -205,15 +220,13 @@ public enum FTPFieldSchema {
             switch field {
             case .host:
                 guard let normalized = normalizedHost(values[FTPField.host]) else {
-                    // Three different complaints, three different sentences:
-                    // nothing typed, a credential or scheme typed, and a host
-                    // with whitespace or path characters in it.
+                    // Nothing typed is its own complaint. Everything else
+                    // (user-info, a scheme, a port, whitespace, a path) is
+                    // "a host is a name or an address and nothing more", which
+                    // `ftpHostInvalid` says. `hostInvalid` is NOT used: its
+                    // text is about shell characters, and FTP has no shell.
                     let typed = values[FTPField.host].trimmingCharacters(in: .whitespacesAndNewlines)
-                    let key =
-                        typed.isEmpty
-                        ? "core.connect.emptyHost"
-                        : hostCarriesUserinfo(typed)
-                            ? "core.connect.ftpHostInvalid" : "core.connect.hostInvalid"
+                    let key = typed.isEmpty ? "core.connect.emptyHost" : "core.connect.ftpHostInvalid"
                     throw RemoteFSError.connectionFailed(reason: CoreL10n.string(key))
                 }
                 host = normalized
