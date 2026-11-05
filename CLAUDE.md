@@ -648,6 +648,27 @@ value in a named constant and compute the `Bool` before the expectation
 (`#expect(inAuditLine == false)`), so neither the value nor its spelling can
 reach the output.
 
+**The value under test can itself be the carrier, and then this binds every
+expectation about it — not only the one that names the secret.** `#expect`
+reports what the subexpressions EVALUATED to as well as their source text,
+so a variable holding the carrier is unremarkable in the source and
+revealing in the value report. Measured 2026-11-05 on
+`theSummaryDoesNotPrintAUserinfoSecretItRefusedToParse`, which proves that
+`FTPFieldSchema.displaySummary`'s parse-failure fallback prints no
+credential: `#expect(leaked == false)` was written exactly as the paragraph
+above prescribes and leaked nothing, while the positive check standing
+beside it — `#expect(summary == "tim @ files.example.com:2121")`, which
+mentions no secret in value or spelling — printed the whole rendered host
+with the credential in it on the red run, because the reported value of
+`summary` is the thing under test.
+
+That neighbour is not optional, which is what makes this worth writing
+down: "Guards that name what they watch" is why it is there, since
+`leaked == false` holds just as well for a fallback that returned `""`. So
+the two rules are read together — the first says a negative check needs a
+positive check beside it, and this one says that check is an exit too. The
+`Bool` is computed before BOTH expectations.
+
 The second exit is the one everybody remembers: the code under test. The
 first is the test itself, and it opens only when the test fails, which is
 exactly when someone is looking.
