@@ -80,22 +80,59 @@ struct FTPReplyTests {
         #expect(next.lines == ["done"])
     }
 
-    @Test(arguments: ["hello", "12 ready", "2200 ready", "22", "", "abc def", "000 zero", "2x0 odd", "220ready"])
-    func aLineThatIsNotAReplyIsRefusedRatherThanGuessed(line: String) {
+    @Test(arguments: [
+        ("hello", FTPReplyError.Malformation.notThreeDigits),
+        ("12 ready", .notThreeDigits),
+        ("2200 ready", .badSeparator),
+        ("22", .tooShort),
+        ("", .tooShort),
+        ("abc def", .notThreeDigits),
+        ("000 zero", .notThreeDigits),
+        ("2x0 odd", .notThreeDigits),
+        ("220ready", .badSeparator),
+        // Arabic-Indic digits: not ASCII, so not digits.
+        ("\u{0662}\u{0662}\u{0660} ready", .notThreeDigits),
+    ])
+    func aLineThatIsNotAReplyIsRefusedRatherThanGuessed(line: String, why: FTPReplyError.Malformation) {
         var partial: [String] = []
-        #expect(throws: FTPReplyError.notAReply(line)) {
+        #expect(throws: FTPReplyError.notAReply(why, byteCount: line.utf8.count)) {
             try FTPReplyAccumulator.feed(line, into: &partial)
         }
         // Refusing a line leaves no half-open reply behind.
         #expect(partial.isEmpty)
     }
 
-    @Test func nonASCIIDigitsAreNotDigits() {
+    @Test func aRefusalCarriesNoTextFromTheLine() {
+        // A server may echo the client's command line, PASS included. The
+        // marker stands in for such text; the Bool is computed first so a
+        // failure report cannot print the marker either.
+        let marker = "ECHOED-SECRET-MARKER"
         var partial: [String] = []
-        let line = "\u{0662}\u{0662}\u{0660} ready" // Arabic-Indic digits
-        #expect(throws: FTPReplyError.notAReply(line)) {
-            try FTPReplyAccumulator.feed(line, into: &partial)
+        var described = ""
+        do {
+            _ = try FTPReplyAccumulator.feed("PASS \(marker)", into: &partial)
+        } catch {
+            described = "\(error) \(String(reflecting: error))"
         }
+        let refused = !described.isEmpty
+        let leaked = described.contains(marker) || described.contains("PASS")
+        #expect(refused)
+        #expect(leaked == false)
+    }
+
+    @Test(arguments: [
+        ["hello"],            // not a reply at all
+        ["211 End"],          // a reply head, but a closer rather than an opener
+        ["2110 odd", "more"], // not a head
+    ])
+    func anOpenReplyWithoutAValidOpenerIsDiscardedAndRefused(stored: [String]) {
+        var partial = stored
+        #expect(throws: FTPReplyError.notAReply(.unusableOpener, byteCount: stored[0].utf8.count)) {
+            try FTPReplyAccumulator.feed("211 End", into: &partial)
+        }
+        // The documented exception to "a refusal leaves partial untouched":
+        // a corrupt partial is dropped so the next line starts clean.
+        #expect(partial.isEmpty)
     }
 
     @Test(arguments: [
