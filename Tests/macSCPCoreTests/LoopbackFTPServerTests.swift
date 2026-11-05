@@ -724,8 +724,28 @@ struct LoopbackFTPServerTests {
     // disabled guard with the body `exit(3)` and `.failure` stayed green, because
     // it pins only "the child exited non-zero"; it also measured a failed
     // `precondition` as SIGTRAP in `-Onone` and `-O` alike. The message is
-    // checked in debug builds only (release strips it), and it is what tells the
-    // guard's trap from `AsyncStream`'s own. The waits for "a read is in flight"
+    // checked in debug builds only (release strips it), so in a RELEASE build
+    // the signal is the whole pin.
+    //
+    // That is fine, and the reason withdraws a clause this comment used to
+    // carry, verbatim: "and it is what tells the guard's trap from
+    // `AsyncStream`'s own". There is no `AsyncStream` trap of its own to tell it
+    // from. Measured 2026-11-05 on arm64, toolchain `swift --version` whose
+    // first line opens `swift-driver version: 1.168.6 Apple Swift version
+    // 6.4.2`: a bare program (not in this tree) holding ONE `AsyncStream`
+    // iterator in an `@unchecked Sendable` box -- the shape of
+    // `LoopbackLineSource` with its guard removed -- and calling `next()` from
+    // 2, then 3, concurrent tasks, each suspended inside it before anything is
+    // yielded, printed its "no trap" line and exited 0 in all four runs:
+    // `swiftc -swift-version 6 -Onone` and `swiftc -swift-version 6 -O`, 2 and
+    // 3 readers each.
+    //
+    // What that does NOT cover: x86_64. A Swift runtime trap is reported there
+    // as SIGILL rather than SIGTRAP, and nothing here has been run on it, so
+    // whether these exit tests hold on an x86_64 runner is UNMEASURED -- neither
+    // shown nor ruled out.
+    //
+    // The waits for "a read is in flight"
     // spin a bounded number of times (a count, not a clock): without the guard
     // the first read never says it is in flight, and an unbounded wait would
     // hang the child instead of failing the test.
@@ -871,6 +891,31 @@ struct LoopbackFTPServerTests {
     /// fired: `aSilentPeerEndsTheClientsWaitWithANamedError` asserts
     /// `.noReplyWithin`. Cancelled, here: with the peer still connected, a read
     /// whose task is cancelled throws `CancellationError`, not a close.
+    ///
+    /// **"The peer is still connected" is proved by USING the connection.** This
+    /// test used to end on `#expect(stillHeld)`, under the comment "The peer
+    /// never closed anything: the cancellation was the whole story" -- both
+    /// withdrawn. `isHolding` reads this side's `isActive`, which a FIN that has
+    /// not reached the server's event loop yet has not touched: the re-review of
+    /// fix round 3 planted a client that closes its channel on cancellation and
+    /// the test stayed GREEN, its leftover planted binary failing 0 of 40 runs.
+    /// It was also the assertion carrying an intermittent failure nobody has
+    /// explained (2 of 100 and 3 of 150, then 9 of 200, then 0 of 300, then
+    /// about 68,000 iterations with none; not reproduced, not closed), so it is
+    /// gone rather than hedged, by the maintainer's ruling of 2026-11-05.
+    ///
+    /// What replaces it is a floor: after the cancellation the client writes one
+    /// line on the SAME connection and the server must read those bytes. A
+    /// loaded machine only makes them arrive later -- `bytesReceived` never
+    /// falls -- and the wait for them is a wait on state that BOTH worlds leave,
+    /// so a connection that did go away ends it too and the assertion says
+    /// which happened. The direction is the client's, not the server's, because
+    /// the server's would be unreadable here: cancelling the task that is
+    /// iterating an `AsyncStream` terminates the whole stream, not just that
+    /// one `next()`, so this client can never read another line on this
+    /// connection (measured on Swift 6.4.2 with a bare stream: a `yield` after
+    /// the cancelled read is handed to nobody and a second `next()` returns
+    /// nil).
     @Test func aCancelledReadIsNotReportedAsAClosedConnection() async throws {
         let silent = try await SilentServer.start()
         let client = try await LoopbackFTPClient.connect(
@@ -890,14 +935,100 @@ struct LoopbackFTPServerTests {
         case .success:
             break
         }
-        let stillHeld = silent.isHolding(clientPort: clientPort)
+
+        // The connection is used after the cancellation, which is the proof.
+        var wroteAfterTheCancellation = false
+        do {
+            try await client.send("NOOP")
+            wroteAfterTheCancellation = true
+        } catch {
+            wroteAfterTheCancellation = false
+        }
+        if wroteAfterTheCancellation {
+            try await pollUntil("the silent server reads the line or loses the connection") {
+                silent.bytesReceived(fromClientPort: clientPort) > 0
+                    || !silent.isHolding(clientPort: clientPort)
+            }
+        }
+        let serverReadTheLine = silent.bytesReceived(fromClientPort: clientPort) > 0
         await client.close()
         await silent.stop()
 
         #expect(cancelled)
         #expect(describedAsAClose == false)
-        // The peer never closed anything: the cancellation was the whole story.
-        #expect(stillHeld)
+        #expect(wroteAfterTheCancellation)
+        #expect(serverReadTheLine)
+    }
+
+    /// H1 at the other caller of the same check. `readReply`'s cancellation has
+    /// the pin above; `waitForHandshake`'s had none -- removing the call from it
+    /// left the suite green in the re-review of fix round 3. A handshake wait
+    /// whose task is cancelled, against a peer that will never settle one,
+    /// reports `CancellationError` and not `handshakeFailed`.
+    ///
+    /// `waitForHandshake` is called directly, for the reason its own comment
+    /// gives: through `startTLS()` the cancellation would race that method's
+    /// `awaitCancellably` of the pipeline edit, which throws a
+    /// `CancellationError` of its own, and a client with no check at all would
+    /// pass on it.
+    @Test func aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake() async throws {
+        let silent = try await SilentServer.start()
+        let client = try await LoopbackFTPClient.connect(
+            host: "127.0.0.1", port: silent.port, replyBound: .seconds(30))
+        let clientPort = try #require(client.localPort)
+        try await silent.waitUntilSettled(clientPort: clientPort)
+        let waiting = Task { try await client.waitForHandshake() }
+        waiting.cancel()
+        let outcome = await waiting.result
+
+        var cancelled = false
+        var describedAsAFailedHandshake = false
+        switch outcome {
+        case .failure(let error):
+            cancelled = error is CancellationError
+            describedAsAFailedHandshake = (error as? LoopbackFTPClientError) == .handshakeFailed
+        case .success:
+            break
+        }
+        await client.close()
+        await silent.stop()
+
+        #expect(cancelled)
+        #expect(describedAsAFailedHandshake == false)
+    }
+
+    /// H1's precedence, which fix round 3 decided and nothing held it to: a
+    /// recorded cause outranks cancellation, so a read that ends with its bound
+    /// fired AND its task cancelled reports the bound.
+    ///
+    /// Driven at the check rather than through a live read, because through one
+    /// the two events would have to be made to land inside the few instructions
+    /// between the timer's `noteTimeout()` and the check -- a race to arrange,
+    /// and a ceiling to assert. The latch is what orders this: the body cannot
+    /// reach the check before `cancel()` has been called, because nothing
+    /// raises `go` until after it.
+    @Test func aFiredBoundOutranksCancellationWhenBothEndTheSameRead() async throws {
+        let end = LoopbackClientEnd()
+        end.noteTimeout()
+        let go = AsyncSignal()
+        let probe = Task { () -> (cancelled: Bool, threw: Bool) in
+            _ = await go.wait()
+            do {
+                try LoopbackFTPClient.throwIfCancelledWithoutACause(end)
+                return (Task.isCancelled, false)
+            } catch {
+                return (Task.isCancelled, true)
+            }
+        }
+        probe.cancel()
+        go.signal()
+        let outcome = await probe.value
+
+        // The positive beside the negative: the task really was cancelled, so a
+        // green `threw == false` is the precedence and not a probe that never
+        // put the check in the position it is about.
+        #expect(outcome.cancelled)
+        #expect(outcome.threw == false)
     }
 
     /// H1. The fixture answers for ITS connection, not for everything that
@@ -1006,6 +1137,17 @@ struct LoopbackFTPServerTests {
 
     /// H4, the other half: the data reader's hang bound. Nothing arrives and the
     /// connection stays up, so the bound is the only way the read can end.
+    ///
+    /// Its `stillHeld` read is kept, where
+    /// `aCancelledReadIsNotReportedAsAClosedConnection`'s was dropped, and the
+    /// difference is not analogy but what is in the path: there the awaiting
+    /// task's own cancellation was what a plant could turn into a client-side
+    /// close, so the read raced a FIN. Here nothing closes either end before it
+    /// -- `readToEnd()` ends because the bound finishes the stream, which
+    /// touches no channel, and `client.close()` comes after the read -- so
+    /// there is no FIN for it to race. What it is for is unchanged: the
+    /// load-bearing assertion is the positive one on the named error below, and
+    /// this says the error came from a silent peer rather than a vanished one.
     @Test func aSilentDataConnectionEndsReadToEndWithTheNamedError() async throws {
         let silent = try await SilentServer.start()
         let client = try await LoopbackFTPClient.connect(
@@ -1112,6 +1254,13 @@ struct LoopbackFTPServerTests {
     /// kernel's accept queue or on the listening descriptor's lifetime is left in
     /// the path, and if the connection does go away, `stillHeld` says so and the
     /// failure reads "the peer's connection was gone", not "the wrong error".
+    ///
+    /// Kept for the same reason as the data reader's, and not by analogy with
+    /// it: the only thing that ends the read here is the 200 ms bound finishing
+    /// the stream, which closes no channel, and `client.close()` runs after the
+    /// read. Nothing in the path puts a FIN in flight, so the race that made
+    /// `aCancelledReadIsNotReportedAsAClosedConnection`'s `isHolding` read
+    /// insensitive cannot reach this one.
     @Test func aSilentPeerEndsTheClientsWaitWithANamedError() async throws {
         let silent = try await SilentServer.start()
         let client: LoopbackFTPClient
@@ -1215,15 +1364,22 @@ final class SilentServer: Sendable {
     /// "the server holds this connection". An entry appears when the connection
     /// has become active (or been closed before it could), and not before.
     private let entries: NIOLockedValueBox<[Int: Channel]>
+    /// Bytes this server has READ off each connection, by the client's port.
+    /// `isHolding` asks whether a channel object still looks open, which a FIN
+    /// in flight has not reached yet; this is the other kind of answer, and the
+    /// only one that says the peer was there -- see
+    /// `aCancelledReadIsNotReportedAsAClosedConnection`.
+    private let received: NIOLockedValueBox<[Int: Int]>
 
     private init(
         port: Int, listener: Channel, all: NIOLockedValueBox<[Channel]>,
-        entries: NIOLockedValueBox<[Int: Channel]>
+        entries: NIOLockedValueBox<[Int: Channel]>, received: NIOLockedValueBox<[Int: Int]>
     ) {
         self.port = port
         self.listener = listener
         self.all = all
         self.entries = entries
+        self.received = received
     }
 
     /// `sending` is written to every accepted connection as soon as it is
@@ -1231,6 +1387,7 @@ final class SilentServer: Sendable {
     static func start(sending: Data = Data()) async throws -> SilentServer {
         let all = NIOLockedValueBox<[Channel]>([])
         let entries = NIOLockedValueBox<[Int: Channel]>([:])
+        let received = NIOLockedValueBox<[Int: Int]>([:])
         let listener = try await awaitCancellably(
             ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                 .childChannelInitializer { channel in
@@ -1246,7 +1403,15 @@ final class SilentServer: Sendable {
                     // the moment the connection's state is settled either way,
                     // and the moment it gets an entry.
                     return channel.eventLoop.makeCompletedFuture {
-                        try channel.pipeline.syncOperations.addHandler(
+                        let pipeline = channel.pipeline.syncOperations
+                        // Counted, not discarded: without a handler that reads
+                        // them, inbound bytes reach the end of the pipeline and
+                        // nothing can be asked about them.
+                        try pipeline.addHandler(
+                            LoopbackByteCounter { count in
+                                received.withLockedValue { $0[peerPort, default: 0] += count }
+                            })
+                        try pipeline.addHandler(
                             LoopbackActivationAnnouncer {
                                 if !sending.isEmpty {
                                     channel.writeAndFlush(ByteBuffer(bytes: sending), promise: nil)
@@ -1260,7 +1425,8 @@ final class SilentServer: Sendable {
             _ = try? await awaitCancellably(listener.close())
             throw LoopbackFTPServerError.noLocalPort
         }
-        return SilentServer(port: port, listener: listener, all: all, entries: entries)
+        return SilentServer(
+            port: port, listener: listener, all: all, entries: entries, received: received)
     }
 
     /// Waits until the connection whose CLIENT port is `clientPort` has settled:
@@ -1284,12 +1450,48 @@ final class SilentServer: Sendable {
     }
 
     /// The connection from `clientPort` is held and still open.
+    ///
+    /// **What it does NOT see: a close whose FIN has not reached this process
+    /// yet.** `isActive` is this side's bookkeeping, and the peer's close
+    /// becomes visible here only once the event loop has processed it, so a
+    /// read taken straight after the peer closed answers `true`. Measured in
+    /// the re-review of fix round 3: a client planted to close on cancellation
+    /// left `aCancelledReadIsNotReportedAsAClosedConnection` green, and the
+    /// leftover planted binary failed 0 of 40 runs. So this answers "nothing
+    /// has told me otherwise", which is a fixture sanity check, not proof that
+    /// a peer is there; `bytesReceived(fromClientPort:)` is the proof.
     func isHolding(clientPort: Int) -> Bool {
         entries.withLockedValue { $0[clientPort]?.isActive ?? false }
+    }
+
+    /// How many bytes this server has read off the connection from
+    /// `clientPort`. Nothing but that peer writing can move it, so a figure
+    /// above zero is positive proof the connection carried traffic -- and it
+    /// only ever grows, so a slow machine delays it and cannot undo it.
+    func bytesReceived(fromClientPort clientPort: Int) -> Int {
+        received.withLockedValue { $0[clientPort] ?? 0 }
     }
 
     func stop() async {
         _ = try? await awaitCancellably(listener.close())
         for channel in all.withLockedValue({ $0 }) { _ = try? await awaitCancellably(channel.close()) }
+    }
+}
+
+/// Reports what arrives on one connection and forwards it, so `SilentServer`
+/// can be asked whether a peer wrote rather than whether a channel object
+/// still looks open.
+final class LoopbackByteCounter: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    private let note: @Sendable (Int) -> Void
+
+    init(_ note: @escaping @Sendable (Int) -> Void) {
+        self.note = note
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        note(unwrapInboundIn(data).readableBytes)
+        context.fireChannelRead(data)
     }
 }

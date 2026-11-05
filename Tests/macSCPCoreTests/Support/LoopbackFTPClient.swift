@@ -256,7 +256,23 @@ actor LoopbackFTPClient {
     /// cancellation as a peer close makes every later hang in this client
     /// unattributable, which is what the bound exists to prevent. A recorded
     /// cause (an error, or the bound) outranks cancellation: it is the real end.
-    fileprivate static func throwIfCancelledWithoutACause(_ end: LoopbackClientEnd) throws {
+    /// `aFiredBoundOutranksCancellationWhenBothEndTheSameRead` holds that
+    /// precedence; `aCancelledReadIsNotReportedAsAClosedConnection` and
+    /// `aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake` hold the two
+    /// callers.
+    ///
+    /// **A limit, not a guarantee: the three are distinct only while exactly
+    /// one of them is true.** A clean close records NOTHING here --
+    /// `LoopbackClientSink.channelInactive` finishes the stream and writes to
+    /// `end` only through `noteError`, which a clean close never reaches -- so
+    /// `end.value` is `.none` both for "the peer closed" and for "nothing has
+    /// happened". A read whose peer has closed AND whose task is cancelled
+    /// therefore answers `CancellationError`, and the close is not reported at
+    /// all. That is deliberate (a cancelled read's caller is going away
+    /// whatever the peer did) and it is the one combination no test pins,
+    /// because there is nothing to tell the two apart by. The other direction,
+    /// the bound against a cancellation, is pinned: the bound wins.
+    static func throwIfCancelledWithoutACause(_ end: LoopbackClientEnd) throws {
         if end.value == .none, Task.isCancelled { throw CancellationError() }
     }
 
@@ -289,7 +305,17 @@ actor LoopbackFTPClient {
         try await waitForHandshake()
     }
 
-    private func waitForHandshake() async throws {
+    /// Waits for the TLS handshake this connection is in the middle of.
+    ///
+    /// **Not `private`, so its own cancellation pin can call it.** Driven
+    /// through `startTLS()` instead, the pin would have to cancel a task that
+    /// is also inside `startTLS`'s `awaitCancellably(...)` of the pipeline
+    /// edit, and that throws a `CancellationError` of its own: a client that
+    /// had lost the check below entirely would still answer
+    /// `CancellationError` often enough for the test to pass. The pin is
+    /// `aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake`; nothing else
+    /// outside this type calls this.
+    func waitForHandshake() async throws {
         let end = self.end
         let handshake = self.handshake
         let timer = channel.eventLoop.scheduleTask(in: replyBound) {

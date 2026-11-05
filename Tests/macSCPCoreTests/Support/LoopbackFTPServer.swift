@@ -367,8 +367,31 @@ actor LoopbackFTPServer {
         // `hand`). By now every tracked channel has been closed and its
         // handlers removed -- the announcer registers a closer from
         // `handlerRemoved`, before the close future completes -- so none can
-        // be added after this drain; and it runs BEFORE the loops go down,
-        // because closing a channel through `executeThenClose` needs its loop.
+        // be added after this drain.
+        //
+        // **Standing before the shutdown is deliberate, and UNPINNED.** This
+        // comment used to go on, verbatim: "and it runs BEFORE the loops go
+        // down, because closing a channel through `executeThenClose` needs its
+        // loop". That read as a property something enforces. Nothing here
+        // does, measured 2026-11-05 by swapping this statement with the one
+        // below it:
+        //
+        //   scripts/mutation-probe --filter 'LoopbackFTPServerTests' --apply \
+        //     'perl -0pi -e "s/^(        for reaper in state\.takeReapers\(\) \{ await reaper\.value \})\n(        try\? await group\.shutdownGracefully\(\))\n/\$2\n\$1\n/m" \
+        //      Tests/macSCPCoreTests/Support/LoopbackFTPServer.swift'
+        //
+        // GREEN: 39 of 39 tests ran and none noticed. The reason it is not
+        // pinned instead is that its symptom is a closer that never completes
+        // -- swift-nio's `SelectableEventLoop._schedule0` prints "Cannot
+        // schedule tasks on an EventLoop that has already shut down." and
+        // DROPS the task (or traps, under its strict mode), so the promise is
+        // never fulfilled -- which makes `stop()` hang, and a test for a hang
+        // is the wall-clock ceiling CLAUDE.md forbids. Neither test that holds
+        // a closer can reach it either: the one
+        // `stopWaitsForARegisteredCloserBeforeItReturns` adopts is plain Swift
+        // and touches no event loop, so it finishes in either order, and
+        // `anUndeliverableChannelIsClosedByARegisteredCloser` drains the
+        // closers itself and never calls `stop()`.
         for reaper in state.takeReapers() { await reaper.value }
         try? await group.shutdownGracefully()
         lifecycle = .idle
@@ -406,7 +429,11 @@ actor LoopbackFTPServer {
 
     /// Registers `task` as a closer `stop()` must await, as `hand(...)` does for a
     /// channel it cannot deliver. A seam for the test that `stop()` waits for
-    /// registered closers before it takes the event loops down.
+    /// registered closers before it RETURNS
+    /// (`stopWaitsForARegisteredCloserBeforeItReturns`). Withdrawn wording,
+    /// verbatim: "before it takes the event loops down" -- that is where the
+    /// drain stands, but the test this seam serves adopts a plain Swift task
+    /// and so cannot tell the two orders apart; see `stop()` at the drain.
     func adoptCloser(_ task: Task<Void, Never>) {
         state.addReaper(task)
     }
@@ -474,7 +501,9 @@ actor LoopbackFTPServer {
     /// server's own group for as long as it lives; if it runs after
     /// `group.shutdownGracefully()` it is the "task that never runs" that
     /// `stop()`'s own comment describes, and it never ends. `state` keeps it so
-    /// `stop()` awaits it after the sessions and before the loops go down.
+    /// `stop()` awaits it after the sessions and before the loops go down --
+    /// an order no test holds `stop()` to, and `stop()`'s comment at the drain
+    /// carries the plant that measures that and why it cannot be pinned.
     static func hand(
         _ channel: NIOAsyncChannel<ByteBuffer, ByteBuffer>,
         to continuation: AsyncStream<NIOAsyncChannel<ByteBuffer, ByteBuffer>>.Continuation,
