@@ -33,6 +33,14 @@ public enum PlaintextTransportGate {
             // Reuses the config's own property rather than re-deriving the
             // rule — two copies of "is this plaintext?" would drift.
             return webdav.isPlaintextTransport
+        case .ftp(let ftp):
+            // Only the plain mode: explicit FTPS upgrades before the login is
+            // sent, and implicit FTPS is TLS from the first byte. The gate
+            // asks two questions -- the capability (`.optionalTLS`) decides
+            // whether the question applies at all, this decides whether THIS
+            // endpoint is plaintext -- so three security modes need no
+            // per-connection capability field.
+            return ftp.security == .plain
         }
     }
 }

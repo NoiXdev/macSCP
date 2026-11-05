@@ -203,6 +203,14 @@
 "connection.webdav.preset.nextcloud" = "Nextcloud / ownCloud";
 "connection.webdav.preset.custom" = "Custom";
 
+/* FTP form section (FTP plan, Task 3) */
+"connection.badge.ftp" = "FTP";
+"connection.ftp.security" = "Security";
+"connection.ftp.security.plain" = "None (plain FTP)";
+"connection.ftp.security.explicitTLS" = "Explicit FTPS (recommended)";
+"connection.ftp.security.implicitTLS" = "Implicit FTPS";
+"connection.ftp.initialPath" = "Initial folder";
+
 /* Shell-only shortcuts on a non-shell backend (M12/T7b) */
 "shortcut.unavailableForProtocol.title" = "Not Available";
 "shortcut.unavailableForProtocol" = "This shortcut isn't available for this connection type.";

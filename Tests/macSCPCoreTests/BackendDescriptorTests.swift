@@ -62,7 +62,7 @@ struct BackendDescriptorTests {
             let handWrittenExpectation: Bool
             switch kind {
             case .ssh: handWrittenExpectation = true
-            case .s3, .webdav: handWrittenExpectation = false
+            case .s3, .webdav, .ftp: handWrittenExpectation = false
             }
             #expect(
                 BackendDescriptor.descriptor(for: kind).capabilities.authenticatesHostKey
@@ -222,13 +222,21 @@ struct BackendDescriptorTests {
         #expect(identifyingIDs(.webdav) == [
             WebDAVField.baseURL.rawValue, WebDAVField.username.rawValue,
         ])
+        // FTP is the endpoint triple again, but WITHOUT the security mode:
+        // one server reached plain or upgraded is one machine addressed two
+        // ways, as S3's `usePathStyle` is.
+        #expect(identifyingIDs(.ftp) == [
+            FTPField.host.rawValue, FTPField.port.rawValue, FTPField.username.rawValue,
+        ])
     }
 
-    /// The host is the ONE case-folded field anywhere. DNS is case-insensitive,
+    /// A host is the ONLY kind of field that is case-folded -- and since the
+    /// FTP plan's Task 3 there are two of them, SSH's and FTP's, because both
+    /// hold a DNS name. DNS is case-insensitive,
     /// so `WEB-01` and `web-01` are one machine; a bucket name, a URL path and
     /// an access key ID are case-SENSITIVE, and folding them would merge
     /// connections that are genuinely different.
-    @Test func onlyTheSSHHostIsCaseFolded() {
+    @Test func onlyTheHostsOfSSHAndFTPAreCaseFolded() {
         var folded: [String] = []
         for kind in ConnectionKind.allCases {
             for field in BackendDescriptor.descriptor(for: kind).identifyingFields
@@ -236,7 +244,9 @@ struct BackendDescriptorTests {
                 folded.append("\(kind.rawValue).\(field.id)")
             }
         }
-        #expect(folded == ["ssh.\(SSHField.host.rawValue)"])
+        #expect(folded == [
+            "ssh.\(SSHField.host.rawValue)", "ftp.\(FTPField.host.rawValue)",
+        ])
     }
 
     /// A group is the ONLY thing any backend hand-draws — pinned so a new

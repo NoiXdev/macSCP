@@ -161,6 +161,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return .sshDescriptor
         case .s3: return .s3Descriptor
         case .webdav: return .webdavDescriptor
+        case .ftp: return .ftpDescriptor
         }
     }
 
@@ -172,6 +173,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHField.namespace
         case .s3: return S3Field.namespace
         case .webdav: return WebDAVField.namespace
+        case .ftp: return FTPField.namespace
         }
     }
 
@@ -187,6 +189,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.defaults
         case .s3: return S3FieldSchema.defaults
         case .webdav: return WebDAVFieldSchema.defaults
+        case .ftp: return FTPFieldSchema.defaults
         }
     }
 
@@ -207,6 +210,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.defaults
         case .s3: return S3FieldSchema.editBaseline
         case .webdav: return WebDAVFieldSchema.defaults
+        case .ftp: return FTPFieldSchema.defaults
         }
     }
 
@@ -242,6 +246,8 @@ public struct BackendDescriptor: Sendable {
         case .webdav:
             values[WebDAVField.baseURL] = WebDAVFieldSchema.baseURLSpelling(
                 host: host, port: port)
+        case .ftp:
+            values = FTPFieldSchema.endpointValues(host: host, port: port, base: values)
         }
         return values
     }
@@ -274,6 +280,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.values(from: set)
         case .s3: return S3FieldSchema.values(from: set)
         case .webdav: return WebDAVFieldSchema.values(from: set)
+        case .ftp: return FTPFieldSchema.values(from: set)
         }
     }
 
@@ -299,6 +306,11 @@ public struct BackendDescriptor: Sendable {
         case .s3: return session.s3.map { S3FieldSchema.values(from: $0) } ?? FieldValues()
         case .webdav:
             return session.webdav.map { WebDAVFieldSchema.values(from: $0) } ?? FieldValues()
+        case .ftp:
+            // No stored FTP block exists yet (FTP plan, Task 8 adds
+            // `StoredSession.ftp`), so there is nothing to read: the empty
+            // bag, which is also the missing-block answer of the other three.
+            return FieldValues()
         }
     }
 
@@ -317,6 +329,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return session.ssh != nil
         case .s3: return session.s3 != nil
         case .webdav: return session.webdav != nil
+        case .ftp: return false  // no stored block to carry until Task 8
         }
     }
 
@@ -418,6 +431,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return SSHFieldSchema.loginSet(id: id, name: name, from: values)
         case .s3: return S3FieldSchema.loginSet(id: id, name: name, from: values)
         case .webdav: return WebDAVFieldSchema.loginSet(id: id, name: name, from: values)
+        case .ftp: return FTPFieldSchema.loginSet(id: id, name: name, from: values)
         }
     }
 
@@ -576,6 +590,59 @@ public struct BackendDescriptor: Sendable {
         connectionActions: [],
         endpoint: { values in WebDAVFieldSchema.endpoint(values) },
         dial: .webdavOptions, diagnostics: [.webdavClaims])
+
+    /// FTP and FTPS (explicit and implicit). The capability row is spec §7a's.
+    ///
+    /// Against WebDAV: a shell is still absent, but POSIX modes are real
+    /// (`SITE CHMOD`, for the servers that honour it -- whether THIS server
+    /// does is a per-connection question this row cannot answer, and a later
+    /// task owns it), symlinks exist, and rename is NOT atomic (`RNFR`/`RNTO`
+    /// is two commands). Resume is a byte offset the client names (`REST`),
+    /// which is neither S3/WebDAV's range GET nor SSH's append. No checksum
+    /// is answered: `XCRC`/`HASH` are extensions, not a protocol feature.
+    ///
+    /// `transport` is the single fixed value `.optionalTLS` for all three
+    /// security modes. The plaintext gate asks two questions -- the capability
+    /// decides whether the question applies, the config
+    /// (`FTPConnectionConfig.security`) whether this endpoint is plaintext --
+    /// so no per-connection capability field is needed.
+    ///
+    /// `authenticatesHostKey` is false: a TLS certificate is not a host key.
+    static let ftpDescriptor = BackendDescriptor(
+        kind: .ftp,
+        capabilities: ProtocolCapabilities(
+            supportsShell: false, permissionModel: .posixMode, supportsSymlinks: true,
+            atomicRename: false, directoriesAreReal: true, resumeMode: .restOffset,
+            supportsPresignedURL: false, supportsRemoteChecksum: false,
+            transport: .optionalTLS, authenticatesHostKey: false),
+        connectionSchema: FTPFieldSchema.connection,
+        credentialSchema: FTPFieldSchema.credential,
+        makeConfig: { values, secret in try FTPFieldSchema.makeConfig(values, secret) },
+        displaySummary: { values in FTPFieldSchema.displaySummary(values) },
+        // Nothing to write into yet: `StoredSession` has no FTP block until
+        // Task 8 adds `StoredFTPConfig` and this closure starts filling it.
+        // Until then an FTP form cannot be saved, which is the honest state
+        // of a backend whose file system does not exist either.
+        apply: { _, _ in },
+        // Replaced in Task 7, when `FTPFileSystem` exists. Until then a person
+        // who reaches this reads a true sentence rather than a crash.
+        connect: { config, _, _, _ in
+            guard case .ftp = config else {
+                throw RemoteFSError.protocolError(reason: "wrong config for the FTP backend")
+            }
+            throw RemoteFSError.connectionFailed(
+                reason: CoreL10n.string("core.connect.ftpNotAvailableYet"))
+        },
+        badgeLabelKey: "connection.badge.ftp", badgeLabelDefault: "FTP",
+        // The same variable WebDAV reuses, for the same reason: a plain
+        // password, no conventional name of its own.
+        secretEnvironmentVariable: "MACSCP_PASSWORD", requiresSecret: { _ in true },
+        fileActions: [],
+        connectionActions: [],
+        endpoint: { values in FTPFieldSchema.endpoint(values) },
+        // No dial row and no probes yet: the diagnostics contribution is
+        // Task 8's, and a row that guessed would diagnose nothing.
+        dial: nil, diagnostics: [])
 }
 
 extension BackendDescriptor {

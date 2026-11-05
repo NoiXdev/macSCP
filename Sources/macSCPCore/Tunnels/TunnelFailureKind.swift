@@ -300,14 +300,15 @@ public enum TunnelFailureKind: Sendable, Equatable {
     /// spelled in English — and only the article is decided here. It follows
     /// PRONUNCIATION rather than spelling: "S3" is said "ess-three", so it
     /// takes "an" though it begins with a consonant letter, while "WebDAV"
-    /// takes "a". A rule over the first letter would get one of those two
+    /// takes "a". "FTP" ("ef-tee-pee") and "SSH" take "an" for the same
+    /// reason. A rule over the first letter would get some of these
     /// wrong whichever way it was written, so this is an exhaustive switch:
     /// a fourth backend's label needs the judgement made by a person, and
     /// the compiler is what asks for it.
     private static func namedWithArticle(_ kind: ConnectionKind) -> String {
         let label = BackendDescriptor.descriptor(for: kind).badgeLabelDefault
         switch kind {
-        case .ssh, .s3: return "an \(label)"
+        case .ssh, .s3, .ftp: return "an \(label)"
         case .webdav: return "a \(label)"
         }
     }

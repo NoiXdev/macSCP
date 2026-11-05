@@ -136,7 +136,9 @@ public struct SessionOverviewModel: Sendable, Equatable {
         case .ssh:
             guard let knownKey else { return .unknown }
             return .known(type: knownKey.keyType, fingerprint: knownKey.fingerprintSHA256)
-        case .s3, .webdav:
+        case .s3, .webdav, .ftp:
+            // FTPS authenticates with a certificate, not a remembered host
+            // key (`authenticatesHostKey` is false for it).
             return .notApplicable
         }
     }
@@ -219,6 +221,9 @@ public struct SessionOverviewModel: Sendable, Equatable {
         case .ssh: return sshFacts(session, loginSetName)
         case .s3: return s3Facts(session, loginSetName)
         case .webdav: return webdavFacts(session, loginSetName)
+        // No stored FTP block exists until FTP plan Task 8, so there is
+        // nothing to show; that task writes `ftpFacts` and this arm calls it.
+        case .ftp: return []
         }
     }
 

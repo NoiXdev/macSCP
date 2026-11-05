@@ -163,7 +163,8 @@ struct LoginResolverSchemaTests {
     /// round 1): anonymous WebDAV is a real deployment (a public read-only
     /// share, or a LAN box with no auth), so neither of its credential fields
     /// is required and an empty WebDAV credential form is legitimately
-    /// complete.
+    /// complete. FTP is the second exception, for the same reason: anonymous
+    /// FTP is the oldest real deployment the protocol has.
     ///
     /// Total over `ConnectionKind.allCases` rather than filtered (M23/T9 fix
     /// round 2): a `filter { $0 != .webdav }` silently drops a fourth backend
@@ -174,7 +175,7 @@ struct LoginResolverSchemaTests {
     /// the separate count assertion below catches a tuple silently missing
     /// from the list, the same way the filter used to hide `.webdav`.
     @Test(arguments: [
-        (ConnectionKind.ssh, true), (.s3, true), (.webdav, false),
+        (ConnectionKind.ssh, true), (.s3, true), (.webdav, false), (.ftp, false),
     ])
     func anEmptyCredentialFormIsIncompleteUnlessTheBackendAllowsAnonymousLogin(
         kind: ConnectionKind, isIncomplete: Bool
@@ -194,7 +195,7 @@ struct LoginResolverSchemaTests {
     /// the list ITSELF total, not merely each case in it.
     @Test func everyConnectionKindHasAnAnonymousLoginExpectation() {
         let cases: [(ConnectionKind, Bool)] = [
-            (.ssh, true), (.s3, true), (.webdav, false),
+            (.ssh, true), (.s3, true), (.webdav, false), (.ftp, false),
         ]
         #expect(cases.count == ConnectionKind.allCases.count)
     }

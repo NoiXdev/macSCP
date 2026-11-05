@@ -73,10 +73,10 @@ struct SchemaConformanceTests {
         }
     }
 
-    /// The port is the ONE numeric field in the app. Pinned so that adding a
-    /// second `.numeric` field is a deliberate act with a test to update, not a
-    /// drive-by.
-    @Test func onlyTheSSHPortIsNumeric() {
+    /// A port is the ONLY numeric field in the app -- SSH's and, since the FTP
+    /// plan's Task 3, FTP's. Pinned so that adding another `.numeric` field is
+    /// a deliberate act with a test to update, not a drive-by.
+    @Test func onlyTheSSHAndFTPPortsAreNumeric() {
         let numeric = ConnectionKind.allCases.flatMap { kind -> [String] in
             let descriptor = BackendDescriptor.descriptor(for: kind)
             return [descriptor.connectionSchema, descriptor.credentialSchema]
@@ -84,6 +84,6 @@ struct SchemaConformanceTests {
                 .filter { $0.format == .numeric }
                 .map { "\(kind).\($0.id)" }
         }
-        #expect(numeric == ["ssh.port"])
+        #expect(numeric == ["ssh.port", "ftp.port"])
     }
 }

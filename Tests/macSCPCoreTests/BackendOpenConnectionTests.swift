@@ -33,6 +33,8 @@ struct BackendOpenConnectionTests {
         .webdav(WebDAVConnectionConfig(
             baseURL: "http://127.0.0.1:1/dav", username: "u",
             useNextcloudPath: false, password: "p")),
+        .ftp(FTPConnectionConfig(
+            host: "127.0.0.1", port: 1, username: "u", security: .plain, password: "p")),
     ]
 
     @Test func everyConfigReachesTheBackendItsOwnKindNames() async {

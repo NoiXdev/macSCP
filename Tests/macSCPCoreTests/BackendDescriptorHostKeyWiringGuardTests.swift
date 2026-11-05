@@ -3,7 +3,7 @@ import MacSCPTestSupport
 import Testing
 
 /// Reads `Sources/macSCPCore/Capabilities/BackendDescriptor.swift`'s own
-/// text and checks each of the three descriptors' `connect` closure against
+/// text and checks each of the four descriptors' `connect` closure against
 /// what its OWN `capabilities.authenticatesHostKey` declares — the
 /// derivation `BackendDescriptorTests
 /// .authenticatesHostKeyMatchesWhichBackendsConnectClosureUsesTheDecider`
@@ -11,7 +11,7 @@ import Testing
 /// independent derivation of the same fact", and so did this project's own
 /// fix-round report and `docs/BACKLOG.md` row — a reviewer caught it
 /// (2026-09-04, fix round on `cab8c7b4`): the switch in that test is typed
-/// by hand, and reads none of `BackendDescriptor.swift`. It PINS the three
+/// by hand, and reads none of `BackendDescriptor.swift`. It PINS the four
 /// booleans as a second copy — worth having, since a change to one must now
 /// be made to the other on purpose — but a pin is not a derivation, and
 /// saying so was the report's own "A report says what the diff shows"
@@ -30,8 +30,8 @@ import Testing
 /// Per CLAUDE.md "Guards that name what they watch": the negative half —
 /// "a `false` descriptor's closure does not forward the decider" — is
 /// trivially satisfiable by a scan that finds nothing at all, so it is
-/// paired with positives that are not: `exactlyThreeDescriptorsAreFoundIn
-/// TheRealFile` (the scan reaches the file and finds all three, not zero)
+/// paired with positives that are not: `exactlyFourDescriptorsAreFoundIn
+/// TheRealFile` (the scan reaches the file and finds all four, not zero)
 /// and `theSSHClosureBodyMentionsItsDecider` (the one `true` descriptor's
 /// closure really does name and use its parameter). Four more tests run the
 /// scanner over synthetic sources and drive it through the exact parsing
@@ -76,20 +76,20 @@ struct BackendDescriptorHostKeyWiringGuardTests {
 
     // MARK: - Positive companions
 
-    /// The scan reaches the real file and finds all three descriptors, not
+    /// The scan reaches the real file and finds all four descriptors, not
     /// zero — without this, the guard above could be silently checking
     /// nothing.
-    @Test func exactlyThreeDescriptorsAreFoundInTheRealFile() throws {
+    @Test func exactlyFourDescriptorsAreFoundInTheRealFile() throws {
         let descriptors = try Self.realDescriptors()
-        #expect(descriptors.count == 3, """
-            expected 3 `ProtocolCapabilities(` sites (ssh, s3, webdav) in \
+        #expect(descriptors.count == 4, """
+            expected 4 `ProtocolCapabilities(` sites (ssh, s3, webdav, ftp) in \
             BackendDescriptor.swift, found \(descriptors.count) — re-anchor this guard
             """)
     }
 
     /// The one descriptor declaring `true` really does name and use its
     /// decider — without this, "no closure claiming `false` forwards its
-    /// decider" could be vacuously true over three closures that all
+    /// decider" could be vacuously true over closures that all
     /// discard it, `true` claim included.
     @Test func theSSHClosureBodyMentionsItsDecider() throws {
         let descriptors = try Self.realDescriptors()

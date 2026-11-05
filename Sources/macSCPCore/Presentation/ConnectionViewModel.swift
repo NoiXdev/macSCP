@@ -1173,6 +1173,12 @@ public final class ConnectionViewModel {
             return (URLText.withoutUserinfo(typedURL: s3.endpoint, atMayFollowHost: false), "-", "s3")
         case .webdav(let webdav):
             return (URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true), "-", "webdav")
+        case .ftp(let ftp):
+            // Host and port as the config holds them: `normalizedHost`
+            // refused anything shaped like a URL or a user-info prefix, so
+            // unlike the two URL-typed fields above there is no credential
+            // that could ride along inside it.
+            return (ftp.host, String(ftp.port), "ftp")
         }
     }
 

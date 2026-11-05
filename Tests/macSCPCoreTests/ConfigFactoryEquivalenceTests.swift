@@ -37,6 +37,8 @@ import Testing
             session = s3Session(name: "archive", config: s3Stored(padded: false))
         case .webdav:
             session = webdavSession(name: "cloud")
+        case .ftp:
+            session = ftpSession(name: "files")
         }
 
         let viaBuild = try StoredSessionConnectionConfig.build(for: session, secret: secret, checkedSources: [])

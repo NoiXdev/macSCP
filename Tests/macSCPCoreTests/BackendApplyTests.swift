@@ -100,6 +100,7 @@ import Testing
             authKind: .privateKey, keyPath: "/k", groupID: group, loginSetID: set)
         case .s3: original = s3Session(name: "s", groupID: group, loginSetID: set)
         case .webdav: original = webdavSession(name: "s", groupID: group, loginSetID: set)
+        case .ftp: original = ftpSession(name: "s", groupID: group, loginSetID: set)
         }
 
         var rebuilt = original

@@ -30,12 +30,12 @@ public enum TunnelCarriers {
     /// Whether a forwarding can be carried over a connection of this kind.
     ///
     /// Exhaustive on purpose — no `default`. There is no `direct-tcpip` over
-    /// S3 or WebDAV, and a fourth backend must answer this question here
+    /// S3, WebDAV or FTP, and a fourth backend must answer this question here
     /// rather than inherit `false` from a wildcard nobody revisits.
     public static func carries(_ kind: ConnectionKind) -> Bool {
         switch kind {
         case .ssh: return true
-        case .s3, .webdav: return false
+        case .s3, .webdav, .ftp: return false
         }
     }
 

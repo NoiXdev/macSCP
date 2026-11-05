@@ -203,6 +203,8 @@ struct SessionFieldOptions: ParsableArguments {
         case .ssh: return [("--host", host), ("--user", user)]
         case .s3: return [("--endpoint", endpoint), ("--bucket", bucket), ("--access-key", accessKey)]
         case .webdav: return [("--url", url), ("--user", user)]
+        // FTP has no flags of its own until FTP plan Task 10.
+        case .ftp: return []
         }
     }
 
@@ -254,6 +256,12 @@ struct SessionFieldOptions: ParsableArguments {
                 baseURL: try required(url, "--url", for: kind),
                 username: try required(user, "--user", for: kind),
                 useNextcloudPath: nextcloud)
+        case .ftp:
+            // Refused rather than written: `StoredSession` has no FTP block
+            // until FTP plan Task 8, and a session record of this kind with
+            // no block would be one nothing can dial. Task 10 replaces this
+            // arm with the real flags.
+            throw ValidationError("--kind ftp is not available from the command line yet")
         }
         session.tags = tag
         if let pane { session.paneVisibility = pane.visibility }

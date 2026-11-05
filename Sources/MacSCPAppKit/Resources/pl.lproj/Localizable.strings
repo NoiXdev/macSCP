@@ -205,6 +205,14 @@
 "connection.webdav.preset.nextcloud" = "Nextcloud / ownCloud";
 "connection.webdav.preset.custom" = "Niestandardowy";
 
+/* FTP form section (FTP plan, Task 3) */
+"connection.badge.ftp" = "FTP";
+"connection.ftp.security" = "Zabezpieczenie";
+"connection.ftp.security.plain" = "Brak (zwykłe FTP)";
+"connection.ftp.security.explicitTLS" = "Jawne FTPS (zalecane)";
+"connection.ftp.security.implicitTLS" = "Niejawne FTPS";
+"connection.ftp.initialPath" = "Folder początkowy";
+
 /* Skrót bez powłoki na backendzie bez powłoki (M12/T7b) */
 "shortcut.unavailableForProtocol.title" = "Niedostępne";
 "shortcut.unavailableForProtocol" = "Ten skrót nie jest dostępny dla tego typu połączenia.";

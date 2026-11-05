@@ -394,6 +394,7 @@ struct SessionExportCodecTests {
             authKind: .privateKey, keyPath: "/k")
         case .s3: session = s3Session(name: "s")
         case .webdav: session = webdavSession(name: "s")
+        case .ftp: session = ftpSession(name: "s")
         }
 
         let descriptor = BackendDescriptor.descriptor(for: kind)

@@ -199,6 +199,11 @@ public struct SessionCatalog: Sendable {
         case .webdav:
             guard let webdav = session.webdav else { return "" }
             return URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true)
+        case .ftp:
+            // No stored FTP block exists until FTP plan Task 8 adds
+            // `StoredSession.ftp`, so there is no target to describe; that
+            // task replaces this arm with the host and port.
+            return ""
         }
     }
 }

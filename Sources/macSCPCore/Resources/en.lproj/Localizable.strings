@@ -90,6 +90,9 @@
 /* ConnectionViewModel WebDAV form validation (M21/T9) */
 "core.connect.webdavFieldRequired" = "Enter the WebDAV server URL.";
 
+/* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
+"core.connect.ftpNotAvailableYet" = "FTP connections are not available in this build yet.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";
