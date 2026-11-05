@@ -208,6 +208,7 @@ struct RigidControlScanTests {
         pattern: #"\.pickerStyle\(\s*\.menu\s*\)|(?:^|\W)MenuPickerStyle(?!\w)"#,
         allowed: [
             "ConnectionFormView.swift": 2,
+            "RigidControls.swift": 1,
             "AuditLogSheet.swift": 1,
             "DiagnosticsPanel.swift": 1,
             "FileSearchBar.swift": 1,
@@ -439,9 +440,8 @@ struct RigidControlScanTests {
             pattern: #"(?:^|\W)SegmentedChoice\("#,
             sites: [
                 "BucketCORSSheet.swift": 1,
-                "ConnectionFormView.swift": 3,
+                "ConnectionFormView.swift": 2,
                 "FileActionEditor.swift": 1,
-                "LoginSetsSheet.swift": 1,
                 "PresignedURLSheet.swift": 1,
                 "SSHKeysSheet.swift": 2,
                 "SettingsView.swift": 2,
@@ -469,6 +469,17 @@ struct RigidControlScanTests {
                 "ObjectMetadataSheet.swift": 1,
                 "SheetSearchField.swift": 1,
                 "SnippetsSheet.swift": 2,
+            ]),
+        // Added with the FTP backend (its Task 3): the connection-type choice
+        // moved here from `SegmentedChoice`, whose width grows with the number
+        // of kinds. Last in the list because `components[0]` and
+        // `components[2]` are read by index below.
+        Component(
+            name: "MenuChoice",
+            pattern: #"(?:^|\W)MenuChoice\("#,
+            sites: [
+                "ConnectionFormView.swift": 1,
+                "LoginSetsSheet.swift": 1,
             ]),
     ]
 

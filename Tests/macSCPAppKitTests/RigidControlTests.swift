@@ -105,6 +105,46 @@ struct RigidControlTests {
         ]
     }
 
+    // MARK: - A choice that grows with the product
+
+    /// The connection-type labels as they stood before FTP and with it. The
+    /// added label is the SHORTEST, so a menu's width (the longest single
+    /// label) cannot move and a segmented control's (the sum) must.
+    private static let threeKinds = ["SSH", "S3", "WebDAV"]
+    private static let fourKinds = ["SSH", "S3", "WebDAV", "FTP"]
+
+    private static func menu(_ labels: [String]) -> some View {
+        MenuChoice(
+            "", selection: .constant(0),
+            options: labels.enumerated().map { ($0.offset, $0.element) })
+    }
+
+    private static func segmented(_ labels: [String]) -> some View {
+        SegmentedChoice(
+            "", selection: .constant(0),
+            options: labels.enumerated().map { ($0.offset, $0.element) })
+    }
+
+    /// The property `MenuChoice` exists for, with its positive control beside
+    /// it: the same options on `SegmentedChoice` DO grow when a fourth is
+    /// added, so a menu that stayed flat is the menu's doing and not a
+    /// measurement that cannot see growth. It is also rigid (minimum equals
+    /// ideal), as every component here is.
+    @Test func aMenuChoiceDoesNotGrowWithItsOptionCount() {
+        for locale in LayoutMeasure.shippedLocales {
+            let menu3 = Self.figures(locale) { Self.menu(Self.threeKinds) }
+            let menu4 = Self.figures(locale) { Self.menu(Self.fourKinds) }
+            let segmented3 = LayoutMeasure.idealWidth(locale: locale) { Self.segmented(Self.threeKinds) }
+            let segmented4 = LayoutMeasure.idealWidth(locale: locale) { Self.segmented(Self.fourKinds) }
+
+            #expect(segmented4 > segmented3, "\(locale): segmented \(segmented3) -> \(segmented4)")
+            #expect(menu4[1] == menu3[1], "\(locale): menu \(menu3[1]) -> \(menu4[1])")
+            #expect(menu4[0] == menu4[1], "\(locale): menu minimum \(menu4[0]), ideal \(menu4[1])")
+            #expect(menu4[1] > 0, "\(locale): \(menu4)")
+            #expect(menu4[1] < segmented4, "\(locale): menu \(menu4[1]) vs segmented \(segmented4)")
+        }
+    }
+
     // MARK: - The properties
 
     /// The negative check: the components are rigid in every shipped

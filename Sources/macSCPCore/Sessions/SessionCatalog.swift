@@ -40,7 +40,7 @@ public struct SessionCatalog: Sendable {
         public let groupPath: String
         public let tags: [String]
         /// Per kind: `user@host:port` (SSH, port always shown), `bucket @
-        /// endpoint` (S3), the URL (WebDAV).
+        /// endpoint` (S3), the URL (WebDAV), `[user@]host:port` (FTP).
         public let target: String
     }
 
@@ -173,7 +173,7 @@ public struct SessionCatalog: Sendable {
             target: target(for: session))
     }
 
-    /// A missing block (`ssh`/`s3`/`webdav` all `nil` on `kind`'s own
+    /// A missing block (`ssh`/`s3`/`webdav`/`ftp` all `nil` on `kind`'s own
     /// backend) answers `""` rather than inventing a target, for every kind
     /// alike — not just because a blockless record is reachable (`SessionStore`
     /// drops a blockless `.ssh` record on load, but has no such drop for
@@ -200,10 +200,11 @@ public struct SessionCatalog: Sendable {
             guard let webdav = session.webdav else { return "" }
             return URLText.withoutUserinfo(typedURL: webdav.baseURL, atMayFollowHost: true)
         case .ftp:
-            // No stored FTP block exists until FTP plan Task 8 adds
-            // `StoredSession.ftp`, so there is no target to describe; that
-            // task replaces this arm with the host and port.
-            return ""
+            guard let ftp = session.ftp else { return "" }
+            // `Endpoint.text` is this project's one spelling of host:port,
+            // IPv6 brackets included.
+            let address = Endpoint(host: ftp.host, port: ftp.port).text
+            return ftp.username.isEmpty ? address : "\(ftp.username)@\(address)"
         }
     }
 }

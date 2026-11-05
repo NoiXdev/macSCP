@@ -177,6 +177,9 @@
 "core.overview.panes.terminal" = "Terminal";
 "core.overview.panes.both" = "Pliki i terminal";
 "core.overview.s3.bucketList" = "Lista bucketów";
+"core.overview.ftp.security.plain" = "Brak (zwykłe FTP)";
+"core.overview.ftp.security.explicitTLS" = "Jawne FTPS";
+"core.overview.ftp.security.implicitTLS" = "Niejawne FTPS";
 
 /* File type label (Browser Type Column, 2026-09-04) */
 "core.fileType.bucket" = "Bucket";

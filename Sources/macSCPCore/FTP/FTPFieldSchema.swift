@@ -235,6 +235,43 @@ public enum FTPFieldSchema {
         return port == mode.defaultPort ? base : "\(base):\(port)"
     }
 
+    // MARK: - Persistence adapter
+
+    /// The stored block as form values. The password is deliberately absent:
+    /// it lives in the Keychain.
+    public static func values(from stored: StoredFTPConfig) -> FieldValues {
+        var values = FieldValues()
+        values[FTPField.host] = stored.host
+        values[FTPField.port] = String(stored.port)
+        values[FTPField.security] = stored.security.rawValue
+        values[FTPField.initialPath] = stored.initialPath ?? ""
+        values[FTPField.username] = stored.username
+        return values
+    }
+
+    /// The block a filled-in form describes. Text fields are TRIMMED on the
+    /// way in, for the reason `S3FieldSchema.stored(from:)` gives: an import's
+    /// duplicate key reads these byte for byte. A blank port is the mode's own
+    /// default, a port that does not parse falls back to it too (the strict
+    /// reader is `makeConfig`, which refuses it before a session is saved),
+    /// and a blank initial folder is `nil`.
+    public static func stored(from values: FieldValues) -> StoredFTPConfig {
+        let mode = security(values)
+        let path = values[FTPField.initialPath].trimmingCharacters(in: .whitespacesAndNewlines)
+        return StoredFTPConfig(
+            host: values[FTPField.host].trimmingCharacters(in: .whitespacesAndNewlines),
+            port: port(values[FTPField.port], for: mode) ?? mode.defaultPort,
+            username: values[FTPField.username].trimmingCharacters(in: .whitespacesAndNewlines),
+            security: mode,
+            initialPath: path.isEmpty ? nil : path)
+    }
+
+    /// Writes ONLY the fields `FTPField` covers -- same contract as the other
+    /// backends' `apply`: group, login-set binding and tags are not touched.
+    public static func apply(_ values: FieldValues, to session: inout StoredSession) {
+        session.ftp = stored(from: values)
+    }
+
     // MARK: - Login sets
 
     /// A login set's credentials in schema shape: the user name only. The

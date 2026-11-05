@@ -2153,6 +2153,11 @@ struct ConnectionViewModelTests {
                     ? StoredWebDAVConfig(
                         baseURL: "https://dav.example.com", username: "dave",
                         useNextcloudPath: false)
+                    : nil,
+                ftp: kind == .ftp
+                    ? StoredFTPConfig(
+                        host: "ftp.example.com", port: 21, username: "frank",
+                        security: .explicitTLS)
                     : nil)
             vm.beginEditing(stored)
             #expect(vm.loginMode == .set)

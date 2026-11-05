@@ -77,19 +77,16 @@ func webdavSession(
                   loginSetID: loginSetID, kind: .webdav, webdav: config)
 }
 
-/// An FTP session with NO stored block, because none exists yet: FTP plan
-/// Task 8 adds `StoredSession.ftp` and gives this fixture its `config`
-/// parameter. Until then every test that walks `ConnectionKind.allCases`
-/// reaches FTP through this one place, so the tests that become meaningful
-/// with the block are found by searching for it.
 func ftpSession(
     id: UUID = UUID(),
     name: String,
     groupID: UUID? = nil,
-    loginSetID: UUID? = nil
+    loginSetID: UUID? = nil,
+    config: StoredFTPConfig = StoredFTPConfig(
+        host: "ftp.example.com", port: 21, username: "tim", security: .explicitTLS)
 ) -> StoredSession {
     StoredSession(id: id, name: name, groupID: groupID,
-                  loginSetID: loginSetID, kind: .ftp)
+                  loginSetID: loginSetID, kind: .ftp, ftp: config)
 }
 
 // MARK: - Export field bags (M23/P3)

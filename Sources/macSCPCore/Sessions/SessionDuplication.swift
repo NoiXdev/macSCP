@@ -61,6 +61,7 @@ public enum SessionDuplication {
             ssh: template.ssh,
             s3: template.s3,
             webdav: template.webdav,
+            ftp: template.ftp,
             paneVisibility: template.paneVisibility,
             tags: template.tags,
             position: template.position)

@@ -956,7 +956,7 @@ struct LoginSetEditorView: BoundedView {
             // `.webdav` unreachable.
             let kindLabel = L10n.string("loginSets.editor.kind", "Type")
             FormRow(label: kindLabel) {
-                SegmentedChoice(
+                MenuChoice(
                     kindLabel, selection: $kind,
                     options: ConnectionKind.allCases.map { kind in
                         (kind, LoginSetsSheet.kindLabel(kind))

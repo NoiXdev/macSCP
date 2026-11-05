@@ -221,9 +221,7 @@ public struct SessionOverviewModel: Sendable, Equatable {
         case .ssh: return sshFacts(session, loginSetName)
         case .s3: return s3Facts(session, loginSetName)
         case .webdav: return webdavFacts(session, loginSetName)
-        // No stored FTP block exists until FTP plan Task 8, so there is
-        // nothing to show; that task writes `ftpFacts` and this arm calls it.
-        case .ftp: return []
+        case .ftp: return ftpFacts(session, loginSetName)
         }
     }
 
@@ -302,6 +300,38 @@ public struct SessionOverviewModel: Sendable, Equatable {
         }
         facts.append(
             Fact(id: "pathStyle", labelKey: label("pathStyle"), text: yesNo(s3.usePathStyle)))
+        if let fact = loginSetFact(loginSetName) { facts.append(fact) }
+        return facts
+    }
+
+    /// Host, port and the security mode are the facts -- the address is what
+    /// an FTP session IS, as the base URL is WebDAV's. The user name follows
+    /// WebDAV's arm (a fact when non-empty, anonymous FTP having none) and the
+    /// initial folder is one only when set. No password and nothing that names
+    /// one: the overview's separate secret row says whether one is saved.
+    private static func ftpFacts(_ session: StoredSession, _ loginSetName: String?) -> [Fact] {
+        guard let ftp = session.ftp else { return [] }
+        var facts: [Fact] = []
+        if !ftp.host.isEmpty {
+            facts.append(
+                Fact(id: "host", labelKey: label("host"), text: ftp.host, isMonospaced: true))
+        }
+        facts.append(
+            Fact(id: "port", labelKey: label("port"), text: String(ftp.port), isMonospaced: true))
+        facts.append(
+            Fact(
+                id: "security", labelKey: label("security"),
+                text: CoreL10n.string("core.overview.ftp.security.\(ftp.security.rawValue)")))
+        if !ftp.username.isEmpty {
+            facts.append(
+                Fact(
+                    id: "username", labelKey: label("username"), text: ftp.username,
+                    isMonospaced: true))
+        }
+        if let path = ftp.initialPath, !path.isEmpty {
+            facts.append(
+                Fact(id: "initialPath", labelKey: label("initialPath"), text: path, isMonospaced: true))
+        }
         if let fact = loginSetFact(loginSetName) { facts.append(fact) }
         return facts
     }

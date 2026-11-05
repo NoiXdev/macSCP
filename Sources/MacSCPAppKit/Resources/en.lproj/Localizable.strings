@@ -1669,6 +1669,10 @@
 "overview.fact.pathStyle" = "Path-style addressing";
 "overview.fact.baseURL" = "Server URL";
 "overview.fact.nextcloudPath" = "Nextcloud path";
+"overview.fact.host" = "Host";
+"overview.fact.port" = "Port";
+"overview.fact.security" = "Security";
+"overview.fact.initialPath" = "Initial folder";
 "overview.fact.group" = "Group";
 "overview.fact.tags" = "Labels";
 "overview.fact.panes" = "Opens showing";

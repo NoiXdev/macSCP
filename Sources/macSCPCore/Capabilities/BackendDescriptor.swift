@@ -307,10 +307,7 @@ public struct BackendDescriptor: Sendable {
         case .webdav:
             return session.webdav.map { WebDAVFieldSchema.values(from: $0) } ?? FieldValues()
         case .ftp:
-            // No stored FTP block exists yet (FTP plan, Task 8 adds
-            // `StoredSession.ftp`), so there is nothing to read: the empty
-            // bag, which is also the missing-block answer of the other three.
-            return FieldValues()
+            return session.ftp.map { FTPFieldSchema.values(from: $0) } ?? FieldValues()
         }
     }
 
@@ -329,7 +326,7 @@ public struct BackendDescriptor: Sendable {
         case .ssh: return session.ssh != nil
         case .s3: return session.s3 != nil
         case .webdav: return session.webdav != nil
-        case .ftp: return false  // no stored block to carry until Task 8
+        case .ftp: return session.ftp != nil
         }
     }
 
@@ -619,11 +616,7 @@ public struct BackendDescriptor: Sendable {
         credentialSchema: FTPFieldSchema.credential,
         makeConfig: { values, secret in try FTPFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in FTPFieldSchema.displaySummary(values) },
-        // Nothing to write into yet: `StoredSession` has no FTP block until
-        // Task 8 adds `StoredFTPConfig` and this closure starts filling it.
-        // Until then an FTP form cannot be saved, which is the honest state
-        // of a backend whose file system does not exist either.
-        apply: { _, _ in },
+        apply: { values, session in FTPFieldSchema.apply(values, to: &session) },
         // Replaced in Task 7, when `FTPFileSystem` exists. Until then a person
         // who reaches this reads a true sentence rather than a crash.
         connect: { config, _, _, _ in

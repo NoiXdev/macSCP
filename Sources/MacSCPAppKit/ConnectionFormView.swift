@@ -447,7 +447,7 @@ struct ConnectionFormView: BoundedView {
                             // feature) and the schema-driven S3 section.
                             let typeLabel = L10n.string("connection.type.label", "Connection type")
                             FormRow(label: typeLabel) {
-                                SegmentedChoice(
+                                MenuChoice(
                                     typeLabel, selection: $viewModel.kind,
                                     options: ConnectionKind.allCases.map { kind in
                                         let descriptor = BackendDescriptor.descriptor(for: kind)

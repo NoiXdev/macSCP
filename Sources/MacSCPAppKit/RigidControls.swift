@@ -62,10 +62,12 @@ import SwiftUI
 // `RigidControlTests.aWrappingCheckboxBreaksTheLabelInsteadOfLosingIt` pins
 // that it neither truncates nor reports its one-line ideal as its minimum.
 //
-// Rigid menu pickers are NOT components: a `Picker` in the menu style held
-// with `.fixedSize()`, written by hand. A pop-up shows one label, which is why
-// it fits where a segmented control of the same labels did not. Nothing but
-// review keeps their `.fixedSize()` in place.
+// Rigid menu pickers are mostly NOT components: a `Picker` in the menu style
+// held with `.fixedSize()`, written by hand. A pop-up shows one label, which is
+// why it fits where a segmented control of the same labels did not. Nothing but
+// review keeps their `.fixedSize()` in place. The one exception is `MenuChoice`
+// below, which exists for the connection type: a choice whose option list grows
+// with the product, where a segmented control's width grew with it.
 //
 // **Corrected 2026-10-18, Task 10.** The paragraph below says the command it
 // names "prints five lines" and that "All five carry `.fixedSize()`". It now
@@ -132,6 +134,46 @@ struct SegmentedChoice<Value: Hashable>: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
+        .fixedSize()
+    }
+}
+
+/// A pop-up menu that cannot be compressed below its ideal width, for a
+/// choice whose option list GROWS with the product -- the connection type.
+///
+/// A segmented control's width is the SUM of its labels, so every protocol
+/// added to `ConnectionKind` asks the sheet that holds it for more room (the
+/// fourth, FTP, pushed two bounded sheets 8 and 16 pt past a granted 460 pt;
+/// `BoundedViewLayoutGuardTests` was the measurement). A menu shows ONE label,
+/// so its width follows the longest single label and is flat in the number of
+/// options. `RigidControlTests.aMenuChoiceDoesNotGrowWithItsOptionCount`
+/// measures that against `SegmentedChoice` with the same options.
+///
+/// A sibling of `SegmentedChoice` with the same initializer, not a change to
+/// it: the shared type has call sites whose choice is a fixed handful, and
+/// restyling those is not this component's business.
+struct MenuChoice<Value: Hashable>: View {
+    private let accessibilityLabel: String
+    private let selection: Binding<Value>
+    private let options: [(value: Value, label: String)]
+
+    init(
+        _ accessibilityLabel: String, selection: Binding<Value>,
+        options: [(value: Value, label: String)]
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.selection = selection
+        self.options = options
+    }
+
+    var body: some View {
+        Picker(accessibilityLabel, selection: selection) {
+            ForEach(options.indices, id: \.self) { index in
+                Text(options[index].label).tag(options[index].value)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
         .fixedSize()
     }
 }

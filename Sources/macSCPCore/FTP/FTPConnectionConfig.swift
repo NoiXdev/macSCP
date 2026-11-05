@@ -1,32 +1,53 @@
-/// The RUNTIME FTP connect config.
+/// The persisted, SECRET-FREE FTP parameters -- stored in
+/// `StoredSession.ftp` and in exports. The password is never here; it lives
+/// only in the Keychain (`SecretStore`), like every other backend's secret.
 ///
-/// **Public although the other FTP types are internal**: it is the associated
-/// value of the public `ConnectionConfig.ftp`, and an enum case's payload
-/// cannot be less accessible than the enum (`WebDAVConnectionConfig` is
-/// public for the same reason).
-///
-/// **`password` is the one field that is not persisted.** WebDAV splits this
-/// into a stored, secret-free struct and a runtime one; FTP has one struct,
-/// and `CodingKeys` below is what keeps the secret out of any encoding of it.
-/// `makeConfig` receives the resolved secret and has nowhere else to put it,
-/// because `ConnectionConfig.ftp` carries exactly one payload. The empty
-/// default is also what a decoded value reads, so a config that came off disk
-/// holds no password until a caller resolves one.
-///
-/// Warning: `password` is a plaintext secret -- never log, interpolate or
-/// persist it.
-public struct FTPConnectionConfig: Sendable, Equatable, Codable {
+/// Public for the reason `StoredWebDAVConfig` is: `StoredSession` is public
+/// and holds it. A sixth persisted field is a decision, which is why the
+/// persistence test compares the encoded key set exactly.
+public struct StoredFTPConfig: Equatable, Codable, Sendable {
     public var host: String
     public var port: Int
     public var username: String
     public var security: FTPSecurityMode
     /// The folder to open first; `nil` means whatever the server starts in.
     public var initialPath: String?
-    public var password: String = ""
 
     public init(
         host: String, port: Int, username: String, security: FTPSecurityMode,
-        initialPath: String? = nil, password: String = ""
+        initialPath: String? = nil
+    ) {
+        self.host = host
+        self.port = port
+        self.username = username
+        self.security = security
+        self.initialPath = initialPath
+    }
+}
+
+/// The RUNTIME FTP connect config: the persisted fields PLUS the transient
+/// secret. NOT Codable -- never persisted. A type that cannot be encoded
+/// cannot encode a secret, which is why this is a second struct and not
+/// `StoredFTPConfig` with an exclusion list.
+///
+/// **Public although the other FTP types are internal**: it is the associated
+/// value of the public `ConnectionConfig.ftp`, and an enum case's payload
+/// cannot be less accessible than the enum (`WebDAVConnectionConfig` is
+/// public for the same reason).
+public struct FTPConnectionConfig: Equatable, Sendable {
+    public var host: String
+    public var port: Int
+    public var username: String
+    public var security: FTPSecurityMode
+    public var initialPath: String?
+    /// Warning: plaintext secret -- never log, interpolate or persist it.
+    /// Possibly empty (anonymous FTP), but always supplied: there is no
+    /// default, so a call site cannot forget it.
+    public var password: String
+
+    public init(
+        host: String, port: Int, username: String, security: FTPSecurityMode,
+        initialPath: String? = nil, password: String
     ) {
         self.host = host
         self.port = port
@@ -34,12 +55,5 @@ public struct FTPConnectionConfig: Sendable, Equatable, Codable {
         self.security = security
         self.initialPath = initialPath
         self.password = password
-    }
-
-    /// Every stored property except `password`. A case added above without a
-    /// line here is not encoded, which is why the persistence test compares
-    /// the encoded keys with this list rather than trusting it.
-    private enum CodingKeys: String, CodingKey {
-        case host, port, username, security, initialPath
     }
 }

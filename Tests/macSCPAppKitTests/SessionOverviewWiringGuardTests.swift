@@ -915,9 +915,10 @@ struct SessionOverviewWiringGuardTests {
 
     @Test func everyFactLabelTheModelEmitsHasAnEnglishEntry() throws {
         let ids = try Self.factLabelIDs()
-        #expect(ids.count == 15, """
-            SessionOverviewModel emits \(ids.count) distinct fact label ids, not the fifteen \
-            counted when this check was written: \(ids.sorted()). Recount, and give any new \
+        #expect(ids.count == 19, """
+            SessionOverviewModel emits \(ids.count) distinct fact label ids, not the nineteen \
+            counted when this check was last updated (fifteen when it was written; the FTP \
+            plan's Task 3 added host, port, security and initialPath): \(ids.sorted()). Recount, and give any new \
             one a label in all four catalogues before changing this number.
             """)
         // The Bool is computed BEFORE the expectation and the whole

@@ -1665,6 +1665,10 @@
 "overview.fact.pathStyle" = "Adresowanie ścieżkowe";
 "overview.fact.baseURL" = "Adres URL serwera";
 "overview.fact.nextcloudPath" = "Ścieżka Nextcloud";
+"overview.fact.host" = "Host";
+"overview.fact.port" = "Port";
+"overview.fact.security" = "Zabezpieczenie";
+"overview.fact.initialPath" = "Folder początkowy";
 "overview.fact.group" = "Grupa";
 "overview.fact.tags" = "Etykiety";
 "overview.fact.panes" = "Otwiera się na";

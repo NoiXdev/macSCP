@@ -96,6 +96,11 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     /// `nil` for SSH/S3 sessions and on legacy JSON. The password is NOT here
     /// (Keychain only) -- this is `StoredWebDAVConfig`, not the runtime config.
     public var webdav: StoredWebDAVConfig? = nil
+    /// Persisted, SECRET-FREE FTP parameters when `kind == .ftp`. `nil` for
+    /// every other kind and on any JSON written before FTP existed. The
+    /// password is NOT here (Keychain only) -- this is `StoredFTPConfig`, not
+    /// the runtime config.
+    public var ftp: StoredFTPConfig? = nil
     /// Which window halves (files/terminal) were last shown for this session
     /// (P2 terminal-chrome milestone, Task 4). Belongs in the same category
     /// as `groupID` above: a fact about the SESSION, not a connection
@@ -160,6 +165,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh: StoredSSHConfig? = nil,
         s3: StoredS3Config? = nil,
         webdav: StoredWebDAVConfig? = nil,
+        ftp: StoredFTPConfig? = nil,
         paneVisibility: PaneVisibility = .filesOnly,
         tags: [String] = [],
         position: Int = 0,
@@ -175,6 +181,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.ssh = ssh
         self.s3 = s3
         self.webdav = webdav
+        self.ftp = ftp
         self.paneVisibility = paneVisibility
         self.tags = TagList.normalized(tags)
         self.position = position
@@ -184,7 +191,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, groupID, loginSetID, kind, ssh, s3, webdav, paneVisibility, tags
+        case id, name, groupID, loginSetID, kind, ssh, s3, webdav, ftp, paneVisibility, tags
         case position, importSource, importID, importedAt
     }
 
@@ -208,6 +215,7 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         ssh = try c.decodeIfPresent(StoredSSHConfig.self, forKey: .ssh)
         s3 = try c.decodeIfPresent(StoredS3Config.self, forKey: .s3)
         webdav = try c.decodeIfPresent(StoredWebDAVConfig.self, forKey: .webdav)
+        ftp = try c.decodeIfPresent(StoredFTPConfig.self, forKey: .ftp)
         paneVisibility = try c.decodeIfPresent(PaneVisibility.self, forKey: .paneVisibility) ?? .filesOnly
         tags = TagList.normalized(try c.decodeIfPresent([String].self, forKey: .tags) ?? [])
         position = try c.decodeIfPresent(Int.self, forKey: .position) ?? 0

@@ -2,6 +2,10 @@ import Foundation
 import Testing
 @testable import macSCPCore
 
+private struct NoSecrets: SecretPresence {
+    func hasSecret(for slot: UUID) -> Bool { false }
+}
+
 @Suite("FTP as a connection kind")
 struct FTPFieldSchemaTests {
     // A value this suite must not leak: it lives in a named constant and every
@@ -12,7 +16,7 @@ struct FTPFieldSchemaTests {
     private func config(_ security: FTPSecurityMode) -> FTPConnectionConfig {
         FTPConnectionConfig(
             host: "files.example.com", port: security.defaultPort, username: "tim",
-            security: security)
+            security: security, password: "")
     }
 
     private func filledValues() -> FieldValues {
@@ -179,27 +183,111 @@ struct FTPFieldSchemaTests {
 
     // MARK: - Persisted shape
 
-    /// The secret never reaches an encoding. The keys are compared with an
-    /// explicit list so a stored property added later without a decision is
-    /// seen here rather than written to disk.
-    @Test func anEncodedConfigHoldsNoPasswordAndRoundTripsTheRest() throws {
-        var original = config(.explicitTLS)
-        original.initialPath = "/pub"
-        original.password = Self.secret
-
+    /// The persisted block has exactly these keys, so a sixth field is a
+    /// decision somebody makes here on purpose. The secret cannot be among
+    /// them for a structural reason: `StoredFTPConfig` has no such property,
+    /// and the runtime `FTPConnectionConfig`, which has, is not `Codable`
+    /// (nothing here can encode it -- it would not compile).
+    @Test func theStoredBlockHasExactlyTheDeclaredKeysAndRoundTrips() throws {
+        let original = StoredFTPConfig(
+            host: "files.example.com", port: 990, username: "tim",
+            security: .implicitTLS, initialPath: "/pub")
         let data = try JSONEncoder().encode(original)
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(Set(object.keys) == ["host", "port", "username", "security", "initialPath"])
+        #expect(try JSONDecoder().decode(StoredFTPConfig.self, from: data) == original)
+    }
 
-        let text = String(decoding: data, as: UTF8.self)
+    /// The whole session file, not just the block: the password a form
+    /// resolved never reaches `StoredSession`, because `makeConfig`'s secret
+    /// lands only in the runtime config.
+    @Test func aSavedSessionCarriesNoPasswordOnDisk() throws {
+        var session = StoredSession(name: "files", kind: .ftp)
+        BackendDescriptor.descriptor(for: .ftp).apply(filledValues(), &session)
+        _ = try FTPFieldSchema.makeConfig(filledValues(), Self.secret)
+
+        let text = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
         let leaked = text.contains(Self.secret)
         #expect(leaked == false)
+        #expect(session.ftp != nil)
+    }
 
-        let back = try JSONDecoder().decode(FTPConnectionConfig.self, from: data)
-        #expect(back.password.isEmpty)
-        var expected = original
-        expected.password = ""
-        #expect(back == expected)
+    // MARK: - The stored block
+
+    @Test func applyWritesTheBlockAndLeavesTheRestOfTheSessionAlone() {
+        let group = UUID(), set = UUID()
+        var session = ftpSession(name: "files", groupID: group, loginSetID: set)
+        session.tags = ["a"]
+        BackendDescriptor.descriptor(for: .ftp).apply(filledValues(), &session)
+        #expect(session.ftp == StoredFTPConfig(
+            host: "files.example.com", port: 2121, username: "tim",
+            security: .implicitTLS, initialPath: "/pub"))
+        #expect(session.groupID == group)
+        #expect(session.loginSetID == set)
+        #expect(session.tags == ["a"])
+    }
+
+    @Test func aBlankPortStoresTheModesDefaultAndABlankFolderStoresNil() {
+        var values = filledValues()
+        values[FTPField.port] = " "
+        values[FTPField.initialPath] = ""
+        let stored = FTPFieldSchema.stored(from: values)
+        #expect(stored.port == 990)
+        #expect(stored.initialPath == nil)
+    }
+
+    @Test func aStoredSessionRoundTripsThroughTheStoreAndDuplication() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ftp-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = ftpSession(
+            name: "files",
+            config: StoredFTPConfig(
+                host: "files.example.com", port: 2121, username: "tim",
+                security: .plain, initialPath: "/pub"))
+        let store = SessionStore(directory: directory)
+        try store.upsert(session)
+        let loaded = try #require(try store.all().first)
+        #expect(loaded == session)
+
+        let copy = SessionDuplication.copy(of: session, avoiding: [session])
+        #expect(copy.ftp == session.ftp)
+    }
+
+    @Test func aSessionFileWithoutAnFTPKeyStillDecodes() throws {
+        let json = #"{"id":"\#(UUID().uuidString)","name":"old","kind":"webdav"}"#
+        let decoded = try JSONDecoder().decode(StoredSession.self, from: Data(json.utf8))
+        #expect(decoded.ftp == nil)
+    }
+
+    @Test func theCatalogDescribesTheTargetAsUserAtHostAndPort() {
+        let catalog = SessionCatalog(
+            sessions: [ftpSession(
+                name: "files",
+                config: StoredFTPConfig(
+                    host: "files.example.com", port: 2121, username: "tim", security: .plain))],
+            groups: [])
+        #expect(catalog.rows(matching: .init()).map(\.target) == ["tim@files.example.com:2121"])
+    }
+
+    @Test func theOverviewShowsAddressSecurityAndUserButNoPassword() {
+        let session = ftpSession(
+            name: "files",
+            config: StoredFTPConfig(
+                host: "files.example.com", port: 990, username: "tim",
+                security: .implicitTLS, initialPath: "/pub"))
+        let descriptor = BackendDescriptor.descriptor(for: .ftp)
+        let model = SessionOverviewModel(
+            session: session, descriptor: descriptor, knownKey: nil,
+            secrets: NoSecrets(), events: [], snippets: [])
+        let ids = model.facts.map(\.id)
+        #expect(ids.contains("host") && ids.contains("port") && ids.contains("security"))
+        #expect(ids.contains("username") && ids.contains("initialPath"))
+        #expect(model.hostKey == .notApplicable)
+        let namesAPassword = ids.contains { $0.lowercased().contains("password") }
+        #expect(namesAPassword == false)
     }
 
     // MARK: - Summary, endpoint, login set

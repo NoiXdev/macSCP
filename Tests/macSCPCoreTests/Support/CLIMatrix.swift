@@ -94,7 +94,7 @@ struct CLIMatrix: Sendable {
     /// and the TLS vhost is unreachable from the binary at all.
     private static func fixture(
         for kind: ConnectionKind, name: String
-    ) throws -> (session: StoredSession, secret: String, remoteRoot: String) {
+    ) -> (session: StoredSession, secret: String, remoteRoot: String) {
         switch kind {
         case .ssh:
             return (
@@ -123,11 +123,22 @@ struct CLIMatrix: Sendable {
                 "testpass",
                 "/")
         case .ftp:
-            // Fails loudly under `MACSCP_ITEST=1` BY DESIGN: the FTP rig
-            // container is FTP plan Task 11, and the CLI's FTP flags are
-            // Task 10. A fixture invented here would be a rig that does not
-            // exist, which is the quiet way for this matrix to go green.
-            throw CLIMatrixError.noRigYet(kind: kind.rawValue)
+            // Where the FTP rig WILL be (FTP plan Task 11 builds the
+            // container): control port 2121, implicit TLS on 2990, the same
+            // `testuser`/`testpass` pair as the SSH rig. Plain on purpose,
+            // for the reason the WebDAV vhost above is: the CLI hands every
+            // connect `certificate: .refusing`, so a self-signed TLS endpoint
+            // is unreachable from the binary. The gated cases that dial this
+            // fail until the container exists, which is where that debt
+            // belongs; nothing in the ungated suites opens a socket.
+            return (
+                ftpSession(
+                    name: name,
+                    config: StoredFTPConfig(
+                        host: "127.0.0.1", port: 2121, username: "testuser",
+                        security: .plain)),
+                "testpass",
+                "/")
         }
     }
 
@@ -140,7 +151,7 @@ struct CLIMatrix: Sendable {
                 "macscp-cli-matrix-\(kind.rawValue)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
             at: storageDirectory, withIntermediateDirectories: true)
-        let fixture = try fixture(for: kind, name: "\(label)-\(kind.rawValue)-\(UUID().uuidString)")
+        let fixture = fixture(for: kind, name: "\(label)-\(kind.rawValue)-\(UUID().uuidString)")
         // The directory exists before the store step, and only the caller
         // holding a rig can call `tearDown()` — so a throw between the two
         // used to leave a directory nobody had a handle to. There is no
@@ -407,7 +418,13 @@ struct CLIMatrix: Sendable {
             arguments += ["--url", webdav.baseURL, "--user", webdav.username]
             if webdav.useNextcloudPath { arguments.append("--nextcloud") }
         case .ftp:
-            throw CLIMatrixError.noRigYet(kind: kind.rawValue)
+            guard let ftp = session.ftp else { throw CLIMatrixError.fixtureHasNoConfig(kind: kind.rawValue) }
+            // The shared flags only. The security mode and the initial folder
+            // have no flag until FTP plan Task 10 names them, and this vector
+            // takes them from there.
+            arguments += [
+                "--host", ftp.host, "--port", String(ftp.port), "--user", ftp.username,
+            ]
         }
         return arguments
     }
@@ -669,8 +686,15 @@ struct CLIMatrix: Sendable {
             return try await WebDAVFileSystem.connect(
                 webdav, trustStore: TrustedCertificateStore(directory: storageDirectory),
                 decider: .asking { _ in true })
-        case .ftp:
-            throw CLIMatrixError.noRigYet(kind: kind.rawValue)
+        case .ftp(let ftp):
+            // Through the descriptor, because `FTPFileSystem` does not exist
+            // until FTP plan Task 7 and this arm should not name it before
+            // then. Unlike SSH there is no known-hosts store to keep out of
+            // the developer's real directory: a TLS certificate is decided by
+            // the decider handed in, not remembered in a file.
+            return try await BackendDescriptor.openConnection(
+                .ftp(ftp), hostKey: .refusing, certificate: .asking { _ in true },
+                timeoutSeconds: 30)
         }
     }
 
@@ -1884,7 +1908,6 @@ extension CLIMatrix {
 enum CLIMatrixError: Error, CustomStringConvertible {
     case binaryNotFound(String)
     case fixtureHasNoConfig(kind: String)
-    case noRigYet(kind: String)
     case helpFailed(status: Int32)
     case noSubcommandsInHelp
     case noHostKeyRecorded(kind: String)
@@ -1898,8 +1921,6 @@ enum CLIMatrixError: Error, CustomStringConvertible {
         switch self {
         case .fixtureHasNoConfig(let kind):
             return "the \(kind) rig fixture carries no configuration of its own kind"
-        case .noRigYet(let kind):
-            return "there is no \(kind) rig yet (FTP plan Tasks 10 and 11)"
         case .noHostKeyRecorded(let kind):
             return "no host key was recorded for the \(kind) rig"
         case .unreadableHostKey(let kind):
