@@ -359,9 +359,15 @@ carries the leaf certificate as `derBase64` — so **the existing trust store an
 fingerprint decision are reusable under either option**, and the only remaining
 difference is how many stacks the project has.
 
-The cost is named rather than hidden: `swift-nio-ssl` vendors BoringSSL, which
-adds build time and binary size. **Neither figure is measured**; the plan's
-first task should measure both, because this project documents every dependency
+The cost is named rather than hidden, and more precisely than the first draft
+managed: `swift-nio-ssl` vendors BoringSSL as `CNIOBoringSSL`, and
+**`swift-crypto` already vendors the same codebase as `CCryptoBoringSSL`** —
+measured 2026-11-05, `.build/checkouts/swift-crypto/Sources/` holds
+`CCryptoBoringSSL` and `CCryptoBoringSSLShims`. So this is not "a vendored C
+library" but a **second copy of one already in the binary**. That is the figure
+Task 4 has to report. **Neither build time nor binary size is measured yet**;
+the plan's TLS task measures both, because this project documents every
+dependency
 (`docs/superpowers/specs/2026-08-20-backlog-dependencies.md`) and a dependency
 whose cost nobody wrote down is the kind of debt that section exists to prevent.
 

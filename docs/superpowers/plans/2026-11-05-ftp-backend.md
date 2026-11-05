@@ -348,12 +348,22 @@ material is committed**. Serves all three security modes.
 - [ ] **Step 1: Add the dependency and measure what it costs**
 
 Add `.package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0")`
-and the product to `macSCPCore`. Then measure, because the spec records both
-figures as unmeasured: `swift build 2>&1 | tail -1` for the clean build time
-from an empty `.build`, and the `dist/macSCP.app` size before and after via
-`scripts/package-app`. Write both into
-`docs/superpowers/specs/2026-08-20-backlog-dependencies.md` with the commands.
-If either cost is startling, stop and report rather than deciding alone.
+and the product to `macSCPCore`. This is the **one** new direct dependency the
+whole backend needs: 8 `url:` lines in `Package.swift` become 9, and the
+resolved graph goes from 12 pinned identities to 13, since `swift-nio-ssl`
+depends on `swift-nio`, which is already there.
+
+**Measure it knowing what it actually is: a second vendored BoringSSL.**
+`swift-crypto` already carries `CCryptoBoringSSL` and `CCryptoBoringSSLShims`
+(`ls .build/checkouts/swift-crypto/Sources/`), and `swift-nio-ssl` carries
+`CNIOBoringSSL`. So report three things, each with its command: clean build
+time from an emptied `.build` (`time swift build`), the `dist/macSCP.app` size
+before and after through `scripts/package-app`, and whether the linker keeps
+both copies. Write all three into
+`docs/superpowers/specs/2026-08-20-backlog-dependencies.md` beside their
+commands. **If the size delta is startling, stop and report** — the alternative
+on the table would be `Network.framework` for TLS, which the spec rejects on
+design grounds that a large enough measurement could outweigh.
 
 - [ ] **Step 2: Write the failing test**
 
