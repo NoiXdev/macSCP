@@ -1600,3 +1600,172 @@ maintainer ruled them out of this change: fixing them changes what macSCP's
 terminal path reports on an abort, which is a behaviour change with no tests
 behind it and not what this feature needs. A `docs/BACKLOG.md` row carries it
 instead.
+
+## Measured 2026-11-05 — swift-nio-ssl, the FTP backend's TLS, and what it costs
+
+The FTP backend (`docs/superpowers/specs/2026-11-05-ftp-backend-design.md`,
+section 7) needs TLS on a raw socket: `AUTH TLS` upgrades an open TCP
+connection, implicit FTPS wraps it from the first byte. Task 4 of the plan adds
+`https://github.com/apple/swift-nio-ssl.git` (`from: "2.27.0"`) as the ONE new
+direct dependency, to `macSCPCore` and `macSCPCoreTests`. The in-process FTP
+server of the tests (`Tests/macSCPCoreTests/Support/LoopbackFTPServer.swift`)
+is built on it. Machine: macOS 27.0.1, Xcode 27.2 (Swift 6.4.2), 10 cores.
+Every figure below is followed by the command that produced it; the greps are
+`/usr/bin/grep` (BSD), not the session's ugrep, and none of them has a `$` in
+its pattern.
+
+### The graph
+
+- `package(url:` occurrences in `Package.swift`: **8 before, 9 after**.
+  `git show 48d1adb1:Package.swift | /usr/bin/grep -o 'package(url:' | wc -l`
+  prints 8; `/usr/bin/grep -o 'package(url:' Package.swift | wc -l` prints 9.
+- Pinned identities: **12 before, 13 after**.
+  `git show 48d1adb1:Package.resolved | /usr/bin/grep -o '"identity"' | wc -l`
+  prints 12; the same on `Package.resolved` prints 13.
+- The brief said the 13th is "swift-nio-ssl, which depends on swift-nio, already
+  there". Half of that is wrong. Resolved to **2.37.6**, swift-nio-ssl also
+  DECLARES a dependency on `swift-certificates`
+  (`/usr/bin/grep -c 'swift-certificates' .build/checkouts/swift-nio-ssl/Package.swift`
+  prints 3 lines), and it declares `// swift-tools-version:6.1`
+  (`/usr/bin/grep -n 'swift-tools-version' .build/checkouts/swift-nio-ssl/Package.swift | head -1`).
+  SwiftPM does not fetch a package no built target uses, so it is NOT in the
+  graph: `/usr/bin/grep -o 'swift-certificates' Package.resolved | wc -l`
+  prints 0, against 2 for `swift-nio-ssl` (identity and location), and
+  `ls .build/checkouts | wc -l` prints 13. Two consequences. A future change
+  that makes a target use it pulls `swift-certificates` in, and that is a
+  second dependency decision, not a free one. And the tools-version means a
+  consumer needs Swift 6.1 or newer: the oldest toolchain `.github/workflows/ci.yml`
+  records for the runner is Xcode 16.4 / Swift 6.1.2, so the gate still builds,
+  but `from: "2.27.0"` is not the floor that matters.
+- `THIRD_PARTY_NOTICES.md` was regenerated with `scripts/third-party-notices`
+  (`--check` prints "up to date" and exits 0). swift-nio-ssl's vendored BoringSSL
+  has no standalone licence file either:
+  `find .build/checkouts/swift-nio-ssl/Sources/CNIOBoringSSL -iname '*LICENSE*' -o -iname '*LICENCE*' -o -iname '*COPYING*' -o -iname '*NOTICE*' | wc -l`
+  prints 0, the same shape as the swift-crypto finding of 2026-09-03
+  above. The notices therefore hold swift-nio-ssl's own `LICENSE.txt` and do not
+  name BoringSSL separately.
+
+### Clean build time
+
+Emptied scratch directory each time (`--scratch-path`, so the worktree's own
+`.build` stays usable), resolved first so the clone time is not in the figure:
+`swift package resolve --scratch-path S`, then `time swift build --scratch-path S`.
+Debug configuration, one run each, so **the run-to-run spread is not measured**.
+
+| | real | user |
+|---|---|---|
+| before (48d1adb1) | 54.396 s | 4m52.273s |
+| after | 67.257 s | 6m26.460s |
+
+That is +12.861 s real (+23.6 %) and +94.187 s of CPU (+32.2 %), for a package
+that compiles a second BoringSSL.
+
+### App size
+
+`scripts/package-app` (universal, release), then `du -sk dist/macSCP.app`:
+**139140 KB before, 151820 KB after: +12680 KB, +9.1 %.** The two binaries it
+holds, `ls -l dist/macSCP.app/Contents/MacOS/`:
+
+| | before | after | delta |
+|---|---|---|---|
+| `macSCP` | 88,876,872 | 95,369,000 | +6,492,128 |
+| `macscp-cli` | 52,451,784 | 58,944,616 | +6,492,832 |
+
+One arm64 slice (`lipo dist/macSCP.app/Contents/MacOS/macSCP -thin arm64 -output S/macSCP.arm64`
+then `ls -l S/macSCP.arm64`): 43,984,712 to 47,085,352, +3,100,640 bytes; its
+`__TEXT` segment (`size -m S/macSCP.arm64`) 16,498,688 to 18,055,168. Not
+startling, and no reason to prefer Network.framework on this evidence. **What
+the figure is:** the product is DECLARED in `macSCPCore`, and nothing in
+`Sources/` imports it yet (Task 5 will), so this is the cost of linking it. The
+linker kept it anyway: the delta is already there with no caller. Whether a
+caller adds anything on top is NOT measured; the whole archive being present
+already suggests little, and that is an inference.
+
+### Does the linker keep both BoringSSLs? Yes.
+
+Defined symbols carrying each copy's prefix, in the arm64 slice
+(`nm S/macSCP.arm64 | /usr/bin/grep -c ' [TtSsDdBb] .*CCryptoBoringSSL_'` and the
+same with `CNIOBoringSSL_`; `nm` writes one symbol per line, so counting lines
+is counting symbols here):
+
+| | `CCryptoBoringSSL_` | `CNIOBoringSSL_` |
+|---|---|---|
+| before | 1042 | 0 |
+| after | 1042 | 1234 |
+
+The 1042 beside the 0 is the positive control: the pattern finds symbols when
+there are some. Both copies are in the shipped binary, under distinct prefixes,
+so they do not collide; they are two copies of one codebase.
+
+### Why not Network.framework, measured rather than argued
+
+Ruling T4.1 asked whether Network.framework could serve the test server, because
+the server must (a) observe whether a data connection resumed the control
+connection's TLS session and (b) refuse it when it did not (vsftpd's
+`require_ssl_reuse`, which defaults to on). Three measurements, none of them an
+opinion:
+
+1. **The metadata has no such accessor.** The TLS metadata of a connection is
+   read through `sec_protocol_metadata_*`: `/usr/bin/grep -o 'sec_protocol_metadata_[a-z_]*(' <SecProtocolMetadata.h> | sort -u | wc -l`
+   prints 19 (header: `MacOSX27.2.sdk/System/Library/Frameworks/Security.framework/Headers/SecProtocolMetadata.h`
+   in Xcode.app), and `/usr/bin/grep -o -i -e resum -e ticket -e session <same header> | wc -l`
+   prints 0. The options header has setters only
+   (`sec_protocol_options_set_tls_tickets_enabled`, `..._resumption_enabled`).
+2. **A probe agreed.** A throwaway `NWListener` with a TLS identity, driven by
+   `openssl s_client -reconnect -tls1_2`, whose own report was one `New,` and
+   five `Reused,` lines: the listener's metadata (version, ciphersuite, PSK count,
+   early-data flag) was identical for all six connections. The probe source was
+   not committed; it is described here, not reproducible from the tree.
+3. **It cannot upgrade a connection.** `AUTH TLS` is a STARTTLS: TLS starts in
+   the middle of an open connection. `/usr/bin/grep -o -i -e starttls -e upgrade <Network.framework/Headers/*.h> | wc -l`
+   prints 0, against 72 for `-e tls` over the same files (the control). An
+   `NWListener` configured with TLS speaks it from the first byte, which is
+   implicit FTPS and only that.
+
+So the server is NIO, and answers (a) from the wire: `TLSResumptionInspector`
+reads the server's own `ServerHello` flight (pre_shared_key extension in TLS 1.3;
+Certificate versus ChangeCipherSpec/NewSessionTicket in TLS 1.2). It is checked
+against a client that really resumes, `openssl s_client -reconnect`, whose
+"New"/"Reused" report is the oracle:
+`LoopbackFTPServerTests.theServerReadsAResumedHandshakeOffTheWire` (6 handshakes
+seen: one full, five resumed). TLS 1.3 is exercised by synthetic hellos in
+`TLSResumptionInspectorTests` and by NIOSSL's own default, but NOT against a
+resuming TLS 1.3 client: LibreSSL's `s_client -reconnect -tls1_3` against the
+probe listener in (2) did not finish in 90 s and was killed, cause not
+investigated.
+
+### Finding for Task 5, which the plan did not expect: neither client resumes
+
+The design asked whether swift-nio-ssl offers client-side session resumption
+across connections ("not measured", section 7). **It does not offer it at all.**
+`/usr/bin/grep -rn -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET .build/checkouts/swift-nio-ssl/Sources/NIOSSL`
+prints nothing (exit 1), against 1 line for
+`-e SSL_CTX_set_min_proto_version` over the same directory (the control). A
+BoringSSL client offers a session only when told to with `SSL_set_session`, so a
+swift-nio-ssl client always starts a full handshake. The server side is
+unaffected (BoringSSL server tickets and caching are on by default there).
+
+Network.framework as a CLIENT was also tried, against the loopback server in
+implicit mode, three `NWConnection`s in a row, repeated 5 times: TLS 1.2 resumed
+the second connection and not the third (`[full, resumed, full]` every time), TLS
+1.3 never resumed (`[full, full, full]`), and `sec_protocol_options_set_tls_resumption_enabled`
+/ `..._tickets_enabled` made no difference. Then the FTP shape, 3 runs of
+control-then-data on two different ports of the same server with `PROT P` and
+`requiresTLSSessionReuse: true`: the data handshake was a full one every time (`522`,
+`refusedDataConnectionCount == 1`). That probe was also not committed.
+
+**What this means:** against a server that insists on session reuse, a client
+built on either stack as measured here would be refused at the first transfer.
+Task 5's `PROT P` measurement has to start from that, not from "does it
+work". The server's acceptance half is proven with the one client that can:
+`LoopbackFTPServerTests.aServerThatRequiresSessionReuseAcceptsAResumedDataHandshake`
+(a saved `s_client` session offered to the data port; `150`, the listing, `226`,
+data handshake `resumed: true`), beside the refusal half
+`aServerThatRequiresSessionReuseRefusesAFreshDataHandshake` (NIOSSL client, the
+same flow, `522`).
+
+One limit of the server's check, stated so it is not read as more: it enforces
+"this data handshake resumed SOME session this server issued", which is all the
+wire shows. It does not check that the session is the control connection's own.
+
+**Review date:** at the next release, and when Task 5 reports.

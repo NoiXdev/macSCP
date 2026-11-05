@@ -97,6 +97,16 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", revision: "d5ee56e1c74777120f3af688600d336de4201bd2"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
+        // TLS for the FTP backend's explicit (`AUTH TLS`) and implicit modes,
+        // and for the in-process FTP/FTPS server the tests run against
+        // (`LoopbackFTPServer`). Network.framework cannot do either job: it
+        // cannot upgrade an established TCP connection to TLS, which is what
+        // `AUTH TLS` is, and it exposes no answer to "did this connection
+        // resume a session" (docs/superpowers/specs/2026-08-20-backlog-dependencies.md,
+        // "swift-nio-ssl"). It vendors a second BoringSSL beside the one
+        // swift-crypto already carries; the measured cost is in the same
+        // record.
+        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
     ],
     targets: [
         .target(
@@ -106,6 +116,7 @@ let package = Package(
                 .product(name: "Crypto", package: "swift-crypto"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 // Core implements NIOSSH's key/signature protocols itself
                 // (AgentBackedPrivateKey); naming the product here is what
                 // makes the root-level swift-nio-ssh dependency "used".
@@ -186,6 +197,13 @@ let package = Package(
                 // `SSHAuthenticationMethod` the way NIOSSH does, on a real
                 // event loop, to read the algorithm names it would offer.
                 .product(name: "NIOPosix", package: "swift-nio"),
+                // `LoopbackFTPServer` and its client keep their shared state
+                // in `NIOLockedValueBox` and read `TLSUserEvent` off the pipeline.
+                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
+                .product(name: "NIOTLS", package: "swift-nio"),
+                // `LoopbackFTPServer` terminates TLS with `NIOSSLServerHandler`
+                // on a pipeline it can upgrade mid-connection (`AUTH TLS`).
+                .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 // `PEMPrivateKeyDecoderTests` builds a PBES2 file and a
                 // PKCS#8 wrapper with `DER.Serializer`, derives the PBKDF2 key
