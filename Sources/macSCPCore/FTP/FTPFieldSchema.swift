@@ -95,12 +95,35 @@ public enum FTPFieldSchema {
 
     /// Whether the text carries user-info or a scheme: an `@` anywhere, or
     /// `://`. The shapes of a pasted `ftp://user:secret@host/`, and of
-    /// `user@host` typed into the wrong field. A host never holds a
-    /// credential, so no view that renders one needs to filter it
-    /// (`SessionCatalog.target(for:)` and the overview's host fact print it
-    /// as stored), and this is the one place to get that right.
+    /// `user@host` typed into the wrong field.
+    ///
+    /// FTP's entry point to a GENERIC rule. The implementation is
+    /// `URLText.hostCarriesUserinfo`, beside the project's other host-text
+    /// filters, and `FieldFormat.hostWithoutUserinfo` asks that same function;
+    /// this one forwards so the call sites in this file read in FTP's own
+    /// terms.
+    ///
+    /// **Where the rule is enforced, and where it is not.** The FORM refuses a
+    /// violating value (`FieldFormat.hostWithoutUserinfo` on the host field)
+    /// and so does `makeConfig`, through `normalizedHost`. `stored(from:)`
+    /// does NOT -- it only trims -- so an import or a hand-edited sessions file
+    /// can still put `tim:secret@host` into `StoredFTPConfig.host`, and
+    /// `SessionCatalog.target(for:)` and the overview's host fact then print
+    /// it as stored. That remaining exposure is the `docs/BACKLOG.md` row
+    /// beginning "A stored host can carry user-info on SSH and FTP"; the one
+    /// render site this file owns, `displaySummary`'s fallback, was closed in
+    /// fix round 4 and is no longer part of it.
+    ///
+    /// (Withdrawn wording, verbatim: "A host never holds a credential, so no
+    /// view that renders one needs to filter it (`SessionCatalog.target(for:)`
+    /// and the overview's host fact print it as stored), and this is the one
+    /// place to get that right." It cited as evidence of safety the two sites
+    /// that the backlog row added in the same commit names as the exposure, so
+    /// it would have argued the next contributor out of that row's own fix.
+    /// A host CAN hold a credential: validation sits at the form and the dial,
+    /// not at the store.)
     public static func hostCarriesUserinfo(_ text: String) -> Bool {
-        text.contains("@") || text.contains("://")
+        URLText.hostCarriesUserinfo(text)
     }
 
     /// The host as a connectable name, or nil when the text names none.
@@ -131,9 +154,14 @@ public enum FTPFieldSchema {
 
         var bracketed = false
         if text.hasPrefix("[") && text.hasSuffix("]") {
+            // No emptiness check here: `"[]"` is the only input that can be
+            // empty after the strip, and it is refused by the bracket rule
+            // below (`bracketed` is true and `colons == 0`). A `guard
+            // !text.isEmpty` stood here until fix round 4 and was redundant
+            // for every input, not merely for the tested ones -- a layer that
+            // reads as checked and is not.
             text = String(text.dropFirst().dropLast())
             bracketed = true
-            guard !text.isEmpty else { return nil }
         }
 
         for scalar in text.unicodeScalars {
@@ -257,9 +285,30 @@ public enum FTPFieldSchema {
 
     /// User name and host -- what identifies an FTP connection to a human.
     /// The port is appended only when it is not the mode's own default.
+    ///
+    /// **The fallback is FILTERED, and that is the house precedent, not an
+    /// FTP exception.** This is the only site that asks the validator, is told
+    /// the string is not a host, and renders it anyway, so the text it renders
+    /// is by definition one `normalizedHost` refused -- user-info among the
+    /// reasons. It goes through `URLText.withoutUserinfo(typedURL:
+    /// atMayFollowHost:)`, the same door `S3FieldSchema.displaySummary`'s
+    /// fallback uses, with the same `atMayFollowHost: false`: a host field has
+    /// no path for a legitimate `@` to live in, so everything up to the last
+    /// `@` is user-info with no tie to break.
+    ///
+    /// Its reach is why it is worth closing here: the sidebar row summary
+    /// (`SessionSidebar.swift`), the sidebar's search (`SidebarVisibility
+    /// .swift`), the audit summary and the stored tab's title
+    /// (`ContentView.swift`), and `SessionImportPlanner.displaySummary(for:)`,
+    /// which builds it from a FILE's raw fields -- the one input that reaches
+    /// here without ever passing the form that refuses user-info.
     public static func displaySummary(_ values: FieldValues) -> String {
         let mode = security(values)
-        let host = normalizedHost(values[FTPField.host]) ?? values[FTPField.host]
+        // Trimmed before either branch: `normalizedHost` trims its own input,
+        // and a fallback that kept the raw padding would print it.
+        let typed = values[FTPField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = normalizedHost(typed)
+            ?? URLText.withoutUserinfo(typedURL: typed, atMayFollowHost: false)
         let user = values[FTPField.username]
         let base = user.isEmpty ? host : "\(user) @ \(host)"
         let port = lenientPort(values)

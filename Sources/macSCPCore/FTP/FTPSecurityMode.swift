@@ -11,7 +11,13 @@
 /// `FTPField`, `FTPFieldSchema` or `StoredFTPConfig`, which are public too.)
 ///
 /// The raw values are the persisted spelling (`StoredFTPConfig` writes them),
-/// so they are not to be renamed.
+/// so they are not to be renamed. (Withdrawn wording, verbatim: "The raw
+/// values are the persisted spelling (`StoredFTPConfig` will write them), so
+/// they are not to be renamed." The future tense was true while the stored
+/// block was still to come; it became present tense in the commit that added
+/// `StoredFTPConfig`, which is a meaning change and owed this quote -- the
+/// more so for sitting in the same comment block as a properly quoted
+/// withdrawal.)
 public enum FTPSecurityMode: String, Codable, Sendable, CaseIterable {
     /// No TLS anywhere: credentials and file contents cross the network in the
     /// clear. The only mode `PlaintextTransportGate` asks the user to confirm.

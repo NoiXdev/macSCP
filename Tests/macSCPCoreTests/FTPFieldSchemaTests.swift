@@ -95,12 +95,25 @@ struct FTPFieldSchemaTests {
         #expect(FTPFieldSchema.normalizedHost(raw) == expected)
     }
 
+    /// The last two are UNBALANCED brackets, and they are the only inputs here
+    /// that reach the `[` and `]` members of `normalizedHost`'s character
+    /// scan: every other bracketed input is a matched outer pair, which the
+    /// strip above the scan removes, so the scan never sees a bracket.
+    ///
+    /// The re-review of 2026-11-05 measured the then-committed inputs GREEN
+    /// with both members deleted from the scanned set. With these two added it
+    /// is RED, measured in fix round 4 by the command below, which printed
+    /// `RESULT: RED — 1 test(s) ran, and the plant was caught by:
+    /// macSCPCoreTests.FTPFieldSchemaTests/aHostThatIsNotAHostIsRefused(raw:)`:
+    ///
+    ///     scripts/mutation-probe --filter 'aHostThatIsNotAHostIsRefused' --apply "perl -pi -e 's{if \"/\?#\[\]\"\.unicodeScalars\.contains\(scalar\) \{ return nil \}}{if \"/?#\".unicodeScalars.contains(scalar) { return nil }}' Sources/macSCPCore/FTP/FTPFieldSchema.swift"
     @Test(arguments: [
         "", "   ", "files example.com", "ftp://files.example.com", "files.example.com/pub",
         "tim@files.example.com", "[files.example.com]", "[]",
         "files.example.com:21", "[files.example.com:21]", "2001:db8::g", "[2001:db8::g]",
         "192.0.2.7:21", "beef:21",
         "files.example.com?x", "files.example.com#x", "a\u{0}b", "a\tb",
+        "[files.example.com", "a]b",
     ])
     func aHostThatIsNotAHostIsRefused(raw: String) {
         #expect(FTPFieldSchema.normalizedHost(raw) == nil)
@@ -145,10 +158,16 @@ struct FTPFieldSchemaTests {
             in: values, requireSecrets: false) == nil)
     }
 
-    /// The colon rule, both sides together: one colon is a port in the wrong
-    /// field and is refused (by `makeConfig`, with the host sentence), two or
-    /// more are an IPv6 literal and pass. The refusals and the positives sit
-    /// in one test so neither half can be satisfied by deleting the other.
+    /// The colon rule, both sides together, as `normalizedHost` answers it:
+    /// one colon is a port in the wrong field and is refused, two or more are
+    /// an IPv6 literal and pass. The refusals and the positives sit in one
+    /// test so neither half can be satisfied by deleting the other.
+    ///
+    /// (Corrected in fix round 4. This paragraph read, verbatim: "one colon is
+    /// a port in the wrong field and is refused (by `makeConfig`, with the
+    /// host sentence)". Nothing in this body calls `makeConfig`; that half is
+    /// `makeConfigRefusesEachBadFieldWithItsOwnSentence`, which pins
+    /// `files.example.com:21` to `core.connect.ftpHostInvalid`.)
     @Test func oneColonIsAPortInTheWrongFieldAndSeveralAreIPv6() {
         #expect(FTPFieldSchema.normalizedHost("files.example.com:21") == nil)
         // Hex digits, dots and ONE colon: the content check alone would pass
@@ -159,7 +178,6 @@ struct FTPFieldSchemaTests {
         #expect(FTPFieldSchema.normalizedHost("[::1]") == "::1")
         #expect(FTPFieldSchema.normalizedHost("::1") == "::1")
         #expect(FTPFieldSchema.normalizedHost("files.example.com") == "files.example.com")
-
     }
 
     // MARK: - Registration
@@ -269,6 +287,47 @@ struct FTPFieldSchemaTests {
                     "core.connect.portNumeric"]
         #expect(Set(keys.map { CoreL10n.string($0) }).count == keys.count)
         #expect(keys.allSatisfy { CoreL10n.string($0) != $0 })
+    }
+
+    /// A BLANK host answers with TWO different sentences, on purpose: the form
+    /// shows the host sentence, `makeConfig` shows the empty-host one.
+    ///
+    /// The host field carries one `invalidMessageKey` for blank-and-unparsable
+    /// alike (`firstViolation` returns it for a blank required field too), and
+    /// `core.connect.ftpHostInvalid` names what to type, so it serves the
+    /// blank field as well -- the identical shape S3's endpoint field has, for
+    /// the identical stated reason. `makeConfig` is the stricter reader and
+    /// keeps `core.connect.emptyHost`, because nothing typed is its own
+    /// complaint.
+    ///
+    /// Pinned so the divergence is a decision on the record rather than a
+    /// surprise for whoever next touches either path. Measured sensitive in
+    /// fix round 4 by the command below -- setting the field's key back to
+    /// what it was before this task -- which printed `RESULT: RED — 1 test(s)
+    /// ran, and the plant was caught by:` this test:
+    ///
+    ///     scripts/mutation-probe --filter 'aBlankHostShowsTheHostSentenceInTheFormAndTheEmptyOneAtTheConfig' --apply "perl -pi -e 's{invalidMessageKey: \"core.connect.ftpHostInvalid\",\$}{invalidMessageKey: \"core.connect.emptyHost\",}' Sources/macSCPCore/FTP/FTPFieldSchema.swift"
+    @Test func aBlankHostShowsTheHostSentenceInTheFormAndTheEmptyOneAtTheConfig() throws {
+        var values = filledValues()
+        values[FTPField.host] = "   "
+        let violation = try #require(
+            BackendDescriptor.descriptor(for: .ftp).firstViolation(
+                in: values, requireSecrets: false))
+        #expect(violation.fieldKey == "\(FTPField.namespace).\(FTPField.host.rawValue)")
+
+        // Asserted as the resolved SENTENCES, not as the keys: that is what a
+        // user is shown, and it is what tells the two paths apart.
+        let formSentence = CoreL10n.string(violation.messageKey)
+        #expect(formSentence == CoreL10n.string("core.connect.ftpHostInvalid"))
+        #expect(refusalReason(values) == CoreL10n.string("core.connect.emptyHost"))
+
+        // The positives: both sentences are resolved (a key no catalogue
+        // declares comes back as itself), and they are genuinely different, so
+        // neither equality above can hold by both texts being the same string.
+        #expect(formSentence != violation.messageKey)
+        let diverge = CoreL10n.string("core.connect.ftpHostInvalid")
+            != CoreL10n.string("core.connect.emptyHost")
+        #expect(diverge)
     }
 
     // MARK: - Persisted shape
@@ -414,6 +473,34 @@ struct FTPFieldSchemaTests {
         #expect(FTPFieldSchema.displaySummary(values) == "tim @ files.example.com")
         values[FTPField.port] = "2121"
         #expect(FTPFieldSchema.displaySummary(values) == "tim @ files.example.com:2121")
+    }
+
+    /// The summary's parse-failure fallback prints no credential.
+    ///
+    /// This is the one site that asks the validator, is told the string is not
+    /// a host, and renders it anyway. It is reached without a form:
+    /// `SessionImportPlanner.displaySummary(for:)` builds it from a FILE's raw
+    /// fields, and from there it goes to the sidebar row, the sidebar's
+    /// search, the audit summary and the stored tab's title.
+    ///
+    /// The secret lives in a named constant and the comparison is computed
+    /// into a `Bool` before the expectation, because `#expect` prints the
+    /// SOURCE TEXT of the expression it checks: an expectation written over
+    /// the value would leak it in the very failure message saying it leaked.
+    @Test func theSummaryDoesNotPrintAUserinfoSecretItRefusedToParse() {
+        var values = filledValues()
+        values[FTPField.host] = "  tim:\(Self.secret)@files.example.com  "
+        let summary = FTPFieldSchema.displaySummary(values)
+        let leaked = summary.contains(Self.secret)
+        #expect(leaked == false)
+        // The positive beside it: a fallback that returned "" would not leak
+        // either, and would be useless. The host survives, trimmed, and so
+        // does the rest of the summary's shape. Computed into a `Bool` for the
+        // same reason as above -- `summary` IS the carrier here, and an
+        // expectation over it printed the secret when this test was first run
+        // red.
+        let isTheExpectedShape = summary == "tim @ files.example.com:2121"
+        #expect(isTheExpectedShape)
     }
 
     @Test func theEndpointIsTheHostAndPortAndNilForNoHost() {

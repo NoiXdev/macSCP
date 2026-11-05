@@ -47,8 +47,21 @@ public enum FieldFormat: Sendable, Equatable {
     /// A host name or address and nothing more (FTP's host): no user-info
     /// (`tim:secret@host`) and no scheme (`ftp://host`). A credential typed
     /// into the host field would otherwise be stored and then rendered raw by
-    /// every view that shows the host, so the field refuses it at the source
-    /// instead of each view filtering it (`FTPFieldSchema.hostCarriesUserinfo`).
+    /// every view that shows the host, so the field refuses it here, where a
+    /// typed value enters (`URLText.hostCarriesUserinfo`).
+    ///
+    /// **That is the FORM's half, and only that half.** Nothing validates the
+    /// STORE path: an import or a hand-edited sessions file reaches
+    /// `StoredFTPConfig.host` (and `StoredSSHConfig.host`) without passing
+    /// this format at all, so the views that render a stored host are NOT
+    /// relieved of filtering it. What is still open is recorded in
+    /// `docs/BACKLOG.md`, the row beginning "A stored host can carry user-info
+    /// on SSH and FTP".
+    ///
+    /// (Withdrawn wording, verbatim: "so the field refuses it at the source
+    /// instead of each view filtering it (`FTPFieldSchema
+    /// .hostCarriesUserinfo`)." It read as though refusing a typed value here
+    /// made a view's own filter unnecessary. The form is not the only source.)
     case hostWithoutUserinfo
 
     /// Whether `value` — already trimmed, and not blank — satisfies the rule.
@@ -58,7 +71,9 @@ public enum FieldFormat: Sendable, Equatable {
         switch self {
         case .numeric: return Int(value) != nil
         case .urlWithoutAtAfterHost: return !URLText.hasAtAfterHost(typedURL: value)
-        case .hostWithoutUserinfo: return !FTPFieldSchema.hostCarriesUserinfo(value)
+        // `URLText`, not `FTPFieldSchema`: the shared field vocabulary must not
+        // depend on one backend's schema, and the rule is not FTP's.
+        case .hostWithoutUserinfo: return !URLText.hostCarriesUserinfo(value)
         }
     }
 }

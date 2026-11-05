@@ -13,6 +13,15 @@ import Testing
 /// the doc comments that quote these spellings neither trip a negative check nor
 /// satisfy a positive one.
 ///
+/// (Corrected 2026-11-05, FTP plan Task 3 fix round 4. The enumeration above
+/// read, verbatim: "The rigid components (`SegmentedChoice`, `RadioChoice`,
+/// `CheckboxRow`) exist". `MenuChoice` was appended in fix round 2 without the
+/// quote this project requires of a meaning change. Nothing was lost -- the
+/// old list is a verbatim prefix of the new one -- but the sentence now claims
+/// a fourth component, which is a claim about the rest of this file: the
+/// `components` array below, and the figures in the paragraphs that count
+/// per-component call sites.)
+///
 /// ## Why this is an allow-list and not "only the component file"
 ///
 /// The first form of this task asked for a scan asserting that the three raw

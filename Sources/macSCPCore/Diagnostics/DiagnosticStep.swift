@@ -247,6 +247,36 @@ enum URLText {
         return rest[delimiter...].contains("@")
     }
 
+    /// Whether this text carries user-info or a scheme: an `@` anywhere, or
+    /// `://`. The shape of a pasted `ftp://user:secret@host/`, and of
+    /// `user@host` typed into a field that wants a bare host.
+    ///
+    /// A HOST-TEXT rule, not a URL one, which is why it is the crude scan it
+    /// looks like. A field that may hold only a name or an address has no
+    /// legitimate `@` and no legitimate scheme anywhere in it, so there is no
+    /// authority to delimit and no tie to break — `hostStart(in:)`'s work on a
+    /// typed URL has no counterpart here.
+    ///
+    /// It lives beside `withoutUserinfo` rather than in one backend's schema
+    /// because two generic layers ask it: `FieldFormat.hostWithoutUserinfo`,
+    /// for any field declaring that format, and the host-text fallbacks that
+    /// render what such a field holds. `FTPFieldSchema.hostCarriesUserinfo`
+    /// forwards to it and does not implement it.
+    ///
+    /// **A note for whoever plants a mutation here.** Deleting the `://`
+    /// disjunct measures GREEN against `FTPFieldSchema.normalizedHost`, and
+    /// that is correct rather than a hole: every `://` carries a `/`, which
+    /// that function's own `/?#[]` scan refuses on its own, so the disjunct is
+    /// never decisive *inside* it. What does measure the disjunct is the
+    /// predicate asserted directly, and the FORM violation asserted beside it
+    /// — `FTPFieldSchemaTests.aHostWithUserinfoOrASchemeIsRefusedEverywhere`
+    /// takes `ftp://files.example.com` through both — because the form has no
+    /// path scan standing behind this rule. It is load-bearing; do not delete
+    /// it on a green probe.
+    static func hostCarriesUserinfo(_ text: String) -> Bool {
+        text.contains("@") || text.contains("://")
+    }
+
     /// Strips `userinfo@` out of every `scheme://…` in a free-text string.
     ///
     /// The backstop for text this module did not compose — an `NSError`
