@@ -45,6 +45,7 @@ enum FTPListParser {
         var items: [RemoteFileItem] = []
         for (index, line) in lines.enumerated() {
             let raw = [UInt8](line)
+            if isBlank(raw) { continue }
             guard let space = raw.firstIndex(of: 0x20) else {
                 throw FTPListRefusal.unreadableLine(index: index)
             }
@@ -107,7 +108,7 @@ enum FTPListParser {
         for (index, line) in lines.enumerated() {
             let raw = [UInt8](line)
             // A blank line and the `total N` summary are not entries.
-            if raw.allSatisfy({ $0 == 0x20 }) { continue }
+            if isBlank(raw) { continue }
             if raw.starts(with: Array("total ".utf8)) { continue }
 
             let parsed: ParsedLine?
@@ -199,7 +200,8 @@ enum FTPListParser {
             let month = Int(decodeName(dateParts[0])), let day = Int(decodeName(dateParts[1])),
             var year = Int(decodeName(dateParts[2]))
         else { return nil }
-        // Two-digit years: the DOS epoch is 1980, so 70-99 are the 1900s.
+        // Two-digit years: a convention, not something the format dictates --
+        // 70-99 are read as the 1900s and 00-69 as the 2000s.
         if dateParts[2].count <= 2 { year += year >= 70 ? 1900 : 2000 }
 
         guard let clock = dosClock(time) else { return nil }
@@ -238,6 +240,12 @@ enum FTPListParser {
     private static func isUsableName(_ name: String) -> Bool {
         !name.isEmpty && !name.contains("/") && !name.unicodeScalars.contains("\0")
     }
+
+    /// An empty line, or one of nothing but spaces. A trailing line
+    /// terminator in a data stream routinely leaves one at the end, so it is
+    /// not an entry and not a malformation. It is NOT an empty NAME: facts, a
+    /// space, and nothing after it is a line with content, and is refused.
+    private static func isBlank(_ raw: [UInt8]) -> Bool { raw.allSatisfy { $0 == 0x20 } }
 
     private static func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
 

@@ -202,6 +202,67 @@ struct FTPListParserTests {
         }
     }
 
+    @Test func anEmptyNameIsRefusedByBothReaders() throws {
+        // Joined onto "/home" an empty name gives "/home/", which aliases the
+        // listed directory itself. The positive half: a one-character name
+        // in the same shape is read.
+        #expect(try FTPListParser.mlsd(bytes(["type=file;size=1; a"]), at: "/home").count == 1)
+        #expect(throws: FTPListRefusal.unreadableLine(index: 0)) {
+            try FTPListParser.mlsd(bytes(["type=file;size=1; "]), at: "/home")
+        }
+        // A Unix line whose name is empty is its facts and one space.
+        #expect(
+            try FTPListParser.list(bytes(["-rw-r--r-- 1 a b 1 Jan  5  2024 a"]), at: "/home")
+                .count == 1)
+        #expect(throws: FTPListRefusal.unreadableLine(index: 0)) {
+            try FTPListParser.list(bytes(["-rw-r--r-- 1 a b 1 Jan  5  2024 "]), at: "/home")
+        }
+        // DOS: nothing after the size.
+        #expect(
+            try FTPListParser.list(bytes(["01-05-24  01:40PM  10 a"]), at: "/home").count == 1)
+        #expect(throws: FTPListRefusal.unreadableLine(index: 0)) {
+            try FTPListParser.list(bytes(["01-05-24  01:40PM  10 "]), at: "/home")
+        }
+    }
+
+    @Test func aNameContainingNULIsRefusedByBothReaders() throws {
+        let nul = Data([0])
+        // The positive half: the same shape with a printable byte in the
+        // place of the NUL is read, so the refusal below is the NUL's doing.
+        let plainMLSD = Data("type=file;size=1; a".utf8) + Data("-".utf8) + Data("b".utf8)
+        let plainList =
+            Data("-rw-r--r-- 1 a b 1 Jan  5  2024 a".utf8) + Data("-".utf8) + Data("b".utf8)
+        #expect(try FTPListParser.mlsd([plainMLSD], at: "/").map(\.name) == ["a-b"])
+        #expect(try FTPListParser.list([plainList], at: "/").map(\.name) == ["a-b"])
+
+        let nulMLSD = Data("type=file;size=1; a".utf8) + nul + Data("b".utf8)
+        let nulList = Data("-rw-r--r-- 1 a b 1 Jan  5  2024 a".utf8) + nul + Data("b".utf8)
+        #expect(throws: FTPListRefusal.unreadableLine(index: 0)) {
+            try FTPListParser.mlsd([nulMLSD], at: "/")
+        }
+        #expect(throws: FTPListRefusal.unreadableLine(index: 0)) {
+            try FTPListParser.list([nulList], at: "/")
+        }
+    }
+
+    @Test func aBlankLineIsSkippedByBothReadersAndKeepsTheOtherIndexes() throws {
+        // A trailing CRLF in a data stream routinely leaves an empty last
+        // element; it is not an entry and must not fail the directory. A
+        // blank line is an EMPTY line, not an empty name (see the test above).
+        let mlsd = [Data("type=file;size=1; a".utf8), Data(), Data("type=dir; b".utf8), Data()]
+        #expect(try FTPListParser.mlsd(mlsd, at: "/").map(\.name) == ["a", "b"])
+        let list = [
+            Data("-rw-r--r-- 1 u g 1 Jan  5  2024 a".utf8), Data(),
+            Data("-rw-r--r-- 1 u g 1 Jan  5  2024 b".utf8), Data(),
+        ]
+        #expect(try FTPListParser.list(list, at: "/").map(\.name) == ["a", "b"])
+        // Skipping does not renumber: a bad line after a blank one is still
+        // named by its position in the array that was passed in.
+        #expect(throws: FTPListRefusal.unreadableLine(index: 2)) {
+            try FTPListParser.mlsd([Data("type=file; a".utf8), Data(), Data("nonsense".utf8)], at: "/")
+        }
+    }
+
     @Test func aNameThatIsNotValidUTF8SurvivesAsItsLatin1Reading() throws {
         let latin1Name = Data([0x63, 0x61, 0x66, 0xE9])  // "caf" + 0xE9, not valid UTF-8
         #expect(String(data: latin1Name, encoding: .utf8) == nil)
