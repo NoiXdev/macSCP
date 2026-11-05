@@ -6,7 +6,7 @@ import Foundation
 /// dropped the lines it could not read would show the user a folder with
 /// files missing and say nothing, and a comparison or a sync built on that
 /// listing would act on the gap. `index` is the position in the array that was
-/// passed in, blank lines included.
+/// passed in, empty lines included.
 ///
 /// **The payload is deliberately free of server-supplied text**, for the same
 /// reason as `FTPReplyError`: a failed `#expect` and the default description
@@ -45,7 +45,7 @@ enum FTPListParser {
         var items: [RemoteFileItem] = []
         for (index, line) in lines.enumerated() {
             let raw = [UInt8](line)
-            if isBlank(raw) { continue }
+            if isEmptyLine(raw) { continue }
             guard let space = raw.firstIndex(of: 0x20) else {
                 throw FTPListRefusal.unreadableLine(index: index)
             }
@@ -107,8 +107,8 @@ enum FTPListParser {
         var items: [RemoteFileItem] = []
         for (index, line) in lines.enumerated() {
             let raw = [UInt8](line)
-            // A blank line and the `total N` summary are not entries.
-            if isBlank(raw) { continue }
+            // An empty line and the `total N` summary are not entries.
+            if isEmptyLine(raw) { continue }
             if raw.starts(with: Array("total ".utf8)) { continue }
 
             let parsed: ParsedLine?
@@ -241,11 +241,13 @@ enum FTPListParser {
         !name.isEmpty && !name.contains("/") && !name.unicodeScalars.contains("\0")
     }
 
-    /// An empty line, or one of nothing but spaces. A trailing line
-    /// terminator in a data stream routinely leaves one at the end, so it is
-    /// not an entry and not a malformation. It is NOT an empty NAME: facts, a
-    /// space, and nothing after it is a line with content, and is refused.
-    private static func isBlank(_ raw: [UInt8]) -> Bool { raw.allSatisfy { $0 == 0x20 } }
+    /// An EMPTY line, and only that. A trailing line terminator in a data
+    /// stream routinely leaves one at the end, so it is not an entry and not
+    /// a malformation. A run of spaces is not a terminator artefact but a
+    /// damaged entry, and the single line " " is an empty fact block, a space
+    /// and an empty name, which is refused -- so both readers refuse it. The
+    /// same goes for a lone CR left behind by a splitter that breaks on LF.
+    private static func isEmptyLine(_ raw: [UInt8]) -> Bool { raw.isEmpty }
 
     private static func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
 

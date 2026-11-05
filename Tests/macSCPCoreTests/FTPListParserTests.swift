@@ -263,6 +263,42 @@ struct FTPListParserTests {
         }
     }
 
+    @Test func aLineOfOnlySpacesIsRefusedByBothReaders() throws {
+        // Only an EMPTY line is a terminator artefact. A run of spaces is a
+        // damaged or overwritten entry, and for MLSD the single line " " is
+        // an empty fact block, a space and an empty name -- the shape that
+        // anEmptyNameIsRefusedByBothReaders pins as refused. The positive
+        // half: an empty element beside it is skipped, so the refusal is
+        // about the spaces and not about the array.
+        let fineMLSD = Data("type=file;size=1; a".utf8)
+        let fineList = Data("-rw-r--r-- 1 u g 1 Jan  5  2024 a".utf8)
+        #expect(try FTPListParser.mlsd([fineMLSD, Data()], at: "/").count == 1)
+        #expect(try FTPListParser.list([fineList, Data()], at: "/").count == 1)
+        for spaces in [" ", "    "] {
+            #expect(throws: FTPListRefusal.unreadableLine(index: 1)) {
+                try FTPListParser.mlsd([fineMLSD, Data(spaces.utf8)], at: "/")
+            }
+            #expect(throws: FTPListRefusal.unreadableLine(index: 1)) {
+                try FTPListParser.list([fineList, Data(spaces.utf8)], at: "/")
+            }
+        }
+    }
+
+    @Test func aLineOfOnlyACarriageReturnIsRefusedByBothReaders() throws {
+        // What reaches the parsers when the line splitter breaks on LF alone
+        // and leaves the CR of a CRLF behind: neither empty nor parseable.
+        // The contract for whoever writes the splitter is to strip the CR;
+        // the parsers refuse the directory rather than guess. The positive
+        // half is the first element, which parses.
+        let cr = Data([0x0D])
+        #expect(throws: FTPListRefusal.unreadableLine(index: 1)) {
+            try FTPListParser.mlsd([Data("type=file;size=1; a".utf8), cr], at: "/")
+        }
+        #expect(throws: FTPListRefusal.unreadableLine(index: 1)) {
+            try FTPListParser.list([Data("-rw-r--r-- 1 u g 1 Jan  5  2024 a".utf8), cr], at: "/")
+        }
+    }
+
     @Test func aNameThatIsNotValidUTF8SurvivesAsItsLatin1Reading() throws {
         let latin1Name = Data([0x63, 0x61, 0x66, 0xE9])  // "caf" + 0xE9, not valid UTF-8
         #expect(String(data: latin1Name, encoding: .utf8) == nil)
