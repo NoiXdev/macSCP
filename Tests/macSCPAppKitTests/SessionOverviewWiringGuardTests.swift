@@ -924,7 +924,7 @@ struct SessionOverviewWiringGuardTests {
         // The Bool is computed BEFORE the expectation and the whole
         // catalogue never reaches one: `#expect` reports the SOURCE TEXT and
         // the values of what it checks, so `english.contains(…)` would print
-        // every key in `en.lproj` on each of fifteen failures. The same rule
+        // every key in `en.lproj` on each failure. The same rule
         // CLAUDE.md states for a value a test must not leak applies to a
         // value nobody can read.
         let english = try Self.catalogKeys("en")

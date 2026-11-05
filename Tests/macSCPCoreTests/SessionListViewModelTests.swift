@@ -566,6 +566,62 @@ struct SessionListViewModelTests {
         #expect(try secrets.password(for: switched.id) == nil)
     }
 
+    /// One ordered pair of distinct kinds: a session of `from` is saved over by
+    /// values of `to`.
+    struct KindTransition: Sendable, CustomTestStringConvertible {
+        let from: ConnectionKind
+        let to: ConnectionKind
+        var testDescription: String { "\(from.rawValue) -> \(to.rawValue)" }
+    }
+
+    /// Every from -> to transition, derived from `allCases` and not written
+    /// out: a hand-written list cannot redden when a kind is added, which is
+    /// how the S3 -> SSH case alone let `ftp` through.
+    nonisolated static let kindTransitions: [KindTransition] = ConnectionKind.allCases.flatMap { from in
+        ConnectionKind.allCases.filter { $0 != from }.map { KindTransition(from: from, to: $0) }
+    }
+
+    /// A string that appears in the store file only if the block of `kind`
+    /// built by `sampleValues(for:)` does.
+    private static func staleMarker(_ kind: ConnectionKind) -> String {
+        "stale-marker-\(kind.rawValue)"
+    }
+
+    /// Valid-looking values for a kind, each carrying its `staleMarker`. The
+    /// switch has no `default`, so a fifth kind does not compile here until
+    /// someone says what its values are.
+    private func sampleValues(for kind: ConnectionKind) -> FieldValues {
+        let marker = Self.staleMarker(kind)
+        switch kind {
+        case .ssh:
+            return sshValues(host: "\(marker).example.com", port: 2222, username: "tim")
+        case .s3:
+            return S3FieldSchema.values(from: StoredS3Config(
+                accessKeyID: "AKIA", region: "eu-central-1",
+                endpoint: "https://\(marker).example.com", bucket: "backups",
+                usePathStyle: true))
+        case .webdav:
+            return WebDAVFieldSchema.values(from: StoredWebDAVConfig(
+                baseURL: "https://\(marker).example.com/dav", username: "tim",
+                useNextcloudPath: false))
+        case .ftp:
+            return FTPFieldSchema.values(from: StoredFTPConfig(
+                host: "\(marker).example.com", port: 21, username: "tim",
+                security: .explicitTLS))
+        }
+    }
+
+    /// Whether the session carries the stored block of `kind`. Also
+    /// exhaustive, for the same reason.
+    private func carriesBlock(_ session: StoredSession, of kind: ConnectionKind) -> Bool {
+        switch kind {
+        case .ssh: return session.ssh != nil
+        case .s3: return session.s3 != nil
+        case .webdav: return session.webdav != nil
+        case .ftp: return session.ftp != nil
+        }
+    }
+
     /// `save` matches an EXISTING session by name, so a "Save & connect" whose
     /// name collides with a session of a DIFFERENT kind changes that session's
     /// protocol. Mutating rather than rebuilding is what carries group and
@@ -573,26 +629,42 @@ struct SessionListViewModelTests {
     /// backend's own block forward, or an `.ssh` session keeps a populated `s3`
     /// block (endpoint, bucket, access key id) that reaches the store file,
     /// the export codec and `SessionImportPlanner.duplicateKey`.
-    @Test func savingOverAnExistingNameOfAnotherKindClearsTheOldBackendBlock() throws {
+    ///
+    /// The old protocol's block must not come along, for EVERY ordered pair of
+    /// kinds. The second half of each check is the one that was missing: the
+    /// destination's block being present proves the save worked, and every
+    /// OTHER block being absent proves nothing stale rode along. The raw store
+    /// file is read too, because a block can be cleared in memory and still be
+    /// written by a different path.
+    @Test(arguments: SessionListViewModelTests.kindTransitions)
+    func savingOverAnExistingNameOfAnotherKindClearsTheOldBackendBlock(
+        transition: KindTransition
+    ) throws {
         let (vm, _, dir) = makeVM()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let s3 = StoredS3Config(
-            accessKeyID: "AKIA", region: "eu-central-1",
-            endpoint: "https://s3.example.com", bucket: "backups", usePathStyle: true)
         _ = vm.save(
-            name: "shared", values: S3FieldSchema.values(from: s3),
-            password: "SECRET", kind: .s3)
+            name: "shared", values: sampleValues(for: transition.from),
+            password: "pw", kind: transition.from)
 
-        let asSSH = vm.save(
-            name: "shared",
-            values: sshValues(host: "h.example.com", port: 2222, username: "tim"),
-            password: "pw")!
+        let saved = try #require(vm.save(
+            name: "shared", values: sampleValues(for: transition.to),
+            password: "pw", kind: transition.to))
 
-        #expect(asSSH.kind == .ssh)
-        #expect(asSSH.s3 == nil)
-        #expect(asSSH.ssh?.host == "h.example.com")
-        let raw = try String(contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
-        #expect(!raw.contains("backups"))
+        #expect(saved.kind == transition.to)
+        #expect(carriesBlock(saved, of: transition.to), "\(transition): the destination block is missing")
+        for kind in ConnectionKind.allCases where kind != transition.to {
+            #expect(
+                !carriesBlock(saved, of: kind),
+                "\(transition): a stale \(kind.rawValue) block survived the save")
+        }
+        let raw = try String(
+            contentsOf: dir.appendingPathComponent("sessions-v2.json"), encoding: .utf8)
+        let fromMarker = Self.staleMarker(transition.from)
+        let leaked = raw.contains(fromMarker)
+        #expect(!leaked, "\(transition): the old block's contents reached the store file")
+        let toMarker = Self.staleMarker(transition.to)
+        let wroteDestination = raw.contains(toMarker)
+        #expect(wroteDestination, "\(transition): the destination's contents did not reach the store file")
     }
 
     /// The same rule in the other direction: SSH's own fields are not a place

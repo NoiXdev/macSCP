@@ -242,9 +242,15 @@ public final class SessionListViewModel {
         // session keeps SSH's key path, auth kind and port. All of that reaches
         // the store, the export codec and `SessionImportPlanner.duplicateKey`.
         //
-        // Since M23/T8 that is one line per backend block, and the separate
-        // `host`/`username` reset this used to need before `apply` is gone with
-        // it: SSH's fields live in `ssh`, so clearing the block clears them.
+        // Since M23/T8 the previous backend's storage is its block, and the
+        // separate `host`/`username` reset this used to need before `apply` is
+        // gone with it: SSH's fields live in `ssh`, so clearing the block
+        // clears them. (Withdrawn wording, verbatim: "Since M23/T8 that is one
+        // line per backend block". It stopped being true when `ftp` arrived
+        // and this list, written out here, did not grow with it: a stale `ftp`
+        // block survived a save of any other kind. The blocks are now cleared
+        // by `StoredSession.clearBackendBlocks()`, whose `switch` over
+        // `ConnectionKind` has no `default`.)
         //
         // Guarded on an actual kind CHANGE so the ordinary same-kind re-save
         // stays byte-identical. `validateForEditSave` needs no counterpart: the
@@ -252,9 +258,7 @@ public final class SessionListViewModel {
         // "connection type is fixed after creation"), so an edit cannot reach
         // this case.
         if session.kind != kind {
-            session.ssh = nil
-            session.s3 = nil
-            session.webdav = nil
+            session.clearBackendBlocks()
         }
         session.kind = kind
         session.groupID = groupID

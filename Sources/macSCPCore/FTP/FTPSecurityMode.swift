@@ -1,13 +1,17 @@
 /// How an FTP control connection is protected: not at all, upgraded after the
 /// greeting, or wrapped from the first byte.
 ///
-/// **Public although the other FTP types are internal.** `ConnectionConfig` is
-/// a public enum, and an enum case's associated value cannot be less
-/// accessible than the enum; `FTPConnectionConfig` therefore has to be public,
-/// and a public struct's stored property cannot name an internal type.
+/// **Public, like the types that hold it.** `ConnectionConfig` is a public
+/// enum, and an enum case's associated value cannot be less accessible than
+/// the enum; `FTPConnectionConfig` therefore has to be public, and a public
+/// struct's stored property cannot name an internal type. (Withdrawn wording,
+/// verbatim: "Public although the other FTP types are internal." It was true
+/// only of the wire types of Tasks 1-2 -- `FTPReply`, `FTPReplyError`,
+/// `FTPReplyAccumulator`, `FTPListRefusal` and `FTPListParser` -- and not of
+/// `FTPField`, `FTPFieldSchema` or `StoredFTPConfig`, which are public too.)
 ///
-/// The raw values are the persisted spelling (`StoredFTPConfig` will write
-/// them), so they are not to be renamed.
+/// The raw values are the persisted spelling (`StoredFTPConfig` writes them),
+/// so they are not to be renamed.
 public enum FTPSecurityMode: String, Codable, Sendable, CaseIterable {
     /// No TLS anywhere: credentials and file contents cross the network in the
     /// clear. The only mode `PlaintextTransportGate` asks the user to confirm.

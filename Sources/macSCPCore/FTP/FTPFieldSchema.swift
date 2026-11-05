@@ -39,7 +39,11 @@ public enum FTPFieldSchema {
                             labelKey: "connection.field.host",
                             labelDefault: "Host", kind: .text,
                             isRequired: true,
-                            invalidMessageKey: "core.connect.emptyHost",
+                            // ONE key covers a blank host and a host with
+                            // user-info in it (the field's `format` below),
+                            // as S3's endpoint does; the text names both.
+                            format: .hostWithoutUserinfo,
+                            invalidMessageKey: "core.connect.ftpHostInvalid",
                             identity: .caseInsensitive),
             ConnectionField(id: FTPField.port.rawValue,
                             labelKey: "connection.field.port",
@@ -89,20 +93,33 @@ public enum FTPFieldSchema {
 
     // MARK: - Reading the fields
 
+    /// Whether the text carries user-info or a scheme: an `@` anywhere, or
+    /// `://`. The shapes of a pasted `ftp://user:secret@host/`, and of
+    /// `user@host` typed into the wrong field. A host never holds a
+    /// credential, so no view that renders one needs to filter it
+    /// (`SessionCatalog.target(for:)` and the overview's host fact print it
+    /// as stored), and this is the one place to get that right.
+    public static func hostCarriesUserinfo(_ text: String) -> Bool {
+        text.contains("@") || text.contains("://")
+    }
+
     /// The host as a connectable name, or nil when the text names none.
     ///
     /// Trimmed. A bracketed IPv6 literal loses its brackets (the dial wants
-    /// the bare address), and an unbracketed one is accepted as such. What is
-    /// refused is everything a host name cannot be: blank, any whitespace or
-    /// control character, and the characters that would make this a URL or a
-    /// user-info prefix (`/ @ ? #`), which are the shapes of a pasted
-    /// `ftp://user@host/` -- a credential would otherwise end up in a host
-    /// field. A single `:` is refused too: `host:21` is a port the port field
-    /// owns, and quietly dropping or keeping it would dial something the
-    /// user did not type.
+    /// the bare address). What is refused is everything a host name cannot
+    /// be: blank, user-info or a scheme (`hostCarriesUserinfo`), any
+    /// whitespace or control character, and the characters that make this a
+    /// path or a URL (`/ ? #` and stray brackets).
+    ///
+    /// **A `:` is deliberately NOT refused and not validated.** An IPv6
+    /// literal contains colons and whether this project accepts one in a host
+    /// field is not settled here, so `host:21` is accepted as a host and
+    /// fails at the dial. That is a known gap with a named reason, not a
+    /// decision that it is valid: FTP plan Task 10 inherits it.
     public static func normalizedHost(_ raw: String) -> String? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
+        guard !hostCarriesUserinfo(text) else { return nil }
 
         var bracketed = false
         if text.hasPrefix("[") && text.hasSuffix("]") {
@@ -117,18 +134,11 @@ public enum FTPFieldSchema {
             {
                 return nil
             }
-            if "/@?#[]".unicodeScalars.contains(scalar) { return nil }
+            if "/?#[]".unicodeScalars.contains(scalar) { return nil }
         }
-
-        let colons = text.filter { $0 == ":" }.count
-        if colons == 0 {
-            return bracketed ? nil : text
-        }
-        // Colons mean an IPv6 literal, which has at least two and only hex
-        // digits, colons and (for an embedded IPv4 tail) dots.
-        guard colons >= 2 else { return nil }
-        let allowed = Set("0123456789abcdefABCDEF:.")
-        guard text.allSatisfy({ allowed.contains($0) }) else { return nil }
+        // Brackets exist to hold an IPv6 literal; around anything else they
+        // are a typo.
+        if bracketed && !text.contains(":") { return nil }
         return text
     }
 
@@ -195,8 +205,16 @@ public enum FTPFieldSchema {
             switch field {
             case .host:
                 guard let normalized = normalizedHost(values[FTPField.host]) else {
-                    throw RemoteFSError.connectionFailed(
-                        reason: CoreL10n.string("core.connect.emptyHost"))
+                    // Three different complaints, three different sentences:
+                    // nothing typed, a credential or scheme typed, and a host
+                    // with whitespace or path characters in it.
+                    let typed = values[FTPField.host].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let key =
+                        typed.isEmpty
+                        ? "core.connect.emptyHost"
+                        : hostCarriesUserinfo(typed)
+                            ? "core.connect.ftpHostInvalid" : "core.connect.hostInvalid"
+                    throw RemoteFSError.connectionFailed(reason: CoreL10n.string(key))
                 }
                 host = normalized
             case .port:

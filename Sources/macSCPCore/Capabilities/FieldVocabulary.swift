@@ -44,6 +44,12 @@ public enum FieldFormat: Sendable, Equatable {
     /// nobody uses or a credential no rule can separate from one
     /// (`URLText.hasAtAfterHost(typedURL:)`).
     case urlWithoutAtAfterHost
+    /// A host name or address and nothing more (FTP's host): no user-info
+    /// (`tim:secret@host`) and no scheme (`ftp://host`). A credential typed
+    /// into the host field would otherwise be stored and then rendered raw by
+    /// every view that shows the host, so the field refuses it at the source
+    /// instead of each view filtering it (`FTPFieldSchema.hostCarriesUserinfo`).
+    case hostWithoutUserinfo
 
     /// Whether `value` — already trimmed, and not blank — satisfies the rule.
     /// Blank is `isRequired`'s question, not the format's; `numeric` keeps
@@ -52,6 +58,7 @@ public enum FieldFormat: Sendable, Equatable {
         switch self {
         case .numeric: return Int(value) != nil
         case .urlWithoutAtAfterHost: return !URLText.hasAtAfterHost(typedURL: value)
+        case .hostWithoutUserinfo: return !FTPFieldSchema.hostCarriesUserinfo(value)
         }
     }
 }

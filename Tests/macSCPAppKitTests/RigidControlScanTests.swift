@@ -4,7 +4,8 @@ import Testing
 
 /// Keeps the compressible spellings of a localized control from coming back.
 ///
-/// The rigid components (`SegmentedChoice`, `RadioChoice`, `CheckboxRow`) exist
+/// The rigid components (`SegmentedChoice`, `RadioChoice`, `CheckboxRow` and
+/// `MenuChoice`) exist
 /// because a compressed control truncates its label and NOTHING overflows, so no
 /// width measurement can see it. Replacing the call sites made the defect
 /// measurable; this suite is what stops a later edit from making it silent
@@ -19,7 +20,7 @@ import Testing
 /// tree. Five raw segmented sites survive in containers no task migrated, none
 /// of them a bounded view or a resizable container:
 /// `SessionExportImportSheets.swift` (2), `BrowserSheets.swift` (1) and
-/// `TunnelProfilesSheet.swift` (2). Seven hand-written menus exist besides, and
+/// `TunnelProfilesSheet.swift` (2). Eight hand-written menus exist besides, and
 /// they are not components at all: a `Picker`, the menu style and `.fixedSize()`,
 /// written by hand. A blanket prohibition would have to be red today, and the
 /// choices are to weaken it until it is green (a comment that runs) or to
@@ -196,10 +197,22 @@ struct RigidControlScanTests {
     /// did not. Its rigidity is a hand-written `.fixedSize()`, checked by
     /// `everyHandWrittenMenuCarriesFixedSize`. Counted the same way,
     /// `grep -rn 'pickerStyle[(][.]menu[)]' Sources/MacSCPAppKit`, which prints
-    /// 8 lines: `ConnectionFormView` (2), and one each in `AuditLogSheet`,
+    /// 9 lines: `ConnectionFormView` (2), and one each in `AuditLogSheet`,
     /// `DiagnosticsPanel`, `FileSearchBar`, `SheetFacetPicker`,
-    /// `SidebarTagFilterBar` and `ObjectVersionsSheet` (added with the version
-    /// history sheet, 2026-11-02). (Withdrawn wording, verbatim: "which prints
+    /// `SidebarTagFilterBar`, `ObjectVersionsSheet` (added with the version
+    /// history sheet, 2026-11-02) and `RigidControls.swift` (`MenuChoice`'s
+    /// own, added with the FTP plan's Task 3). Eight of the nine are
+    /// hand-written menus; the ninth is the one menu component.
+    /// **Corrected 2026-11-05 (FTP plan, Task 3 fix round 2).** This
+    /// paragraph read, verbatim: "which prints 8 lines: `ConnectionFormView`
+    /// (2), and one each in `AuditLogSheet`, `DiagnosticsPanel`,
+    /// `FileSearchBar`, `SheetFacetPicker`, `SidebarTagFilterBar` and
+    /// `ObjectVersionsSheet`". It was true until `MenuChoice` was added;
+    /// the `allowed` dictionary below was updated that day and this prose was
+    /// not. Likewise this suite's opening paragraph said "Seven hand-written
+    /// menus exist besides" (verbatim): seven when it was written, eight once
+    /// `ObjectVersionsSheet` joined, and the same eight now that the ninth line
+    /// is a component. (Older withdrawn wording, verbatim: "which prints
     /// 7 lines: `ConnectionFormView` (2), and one each in `AuditLogSheet`,
     /// `DiagnosticsPanel`, `FileSearchBar`, `SheetFacetPicker` and
     /// `SidebarTagFilterBar`." It was true until that sheet's filter menu.)
@@ -276,9 +289,11 @@ struct RigidControlScanTests {
     /// `.palette`, `.switch`) would walk past every allow-list. So the number of
     /// `.pickerStyle(` and `.toggleStyle(` calls is held to the sum of the
     /// styles that ARE named. Counted 2026-10-18 with
-    /// `grep -rn 'pickerStyle[(]' Sources/MacSCPAppKit`, which prints 15 lines
-    /// (6 segmented, 1 radio group, 8 menu; withdrawn, verbatim: "which prints
-    /// 14 lines (6 segmented, 1 radio group, 7 menu)"), and
+    /// `grep -rn 'pickerStyle[(]' Sources/MacSCPAppKit`, which prints 16 lines
+    /// (6 segmented, 1 radio group, 9 menu, the ninth being `MenuChoice`'s
+    /// own; withdrawn, verbatim: "which prints 15 lines (6 segmented, 1 radio
+    /// group, 8 menu; withdrawn, verbatim: 'which prints 14 lines (6
+    /// segmented, 1 radio group, 7 menu)')"), and
     /// `grep -rn 'toggleStyle[(]' Sources/MacSCPAppKit`, which prints 2 (the
     /// checkbox, the toggle button).
     @Test func noPickerOrToggleStyleEscapesTheNamedFamilies() throws {
@@ -427,6 +442,15 @@ struct RigidControlScanTests {
     /// the counts below sum to 29 (the same one line of header prose is the
     /// difference). The Task 11 paragraph is left as it stands: it records
     /// what the commands printed when it was written.
+    ///
+    /// **Corrected 2026-11-05 (FTP plan, Task 3 fix round 2).** The Task 4
+    /// paragraph directly above read, verbatim: "print 13, 4 and 13: 30 lines
+    /// in all, and the counts below sum to 29". Moving the connection-type
+    /// choice to the new `MenuChoice` removed two `SegmentedChoice` sites, so
+    /// `grep -rn 'SegmentedChoice[(]' Sources/MacSCPAppKit`, `'RadioChoice[(]'`
+    /// and `'CheckboxRow[(]'` print 11, 4 and 13, and the fourth component's
+    /// `'MenuChoice[(]'` prints 2: 30 lines in all, and the counts below still
+    /// sum to 29. The total is unchanged; two of its parts are not.
     fileprivate struct Component: Sendable, CustomTestStringConvertible {
         let name: String
         let pattern: String

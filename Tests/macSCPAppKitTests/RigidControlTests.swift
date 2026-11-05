@@ -108,8 +108,11 @@ struct RigidControlTests {
     // MARK: - A choice that grows with the product
 
     /// The connection-type labels as they stood before FTP and with it. The
-    /// added label is the SHORTEST, so a menu's width (the longest single
-    /// label) cannot move and a segmented control's (the sum) must.
+    /// added label is not the LONGEST ("WebDAV" is), so a menu's width (the
+    /// longest single label) cannot move and a segmented control's (the sum)
+    /// must. (Withdrawn wording, verbatim: "The added label is the SHORTEST".
+    /// "S3" is shorter; the property that matters is only that it is not the
+    /// longest.)
     private static let threeKinds = ["SSH", "S3", "WebDAV"]
     private static let fourKinds = ["SSH", "S3", "WebDAV", "FTP"]
 

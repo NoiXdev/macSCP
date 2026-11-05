@@ -190,6 +190,53 @@ public struct StoredSession: Codable, Equatable, Identifiable, Sendable {
         self.importedAt = importedAt
     }
 
+    // MARK: - The per-backend blocks, as a set
+
+    /// Empties every per-backend block (`ssh`, `s3`, `webdav`, `ftp`).
+    ///
+    /// The one place that knows the list of blocks for CLEARING, for the two
+    /// callers that need all of them at once: `SessionListViewModel.save`
+    /// when a save changes an existing session's kind, and (through its dual,
+    /// `copyBackendBlocks(from:)`) `SessionDuplication.copy`. It exists
+    /// because both used to spell the list out by hand and both missed `ftp`:
+    /// a list written at the call site is not something the compiler can
+    /// check. This one is a loop over `ConnectionKind.allCases` into a
+    /// `switch` with no `default`, so a fifth backend does not compile until
+    /// it has an arm here.
+    ///
+    /// What the switch cannot see is a block that is NOT keyed by a
+    /// `ConnectionKind`; `StoredSessionBlockTests` reflects over the stored
+    /// properties for that.
+    mutating func clearBackendBlocks() {
+        for kind in ConnectionKind.allCases { clearBackendBlock(for: kind) }
+    }
+
+    private mutating func clearBackendBlock(for kind: ConnectionKind) {
+        switch kind {
+        case .ssh: ssh = nil
+        case .s3: s3 = nil
+        case .webdav: webdav = nil
+        case .ftp: ftp = nil
+        }
+    }
+
+    /// Takes every per-backend block from `other`, replacing this session's
+    /// own. The dual of `clearBackendBlocks()`, with the same exhaustive
+    /// `switch`, for the caller that must CARRY the blocks rather than drop
+    /// them (`SessionDuplication.copy`).
+    mutating func copyBackendBlocks(from other: StoredSession) {
+        for kind in ConnectionKind.allCases { copyBackendBlock(for: kind, from: other) }
+    }
+
+    private mutating func copyBackendBlock(for kind: ConnectionKind, from other: StoredSession) {
+        switch kind {
+        case .ssh: ssh = other.ssh
+        case .s3: s3 = other.s3
+        case .webdav: webdav = other.webdav
+        case .ftp: ftp = other.ftp
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, name, groupID, loginSetID, kind, ssh, s3, webdav, ftp, paneVisibility, tags
         case position, importSource, importID, importedAt

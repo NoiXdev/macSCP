@@ -58,13 +58,13 @@ public enum SessionDuplication {
             groupID: template.groupID,
             loginSetID: template.loginSetID,
             kind: template.kind,
-            ssh: template.ssh,
-            s3: template.s3,
-            webdav: template.webdav,
-            ftp: template.ftp,
             paneVisibility: template.paneVisibility,
             tags: template.tags,
             position: template.position)
+        // Every backend block, through the dual of the clearing the save path
+        // does: a block listed by hand here is one a new backend can leave
+        // out without the compiler saying so (`ftp` was, in this very place).
+        copy.copyBackendBlocks(from: template)
         // `importSource`/`importID`/`importedAt` (M24) are deliberately NOT
         // taken over here: they stay at `StoredSession.init`'s own default
         // (`nil`), because the copy did not come from Cyberduck — the

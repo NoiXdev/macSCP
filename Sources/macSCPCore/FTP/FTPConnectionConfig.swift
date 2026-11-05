@@ -30,10 +30,13 @@ public struct StoredFTPConfig: Equatable, Codable, Sendable {
 /// cannot encode a secret, which is why this is a second struct and not
 /// `StoredFTPConfig` with an exclusion list.
 ///
-/// **Public although the other FTP types are internal**: it is the associated
-/// value of the public `ConnectionConfig.ftp`, and an enum case's payload
-/// cannot be less accessible than the enum (`WebDAVConnectionConfig` is
-/// public for the same reason).
+/// **Public**, because it is the associated value of the public
+/// `ConnectionConfig.ftp`, and an enum case's payload cannot be less
+/// accessible than the enum (`WebDAVConnectionConfig` is public for the same
+/// reason). (Withdrawn wording, verbatim: "Public although the other FTP types
+/// are internal". Only the Task 1-2 wire types -- `FTPReply`,
+/// `FTPReplyError`, `FTPReplyAccumulator`, `FTPListRefusal`, `FTPListParser`
+/// -- are internal.)
 public struct FTPConnectionConfig: Equatable, Sendable {
     public var host: String
     public var port: Int

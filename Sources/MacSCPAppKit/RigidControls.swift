@@ -77,6 +77,14 @@ import SwiftUI
 // eye at the site. Re-run it to confirm; the figure is only as good as the
 // day it was counted.
 //
+// **Corrected 2026-11-05 (FTP plan, Task 3 fix round 2).** The paragraph
+// directly above read, verbatim: "It now prints seven". It prints nine: those
+// seven, `ObjectVersionsSheet` (1, its filter menu, added 2026-11-02) and
+// `MenuChoice`'s own line in this file. Eight of the nine are hand-written
+// menus carrying `.fixedSize()` (`RigidControlScanTests
+// .everyHandWrittenMenuCarriesFixedSize` reads the chain of all nine, this
+// component's included); the ninth is the component.
+//
 // **Corrected 2026-10-18, fix round 4.** This paragraph first read "Three more
 // rigid controls are NOT components", naming `AuditLogSheet` and the jump
 // source and jump authentication rows of `ConnectionFormView`. The three are

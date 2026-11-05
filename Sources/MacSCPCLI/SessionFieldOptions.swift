@@ -257,10 +257,14 @@ struct SessionFieldOptions: ParsableArguments {
                 username: try required(user, "--user", for: kind),
                 useNextcloudPath: nextcloud)
         case .ftp:
-            // Refused rather than written: `StoredSession` has no FTP block
-            // until FTP plan Task 8, and a session record of this kind with
-            // no block would be one nothing can dial. Task 10 replaces this
-            // arm with the real flags.
+            // Refused rather than written: the flags and the required-field
+            // set for FTP are FTP plan Task 10's, and a `newSession` that
+            // writes a half-specified record is worse than one that refuses.
+            // (Withdrawn wording, verbatim: "`StoredSession` has no FTP block
+            // until FTP plan Task 8, and a session record of this kind with no
+            // block would be one nothing can dial." The block landed in Task 3,
+            // in the same commit series as this arm, so the reason was false
+            // as committed.) Task 10 replaces this arm with the real flags.
             throw ValidationError("--kind ftp is not available from the command line yet")
         }
         session.tags = tag

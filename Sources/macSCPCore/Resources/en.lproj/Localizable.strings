@@ -92,6 +92,7 @@
 
 /* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
 "core.connect.ftpNotAvailableYet" = "FTP connections are not available in this build yet.";
+"core.connect.ftpHostInvalid" = "Enter only the host name or address, such as ftp.example.com — no user name, no ftp:// and no path. The user name has its own field.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";

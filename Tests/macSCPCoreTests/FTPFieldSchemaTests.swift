@@ -95,11 +95,60 @@ struct FTPFieldSchemaTests {
 
     @Test(arguments: [
         "", "   ", "files example.com", "ftp://files.example.com", "files.example.com/pub",
-        "tim@files.example.com", "files.example.com:21", "[files.example.com]", "[]",
-        "files.example.com?x", "files.example.com#x", "a\u{0}b", "a\tb", "2001:db8::g",
+        "tim@files.example.com", "[files.example.com]", "[]",
+        "files.example.com?x", "files.example.com#x", "a\u{0}b", "a\tb",
     ])
     func aHostThatIsNotAHostIsRefused(raw: String) {
         #expect(FTPFieldSchema.normalizedHost(raw) == nil)
+    }
+
+    // MARK: - A host never carries user-info
+
+    /// One shape per refusal. A host that held `tim:secret@host` would be
+    /// stored and then printed raw by the sidebar row and the overview's host
+    /// fact, neither of which filters it; the schema refuses it so that
+    /// neither has to.
+    @Test(arguments: [
+        "tim@files.example.com", "tim:secret@files.example.com", "@files.example.com",
+        "files.example.com@", "ftp://files.example.com", "ftps://tim:secret@files.example.com/",
+        "  tim@files.example.com  ",
+    ])
+    func aHostWithUserinfoOrASchemeIsRefusedEverywhere(raw: String) throws {
+        #expect(FTPFieldSchema.hostCarriesUserinfo(raw))
+        #expect(FTPFieldSchema.normalizedHost(raw) == nil)
+
+        // The form's own validation, so a save is refused before anything is
+        // stored -- with the sentence that names this problem, not the
+        // blank-host one.
+        var values = filledValues()
+        values[FTPField.host] = raw
+        let violation = try #require(
+            BackendDescriptor.descriptor(for: .ftp).firstViolation(
+                in: values, requireSecrets: false))
+        #expect(violation.messageKey == "core.connect.ftpHostInvalid")
+        #expect(violation.fieldKey == "\(FTPField.namespace).\(FTPField.host.rawValue)")
+    }
+
+    /// The positive beside the refusals above: an ordinary host, an address
+    /// and a bracketed IPv6 literal all pass both the parse and the form.
+    @Test(arguments: ["files.example.com", "ftp-1.example.com", "192.0.2.7", "[2001:db8::1]"])
+    func anOrdinaryHostPassesBothTheParseAndTheForm(raw: String) {
+        #expect(FTPFieldSchema.hostCarriesUserinfo(raw) == false)
+        #expect(FTPFieldSchema.normalizedHost(raw) != nil)
+        var values = filledValues()
+        values[FTPField.host] = raw
+        #expect(BackendDescriptor.descriptor(for: .ftp).firstViolation(
+            in: values, requireSecrets: false) == nil)
+    }
+
+    /// A KNOWN GAP, pinned so it is a decision and not a surprise: a colon is
+    /// neither refused nor validated, because an IPv6 literal contains colons
+    /// and whether this project accepts one in a host field is not settled.
+    /// `host:21` therefore parses as a host and fails at the dial. FTP plan
+    /// Task 10 inherits this.
+    @Test func aColonInAHostIsAcceptedButNotValidated() {
+        #expect(FTPFieldSchema.normalizedHost("files.example.com:21") == "files.example.com:21")
+        #expect(FTPFieldSchema.normalizedHost("2001:db8::g") == "2001:db8::g")
     }
 
     // MARK: - Registration
@@ -171,14 +220,43 @@ struct FTPFieldSchemaTests {
         #expect(ftp.initialPath == nil)
     }
 
-    @Test func makeConfigRefusesABadHostAndABadPort() {
-        var badHost = filledValues()
-        badHost[FTPField.host] = "ftp://files.example.com"
-        #expect(throws: (any Error).self) { _ = try FTPFieldSchema.makeConfig(badHost, "") }
+    /// The `reason` of the `.connectionFailed` a refused form throws, or nil
+    /// when `makeConfig` did not throw one.
+    private func refusalReason(_ values: FieldValues) -> String? {
+        do {
+            _ = try FTPFieldSchema.makeConfig(values, "")
+            return nil
+        } catch RemoteFSError.connectionFailed(let reason) {
+            return reason
+        } catch {
+            return nil
+        }
+    }
 
-        var badPort = filledValues()
-        badPort[FTPField.port] = "99999"
-        #expect(throws: (any Error).self) { _ = try FTPFieldSchema.makeConfig(badPort, "") }
+    /// Each refusal is pinned to the sentence that names ITS problem: a blank
+    /// host, a host with user-info, a host with whitespace in it, and a port
+    /// that is not one. `(any Error).self` accepted any of them for any
+    /// reason, which is how a credential-shaped host once got the
+    /// blank-host sentence.
+    @Test func makeConfigRefusesEachBadFieldWithItsOwnSentence() {
+        func reason(host: String? = nil, port: String? = nil) -> String? {
+            var values = filledValues()
+            if let host { values[FTPField.host] = host }
+            if let port { values[FTPField.port] = port }
+            return refusalReason(values)
+        }
+        #expect(reason(host: "  ") == CoreL10n.string("core.connect.emptyHost"))
+        #expect(reason(host: "tim@files.example.com") == CoreL10n.string("core.connect.ftpHostInvalid"))
+        #expect(reason(host: "ftp://files.example.com") == CoreL10n.string("core.connect.ftpHostInvalid"))
+        #expect(reason(host: "files example.com") == CoreL10n.string("core.connect.hostInvalid"))
+        #expect(reason(port: "99999") == CoreL10n.string("core.connect.portNumeric"))
+
+        // Positive: the four sentences are four different, resolved texts, so
+        // the equalities above cannot all hold by every key being unresolved.
+        let keys = ["core.connect.emptyHost", "core.connect.ftpHostInvalid",
+                    "core.connect.hostInvalid", "core.connect.portNumeric"]
+        #expect(Set(keys.map { CoreL10n.string($0) }).count == 4)
+        #expect(keys.allSatisfy { CoreL10n.string($0) != $0 })
     }
 
     // MARK: - Persisted shape
@@ -203,8 +281,12 @@ struct FTPFieldSchemaTests {
     /// lands only in the runtime config.
     @Test func aSavedSessionCarriesNoPasswordOnDisk() throws {
         var session = StoredSession(name: "files", kind: .ftp)
-        BackendDescriptor.descriptor(for: .ftp).apply(filledValues(), &session)
-        _ = try FTPFieldSchema.makeConfig(filledValues(), Self.secret)
+        // The secret IS on the path into `apply`: the form's password field
+        // holds it. Without this line the test could not fail, whatever
+        // `apply` did.
+        var values = filledValues()
+        values[FTPField.password] = Self.secret
+        BackendDescriptor.descriptor(for: .ftp).apply(values, &session)
 
         let text = String(decoding: try JSONEncoder().encode(session), as: UTF8.self)
         let leaked = text.contains(Self.secret)
@@ -236,23 +318,44 @@ struct FTPFieldSchemaTests {
         #expect(stored.initialPath == nil)
     }
 
-    @Test func aStoredSessionRoundTripsThroughTheStoreAndDuplication() throws {
+    /// A session of `kind` with its block populated. No `default`: a fifth
+    /// kind does not compile here until it has a fixture.
+    private func session(of kind: ConnectionKind) -> StoredSession {
+        switch kind {
+        case .ssh: return sshSession(name: "files")
+        case .s3: return s3Session(name: "files")
+        case .webdav: return webdavSession(name: "files")
+        case .ftp:
+            return ftpSession(
+                name: "files",
+                config: StoredFTPConfig(
+                    host: "files.example.com", port: 2121, username: "tim",
+                    security: .plain, initialPath: "/pub"))
+        }
+    }
+
+    /// Store encode/decode and `SessionDuplication.copy`, for every kind.
+    /// (A no-op `apply` is caught by `BackendApplyTests
+    /// .applyIsTheInverseOfSessionValues`, which is total over kinds; this
+    /// test's scope is the store and the copy.)
+    @Test(arguments: ConnectionKind.allCases)
+    func aStoredSessionRoundTripsThroughTheStoreAndDuplication(kind: ConnectionKind) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ftp-store-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let session = ftpSession(
-            name: "files",
-            config: StoredFTPConfig(
-                host: "files.example.com", port: 2121, username: "tim",
-                security: .plain, initialPath: "/pub"))
+        let session = session(of: kind)
         let store = SessionStore(directory: directory)
         try store.upsert(session)
         let loaded = try #require(try store.all().first)
         #expect(loaded == session)
 
         let copy = SessionDuplication.copy(of: session, avoiding: [session])
+        #expect(copy.kind == kind)
+        #expect(copy.ssh == session.ssh)
+        #expect(copy.s3 == session.s3)
+        #expect(copy.webdav == session.webdav)
         #expect(copy.ftp == session.ftp)
     }
 
@@ -377,10 +480,12 @@ struct FTPFieldSchemaTests {
     }
 
     @Test(arguments: ["en", "de", "fr", "pl"])
-    func theNotAvailableSentenceIsDeclaredInTheCoreCatalogue(locale: String) throws {
+    func theFTPSentencesAreDeclaredInTheCoreCatalogue(locale: String) throws {
         let url = LocalizationCatalogs.repoRoot.appendingPathComponent(
             "Sources/macSCPCore/Resources/\(locale).lproj/Localizable.strings")
         let catalogue = try #require(NSDictionary(contentsOf: url) as? [String: String])
-        #expect(catalogue["core.connect.ftpNotAvailableYet"]?.isEmpty == false)
+        for key in ["core.connect.ftpNotAvailableYet", "core.connect.ftpHostInvalid"] {
+            #expect(catalogue[key]?.isEmpty == false, Comment(rawValue: "\(key) missing from \(locale)"))
+        }
     }
 }
