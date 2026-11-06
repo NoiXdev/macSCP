@@ -230,6 +230,60 @@ struct LoopbackFTPServerTests {
         #expect(await server.controlConnectionCount == 2)
     }
 
+    /// The `PBSZ` and `PROT` seams fire only on a PROTECTED control
+    /// connection, so neither stands in for an unprotected branch and neither
+    /// is spent by a command this server would refuse anyway.
+    ///
+    /// Fix round 2 wrote that the `PBSZ` seam answers "on a control
+    /// connection that is otherwise fit to carry it" and the handler did not
+    /// enforce it — the arm was read before the `tlsActive` check (fix round
+    /// 3, G5). Why this reads codes and not reply text: the two `PBSZ`
+    /// refusals are BOTH `503` and differ only in their sentences, so the
+    /// cleartext reply cannot tell the branches apart. The second `PBSZ`
+    /// can. Armed once and sent twice, it is the policy `503` only if the
+    /// cleartext one left the arm standing; before the fix it was `200`,
+    /// because the arm had been spent in the clear. `PROT` needs no such
+    /// detour — `534` is not a code its unprotected branch answers — so the
+    /// cleartext `PROT` below pins its own half directly.
+    @Test func theTLSUpgradeSeamsDoNotFireOnACleartextControlConnection() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let codes = try await Self.running(server) { host, port in
+            await server.refuseNextPBSZWith503()
+            await server.refuseNextPROTWith534()
+
+            let client = try await LoopbackFTPClient.connect(host: host, port: port)
+            #expect(try await client.readReply().code == 220)
+            // In the clear, before `AUTH TLS`: the unprotected branches.
+            let clearPBSZ = try await client.command("PBSZ 0").code
+            let clearPROT = try await client.command("PROT P").code
+
+            #expect(try await client.command("AUTH TLS").code == 234)
+            try await client.startTLS()
+            // And now the arms, which the two commands above did not spend.
+            let armedPBSZ = try await client.command("PBSZ 0").code
+            let armedPROT = try await client.command("PROT P").code
+            // One shot each: the connection is served normally afterwards,
+            // which is also the positive control that these four replies are
+            // refusals the seams produced and not a session that had stopped
+            // answering.
+            let spentPBSZ = try await client.command("PBSZ 0").code
+            let spentPROT = try await client.command("PROT P").code
+            await client.close()
+            return (
+                clearPBSZ: clearPBSZ, clearPROT: clearPROT,
+                armedPBSZ: armedPBSZ, armedPROT: armedPROT,
+                spentPBSZ: spentPBSZ, spentPROT: spentPROT
+            )
+        }
+        #expect(codes.clearPBSZ == 503)
+        #expect(codes.clearPROT == 503)
+        #expect(codes.armedPBSZ == 503)
+        #expect(codes.armedPROT == 534)
+        #expect(codes.spentPBSZ == 200)
+        #expect(codes.spentPROT == 200)
+    }
+
     @Test func aDesynchronisedReplyLeavesTheStreamOneReplyAhead() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)

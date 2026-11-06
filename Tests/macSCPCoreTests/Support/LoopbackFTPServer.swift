@@ -463,12 +463,30 @@ actor LoopbackFTPServer {
     /// one never does. So a refusal that is a POLICY — the shape a real
     /// server produces, and the only shape the client's own guards can be
     /// measured against — had no fixture at all until fix round 2 (F6).
+    ///
+    /// **"On a control connection that is otherwise fit to carry it" is the
+    /// code's doing since fix round 3 (G5).** Fix round 2 wrote that sentence
+    /// and the handler did not enforce it: the arm was read and cleared
+    /// BEFORE the `tlsActive` check, so a `PBSZ` in the clear took the policy
+    /// refusal — the same `503` the unprotected branch answers, differing
+    /// only in text — and spent the arm on it. The check now stands in front
+    /// of the arm in both handlers, so neither seam can stand in for an
+    /// unprotected branch and neither is spent by a command this server
+    /// would refuse anyway.
+    /// `theTLSUpgradeSeamsDoNotFireOnACleartextControlConnection` is the pin,
+    /// and it reads codes rather than reply text: before the fix the second
+    /// `PBSZ` — the one after the handshake, the one the seam exists for —
+    /// answered `200`, because the cleartext one had already spent the arm.
     func refuseNextPBSZWith503() {
         state.box.withLockedValue { $0.refuseNextPBSZ = true }
     }
 
     /// The next `PROT` is answered `534 Request denied for policy reasons`
-    /// (RFC 2228 section 5) instead of `200`. One shot.
+    /// (RFC 2228 section 5) instead of `200`, on a control connection that is
+    /// otherwise fit to carry it. One shot.
+    ///
+    /// Behind `handleProtection`'s `tlsActive` check, for the reason
+    /// `refuseNextPBSZWith503()` above gives.
     func refuseNextPROTWith534() {
         state.box.withLockedValue { $0.refuseNextPROT = true }
     }
@@ -1044,17 +1062,22 @@ final class LoopbackFTPSession: @unchecked Sendable {
         case "AUTH":
             try await handleAuth(argument)
         case "PBSZ":
-            let pbszRefused = state.box.withLockedValue { inner -> Bool in
-                let armed = inner.refuseNextPBSZ
-                inner.refuseNextPBSZ = false
-                return armed
-            }
-            if pbszRefused {
-                try await send(503, "Buffer size negotiation denied for policy reasons.")
-            } else if tlsActive {
-                try await send(200, "PBSZ=0")
-            } else {
+            // The TLS check stands in FRONT of the arm (fix round 3, G5): a
+            // seam that answers "on a control connection that is otherwise
+            // fit to carry it" must not be spent by one that is not.
+            if !tlsActive {
                 try await send(503, "PBSZ needs a protected control connection.")
+            } else {
+                let pbszRefused = state.box.withLockedValue { inner -> Bool in
+                    let armed = inner.refuseNextPBSZ
+                    inner.refuseNextPBSZ = false
+                    return armed
+                }
+                if pbszRefused {
+                    try await send(503, "Buffer size negotiation denied for policy reasons.")
+                } else {
+                    try await send(200, "PBSZ=0")
+                }
             }
         case "PROT":
             try await handleProtection(argument)
@@ -1168,6 +1191,11 @@ final class LoopbackFTPSession: @unchecked Sendable {
     }
 
     private func handleProtection(_ level: String) async throws {
+        // Before the arm, for the reason `refuseNextPBSZWith503()` gives.
+        guard tlsActive else {
+            try await send(503, "PROT needs a protected control connection.")
+            return
+        }
         let refused = state.box.withLockedValue { inner -> Bool in
             let armed = inner.refuseNextPROT
             inner.refuseNextPROT = false
@@ -1175,10 +1203,6 @@ final class LoopbackFTPSession: @unchecked Sendable {
         }
         if refused {
             try await send(534, "Request denied for policy reasons.")
-            return
-        }
-        guard tlsActive else {
-            try await send(503, "PROT needs a protected control connection.")
             return
         }
         switch level.uppercased() {
