@@ -109,6 +109,10 @@
 "core.connect.ftpSessionRefused" = "La session chiffrée de cette connexion n'a pas pu être réutilisée pour le transfert de fichiers.";
 "core.connect.ftpBinaryModeRefused" = "Ce serveur a refusé de transférer les fichiers sans les modifier. macSCP n'a pas continué, car les transférer autrement en altérerait le contenu.";
 "core.connect.ftpCredentialNotSendable" = "Le nom d'utilisateur ou le mot de passe contient un saut de ligne ou un autre caractère qui ne peut pas être envoyé à un serveur FTP ; l'identification n'a donc pas été envoyée. Modifiez-le, puis réessayez.";
+"core.connect.ftpPassiveAddressRefused" = "Ce serveur a demandé à macSCP de transférer le fichier via une connexion vers une autre adresse ; cela a été refusé. Si le serveur est derrière un routeur, vérifiez qu'il est configuré pour annoncer sa propre adresse publique.";
+"core.connect.ftpPassiveModeRefused" = "Ce serveur a refusé d'ouvrir une connexion pour le transfert de fichiers lui-même. macSCP ne peut pas échanger de fichiers avec lui.";
+"core.connect.ftpTransferRefused" = "Le serveur a refusé le transfert.";
+"core.connect.ftpRestRefused" = "Ce serveur ne peut pas reprendre un transfert interrompu ; le transfert a donc été arrêté plutôt que recommencé au mauvais endroit. Transférez le fichier à nouveau depuis le début.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "L'hôte ne doit pas être vide.";

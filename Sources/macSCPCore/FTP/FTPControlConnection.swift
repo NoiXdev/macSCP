@@ -86,6 +86,36 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// control connection that established it. macSCP's own guard: the TLS
     /// library cannot make this comparison for a peer named by address.
     case sessionFromAnotherConnection
+    /// A passive reply named a place this client will not dial, or named no
+    /// readable place at all.
+    ///
+    /// Unusable means one of four things: the reply carries no six-number
+    /// address, one of its octets is past 255, its port is zero, or the
+    /// address is not the peer the control connection is talking to. The
+    /// last is the one with teeth — dialling it is the FTP bounce primitive,
+    /// a server choosing on the client's behalf which host receives a
+    /// connection, and under FTPS it could not work anyway, since a data
+    /// connection has to present the control connection's own certificate
+    /// byte for byte (Ruling T5.1).
+    ///
+    /// It carries no payload, so neither the address the server named nor
+    /// the one it was compared against can reach a log or a failure message.
+    case passiveAddressRefused
+    /// Both `EPSV` and `PASV` were refused, so there is no way to open a data
+    /// connection. `code` is the reply code `PASV` came back with.
+    case passiveModeRefused(code: Int)
+    /// The transfer command itself was refused, or its completion reply was
+    /// not a `2xx`. `code` is the reply code.
+    case transferRefused(code: Int)
+    /// `REST` was refused, so the offset a resumed transfer asked for cannot
+    /// be honoured. `code` is the reply code.
+    ///
+    /// Its own case, and the transfer stops here, because the alternative is
+    /// silent corruption: a client that carried on would receive the whole
+    /// file and write it at the offset, leaving the file's head in the middle
+    /// of it with no error anywhere.
+    case restRefused(code: Int)
+
     /// The TLS library refused the session this connection offered.
     ///
     /// **Mapped, never surfaced.** `NIOSSLExtraError`'s own description for
@@ -126,6 +156,10 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case dataCertificateDiffers
         case sessionFromAnotherConnection
         case sessionRefusedByTLS
+        case passiveAddressRefused
+        case passiveModeRefused
+        case transferRefused
+        case restRefused
 
         /// This failure's catalog key. A case added without its four catalog
         /// entries is caught by `everyConnectionFailureHasItsOwnSentence`,
@@ -150,6 +184,10 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
             case .dataCertificateDiffers: "core.connect.ftpDataCertificateDiffers"
             case .sessionFromAnotherConnection: "core.connect.ftpSessionScope"
             case .sessionRefusedByTLS: "core.connect.ftpSessionRefused"
+            case .passiveAddressRefused: "core.connect.ftpPassiveAddressRefused"
+            case .passiveModeRefused: "core.connect.ftpPassiveModeRefused"
+            case .transferRefused: "core.connect.ftpTransferRefused"
+            case .restRefused: "core.connect.ftpRestRefused"
             }
         }
     }
@@ -172,6 +210,35 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case .dataCertificateDiffers: .dataCertificateDiffers
         case .sessionFromAnotherConnection: .sessionFromAnotherConnection
         case .sessionRefusedByTLS: .sessionRefusedByTLS
+        case .passiveAddressRefused: .passiveAddressRefused
+        case .passiveModeRefused: .passiveModeRefused
+        case .transferRefused: .transferRefused
+        case .restRefused: .restRefused
+        }
+    }
+
+    /// Whether a failure leaves the control connection it came from in step
+    /// with the server, so the connection can carry the next command.
+    ///
+    /// The distinction the pool releases a lease by: a server that REFUSED a
+    /// command answered it, and the reply stream is where it was; a
+    /// connection that closed, timed out, or sent something unreadable is a
+    /// connection nothing has established the state of, and §5a's rule is
+    /// that such a connection is dropped rather than reused.
+    ///
+    /// The three refusals this task added are in step for the same reason
+    /// `aRefusedTransferCarriesNoCompletionReply` gives: a refusal is the
+    /// whole answer and nothing further is owed.
+    var leavesConnectionInStep: Bool {
+        switch kind {
+        case .passiveAddressRefused, .passiveModeRefused, .transferRefused, .restRefused,
+            .binaryModeRefused, .dataCertificateDiffers, .sessionFromAnotherConnection,
+            .sessionRefusedByTLS, .certificateRejected, .certificateMismatch,
+            .trustStoreUnreadable, .credentialNotSendable:
+            true
+        case .greetingRefused, .timedOut, .connectionClosed, .protocolViolation,
+            .tlsUpgradeRefused, .tlsHandshakeFailed, .loginRefused:
+            false
         }
     }
 
@@ -272,6 +339,16 @@ actor FTPControlConnection {
 
     nonisolated let identity = Identity()
 
+    /// The host this connection was dialled with, exactly as the caller
+    /// spelled it.
+    ///
+    /// Read by the passive negotiation, which refuses a `227` naming any
+    /// other place (`FTPConnectionFailure.passiveAddressRefused`). Not
+    /// `serverHostname`, which is `nil` for a peer named by address because
+    /// an IP literal may not go in SNI — and a peer named by address is
+    /// exactly the case the comparison is for.
+    nonisolated let peerHost: String
+
     private let channel: Channel
     private let lines: FTPLineSource
     private let deliver: AsyncStream<ByteBuffer>.Continuation
@@ -303,12 +380,20 @@ actor FTPControlConnection {
     private var keepalive: Task<Void, Never>?
     private var lastActivity = ContinuousClock.now
     private var isClosed = false
+    /// This server answered `EPSV` with a refusal once, so the passive
+    /// negotiation goes straight to `PASV` from now on
+    /// (`FTPDataConnection.openPassive`). A memo, not a capability: `FEAT`
+    /// does not have to list `EPSV`, so asking is the only way to find out,
+    /// and asking once per connection is one round trip rather than one per
+    /// transfer.
+    private var extendedPassiveRefused = false
 
     private init(
         channel: Channel, lines: FTPLineSource, deliver: AsyncStream<ByteBuffer>.Continuation,
         events: FTPChannelEvents, trust: FTPTrustDecision, tlsContext: NIOSSLContext?,
-        serverHostname: String?, timeout: Duration, tuning: Tuning
+        peerHost: String, serverHostname: String?, timeout: Duration, tuning: Tuning
     ) {
+        self.peerHost = peerHost
         self.channel = channel
         self.lines = lines
         self.deliver = deliver
@@ -392,7 +477,7 @@ actor FTPControlConnection {
 
         let connection = FTPControlConnection(
             channel: channel, lines: FTPLineSource(stream), deliver: continuation, events: events,
-            trust: trust, tlsContext: tlsContext, serverHostname: serverHostname,
+            trust: trust, tlsContext: tlsContext, peerHost: host, serverHostname: serverHostname,
             timeout: timeout, tuning: tuning)
         do {
             try await connection.handshakeAndLogin(
@@ -634,10 +719,9 @@ actor FTPControlConnection {
         do {
             try await body()
         } catch {
-            do {
-                _ = try await readReply()
+            if await readOwedReplyUnderShield() {
                 lastActivity = .now
-            } catch {
+            } else {
                 await close()
             }
             throw error
@@ -645,6 +729,47 @@ actor FTPControlConnection {
         let completion = try await readReply()
         lastActivity = .now
         return (opening, completion)
+    }
+
+    /// Reads the completion reply a failed drain still owes, SHIELDED from
+    /// this task's cancellation, and answers whether it arrived.
+    ///
+    /// **The shield is the whole point, and it is a defect fix.** Cancelling
+    /// a transfer must not take its control connection down with it: there is
+    /// one control connection per tab, so a cancelled download that closed it
+    /// would disconnect the tab. Without the shield the close was not a
+    /// corner case but the ONLY outcome on that path — measured on the Task 5
+    /// tree, where the first command after a cancelled transfer came back
+    /// `connectionClosed` every time.
+    ///
+    /// Why it could not be otherwise there: an `AsyncStream` iteration in a
+    /// cancelled task ends at once with no element — `next()` runs under a
+    /// `withTaskCancellationHandler` whose handler terminates the stream, and
+    /// an already-cancelled task runs it immediately — so `readReply()` saw
+    /// an ended stream, threw `connectionClosed`, and the branch that closes
+    /// the connection when the owed read fails ran on every cancel. The reply
+    /// is usually right there: a server whose data connection the client
+    /// closed answers `426 Transfer aborted` or `226`, and the bytes have
+    /// often already arrived.
+    ///
+    /// An unstructured `Task` does not inherit its creator's cancellation
+    /// (only its priority and its isolation), and awaiting its value does not
+    /// observe the awaiting task's cancellation either, so the read inside it
+    /// sees an uncancelled task and the stream behaves. The bound is still
+    /// `readReply`'s own idle watchdog, so this cannot park: a server that
+    /// says nothing ends the read as `timedOut`, which answers `false` and
+    /// the connection is discarded, which is what "only discard when the
+    /// shielded read fails" means.
+    private func readOwedReplyUnderShield() async -> Bool {
+        let read = Task { [self] in
+            do {
+                _ = try await readReply()
+                return true
+            } catch {
+                return false
+            }
+        }
+        return await read.value
     }
 
     /// The ONE place a command line is built, and the only function here that
@@ -884,8 +1009,24 @@ actor FTPControlConnection {
             vault: offer == nil ? nil : vault)
     }
 
+    /// Whether this server has already refused `EPSV` on this connection.
+    var prefersClassicPassive: Bool { extendedPassiveRefused }
+
+    /// Remembers that `EPSV` was refused here.
+    func noteExtendedPassiveRefused() {
+        extendedPassiveRefused = true
+    }
+
     /// Opens a data connection for THIS control connection, with this
     /// connection's own protection.
+    ///
+    /// **The scoping guard is structural here, not a check.** The static
+    /// below takes an `owner:` argument and refuses a mismatch at run time;
+    /// this one derives both the protection and the owner from `self`, so a
+    /// data connection paired with another control connection's session
+    /// cannot be written. Every caller in the backend goes through this one
+    /// (`FTPDataConnection.openPassive`); the static's argument check remains
+    /// for the test that pins the refusal.
     func openDataConnection(host: String, port: Int) async throws -> FTPDataChannel {
         try await Self.openDataConnection(
             host: host, port: port, protection: await dataProtection(), owner: identity,
@@ -1155,6 +1296,25 @@ actor FTPDataChannel {
     /// budget — and it was the DIAL's figure, so a 30-second connect timeout
     /// capped every download at 30 seconds (R2).
     func readToEnd() async throws -> Data {
+        var data = Data()
+        try await read { data.append($0) }
+        return data
+    }
+
+    /// Everything the server sends, handed to `sink` one chunk at a time.
+    ///
+    /// The shape a download of any size needs: `readToEnd()` is this with an
+    /// appending sink, and a caller that writes each chunk to disk or yields
+    /// it to a stream never holds the file in memory.
+    ///
+    /// **A cancelled read throws rather than returning what it got.** An
+    /// `AsyncStream` iteration in a cancelled task ends with no element,
+    /// exactly as a peer that closed does, so without the check below a
+    /// cancelled download returned its partial bytes as a COMPLETE transfer
+    /// — a silently truncated file, which is the one anti-goal §6 names. The
+    /// check is after the loop and not inside it: a chunk that arrived is
+    /// handed on either way, and it is the ending that is misreported.
+    func read(into sink: (Data) throws -> Void) async throws {
         let events = self.events
         let deliver = self.deliver
         let watchdog = FTPIdleWatchdog(bound: bound, loop: channel.eventLoop) {
@@ -1164,13 +1324,12 @@ actor FTPDataChannel {
         watchdog.start()
         defer { watchdog.stop() }
 
-        var data = Data()
         while let chunk = await chunks.next() {
             watchdog.noteProgress()
-            data.append(contentsOf: chunk.readableBytesView)
+            try sink(Data(chunk.readableBytesView))
         }
         if events.end == .timedOut { throw FTPConnectionFailure.timedOut }
-        return data
+        try Task.checkCancellation()
     }
 
     func write(_ data: Data) async throws {
@@ -1194,13 +1353,24 @@ actor FTPDataChannel {
     /// existed; `aDataChannelClosedTwiceDoesNotReissueAHeldSession` is the
     /// case.
     func close() async {
+        await close(returningSession: true)
+    }
+
+    /// The same, with the choice of whether the session goes back.
+    ///
+    /// `returningSession: false` DROPS it: the vault still marks it held, so
+    /// it is never offered again. That is what a server answering `522` after
+    /// a resumed handshake has said about it — the session it issued will not
+    /// do — and offering it to the retry would make the retry fail for the
+    /// reason the first attempt did.
+    func close(returningSession: Bool) async {
         guard !isClosed else { return }
         isClosed = true
         deliver.finish()
         _ = try? await channel.close().get()
         // Returned after the channel is closed, not before: while this
         // connection is open it is the one holding the session.
-        if let session, let vault { vault.checkIn(session) }
+        if returningSession, let session, let vault { vault.checkIn(session) }
     }
 }
 

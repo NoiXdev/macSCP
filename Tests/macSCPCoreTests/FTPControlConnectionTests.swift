@@ -1742,6 +1742,8 @@ struct FTPControlConnectionTests {
             .credentialNotSendable, .certificateRejected, .certificateMismatch,
             .trustStoreUnreadable, .dataCertificateDiffers, .sessionFromAnotherConnection,
             .sessionRefusedByTLS,
+            .passiveAddressRefused, .passiveModeRefused(code: 500),
+            .transferRefused(code: 522), .restRefused(code: 501),
         ]
         #expect(Set(all.map(\.kind)) == Set(FTPConnectionFailure.Kind.allCases))
         // Positive that the comparison is about something: an empty tag set
