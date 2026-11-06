@@ -108,7 +108,7 @@
 "core.connect.ftpSessionScope" = "Ten transfer próbował użyć szyfrowanej sesji innego połączenia, na co macSCP nie pozwala.";
 "core.connect.ftpSessionRefused" = "Szyfrowanej sesji tego połączenia nie udało się użyć do przesłania plików.";
 "core.connect.ftpBinaryModeRefused" = "Ten serwer odmówił przesyłania plików bez zmian. macSCP nie kontynuował, ponieważ przesłanie ich w inny sposób zmieniłoby ich zawartość.";
-"core.connect.ftpCredentialNotSendable" ="Nazwa użytkownika lub hasło zawiera znak nowego wiersza albo inny znak, którego nie można wysłać do serwera FTP, dlatego dane logowania nie zostały wysłane. Zmień je i spróbuj ponownie.";
+"core.connect.ftpCredentialNotSendable" = "Nazwa użytkownika lub hasło zawiera znak nowego wiersza albo inny znak, którego nie można wysłać do serwera FTP, dlatego dane logowania nie zostały wysłane. Zmień je i spróbuj ponownie.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host nie może być pusty.";
