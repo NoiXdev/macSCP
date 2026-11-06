@@ -190,6 +190,37 @@ struct FTPControlConnectionTests {
         #expect(refused == .failed(.loginRefused))
     }
 
+    // MARK: - The turn
+
+    /// Two commands issued at once each get the reply to ITS OWN command.
+    ///
+    /// An actor does not buy this: it is re-entrant at every `await`, so
+    /// without the turn both `send`s would write and then both read from one
+    /// line stream. The two codes are distinct, so a crossed pair shows up as
+    /// a swap rather than as two equal values that happen to match.
+    ///
+    /// **Unmeasured by a plant, deliberately.** Removing the turn does not
+    /// produce a red here but a `precondition` trap in `FTPLineSource` — the
+    /// overlap guard that makes its `@unchecked Sendable` sound — and a run
+    /// that aborts is not a verdict (CLAUDE.md on planting). The trap is the
+    /// stronger protection of the two; this case pins the behaviour the turn
+    /// is there to produce.
+    @Test func twoConcurrentCommandsEachGetTheirOwnReply() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let replies = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            async let directory = connection.send("PWD", argument: nil)
+            async let size = connection.send("SIZE", argument: "/absent.txt")
+            let replies = try await (directory: directory, size: size)
+            await connection.close()
+            return replies
+        }
+        #expect(replies.directory.code == 257)
+        #expect(replies.size.code == 550)
+    }
+
     // MARK: - FEAT
 
     @Test func featIsReadOnceAndItsFeaturesAreQueryable() async throws {
@@ -363,6 +394,92 @@ struct FTPControlConnectionTests {
         #expect(log.askCount == 1)
     }
 
+    /// A server that requires reuse keeps being served past the second
+    /// transfer, and no two data connections hold one session at a time.
+    ///
+    /// The case this exists for is measured on `FTPSessionVault`: handing
+    /// each session out exactly once leaves a control connection with two
+    /// resumptions, because BoringSSL issues two tickets per handshake, and
+    /// the third data connection is then answered `522`. Four in a row here,
+    /// which is past that edge.
+    @Test func dataConnectionsPastTheSecondStillResume() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
+        let log = DeciderLog()
+        let codes = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            var codes: [Int] = []
+            var resumptions: [Bool] = []
+            for _ in 1...4 {
+                let passive = try Self.passiveEndpoint(
+                    try await connection.send("PASV", argument: nil))
+                let data = try await connection.openDataConnection(
+                    host: passive.host, port: passive.port)
+                let reply = try await connection.send("LIST", argument: nil)
+                if reply.code == 150 {
+                    _ = try await data.readToEnd()
+                    _ = try await connection.readFurtherReply()
+                }
+                codes.append(reply.code)
+                resumptions.append(data.didResumeTLSSession)
+                // Closing is what returns the session, so the next one has
+                // something to offer.
+                await data.close()
+            }
+            await connection.close()
+            return (codes: codes, resumptions: resumptions)
+        }
+        #expect(codes.codes == [150, 150, 150, 150])
+        #expect(codes.resumptions == [true, true, true, true])
+        #expect(await server.refusedDataConnectionCount == 0)
+        // The server's own reading of all five handshakes, off the wire.
+        #expect(
+            await server.handshakes == [
+                .init(connection: .control, resumed: false),
+                .init(connection: .data, resumed: true),
+                .init(connection: .data, resumed: true),
+                .init(connection: .data, resumed: true),
+                .init(connection: .data, resumed: true),
+            ])
+        #expect(log.askCount == 1)
+    }
+
+    /// Two data connections open at once are offered DIFFERENT sessions, and
+    /// the second is not offered the first's.
+    ///
+    /// This is the half of RFC 8446 appendix C.4 the vault still keeps: a
+    /// session comes round again, but never to two live connections at the
+    /// same time.
+    @Test func twoOpenDataConnectionsAreNeverOfferedTheSameSession() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
+        let log = DeciderLog()
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            let first = try #require(await connection.dataProtection())
+            let second = try #require(await connection.dataProtection())
+            let third = await connection.dataProtection()
+            let firstSession = try #require(first.session)
+            let secondSession = try #require(second.session)
+            await connection.close()
+            return (
+                same: firstSession === secondSession,
+                exhausted: third?.session == nil,
+                thirdExists: third != nil
+            )
+        }
+        #expect(!outcome.same)
+        // And what the measurement on `FTPSessionVault` says: the peer issued
+        // two, so a third protection asked for while both are out carries no
+        // session at all rather than one of theirs.
+        #expect(outcome.thirdExists)
+        #expect(outcome.exhausted)
+    }
+
     /// The guard swift-nio-ssl cannot build: a session established by one
     /// control connection is offered only to THAT connection's data
     /// connections.
@@ -448,7 +565,7 @@ struct FTPControlConnectionTests {
                         owner: connection.identity, context: real.context,
                         serverHostname: real.serverHostname,
                         controlCertificateDER: Array("not this server's certificate".utf8),
-                        session: nil),
+                        session: nil, vault: nil),
                     owner: connection.identity, timeout: .seconds(30))
                 await refused.close()
             } catch let failure as FTPConnectionFailure {
@@ -463,7 +580,7 @@ struct FTPControlConnectionTests {
                 protection: FTPControlConnection.DataProtection(
                     owner: connection.identity, context: real.context,
                     serverHostname: real.serverHostname,
-                    controlCertificateDER: real.controlCertificateDER, session: nil),
+                    controlCertificateDER: real.controlCertificateDER, session: nil, vault: nil),
                 owner: connection.identity, timeout: .seconds(30))
             let reply = try await connection.send("LIST", argument: nil)
             if reply.code == 150 {

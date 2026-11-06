@@ -165,6 +165,10 @@ actor FTPControlConnection {
         /// A session to offer, or `nil` — then the handshake is a full one
         /// and the comparison above is what guards it.
         let session: NIOSSLSession?
+        /// Where `session` is returned once the connection holding it has
+        /// closed, so the next data connection of this control connection can
+        /// be offered it. `nil` when no session is offered.
+        let vault: FTPSessionVault?
     }
 
     nonisolated let identity = Identity()
@@ -179,12 +183,13 @@ actor FTPControlConnection {
     private let timeout: Duration
     private let replyBound: TimeAmount
 
+    /// This control connection's TLS sessions, and which of them a data
+    /// connection is holding right now. Scoped to this connection: see
+    /// `openDataConnection(host:port:protection:owner:timeout:)`.
+    private let vault = FTPSessionVault()
+
     private var featureSet: Set<String> = []
     private var dataProtected = false
-    /// Sessions already handed to a data connection. A TLS 1.3 session is
-    /// nominally single-use (RFC 8446 appendix C.4) and the library leaves
-    /// that policy to whoever holds the session, so this is where it is kept.
-    private var spentSessions: Set<ObjectIdentifier> = []
     private var commandInFlight = false
     private var waitingOrder: [UUID] = []
     private var waiting: [UUID: CheckedContinuation<Void, Never>] = [:]
@@ -558,25 +563,19 @@ actor FTPControlConnection {
     /// read. By the time a data connection is wanted, at least one reply has
     /// been read since the handshake, and TLS records are processed in order.
     ///
-    /// A session marked `shouldBeSingleUse` is handed out once and then
-    /// remembered as spent; one that is not (TLS 1.2 and earlier) may be
-    /// offered again.
+    /// Which session, and why one can come round again, is
+    /// `FTPSessionVault`'s: a session is held by at most one data connection
+    /// at a time, and is offered again once that connection has closed.
     func dataProtection() async -> DataProtection? {
         guard dataProtected, let tlsContext,
             let accepted = trust.acceptedCertificateDER
         else { return nil }
         let sessions = (try? await channel.nioSSL_establishedTLSSessions().get()) ?? []
-        var offer: NIOSSLSession?
-        for session in sessions where session.isResumable {
-            let key = ObjectIdentifier(session)
-            guard !spentSessions.contains(key) else { continue }
-            offer = session
-            if session.shouldBeSingleUse { spentSessions.insert(key) }
-            break
-        }
+        let offer = vault.checkOut(from: sessions)
         return DataProtection(
             owner: identity, context: tlsContext, serverHostname: serverHostname,
-            controlCertificateDER: accepted, session: offer)
+            controlCertificateDER: accepted, session: offer,
+            vault: offer == nil ? nil : vault)
     }
 
     /// Opens a data connection for THIS control connection, with this
@@ -664,6 +663,7 @@ actor FTPControlConnection {
                 .connect(host: host, port: port).get()
         } catch {
             continuation.finish()
+            if let session = protection?.session { protection?.vault?.checkIn(session) }
             throw Self.dialFailure(error)
         }
 
@@ -675,18 +675,23 @@ actor FTPControlConnection {
             case .some(false):
                 continuation.finish()
                 _ = try? await channel.close().get()
+                // The session goes back whatever ended the handshake: a
+                // connection that never opened is not holding it.
+                if let session = protection?.session { protection?.vault?.checkIn(session) }
                 throw outcome.differs
                     ? FTPConnectionFailure.dataCertificateDiffers
                     : FTPConnectionFailure.tlsHandshakeFailed
             case .none:
                 continuation.finish()
                 _ = try? await channel.close().get()
+                if let session = protection?.session { protection?.vault?.checkIn(session) }
                 throw FTPConnectionFailure.timedOut
             }
         }
         return FTPDataChannel(
             channel: channel, chunks: FTPLineSource(stream), deliver: continuation, events: events,
-            didResumeTLSSession: resumed, bound: Self.timeAmount(timeout))
+            didResumeTLSSession: resumed, bound: Self.timeAmount(timeout),
+            session: protection?.session, vault: protection?.vault)
     }
 
     // MARK: - Keepalive
@@ -789,6 +794,11 @@ actor FTPDataChannel {
     private let deliver: AsyncStream<ByteBuffer>.Continuation
     private let events: FTPChannelEvents
     private let bound: TimeAmount
+    /// The session this connection offered, and where it goes back to. Held
+    /// until `close()`, so no other data connection is offered it in the
+    /// meantime (`FTPSessionVault`).
+    private let session: NIOSSLSession?
+    private let vault: FTPSessionVault?
 
     /// Whether this connection's handshake resumed its control connection's
     /// TLS session instead of performing a full one. `false` on a clear data
@@ -802,7 +812,8 @@ actor FTPDataChannel {
 
     init(
         channel: Channel, chunks: FTPLineSource, deliver: AsyncStream<ByteBuffer>.Continuation,
-        events: FTPChannelEvents, didResumeTLSSession: Bool, bound: TimeAmount
+        events: FTPChannelEvents, didResumeTLSSession: Bool, bound: TimeAmount,
+        session: NIOSSLSession?, vault: FTPSessionVault?
     ) {
         self.channel = channel
         self.chunks = chunks
@@ -810,6 +821,8 @@ actor FTPDataChannel {
         self.events = events
         self.didResumeTLSSession = didResumeTLSSession
         self.bound = bound
+        self.session = session
+        self.vault = vault
     }
 
     /// Everything the server sends until it closes the connection.
@@ -839,7 +852,88 @@ actor FTPDataChannel {
     func close() async {
         deliver.finish()
         _ = try? await channel.close().get()
+        // Returned after the channel is closed, not before: while this
+        // connection is open it is the one holding the session.
+        if let session, let vault { vault.checkIn(session) }
     }
+}
+
+/// The TLS sessions ONE control connection has, and which of them a data
+/// connection is holding right now.
+///
+/// **Why a session comes round again, and why never to two connections at
+/// once.** Under TLS 1.3 a session is nominally single-use: RFC 8446 appendix
+/// C.4 asks a client not to offer one ticket for several connections, so that
+/// a passive observer cannot correlate them, and `NIOSSLSession` reports the
+/// requirement (`shouldBeSingleUse`) while enforcing nothing. Handing each
+/// session out exactly once is what that reads as — and it does not work.
+///
+/// Measured 2026-11-06 against `LoopbackFTPServer` with
+/// `requiresTLSSessionReuse: true`, four data connections in a row on one
+/// control connection, printing whether a session was offered, whether the
+/// handshake resumed, and the reply to `LIST`:
+///
+///     1: offered=true  resumed=true  reply=150
+///     2: offered=true  resumed=true  reply=150
+///     3: offered=false resumed=false reply=522
+///     4: offered=false resumed=false reply=522
+///
+/// with `refusedDataConnectionCount` at 2 and the server's own handshake
+/// journal reading `control/false, data/true, data/true, data/false,
+/// data/false`. BoringSSL issues two tickets per handshake as a server and
+/// the fixture renews none, so one control connection has exactly two
+/// resumptions in it. vsftpd defaults `require_ssl_reuse` to on: that is a
+/// backend that stops transferring after the second file.
+///
+/// Harvesting new sessions from the data connections is not an answer here.
+/// The same measurement read `establishedTLSSessions` on each data channel
+/// after its transfer and got **0** every time — the server closes a data
+/// connection as soon as the transfer ends, and no ticket of its own is
+/// processed before it does.
+///
+/// So a session is offered again once the connection holding it has closed.
+/// Re-measured with exactly that change: **4 of 4** data connections resumed,
+/// `refusedDataConnectionCount` 0, the journal `control/false` then four
+/// `data/true`. What it costs is the correlation C.4 is about, and only
+/// between the data connections of ONE control connection to ONE server —
+/// connections a passive observer already watches opening to the address that
+/// server's own `PASV` replies named.
+///
+/// A session whose holder is never closed stays checked out. That degrades to
+/// a full handshake, which is the direction this fails in anyway, and the UI
+/// owning lifecycles explicitly is this project's standing answer to it.
+final class FTPSessionVault: Sendable {
+    private let heldSessions = Mutex(Set<ObjectIdentifier>())
+
+    /// The oldest resumable session nothing is holding, marked as held if it
+    /// is single-use. `nil` when the peer has issued none yet, or every one
+    /// it issued is in use.
+    ///
+    /// Oldest first, which is the order `establishedTLSSessions` hands them
+    /// out in: a session expires, so spending the oldest first is what keeps
+    /// the supply from aging out underneath the connection.
+    func checkOut(from sessions: [NIOSSLSession]) -> NIOSSLSession? {
+        heldSessions.withLock { held in
+            for session in sessions where session.isResumable {
+                let key = ObjectIdentifier(session)
+                guard !held.contains(key) else { continue }
+                if session.shouldBeSingleUse { held.insert(key) }
+                return session
+            }
+            return nil
+        }
+    }
+
+    /// Gives a session back. Idempotent: a caller that closes twice, or that
+    /// hands back a session which was never single-use and so never held,
+    /// changes nothing.
+    func checkIn(_ session: NIOSSLSession) {
+        heldSessions.withLock { _ = $0.remove(ObjectIdentifier(session)) }
+    }
+
+    /// How many sessions are checked out. For the test that holds two data
+    /// connections open at once.
+    var heldCount: Int { heldSessions.withLock { $0.count } }
 }
 
 // MARK: - Channel plumbing
