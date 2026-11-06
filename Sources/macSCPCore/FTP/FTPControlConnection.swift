@@ -930,10 +930,6 @@ final class FTPSessionVault: Sendable {
     func checkIn(_ session: NIOSSLSession) {
         heldSessions.withLock { _ = $0.remove(ObjectIdentifier(session)) }
     }
-
-    /// How many sessions are checked out. For the test that holds two data
-    /// connections open at once.
-    var heldCount: Int { heldSessions.withLock { $0.count } }
 }
 
 // MARK: - Channel plumbing

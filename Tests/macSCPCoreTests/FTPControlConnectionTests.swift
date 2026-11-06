@@ -446,13 +446,15 @@ struct FTPControlConnectionTests {
         #expect(log.askCount == 1)
     }
 
-    /// Two data connections open at once are offered DIFFERENT sessions, and
-    /// the second is not offered the first's.
+    /// Two protections outstanding at once carry DIFFERENT sessions: the
+    /// second is not handed the first's while the first is still out.
     ///
-    /// This is the half of RFC 8446 appendix C.4 the vault still keeps: a
-    /// session comes round again, but never to two live connections at the
-    /// same time.
-    @Test func twoOpenDataConnectionsAreNeverOfferedTheSameSession() async throws {
+    /// This is the half of RFC 8446 appendix C.4 the vault keeps — a session
+    /// comes round again, but never to two holders at the same time — and it
+    /// is asked at the checkout, which is where the decision is made: a
+    /// protection is handed out before its data connection exists, and it is
+    /// closing that connection which returns the session.
+    @Test func twoProtectionsOutstandingAtOnceCarryDifferentSessions() async throws {
         let server = LoopbackFTPServer(
             security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
         let log = DeciderLog()
