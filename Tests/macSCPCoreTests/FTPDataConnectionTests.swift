@@ -200,40 +200,39 @@ struct FTPDataConnectionTests {
         #expect(legacyVerbs.contains("RETR"))
     }
 
-    /// A `227` this client cannot use is refused where it is read, so nothing
-    /// is dialled on the strength of it.
+    /// A `227` this client cannot READ is refused where it is read, so
+    /// nothing is dialled on the strength of it.
     ///
-    /// Four ways to be unusable, and the fourth is the one with teeth: an
-    /// address that is not the peer the control connection is talking to.
-    /// Dialling it would be the FTP bounce primitive — a server choosing, on
-    /// the client's behalf, which host receives a connection — and under FTPS
-    /// it could not work anyway, since a data connection has to present the
-    /// control connection's own certificate byte for byte (Ruling T5.1).
-    ///
-    /// **The interop cost is real and named rather than hidden:** a server
-    /// behind NAT that reports its private address in `PASV` is refused here.
-    /// That is why `EPSV` is preferred — it names no address — and a server
-    /// modern enough to sit behind NAT answers it.
+    /// **Five ways to be unusable**, counted against the table below: no
+    /// parenthesised address at all, not six comma-separated fields, a field
+    /// that is not a number, an octet past 255, and a port of zero. All five
+    /// are the reply being unreadable; none of them is a judgement about
+    /// WHERE the reply points, which is
+    /// `aPassiveReplyNamingAnotherHostIsDialledAtTheControlPeer`.
     ///
     /// The comparisons are computed into `Bool`s before the expectations, so
     /// neither an address nor a port reaches a failure message.
     @Test func aPASVReplyWithAnUnusableAddressIsRefusedRatherThanDialled() async throws {
         let peer = "127.0.0.1"
-        // The positive: an honest reply from the peer the client is talking
-        // to parses, and parses to the right place. Without it the refusals
-        // below would also hold for a parser that refuses everything.
+        // The positive: an honest reply parses, and parses to the right
+        // place. Without it the refusals below would also hold for a parser
+        // that refuses everything.
         let honest = try FTPDataConnection.passiveEndpoint(
             Self.passiveReply([127, 0, 0, 1, 195, 80]), peerHost: peer)
         let honestIsTheRightEndpoint = honest == FTPDataEndpoint(host: peer, port: 195 * 256 + 80)
         #expect(honestIsTheRightEndpoint)
 
         let unusable: [(name: String, reply: FTPReply)] = [
-            ("another host", Self.passiveReply([203, 0, 113, 9, 195, 80])),
-            ("port zero", Self.passiveReply([127, 0, 0, 1, 0, 0])),
-            ("an octet past 255", Self.passiveReply([127, 0, 0, 999, 195, 80])),
-            ("five numbers", Self.passiveReply([127, 0, 0, 1, 195])),
             ("no address at all", FTPReply(code: 227, lines: ["Entering Passive Mode."])),
+            ("five numbers", Self.passiveReply([127, 0, 0, 1, 195])),
+            (
+                "a field that is not a number",
+                FTPReply(code: 227, lines: ["Entering Passive Mode (127,0,0,x,195,80)."])
+            ),
+            ("an octet past 255", Self.passiveReply([127, 0, 0, 999, 195, 80])),
+            ("a port of zero", Self.passiveReply([127, 0, 0, 1, 0, 0])),
         ]
+        #expect(unusable.count == 5)
         for candidate in unusable {
             var refusal: FTPConnectionFailure?
             do {
@@ -246,14 +245,17 @@ struct FTPDataConnectionTests {
 
         // And on the wire: the refusal happens before the transfer command is
         // written, so the server never sees a `RETR` for a transfer that was
-        // refused at the reply.
-        let lying = LoopbackFTPServer(
-            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
-        await lying.seedFile(Self.seededName, contents: Self.seeded)
-        let refused = try await Self.running(lying) { host, port in
-            await lying.refuseExtendedPassive()
-            await lying.answerPASVWith(host: "203.0.113.9")
-            let connection = try await Self.connect(lying, host: host, port: port)
+        // refused at the reply. The scripted server is what produces an
+        // unreadable `227` — the loopback server's replies are always
+        // well-formed, which is what a real server's are.
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: Self.dialReplies + [
+                ["500 Unknown command."],
+                ["227 Entering Passive Mode (127,0,0,1,0,0)."],
+            ])
+        let refused = try await Self.runningScript(server) { host, port in
+            let connection = try await Self.connectScript(host: host, port: port)
             let outcome = await Self.outcome {
                 try await FTPDataConnection.transfer(
                     "RETR", argument: Self.seededName, on: connection
@@ -265,9 +267,82 @@ struct FTPDataConnectionTests {
             return outcome
         }
         #expect(refused == .failed(.passiveAddressRefused))
+        let verbs = await server.receivedCommands.map { String($0.split(separator: " ").first ?? "") }
+        #expect(verbs.contains("PASV"))
+        #expect(!verbs.contains("RETR"))
+    }
+
+    /// A passive reply naming a host that is not the peer is DIALLED AT THE
+    /// PEER, not refused.
+    ///
+    /// **Ruling T6.2, and the hazard the review found under it.** The
+    /// comparison this replaces — refuse unless the reply's address equals
+    /// the control connection's host — could protect nothing, because both
+    /// parsers already return `host: peerHost` whatever the reply named, so
+    /// the named address was never dialled on either side of the decision.
+    /// What it did do was refuse: `peerHost` is the host that was DIALLED, so
+    /// for a server reached by name it is a hostname, while a `227` always
+    /// carries dotted-quad octets — the comparison therefore refused the
+    /// `PASV` fallback against every DNS-named server, honest or not, and the
+    /// rig could not see it because its peer is `127.0.0.1` everywhere.
+    ///
+    /// **So the pure half uses a HOSTNAME peer**, which a merely-loosened
+    /// comparison could not satisfy: a numeric-peer case would pass against
+    /// one that still compared, and prove nothing. Both parsers are asked,
+    /// because the review found the same comparison in the `EPSV` one.
+    ///
+    /// And the wire half tells substitution from trust: the server names
+    /// `203.0.113.9` (RFC 5737 documentation space, unroutable from here), so
+    /// the transfer can only complete if the control peer was dialled
+    /// instead.
+    @Test func aPassiveReplyNamingAnotherHostIsDialledAtTheControlPeer() async throws {
+        let named = "ftp.example.com"
+        let classic = try FTPDataConnection.passiveEndpoint(
+            Self.passiveReply([203, 0, 113, 9, 195, 80]), peerHost: named)
+        let classicGoesToThePeer = classic == FTPDataEndpoint(host: named, port: 195 * 256 + 80)
+        #expect(classicGoesToThePeer)
+
+        // RFC 2428 lets a server fill the net-addr field; most leave it
+        // empty, which is why this path was quiet.
+        let extended = try FTPDataConnection.extendedPassiveEndpoint(
+            FTPReply(code: 229, lines: ["Entering Extended Passive Mode (|1|203.0.113.9|6446|)"]),
+            peerHost: named)
+        let extendedGoesToThePeer = extended == FTPDataEndpoint(host: named, port: 6446)
+        #expect(extendedGoesToThePeer)
+
+        // The positive beside them: the form every ordinary server sends
+        // parses against the same hostname peer, so the two above are not a
+        // parser that answers the peer for everything it is given.
+        let ordinary = try FTPDataConnection.extendedPassiveEndpoint(
+            FTPReply(code: 229, lines: ["Entering Extended Passive Mode (|||6446|)"]),
+            peerHost: named)
+        let ordinaryGoesToThePeer = ordinary == FTPDataEndpoint(host: named, port: 6446)
+        #expect(ordinaryGoesToThePeer)
+
+        // On the wire.
+        let lying = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await lying.seedFile(Self.seededName, contents: Self.seeded)
+        let served = try await Self.running(lying) { host, port in
+            await lying.refuseExtendedPassive()
+            await lying.answerPASVWith(host: "203.0.113.9")
+            let connection = try await Self.connect(lying, host: host, port: port)
+            let sink = FTPByteSink()
+            let outcome = await Self.outcome {
+                try await FTPDataConnection.transfer(
+                    "RETR", argument: Self.seededName, on: connection
+                ) { channel in
+                    sink.append(try await channel.readToEnd())
+                }
+            }
+            await connection.close()
+            return (outcome: outcome, matched: sink.matches(Self.seeded))
+        }
+        #expect(served.outcome == .completed)
+        #expect(served.matched)
         let lyingVerbs = await lying.receivedCommands.map(\.verb)
         #expect(lyingVerbs.contains("PASV"))
-        #expect(!lyingVerbs.contains("RETR"))
+        #expect(lyingVerbs.contains("RETR"))
     }
 
     /// Both passive commands refused is reported as itself, not as a dial

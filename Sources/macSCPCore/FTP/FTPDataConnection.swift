@@ -51,8 +51,9 @@ enum FTPDataConnection {
     /// `<d><net-prt><d><net-addr><d><tcp-port><d>` where `<d>` is any
     /// printable ASCII character the server picks, and a server answering
     /// `EPSV` normally leaves the first two empty. An address that IS named
-    /// goes through the same comparison a `227`'s does, so there is one rule
-    /// and not two.
+    /// is read and then IGNORED, for the reason
+    /// `passiveEndpoint(_:peerHost:)` gives: one rule, and it is the same
+    /// rule on both sides.
     static func extendedPassiveEndpoint(
         _ reply: FTPReply, peerHost: String
     ) throws -> FTPDataEndpoint {
@@ -66,10 +67,6 @@ enum FTPDataConnection {
         guard parts.count == 5, parts[0].isEmpty, parts[4].isEmpty else {
             throw FTPConnectionFailure.passiveAddressRefused
         }
-        let named = String(parts[2])
-        guard named.isEmpty || named == peerHost else {
-            throw FTPConnectionFailure.passiveAddressRefused
-        }
         guard let port = Int(parts[3]), (1...65535).contains(port) else {
             throw FTPConnectionFailure.passiveAddressRefused
         }
@@ -78,11 +75,27 @@ enum FTPDataConnection {
 
     /// The endpoint a `227` names, or a refusal.
     ///
-    /// Four ways to be unusable, and the fourth is the one with teeth: an
-    /// address that is not the peer the control connection is talking to.
-    /// See `FTPConnectionFailure.passiveAddressRefused` for why it is refused
-    /// rather than substituted or dialled, and for the interop cost that
-    /// carries.
+    /// **The port comes from the reply; the host is always the control
+    /// connection's own peer.** The four address octets are read — a reply
+    /// that cannot produce them is unreadable and is refused — and then not
+    /// used. That is the anti-bounce measure in its working form: a server
+    /// never gets to choose which host this client connects to, so there is
+    /// nothing to compare and nothing a comparison could protect. Under FTPS
+    /// it is also the only form that can work, since a data connection has to
+    /// present the control connection's certificate byte for byte
+    /// (Ruling T5.1), and it is what `curl --ftp-skip-pasv-ip` does.
+    ///
+    /// **It replaces a comparison that refused instead** (Ruling T6.2). That
+    /// one required the reply's dotted quad to equal `peerHost` — the host
+    /// that was DIALLED — so a server reached by name could never satisfy it,
+    /// and the `PASV` fallback was dead for every DNS-named server rather
+    /// than only for NAT'd ones. It protected nothing either way, because
+    /// this function returned `host: peerHost` on both sides of it.
+    ///
+    /// **Five ways to be unusable**, counted here against the table in
+    /// `FTPDataConnectionTests.aPASVReplyWithAnUnusableAddressIsRefusedRatherThanDialled`:
+    /// no parenthesised address at all, not six comma-separated fields, a
+    /// field that is not a number, an octet past 255, and a port of zero.
     static func passiveEndpoint(_ reply: FTPReply, peerHost: String) throws -> FTPDataEndpoint {
         guard let field = Self.parenthesised(reply) else {
             throw FTPConnectionFailure.passiveAddressRefused
@@ -99,8 +112,6 @@ enum FTPDataConnection {
         guard octets.count == 6, octets.allSatisfy({ (0...255).contains($0) }) else {
             throw FTPConnectionFailure.passiveAddressRefused
         }
-        let named = octets[0..<4].map(String.init).joined(separator: ".")
-        guard named == peerHost else { throw FTPConnectionFailure.passiveAddressRefused }
         let port = octets[4] * 256 + octets[5]
         guard port > 0 else { throw FTPConnectionFailure.passiveAddressRefused }
         return FTPDataEndpoint(host: peerHost, port: port)

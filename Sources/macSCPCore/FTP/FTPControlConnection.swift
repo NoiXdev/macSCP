@@ -86,20 +86,30 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// control connection that established it. macSCP's own guard: the TLS
     /// library cannot make this comparison for a peer named by address.
     case sessionFromAnotherConnection
-    /// A passive reply named a place this client will not dial, or named no
-    /// readable place at all.
+    /// A passive reply named no readable place at all.
     ///
-    /// Unusable means one of four things: the reply carries no six-number
-    /// address, one of its octets is past 255, its port is zero, or the
-    /// address is not the peer the control connection is talking to. The
-    /// last is the one with teeth — dialling it is the FTP bounce primitive,
-    /// a server choosing on the client's behalf which host receives a
-    /// connection, and under FTPS it could not work anyway, since a data
-    /// connection has to present the control connection's own certificate
-    /// byte for byte (Ruling T5.1).
+    /// Unusable means one of five things, all of them the reply being
+    /// unreadable: no parenthesised address at all, not six comma-separated
+    /// fields, a field that is not a number, an octet past 255, or a port of
+    /// zero. **It is never a judgement about WHERE the reply points**: the
+    /// host a passive reply names is read and then ignored, and the data
+    /// connection always goes to the control connection's own peer
+    /// (`FTPDataConnection.passiveEndpoint(_:peerHost:)`). Withdrawn wording,
+    /// verbatim: "A passive reply named a place this client will not dial, or
+    /// named no readable place at all", and "Unusable means one of four
+    /// things: the reply carries no six-number address, one of its octets is
+    /// past 255, its port is zero, or the address is not the peer the control
+    /// connection is talking to. The last is the one with teeth — dialling it
+    /// is the FTP bounce primitive, a server choosing on the client's behalf
+    /// which host receives a connection, and under FTPS it could not work
+    /// anyway, since a data connection has to present the control
+    /// connection's own certificate byte for byte (Ruling T5.1)." The
+    /// anti-bounce argument is kept, in its working form, at
+    /// `passiveEndpoint(_:peerHost:)`; what is withdrawn is the comparison
+    /// and the refusal it produced (Ruling T6.2).
     ///
-    /// It carries no payload, so neither the address the server named nor
-    /// the one it was compared against can reach a log or a failure message.
+    /// It carries no payload, so nothing the server named can reach a log or
+    /// a failure message.
     case passiveAddressRefused
     /// Both `EPSV` and `PASV` were refused, so there is no way to open a data
     /// connection. `code` is the reply code `PASV` came back with.

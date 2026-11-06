@@ -107,7 +107,7 @@
 "core.connect.ftpSessionRefused" = "Die verschlüsselte Sitzung dieser Verbindung konnte für die Dateiübertragung nicht weiterverwendet werden.";
 "core.connect.ftpBinaryModeRefused" = "Dieser Server hat es abgelehnt, Dateien unverändert zu übertragen. macSCP hat nicht fortgefahren, weil eine andere Übertragung den Inhalt verändern würde.";
 "core.connect.ftpCredentialNotSendable" = "Der Benutzername oder das Passwort enthält einen Zeilenumbruch oder ein anderes Zeichen, das sich nicht an einen FTP-Server senden lässt; die Anmeldung wurde deshalb nicht gesendet. Ändere es und versuche es erneut.";
-"core.connect.ftpPassiveAddressRefused" = "Dieser Server wollte die Datei über eine Verbindung zu einer anderen Adresse übertragen; das wurde abgelehnt. Wenn der Server hinter einem Router steht, prüfe, ob er so eingerichtet ist, dass er seine eigene öffentliche Adresse meldet.";
+"core.connect.ftpPassiveAddressRefused" = "Die Antwort dieses Servers, wohin die Datei gesendet werden soll, war nicht lesbar. Die Übertragung wurde deshalb nicht gestartet.";
 "core.connect.ftpPassiveModeRefused" = "Dieser Server hat es abgelehnt, eine Verbindung für die Dateiübertragung zu öffnen. macSCP kann keine Dateien mit ihm austauschen.";
 "core.connect.ftpTransferRefused" = "Der Server hat die Übertragung abgelehnt.";
 "core.connect.ftpRestRefused" = "Dieser Server kann eine abgebrochene Übertragung nicht fortsetzen. Die Übertragung wurde deshalb gestoppt und nicht an der falschen Stelle neu begonnen. Übertrage die Datei noch einmal von Anfang an.";
