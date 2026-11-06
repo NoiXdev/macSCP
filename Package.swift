@@ -110,7 +110,7 @@ let package = Package(
         // at a different URL — the shape the two overrides above already
         // have. `exact:` makes every change to it a deliberate bump here, and
         // SwiftPM admits a pre-release version only through `exact:` anyway.
-        // 2.37.6-noix.1 = apple 2.37.6 + a client-side TLS session-resumption
+        // 2.37.6-noix.2 = apple 2.37.6 + a client-side TLS session-resumption
         // API, which upstream has none of: `NIOSSLSession`,
         // `NIOSSLHandler.tlsSessionWasResumed` / `.establishedTLSSessions`
         // (each also on `Channel` and `ChannelPipeline.SynchronousOperations`),
@@ -123,7 +123,14 @@ let package = Package(
         // everything up to and including 2.37.1 is inside CVE-2026-43820. The
         // fork record, with the measurements and that CVE spelled out, is in
         // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
-        .package(url: "https://github.com/NoiXdev/swift-nio-ssl.git", exact: "2.37.6-noix.1"),
+        // Do NOT go back to `2.37.6-noix.1`, which this line pinned until
+        // 2026-11-06: it set the BoringSSL session-cache mode by assignment
+        // where it had to OR the client bit in, and BoringSSL's default is
+        // `SSL_SESS_CACHE_SERVER`, so every `NIOSSLContext` it built had the
+        // server bit cleared and no server-side session cache. `.1` is kept
+        // on the remote because a published tag is never re-pointed, not
+        // because it is usable.
+        .package(url: "https://github.com/NoiXdev/swift-nio-ssl.git", exact: "2.37.6-noix.2"),
     ],
     targets: [
         .target(

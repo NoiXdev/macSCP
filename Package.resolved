@@ -1,5 +1,5 @@
 {
-  "originHash" : "73c013421c3c254e310909783998b045256180a0d1dc0b1b43f6f0b9dc97c64e",
+  "originHash" : "3ccfcfba4de266c66b78d2edf382404ec700124dfd9c087f371fa43af18d2be1",
   "pins" : [
     {
       "identity" : "bigint",
@@ -96,8 +96,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/NoiXdev/swift-nio-ssl.git",
       "state" : {
-        "revision" : "5a4e81132d729242bbffcbd65bc4725672a22429",
-        "version" : "2.37.6-noix.1"
+        "revision" : "f07915fa4c234e8ea25683483af6471529cd17dd",
+        "version" : "2.37.6-noix.2"
       }
     },
     {

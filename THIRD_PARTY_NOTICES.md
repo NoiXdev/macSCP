@@ -16,7 +16,7 @@
 | swift-log | 1.15.0 | Apache License | https://github.com/apple/swift-log |
 | swift-nio | 2.101.2 | This software is licensed under the MIT License. | https://github.com/apple/swift-nio |
 | swift-nio-ssh | 0.3.10 | Apache License | https://github.com/NoiXdev/swift-nio-ssh |
-| swift-nio-ssl | 2.37.6-noix.1 | Apache License | https://github.com/NoiXdev/swift-nio-ssl |
+| swift-nio-ssl | 2.37.6-noix.2 | Apache License | https://github.com/NoiXdev/swift-nio-ssl |
 | swift-system | 1.7.4 | Apache License | https://github.com/apple/swift-system |
 | swiftterm | d5ee56e (revision, untagged) | Copyright (c) 2019-2022 Miguel de Icaza (https://github.com/migueldeicaza) | https://github.com/migueldeicaza/SwiftTerm |
 
