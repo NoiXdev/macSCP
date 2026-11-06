@@ -266,9 +266,20 @@ actor LoopbackFTPClient {
     /// that a recorded ERROR no longer outranked cancellation: the suite stayed
     /// GREEN, 39 of 39 tests ran and none noticed. The error half has had a test
     /// since fix round 5.
-    /// `aCancelledReadIsNotReportedAsAClosedConnection` and
-    /// `aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake` hold the two
-    /// callers.
+    /// `aCancelledReadIsNotReportedAsAClosedConnection`,
+    /// `aCancelledHandshakeWaitIsNotReportedAsAFailedHandshake` and
+    /// `aCancelledDataReadThrowsInsteadOfReturningAPrefix` hold the three
+    /// callers. Withdrawn wording, verbatim: "hold the two callers" -- there are
+    /// three, counted with
+    /// `/usr/bin/grep -rn 'throwIfCancelledWithoutACause' Tests Sources`, which
+    /// prints EIGHT lines: this declaration, the three calls in this file
+    /// (`readReply`, `waitForHandshake`, `readToEnd`), two direct calls from the
+    /// two precedence tests, and two comments -- of which one is the command
+    /// line just above, so running this command includes the sentence that
+    /// describes it. It printed seven before that line existed, and the figure
+    /// was corrected here after re-running: CLAUDE.md's "run it again after
+    /// writing the sentence", arriving inside the correction of a comment that
+    /// had miscounted the same symbol's callers.
     ///
     /// **A limit, not a guarantee: the three are distinct only while exactly
     /// one of them is true.** A clean close records NOTHING here --

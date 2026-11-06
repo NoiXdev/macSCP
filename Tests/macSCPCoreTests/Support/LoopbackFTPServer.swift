@@ -359,13 +359,36 @@ actor LoopbackFTPServer {
     /// that never runs, so the session, and with it `stop()`, never returned.
     /// "session run returned" printed, "executeThenClose returned" never did.
     ///
-    /// What was NOT measured is whether a test would notice the swap, and this
-    /// round did not measure it either: the predicted symptom is that same hang,
-    /// and a planted run that hangs is not a verdict -- `scripts/mutation-probe`
-    /// would have to be killed rather than read, and a test that detected it
-    /// would be the wall-clock ceiling CLAUDE.md forbids. Of the two orders in
-    /// this function only the one at the reaper drain has been planted at all;
-    /// see the comment there for its command and its GREEN.
+    /// **UNPINNED is true of two swaps here and FALSE of the round-1 order**,
+    /// measured in the re-review of fix round 5 by planting both. Withdrawn
+    /// wording, verbatim: "What was NOT measured is whether a test would notice
+    /// the swap, and this round did not measure it either: the predicted symptom
+    /// is that same hang, and a planted run that hangs is not a verdict --
+    /// `scripts/mutation-probe` would have to be killed rather than read, and a
+    /// test that detected it would be the wall-clock ceiling CLAUDE.md forbids.
+    /// Of the two orders in this function only the one at the reaper drain has
+    /// been planted at all; see the comment there for its command and its
+    /// GREEN." Every clause of that is now either measured or wrong:
+    ///
+    /// - Moving `shutdownGracefully()` to just after `self.group = nil` -- the
+    ///   round-1 order, the one the hang above was found in -- IS caught. The
+    ///   probe run came back RUN INCOMPLETE, 18 of 40 tests run, ending in
+    ///   `Fatal error: leaking promise` from the `awaitCancellably`-wrapped
+    ///   `listener.close()` above, signal 5; the leftover planted binary was
+    ///   3 of 3 identical, each with 22 tests red on
+    ///   `Time limit was exceeded: 300.000 seconds` -- the suite's own
+    ///   `.timeLimit(.minutes(5))` -- followed by that same trap, in about
+    ///   322 s. So the probe ENDED BY ITSELF and gave a verdict; nobody had to
+    ///   kill it, and no test here states a ceiling. The hang bound every suite
+    ///   already carries is what notices.
+    /// - Moving it above `await acceptLoop?.value` is GREEN (one probe run, not
+    ///   repeated), and the reaper-drain swap is GREEN 39 of 39. Those two are
+    ///   what UNPINNED is true of.
+    ///
+    /// The withdrawn sentence was wrong in the safe direction -- it understated
+    /// what the suite protects -- and it was wrong because it reasoned from a
+    /// predicted symptom instead of planting. That reasoning was mine, in the
+    /// ruling that accepted it; the correction is the re-reviewer's.
     func stop() async {
         precondition(lifecycle != .starting, "stop() while start() is in flight")
         guard lifecycle == .running, let group else { return }
@@ -400,8 +423,15 @@ actor LoopbackFTPServer {
         // -- swift-nio's `SelectableEventLoop._schedule0` prints "Cannot
         // schedule tasks on an EventLoop that has already shut down." and
         // DROPS the task (or traps, under its strict mode), so the promise is
-        // never fulfilled -- which makes `stop()` hang, and a test for a hang
-        // is the wall-clock ceiling CLAUDE.md forbids. Neither test that holds
+        // never fulfilled. Withdrawn wording, verbatim: "which makes `stop()`
+        // hang, and a test for a hang is the wall-clock ceiling CLAUDE.md
+        // forbids" -- that is an inference from the dropped task and it was
+        // stated as fact. No hang was observed for THIS swap: the plant came
+        // back green, so `stop()` returned. And where a hang WAS observed, for
+        // the round-1 order in the doc comment above, the suite's own
+        // five-minute bound caught it and the planted run ended by itself, so a
+        // hang is not beyond a test's reach here. What stands is the dropped
+        // task, which is read from nio's source. Neither test that holds
         // a closer can reach it either: the one
         // `stopWaitsForARegisteredCloserBeforeItReturns` adopts is plain Swift
         // and touches no event loop, so it finishes in either order, and
@@ -800,8 +830,14 @@ final class LoopbackSingleReaderGuard: Sendable {
 ///
 /// **One iterator, owned here.** The connections arrive on an `AsyncStream`,
 /// which has a single consumer; `next()` and `discard()` used to each make their
-/// own iterator over it, which is the documented way to a runtime trap if the
-/// two ever overlap. Both now go through the one stored iterator.
+/// own iterator over it, which the documentation forbids if the two ever
+/// overlap. Both now go through the one stored iterator. Withdrawn wording,
+/// verbatim: "which is the documented way to a runtime trap if the two ever
+/// overlap" -- forbidden is not the same as trapping, and for THIS shape it
+/// does not trap: measured in the re-review of fix round 4, a bare probe with 2
+/// and 3 concurrent `next()` calls on one iterator, `-Onone` and `-O`, 5 runs
+/// each, 20 of 20 exit 0 and no trap. Overlap here is undefined behaviour that
+/// stays silent, which is why `reader` exists.
 ///
 /// **Why `@unchecked Sendable` is sound here, and not just needed.** The
 /// iterator is the only mutable state, and every access to it is bracketed by

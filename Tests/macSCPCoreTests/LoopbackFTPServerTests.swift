@@ -797,8 +797,15 @@ struct LoopbackFTPServerTests {
     /// second read begun while a first is in flight traps with the guard's
     /// message. Without `reader.enter` in the reader, a sequential test cannot
     /// tell (a second iteration over a finished stream returns empty), and the
-    /// overlapping case ends in `AsyncStream`'s own trap or in nothing -- neither
-    /// of which carries this message. A task finishes the stream after half a
+    /// overlapping case ends in NOTHING, which carries no message at all.
+    /// Withdrawn wording, verbatim: "the overlapping case ends in
+    /// `AsyncStream`'s own trap or in nothing -- neither of which carries this
+    /// message" -- there is no trap of its own to end in. Measured in the
+    /// re-review of fix round 4: a bare probe with 2 and 3 concurrent `next()`
+    /// calls on one iterator, built `-Onone` and `-O`, 5 runs each, 20 of 20
+    /// exit 0 and no trap. So the guard is the only thing standing between an
+    /// overlapping read and silence, which is a stronger reason for it than the
+    /// withdrawn sentence gave. A task finishes the stream after half a
     /// second so a reader without the guard ends the child instead of hanging it.
     @Test func theDataChunkSourceTrapsOnOverlappingDrains() async throws {
         let result = await #expect(
