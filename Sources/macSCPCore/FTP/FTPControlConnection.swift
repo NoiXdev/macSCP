@@ -724,18 +724,34 @@ actor FTPControlConnection {
 
     /// Whether a command turn is held right now.
     ///
-    /// **Internal for one property nothing else can see**: that
-    /// `transferCommand` holds the turn across BOTH of its replies. The
-    /// observable consequence of losing the span — a reply reaching the wrong
-    /// command — needs a second command on the wire while the pair is open,
-    /// and a span removed by releasing the turn and re-acquiring it for the
-    /// completion reply still serialises the two readers through the turn
-    /// itself, so which of them reads the `226` is a matter of scheduling and
-    /// not of the property. A test that read the codes therefore passed with
-    /// the span removed: measured as GREEN, 32 tests, in the re-review of fix
-    /// round 1 (fix round 2, F2). This flag is the property, and
+    /// **Internal for one property**: that `transferCommand` holds the turn
+    /// across BOTH of its replies. The observable consequence of losing the
+    /// span — a reply reaching the wrong command — needs a second command on
+    /// the wire while the pair is open, and a test that issued one only after
+    /// `transferCommand` returned passed with the span removed: measured as
+    /// GREEN, 32 tests, in the re-review of fix round 1 (fix round 2, F2).
+    /// This flag is the property read directly, and
     /// `aTransferHoldsTheTurnAcrossBothOfItsReplies` reads it from inside the
     /// drain, where only a held turn can answer `true`.
+    ///
+    /// **Not the only way to see it, which fix round 2 claimed it was** (fix
+    /// round 3, G1). Withdrawn verbatim, from the opening and from the middle
+    /// of the paragraph above: "**Internal for one property nothing else can
+    /// see**", and "a span removed by releasing the turn and re-acquiring it
+    /// for the completion reply still serialises the two readers through the
+    /// turn itself, so which of them reads the `226` is a matter of
+    /// scheduling and not of the property". Sequencing the concurrent
+    /// command's START against the drain — an `AsyncSignal` raised
+    /// immediately before `send`, awaited as the drain's first statement —
+    /// settles that race with no clock in it, and then which reader gets the
+    /// `226` is exactly the property.
+    /// `aCommandIssuedDuringATransferCannotReadItsCompletionReply` is that
+    /// case, 20/20 red against the span plant and 20/20 green without it. The
+    /// flag is kept BESIDE it rather than replaced by it: the flag cannot see
+    /// a turn held with the two replies read in the wrong order, and the
+    /// behavioural case cannot see a turn that is held and wrong — it reads
+    /// only that nothing else reached the wire between the pair, which an
+    /// implementation could also produce without holding a turn at all.
     var turnIsHeld: Bool { commandInFlight }
 
     private func acquire() async {

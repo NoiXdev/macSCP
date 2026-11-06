@@ -547,19 +547,30 @@ struct FTPControlConnectionTests {
     /// hold, because there is no longer a point between the two replies at
     /// which another command can be issued on this connection.
     ///
-    /// **The codes alone do not pin the span, which was measured** (fix round
-    /// 2, F2): the re-review of fix round 1 planted the pre-fix shape —
+    /// **THIS case's codes do not pin the span, which was measured** (fix
+    /// round 2, F2): the re-review of fix round 1 planted the pre-fix shape —
     /// `release()` before the drain, `await acquire()` after it — and this
     /// case came back GREEN with 32 tests run, because the `PWD` below is
     /// issued *after* `transferCommand` returns and 150/226/257 then arrive in
-    /// order whether the turn was held or not. Making it visible through the
-    /// codes needs a second command on the wire while the pair is open, and
-    /// that is a race: the plant releases the turn but still re-acquires it
-    /// for the completion reply, so the turn serialises the two readers either
-    /// way and which of them reads the `226` is scheduling. A deadline on the
-    /// race would be the wall-clock ceiling this project forbids. So the span
-    /// is read where it lives, from inside the drain, where only a held turn
-    /// answers `true`.
+    /// order whether the turn was held or not. That measurement stands. So
+    /// does the reading of it: the span shows in the codes only when a second
+    /// command is on the wire while the pair is open, which this case never
+    /// puts there.
+    ///
+    /// **What is withdrawn is the conclusion drawn from it** (fix round 3,
+    /// G1). The wording that stood here, verbatim: "Making it visible through
+    /// the codes needs a second command on the wire while the pair is open,
+    /// and that is a race: the plant releases the turn but still re-acquires
+    /// it for the completion reply, so the turn serialises the two readers
+    /// either way and which of them reads the `226` is scheduling. A deadline
+    /// on the race would be the wall-clock ceiling this project forbids."
+    /// It is false of the last step: the concurrent command's START can be
+    /// sequenced against the drain with an `AsyncSignal`, and then which
+    /// reader gets the `226` is the property and not scheduling, with no
+    /// clock anywhere. `aCommandIssuedDuringATransferCannotReadItsCompletionReply`
+    /// below is that case, measured 20/20 red against the span plant. So the
+    /// span is pinned twice: here, where only a held turn answers `true`, and
+    /// there, on the wire.
     @Test func aTransferHoldsTheTurnAcrossBothOfItsReplies() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
@@ -593,6 +604,64 @@ struct FTPControlConnectionTests {
         #expect(codes.pwd == 257)
         #expect(codes.heldDuringTheDrain)
         #expect(!codes.heldAfterwards)
+    }
+
+    /// The same span, read on the WIRE: a command issued while the pair is
+    /// open cannot reach it, so neither reply can go to the wrong command.
+    ///
+    /// **This case exists because fix round 2 said it could not.** The
+    /// sentence it withdraws is quoted in the case above, which keeps the
+    /// measurement that really was taken — a `PWD` issued AFTER
+    /// `transferCommand` returns cannot see the span — while this one takes
+    /// the race the round declared out of reach.
+    ///
+    /// How the sequencing works. `aboutToSend` is raised by the concurrent
+    /// task immediately before it calls `send`, and the drain awaits it as its
+    /// first statement. On the committed tree the case cannot fail however
+    /// late or early that task is scheduled: `send` opens with `acquire()`,
+    /// and while `transferCommand` holds the turn `acquire()` parks on a
+    /// continuation, so the `PWD` cannot reach the wire before the `226` has
+    /// been read — structurally, not by scheduling. With the span removed the
+    /// turn is free when the signal resumes the drain, so the `PWD` is
+    /// written during the drain, reads the `226` as its own, and
+    /// `transferCommand` re-acquires and reads the `257`: both expectations
+    /// below fail. Measured 20/20 red against that plant and 20/20 green
+    /// without it (fix round 3, G1), as ten copies of this body so the
+    /// probe's catcher list was itself the count.
+    ///
+    /// No reader ever overlaps, because the plant still serialises the two
+    /// readers through the turn, so `FTPLineSource`'s overlap `precondition`
+    /// is not reached and the probe reports RED rather than a trap. And no
+    /// `Task.yield()`: a first variant of this shape carried 200 on either
+    /// side of the drain and they were measured unnecessary.
+    @Test func aCommandIssuedDuringATransferCannotReadItsCompletionReply() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let codes = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            let aboutToSend = AsyncSignal()
+            let pwdTask = Task { () async throws -> Int in
+                aboutToSend.signal()
+                return try await connection.send("PWD", argument: nil).code
+            }
+            // The task is awaited below on every path this closure takes, but
+            // `transferCommand` can throw before that line is reached, and a
+            // task nobody awaits is a task nobody ends.
+            defer { pwdTask.cancel() }
+            let transfer = try await connection.transferCommand("LIST") {
+                _ = await aboutToSend.wait()
+                _ = try await data.readToEnd()
+            }
+            let pwd = try await pwdTask.value
+            await data.close()
+            await connection.close()
+            return (completion: transfer.completion?.code, pwd: pwd)
+        }
+        #expect(codes.completion == 226)
+        #expect(codes.pwd == 257)
     }
 
     /// A drain that THROWS still owes the completion reply, and the
