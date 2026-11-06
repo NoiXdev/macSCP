@@ -609,6 +609,11 @@ actor FTPControlConnection {
         host: String, port: Int, protection: DataProtection?, owner: Identity, timeout: Duration
     ) async throws -> FTPDataChannel {
         if let protection, protection.owner != owner {
+            // The session goes back before the throw. Every other failure
+            // path below checks it in, and this one used to be the exception
+            // only because it precedes the plumbing: a refusal left a session
+            // marked held with no holder that would ever return it.
+            if let session = protection.session { protection.vault?.checkIn(session) }
             throw FTPConnectionFailure.sessionFromAnotherConnection
         }
         let events = FTPChannelEvents()
@@ -799,6 +804,10 @@ actor FTPDataChannel {
     /// meantime (`FTPSessionVault`).
     private let session: NIOSSLSession?
     private let vault: FTPSessionVault?
+    /// `close()` has run. The control connection's `close()` has had this
+    /// guard from the start; this one did not, and a second call returned a
+    /// session that by then belonged to another holder — see `close()`.
+    private var isClosed = false
 
     /// Whether this connection's handshake resumed its control connection's
     /// TLS session instead of performing a full one. `false` on a clear data
@@ -849,7 +858,21 @@ actor FTPDataChannel {
         }
     }
 
+    /// Ends the connection and returns its session. Idempotent.
+    ///
+    /// **The guard is not politeness, it is the C.4 invariant.** `checkIn` is
+    /// a set removal, so returning the same session twice is harmless by
+    /// itself; what is not harmless is the second return landing after
+    /// another holder has taken that session out again, because the mark it
+    /// clears is then somebody else's and the next checkout hands a held
+    /// session to a second connection. A `defer { await data.close() }`
+    /// beside an explicit close on an error path is how the second call
+    /// arrives. Measured as `handedOutWhileHeld → true` before this guard
+    /// existed; `aDataChannelClosedTwiceDoesNotReissueAHeldSession` is the
+    /// case.
     func close() async {
+        guard !isClosed else { return }
+        isClosed = true
         deliver.finish()
         _ = try? await channel.close().get()
         // Returned after the channel is closed, not before: while this
@@ -858,20 +881,34 @@ actor FTPDataChannel {
     }
 }
 
-/// The TLS sessions ONE control connection has, and which of them a data
-/// connection is holding right now.
+/// The TLS sessions ONE control connection has: which of them a data
+/// connection is holding right now, and which have never been offered.
 ///
-/// **Why a session comes round again, and why never to two connections at
-/// once.** Under TLS 1.3 a session is nominally single-use: RFC 8446 appendix
-/// C.4 asks a client not to offer one ticket for several connections, so that
-/// a passive observer cannot correlate them, and `NIOSSLSession` reports the
-/// requirement (`shouldBeSingleUse`) while enforcing nothing. Handing each
-/// session out exactly once is what that reads as — and it does not work.
+/// **This type deviates from what the TLS library asks of its callers, and
+/// says so.** BoringSSL's own header states the obligation, in the comment
+/// block on `SSL_SESSION_should_be_single_use`
+/// (`.build/checkouts/swift-nio-ssl/Sources/CNIOBoringSSL/include/CNIOBoringSSL_ssl.h`,
+/// found with
+/// `/usr/bin/grep -n 'clients retain multiple sessions' <that file>`, which
+/// prints one line — 2188 on the `2.37.6-noix.2` checkout):
 ///
-/// Measured 2026-11-06 against `LoopbackFTPServer` with
-/// `requiresTLSSessionReuse: true`, four data connections in a row on one
-/// control connection, printing whether a session was offered, whether the
-/// handshake resumed, and the reply to `LIST`:
+///     // SSL_SESSION_should_be_single_use returns one if |session| should be
+///     // single-use (TLS 1.3 and later) and zero otherwise.
+///     //
+///     // If this function returns one, clients retain multiple sessions and use each
+///     // only once. This prevents passive observers from correlating connections with
+///     // tickets. See RFC 8446, appendix C.4. If it returns zero, |session| cannot be
+///     // used without leaking a correlator.
+///
+/// So the obligation is about LINKABILITY, not about the key schedule: the
+/// closing sentence says the whole knob is about correlators. This vault
+/// offers a session again once the connection holding it has closed, and
+/// therefore spends an unlinkability property and nothing else.
+///
+/// **What strictness costs, measured 2026-11-06** against
+/// `LoopbackFTPServer` with `requiresTLSSessionReuse: true`, four data
+/// connections in a row on one control connection, printing whether a session
+/// was offered, whether the handshake resumed, and the reply to `LIST`:
 ///
 ///     1: offered=true  resumed=true  reply=150
 ///     2: offered=true  resumed=true  reply=150
@@ -881,54 +918,127 @@ actor FTPDataChannel {
 /// with `refusedDataConnectionCount` at 2 and the server's own handshake
 /// journal reading `control/false, data/true, data/true, data/false,
 /// data/false`. BoringSSL issues two tickets per handshake as a server and
-/// the fixture renews none, so one control connection has exactly two
-/// resumptions in it. vsftpd defaults `require_ssl_reuse` to on: that is a
-/// backend that stops transferring after the second file.
+/// the fixture renews none, so under "each only once" a control connection
+/// has exactly two resumptions in it. vsftpd defaults `require_ssl_reuse` to
+/// on: that is a backend that stops transferring after the second file.
+/// Harvesting new sessions from the data connections is not an answer — the
+/// same run read `establishedTLSSessions` on each data channel after its
+/// transfer and got **0** every time, because the server closes a data
+/// connection as soon as the transfer ends. Re-measured with reuse: **4 of
+/// 4** resumed, `refusedDataConnectionCount` 0, the journal `control/false`
+/// then four `data/true`.
 ///
-/// Harvesting new sessions from the data connections is not an answer here.
-/// The same measurement read `establishedTLSSessions` on each data channel
-/// after its transfer and got **0** every time — the server closes a data
-/// connection as soon as the transfer ends, and no ticket of its own is
-/// processed before it does.
+/// **What the deviation actually spends.** Not the link from the data
+/// connections to the control connection: `require_ssl_reuse` is a
+/// SERVER-SIDE check and puts no correlator on the wire, and under TLS 1.3
+/// the control connection's `NewSessionTicket` messages are post-handshake
+/// and travel under application traffic keys, so a passive observer never
+/// sees the ticket it was issued. What the observer does see in the clear is
+/// the `pre_shared_key` identity in each data `ClientHello` — so reuse links
+/// the data connections **to each other**, and those are already linked, by
+/// the destination address the `PASV` reply named in cleartext and by their
+/// timing inside one FTP session. That is the whole argument. (Withdrawn
+/// wording from this project's record, verbatim: "the half of RFC 8446
+/// appendix C.4 that remains is the one about CONCURRENT offers, which is
+/// what the dispatch's ruling asks for" — the dispatch sentence it rested on
+/// was retracted, and C.4 is about linkability, which does not care whether
+/// two uses overlap in time.)
 ///
-/// So a session is offered again once the connection holding it has closed.
-/// Re-measured with exactly that change: **4 of 4** data connections resumed,
-/// `refusedDataConnectionCount` 0, the journal `control/false` then four
-/// `data/true`. What it costs is the correlation C.4 is about, and only
-/// between the data connections of ONE control connection to ONE server —
-/// connections a passive observer already watches opening to the address that
-/// server's own `PASV` replies named.
+/// **A never-used session is preferred to a returned one, and that is
+/// load-bearing.** Handing back the oldest unheld session means data
+/// connection 2 re-offers the ticket connection 1 has just returned instead
+/// of the untouched second one; a server that enforces single-use
+/// consumption refuses that re-offer, falls back to a full handshake, and
+/// `require_ssl_reuse` makes it `522` — so the policy would fail at
+/// connection 2 where strictness reached 3. A policy adopted to raise a cap
+/// must not lower it. `theVaultPrefersANeverUsedSessionOverAReturnedOne`
+/// pins the order, with three sessions, because two cannot show it.
 ///
-/// A session whose holder is never closed stays checked out. That degrades to
-/// a full handshake, which is the direction this fails in anyway, and the UI
+/// **Two consequences for later tasks, named rather than left to be found.**
+/// The cap is not removed, only moved from sequence to concurrency: reuse
+/// makes SEQUENTIAL data connections resume indefinitely and does nothing for
+/// concurrent ones, since a checkout with every ticket held returns
+/// `session: nil`, which is a full handshake, which a `require_ssl_reuse`
+/// server answers `522`. A transfer queue running three data connections at
+/// once over one control connection therefore fails on the third — the same
+/// failure strictness produced, reached by concurrency instead of by count.
+/// Task 6 either serialises data connections per control connection or opens
+/// a control connection per concurrent transfer. And N data connections now
+/// derive from one resumption secret instead of N: with `psk_dhe_ke` each
+/// still performs its own DH exchange, so forward secrecy survives, but
+/// nothing here may enable 0-RTT early data, for which single-use tickets are
+/// also the server's anti-replay primitive.
+///
+/// A session whose holder never closes stays checked out. That degrades to a
+/// full handshake, which is the direction this fails in anyway, and the UI
 /// owning lifecycles explicitly is this project's standing answer to it.
-final class FTPSessionVault: Sendable {
-    private let heldSessions = Mutex(Set<ObjectIdentifier>())
+///
+/// The two things `FTPSessionVault` reads of a session, so that its order can
+/// be tested with more sessions than a handshake hands out.
+///
+/// `NIOSSLSession` cannot be built in a test — its initializer takes ownership
+/// of a BoringSSL `SSL_SESSION` that only a handshake produces — and the peer
+/// issues two, where the vault's preference needs three to be visible. The
+/// protocol is this project's, so conforming the library's type to it is ours
+/// to declare.
+protocol FTPResumableSession: AnyObject, Sendable {
+    /// The session is complete and carries a session ID or ticket.
+    var isResumable: Bool { get }
+    /// The session should be offered at most once (TLS 1.3 and later).
+    var shouldBeSingleUse: Bool { get }
+}
 
-    /// The oldest resumable session nothing is holding, marked as held if it
-    /// is single-use. `nil` when the peer has issued none yet, or every one
-    /// it issued is in use.
+extension NIOSSLSession: FTPResumableSession {}
+
+final class FTPSessionVault: Sendable {
+    private struct Inner {
+        /// Sessions a live holder has not returned yet.
+        var held: Set<ObjectIdentifier> = []
+        /// Sessions that have been offered at least once. The fallback set:
+        /// a session in here is only offered again when nothing untouched is
+        /// left.
+        var used: Set<ObjectIdentifier> = []
+    }
+
+    private let state = Mutex(Inner())
+
+    /// A resumable session nothing is holding: the oldest NEVER-OFFERED one,
+    /// or, when every one the peer issued has been offered already, the
+    /// oldest returned one. `nil` when the peer has issued none yet or every
+    /// one it issued is held.
     ///
-    /// Oldest first, which is the order `establishedTLSSessions` hands them
-    /// out in: a session expires, so spending the oldest first is what keeps
-    /// the supply from aging out underneath the connection.
-    func checkOut(from sessions: [NIOSSLSession]) -> NIOSSLSession? {
-        heldSessions.withLock { held in
-            for session in sessions where session.isResumable {
-                let key = ObjectIdentifier(session)
-                guard !held.contains(key) else { continue }
-                if session.shouldBeSingleUse { held.insert(key) }
-                return session
-            }
-            return nil
+    /// Oldest first within each of the two groups, which is the order
+    /// `establishedTLSSessions` hands them out in: a session expires, so
+    /// spending the oldest first keeps the supply from aging out underneath
+    /// the connection. Why never-used comes first is on the type.
+    ///
+    /// A session the library does not mark single-use is handed out without
+    /// being held: `shouldBeSingleUse == false` means the header's "cannot be
+    /// used without leaking a correlator", so there is no per-use obligation
+    /// to keep for it.
+    func checkOut<Session: FTPResumableSession>(from sessions: [Session]) -> Session? {
+        state.withLock { inner in
+            let resumable = sessions.filter(\.isResumable)
+            let free = resumable.filter { !inner.held.contains(ObjectIdentifier($0)) }
+            let offer =
+                free.first { !inner.used.contains(ObjectIdentifier($0)) } ?? free.first
+            guard let offer else { return nil }
+            let key = ObjectIdentifier(offer)
+            inner.used.insert(key)
+            if offer.shouldBeSingleUse { inner.held.insert(key) }
+            return offer
         }
     }
 
-    /// Gives a session back. Idempotent: a caller that closes twice, or that
-    /// hands back a session which was never single-use and so never held,
-    /// changes nothing.
-    func checkIn(_ session: NIOSSLSession) {
-        heldSessions.withLock { _ = $0.remove(ObjectIdentifier(session)) }
+    /// Gives a session back, so it can be offered again once nothing
+    /// untouched is left.
+    ///
+    /// Idempotent on the set, and that is NOT enough on its own: a second
+    /// return arriving after another holder has taken the same session out
+    /// clears that holder's mark. Keeping `close()` idempotent is what makes
+    /// this safe, and `FTPDataChannel.close()` says so.
+    func checkIn(_ session: some FTPResumableSession) {
+        state.withLock { _ = $0.held.remove(ObjectIdentifier(session)) }
     }
 }
 

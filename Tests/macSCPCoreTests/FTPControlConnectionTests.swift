@@ -42,6 +42,24 @@ struct FTPControlConnectionTests {
         }
     }
 
+    /// A stand-in for `NIOSSLSession` in the vault's own tests.
+    ///
+    /// The vault's order is only visible with THREE sessions, and a
+    /// `NIOSSLSession` cannot be made in a test: its initializer takes
+    /// ownership of a BoringSSL `SSL_SESSION` that only a handshake produces,
+    /// and the loopback peer issues exactly two. So the vault is generic over
+    /// `FTPResumableSession` — the two properties it actually reads — and this
+    /// is the third session.
+    private final class FakeResumableSession: FTPResumableSession {
+        let isResumable: Bool
+        let shouldBeSingleUse: Bool
+
+        init(resumable: Bool = true, singleUse: Bool = true) {
+            isResumable = resumable
+            shouldBeSingleUse = singleUse
+        }
+    }
+
     /// Counts what a certificate decider was asked, without holding a
     /// certificate: the count is all any test here reads.
     private final class DeciderLog: Sendable {
@@ -480,6 +498,153 @@ struct FTPControlConnectionTests {
         // session at all rather than one of theirs.
         #expect(outcome.thirdExists)
         #expect(outcome.exhausted)
+    }
+
+    /// A data channel closed twice does not hand its session to a second
+    /// holder.
+    ///
+    /// `checkIn` is a set removal, so returning the SAME session twice is
+    /// harmless on its own. What is not harmless is the second return landing
+    /// after another holder has taken that session out again: the mark it
+    /// clears is then somebody else's, and the next checkout hands a held
+    /// session to a second connection — the one RFC 8446 appendix C.4
+    /// property the vault still keeps after Ruling T5.2. A
+    /// `defer { await data.close() }` beside an explicit close on an error
+    /// path is how that double call arrives.
+    @Test func aDataChannelClosedTwiceDoesNotReissueAHeldSession() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
+        let log = DeciderLog()
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            // The channel takes the first session; a second protection takes
+            // the other one the peer issued, so the supply is exhausted and a
+            // later checkout has to fall back to whatever came back.
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            let second = try #require(await connection.dataProtection())
+            await data.close()
+            let third = try #require(await connection.dataProtection())
+            // The second close is the one under test.
+            await data.close()
+            let fourth = await connection.dataProtection()
+            await connection.close()
+            return (
+                secondHasSession: second.session != nil,
+                thirdHasSession: third.session != nil,
+                handedOutWhileHeld: fourth?.session === third.session
+            )
+        }
+        // Positive beside the negative: the sequence really did hand out two
+        // sessions and then a third, so the check below is about a double
+        // close and not about a vault that hands nothing out.
+        #expect(outcome.secondHasSession)
+        #expect(outcome.thirdHasSession)
+        #expect(!outcome.handedOutWhileHeld)
+    }
+
+    /// A data connection refused for a foreign owner returns the session it
+    /// was offered.
+    ///
+    /// Every other failure path in `openDataConnection` checks the session
+    /// back in; the owner comparison throws before that plumbing, so a
+    /// refusal used to strand a session marked held with no holder that would
+    /// ever return it.
+    @Test func aRefusedOwnerReturnsTheSessionItWasOffered() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: true)
+        let log = DeciderLog()
+        let outcome = try await Self.running(server) { host, port in
+            let mine = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            let other = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            let passive = try Self.passiveEndpoint(try await mine.send("PASV", argument: nil))
+            // Both sessions out, so the next checkout can only come from what
+            // the refusal gives back.
+            let offered = try #require(await mine.dataProtection())
+            let alsoOut = try #require(await mine.dataProtection())
+            var refusal: FTPConnectionFailure?
+            do {
+                let stolen = try await FTPControlConnection.openDataConnection(
+                    host: passive.host, port: passive.port, protection: offered,
+                    owner: other.identity, timeout: .seconds(30))
+                await stolen.close()
+            } catch let failure as FTPConnectionFailure {
+                refusal = failure
+            }
+            let afterRefusal = await mine.dataProtection()
+            await mine.close()
+            await other.close()
+            return (
+                refusal: refusal,
+                bothWereOut: offered.session != nil && alsoOut.session != nil,
+                returned: afterRefusal?.session === offered.session
+            )
+        }
+        #expect(outcome.refusal == .sessionFromAnotherConnection)
+        #expect(outcome.bothWereOut)
+        #expect(outcome.returned)
+    }
+
+    /// The vault hands out a session nobody has used before preferring one
+    /// that came back.
+    ///
+    /// **Load-bearing, not tidiness.** Handing back the oldest unheld session
+    /// means data connection 2 re-offers the ticket connection 1 has just
+    /// returned instead of the untouched second one. A server that enforces
+    /// single-use consumption — which is what RFC 8446 asks a client to
+    /// assume, and what any anti-replay implementation does — refuses that
+    /// re-offer, falls back to a full handshake, and `require_ssl_reuse`
+    /// turns it into `522`: the policy would fail at connection 2 where
+    /// strict single-use reached 3. A policy adopted to raise a cap must not
+    /// lower it.
+    ///
+    /// Three sessions, because two cannot show it: with two, the fallback and
+    /// the preference name the same session. The loopback peer issues exactly
+    /// two, which is why `FakeResumableSession` exists rather than a server
+    /// that could be asked for a third.
+    @Test func theVaultPrefersANeverUsedSessionOverAReturnedOne() {
+        let vault = FTPSessionVault()
+        let first = FakeResumableSession()
+        let second = FakeResumableSession()
+        let third = FakeResumableSession()
+        let supply = [first, second, third]
+
+        #expect(vault.checkOut(from: supply) === first)
+        vault.checkIn(first)
+        // The point of the whole case: `first` is free again and `second` has
+        // never been offered, so `second` is the one to offer.
+        #expect(vault.checkOut(from: supply) === second)
+        vault.checkIn(second)
+        #expect(vault.checkOut(from: supply) === third)
+        vault.checkIn(third)
+
+        // Supply exhausted: now a returned one comes round again, oldest
+        // first, which is Ruling T5.2's deviation.
+        #expect(vault.checkOut(from: supply) === first)
+        #expect(vault.checkOut(from: supply) === second)
+        #expect(vault.checkOut(from: supply) === third)
+        // And nothing is handed out twice while held.
+        #expect(vault.checkOut(from: supply) == nil)
+    }
+
+    /// A session the library does not mark single-use is never held, so it
+    /// can be offered to two connections at once — which is exactly what
+    /// `shouldBeSingleUse == false` means ("`session` cannot be used without
+    /// leaking a correlator", so there is no per-use obligation to keep).
+    @Test func aSessionThatIsNotSingleUseIsOfferedWithoutBeingHeld() {
+        let vault = FTPSessionVault()
+        let reusable = FakeResumableSession(singleUse: false)
+        #expect(vault.checkOut(from: [reusable]) === reusable)
+        #expect(vault.checkOut(from: [reusable]) === reusable)
+        // A session that cannot be resumed at all is never offered.
+        let spent = FakeResumableSession(resumable: false)
+        #expect(vault.checkOut(from: [spent]) == nil)
     }
 
     /// The guard swift-nio-ssl cannot build: a session established by one
