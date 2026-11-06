@@ -417,6 +417,70 @@ struct FTPControlConnectionTests {
         #expect(outcome.reply.code == 150)
     }
 
+    /// Ruling T5.1's comparison: a data connection performing a FULL
+    /// handshake must present its control connection's certificate material
+    /// byte for byte, and a mismatch fails the transfer rather than asking
+    /// anybody.
+    ///
+    /// The material is varied instead of the server, because one loopback
+    /// server has one certificate: the protection handed to the data
+    /// connection is rebuilt with other bytes in it, which is exactly the
+    /// case the rule exists for — a `PASV` listener on another host that
+    /// offers a different-but-valid certificate.
+    @Test func aDataConnectionPresentingAnotherCertificateIsRefused() async throws {
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let log = DeciderLog()
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+            let real = try #require(await connection.dataProtection())
+
+            // A full handshake (no session offered) against material that is
+            // not this server's.
+            let first = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            var refusal: FTPConnectionFailure?
+            do {
+                let refused = try await FTPControlConnection.openDataConnection(
+                    host: first.host, port: first.port,
+                    protection: FTPControlConnection.DataProtection(
+                        owner: connection.identity, context: real.context,
+                        serverHostname: real.serverHostname,
+                        controlCertificateDER: Array("not this server's certificate".utf8),
+                        session: nil),
+                    owner: connection.identity, timeout: .seconds(30))
+                await refused.close()
+            } catch let failure as FTPConnectionFailure {
+                refusal = failure
+            }
+
+            // The positive beside it: the same full handshake, the control
+            // connection's own bytes, served.
+            let second = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await FTPControlConnection.openDataConnection(
+                host: second.host, port: second.port,
+                protection: FTPControlConnection.DataProtection(
+                    owner: connection.identity, context: real.context,
+                    serverHostname: real.serverHostname,
+                    controlCertificateDER: real.controlCertificateDER, session: nil),
+                owner: connection.identity, timeout: .seconds(30))
+            let reply = try await connection.send("LIST", argument: nil)
+            if reply.code == 150 {
+                _ = try await data.readToEnd()
+                _ = try await connection.readFurtherReply()
+            }
+            await data.close()
+            await connection.close()
+            return (refusal: refusal, reply: reply)
+        }
+        #expect(outcome.refusal == .dataCertificateDiffers)
+        #expect(outcome.reply.code == 150)
+        // The control connection asked once; neither data connection asked at
+        // all, including the one that was refused.
+        #expect(log.askCount == 1)
+    }
+
     // MARK: - The validated command path
 
     @Test func anArgumentCarryingCRLFNeverReachesTheServer() async throws {
