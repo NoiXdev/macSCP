@@ -564,13 +564,28 @@ struct FTPConnectionPoolTests {
             // The bound, never the property: see the comment above.
             waiter.cancel()
             let ended = await waiter.value
-            // The positive beside it: the lease that held the slot is still
-            // releasable afterwards, so the shutdown released a waiter rather
-            // than taking the pool apart underneath one.
+            // The positive beside it, and it is a CHECK now. The first
+            // version released the lease and called that a positive: nothing
+            // it reached could fail — `give(back:)` clamps with
+            // `max(0, outstanding - 1)`, `close()` is idempotent, and
+            // `wakeOneWaiter()` returns on an empty queue — so it told the
+            // next reader a property was watched when nothing watched it.
+            // Two reads instead, which can fail in both directions: the slot
+            // is out while the lease holds it, and back once it is released,
+            // through a pool that has already shut down.
+            let freeWhileHeld = await pool.freeTransferSlots
             await held.release(reusable: false)
-            return ended
+            let freeAfterRelease = await pool.freeTransferSlots
+            return (ended: ended, freeWhileHeld: freeWhileHeld, freeAfterRelease: freeAfterRelease)
         }
-        #expect(outcome == .failed(.connectionClosed))
+        #expect(outcome.ended == .failed(.connectionClosed))
+        #expect(outcome.freeWhileHeld == 0)
+        // One, not zero: the slot really came back. A shut-down pool still
+        // reports its configured capacity, because nothing asks it to lie
+        // about that — what refuses a caller is `acquireTransfer`'s own
+        // `isShutDown` guard, which `shutdownReleasesAWaiter…`'s first
+        // expectation above is the measurement of.
+        #expect(outcome.freeAfterRelease == 1)
     }
 
     // MARK: - The 421 budget
