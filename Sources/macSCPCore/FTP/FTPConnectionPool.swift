@@ -141,6 +141,17 @@ actor FTPConnectionPool {
             host: config.host, account: config.username, configured: configuredSlots)
     }
 
+    /// How many callers are parked waiting for a slot.
+    ///
+    /// **A seam, and it earns its keep rather than being convenience.** The
+    /// two cases about a wait ENDING — by cancellation and by `shutdown()` —
+    /// have to know a waiter is really parked before they end it, because a
+    /// waiter that has not parked yet takes the `guard !isShutDown` or the
+    /// `Task.isCancelled` arm on its first look and never reaches the
+    /// release the case exists to measure. Without this the case would pass
+    /// against a pool that strands every waiter it has.
+    var waiterCount: Int { waitingOrder.count }
+
     /// Slots nothing is holding. Never negative: a budget that shrinks below
     /// what is already out means no new lease until one comes back, not a
     /// count that reads as a debt.

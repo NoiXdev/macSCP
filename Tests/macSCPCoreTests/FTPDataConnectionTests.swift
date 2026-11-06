@@ -200,6 +200,52 @@ struct FTPDataConnectionTests {
         #expect(legacyVerbs.contains("RETR"))
     }
 
+    /// A server that refused `EPSV` once is not asked again on the same
+    /// connection.
+    ///
+    /// **The case `LoopbackFTPServer.refuseExtendedPassive` was deliberately
+    /// built non-one-shot for, and which the first round did not write.** The
+    /// memo is claimed by two comments to pay the extra round trip "once
+    /// rather than once per transfer", and the review's probe
+    /// (`prefersClassicPassive` → `false`) was GREEN across 56 tests: no case
+    /// performed a second transfer on a legacy server, so nothing read the
+    /// memo at all.
+    ///
+    /// Counted with `filter`, not `contains`: one `EPSV` and two `PASV`s is
+    /// the property, and `contains` cannot tell one from two.
+    @Test func theEPSVRefusalIsRememberedForTheRestOfTheConnection() async throws {
+        let legacy = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await legacy.seedFile(Self.seededName, contents: Self.seeded)
+        let both = try await Self.running(legacy) { host, port in
+            await legacy.refuseExtendedPassive()
+            let connection = try await Self.connect(legacy, host: host, port: port)
+            let first = FTPByteSink()
+            try await FTPDataConnection.transfer(
+                "RETR", argument: Self.seededName, on: connection
+            ) { channel in
+                first.append(try await channel.readToEnd())
+            }
+            let second = FTPByteSink()
+            try await FTPDataConnection.transfer(
+                "RETR", argument: Self.seededName, on: connection
+            ) { channel in
+                second.append(try await channel.readToEnd())
+            }
+            await connection.close()
+            return first.matches(Self.seeded) && second.matches(Self.seeded)
+        }
+        #expect(both)
+        let verbs = await legacy.receivedCommands.map(\.verb)
+        // One `EPSV` for two transfers: the refusal was remembered. The two
+        // `PASV`s and the two `RETR`s beside it are the positive — both
+        // transfers really happened, so the single `EPSV` is a memo and not a
+        // second transfer that never ran.
+        #expect(verbs.filter { $0 == "EPSV" }.count == 1)
+        #expect(verbs.filter { $0 == "PASV" }.count == 2)
+        #expect(verbs.filter { $0 == "RETR" }.count == 2)
+    }
+
     /// A `227` this client cannot READ is refused where it is read, so
     /// nothing is dialled on the strength of it.
     ///

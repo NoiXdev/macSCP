@@ -509,6 +509,42 @@ struct FTPConnectionPoolTests {
         #expect(outcome.served == .completed)
     }
 
+    /// `shutdown()` releases a waiter instead of leaving it parked.
+    ///
+    /// The shutdown twin of
+    /// `aWaiterForASlotAnswersCancellationRatherThanParkingForever`: those
+    /// are the only two ways a wait for a slot can end other than being
+    /// served, and the review's probe on the stranded-waiter release
+    /// (`for identifier in stranded` → `_ = stranded`) was GREEN across 56
+    /// tests. Without it a tab that is being torn down leaves its queue's
+    /// waiters parked forever, and the UI owns that teardown explicitly.
+    ///
+    /// The waiter is woken by `shutdown` and re-loops into
+    /// `guard !isShutDown`, so what it reports is `connectionClosed` — the
+    /// pool is gone, which is what the caller has to be told. No clock: the
+    /// only slot is held for the whole case, so nothing but the shutdown can
+    /// end the wait.
+    @Test func shutdownReleasesAWaiterRatherThanLeavingItParked() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            let pool = Self.pool(server, host: host, port: port, slots: 1)
+            let held = try await pool.acquireTransfer()
+            let waiter = Task { await Self.outcome { _ = try await pool.acquireTransfer() } }
+            try await pollUntil("the waiter to park on the pool's only slot") {
+                await pool.waiterCount == 1
+            }
+            await pool.shutdown()
+            let ended = await waiter.value
+            // The positive beside it: the lease that held the slot is still
+            // releasable afterwards, so the shutdown released a waiter rather
+            // than taking the pool apart underneath one.
+            await held.release(reusable: false)
+            return ended
+        }
+        #expect(outcome == .failed(.connectionClosed))
+    }
+
     // MARK: - The 421 budget
 
     /// A `421` on acquiring a transfer connection shrinks the budget for that
