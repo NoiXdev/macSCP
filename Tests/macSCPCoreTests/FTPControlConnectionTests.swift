@@ -621,13 +621,40 @@ struct FTPControlConnectionTests {
     /// late or early that task is scheduled: `send` opens with `acquire()`,
     /// and while `transferCommand` holds the turn `acquire()` parks on a
     /// continuation, so the `PWD` cannot reach the wire before the `226` has
-    /// been read — structurally, not by scheduling. With the span removed the
-    /// turn is free when the signal resumes the drain, so the `PWD` is
-    /// written during the drain, reads the `226` as its own, and
-    /// `transferCommand` re-acquires and reads the `257`: both expectations
-    /// below fail. Measured 20/20 red against that plant and 20/20 green
-    /// without it (fix round 3, G1), as ten copies of this body so the
-    /// probe's catcher list was itself the count.
+    /// been read — structurally, not by scheduling. That half is exact, and it
+    /// is why this case cannot flake: on a correct tree it passes in every
+    /// interleaving.
+    ///
+    /// The PLANTED side is NOT structural, and this comment first said it was.
+    /// Withdrawn verbatim: "With the span removed the turn is free when the
+    /// signal resumes the drain, so the `PWD` is written during the drain,
+    /// reads the `226` as its own, and `transferCommand` re-acquires and reads
+    /// the `257`: both expectations below fail." Nothing sequences
+    /// `transferCommand`'s own `acquire()` ahead of the concurrent task, so a
+    /// planted tree has two interleavings, not one. The intended one: the
+    /// `PWD` parks in `acquire()`, is resumed inside the span, and reads the
+    /// `226`. The blind one: the task takes the turn FIRST, is answered `257`
+    /// and releases before `LIST` is ever sent — the latch then returns at
+    /// once in the drain, the two commands never overlap, and both
+    /// expectations hold on the plant. The blind order is undetectable by this
+    /// case by construction, not by bad luck.
+    ///
+    /// Measured 20/20 red against the plant and 20/20 green without it (fix
+    /// round 3, G1), as ten copies of this body so the probe's catcher list
+    /// was itself the count; the re-review of that round raised it to 80/80
+    /// each over four rounds of twenty. The ORDER was then counted on its own,
+    /// twenty copies reading `receivedCommands.map(\.verb)` on the fixed tree
+    /// over three rounds: 59 x `PASV,LIST,PWD` against 1 x `PASV,PWD,LIST`.
+    /// About 1 run in 60, which is what 80/80 is consistent with rather than
+    /// evidence against — no blind trial in eighty draws has probability
+    /// around 0.26.
+    ///
+    /// The case is deliberately NOT rebuilt around that. Having the drain
+    /// signal and the concurrent task wait would close the blind order and
+    /// open its mirror, unmeasured. What covers it is the flag case above,
+    /// which reads the span where it lives and cannot be raced at all. The two
+    /// together are the guard: this one would see a turn whose replies go to
+    /// the wrong command, that one sees a turn that is held and wrong.
     ///
     /// No reader ever overlaps, because the plant still serialises the two
     /// readers through the turn, so `FTPLineSource`'s overlap `precondition`
