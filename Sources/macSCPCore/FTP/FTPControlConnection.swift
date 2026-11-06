@@ -1307,6 +1307,11 @@ actor FTPDataChannel {
     /// appending sink, and a caller that writes each chunk to disk or yields
     /// it to a stream never holds the file in memory.
     ///
+    /// The sink is `async`, which is what lets it exert BACK PRESSURE: the
+    /// read does not go on until the sink returns, so a consumer that is
+    /// slower than the network slows the reader instead of filling a buffer
+    /// with the rest of the file (`FTPTransferLease.readStream`).
+    ///
     /// **A cancelled read throws rather than returning what it got.** An
     /// `AsyncStream` iteration in a cancelled task ends with no element,
     /// exactly as a peer that closed does, so without the check below a
@@ -1314,7 +1319,7 @@ actor FTPDataChannel {
     /// — a silently truncated file, which is the one anti-goal §6 names. The
     /// check is after the loop and not inside it: a chunk that arrived is
     /// handed on either way, and it is the ending that is misreported.
-    func read(into sink: (Data) throws -> Void) async throws {
+    func read(into sink: (Data) async throws -> Void) async throws {
         let events = self.events
         let deliver = self.deliver
         let watchdog = FTPIdleWatchdog(bound: bound, loop: channel.eventLoop) {
@@ -1326,7 +1331,7 @@ actor FTPDataChannel {
 
         while let chunk = await chunks.next() {
             watchdog.noteProgress()
-            try sink(Data(chunk.readableBytesView))
+            try await sink(Data(chunk.readableBytesView))
         }
         if events.end == .timedOut { throw FTPConnectionFailure.timedOut }
         try Task.checkCancellation()

@@ -162,6 +162,17 @@ struct FTPConnectionPoolTests {
     ///
     /// One leak per abandoned download ends in a permanently starved pool,
     /// which a user sees as a queue that hangs for no reason.
+    ///
+    /// **Three checks, because "the lease came back" alone would also hold
+    /// for a download that simply finished.** The slot is taken while the
+    /// stream is alive; a chunk really was read before the drop; and the
+    /// connection was DISCARDED rather than pooled, which only the abandoned
+    /// path does — a transfer that ran to its `226` releases
+    /// `reusable: true` and the next lease then costs no dial. That third
+    /// check is what makes the case about abandonment and not about timing,
+    /// and it is the one an unbounded push-based stream could not pass,
+    /// because such a drain reads the rest of the file whatever the consumer
+    /// does (`FTPTransferLease.readStream`).
     @Test func anAbandonedReadStreamReturnsItsLeaseToThePool() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
@@ -183,6 +194,10 @@ struct FTPConnectionPoolTests {
             try await pollUntil("the abandoned stream's lease to come back") {
                 await pool.freeTransferSlots == 1
             }
+            let afterDrop = await server.controlConnectionCount
+            _ = try await pool.acquireTransfer()
+            let afterNextLease = await server.controlConnectionCount
+            #expect(afterNextLease == afterDrop + 1)
             await pool.shutdown()
         }
     }

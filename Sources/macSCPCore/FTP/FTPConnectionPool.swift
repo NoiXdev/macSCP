@@ -356,45 +356,63 @@ final class FTPTransferLease: Sendable {
     ///
     /// The abandoned case is the one spec §5a is about, and it is the one a
     /// call-site `defer` cannot cover: a consumer that stops iterating and
-    /// drops the stream never returns to any code of its own. What covers it
-    /// is the continuation's termination handler, which the runtime runs when
-    /// the stream and its iterator are both released; it cancels the task
-    /// doing the work, and that task's one exit path releases the lease.
+    /// drops the stream never returns to any code of its own.
     ///
-    /// Cancelling after a normal finish is harmless — the task is already
-    /// past its last suspension — so there is one handler and not two paths.
+    /// **It is PULL-based, which is what makes the abandonment visible AND
+    /// bounds the memory.** `AsyncStream`'s `yield` never suspends, so a
+    /// pushing drain reads as fast as the network allows: a 4 GB download
+    /// would sit in the buffer, and — the reason it matters here as well as
+    /// there — a drain that always runs to the end releases the lease by
+    /// finishing, so a test that abandoned a stream would be measuring a
+    /// transfer that completed anyway. So the consumer asks for each chunk
+    /// through `demands`, and the drain takes one of those tokens before it
+    /// reads on. At most two chunks are ever in flight, which is the same
+    /// "never more than one chunk is buffered" `LocalFileSystem.readStream`
+    /// states, within one chunk of read-ahead.
+    ///
+    /// What ends the drain when the consumer walks away: dropping the stream
+    /// releases the closure below, which holds the only reference to the
+    /// demand continuation, so the demand stream finishes and the drain's
+    /// next token does not arrive. It throws, and its one exit path releases
+    /// the lease.
     func readStream(
         _ path: String, startingAt offset: Int64 = 0
     ) -> AsyncThrowingStream<Data, any Error> {
-        let (stream, continuation) = AsyncThrowingStream.makeStream(
+        // Consumer to drain: one token per chunk wanted.
+        let (demands, continuation) = AsyncStream.makeStream(of: Void.self)
+        let demand = FTPDemandSource(continuation)
+        // Drain to consumer.
+        let (supply, chunks) = AsyncThrowingStream.makeStream(
             of: Data.self, throwing: (any Error).self)
-        let work = Task { [self] in
+        let waiting = FTPSingleReader(demands)
+        let arriving = FTPSingleThrowingReader(supply)
+        Task { [self] in
             do {
                 try await FTPDataConnection.transfer(
                     "RETR", argument: path, restartingAt: offset > 0 ? offset : nil,
                     on: connection
                 ) { channel in
                     try await channel.read { chunk in
-                        // A consumer that has already gone is a read with
-                        // nowhere to put its bytes: stop here rather than
-                        // draining the rest of the file into a finished
-                        // stream. The termination handler below has usually
-                        // cancelled this task already; this is the same
-                        // ending read off the yield instead.
-                        if case .terminated = continuation.yield(chunk) {
-                            throw CancellationError()
-                        }
+                        chunks.yield(chunk)
+                        // Asked for AFTER the chunk is handed over, so the
+                        // first one needs no token and the drain is parked
+                        // here — not on the network — whenever the consumer
+                        // is idle. A consumer that has gone finishes this
+                        // stream, and that is the ending.
+                        guard await waiting.next() else { throw CancellationError() }
                     }
                 }
-                continuation.finish()
+                chunks.finish()
                 await release(reusable: true)
             } catch {
-                continuation.finish(throwing: error)
+                chunks.finish(throwing: error)
                 await release(reusable: Self.reusable(after: error))
             }
         }
-        continuation.onTermination = { _ in work.cancel() }
-        return stream
+        return AsyncThrowingStream {
+            demand.request()
+            return try await arriving.next()
+        }
     }
 
     /// Whether the connection a transfer failed on may be handed out again.
@@ -402,5 +420,90 @@ final class FTPTransferLease: Sendable {
         if error is CancellationError { return false }
         guard let failure = error as? FTPConnectionFailure else { return false }
         return failure.leavesConnectionInStep
+    }
+}
+
+/// The consumer's end of a `readStream`'s demand channel.
+///
+/// **Its `deinit` is how a dropped stream is noticed, and it is spelled by
+/// hand because `AsyncThrowingStream(unfolding:)` has no `onTermination`.**
+/// It is the same mechanism — the stream's storage going away — reached
+/// through the only hook an unfolding stream offers: the closure it holds,
+/// which holds this. Measured 2026-11-06: releasing the `AsyncStream.Continuation`
+/// alone did NOT finish the stream, so the drain stayed parked on a token
+/// that could not arrive and `anAbandonedReadStreamReturnsItsLeaseToThePool`
+/// ran into its 300-second hang bound. With the explicit `finish()` here it
+/// passes.
+///
+/// This is not the `deinit` cleanup CLAUDE.md rules out. That rule is about
+/// a connection or a session whose teardown the UI owns explicitly; nothing
+/// is torn down here. One stream is finished, which is what tells the drain
+/// to stop and release its lease through its own single exit path.
+final class FTPDemandSource: Sendable {
+    private let continuation: AsyncStream<Void>.Continuation
+
+    init(_ continuation: AsyncStream<Void>.Continuation) {
+        self.continuation = continuation
+    }
+
+    /// Asks for one more chunk.
+    func request() {
+        continuation.yield(())
+    }
+
+    deinit {
+        continuation.finish()
+    }
+}
+
+/// One `AsyncStream`'s iterator, in a reference a closure can hold.
+///
+/// `FTPLineSource`'s shape and for its reason: an actor cannot call a
+/// mutating `async` method on a stored property, a closure cannot capture a
+/// mutable local and still be `@Sendable`, and an `AsyncStream` has a single
+/// consumer — two overlapping `next()` calls on one iterator are undefined
+/// behaviour that stays silent, so `reader` turns a violation into a named
+/// trap. Here the single consumer is the drain of one `readStream`.
+final class FTPSingleReader: @unchecked Sendable {
+    private var iterator: AsyncStream<Void>.Iterator
+    private let reader = Mutex(false)
+
+    init(_ stream: AsyncStream<Void>) {
+        iterator = stream.makeAsyncIterator()
+    }
+
+    /// Whether a token arrived. `false` means the other end has gone.
+    func next() async -> Bool {
+        let overlapped = reader.withLock { busy -> Bool in
+            let was = busy
+            busy = true
+            return was
+        }
+        precondition(!overlapped, "two reads overlapped on one FTP demand stream")
+        defer { reader.withLock { $0 = false } }
+        return await iterator.next() != nil
+    }
+}
+
+/// The same, for the chunks a `readStream`'s consumer pulls. Its single
+/// consumer is the unfolding closure the stream hands out, which the runtime
+/// never calls twice at once.
+final class FTPSingleThrowingReader: @unchecked Sendable {
+    private var iterator: AsyncThrowingStream<Data, any Error>.Iterator
+    private let reader = Mutex(false)
+
+    init(_ stream: AsyncThrowingStream<Data, any Error>) {
+        iterator = stream.makeAsyncIterator()
+    }
+
+    func next() async throws -> Data? {
+        let overlapped = reader.withLock { busy -> Bool in
+            let was = busy
+            busy = true
+            return was
+        }
+        precondition(!overlapped, "two reads overlapped on one FTP chunk stream")
+        defer { reader.withLock { $0 = false } }
+        return try await iterator.next()
     }
 }
