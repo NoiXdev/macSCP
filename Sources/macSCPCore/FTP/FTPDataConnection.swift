@@ -181,6 +181,15 @@ enum FTPDataConnection {
     /// until the reply bound. Closing is idempotent, so the close on the
     /// refusal path below cannot return a TLS session twice.
     ///
+    /// **A refused `227`/`229` leaves the server holding a passive listener
+    /// this client never dials**, and the lease is still returned
+    /// `reusable: true`, because the reply stream is in step — the refusal
+    /// was the whole answer. The listener is the server's to reap, and every
+    /// server I know of replaces it on the next `PASV`/`EPSV`, which is what
+    /// `LoopbackFTPServer.handlePassive` does with its own
+    /// `releasePassiveListener()`. Named rather than handled: there is no
+    /// command that retracts a passive listener.
+    ///
     /// **`body` is `@Sendable`, and that is forced rather than chosen.** It
     /// is handed to `FTPControlConnection.transferCommand`, which is an
     /// actor's method, so the drain closure crosses an isolation boundary;

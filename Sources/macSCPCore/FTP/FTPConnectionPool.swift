@@ -267,6 +267,15 @@ actor FTPConnectionPool {
     /// fail the item: the queue degrades to fewer sockets rather than to a
     /// failed download. A second `421` is reported, because a client that
     /// kept retrying a server that keeps refusing is a client in a loop.
+    ///
+    /// **It sees a `421` GREETING only, which is the narrower of the two
+    /// readings §5 admits.** A shared host that accepts the connection and
+    /// then answers `421` to `USER` or `PASS` does not shrink the budget
+    /// here: that refusal arrives as `loginRefused`, which is also what a
+    /// wrong password is, and telling the two apart means carrying the reply
+    /// code out of the login. §5 does not say when the `421` arrives, so
+    /// this is not a violation — but it is a choice, and the wider reading
+    /// belongs with whoever maps reply codes for the UI.
     private func dial() async throws -> FTPControlConnection {
         do {
             return try await connect()
@@ -554,10 +563,21 @@ final class FTPTransferLease: Sendable {
 /// ran into its 300-second hang bound. With the explicit `finish()` here it
 /// passes.
 ///
-/// This is not the `deinit` cleanup CLAUDE.md rules out. That rule is about
-/// a connection or a session whose teardown the UI owns explicitly; nothing
-/// is torn down here. One stream is finished, which is what tells the drain
-/// to stop and release its lease through its own single exit path.
+/// **Why this is not the `deinit` cleanup CLAUDE.md rules out, argued
+/// properly.** The first version of this paragraph said "nothing is torn down
+/// here. One stream is finished", and the review was right that this is too
+/// quick: the chain this `deinit` starts ends in `connection.close()`, so
+/// something certainly is torn down. The invariant is about teardown that is
+/// ORDERED AND OWNED — the UI runs `cancelAll` → `shutdown` → `disconnect`
+/// in one place, and nothing may reach around that order through an object
+/// graph nobody sequenced. This does not: the owner here is the CONSUMER of
+/// the stream, releasing it IS its explicit act, and the order that follows
+/// is the one `readStream` spells — finish the demand, let the drain throw,
+/// release the lease, and let the pool decide whether the connection is
+/// pooled or closed. What makes a hook necessary at all is spec §5a, which
+/// requires abandonment to return the lease, and an unfolding stream offers
+/// no other; what makes it safe is that the hook starts a sequence rather
+/// than performing a teardown.
 final class FTPDemandSource: Sendable {
     private let continuation: AsyncStream<Void>.Continuation
 

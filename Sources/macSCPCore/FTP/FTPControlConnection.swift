@@ -116,6 +116,15 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     case passiveModeRefused(code: Int)
     /// The transfer command itself was refused, or its completion reply was
     /// not a `2xx`. `code` is the reply code.
+    ///
+    /// **Its sentence gives the user nothing to act on, and that is
+    /// deliberate for now.** A `550 No such file` arrives here too, and it
+    /// reads "The server refused the transfer." The code is in the payload
+    /// and not in the text, so a layer that renders failures can tell them
+    /// apart and say which it was; doing it in this sentence would mean one
+    /// catalogue key per reply code, decided without the UI that shows them.
+    /// A message that names the WRONG cause is worse than a general one, so
+    /// the mapping waits for the task that owns rendering.
     case transferRefused(code: Int)
     /// `REST` was refused, so the offset a resumed transfer asked for cannot
     /// be honoured. `code` is the reply code.
@@ -254,9 +263,24 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// connection nothing has established the state of, and §5a's rule is
     /// that such a connection is dropped rather than reused.
     ///
-    /// The three refusals this task added are in step for the same reason
+    /// **The five cases this task added are all in step**, and they are
+    /// `passiveAddressRefused`, `passiveModeRefused`, `transferRefused`,
+    /// `restRefused` and `leaseAlreadyReturned` — named rather than counted
+    /// at the reader's expense, because a number in a comment is a claim
+    /// about the rest of the project. (Withdrawn wording, verbatim: "The
+    /// three refusals this task added are in step". It was written when four
+    /// had been added, and a fifth has since joined them; it also called
+    /// them all refusals, where two of the five are macSCP's own guard
+    /// rather than a server's answer.) The count re-runs from the repository
+    /// root, one key per line so `-c` is the right tool:
+    ///
+    ///     /usr/bin/grep -c -e ftpPassiveAddressRefused -e ftpPassiveModeRefused -e ftpTransferRefused -e ftpRestRefused -e ftpLeaseReturned Sources/macSCPCore/Resources/en.lproj/Localizable.strings
+    ///
+    /// The three that ARE server refusals are in step for the reason
     /// `aRefusedTransferCarriesNoCompletionReply` gives: a refusal is the
-    /// whole answer and nothing further is owed.
+    /// whole answer and nothing further is owed. `passiveAddressRefused` and
+    /// `leaseAlreadyReturned` are in step because nothing was written to the
+    /// wire at all.
     var leavesConnectionInStep: Bool {
         switch kind {
         case .passiveAddressRefused, .passiveModeRefused, .transferRefused, .restRefused,
