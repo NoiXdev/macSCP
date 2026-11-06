@@ -427,17 +427,51 @@ final class FTPTransferLease: Sendable {
     /// call-site `defer` cannot cover: a consumer that stops iterating and
     /// drops the stream never returns to any code of its own.
     ///
-    /// **It is PULL-based, which is what makes the abandonment visible AND
-    /// bounds the memory.** `AsyncStream`'s `yield` never suspends, so a
-    /// pushing drain reads as fast as the network allows: a 4 GB download
-    /// would sit in the buffer, and — the reason it matters here as well as
-    /// there — a drain that always runs to the end releases the lease by
-    /// finishing, so a test that abandoned a stream would be measuring a
-    /// transfer that completed anyway. So the consumer asks for each chunk
-    /// through `demands`, and the drain takes one of those tokens before it
-    /// reads on. At most two chunks are ever in flight, which is the same
-    /// "never more than one chunk is buffered" `LocalFileSystem.readStream`
-    /// states, within one chunk of read-ahead.
+    /// **It is PULL-based, which is what makes the abandonment visible.**
+    /// `AsyncStream`'s `yield` never suspends, so a pushing drain runs to the
+    /// end of the file whatever the consumer does — and a drain that runs to
+    /// the end releases the lease by FINISHING, so a case that abandoned a
+    /// stream would be measuring a transfer that completed anyway. The
+    /// consumer therefore asks for each chunk through `demands`, and the
+    /// drain takes one of those tokens before it reads on. At most two
+    /// CONSUMER-VISIBLE chunks are in flight: one in `supply`, one in the
+    /// consumer's hand.
+    ///
+    /// **It does NOT bound the memory this transfer costs, and the earlier
+    /// version of this comment said it did.** Withdrawn wording, verbatim:
+    /// "It is PULL-based, which is what makes the abandonment visible AND
+    /// bounds the memory", "a 4 GB download would sit in the buffer", and "At
+    /// most two chunks are ever in flight, which is the same 'never more than
+    /// one chunk is buffered' `LocalFileSystem.readStream` states, within one
+    /// chunk of read-ahead". The two-chunk count is right for the chunks the
+    /// consumer sees and says nothing about the layer under it: the data
+    /// channel's inbound stream is built with no buffering policy, whose
+    /// default is unbounded, `FTPChannelSink.channelRead` yields into it
+    /// unconditionally, and nothing under `Sources/macSCPCore/FTP/` turns
+    /// NIO's automatic reading off. So the socket is drained as fast as the
+    /// network delivers, however little the consumer asks for.
+    ///
+    /// Measured 2026-11-06 — a 67,108,864-byte file, one 2,048-byte chunk
+    /// pulled and held, resident size sampled until it stopped moving:
+    /// growth **134,987,776 bytes, 2.01x the payload** (two copies, both ends
+    /// being in one process for the loopback rig). The control at an eighth
+    /// of the payload, 8,388,608 bytes, grew 17,186,816 — **2.05x** — so the
+    /// figure tracks the file and is not a fixed overhead, which is what
+    /// "unbounded" means here. The measurement was an untracked test case,
+    /// removed with `rm`; it asserts no figure, because a resident-size
+    /// figure asserted on one machine is a test that fails on another.
+    ///
+    /// **The commands that establish all of it live in the `docs/BACKLOG.md`
+    /// row "An FTP download's inbound buffer is unbounded", and they live
+    /// there rather than here for a reason worth knowing**: the negative one
+    /// searches these sources for the name of the option nobody sets, so a
+    /// comment that quoted it would be the only match and would report
+    /// itself — the self-falsifying sentence CLAUDE.md records, caught here
+    /// by re-running the command after writing the sentence. The real bound
+    /// is in that row too: a buffering policy, automatic reading off, and an
+    /// explicit read per chunk, which is the shape
+    /// `Sources/macSCPCore/Tunnels/BytePump.swift` already uses. It is a
+    /// design, not an edit.
     ///
     /// What ends the drain when the consumer walks away: dropping the stream
     /// releases the closure below, which holds the only reference to the
