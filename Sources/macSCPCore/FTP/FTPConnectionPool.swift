@@ -416,8 +416,17 @@ final class FTPTransferLease: Sendable {
     }
 
     /// Whether the connection a transfer failed on may be handed out again.
+    ///
+    /// An error this layer does not recognise is NOT reusable, and a
+    /// cancellation is one of those: §5a's rule is that a cancelled or
+    /// desynchronised connection is dropped, and "I do not know what this
+    /// error means" is not a state in which to hand a connection to the next
+    /// item. A mutation probe on 2026-11-06 is why this says so rather than
+    /// testing for `CancellationError` by name: an `if error is
+    /// CancellationError { return false }` stood here, and planting it away
+    /// was GREEN across 8 tests, because the `guard` below already answers
+    /// `false` for it. A line both of whose arms agree is not a guard.
     private static func reusable(after error: any Error) -> Bool {
-        if error is CancellationError { return false }
         guard let failure = error as? FTPConnectionFailure else { return false }
         return failure.leavesConnectionInStep
     }
