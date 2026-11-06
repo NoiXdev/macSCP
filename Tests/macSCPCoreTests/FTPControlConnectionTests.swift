@@ -477,6 +477,20 @@ struct FTPControlConnectionTests {
     /// expectation below is the same one; `transferCommand` is what makes it
     /// hold, because there is no longer a point between the two replies at
     /// which another command can be issued on this connection.
+    ///
+    /// **The codes alone do not pin the span, which was measured** (fix round
+    /// 2, F2): the re-review of fix round 1 planted the pre-fix shape —
+    /// `release()` before the drain, `await acquire()` after it — and this
+    /// case came back GREEN with 32 tests run, because the `PWD` below is
+    /// issued *after* `transferCommand` returns and 150/226/257 then arrive in
+    /// order whether the turn was held or not. Making it visible through the
+    /// codes needs a second command on the wire while the pair is open, and
+    /// that is a race: the plant releases the turn but still re-acquires it
+    /// for the completion reply, so the turn serialises the two readers either
+    /// way and which of them reads the `226` is scheduling. A deadline on the
+    /// race would be the wall-clock ceiling this project forbids. So the span
+    /// is read where it lives, from inside the drain, where only a held turn
+    /// answers `true`.
     @Test func aTransferHoldsTheTurnAcrossBothOfItsReplies() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
@@ -485,20 +499,80 @@ struct FTPControlConnectionTests {
                 server, host: host, port: port, security: .plain)
             let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
             let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            var heldDuringTheDrain = false
             let transfer = try await connection.transferCommand("LIST") {
+                // Between the `150` and the `226`, which is the whole span
+                // the method exists for.
+                heldDuringTheDrain = await connection.turnIsHeld
                 _ = try await data.readToEnd()
             }
             let pwd = try await connection.send("PWD", argument: nil)
+            // The positive beside it: the turn is a span and not a latch, so
+            // it is gone again once the pair is closed. A connection that
+            // answered `true` to both would be one that never releases.
+            let heldAfterwards = await connection.turnIsHeld
             await data.close()
             await connection.close()
             return (
                 opening: transfer.opening.code, completion: transfer.completion?.code,
-                pwd: pwd.code
+                pwd: pwd.code, heldDuringTheDrain: heldDuringTheDrain,
+                heldAfterwards: heldAfterwards
             )
         }
         #expect(codes.opening == 150)
         #expect(codes.completion == 226)
         #expect(codes.pwd == 257)
+        #expect(codes.heldDuringTheDrain)
+        #expect(!codes.heldAfterwards)
+    }
+
+    /// A drain that THROWS still owes the completion reply, and the
+    /// connection is in step afterwards.
+    ///
+    /// The `150` promised a `226`, and `defer { release() }` hands the turn on
+    /// as the error leaves `transferCommand`, so an unguarded drain left that
+    /// `226` inbound for the next command to read as its own. Measured before
+    /// the fix, and it is the same wrong reply R3 exists to prevent, reached
+    /// through a throwing body instead of through an interleaving command:
+    /// the `PWD` below came back **226** where `257` was due (fix round 2,
+    /// F1).
+    ///
+    /// The path is an ordinary one. A `readToEnd()` that hits its own idle
+    /// bound throws `timedOut`, and a Task 6 caller's drain is exactly that
+    /// read — so this is the common failure of a transfer, not a corner of it.
+    @Test func aDrainThatThrowsStillOwesItsCompletionReply() async throws {
+        struct DrainFailed: Error {}
+
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            var threw = false
+            do {
+                // The drain reads the payload to its end first, so the `226`
+                // is on its way when the body throws: what is measured is
+                // which command reads it, not whether the server sent it.
+                _ = try await connection.transferCommand("LIST") {
+                    _ = try await data.readToEnd()
+                    throw DrainFailed()
+                }
+            } catch is DrainFailed {
+                threw = true
+            }
+            // The next command on this connection, and the reply that
+            // belongs to it.
+            let pwd = try await connection.send("PWD", argument: nil)
+            await data.close()
+            await connection.close()
+            return (threw: threw, pwd: pwd.code)
+        }
+        // The drain's own error reaches the caller unchanged: reading the
+        // owed reply must not replace the reason the transfer failed.
+        #expect(outcome.threw)
+        #expect(outcome.pwd == 257)
     }
 
     /// A refused transfer has ONE reply, and nothing waits for a second.

@@ -555,6 +555,25 @@ actor FTPControlConnection {
     /// A refusal (`425`, `522`, `550`) is the whole answer and `completion`
     /// is `nil`: only a preliminary reply promises a second one, and waiting
     /// for one that is never coming would park until the idle bound.
+    ///
+    /// **A drain that THROWS still owes the completion reply** (fix round 2,
+    /// F1, Ruling T5.11). The preliminary reply has promised a second one, and
+    /// `defer { release() }` hands the turn to whoever is next as the error
+    /// leaves this function, so an unguarded `try await body()` left the
+    /// `226`/`426` inbound for the next command to read as its own — the very
+    /// desynchronisation this method exists to prevent, reached through a
+    /// throwing body instead of through an interleaving command. Measured
+    /// before the fix: a `PWD` after a thrown drain came back **226** where
+    /// `257` was due. The path is an ordinary one, not a corner: a
+    /// `readToEnd()` that hits its own idle bound throws, and that is what a
+    /// caller's drain is.
+    ///
+    /// So the reply is read under the reply bound before the original error is
+    /// rethrown, and if THAT read fails the connection is closed: reading it
+    /// keeps the control connection usable after a failed transfer, and
+    /// closing on a failed read refuses to guess at a stream state nothing has
+    /// established. The bounded read's own failure never replaces the reason
+    /// the transfer failed.
     func transferCommand(
         _ command: String, argument: String? = nil,
         draining body: () async throws -> Void
@@ -571,7 +590,17 @@ actor FTPControlConnection {
         let opening = try await readReply()
         lastActivity = .now
         guard opening.isPreliminary else { return (opening, nil) }
-        try await body()
+        do {
+            try await body()
+        } catch {
+            do {
+                _ = try await readReply()
+                lastActivity = .now
+            } catch {
+                await close()
+            }
+            throw error
+        }
         let completion = try await readReply()
         lastActivity = .now
         return (opening, completion)
@@ -651,6 +680,22 @@ actor FTPControlConnection {
     }
 
     // MARK: - The turn
+
+    /// Whether a command turn is held right now.
+    ///
+    /// **Internal for one property nothing else can see**: that
+    /// `transferCommand` holds the turn across BOTH of its replies. The
+    /// observable consequence of losing the span — a reply reaching the wrong
+    /// command — needs a second command on the wire while the pair is open,
+    /// and a span removed by releasing the turn and re-acquiring it for the
+    /// completion reply still serialises the two readers through the turn
+    /// itself, so which of them reads the `226` is a matter of scheduling and
+    /// not of the property. A test that read the codes therefore passed with
+    /// the span removed: measured as GREEN, 32 tests, in the re-review of fix
+    /// round 1 (fix round 2, F2). This flag is the property, and
+    /// `aTransferHoldsTheTurnAcrossBothOfItsReplies` reads it from inside the
+    /// drain, where only a held turn can answer `true`.
+    var turnIsHeld: Bool { commandInFlight }
 
     private func acquire() async {
         if !commandInFlight {
