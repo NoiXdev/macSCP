@@ -98,12 +98,15 @@ struct FTPControlConnectionTests {
     private static func dial(
         _ server: LoopbackFTPServer, host: String, port: Int, security: FTPSecurityMode,
         decider: CertificateDecider = .refusing, timeout: Duration = .seconds(30),
-        trustStore: TrustedCertificateStore? = nil, password: String? = nil
+        trustStore: TrustedCertificateStore? = nil, password: String? = nil,
+        username: String? = nil
     ) async -> DialOutcome {
         let credentials = server.credentials
         do {
             let connection = try await FTPControlConnection.connect(
-                Self.config(host: host, port: port, security: security, username: credentials.username),
+                Self.config(
+                    host: host, port: port, security: security,
+                    username: username ?? credentials.username),
                 password: password ?? credentials.password,
                 certificateDecider: decider,
                 timeout: timeout,
@@ -139,6 +142,9 @@ struct FTPControlConnectionTests {
             password: credentials.password,
             certificateDecider: decider,
             timeout: timeout,
+            // Named out loud, with no default to fall through: a dial that
+            // remembers nothing says so (Ruling T5.7).
+            trustStore: nil,
             tuning: tuning)
     }
 
@@ -1024,6 +1030,48 @@ struct FTPControlConnectionTests {
         #expect(log.askCount == 1)
     }
 
+    /// A user name or password carrying CR or LF is refused AS A CREDENTIAL.
+    ///
+    /// Routing both through `FTPPath.validated` is right — either injects a
+    /// command exactly as a file name would — but the refusal a user would
+    /// have read said "Rename the file or folder and try again", and
+    /// `FTPPathRefusal` left `connect` as a type nothing above maps.
+    ///
+    /// **Every expectation here binds its `Bool` first**, including the
+    /// positive one: `#expect` prints what its subexpressions evaluated to,
+    /// and the values this case is about are a user name and a password.
+    @Test func aCredentialCarryingALineBreakIsRefusedAsACredential() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcomes = try await Self.running(server) { host, port in
+            let password = await Self.dial(
+                server, host: host, port: port, security: .plain,
+                password: "two\r\nlines")
+            let user = await Self.dial(
+                server, host: host, port: port, security: .plain,
+                username: "two\nlines")
+            // The positive beside them, same server, same dial.
+            let clean = await Self.dial(server, host: host, port: port, security: .plain)
+            return (password: password, user: user, clean: clean)
+        }
+        let passwordWasRefusedAsACredential = outcomes.password == .failed(.credentialNotSendable)
+        #expect(passwordWasRefusedAsACredential)
+        let userWasRefusedAsACredential = outcomes.user == .failed(.credentialNotSendable)
+        #expect(userWasRefusedAsACredential)
+        let aCleanLoginStillConnects = outcomes.clean == .connected
+        #expect(aCleanLoginStillConnects)
+
+        // What reached the wire: the refused password's dial got as far as
+        // `USER` and no further, and the refused user name sent nothing at
+        // all. The server stores no `PASS` argument, so these operands cannot
+        // evaluate to a credential either.
+        let verbs = await server.receivedCommands.map(\.verb)
+        let noPasswordEverReachedTheWire = !verbs.contains("PASS") || verbs.filter { $0 == "PASS" }.count == 1
+        #expect(noPasswordEverReachedTheWire)
+        let theCleanDialLoggedIn = verbs.contains("PASS")
+        #expect(theCleanDialLoggedIn)
+    }
+
     // MARK: - The validated command path
 
     @Test func anArgumentCarryingCRLFNeverReachesTheServer() async throws {
@@ -1104,7 +1152,7 @@ struct FTPControlConnectionTests {
                 FTPConnectionConfig(
                     host: "127.0.0.1", port: socket.port, username: "nobody",
                     security: .plain, password: ""),
-                password: "", certificateDecider: .refusing, timeout: bound)
+                password: "", certificateDecider: .refusing, timeout: bound, trustStore: nil)
             await connection.close()
         } catch let failure as FTPConnectionFailure {
             outcome = .failed(failure)
@@ -1200,40 +1248,38 @@ struct FTPControlConnectionTests {
 
     // MARK: - Failure text
 
-    /// Every failure has a sentence of its own in all four catalogs.
+    /// Every failure has a sentence of its own in all four catalogs, and the
+    /// set under test is the compiler's rather than this file's.
     ///
-    /// The `switch` is exhaustive over the enum, so a case added to it does
-    /// not compile until it is named here; the count then holds `all` to the
-    /// same set, so a case named in the `switch` but missing from `all` fails
-    /// too. The lookup itself cannot fail loudly — `CoreL10n.string` falls
-    /// back to the key text — so the check is that a key does NOT come back
-    /// as itself.
+    /// **The shape this replaces did not catch what it claimed.** It built a
+    /// set by iterating a hand-written list of failures and compared its size
+    /// to the literal `13`; a 14th case added to the enum, to its key mapping
+    /// and to the test's own exhaustive `switch`, with a key no catalog
+    /// declares, left it GREEN — the set was populated only from the list, so
+    /// a case missing from the list was never counted. Now `Kind.allCases` is
+    /// the compiler's list, `FTPConnectionFailure.kind` is exhaustive over
+    /// the failure, and the set comparison below holds the two to each other
+    /// in BOTH directions: a case missing from `all` makes the sets unequal,
+    /// and so does a `Kind` no failure maps to.
     @Test func everyConnectionFailureHasItsOwnSentence() throws {
         let all: [FTPConnectionFailure] = [
             .greetingRefused(code: 421), .timedOut, .connectionClosed, .protocolViolation,
             .tlsUpgradeRefused(code: 502), .tlsHandshakeFailed, .loginRefused,
-            .certificateRejected, .certificateMismatch, .trustStoreUnreadable,
-            .dataCertificateDiffers, .sessionFromAnotherConnection, .sessionRefusedByTLS,
+            .credentialNotSendable, .certificateRejected, .certificateMismatch,
+            .trustStoreUnreadable, .dataCertificateDiffers, .sessionFromAnotherConnection,
+            .sessionRefusedByTLS,
         ]
-        var named: Set<String> = []
-        for failure in all {
-            switch failure {
-            case .greetingRefused: named.insert("greetingRefused")
-            case .timedOut: named.insert("timedOut")
-            case .connectionClosed: named.insert("connectionClosed")
-            case .protocolViolation: named.insert("protocolViolation")
-            case .tlsUpgradeRefused: named.insert("tlsUpgradeRefused")
-            case .tlsHandshakeFailed: named.insert("tlsHandshakeFailed")
-            case .loginRefused: named.insert("loginRefused")
-            case .certificateRejected: named.insert("certificateRejected")
-            case .certificateMismatch: named.insert("certificateMismatch")
-            case .trustStoreUnreadable: named.insert("trustStoreUnreadable")
-            case .dataCertificateDiffers: named.insert("dataCertificateDiffers")
-            case .sessionFromAnotherConnection: named.insert("sessionFromAnotherConnection")
-            case .sessionRefusedByTLS: named.insert("sessionRefusedByTLS")
-            }
+        #expect(Set(all.map(\.kind)) == Set(FTPConnectionFailure.Kind.allCases))
+        // Positive that the comparison is about something: an empty tag set
+        // would satisfy an equality with an empty list of failures.
+        #expect(!FTPConnectionFailure.Kind.allCases.isEmpty)
+
+        for kind in FTPConnectionFailure.Kind.allCases {
+            #expect(
+                CoreL10n.string(kind.messageKey) != kind.messageKey,
+                "no catalog text for \(kind.messageKey)")
         }
-        #expect(named.count == 13)
+        // And the failures reach their own sentence, not just the tags.
         for failure in all {
             #expect(failure.message != failure.messageKey, "no catalog text for \(failure.messageKey)")
         }

@@ -62,6 +62,16 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// material that is not its control connection's, byte for byte
     /// (Ruling T5.1).
     case dataCertificateDiffers
+    /// The user name or the password carries a character that cannot cross a
+    /// command line (CR, LF or NUL), so the login was never sent.
+    ///
+    /// Its own case because the choke point's own refusal is a FILE's: it
+    /// says "Rename the file or folder and try again", which is not what
+    /// somebody whose password contains a line break needs to read. The case
+    /// carries nothing, so neither the credential nor which of the two
+    /// fields it was can reach a log or a failure message.
+    case credentialNotSendable
+
     /// A TLS session was offered to a connection that does not belong to the
     /// control connection that established it. macSCP's own guard: the TLS
     /// library cannot make this comparison for a peer named by address.
@@ -76,29 +86,84 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// is macSCP's obligation rather than the fork's bug.
     case sessionRefusedByTLS
 
-    /// This failure's catalog key, DERIVED from the case. A case added
-    /// without its four catalog entries is caught by
-    /// `everyConnectionFailureHasItsOwnSentence`; the lookup itself cannot
-    /// fail loudly, since `CoreL10n.string` falls back to the key text.
-    var messageKey: String {
-        switch self {
-        case .greetingRefused: "core.connect.ftpGreetingRefused"
-        case .timedOut: "core.connect.ftpTimedOut"
-        case .connectionClosed: "core.connect.ftpConnectionClosed"
-        case .protocolViolation: "core.connect.ftpProtocolViolation"
-        case .tlsUpgradeRefused: "core.connect.ftpTLSRequired"
-        case .tlsHandshakeFailed: "core.connect.ftpTLSHandshakeFailed"
-        // Not an FTP-specific sentence: a refused login reads the same
-        // whichever protocol carried it, and this key already says it.
-        case .loginRefused: "core.connect.authFailed"
-        case .certificateRejected: "core.connect.ftpCertificateRejected"
-        case .certificateMismatch: "core.connect.ftpCertificateMismatch"
-        case .trustStoreUnreadable: "core.connect.ftpTrustStoreUnreadable"
-        case .dataCertificateDiffers: "core.connect.ftpDataCertificateDiffers"
-        case .sessionFromAnotherConnection: "core.connect.ftpSessionScope"
-        case .sessionRefusedByTLS: "core.connect.ftpSessionRefused"
+    /// Every case of this type as a payload-free tag, so that the set of
+    /// them can be ITERATED.
+    ///
+    /// **This exists because a guard could not be held to the enum without
+    /// it.** `everyConnectionFailureHasItsOwnSentence` built its set by
+    /// iterating a hand-written list of failures and comparing its size to
+    /// the literal `13`. Measured in the Task 5 review: a 14th case added to
+    /// this enum, to its key mapping, and to the test's own exhaustive
+    /// `switch` — with a key no catalog declares — left the test GREEN,
+    /// because the set was populated only from that list, so a case missing
+    /// from the list was never counted and `13` still held. An enum with
+    /// associated values cannot be `CaseIterable`; a tag beside it can, and
+    /// `kind` below is exhaustive over the failure, so neither set can grow
+    /// without the other.
+    enum Kind: String, CaseIterable, Sendable {
+        case greetingRefused
+        case timedOut
+        case connectionClosed
+        case protocolViolation
+        case tlsUpgradeRefused
+        case tlsHandshakeFailed
+        case loginRefused
+        case credentialNotSendable
+        case certificateRejected
+        case certificateMismatch
+        case trustStoreUnreadable
+        case dataCertificateDiffers
+        case sessionFromAnotherConnection
+        case sessionRefusedByTLS
+
+        /// This failure's catalog key. A case added without its four catalog
+        /// entries is caught by `everyConnectionFailureHasItsOwnSentence`,
+        /// which walks `allCases`; the lookup itself cannot fail loudly,
+        /// since `CoreL10n.string` falls back to the key text.
+        var messageKey: String {
+            switch self {
+            case .greetingRefused: "core.connect.ftpGreetingRefused"
+            case .timedOut: "core.connect.ftpTimedOut"
+            case .connectionClosed: "core.connect.ftpConnectionClosed"
+            case .protocolViolation: "core.connect.ftpProtocolViolation"
+            case .tlsUpgradeRefused: "core.connect.ftpTLSRequired"
+            case .tlsHandshakeFailed: "core.connect.ftpTLSHandshakeFailed"
+            // Not an FTP-specific sentence: a refused login reads the same
+            // whichever protocol carried it, and this key already says it.
+            case .loginRefused: "core.connect.authFailed"
+            case .credentialNotSendable: "core.connect.ftpCredentialNotSendable"
+            case .certificateRejected: "core.connect.ftpCertificateRejected"
+            case .certificateMismatch: "core.connect.ftpCertificateMismatch"
+            case .trustStoreUnreadable: "core.connect.ftpTrustStoreUnreadable"
+            case .dataCertificateDiffers: "core.connect.ftpDataCertificateDiffers"
+            case .sessionFromAnotherConnection: "core.connect.ftpSessionScope"
+            case .sessionRefusedByTLS: "core.connect.ftpSessionRefused"
+            }
         }
     }
+
+    /// Which kind of failure this is, with the payload dropped.
+    var kind: Kind {
+        switch self {
+        case .greetingRefused: .greetingRefused
+        case .timedOut: .timedOut
+        case .connectionClosed: .connectionClosed
+        case .protocolViolation: .protocolViolation
+        case .tlsUpgradeRefused: .tlsUpgradeRefused
+        case .tlsHandshakeFailed: .tlsHandshakeFailed
+        case .loginRefused: .loginRefused
+        case .credentialNotSendable: .credentialNotSendable
+        case .certificateRejected: .certificateRejected
+        case .certificateMismatch: .certificateMismatch
+        case .trustStoreUnreadable: .trustStoreUnreadable
+        case .dataCertificateDiffers: .dataCertificateDiffers
+        case .sessionFromAnotherConnection: .sessionFromAnotherConnection
+        case .sessionRefusedByTLS: .sessionRefusedByTLS
+        }
+    }
+
+    /// This failure's catalog key, DERIVED from the case through `kind`.
+    var messageKey: String { kind.messageKey }
 
     /// The localized sentence for this failure.
     var message: String { CoreL10n.string(messageKey) }
@@ -226,8 +291,6 @@ actor FTPControlConnection {
     private var lastActivity = ContinuousClock.now
     private var isClosed = false
 
-    private static let logger = Logger(subsystem: "dev.noix.macscp", category: "FTPControlConnection")
-
     private init(
         channel: Channel, lines: FTPLineSource, deliver: AsyncStream<ByteBuffer>.Continuation,
         events: FTPChannelEvents, trust: FTPTrustDecision, tlsContext: NIOSSLContext?,
@@ -262,16 +325,21 @@ actor FTPControlConnection {
     /// nothing here can park past it waiting on a future that answers no
     /// cancellation.
     ///
-    /// `trustStore` is where a certificate is looked up and remembered.
-    /// Without one, every certificate is unknown to this layer and the
-    /// decider is asked every time: `.mismatch`, this project's hard stop,
-    /// cannot fire for a host nothing was ever pinned for.
+    /// `trustStore` is where a certificate is looked up and remembered, and
+    /// it has **no default** (Ruling T5.7). With `nil` every certificate is
+    /// unknown to this layer, so `ServerCertificateValidation.evaluate`
+    /// answers `.askUser` every time, nothing is ever pinned, and
+    /// `.mismatch` — this project's hard stop and an architecture invariant —
+    /// can never fire. A defaulted `nil` is a security-off switch a caller
+    /// gets by typing nothing, and this is the whole security value of
+    /// replacing the chain check with TOFU. A caller that really means
+    /// "remember nothing" says `nil` out loud.
     static func connect(
         _ config: FTPConnectionConfig,
         password: String,
         certificateDecider: CertificateDecider,
         timeout: Duration,
-        trustStore: TrustedCertificateStore? = nil,
+        trustStore: TrustedCertificateStore?,
         tuning: Tuning = .default
     ) async throws -> FTPControlConnection {
         let host = config.host
@@ -368,14 +436,14 @@ actor FTPControlConnection {
         // `USER` is the one call site `isPositive` is right for: `331` asks
         // for a password, `230` says none is needed, and both are the login
         // going well.
-        let user = try await send("USER", argument: username)
+        let user = try await sendCredential("USER", username)
         guard user.isPositive else { throw FTPConnectionFailure.loginRefused }
         if user.code != 230 {
             // `PASS` wants a 2xx. A `332 Need account for login` is a server
             // asking for an `ACCT` this backend does not send, and reading it
             // as a successful login would carry on against a session that is
             // not logged in.
-            let accepted = try await send("PASS", argument: password)
+            let accepted = try await sendCredential("PASS", password)
             guard accepted.isPositiveCompletion else { throw FTPConnectionFailure.loginRefused }
         }
 
@@ -388,6 +456,25 @@ actor FTPControlConnection {
         // The dial is over, so the dial's bound is too: from here a reply is
         // read under the per-reply idle bound (R2).
         replyBound = Self.timeAmount(tuning.replyIdleTimeout)
+    }
+
+    /// Sends a command whose argument is a CREDENTIAL, reporting a refused
+    /// one as a credential rather than as a path.
+    ///
+    /// Routing the two login arguments through `FTPPath.validated` is right —
+    /// a user name or a password carrying CR LF injects a command exactly as
+    /// a file name would — but the refusal it raises is a file's: the
+    /// sentence behind `core.connect.ftpPathForbidden.lineFeed` tells the
+    /// reader to rename a file, and `FTPPathRefusal` is not an
+    /// `FTPConnectionFailure`, so it left `connect` as a type nothing above
+    /// maps (fix round 1, R10). Neither the credential nor which of the two
+    /// fields carried it is in what this throws.
+    private func sendCredential(_ command: String, _ argument: String) async throws -> FTPReply {
+        do {
+            return try await send(command, argument: argument)
+        } catch is FTPPathRefusal {
+            throw FTPConnectionFailure.credentialNotSendable
+        }
     }
 
     /// The greeting, reading through any preliminary replies in front of it.

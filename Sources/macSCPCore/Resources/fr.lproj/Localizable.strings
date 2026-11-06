@@ -107,6 +107,7 @@
 "core.connect.ftpDataCertificateDiffers" = "Le serveur a utilisé un certificat différent pour le transfert de fichiers et pour la connexion elle-même ; le transfert a donc été refusé.";
 "core.connect.ftpSessionScope" = "Ce transfert a tenté de réutiliser la session chiffrée d'une autre connexion, ce que macSCP n'autorise pas.";
 "core.connect.ftpSessionRefused" = "La session chiffrée de cette connexion n'a pas pu être réutilisée pour le transfert de fichiers.";
+"core.connect.ftpCredentialNotSendable" = "Le nom d'utilisateur ou le mot de passe contient un saut de ligne ou un autre caractère qui ne peut pas être envoyé à un serveur FTP ; l'identification n'a donc pas été envoyée. Modifiez-le, puis réessayez.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "L'hôte ne doit pas être vide.";
