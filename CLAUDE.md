@@ -751,10 +751,17 @@ and its interest is paid by checking, not by remembering:
    to the upstream URL and a released tag, the fork record gets a
    "Retired" line, and the fork repository is archived — not deleted,
    the record points into it.
-3. **Upstream what the fork carries.** Every change the fork makes that
-   is not a cherry-pick is a PR candidate against upstream; open it, and
-   name the PR in the fork record. A fork that never sends anything back
-   grows its distance forever.
+3. **Do not open pull requests from the forks** (maintainer decision,
+   2026-11-06). This rule used to say the opposite, verbatim: "**Upstream
+   what the fork carries.** Every change the fork makes that is not a
+   cherry-pick is a PR candidate against upstream; open it, and name the PR
+   in the fork record." It is withdrawn, and the clause that followed it is
+   not — a fork that never sends anything back does grow its distance
+   forever, and that is now the accepted cost rather than a thing to
+   prevent. What a fork record states is therefore that no upstream PR will
+   be opened and why, not a PR number and not a candidacy. Retirement is
+   unaffected: rule 2 still ends a fork when upstream carries what the fork
+   carries, and that happens whether or not upstream heard it from us.
 4. **A fork change is reviewed like any code here**, red first, with the
    fork's own suite green, a real observed red in the commit message and
    no fabricated hash (both happened once, 2026-09-01, and were caught

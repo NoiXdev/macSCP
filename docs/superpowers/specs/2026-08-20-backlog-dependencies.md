@@ -4,6 +4,21 @@
 `Package.swift`, `Package.resolved` and the tags of the respective
 projects.
 
+> **Reading note, 2026-11-06: every "upstream PR candidate" in this document
+> is a candidate that will not be sent.** The maintainer ruled that no pull
+> requests are to be created from any of the three forks ("von den forks bitte
+> keine prs erstellen"), and CLAUDE.md's fork rule 3 was inverted the same day
+> to say so, quoting the sentence it withdrew. This note is deliberately one
+> statement at the head of the document rather than an edit at each site: the
+> phrase occurs in several rows and sections written over three months, a
+> sweep for it has to classify per match rather than per line in a file whose
+> rows are one physical line each, and this project's own record of such
+> sweeps is that one gets missed. So nothing below is rewritten, each
+> occurrence stays as the accurate record of what the fork carries and of what
+> would have made a good contribution, and this note is what makes it clear
+> that none of them is an open action. The two sections dated 2026-10-08 and
+> 2026-11-06 state the decision itself.
+
 ## Is vs. latest
 
 | Package | resolved | latest | Note |
@@ -1547,13 +1562,21 @@ commit today.
 
 ### Decided 2026-10-08 — NO upstream PR for this tag, a deliberate deviation
 
-CLAUDE.md's fork rule 3 says "Every change the fork makes that is not a
-cherry-pick is a PR candidate against upstream; open it, and name the PR in
-the fork record. A fork that never sends anything back grows its distance
-forever." **The maintainer chose not to open one for `0.12.1-noix.4`**, with
-that rule quoted to them, and asked for the decision to be recorded as a
-deviation rather than left as an omission — so that a later reader sees a
-choice and not a lapse.
+CLAUDE.md's fork rule 3 said, until 2026-11-06, "Every change the fork makes
+that is not a cherry-pick is a PR candidate against upstream; open it, and
+name the PR in the fork record. A fork that never sends anything back grows
+its distance forever." **The maintainer chose not to open one for
+`0.12.1-noix.4`**, with that rule quoted to them, and asked for the decision
+to be recorded as a deviation rather than left as an omission — so that a
+later reader sees a choice and not a lapse.
+
+Withdrawn wording, verbatim: "CLAUDE.md's fork rule 3 says" — present tense,
+and on **2026-11-06** it stopped being true. The maintainer ruled that no pull
+requests are to be created from any of the three forks ("von den forks bitte
+keine prs erstellen"), and rule 3 was inverted in CLAUDE.md to say so,
+quoting the sentence above as the wording it withdraws. Nothing in the
+paragraph that follows is withdrawn: it is the account of a decision taken on
+2026-10-08 under the rule as it then stood, and it was accurate then.
 
 This is recorded, not endorsed, and the debt it names is still open: both
 halves of this tag are general, neither depends on anything fork-specific,
@@ -1561,6 +1584,18 @@ and the half-close uses the spelling nio-ssh's own documentation prescribes,
 so both remain good PR candidates whenever the decision is revisited. The
 context for the choice: upstream has not pushed since 2026-06-12 and PR #135
 has sat open since the RSA work, so an upstream merge cannot be counted on.
+
+**Status as of 2026-11-06: the decision was not revisited, it was
+generalised.** Withdrawn wording, verbatim: "This is recorded, not endorsed,
+and the debt it names is still open" — the debt is now closed as a decision
+rather than as work, because the rule it deviated from no longer asks for the
+PR. What survives unchanged is everything the paragraph says about the code:
+both halves are general, neither depends on anything fork-specific, and either
+would still be a good PR if the decision were ever reversed. What replaces the
+open debt is the accepted cost, which rule 3 now states in CLAUDE.md itself:
+the distance from upstream grows with every release, and only upstream
+arriving at an equivalent independently closes it — which is what rule 2's
+retirement check at each release exists to notice.
 
 ### A third defect, found by fixing the second, and left marked
 
