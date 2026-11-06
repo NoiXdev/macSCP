@@ -1773,8 +1773,27 @@ across connections ("not measured", section 7). **It does not offer it at all.**
 `/usr/bin/grep -rn -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET .build/checkouts/swift-nio-ssl/Sources/NIOSSL`
 prints nothing (exit 1), against 1 for
 `/usr/bin/grep -rn -e SSL_CTX_set_min_proto_version .build/checkouts/swift-nio-ssl/Sources/NIOSSL | wc -l`
-(the control: the same directory, a symbol it does use). A
-BoringSSL client offers a session only when told to with `SSL_set_session`, so a
+(the control: the same directory, a symbol it does use).
+
+**Correction, 2026-11-06.** The finding is unchanged — apple/swift-nio-ssl still
+offers no client-side resumption — but the command above no longer measures it,
+and re-running it as committed now says the opposite. Withdrawn: "prints
+nothing (exit 1)". Since the override of 2026-11-06 below,
+`.build/checkouts/swift-nio-ssl` is the NoiXdev fork, where the same command
+prints **7** lines and exits **0**
+(`/usr/bin/grep -rn -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET .build/checkouts/swift-nio-ssl/Sources/NIOSSL | wc -l`).
+What still reproduces the claim, run in the fork clone where both tags exist,
+with the apple base tag and our tag as each other's control — `-l` lists files,
+so these are file counts, not occurrence counts:
+
+```
+git grep -l -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET 2.37.6 -- Sources/NIOSSL
+    ->  nothing, exit 1                 (apple 2.37.6: the finding)
+git grep -l -e SSL_set_session -e SSL_session_reused -e SSL_CTX_set_session -e SSL_OP_NO_TICKET 2.37.6-noix.1 -- Sources/NIOSSL
+    ->  4 files, exit 0                 (the control for that zero)
+```
+
+A BoringSSL client offers a session only when told to with `SSL_set_session`, so a
 swift-nio-ssl client always starts a full handshake. The server side is
 unaffected (BoringSSL server tickets and caching are on by default there).
 
@@ -1829,3 +1848,256 @@ Each quotes the wording it withdraws, verbatim.
   the committed text afterwards and printed 1234, 2, 72 and 1.
 
 **Review date:** at the next release, and when Task 5 reports.
+
+## Done 2026-11-06 — the third fork: `NoiXdev/swift-nio-ssl`, for client-side TLS session resumption
+
+The finding above ("neither client resumes") was not something to ship around:
+vsftpd defaults `require_ssl_reuse` to YES, so an FTPS data connection that does
+not resume its control connection's TLS session is answered
+`522 SSL connection failed; session reuse required`, and that server population
+is why FTP is being built at all. The maintainer chose a third fork, alongside
+the two above.
+
+**What it carries.** One commit, adding the client-side session-resumption API
+upstream has none of. Nothing is removed, nothing existing changes signature,
+and nothing under `Sources/CNIOBoringSSL/` is touched — every BoringSSL function
+needed was already vendored, so this is a Swift wrapping job over C that is
+present, not a patch to BoringSSL.
+
+- `NIOSSLSession`, a reference-counted handle on an `SSL_SESSION`, `Sendable` so
+  a session can cross `EventLoop`s. It exposes `shouldBeSingleUse`
+  (`SSL_SESSION_should_be_single_use`) and `isResumable`
+  (`SSL_SESSION_is_resumable`).
+- `NIOSSLHandler.tlsSessionWasResumed` (`SSL_session_reused`) and
+  `NIOSSLHandler.establishedTLSSessions`, each also on `Channel` and on
+  `ChannelPipeline.SynchronousOperations` as `nioSSL_*`, which is the three-way
+  spelling upstream already uses for `tlsVersion` and `peerCertificate`.
+- `NIOSSLClientHandler.init(context:serverHostname:sessionToResume:customVerificationCallback:configuration:)`,
+  which calls `SSL_set_session` beside `setConnectState()` and
+  `setServerName(name:)`, before the handshake can begin.
+- Internally `NIOSSLContext.init` now sets `SSL_SESS_CACHE_CLIENT` and registers
+  `SSL_CTX_sess_set_new_cb`. Both are required, not stylistic: BoringSSL never
+  uses its internal cache on a client, and with the client bit unset the
+  callback is never called at all. Only the client bit is set, so server
+  behaviour is unchanged.
+- Two new `NIOSSLExtraError` cases,
+  `cannotResumeSessionFromDifferentContext` and
+  `cannotResumeSessionForDifferentServerHostname`. Resumption short-circuits
+  certificate verification and most parameter negotiation, so a resumed session
+  inherits the trust decision of the handshake that produced it; a session
+  therefore remembers the `NIOSSLContext` and the SNI name it was established
+  under, and offering it anywhere else **throws** rather than being documented
+  against. For macSCP that is what keeps TOFU meaningful.
+- Who owns a TLS 1.3 session's single use: **the caller**. `shouldBeSingleUse`
+  reports RFC 8446 appendix C.4's requirement and nothing enforces it; the API
+  never consumes or invalidates a session, so a caller needing several
+  resumptions keeps several sessions and takes each out of its own queue once.
+  That policy is Task 5's to write.
+
+**Why not the obvious primitive.** `SSL_get1_session` cannot do this. The
+vendored header says so at `SSL_get_session`: using
+`SSL_CTX_sess_set_new_cb` "is required as of TLS 1.3", and for compatibility
+`SSL_get_session` "will return an unresumable session which may be cached, but
+will never be resumed". TLS 1.3 is the library default. An API built on it would
+compile, read correctly, and leave the `522` exactly where it was.
+
+**Base, tag, and the advisory that set the base.** Fork base is apple's tag
+**2.37.6** (commit `15e0b9e4`), which is what `Package.resolved` already pinned,
+and nothing older: everything in `>= 2.18.0, <= 2.37.1` is inside
+**CVE-2026-43820** (GHSA-xfxg-9975-pc2j, critical, published 2026-07-15,
+"Accessing bytes of non-string SAN can lead to out-of-bounds memory read",
+patched in 2.37.2). Reading a server's subject-alternative-name is precisely
+what an FTPS client does against a host it has never met. Our tag is
+**`2.37.6-noix.1`** — upstream base plus our counter, the `0.12.1-noix.N`
+pattern, which makes the base legible from the tag where
+`NoiXdev/swift-nio-ssh`'s bare `0.3.10` does not. It is a real GitHub fork, not
+a standalone repository, which is what keeps a path back to apple open — and
+fixes, for this fork, the thing that makes the oldest one awkward:
+`NoiXdev/swift-nio-ssh`'s source is `Joannis/swift-nio-ssh`, whose own parent is
+`null`, so every cross-repo compare against apple returns 404.
+`gh api repos/NoiXdev/swift-nio-ssl --jq '[.fork, .private, .parent.full_name, .source.full_name, .default_branch]'`
+prints `[true,false,"apple/swift-nio-ssl","apple/swift-nio-ssl","main"]`.
+
+**The fork's own suite.** Measured 2026-11-06, macOS 27, Swift 6.4.2, no
+`--build-system` flag:
+
+| | tests | failures |
+|---|---|---|
+| pristine `2.37.6` clone (the control) | 344 | 0 |
+| the fork at `2.37.6-noix.1` | **352** | **0** |
+| `swift test --filter TLSSessionResumptionTests` | 8 | 0 |
+
+352 − 344 = 8, exactly the new test file's case count. Three reds were watched,
+each quoted in the commit message and recorded with its anchor at the top of
+`Tests/NIOSSLTests/TLSSessionResumptionTests.swift`:
+
+- **Red first.** With the offer validating its argument but not yet calling
+  `SSL_set_session` — the silent no-op this whole fork exists to avoid —
+  `testASecondConnectionResumesTheFirstsSessionOverTLS13` and `...OverTLS12`
+  both read `XCTAssertTrue failed - the offered session was not resumed`; 8
+  tests ran, 2 failures, the other six green.
+- **The cache mode dropped** (`SSL_CTX_set_session_cache_mode(context,
+  SSL_SESS_CACHE_CLIENT)` removed, anchor asserted to match exactly once): 8
+  tests ran, **10 failures**, with the direct pin
+  `testTheClientSessionCacheModeIsEnabledOnEveryContext` reading
+  `XCTAssertEqual failed: ("0") is not equal to ("1")` — the mode back at
+  `SSL_SESS_CACHE_OFF` — and every connection establishing 0 sessions.
+- **The callback registration dropped** (`NIOSSLContext.setNewSessionCallback`):
+  8 tests ran, **9 failures**, the same 0-session outcome with the cache-mode
+  case the one that stayed green. That difference is what tells the two plants
+  apart.
+
+Both plants were restored by copying a pre-plant copy back, verified
+`cmp`-identical, with `git status --porcelain=v1` diffed against its pre-plant
+capture — never `git checkout -- <file>`. `scripts/mutation-probe` could not
+carry them: it `cd`s to `$(dirname "$0")/..`, so it always measures macSCP, and
+it reads its figures from swift-testing's event stream, which NIOSSL's XCTest
+target does not write.
+
+**Two figures the design had left unmeasured, now measured.** NIOSSL's server
+does issue session tickets at the library default, and the figures are asserted
+rather than bounded: a client receives **2** sessions over TLS 1.3 (BoringSSL's
+documented default — `SSL_CTX_set_num_tickets`: "By default, BoringSSL sends two
+tickets") and **1** over TLS 1.2. No change to server defaults was needed and
+none was made. `shouldBeSingleUse` is pinned `true` for every TLS 1.3 session
+and `false` for the TLS 1.2 one, which is the version-specific distinction the
+withdrawn primitive got wrong.
+
+**Proven end to end outside macSCP**, in a throwaway SwiftPM package depending
+on the fork by local path: two listening sockets sharing one server
+`NIOSSLContext` — which is what shares the ticket keys between them, the way
+vsftpd serves control and data from one process — then a control connection on
+one port and two data connections on the other, each resuming a different
+session out of a caller-held queue, beside the control that a data connection
+offering nothing does not resume. Nine claims, all held. That package was not
+committed; it is described here, not reproducible from the tree.
+
+### The fork debt, measured 2026-11-06 — and the count is zero
+
+CLAUDE.md requires this at every fork change, so it is written here with its
+commands rather than referred to. Run in the fork clone after
+`git fetch upstream --tags`:
+
+```
+git log --oneline 2.37.6..upstream/main | wc -l                 ->  0
+git rev-parse 2.37.6 upstream/main                              ->  15e0b9e4…, 15e0b9e4… (identical)
+git log --oneline upstream/main..client-tls-session-resumption | wc -l  ->  1
+gh api repos/apple/swift-nio-ssl/security-advisories --jq 'length'      ->  2
+```
+
+`upstream/main` **is** the `2.37.6` commit, so there are **0** commits since the
+fork base — nothing to classify as security, correctness, feature or noise, and
+no security commit was owed before the tag. The fork is **1 commit ahead, 0
+behind**. A zero measured on a date is evidence; a zero remembered is not, which
+is why the commands stand beside it.
+
+Both advisories are outside the base, and the second is why the figure is 2
+rather than 1 — it is not new:
+
+| advisory | severity | published | vulnerable range | patched |
+|---|---|---|---|---|
+| CVE-2026-43820 / GHSA-xfxg-9975-pc2j | critical | 2026-07-15 | `>= 2.18.0, <= 2.37.1` | 2.37.2 |
+| CVE-2019-8849 / GHSA-9556-94c5-c3j8 | medium | 2019-11-25 | `2.0.0 <= 2.4.0` | 2.4.1 |
+
+`gh api repos/apple/swift-nio-ssl/security-advisories --jq '.[] | {cve: .cve_id, severity, vulns: [.vulnerabilities[] | {range: .vulnerable_version_range, patched: .patched_versions}]}'`
+prints both rows. 2.37.6 is above both patched versions.
+
+### Retirement condition, and the one sentence a retirement must not lose
+
+**Retireable: no.** The condition is upstream landing an equivalent client-side
+session-resumption API. Upstream has none today — the correction under "neither
+client resumes" above carries the command and its control. When it does, the
+override in `Package.swift` goes back to apple's URL, this record gets a
+"Retired" line, and the fork repository is archived rather than deleted, because
+the record points into it.
+
+**And the retirement must not reinstate a CVE.** The line this override
+replaced was `from: "2.27.0"`. Putting that back would reopen
+**CVE-2026-43820**, which covers everything up to and including 2.37.1. A revert
+to apple's URL therefore needs **`from: "2.37.2"` or later**, never the floor it
+replaced. The same sentence is in `Package.swift`'s comment on the override, so
+it is in both places a person retiring this fork will look.
+
+That is also what became of **Ruling T4.3**, and it is withdrawn here rather
+than silently dropped. The ruling said to raise the floor `from: "2.27.0"` →
+`from: "2.37.2"` as a commit of its own, before the override. Withdrawn: that
+separate commit. `exact: "2.37.6-noix.1"` admits no version range at all, let
+alone a vulnerable one, so raising a floor on a line that no longer exists would
+be a change with no effect. What the ruling was protecting survives as the
+paragraph above: the CVE's reason now lives in this record and in the
+`Package.swift` comment instead of in a floor.
+
+### No upstream PR, for this fork or any of them — maintainer decision, 2026-11-06
+
+**No pull requests are to be created from the forks.** The decision is the
+maintainer's, taken 2026-11-06, and it covers all three of them —
+`NoiXdev/swift-nio-ssl`, `NoiXdev/swift-nio-ssh` and `NoiXdev/Citadel` — not
+only this one. So no PR has been opened against `apple/swift-nio-ssl` and none
+will be; there is no PR number to add to this record later.
+
+CLAUDE.md's fork rule 3 said the opposite until the same day, and now carries
+the decision with the old wording quoted as withdrawn — "**Upstream what the
+fork carries.** Every change the fork makes that is not a cherry-pick is a PR
+candidate against upstream; open it, and name the PR in the fork record." That
+file was corrected by the maintainer, not from here; this record states the
+decision in its own right because a fork record is where a later reader looks
+for what was and was not sent.
+
+**The cost, stated rather than smoothed over.** The withdrawn rule existed
+because a fork that never sends anything back grows its distance forever, and
+the corrected rule 3 keeps that clause rather than dropping it: it is "now the
+accepted cost rather than a thing to prevent". Concretely, for this fork: its
+distance from upstream grows with every apple release, each one a rebase or a
+cherry-pick we carry and nobody else does, and the only thing that closes it is
+upstream arriving at an equivalent client-side resumption API on its own.
+Nothing we do makes that more likely. It is the maintainer's call and it is
+made; it is written down as the price of the decision, not as a problem for a
+later round to solve.
+
+The retirement condition is unaffected, because it never depended on our having
+sent anything: upstream landing an equivalent API is still how this fork ends.
+What changes is only that we will not be the ones who put it there.
+
+### macSCP side
+
+`Package.swift`, one line, same package identity (`swift-nio-ssl`) at a
+different URL — the shape the two overrides above already have:
+
+```
+-        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
++        .package(url: "https://github.com/NoiXdev/swift-nio-ssl.git", exact: "2.37.6-noix.1"),
+```
+
+`exact:` because every change to a fork should be a deliberate bump here, and
+because SwiftPM excludes pre-release versions from `from:` and from range
+requirements while accepting them with `exact:` — which is how
+`NoiXdev/Citadel`'s `0.12.1-noix.5` is already consumed, so the precedent is
+measured rather than assumed.
+
+`Package.resolved` changed in **4** lines and no others
+(`git diff --numstat Package.resolved` prints `4 4 Package.resolved`): the
+`originHash`, and the nio-ssl pin's `location`, `revision` and `version` —
+`https://github.com/apple/swift-nio-ssl.git` at `15e0b9e4…` / `2.37.6` becoming
+`https://github.com/NoiXdev/swift-nio-ssl.git` at
+`5a4e81132d729242bbffcbd65bc4725672a22429` / `2.37.6-noix.1`. It was produced by
+`swift package resolve`, not edited. No other pin moved, and the pinned-identity
+count is unchanged at 13
+(`/usr/bin/grep -o '"identity"' Package.resolved | wc -l`).
+
+`THIRD_PARTY_NOTICES.md` changed in **2** lines
+(`git diff --numstat THIRD_PARTY_NOTICES.md` prints `2 2 THIRD_PARTY_NOTICES.md`):
+the version and URL in the summary table, and the `Source:` line of the
+swift-nio-ssl section. Regenerated with `scripts/third-party-notices`, not by
+hand; `scripts/third-party-notices --check` then prints "is up to date" and
+exits 0. This was not optional and not foreseen in the plan: the notices are a
+function of `Package.resolved`, and the stale file turned
+`ThirdPartyNoticesTests.anUnknownFlagIsRefusedWithUsageAndExitCodeTwo` red on
+its POSITIVE half (`known.status == 0` at `ThirdPartyNoticesTests.swift:284`) —
+the `--check` call that sits beside the unknown-flag refusal precisely so a
+script that rejected every flag could not pass. The licence text itself did not
+move: the fork carries apple's `LICENSE.txt` unchanged, and the vendored
+BoringSSL still has no standalone licence file, so the 2026-11-05 finding above
+about the notices' contents still holds.
+
+**Review date:** at the next release, and when Task 5 reports — and at every
+fork change, which for this fork means before any `2.37.6-noix.2`.
