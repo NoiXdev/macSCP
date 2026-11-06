@@ -5,16 +5,59 @@ import Foundation
 ///
 /// **Why this exists at all.** `LoopbackFTPServer` has to enforce what
 /// vsftpd's `require_ssl_reuse` enforces: a data connection whose TLS session
-/// is not a resumption of the control connection's is refused. Neither TLS
-/// stack on offer answers "did this connection resume?" through an API:
+/// is not a resumption of the control connection's is refused. The verdict is
+/// read off the wire rather than asked of the TLS library, and the reason for
+/// that changed on 2026-11-06 — the original reason was that no library
+/// offered it, and that is no longer true of the one this tree resolves.
+///
+/// Withdrawn wording, verbatim: "Neither TLS stack on offer answers \"did this
+/// connection resume?\" through an API" and, of the second bullet below,
+/// "swift-nio-ssl: `NIOSSLHandler` exposes `tlsVersion`, `peerCertificate` and
+/// the validated chain, and nothing about the session." Task 4b made the
+/// second false: the NoiXdev fork at `2.37.6-noix.1` adds
+/// `tlsSessionWasResumed` to `NIOSSLHandler` — the BASE class of both
+/// `NIOSSLClientHandler` and `NIOSSLServerHandler`, so it reaches the server
+/// handler this fixture uses. Counted in the fork clone with
+/// `git -C /Users/noidee/_dev/swift-nio-ssl grep -n 'var tlsSessionWasResumed' -- Sources/NIOSSL/NIOSSLHandler.swift`,
+/// which prints one line.
+///
+/// **The reason that replaces it is independence, which is the stronger one.**
+/// This fixture's whole job in Task 5 is to check a claim the fork's
+/// client-side `tlsSessionWasResumed` makes. If the server half asked the same
+/// library the same question, a fork that answered wrongly would answer
+/// wrongly in both halves at once and the test would go green on a broken
+/// dependency. Reading the server's own handshake bytes is a measurement the
+/// fork cannot influence. So the API's arrival is a reason to keep this, not
+/// to delete it.
+///
+/// What still stands unchanged:
 ///
 /// - Network.framework: the metadata accessors of an `NWConnection`'s TLS
 ///   protocol (`sec_protocol_metadata_*`) hold no such getter, and a probe
 ///   (docs/superpowers/specs/2026-08-20-backlog-dependencies.md, section
 ///   "swift-nio-ssl") showed one full handshake and five resumed ones through
 ///   an `NWListener` indistinguishable in every accessor there is.
-/// - swift-nio-ssl: `NIOSSLHandler` exposes `tlsVersion`, `peerCertificate`
-///   and the validated chain, and nothing about the session.
+/// - Upstream swift-nio-ssl, at the `2.37.6` tag this fork is built on, still
+///   exposes nothing about the session. Measured with
+///   `git -C /Users/noidee/_dev/swift-nio-ssl grep -c -i 'session_reused\|SSL_SESSION\|sessionWasResumed' 15e0b9e4 -- Sources/NIOSSL/NIOSSLHandler.swift`,
+///   which prints nothing and exits 1. A zero on its own is not a measurement,
+///   so two positive controls stand beside it, each spelled out rather than
+///   described — the figures differ by a flag, and a control whose command the
+///   reader has to reconstruct is the failure the whole rule is about:
+///
+///       # the same pattern one tag later: prints 8
+///       git -C /Users/noidee/_dev/swift-nio-ssl grep -c -i 'session_reused\|SSL_SESSION\|sessionWasResumed' HEAD -- Sources/NIOSSL/NIOSSLHandler.swift
+///       # the file is reachable at the base tag: prints 5, and 10 if -i is added
+///       git -C /Users/noidee/_dev/swift-nio-ssl grep -c 'tlsVersion' 15e0b9e4 -- Sources/NIOSSL/NIOSSLHandler.swift
+///
+///   The second control carries NO `-i`, and this comment first stated its
+///   figure beside the `-i` command above it, which would have had a reader
+///   reproduce 10 where the text said 5. Caught by the Task 4b reviewer reading
+///   this file mid-flight. The claim above
+///   was never wrong about upstream; it went stale because the dependency
+///   moved underneath it, which is the failure mode CLAUDE.md's section on
+///   comments that describe other code exists for — the comment became false
+///   without appearing in any diff, and no test could have caught it.
 ///
 /// What the wire shows, on the other hand, is unambiguous and needs no
 /// library: the server's own handshake messages, which are in the clear up to
