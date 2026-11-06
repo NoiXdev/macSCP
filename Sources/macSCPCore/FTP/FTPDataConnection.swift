@@ -135,12 +135,25 @@ enum FTPDataConnection {
 
     /// A data connection on `control`, negotiated passively.
     ///
-    /// `EPSV` first, `PASV` after it. The preference is not a taste: `EPSV`
+    /// `EPSV` first, `PASV` after it, and the preference is not a taste.
+    /// `EPSV` carries no address to parse, so a reply that is well-formed is
+    /// usable — where a `227` can be well-formed FTP and still unreadable
+    /// here, in the five ways `passiveEndpoint(_:peerHost:)` enumerates. And
+    /// RFC 2428 exists for IPv6: a `227`'s four octets cannot name an IPv6
+    /// peer at all, so `EPSV` is the only passive command with a future.
+    ///
+    /// Withdrawn wording, verbatim: "The preference is not a taste: `EPSV`
     /// carries no address at all, so the question
     /// `passiveEndpoint(_:peerHost:)` has to answer — may this address be
-    /// dialled — never arises on the preferred path. A server that refuses
-    /// `EPSV` is remembered on the connection, so the extra round trip is
-    /// paid once rather than once per transfer.
+    /// dialled — never arises on the preferred path." Ruling T6.2 removed
+    /// that question from both parsers, so the reason given here named a
+    /// decision that no longer exists; eighty lines above, the same file now
+    /// says the address is read and then not used. The preference survives
+    /// the reason it was given for, which is why this is a rewrite and not a
+    /// deletion.
+    ///
+    /// A server that refuses `EPSV` is remembered on the connection, so the
+    /// extra round trip is paid once rather than once per transfer.
     ///
     /// Active mode (`PORT`) is not here and is not planned: it needs the
     /// client to listen, which is what firewalls and NAT have made

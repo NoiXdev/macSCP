@@ -143,13 +143,33 @@ actor FTPConnectionPool {
 
     /// How many callers are parked waiting for a slot.
     ///
-    /// **A seam, and it earns its keep rather than being convenience.** The
-    /// two cases about a wait ENDING — by cancellation and by `shutdown()` —
-    /// have to know a waiter is really parked before they end it, because a
-    /// waiter that has not parked yet takes the `guard !isShutDown` or the
-    /// `Task.isCancelled` arm on its first look and never reaches the
-    /// release the case exists to measure. Without this the case would pass
-    /// against a pool that strands every waiter it has.
+    /// **A seam, and it earns its keep rather than being convenience.** ONE
+    /// case reads it, `shutdownReleasesAWaiterRatherThanLeavingItParked`,
+    /// which has to know a waiter is really parked before it shuts the pool
+    /// down: a waiter that has not parked yet takes the `guard !isShutDown`
+    /// arm on its first look and never reaches the release the case exists
+    /// to measure, so the case would pass against a pool that strands every
+    /// waiter it has.
+    ///
+    /// Withdrawn wording, verbatim: "The two cases about a wait ENDING — by
+    /// cancellation and by `shutdown()` — have to know a waiter is really
+    /// parked before they end it". It was false of the cancellation case,
+    /// which cancels at once and never reads this — and does not need to,
+    /// because `waitForASlot` checks `Task.isCancelled` before it parks, so
+    /// that case is deterministic either way. An enumeration in a comment is
+    /// a claim about the rest of the project, and this one was written in the
+    /// round whose R6 was three such claims; it is corrected here by running
+    /// the command rather than by rereading the sentence:
+    ///
+    ///     /usr/bin/grep -rno 'pool\.waiterCount' Tests
+    ///
+    /// prints **1** line, the one call site. It is spelled with the receiver
+    /// on purpose: a bare `waiterCount` over `Sources Tests` also matches
+    /// `TransferQueueViewModel`'s unrelated property of the same name, the
+    /// `conflictGateWaiterCount` that reads it, and — the reason the figure
+    /// has to be a call-site count rather than a tree-wide one — every
+    /// sentence here that names it, which moved the answer twice while this
+    /// paragraph was being written.
     var waiterCount: Int { waitingOrder.count }
 
     /// Slots nothing is holding. Never negative: a budget that shrinks below

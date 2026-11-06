@@ -88,10 +88,29 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     case sessionFromAnotherConnection
     /// A passive reply named no readable place at all.
     ///
-    /// Unusable means one of five things, all of them the reply being
-    /// unreadable: no parenthesised address at all, not six comma-separated
-    /// fields, a field that is not a number, an octet past 255, or a port of
-    /// zero. **It is never a judgement about WHERE the reply points**: the
+    /// Unusable always means the reply being unreadable, and **both parsers
+    /// throw this, with four throw sites each** — counted, not remembered:
+    /// `/usr/bin/grep -c passiveAddressRefused Sources/macSCPCore/FTP/FTPDataConnection.swift`
+    /// prints 8, and `-c` is the right tool because each site is its own
+    /// line. A `227` is unusable in five ways: no parenthesised address at
+    /// all, not six comma-separated fields, a field that is not a number, an
+    /// octet past 255, or a port of zero. A `229` is unusable in four, and
+    /// they are not the same four: no parenthesised field, a field with no
+    /// first character to use as a delimiter, a field that is not five
+    /// delimiter-separated parts with empty ends, or a port outside
+    /// `1...65535` — which is a wider check than the `227`'s, since six
+    /// octets cannot express a port above 65535 while an `EPSV` reply's
+    /// decimal field can. (Withdrawn wording, verbatim: "Unusable means one
+    /// of five things, all of them the reply being unreadable: no
+    /// parenthesised address at all, not six comma-separated fields, a field
+    /// that is not a number, an octet past 255, or a port of zero." Those
+    /// five are the `227` parser's, and this is the case-level comment for an
+    /// error both parsers throw; "not six comma-separated fields" is not a
+    /// thing `EPSV` ever requires.) The function-level count on
+    /// `passiveEndpoint` is correctly scoped to the `227` and is pinned by
+    /// `#expect(unusable.count == 5)`.
+    ///
+    /// **It is never a judgement about WHERE the reply points**: the
     /// host a passive reply names is read and then ignored, and the data
     /// connection always goes to the control connection's own peer
     /// (`FTPDataConnection.passiveEndpoint(_:peerHost:)`). Withdrawn wording,
@@ -276,11 +295,27 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     ///
     ///     /usr/bin/grep -c -e ftpPassiveAddressRefused -e ftpPassiveModeRefused -e ftpTransferRefused -e ftpRestRefused -e ftpLeaseReturned Sources/macSCPCore/Resources/en.lproj/Localizable.strings
     ///
-    /// The three that ARE server refusals are in step for the reason
-    /// `aRefusedTransferCarriesNoCompletionReply` gives: a refusal is the
-    /// whole answer and nothing further is owed. `passiveAddressRefused` and
+    /// **Four of the five are in step for one reason**, the one
+    /// `aRefusedTransferCarriesNoCompletionReply` gives: the reply was the
+    /// whole answer and nothing further is owed. That covers
+    /// `passiveAddressRefused` too — a `PASV` or `EPSV` WAS written and its
+    /// reply read in full there, and the refusal is this client's, after the
+    /// exchange. (Withdrawn wording, verbatim: "`passiveAddressRefused` and
     /// `leaseAlreadyReturned` are in step because nothing was written to the
-    /// wire at all.
+    /// wire at all." It is true of the second and false of the first, and
+    /// the same commit's own case asserts the opposite:
+    /// `#expect(verbs.contains("PASV"))` in
+    /// `aPASVReplyWithAnUnusableAddressIsRefusedRatherThanDialled`.)
+    ///
+    /// `leaseAlreadyReturned` is the fifth, and nothing is written for it —
+    /// **but its classification here is never consulted.**
+    /// `FTPTransferLease.transferring` throws on a returned lease BEFORE the
+    /// `do` whose `catch` calls `reusable(after:)`, and `readStream` refuses
+    /// through the stream without reaching the drain at all. The case is in
+    /// this arm because the `switch` is exhaustive and because `true` is the
+    /// honest answer if anything ever did ask; it is inert today, and that is
+    /// said here so the next reader does not go looking for the path that
+    /// reads it.
     var leavesConnectionInStep: Bool {
         switch kind {
         case .passiveAddressRefused, .passiveModeRefused, .transferRefused, .restRefused,
@@ -934,22 +969,26 @@ actor FTPControlConnection {
 
     /// How many callers are parked waiting for the turn.
     ///
-    /// **One case reads it, twice**, and it is
+    /// **One case reads it, three times**, and it is
     /// `FTPControlConnectionTests.aWaiterForTheCommandTurnAnswersCancellation`:
-    /// once to know a waiter is really parked before it cancels one — a
+    /// to know a waiter is really parked before it cancels one — a
     /// cancellation that lands before the park takes `acquire()`'s own
     /// `Task.isCancelled` arm and never reaches the release the case exists
-    /// to measure — and once afterwards, to say the queue is empty again.
+    /// to measure — to know the cancelled waiter has been released, which is
+    /// that case's hang bound, and once afterwards to say the queue is empty.
     /// Re-run from the repository root:
     ///
-    ///     /usr/bin/grep -rn turnWaiterCount Sources Tests
+    ///     /usr/bin/grep -rno 'connection\.turnWaiterCount' Tests
     ///
-    /// prints **5** lines: this declaration, the command line just above,
-    /// the two call sites, and one prose mention in that case's own doc
-    /// comment. Counted by running it, which is the point — the first draft
-    /// of this sentence said three, and was written in the fix round whose
-    /// R1 exists because the comment on `FTPConnectionPool.waiterCount` said
-    /// two callers and had one.
+    /// prints **3** lines, all in that one case — the park, the release, and
+    /// the queue read afterwards. It is spelled with the
+    /// receiver and scoped to `Tests` for the reason
+    /// `FTPConnectionPool.waiterCount`'s own comment gives: a bare
+    /// `turnWaiterCount` over `Sources Tests` also matches every sentence
+    /// that names it, so the figure moves as the prose around it is written
+    /// — which happened twice while this paragraph was being written, the
+    /// first draft having said three. A call-site count with a receiver in
+    /// it cannot do that.
     var turnWaiterCount: Int { waitingOrder.count }
 
     /// Takes the turn, parking until it is free, and ANSWERS CANCELLATION
