@@ -126,6 +126,21 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// of it with no error anywhere.
     case restRefused(code: Int)
 
+    /// A transfer was started on an `FTPTransferLease` that had already been
+    /// given back to the pool.
+    ///
+    /// macSCP's own guard, and the last hole in the lease's structural
+    /// boundary. Measured in the Task 6 review: a lease released
+    /// `reusable: true`, whose connection the pool had already handed to a
+    /// second lease, ran a complete `RETR` on it — one socket, two owners.
+    /// Nothing but the control connection's command turn kept the two
+    /// transfers from interleaving, and a desynchronised control connection
+    /// is what §5a's rule about discarding exists to avoid.
+    ///
+    /// It carries no payload, and the transfer never reaches the wire, so
+    /// the connection is left exactly as it was.
+    case leaseAlreadyReturned
+
     /// The TLS library refused the session this connection offered.
     ///
     /// **Mapped, never surfaced.** `NIOSSLExtraError`'s own description for
@@ -170,6 +185,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case passiveModeRefused
         case transferRefused
         case restRefused
+        case leaseAlreadyReturned
 
         /// This failure's catalog key. A case added without its four catalog
         /// entries is caught by `everyConnectionFailureHasItsOwnSentence`,
@@ -198,6 +214,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
             case .passiveModeRefused: "core.connect.ftpPassiveModeRefused"
             case .transferRefused: "core.connect.ftpTransferRefused"
             case .restRefused: "core.connect.ftpRestRefused"
+            case .leaseAlreadyReturned: "core.connect.ftpLeaseReturned"
             }
         }
     }
@@ -224,6 +241,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case .passiveModeRefused: .passiveModeRefused
         case .transferRefused: .transferRefused
         case .restRefused: .restRefused
+        case .leaseAlreadyReturned: .leaseAlreadyReturned
         }
     }
 
@@ -242,6 +260,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     var leavesConnectionInStep: Bool {
         switch kind {
         case .passiveAddressRefused, .passiveModeRefused, .transferRefused, .restRefused,
+            .leaseAlreadyReturned,
             .binaryModeRefused, .dataCertificateDiffers, .sessionFromAnotherConnection,
             .sessionRefusedByTLS, .certificateRejected, .certificateMismatch,
             .trustStoreUnreadable, .credentialNotSendable:

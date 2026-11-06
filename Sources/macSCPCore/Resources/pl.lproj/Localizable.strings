@@ -113,6 +113,7 @@
 "core.connect.ftpPassiveModeRefused" = "Ten serwer odmówił otwarcia połączenia na samo przesłanie pliku. macSCP nie może wymieniać z nim plików.";
 "core.connect.ftpTransferRefused" = "Serwer odrzucił transfer.";
 "core.connect.ftpRestRefused" = "Ten serwer nie potrafi wznowić przerwanego transferu, dlatego transfer został zatrzymany, a nie rozpoczęty od złego miejsca. Prześlij plik ponownie od początku.";
+"core.connect.ftpLeaseReturned" = "Połączenie dla tego transferu zostało już zwrócone, dlatego transfer nie został rozpoczęty. Uruchom go ponownie.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host nie może być pusty.";

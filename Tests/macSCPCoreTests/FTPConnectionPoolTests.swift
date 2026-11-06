@@ -202,6 +202,111 @@ struct FTPConnectionPoolTests {
         }
     }
 
+    /// A second `release` does not free a second slot.
+    ///
+    /// **The "exactly once" half of §5a's central requirement**, which every
+    /// other case in this suite measures only as "at LEAST once". The guard
+    /// in `release(reusable:)` was correct and pinned by nothing: the review
+    /// planted its `return !was` to `return true` — so every call frees a
+    /// slot — and the plant was GREEN across 56 tests. An over-counted free
+    /// slot hands one connection to two queue items, which is the harm §5a
+    /// exists to prevent, and it fails silently.
+    ///
+    /// The slot count is read with a second lease still OUT, so the ceiling
+    /// at `effectiveSlots` cannot hide the over-count.
+    @Test func aSecondReleaseDoesNotFreeASecondSlot() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let counts = try await Self.running(server) { host, port in
+            let pool = Self.pool(server, host: host, port: port, slots: 2)
+            let lease = try await pool.acquireTransfer()
+            let other = try await pool.acquireTransfer()
+            let whileBothOut = await pool.freeTransferSlots
+
+            await lease.release(reusable: true)
+            // The positive beside the negative: the FIRST release does free a
+            // slot, so the figure below is a release that did nothing and not
+            // a count that never moves.
+            let afterOne = await pool.freeTransferSlots
+            await lease.release(reusable: true)
+            await lease.release(reusable: false)
+            let afterThree = await pool.freeTransferSlots
+
+            await other.release(reusable: true)
+            let afterBoth = await pool.freeTransferSlots
+            await pool.shutdown()
+            return (
+                whileBothOut: whileBothOut, afterOne: afterOne, afterThree: afterThree,
+                afterBoth: afterBoth
+            )
+        }
+        #expect(counts.whileBothOut == 0)
+        #expect(counts.afterOne == 1)
+        #expect(counts.afterThree == 1)
+        #expect(counts.afterBoth == 2)
+    }
+
+    /// A lease that has gone back refuses to run a transfer.
+    ///
+    /// **The second mouth of the same hole, and the one that is a code
+    /// change.** Measured by the review on the first round's tree: a lease
+    /// was acquired, released `reusable: true`, the pool handed the SAME
+    /// socket to a second lease, and the released lease then ran a complete
+    /// `RETR` on it — one socket, two owners, with nothing but
+    /// `FTPControlConnection`'s command turn keeping the two transfers from
+    /// interleaving.
+    ///
+    /// This is the task's structural boundary with its one remaining hole
+    /// closed: a lease that cannot be used after it is returned is a handle
+    /// that cannot be double-spent. Both entry points are asked, because
+    /// `readStream` hands back a stream rather than throwing and would
+    /// otherwise have stayed open.
+    ///
+    /// `dials` is what makes the case about sharing rather than about an
+    /// error code: one dial means the second lease really did get the first
+    /// one's socket.
+    @Test func aReleasedLeaseRefusesToRunATransfer() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile(Self.seededName, contents: Self.seeded)
+        let outcome = try await Self.running(server) { host, port in
+            let pool = Self.pool(server, host: host, port: port, slots: 1)
+            let returned = try await pool.acquireTransfer()
+            await returned.release(reusable: true)
+            let holder = try await pool.acquireTransfer()
+            let dials = await server.controlConnectionCount
+
+            let refusedTransfer = await Self.outcome {
+                try await returned.transferring("RETR", argument: Self.seededName) { channel in
+                    _ = try await channel.readToEnd()
+                }
+            }
+            let refusedStream = await Self.outcome {
+                for try await _ in returned.readStream(Self.seededName) {}
+            }
+
+            // The positive beside both: the lease that HOLDS the connection
+            // runs the transfer, so the refusals are about the returned lease
+            // and not about a connection that stopped working.
+            let sink = FTPByteSink()
+            let served = await Self.outcome {
+                try await holder.transferring("RETR", argument: Self.seededName) { channel in
+                    sink.append(try await channel.readToEnd())
+                }
+            }
+            await pool.shutdown()
+            return (
+                dials: dials, refusedTransfer: refusedTransfer, refusedStream: refusedStream,
+                served: served, matched: sink.matches(Self.seeded)
+            )
+        }
+        #expect(outcome.dials == 1)
+        #expect(outcome.refusedTransfer == .failed(.leaseAlreadyReturned))
+        #expect(outcome.refusedStream == .failed(.leaseAlreadyReturned))
+        #expect(outcome.served == .completed)
+        #expect(outcome.matched)
+    }
+
     /// A cancelled transfer's connection is discarded, and the slot it held
     /// comes back.
     ///

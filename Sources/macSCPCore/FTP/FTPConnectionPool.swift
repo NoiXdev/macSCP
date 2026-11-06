@@ -367,6 +367,22 @@ final class FTPTransferLease: Sendable {
         await pool.give(back: connection, reusable: reusable)
     }
 
+    /// Whether this lease has gone back, read the same way `release` reads
+    /// it.
+    ///
+    /// **What it closes, and what it does not.** A lease whose connection the
+    /// pool has already handed to somebody else must not run a transfer on
+    /// it: the review measured exactly that — one socket, two owners, a
+    /// complete `RETR` on a connection a second lease held. Both entry points
+    /// ask this before they touch the connection, so use-AFTER-return cannot
+    /// happen. What this cannot see is a `release` racing a transfer that is
+    /// ALREADY running, because the check is a read and not a reservation;
+    /// that is a caller releasing a lease it is using, which is a misuse the
+    /// type has no way to express a refusal of — `transferring` and
+    /// `readStream` release the lease themselves, so a correct caller never
+    /// calls `release` for a transfer in flight.
+    private var hasGoneBack: Bool { returned.withLock { $0 } }
+
     /// Runs one transfer on this lease's connection and releases the lease.
     ///
     /// Total: the release happens on every exit. Whether the connection is
@@ -381,6 +397,7 @@ final class FTPTransferLease: Sendable {
         restartingAt offset: Int64? = nil,
         draining body: @Sendable (FTPDataChannel) async throws -> Void
     ) async throws {
+        guard !hasGoneBack else { throw FTPConnectionFailure.leaseAlreadyReturned }
         do {
             try await FTPDataConnection.transfer(
                 command, argument: argument, restartingAt: offset, on: connection,
@@ -419,6 +436,13 @@ final class FTPTransferLease: Sendable {
     func readStream(
         _ path: String, startingAt offset: Int64 = 0
     ) -> AsyncThrowingStream<Data, any Error> {
+        // A returned lease refuses here too, and it has to refuse through the
+        // stream: this method cannot throw, and handing back a working
+        // stream on a connection somebody else holds is the very thing
+        // `hasGoneBack` exists to stop.
+        guard !hasGoneBack else {
+            return AsyncThrowingStream { throw FTPConnectionFailure.leaseAlreadyReturned }
+        }
         // Consumer to drain: one token per chunk wanted.
         let (demands, continuation) = AsyncStream.makeStream(of: Void.self)
         let demand = FTPDemandSource(continuation)

@@ -111,6 +111,7 @@
 "core.connect.ftpPassiveModeRefused" = "Dieser Server hat es abgelehnt, eine Verbindung für die Dateiübertragung zu öffnen. macSCP kann keine Dateien mit ihm austauschen.";
 "core.connect.ftpTransferRefused" = "Der Server hat die Übertragung abgelehnt.";
 "core.connect.ftpRestRefused" = "Dieser Server kann eine abgebrochene Übertragung nicht fortsetzen. Die Übertragung wurde deshalb gestoppt und nicht an der falschen Stelle neu begonnen. Übertrage die Datei noch einmal von Anfang an.";
+"core.connect.ftpLeaseReturned" = "Die Verbindung für diese Übertragung war bereits zurückgegeben; die Übertragung wurde deshalb nicht gestartet. Starte sie noch einmal.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
