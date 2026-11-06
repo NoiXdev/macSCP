@@ -62,6 +62,16 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// material that is not its control connection's, byte for byte
     /// (Ruling T5.1).
     case dataCertificateDiffers
+    /// `TYPE I` was refused, so the server will not move bytes without
+    /// rewriting them.
+    ///
+    /// Its own case because it is neither a login problem nor a malformed
+    /// reply: the server answered a command it understood with a refusal.
+    /// There is no fallback — `TYPE A` rewrites line endings, which corrupts
+    /// every file that is not text — so the dial ends here. `code` is the
+    /// reply code.
+    case binaryModeRefused(code: Int)
+
     /// The user name or the password carries a character that cannot cross a
     /// command line (CR, LF or NUL), so the login was never sent.
     ///
@@ -108,6 +118,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case tlsUpgradeRefused
         case tlsHandshakeFailed
         case loginRefused
+        case binaryModeRefused
         case credentialNotSendable
         case certificateRejected
         case certificateMismatch
@@ -131,6 +142,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
             // Not an FTP-specific sentence: a refused login reads the same
             // whichever protocol carried it, and this key already says it.
             case .loginRefused: "core.connect.authFailed"
+            case .binaryModeRefused: "core.connect.ftpBinaryModeRefused"
             case .credentialNotSendable: "core.connect.ftpCredentialNotSendable"
             case .certificateRejected: "core.connect.ftpCertificateRejected"
             case .certificateMismatch: "core.connect.ftpCertificateMismatch"
@@ -152,6 +164,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
         case .tlsUpgradeRefused: .tlsUpgradeRefused
         case .tlsHandshakeFailed: .tlsHandshakeFailed
         case .loginRefused: .loginRefused
+        case .binaryModeRefused: .binaryModeRefused
         case .credentialNotSendable: .credentialNotSendable
         case .certificateRejected: .certificateRejected
         case .certificateMismatch: .certificateMismatch
@@ -433,11 +446,20 @@ actor FTPControlConnection {
             dataProtected = true
         }
 
-        // `USER` is the one call site `isPositive` is right for: `331` asks
-        // for a password, `230` says none is needed, and both are the login
-        // going well.
+        // `USER` wants a 2xx or a 3xx, and nothing else (RFC 959 section 4.2,
+        // the reply list for `USER`): `230` says no password is needed, `331`
+        // asks for one, `332` asks for an account. The refusals are `530` and
+        // `500`/`501`/`421`, and the list has no 1xx in it — a preliminary
+        // reply promises a second one, so accepting it would carry the dial
+        // on with every later reply answering the command before it, which is
+        // what the `120` greeting did before it was read through (fix round 2,
+        // F3). All of them are "this is not a login": the dial stops here and
+        // `connect` closes the connection, so nothing reads the promised
+        // follow-up against a later command.
         let user = try await sendCredential("USER", username)
-        guard user.isPositive else { throw FTPConnectionFailure.loginRefused }
+        guard user.isPositiveCompletion || user.isIntermediate else {
+            throw FTPConnectionFailure.loginRefused
+        }
         if user.code != 230 {
             // `PASS` wants a 2xx. A `332 Need account for login` is a server
             // asking for an `ACCT` this backend does not send, and reading it
@@ -447,10 +469,29 @@ actor FTPControlConnection {
             guard accepted.isPositiveCompletion else { throw FTPConnectionFailure.loginRefused }
         }
 
-        featureSet = Self.features(of: try await send("FEAT", argument: nil))
+        // `FEAT` is answered `211` with the list, or `500`/`502` by a server
+        // that does not implement it (RFC 2389 section 3). An unimplemented
+        // `FEAT` is not a failed dial — it is a server with no features to
+        // report, and the empty set below says so. A 1xx is the one reply
+        // this cannot take: it promises a second one, and reading it as the
+        // answer leaves the stream one reply behind (fix round 2, F3).
+        let feat = try await send("FEAT", argument: nil)
+        guard !feat.isPreliminary else { throw FTPConnectionFailure.protocolViolation }
+        featureSet = Self.features(of: feat)
+
         // Binary, once, and never `TYPE A`: a text-mode transfer rewrites
         // line endings, which corrupts every file that is not text.
-        _ = try await send("TYPE", argument: "I")
+        //
+        // `TYPE` is answered `200`, or `500`/`501`/`504`/`421`/`530` (RFC 959
+        // section 4.2). The reply was discarded with `_ =` until fix round 2
+        // (F3), so a server that refused binary mode was carried on against
+        // in text mode — and then every byte of every file that is not text
+        // is rewritten in transit. There is no fallback worth having here:
+        // the dial fails instead.
+        let type = try await send("TYPE", argument: "I")
+        guard type.isPositiveCompletion else {
+            throw FTPConnectionFailure.binaryModeRefused(code: type.code)
+        }
 
         startKeepalive(tuning.keepaliveInterval)
         // The dial is over, so the dial's bound is too: from here a reply is

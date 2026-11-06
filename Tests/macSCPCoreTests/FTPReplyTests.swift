@@ -135,18 +135,29 @@ struct FTPReplyTests {
         #expect(partial.isEmpty)
     }
 
+    /// Each class is its own predicate, and no two of them answer `true` for
+    /// one code.
+    ///
+    /// The row per code is exhaustive over the five predicates on purpose:
+    /// the union `isPositive` (1xx ∪ 2xx ∪ 3xx) was removed in fix round 2
+    /// (F3) because its 1xx arm admitted a preliminary reply at a call site
+    /// that wanted the other two, and a table that asserted only "positive"
+    /// could not have told those arms apart.
     @Test(arguments: [
-        (150, true, false, false),
-        (226, true, false, false),
-        (331, true, false, false),
-        (421, false, true, false),
-        (550, false, false, true),
+        (150, true, false, false, false, false),
+        (226, false, true, false, false, false),
+        (331, false, false, true, false, false),
+        (421, false, false, false, true, false),
+        (550, false, false, false, false, true),
     ])
     func replyClassesFollowTheirLeadingDigit(
-        code: Int, positive: Bool, transient: Bool, permanent: Bool
+        code: Int, preliminary: Bool, completion: Bool, intermediate: Bool,
+        transient: Bool, permanent: Bool
     ) {
         let reply = FTPReply(code: code, lines: ["x"])
-        #expect(reply.isPositive == positive)
+        #expect(reply.isPreliminary == preliminary)
+        #expect(reply.isPositiveCompletion == completion)
+        #expect(reply.isIntermediate == intermediate)
         #expect(reply.isTransient == transient)
         #expect(reply.isPermanent == permanent)
     }

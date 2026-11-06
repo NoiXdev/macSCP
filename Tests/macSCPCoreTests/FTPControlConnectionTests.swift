@@ -360,6 +360,75 @@ struct FTPControlConnectionTests {
         #expect(await server.receivedCommands == ["AUTH TLS"])
     }
 
+    /// A PRELIMINARY reply to `USER` is not a login.
+    ///
+    /// RFC 959 section 4.2 lists `230`, `331`, `332`, `530` and
+    /// `500`/`501`/`421` for `USER`, and no 1xx. The predicate here was the
+    /// 1xx ∪ 2xx ∪ 3xx union until fix round 2 (F3), so a `150` read as the
+    /// login going well and the dial carried on with every later reply
+    /// answering the command before it — the same desynchronisation the `120`
+    /// greeting produced.
+    @Test func aPreliminaryReplyToUSERIsNotALogin() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [["150 File status okay; about to open data connection."]])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(server, host: host, port: port)
+        }
+        #expect(result.outcome == .failed(.loginRefused))
+        // The negative beside it: the dial stopped at `USER`. No `PASS` was
+        // sent against a reply that promised a second one.
+        #expect(await server.receivedCommands == ["USER scripted"])
+    }
+
+    /// A PRELIMINARY reply to `FEAT` is refused rather than parsed.
+    ///
+    /// RFC 2389 section 3 answers `FEAT` with `211` and the list, or with
+    /// `500`/`502` from a server that does not implement it — and an
+    /// unimplemented `FEAT` is a dial that carries on with no features, which
+    /// `featIsReadOnceAndItsFeaturesAreQueryable` is the other half of. A
+    /// `150` is the reply this cannot take: `FEAT`'s reply code was not
+    /// looked at at all until fix round 2 (F3), so the promised second reply
+    /// was left to answer `TYPE`.
+    @Test func aPreliminaryReplyToFEATIsRefused() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [
+                ["331 Password required."],
+                ["230 Login successful."],
+                ["150 File status okay; about to open data connection."],
+            ])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(server, host: host, port: port)
+        }
+        #expect(result.outcome == .failed(.protocolViolation))
+        #expect(await server.receivedCommands == ["USER scripted", "PASS", "FEAT"])
+    }
+
+    /// A refused `TYPE I` ends the dial instead of leaving it in text mode.
+    ///
+    /// `TYPE` is answered `200`, or `500`/`501`/`504`/`421`/`530` (RFC 959
+    /// section 4.2). Its reply was discarded with `_ =` until fix round 2
+    /// (F3), so a server that refused binary mode was connected to anyway —
+    /// and a text-mode transfer rewrites line endings, which corrupts every
+    /// file that is not text. There is no fallback worth having, so the dial
+    /// fails.
+    @Test func aRefusedTYPEIEndsTheDial() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [
+                ["331 Password required."],
+                ["230 Login successful."],
+                ["211-Features:", " UTF8", "211 End"],
+                ["504 Type not implemented for this parameter."],
+            ])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(server, host: host, port: port)
+        }
+        #expect(result.outcome == .failed(.binaryModeRefused(code: 504)))
+        #expect(await server.receivedCommands == ["USER scripted", "PASS", "FEAT", "TYPE I"])
+    }
+
     /// A reply bound that fires takes the connection down.
     ///
     /// Ending the line stream alone blinded the connection: every later read
@@ -1454,6 +1523,7 @@ struct FTPControlConnectionTests {
         let all: [FTPConnectionFailure] = [
             .greetingRefused(code: 421), .timedOut, .connectionClosed, .protocolViolation,
             .tlsUpgradeRefused(code: 502), .tlsHandshakeFailed, .loginRefused,
+            .binaryModeRefused(code: 504),
             .credentialNotSendable, .certificateRejected, .certificateMismatch,
             .trustStoreUnreadable, .dataCertificateDiffers, .sessionFromAnotherConnection,
             .sessionRefusedByTLS,

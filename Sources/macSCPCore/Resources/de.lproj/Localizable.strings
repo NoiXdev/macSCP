@@ -105,7 +105,8 @@
 "core.connect.ftpDataCertificateDiffers" = "Der Server hat für die Dateiübertragung ein anderes Zertifikat verwendet als für die Verbindung selbst, deshalb wurde die Übertragung abgelehnt.";
 "core.connect.ftpSessionScope" = "Diese Übertragung wollte die verschlüsselte Sitzung einer anderen Verbindung weiterverwenden, was macSCP nicht zulässt.";
 "core.connect.ftpSessionRefused" = "Die verschlüsselte Sitzung dieser Verbindung konnte für die Dateiübertragung nicht weiterverwendet werden.";
-"core.connect.ftpCredentialNotSendable" = "Der Benutzername oder das Passwort enthält einen Zeilenumbruch oder ein anderes Zeichen, das sich nicht an einen FTP-Server senden lässt; die Anmeldung wurde deshalb nicht gesendet. Ändere es und versuche es erneut.";
+"core.connect.ftpBinaryModeRefused" = "Dieser Server hat es abgelehnt, Dateien unverändert zu übertragen. macSCP hat nicht fortgefahren, weil eine andere Übertragung den Inhalt verändern würde.";
+"core.connect.ftpCredentialNotSendable" ="Der Benutzername oder das Passwort enthält einen Zeilenumbruch oder ein anderes Zeichen, das sich nicht an einen FTP-Server senden lässt; die Anmeldung wurde deshalb nicht gesendet. Ändere es und versuche es erneut.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";

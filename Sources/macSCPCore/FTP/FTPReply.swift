@@ -8,16 +8,15 @@ struct FTPReply: Sendable, Equatable {
     let code: Int
     let lines: [String]
 
-    /// 1xx, 2xx and 3xx: the command was accepted, or is in progress, or
-    /// needs a further command.
-    ///
-    /// **The widest of the three predicates here, and the right one at only
-    /// one call site**: `USER`, which is answered `331` when a password is
-    /// wanted and `230` when it is not. Everywhere else a 1xx means the
-    /// command has not finished and a 3xx means it needs something more, and
-    /// reading either as success leaves the stream one reply behind or a
-    /// login half done (fix round 1 of the FTP backend's Task 5, R7).
-    var isPositive: Bool { (100..<200).contains(code) || isPositiveCompletion || isIntermediate }
+    // There is deliberately NO `isPositive` here — the 1xx ∪ 2xx ∪ 3xx union
+    // RFC 959 section 4.2 calls a positive reply. It existed, and its last
+    // call site was `USER`, which was blessed for it on the strength of its
+    // 3xx arm; the 1xx arm came with it and admitted a preliminary reply to a
+    // command that promises no second one. A call site that wants two of the
+    // three classes now spells both (`FTPControlConnection`'s `USER` guard
+    // says `isPositiveCompletion || isIntermediate`), so the union cannot be
+    // reached for by a site that only meant one arm of it, and the violation
+    // has no spelling left (fix round 2 of the FTP backend's Task 5, F3).
 
     /// 1xx: in progress. The command has been accepted and a further reply
     /// will follow — `150` before a transfer's bytes, `120` before a greeting.

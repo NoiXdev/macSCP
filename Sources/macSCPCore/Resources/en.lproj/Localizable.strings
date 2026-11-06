@@ -116,7 +116,8 @@
 "core.connect.ftpDataCertificateDiffers" = "The server used a different certificate for the file transfer than for the connection itself, so the transfer was refused.";
 "core.connect.ftpSessionScope" = "This transfer tried to reuse the secure session of a different connection, which macSCP does not allow.";
 "core.connect.ftpSessionRefused" = "The secure session of this connection could not be reused for the file transfer.";
-"core.connect.ftpCredentialNotSendable" = "The user name or password contains a line break or another character that cannot be sent to an FTP server, so the login was not sent. Change it, then try again.";
+"core.connect.ftpBinaryModeRefused" = "This server refused to transfer files unchanged. macSCP did not continue, because transferring them any other way would alter their contents.";
+"core.connect.ftpCredentialNotSendable" ="The user name or password contains a line break or another character that cannot be sent to an FTP server, so the login was not sent. Change it, then try again.";
 
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
