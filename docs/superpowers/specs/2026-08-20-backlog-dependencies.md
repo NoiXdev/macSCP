@@ -1937,7 +1937,11 @@ present, not a patch to BoringSSL.
   **replaces** the mode bits — BoringSSL's default is `SSL_SESS_CACHE_SERVER`,
   not `SSL_SESS_CACHE_OFF` as this record, the fork's commit message, the source
   comment and the test file all stated — so the server bit was cleared on every
-  `NIOSSLContext` the library builds. Two commands, run in the fork clone:
+  `NIOSSLContext` the library builds. Three commands, run in the fork clone
+  (this said "Two commands" over a block of three until the scoped re-review
+  caught it — a cardinality written in the same pass that corrected four other
+  documents' cardinalities, and contradicted five lines below by this record's
+  own "These three are quoted as"):
 
   ```
   git grep -n 'session_cache_mode = SSL_SESS_CACHE_SERVER' 2.37.6 -- Sources/CNIOBoringSSL/ssl/internal.h
@@ -2054,9 +2058,18 @@ each quoted in the commit message and recorded with its anchor at the top of
 Both plants were restored by copying a pre-plant copy back, verified
 `cmp`-identical, with `git status --porcelain=v1` diffed against its pre-plant
 capture — never `git checkout -- <file>`. `scripts/mutation-probe` could not
-carry them: it `cd`s to `$(dirname "$0")/..`, so it always measures macSCP, and
-it reads its figures from swift-testing's event stream, which NIOSSL's XCTest
-target does not write.
+carry them, and the reason is one thing rather than two. Withdrawn, verbatim:
+"it `cd`s to `$(dirname "$0")/..`, so it always measures macSCP, and it reads
+its figures from swift-testing's event stream, which NIOSSL's XCTest target
+does not write." The first half is false and this round itself disproved it —
+the script was COPIED INTO the fork, where that `cd` lands in the fork and it
+duly measured the fork. Only the second half holds: the probe takes its count
+from `--event-stream-output-path` whenever that file is non-empty, and its
+stdout fallback fires only when the file is empty, so an XCTest target writes a
+non-empty stream reporting `Test run with 0 tests in 0 suites` and the probe
+reports `CONTROL NOT ESTABLISHED` and plants nothing. The re-review reproduced
+the same `0 tests in 0 suites` line incidentally, in its own ordinary fork test
+run.
 
 **Two figures the design had left unmeasured, now measured.** NIOSSL's server
 does issue session tickets at the library default, and the figures are asserted
