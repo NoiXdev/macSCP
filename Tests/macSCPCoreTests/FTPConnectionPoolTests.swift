@@ -524,6 +524,20 @@ struct FTPConnectionPoolTests {
     /// pool is gone, which is what the caller has to be told. No clock: the
     /// only slot is held for the whole case, so nothing but the shutdown can
     /// end the wait.
+    ///
+    /// **The `cancel()` after the shutdown is a hang BOUND, not part of the
+    /// property, and it is here because the first draft did not have one.**
+    /// The waiter runs in an unstructured `Task`, so the suite's
+    /// `.timeLimit` cancels the test but not the waiter, and `Task.value` is
+    /// not cancellation-observing — against the stranding plant the case
+    /// therefore ran past the probe's own ten-minute ceiling instead of
+    /// reddening (measured 2026-11-06, the probe was killed). With the cancel
+    /// it reddens inside the bound, because a stranded waiter ends in
+    /// `.cancelled` where a released one has already ended in
+    /// `connectionClosed`. It is not a race: `shutdown()` resumes the
+    /// continuation inside its own actor step, before it returns, and the
+    /// resumed waiter's next statement is the `guard !isShutDown` throw,
+    /// which no cancellation check precedes.
     @Test func shutdownReleasesAWaiterRatherThanLeavingItParked() async throws {
         let server = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
@@ -535,6 +549,8 @@ struct FTPConnectionPoolTests {
                 await pool.waiterCount == 1
             }
             await pool.shutdown()
+            // The bound, never the property: see the comment above.
+            waiter.cancel()
             let ended = await waiter.value
             // The positive beside it: the lease that held the slot is still
             // releasable afterwards, so the shutdown released a waiter rather
