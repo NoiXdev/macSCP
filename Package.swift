@@ -106,7 +106,24 @@ let package = Package(
         // "swift-nio-ssl"). It vendors a second BoringSSL beside the one
         // swift-crypto already carries; the measured cost is in the same
         // record.
-        .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.27.0"),
+        // Consumed from our own fork, same package identity (`swift-nio-ssl`)
+        // at a different URL — the shape the two overrides above already
+        // have. `exact:` makes every change to it a deliberate bump here, and
+        // SwiftPM admits a pre-release version only through `exact:` anyway.
+        // 2.37.6-noix.1 = apple 2.37.6 + a client-side TLS session-resumption
+        // API, which upstream has none of: `NIOSSLSession`,
+        // `NIOSSLHandler.tlsSessionWasResumed` / `.establishedTLSSessions`
+        // (each also on `Channel` and `ChannelPipeline.SynchronousOperations`),
+        // and `NIOSSLClientHandler.init(context:serverHostname:sessionToResume:…)`.
+        // Without it an FTPS data connection cannot resume its control
+        // connection's session, and vsftpd — which defaults
+        // `require_ssl_reuse` to YES — answers `522 SSL connection failed;
+        // session reuse required`. Reverting this line to apple's URL needs
+        // `from: "2.37.2"` or later, NOT the `from: "2.27.0"` it replaced:
+        // everything up to and including 2.37.1 is inside CVE-2026-43820. The
+        // fork record, with the measurements and that CVE spelled out, is in
+        // docs/superpowers/specs/2026-08-20-backlog-dependencies.md.
+        .package(url: "https://github.com/NoiXdev/swift-nio-ssl.git", exact: "2.37.6-noix.1"),
     ],
     targets: [
         .target(
