@@ -63,6 +63,8 @@ struct LoopbackFTPHandshake: Sendable, Equatable {
 final class LoopbackFTPState: Sendable {
     struct Inner: Sendable {
         var refuseNextAcquire = false
+        var refuseNextPBSZ = false
+        var refuseNextPROT = false
         var desynchroniseNextReply = false
         var pasvHost: String?
         var dropNextTransfer = false
@@ -448,6 +450,26 @@ actor LoopbackFTPServer {
     /// closed. One shot: the connection after it is served normally.
     func refuseNextAcquireWith421() {
         state.box.withLockedValue { $0.refuseNextAcquire = true }
+    }
+
+    /// The next `PBSZ` is answered `503` instead of `200`, on a control
+    /// connection that is otherwise fit to carry it. One shot.
+    ///
+    /// Its own seam, and `PROT`'s below it, because the client sends both
+    /// only on a protected control connection: the unprotected branches the
+    /// session already has (`503 PBSZ needs a protected control connection.`)
+    /// are reachable only by a client that skips the handshake, which this
+    /// one never does. So a refusal that is a POLICY — the shape a real
+    /// server produces, and the only shape the client's own guards can be
+    /// measured against — had no fixture at all until fix round 2 (F6).
+    func refuseNextPBSZWith503() {
+        state.box.withLockedValue { $0.refuseNextPBSZ = true }
+    }
+
+    /// The next `PROT` is answered `534 Request denied for policy reasons`
+    /// (RFC 2228 section 5) instead of `200`. One shot.
+    func refuseNextPROTWith534() {
+        state.box.withLockedValue { $0.refuseNextPROT = true }
     }
 
     /// The reply to the next command is followed by one more reply, for a
@@ -1002,7 +1024,14 @@ final class LoopbackFTPSession: @unchecked Sendable {
         case "AUTH":
             try await handleAuth(argument)
         case "PBSZ":
-            if tlsActive {
+            let pbszRefused = state.box.withLockedValue { inner -> Bool in
+                let armed = inner.refuseNextPBSZ
+                inner.refuseNextPBSZ = false
+                return armed
+            }
+            if pbszRefused {
+                try await send(503, "Buffer size negotiation denied for policy reasons.")
+            } else if tlsActive {
                 try await send(200, "PBSZ=0")
             } else {
                 try await send(503, "PBSZ needs a protected control connection.")
@@ -1119,6 +1148,15 @@ final class LoopbackFTPSession: @unchecked Sendable {
     }
 
     private func handleProtection(_ level: String) async throws {
+        let refused = state.box.withLockedValue { inner -> Bool in
+            let armed = inner.refuseNextPROT
+            inner.refuseNextPROT = false
+            return armed
+        }
+        if refused {
+            try await send(534, "Request denied for policy reasons.")
+            return
+        }
         guard tlsActive else {
             try await send(503, "PROT needs a protected control connection.")
             return

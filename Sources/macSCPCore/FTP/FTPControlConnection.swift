@@ -202,7 +202,7 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
 actor FTPControlConnection {
     /// Which control connection this is. The scope a TLS session belongs to:
     /// a session established here is offered only to data connections opened
-    /// for THIS identity (see `openDataConnection(host:port:protection:owner:timeout:)`).
+    /// for THIS identity (see `openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`).
     struct Identity: Hashable, Sendable {
         private let raw = UUID()
     }
@@ -292,7 +292,7 @@ actor FTPControlConnection {
 
     /// This control connection's TLS sessions, and which of them a data
     /// connection is holding right now. Scoped to this connection: see
-    /// `openDataConnection(host:port:protection:owner:timeout:)`.
+    /// `openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`.
     private let vault = FTPSessionVault()
 
     private var featureSet: Set<String> = []
@@ -1089,7 +1089,7 @@ actor FTPControlConnection {
 
 /// The client end of one FTP data connection: it carries bytes and nothing
 /// else, and it is opened only through
-/// `FTPControlConnection.openDataConnection(host:port:protection:owner:timeout:)`.
+/// `FTPControlConnection.openDataConnection(host:port:protection:owner:timeout:idleTimeout:)`.
 actor FTPDataChannel {
     private let channel: Channel
     private let chunks: FTPLineSource
@@ -1199,12 +1199,12 @@ actor FTPDataChannel {
 /// `/usr/bin/grep -n 'clients retain multiple sessions' <that file>`, which
 /// prints one line — 2188 on the `2.37.6-noix.2` checkout):
 ///
-///     // SSL_SESSION_should_be_single_use returns one if |session| should be
+///     // SSL_SESSION_should_be_single_use returns one if `session` should be
 ///     // single-use (TLS 1.3 and later) and zero otherwise.
 ///     //
 ///     // If this function returns one, clients retain multiple sessions and use each
 ///     // only once. This prevents passive observers from correlating connections with
-///     // tickets. See RFC 8446, appendix C.4. If it returns zero, |session| cannot be
+///     // tickets. See RFC 8446, appendix C.4. If it returns zero, `session` cannot be
 ///     // used without leaking a correlator.
 ///
 /// So the obligation is about LINKABILITY, not about the key schedule: the

@@ -864,6 +864,61 @@ struct FTPControlConnectionTests {
         #expect(log.askCount == 1)
     }
 
+    /// A refused `PBSZ` or `PROT` ends the dial, with no data connection left
+    /// in the clear.
+    ///
+    /// RFC 4217 section 9 is the order — the buffer size first, then the
+    /// protection level — and a server may refuse either (`503` for `PBSZ`,
+    /// `534 Request denied for policy reasons` for `PROT`, RFC 2228 section
+    /// 5). Both replies were checked by fix round 1 and NEITHER check was
+    /// tested: planting `PROT`'s guard away came back GREEN in the re-review,
+    /// with 32 tests run. The fixture had no seam for it, which reads as
+    /// "this cannot happen" and is only "nothing here produces it" (fix round
+    /// 2, F6).
+    @Test func aRefusedPBSZOrPROTEndsTheDialWithNoClearDataConnection() async throws {
+        let log = DeciderLog()
+
+        let refusingPBSZ = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let pbszOutcome = try await Self.running(refusingPBSZ) { host, port in
+            await refusingPBSZ.refuseNextPBSZWith503()
+            return await Self.dial(
+                refusingPBSZ, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+        }
+        #expect(pbszOutcome == .failed(.tlsUpgradeRefused(code: 503)))
+        // The negative: the dial stopped at the refusal. `PROT` was never
+        // sent, and no login crossed a connection whose data channels would
+        // have been in the clear.
+        let afterPBSZ = await refusingPBSZ.receivedCommands.map(\.verb)
+        #expect(afterPBSZ == ["AUTH", "PBSZ"])
+
+        let refusingPROT = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let protOutcome = try await Self.running(refusingPROT) { host, port in
+            await refusingPROT.refuseNextPROTWith534()
+            return await Self.dial(
+                refusingPROT, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+        }
+        #expect(protOutcome == .failed(.tlsUpgradeRefused(code: 534)))
+        let afterPROT = await refusingPROT.receivedCommands.map(\.verb)
+        #expect(afterPROT == ["AUTH", "PBSZ", "PROT"])
+
+        // The positive beside both: the seams are one-shot and the same dial
+        // against the same kind of server connects, so the two failures above
+        // are refusals the client acted on and not a fixture that cannot
+        // complete a dial at all.
+        let serving = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let served = try await Self.running(serving) { host, port in
+            await Self.dial(
+                serving, host: host, port: port, security: .explicitTLS,
+                decider: Self.decider(log, answering: true))
+        }
+        #expect(served == .connected)
+    }
+
     @Test func implicitModeWrapsTheSocketBeforeTheGreeting() async throws {
         let server = LoopbackFTPServer(
             security: .implicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
