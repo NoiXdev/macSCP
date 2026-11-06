@@ -365,6 +365,45 @@ struct FTPConnectionPoolTests {
         #expect(outcome.afterReuse == outcome.afterRefusal)
     }
 
+    /// A queue item cancelled while it waits for a slot is released, not
+    /// parked forever.
+    ///
+    /// **Found by a mutation probe rather than by design, 2026-11-06.** The
+    /// wait was a bare `withCheckedContinuation`, which ignores its task's
+    /// cancellation. A probe that planted away `transferring`'s release left
+    /// four cases in this suite parked here, and the planted run did not
+    /// stop at its 300-second time limit — it ran past twelve minutes until
+    /// it was killed, which is `docs/BACKLOG.md`'s row "A test parked on a
+    /// bare continuation outlives its time limit" arriving through the
+    /// pool's own wait. What it means outside a test: cancelling a download
+    /// that is queued behind three others would never return.
+    ///
+    /// No clock: the slot is held for the whole case, so the waiter cannot
+    /// be served by anything but the release at the end, and both halves end
+    /// on their own.
+    @Test func aWaiterForASlotAnswersCancellationRatherThanParkingForever() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            let pool = Self.pool(server, host: host, port: port, slots: 1)
+            let held = try await pool.acquireTransfer()
+            let waiter = Task { await Self.outcome { _ = try await pool.acquireTransfer() } }
+            waiter.cancel()
+            let cancelled = await waiter.value
+
+            // The positive beside it: a waiter that is NOT cancelled is
+            // served once the slot comes back, so the case above is a
+            // cancellation and not a wait that never works.
+            let patient = Task { await Self.outcome { _ = try await pool.acquireTransfer() } }
+            await held.release(reusable: true)
+            let served = await patient.value
+            await pool.shutdown()
+            return (cancelled: cancelled, served: served)
+        }
+        #expect(outcome.cancelled == .cancelled)
+        #expect(outcome.served == .completed)
+    }
+
     // MARK: - The 421 budget
 
     /// A `421` on acquiring a transfer connection shrinks the budget for that

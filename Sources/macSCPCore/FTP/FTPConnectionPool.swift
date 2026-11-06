@@ -108,7 +108,7 @@ actor FTPConnectionPool {
     private var outstanding = 0
     /// Waiters for a slot, in arrival order, each resumed exactly once.
     private var waitingOrder: [UUID] = []
-    private var waiting: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var waiting: [UUID: CheckedContinuation<Void, any Error>] = [:]
 
     private var commandConnection: FTPControlConnection?
     private var isShutDown = false
@@ -184,11 +184,7 @@ actor FTPConnectionPool {
                 outstanding += 1
                 break
             }
-            let identifier = UUID()
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                waiting[identifier] = continuation
-                waitingOrder.append(identifier)
-            }
+            try await waitForASlot()
         }
         do {
             let connection = try await reuseOrDial()
@@ -200,6 +196,51 @@ actor FTPConnectionPool {
             wakeOneWaiter()
             throw error
         }
+    }
+
+    /// Parks until a slot frees, and ANSWERS CANCELLATION.
+    ///
+    /// **A bare continuation does not.** `withCheckedContinuation` ignores
+    /// its task's cancellation, so a queue item cancelled while it waited
+    /// for a slot would wait forever — and, measured on 2026-11-06, so does
+    /// a TEST: a mutation probe that planted away `transferring`'s release
+    /// left four pool cases parked here, and the planted run did not stop at
+    /// its 300-second time limit but ran past twelve minutes until it was
+    /// killed. That is `docs/BACKLOG.md`'s row "A test parked on a bare
+    /// continuation outlives its time limit", reached through this wait.
+    ///
+    /// Two races, both closed on the actor rather than with a second lock.
+    /// `onCancel` cannot touch actor state, so it hops; if that hop lands
+    /// FIRST, `cancelWaiter` finds nothing to cancel — and the body below
+    /// then sees `Task.isCancelled`, because the flag is set before
+    /// `onCancel` runs, so it refuses to park at all. If the body lands
+    /// first, the hop finds the waiter and resumes it. Either way the
+    /// continuation is resumed exactly once, because removing the entry and
+    /// resuming it happen together in one actor step, here and in
+    /// `wakeOneWaiter`.
+    private func waitForASlot() async throws {
+        let identifier = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waiting[identifier] = continuation
+                waitingOrder.append(identifier)
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(identifier) }
+        }
+    }
+
+    /// Releases one waiter with a `CancellationError`, if it is still
+    /// waiting.
+    private func cancelWaiter(_ identifier: UUID) {
+        guard let continuation = waiting.removeValue(forKey: identifier) else { return }
+        waitingOrder.removeAll { $0 == identifier }
+        continuation.resume(throwing: CancellationError())
     }
 
     /// Takes an idle connection, or dials a new one.
@@ -259,7 +300,7 @@ actor FTPConnectionPool {
     private func wakeOneWaiter() {
         guard let next = waitingOrder.first else { return }
         waitingOrder.removeFirst()
-        waiting.removeValue(forKey: next)?.resume()
+        waiting.removeValue(forKey: next)?.resume(returning: ())
     }
 
     // MARK: - Lifecycle
@@ -278,7 +319,7 @@ actor FTPConnectionPool {
         for connection in open { await connection.close() }
         let stranded = waitingOrder
         waitingOrder = []
-        for identifier in stranded { waiting.removeValue(forKey: identifier)?.resume() }
+        for identifier in stranded { waiting.removeValue(forKey: identifier)?.resume(returning: ()) }
     }
 }
 
