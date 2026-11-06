@@ -2075,6 +2075,8 @@ This dependency is consumed from a fork; upstream project: <https://github.com/a
 
 Source: <https://github.com/NoiXdev/swift-nio-ssl>
 
+This dependency is consumed from a fork; upstream project: <https://github.com/apple/swift-nio-ssl>. See `docs/superpowers/specs/2026-08-20-backlog-dependencies.md` for why the fork exists.
+
 ### LICENSE.txt
 
 ```

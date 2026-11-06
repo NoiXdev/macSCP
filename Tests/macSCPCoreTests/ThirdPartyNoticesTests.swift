@@ -54,6 +54,49 @@ struct ThirdPartyNoticesTests {
         return pins.compactMap { $0["identity"] as? String }
     }
 
+    /// `pins[]` as `(identity, location)` pairs, from the same JSON and with
+    /// the same loudness-on-malformed-input as `pinIdentities()` above. The
+    /// location is what says whether a pin is one of ours: a fork is consumed
+    /// from a `NoiXdev` URL.
+    private static func pins() throws -> [(identity: String, location: String)] {
+        let data = try Data(contentsOf: packageResolvedFile)
+        let root = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let pins = try #require(root["pins"] as? [[String: Any]])
+        return pins.compactMap { pin in
+            guard let identity = pin["identity"] as? String else { return nil }
+            return (identity, pin["location"] as? String ?? "")
+        }
+    }
+
+    /// The body of the `## <identity>` section of a notices file: every line
+    /// after that heading up to the next line starting with `#`, which is
+    /// either the next dependency's `## ` heading or this one's first `### `
+    /// licence-file heading. The fork-provenance sentence the generator emits
+    /// sits in exactly that span, right after `Source: <…>`.
+    ///
+    /// Deliberately NOT fence-aware, unlike `sectionHeadings(in:)`: this span
+    /// ends at the first `#` line, which is before any fenced licence text
+    /// begins, so no fence can be open inside it.
+    private static func sectionBody(ofIdentity identity: String, in notices: String) -> String? {
+        var body: [String] = []
+        var inside = false
+        notices.enumerateLines { line, _ in
+            if line == "## \(identity)" {
+                inside = true
+                return
+            }
+            if inside, line.hasPrefix("#") {
+                inside = false
+                return
+            }
+            if inside {
+                body.append(line)
+            }
+        }
+        return body.isEmpty ? nil : body.joined(separator: "\n")
+    }
+
     /// Section headings in the notices file, taken from lines that start
     /// with `## ` OUTSIDE a fenced licence block. Two distinct decoy risks
     /// live in the file's embedded licence texts:
@@ -282,5 +325,68 @@ struct ThirdPartyNoticesTests {
 
         let known = try await SubprocessRunner.run(script, arguments: ["--check"])
         #expect(known.status == 0, "exit \(known.status), stderr: \(known.stderrText)")
+    }
+
+    // MARK: - Fork provenance
+
+    /// Every dependency consumed from a NoiXdev fork is known to the notices
+    /// generator, and its section in the generated file records what it was
+    /// forked from.
+    ///
+    /// This exists because `--check` cannot see this class of miss, measured
+    /// 2026-11-06: it regenerates the file with the same generator and diffs,
+    /// so a fork the generator's `FORK_UPSTREAM` does not know about is absent
+    /// from both sides and the diff is empty. `swift-nio-ssl` was added to
+    /// `Package.resolved` on 2026-11-05 and recorded in
+    /// `THIRD_PARTY_NOTICES.md` as a bare source URL with no fork line, while
+    /// `scripts/third-party-notices --check` printed "is up to date" and
+    /// exited 0, and this suite's other tests stayed green — they pin the
+    /// headings against the pins, and the heading was there.
+    ///
+    /// Both halves are asserted on purpose. The dict check is what a new fork
+    /// trips over before it can be generated; the file check is what does not
+    /// route through the generator at all, which is the circularity that let
+    /// this through. `scripts/third-party-notices` also refuses to generate
+    /// with an unknown fork pin since the same date, so this test is the
+    /// second of two independent readings rather than the only one.
+    @Test func everyForkPinIsKnownToTheGeneratorAndRecordsItsUpstream() throws {
+        let forkPins = try Self.pins().filter { $0.location.contains("NoiXdev") }
+        // Positive anchors, so none of this can pass vacuously: there are fork
+        // pins to check at all, and the dict this scans is in the script.
+        #expect(!forkPins.isEmpty, """
+            Package.resolved carries no pin whose location contains \
+            "NoiXdev" — either every fork was retired (in which case this \
+            test and FORK_UPSTREAM should go with them) or the pins were \
+            misread, which would make the loop below check nothing.
+            """)
+        let script = try String(
+            contentsOf: Self.repoRoot.appendingPathComponent("scripts/third-party-notices"),
+            encoding: .utf8)
+        #expect(script.contains("FORK_UPSTREAM = {"), """
+            scripts/third-party-notices no longer declares FORK_UPSTREAM, so \
+            the per-identity check below is scanning for entries in a \
+            dictionary that is not there.
+            """)
+        let notices = try String(contentsOf: Self.noticesFile, encoding: .utf8)
+
+        for pin in forkPins {
+            let hasUpstreamEntry = script.contains("\"\(pin.identity)\": \"https://")
+            #expect(hasUpstreamEntry, """
+                scripts/third-party-notices' FORK_UPSTREAM has no entry for \
+                the fork pin "\(pin.identity)" (\(pin.location)), so \
+                THIRD_PARTY_NOTICES.md will record its source URL without \
+                saying it is a fork or what it was forked from. Add \
+                "\(pin.identity)": "<upstream project URL>" to that \
+                dictionary and regenerate.
+                """)
+            let body = Self.sectionBody(ofIdentity: pin.identity, in: notices)
+            let recordsUpstream = body?.contains("This dependency is consumed from a fork; upstream project:") ?? false
+            #expect(recordsUpstream, """
+                THIRD_PARTY_NOTICES.md's "## \(pin.identity)" section does \
+                not record that this dependency is consumed from a fork. \
+                Regenerate with scripts/third-party-notices from the \
+                repository root.
+                """)
+        }
     }
 }

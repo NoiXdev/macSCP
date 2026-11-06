@@ -60,13 +60,25 @@ available_by_lower = {name.lower(): name for name in available}
 LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE")
 PRUNE_DIRS = {".build", "Tests", "test", ".git"}
 
-# The two dependencies consumed from NoiXdev forks (see
+# The dependencies consumed from NoiXdev forks (see
 # docs/superpowers/specs/2026-08-20-backlog-dependencies.md for the
 # fork record): the notice names the fork AND the upstream project it
 # was forked from, so provenance stays readable.
+#
+# There are three, counted 2026-11-06 with
+#   /usr/bin/grep -o '"location" : "[^"]*NoiXdev[^"]*"' Package.resolved | wc -l
+# which prints 3 and exits 0. This comment said "The two dependencies
+# consumed from NoiXdev forks" until then, and the dict below held two
+# entries while Package.resolved held three fork pins, so
+# THIRD_PARTY_NOTICES.md recorded fork provenance for two of three. The
+# count is no longer written as a word here, because the assertion
+# under the dict derives it instead: a number in a comment is a claim
+# about the rest of the project that goes stale silently, which is
+# exactly what happened.
 FORK_UPSTREAM = {
     "citadel": "https://github.com/orlandos-nl/Citadel",
     "swift-nio-ssh": "https://github.com/apple/swift-nio-ssh",
+    "swift-nio-ssl": "https://github.com/apple/swift-nio-ssl",
 }
 
 
@@ -193,6 +205,23 @@ if missing:
     )
 
 entries.sort(key=lambda e: e["identity"])
+
+# Every fork pin must be in FORK_UPSTREAM, or this script writes a public
+# provenance document that omits one. `--check` cannot catch that on its own:
+# it compares the committed file against this same generator, so a fork the
+# generator does not know about is missing from both and the diff is empty.
+# That is how `swift-nio-ssl` was added to Package.resolved on 2026-11-05 and
+# recorded as a plain source URL, with `--check` reporting "is up to date".
+unknown_forks = sorted(
+    e["identity"] for e in entries if "NoiXdev" in e["location"] and e["identity"] not in FORK_UPSTREAM
+)
+if unknown_forks:
+    sys.exit(
+        "error: fork pin(s) with no FORK_UPSTREAM entry: "
+        + ", ".join(unknown_forks)
+        + " — add the upstream project URL to FORK_UPSTREAM in this script, so the "
+        "notice records what each fork was forked from"
+    )
 
 lines = []
 lines.append("# Third-Party Notices")
