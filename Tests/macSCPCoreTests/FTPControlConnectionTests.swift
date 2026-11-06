@@ -239,6 +239,119 @@ struct FTPControlConnectionTests {
         #expect(replies.size.code == 550)
     }
 
+    /// A transfer command owns both of its replies, so the next command gets
+    /// its own.
+    ///
+    /// The red this case was written against, with the two replies read by
+    /// two separate turns (`send` releasing after the `150`, then a
+    /// `readFurtherReply()`): a `PWD` issued between them came back **226**
+    /// where 257 was due, after which every reply is one behind. The
+    /// expectation below is the same one; `transferCommand` is what makes it
+    /// hold, because there is no longer a point between the two replies at
+    /// which another command can be issued on this connection.
+    @Test func aTransferHoldsTheTurnAcrossBothOfItsReplies() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let codes = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            let transfer = try await connection.transferCommand("LIST") {
+                _ = try await data.readToEnd()
+            }
+            let pwd = try await connection.send("PWD", argument: nil)
+            await data.close()
+            await connection.close()
+            return (
+                opening: transfer.opening.code, completion: transfer.completion?.code,
+                pwd: pwd.code
+            )
+        }
+        #expect(codes.opening == 150)
+        #expect(codes.completion == 226)
+        #expect(codes.pwd == 257)
+    }
+
+    /// A refused transfer has ONE reply, and nothing waits for a second.
+    ///
+    /// `522`, `425` and `550` are the whole answer. A `transferCommand` that
+    /// waited for a completion reply after a refusal would park until the
+    /// reply idle bound, which is the shape of hang this API exists to
+    /// prevent rather than cause.
+    @Test func aRefusedTransferCarriesNoCompletionReply() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            // `RETR` of a file that is not there: refused with `550` before
+            // the data connection is used, so there is no `226` to come.
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            var drained = false
+            let transfer = try await connection.transferCommand("RETR", argument: "/absent.txt") {
+                drained = true
+                _ = try await data.readToEnd()
+            }
+            // And the connection is still usable afterwards: the turn was
+            // given up, and no reply is owed.
+            let pwd = try await connection.send("PWD", argument: nil)
+            await data.close()
+            await connection.close()
+            return (
+                opening: transfer.opening.code, completion: transfer.completion?.code,
+                drained: drained, pwd: pwd.code
+            )
+        }
+        #expect(outcome.opening == 550)
+        #expect(outcome.completion == nil)
+        // The body is for the bytes between two replies, so a refusal does
+        // not run it.
+        #expect(!outcome.drained)
+        #expect(outcome.pwd == 257)
+    }
+
+    /// A data read is bounded by SILENCE on the data connection, and not by
+    /// the dial's own timeout.
+    ///
+    /// Until fix round 1 the data channel was built with the dial's figure as
+    /// a TOTAL read budget, so a 30-second connect timeout capped every
+    /// download at 30 seconds and then killed the control stream with it
+    /// (R2). The dial bound here is 600 seconds — longer than this suite's
+    /// whole time limit, so a read bounded by it could not finish at all —
+    /// while the read's own bound is 50 ms. Nothing below asserts an upper
+    /// bound on anything: the 600 seconds is a parameter, and the only timing
+    /// assertion is a floor.
+    @Test func aDataReadIsBoundedByItsOwnIdleTimeoutAndNotByTheDialsTimeout() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let idleBound = Duration.milliseconds(50)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain, timeout: .seconds(600),
+                tuning: FTPControlConnection.Tuning(dataIdleTimeout: idleBound))
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            // No transfer command, so the server never writes to this
+            // connection and never closes it: the read has nothing to wait
+            // for but the bound.
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            let started = ContinuousClock.now
+            var failure: FTPConnectionFailure?
+            do {
+                _ = try await data.readToEnd()
+            } catch let caught as FTPConnectionFailure {
+                failure = caught
+            }
+            let elapsed = ContinuousClock.now - started
+            await data.close()
+            await connection.close()
+            return (failure: failure, elapsed: elapsed)
+        }
+        #expect(outcome.failure == .timedOut)
+        #expect(outcome.elapsed >= idleBound)
+    }
+
     // MARK: - FEAT
 
     @Test func featIsReadOnceAndItsFeaturesAreQueryable() async throws {
@@ -386,15 +499,13 @@ struct FTPControlConnectionTests {
                 decider: Self.decider(log, answering: true))
             let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
             let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
-            let reply = try await connection.send("LIST", argument: nil)
-            if reply.code == 150 {
+            let transfer = try await connection.transferCommand("LIST") {
                 _ = try await data.readToEnd()
-                _ = try await connection.readFurtherReply()
             }
             await data.close()
             let resumed = data.didResumeTLSSession
             await connection.close()
-            return (reply: reply, resumed: resumed)
+            return (reply: transfer.opening, resumed: resumed)
         }
         // The server required reuse and served the transfer: `150`, not the
         // `522 SSL connection failed; session reuse required.` it answers an
@@ -435,12 +546,10 @@ struct FTPControlConnectionTests {
                     try await connection.send("PASV", argument: nil))
                 let data = try await connection.openDataConnection(
                     host: passive.host, port: passive.port)
-                let reply = try await connection.send("LIST", argument: nil)
-                if reply.code == 150 {
+                let transfer = try await connection.transferCommand("LIST") {
                     _ = try await data.readToEnd()
-                    _ = try await connection.readFurtherReply()
                 }
-                codes.append(reply.code)
+                codes.append(transfer.opening.code)
                 resumptions.append(data.didResumeTLSSession)
                 // Closing is what returns the session, so the next one has
                 // something to offer.
@@ -572,7 +681,7 @@ struct FTPControlConnectionTests {
             do {
                 let stolen = try await FTPControlConnection.openDataConnection(
                     host: passive.host, port: passive.port, protection: offered,
-                    owner: other.identity, timeout: .seconds(30))
+                    owner: other.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
                 await stolen.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -676,7 +785,7 @@ struct FTPControlConnectionTests {
             do {
                 let stolen = try await FTPControlConnection.openDataConnection(
                     host: passive.host, port: passive.port, protection: protection,
-                    owner: other.identity, timeout: .seconds(30))
+                    owner: other.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
                 await stolen.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -686,16 +795,14 @@ struct FTPControlConnectionTests {
             // the same protection on the same listener and is served.
             let data = try await FTPControlConnection.openDataConnection(
                 host: passive.host, port: passive.port, protection: protection,
-                owner: mine.identity, timeout: .seconds(30))
-            let reply = try await mine.send("LIST", argument: nil)
-            if reply.code == 150 {
+                owner: mine.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+            let transfer = try await mine.transferCommand("LIST") {
                 _ = try await data.readToEnd()
-                _ = try await mine.readFurtherReply()
             }
             await data.close()
             await mine.close()
             await other.close()
-            return (refusal: refusal, reply: reply)
+            return (refusal: refusal, reply: transfer.opening)
         }
         #expect(outcome.refusal == .sessionFromAnotherConnection)
         #expect(outcome.reply.code == 150)
@@ -733,7 +840,7 @@ struct FTPControlConnectionTests {
                         serverHostname: real.serverHostname,
                         controlCertificateDER: Array("not this server's certificate".utf8),
                         session: nil, vault: nil),
-                    owner: connection.identity, timeout: .seconds(30))
+                    owner: connection.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
                 await refused.close()
             } catch let failure as FTPConnectionFailure {
                 refusal = failure
@@ -748,15 +855,13 @@ struct FTPControlConnectionTests {
                     owner: connection.identity, context: real.context,
                     serverHostname: real.serverHostname,
                     controlCertificateDER: real.controlCertificateDER, session: nil, vault: nil),
-                owner: connection.identity, timeout: .seconds(30))
-            let reply = try await connection.send("LIST", argument: nil)
-            if reply.code == 150 {
+                owner: connection.identity, timeout: .seconds(30), idleTimeout: .seconds(30))
+            let transfer = try await connection.transferCommand("LIST") {
                 _ = try await data.readToEnd()
-                _ = try await connection.readFurtherReply()
             }
             await data.close()
             await connection.close()
-            return (refusal: refusal, reply: reply)
+            return (refusal: refusal, reply: transfer.opening)
         }
         #expect(outcome.refusal == .dataCertificateDiffers)
         #expect(outcome.reply.code == 150)

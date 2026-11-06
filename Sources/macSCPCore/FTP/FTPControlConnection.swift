@@ -137,8 +137,29 @@ actor FTPControlConnection {
         /// less switches the keepalive off.
         var keepaliveInterval: Duration
 
-        init(keepaliveInterval: Duration = .seconds(30)) {
+        /// How long a reply may be SILENT before the control connection gives
+        /// up on it. An idle bound, rearmed whenever a line arrives, so a
+        /// multiline reply that keeps coming is never cut off by a total.
+        ///
+        /// Not the dial's `timeout`: that one bounds reaching the server, and
+        /// it was doing this job too until fix round 1 — a 30-second dial
+        /// bound capped every `226` at 30 seconds (R2).
+        var replyIdleTimeout: Duration
+
+        /// How long a data read may be SILENT before it gives up. The same
+        /// kind of bound, on the other stream: a transfer that keeps
+        /// delivering chunks has no total budget here, which is what a
+        /// download of any size needs.
+        var dataIdleTimeout: Duration
+
+        init(
+            keepaliveInterval: Duration = .seconds(30),
+            replyIdleTimeout: Duration = .seconds(60),
+            dataIdleTimeout: Duration = .seconds(120)
+        ) {
             self.keepaliveInterval = keepaliveInterval
+            self.replyIdleTimeout = replyIdleTimeout
+            self.dataIdleTimeout = dataIdleTimeout
         }
 
         static let `default` = Tuning()
@@ -181,7 +202,15 @@ actor FTPControlConnection {
     private let tlsContext: NIOSSLContext?
     private let serverHostname: String?
     private let timeout: Duration
-    private let replyBound: TimeAmount
+    private let tuning: Tuning
+    /// The idle bound a reply is read under.
+    ///
+    /// The DIAL's own `timeout` until the dial is finished — a caller that
+    /// says "give up after 10 seconds" means the whole business of reaching
+    /// and greeting the server — and `tuning.replyIdleTimeout` from then on.
+    /// One field and one assignment, at the end of `handshakeAndLogin`,
+    /// rather than two bounds and a phase flag to read them by.
+    private var replyBound: TimeAmount
 
     /// This control connection's TLS sessions, and which of them a data
     /// connection is holding right now. Scoped to this connection: see
@@ -202,7 +231,7 @@ actor FTPControlConnection {
     private init(
         channel: Channel, lines: FTPLineSource, deliver: AsyncStream<ByteBuffer>.Continuation,
         events: FTPChannelEvents, trust: FTPTrustDecision, tlsContext: NIOSSLContext?,
-        serverHostname: String?, timeout: Duration
+        serverHostname: String?, timeout: Duration, tuning: Tuning
     ) {
         self.channel = channel
         self.lines = lines
@@ -212,6 +241,7 @@ actor FTPControlConnection {
         self.tlsContext = tlsContext
         self.serverHostname = serverHostname
         self.timeout = timeout
+        self.tuning = tuning
         self.replyBound = Self.timeAmount(timeout)
     }
 
@@ -281,7 +311,8 @@ actor FTPControlConnection {
 
         let connection = FTPControlConnection(
             channel: channel, lines: FTPLineSource(stream), deliver: continuation, events: events,
-            trust: trust, tlsContext: tlsContext, serverHostname: serverHostname, timeout: timeout)
+            trust: trust, tlsContext: tlsContext, serverHostname: serverHostname,
+            timeout: timeout, tuning: tuning)
         do {
             try await connection.handshakeAndLogin(
                 security: config.security, username: config.username, password: password,
@@ -341,6 +372,9 @@ actor FTPControlConnection {
         _ = try await send("TYPE", argument: "I")
 
         startKeepalive(tuning.keepaliveInterval)
+        // The dial is over, so the dial's bound is too: from here a reply is
+        // read under the per-reply idle bound (R2).
+        replyBound = Self.timeAmount(tuning.replyIdleTimeout)
     }
 
     // MARK: - Commands
@@ -371,19 +405,50 @@ actor FTPControlConnection {
         return reply
     }
 
-    /// The SECOND reply of a transfer command: `LIST`, `RETR` and `STOR`
-    /// answer `150` when the data connection opens and `226` when it has
-    /// closed, and the bytes move in between.
+    /// A transfer command and BOTH of its replies, with the turn held across
+    /// the work between them.
     ///
-    /// Its own method rather than a flag on `send`, because the two replies
-    /// are separated by work the caller does (draining the data connection),
-    /// and a `send` that waited for both would hold the turn across it.
-    func readFurtherReply() async throws -> FTPReply {
+    /// `LIST`, `NLST`, `MLSD`, `RETR` and `STOR` answer twice: a preliminary
+    /// `150` when the data connection opens and a `226` when it has closed,
+    /// with the bytes moving in between.
+    ///
+    /// **Why this is one call and not two.** Until fix round 1 the second
+    /// reply had its own method, `readFurtherReply()`, and `send` released the
+    /// turn as soon as the `150` was read. Any command issued in between then
+    /// consumed the `226` as its own reply, and the stream was one reply
+    /// behind from that point on. Measured: a `PWD` issued after a `LIST`'s
+    /// `150` came back `226` where `257` was due (R3). The brief's own
+    /// requirement is that a reply can never be read against the wrong
+    /// command, and for a transfer that means the turn has to span the pair.
+    ///
+    /// `body` runs with the turn HELD, so **it must not issue a command on
+    /// this connection** — it would park on a turn it is itself holding.
+    /// Draining or filling the data connection is the work that belongs
+    /// there, and it is the only work that does.
+    ///
+    /// A refusal (`425`, `522`, `550`) is the whole answer and `completion`
+    /// is `nil`: only a preliminary reply promises a second one, and waiting
+    /// for one that is never coming would park until the idle bound.
+    func transferCommand(
+        _ command: String, argument: String? = nil,
+        draining body: () async throws -> Void
+    ) async throws -> (opening: FTPReply, completion: FTPReply?) {
+        let line = try Self.commandLine(command, argument: argument)
         await acquire()
         defer { release() }
-        let reply = try await readReply()
         lastActivity = .now
-        return reply
+        do {
+            try await channel.writeAndFlush(ByteBuffer(string: line)).get()
+        } catch {
+            throw FTPConnectionFailure.connectionClosed
+        }
+        let opening = try await readReply()
+        lastActivity = .now
+        guard opening.isPreliminary else { return (opening, nil) }
+        try await body()
+        let completion = try await readReply()
+        lastActivity = .now
+        return (opening, completion)
     }
 
     /// The ONE place a command line is built, and the only function here that
@@ -400,21 +465,31 @@ actor FTPControlConnection {
 
     /// Reads one complete reply, joining a multiline one.
     ///
-    /// Bounded by a task on the channel's own event loop that finishes the
-    /// line stream, not by a clock this function watches: a wait that outlasts
-    /// the dial's timeout ends as `timedOut` instead of parking whoever is
-    /// awaiting it.
+    /// Bounded by a watchdog on the channel's own event loop, not by a clock
+    /// this function watches: a wait that goes quiet for longer than the bound
+    /// ends as `timedOut` instead of parking whoever is awaiting it. The
+    /// watchdog is rearmed by every line, so a multiline reply that keeps
+    /// arriving is never cut off by a total.
+    ///
+    /// **A fired bound closes the connection.** Ending the line stream alone
+    /// blinded it: `deliver` is this connection's only continuation, so
+    /// finishing it kills every future read, while the socket stayed open and
+    /// the keepalive went on writing `NOOP` into a connection nothing could
+    /// read any more (fix round 1, R8). A connection whose stream has ended
+    /// IS closed, so this says so.
     private func readReply() async throws -> FTPReply {
         let events = self.events
         let deliver = self.deliver
-        let timer = channel.eventLoop.scheduleTask(in: replyBound) {
+        let watchdog = FTPIdleWatchdog(bound: replyBound, loop: channel.eventLoop) {
             events.noteEnd(.timedOut)
             deliver.finish()
         }
-        defer { timer.cancel() }
+        watchdog.start()
+        defer { watchdog.stop() }
 
         var partial: [String] = []
         while let buffer = await lines.next() {
+            watchdog.noteProgress()
             do {
                 if let reply = try FTPReplyAccumulator.feed(String(buffer: buffer), into: &partial) {
                     return reply
@@ -423,8 +498,11 @@ actor FTPControlConnection {
                 throw FTPConnectionFailure.protocolViolation
             }
         }
-        throw events.end == .timedOut
-            ? FTPConnectionFailure.timedOut : FTPConnectionFailure.connectionClosed
+        if events.end == .timedOut {
+            await close()
+            throw FTPConnectionFailure.timedOut
+        }
+        throw FTPConnectionFailure.connectionClosed
     }
 
     /// The features of a `FEAT` reply.
@@ -583,7 +661,7 @@ actor FTPControlConnection {
     func openDataConnection(host: String, port: Int) async throws -> FTPDataChannel {
         try await Self.openDataConnection(
             host: host, port: port, protection: await dataProtection(), owner: identity,
-            timeout: timeout)
+            timeout: timeout, idleTimeout: tuning.dataIdleTimeout)
     }
 
     /// Opens a data connection, refusing a protection that belongs to another
@@ -605,8 +683,15 @@ actor FTPControlConnection {
     /// and a data connection never asks the user — the question was answered
     /// once, on the control connection, and asking it per transfer is how a
     /// person is trained to click yes.
+    /// - Parameter timeout: bounds OPENING the connection — the TCP connect
+    ///   and the TLS handshake. It is not a read budget: `idleTimeout` is.
+    /// - Parameter idleTimeout: how long a read of this connection may be
+    ///   silent before it gives up, rearmed by every chunk. Passing the dial's
+    ///   figure here is what capped every download at the connect timeout
+    ///   until fix round 1 (R2), so it has no default.
     static func openDataConnection(
-        host: String, port: Int, protection: DataProtection?, owner: Identity, timeout: Duration
+        host: String, port: Int, protection: DataProtection?, owner: Identity,
+        timeout: Duration, idleTimeout: Duration
     ) async throws -> FTPDataChannel {
         if let protection, protection.owner != owner {
             // The session goes back before the throw. Every other failure
@@ -695,7 +780,7 @@ actor FTPControlConnection {
         }
         return FTPDataChannel(
             channel: channel, chunks: FTPLineSource(stream), deliver: continuation, events: events,
-            didResumeTLSSession: resumed, bound: Self.timeAmount(timeout),
+            didResumeTLSSession: resumed, bound: Self.timeAmount(idleTimeout),
             session: protection?.session, vault: protection?.vault)
     }
 
@@ -835,17 +920,27 @@ actor FTPDataChannel {
     }
 
     /// Everything the server sends until it closes the connection.
+    ///
+    /// Bounded by silence, not by a total: the watchdog is rearmed by every
+    /// chunk, so a transfer that keeps moving is never cut off. One timer for
+    /// the whole read, which is what this had until fix round 1, is a total
+    /// budget — and it was the DIAL's figure, so a 30-second connect timeout
+    /// capped every download at 30 seconds (R2).
     func readToEnd() async throws -> Data {
         let events = self.events
         let deliver = self.deliver
-        let timer = channel.eventLoop.scheduleTask(in: bound) {
+        let watchdog = FTPIdleWatchdog(bound: bound, loop: channel.eventLoop) {
             events.noteEnd(.timedOut)
             deliver.finish()
         }
-        defer { timer.cancel() }
+        watchdog.start()
+        defer { watchdog.stop() }
 
         var data = Data()
-        while let chunk = await chunks.next() { data.append(contentsOf: chunk.readableBytesView) }
+        while let chunk = await chunks.next() {
+            watchdog.noteProgress()
+            data.append(contentsOf: chunk.readableBytesView)
+        }
         if events.end == .timedOut { throw FTPConnectionFailure.timedOut }
         return data
     }
@@ -1043,6 +1138,111 @@ final class FTPSessionVault: Sendable {
 }
 
 // MARK: - Channel plumbing
+
+/// Ends a read that has gone QUIET, and only then.
+///
+/// One timer armed for the whole read is a TOTAL budget: it ends a transfer
+/// that is making progress, which is what the dial's own figure was doing to
+/// every download and every second reply until fix round 1 (R2). This watchdog
+/// is rearmed from its own firing instead — when it fires it asks how long ago
+/// the last chunk arrived and either reschedules for the remainder or gives up
+/// — so a chunk costs one clock write rather than a timer, however many
+/// chunks a transfer has.
+///
+/// `onIdle` runs on the event loop, at most once. `stop()` cancels the pending
+/// timer, so a finished read leaves nothing scheduled.
+final class FTPIdleWatchdog: Sendable {
+    private struct Inner {
+        var lastProgress = ContinuousClock.now
+        var pending: Scheduled<Void>?
+        var stopped = false
+    }
+
+    private enum Tick {
+        case stop
+        case fire
+        case again(TimeAmount)
+    }
+
+    private let bound: TimeAmount
+    private let loop: any EventLoop
+    private let onIdle: @Sendable () -> Void
+    private let state = Mutex(Inner())
+
+    init(bound: TimeAmount, loop: any EventLoop, onIdle: @escaping @Sendable () -> Void) {
+        self.bound = bound
+        self.loop = loop
+        self.onIdle = onIdle
+    }
+
+    func start() {
+        arm(bound)
+    }
+
+    func noteProgress() {
+        state.withLock { $0.lastProgress = .now }
+    }
+
+    func stop() {
+        let pending = state.withLock { inner -> Scheduled<Void>? in
+            inner.stopped = true
+            let scheduled = inner.pending
+            inner.pending = nil
+            return scheduled
+        }
+        pending?.cancel()
+    }
+
+    private func arm(_ delay: TimeAmount) {
+        let scheduled = loop.scheduleTask(in: delay) { [self] in
+            switch tick() {
+            case .stop: break
+            case .fire: onIdle()
+            case .again(let remaining): arm(remaining)
+            }
+        }
+        // A `stop()` that ran between building the timer and storing it would
+        // otherwise leave this one scheduled with nobody holding it.
+        let cancelled = state.withLock { inner -> Bool in
+            guard !inner.stopped else { return true }
+            inner.pending = scheduled
+            return false
+        }
+        if cancelled { scheduled.cancel() }
+    }
+
+    private func tick() -> Tick {
+        state.withLock { inner in
+            guard !inner.stopped else { return .stop }
+            inner.pending = nil
+            let quiet = ContinuousClock.now - inner.lastProgress
+            guard quiet < Duration(bound) else {
+                inner.stopped = true
+                return .fire
+            }
+            return .again(TimeAmount(Duration(bound) - quiet))
+        }
+    }
+}
+
+extension Duration {
+    /// A `TimeAmount` as a `Duration`, so the watchdog can do its arithmetic
+    /// in one unit.
+    fileprivate init(_ amount: TimeAmount) {
+        self = .nanoseconds(amount.nanoseconds)
+    }
+}
+
+extension TimeAmount {
+    /// The conversion `FTPControlConnection.timeAmount(_:)` performs, reachable
+    /// from the watchdog, which is not inside that type.
+    fileprivate init(_ duration: Duration) {
+        let components = duration.components
+        let nanoseconds =
+            components.seconds * 1_000_000_000 + components.attoseconds / 1_000_000_000
+        self = .nanoseconds(max(0, nanoseconds))
+    }
+}
 
 /// The inbound end of a channel, read by an actor.
 ///

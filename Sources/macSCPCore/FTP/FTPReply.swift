@@ -10,7 +10,27 @@ struct FTPReply: Sendable, Equatable {
 
     /// 1xx, 2xx and 3xx: the command was accepted, or is in progress, or
     /// needs a further command.
-    var isPositive: Bool { (100..<400).contains(code) }
+    ///
+    /// **The widest of the three predicates here, and the right one at only
+    /// one call site**: `USER`, which is answered `331` when a password is
+    /// wanted and `230` when it is not. Everywhere else a 1xx means the
+    /// command has not finished and a 3xx means it needs something more, and
+    /// reading either as success leaves the stream one reply behind or a
+    /// login half done (fix round 1 of the FTP backend's Task 5, R7).
+    var isPositive: Bool { (100..<200).contains(code) || isPositiveCompletion || isIntermediate }
+
+    /// 1xx: in progress. The command has been accepted and a further reply
+    /// will follow — `150` before a transfer's bytes, `120` before a greeting.
+    var isPreliminary: Bool { (100..<200).contains(code) }
+
+    /// 2xx: the command completed and nothing more is needed. The predicate
+    /// a call site wants unless it has a reason to accept one of the other
+    /// two.
+    var isPositiveCompletion: Bool { (200..<300).contains(code) }
+
+    /// 3xx: accepted, and waiting for a further command — `331` for `PASS`,
+    /// `332` for an account the backend does not supply.
+    var isIntermediate: Bool { (300..<400).contains(code) }
 
     /// 4xx: refused for now; the same command may succeed later.
     var isTransient: Bool { (400..<500).contains(code) }
