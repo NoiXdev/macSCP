@@ -69,6 +69,8 @@ final class LoopbackFTPState: Sendable {
         var pasvHost: String?
         var dropNextTransfer = false
         var garbleNextCompletion = false
+        var refuseExtendedPassive = false
+        var refuseNextTransferWithSessionReuse = false
 
         var commands: [LoopbackFTPReceivedCommand] = []
         var handshakes: [LoopbackFTPHandshake] = []
@@ -503,6 +505,32 @@ actor LoopbackFTPServer {
     /// carries no address and is unaffected.
     func answerPASVWith(host: String) {
         state.box.withLockedValue { $0.pasvHost = host }
+    }
+
+    /// Every `EPSV` from now on is answered `500 Unknown command.`, which is
+    /// what a server predating RFC 2428 says to it. `PASV` is unaffected, so
+    /// a client with a fallback still gets a data connection.
+    ///
+    /// Not one shot: a client that remembers the refusal per connection would
+    /// pass a one-shot seam by accident on its SECOND transfer, which is the
+    /// opposite of what a fallback test should buy.
+    func refuseExtendedPassive() {
+        state.box.withLockedValue { $0.refuseExtendedPassive = true }
+    }
+
+    /// The next transfer is answered `522 SSL connection failed; session reuse
+    /// required.` after its data connection has arrived, whatever that
+    /// connection's handshake did. One shot, and the session carries on, so
+    /// the client can try again on the same control connection.
+    ///
+    /// The seam exists because the honest path to a `522` — exhausting the
+    /// peer's session supply — cannot then be HEALED by a retry: the supply is
+    /// still exhausted on the second attempt, so a retry would be measured
+    /// failing for a reason that is not the one under test. What a real server
+    /// does here is refuse one data connection and serve the next, which is
+    /// this.
+    func refuseNextTransferWith522() {
+        state.box.withLockedValue { $0.refuseNextTransferWithSessionReuse = true }
     }
 
     /// The next data transfer sends half of its payload and then drops the
@@ -955,6 +983,10 @@ final class LoopbackFTPSession: @unchecked Sendable {
     private var authenticated = false
     private var workingDirectory = "/"
     private var passive: LoopbackFTPPassiveListener?
+    /// What `REST` set, consumed by the NEXT transfer command and cleared by
+    /// it however that command ends (RFC 3659 section 5: the marker applies
+    /// to the transfer command that immediately follows it).
+    private var restartOffset = 0
 
     init(
         configuration: LoopbackFTPServer.Configuration, state: LoopbackFTPState,
@@ -1142,10 +1174,23 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 return true
             }
             try await send(removed ? 250 : 550, removed ? "Directory removed." : "Cannot remove directory.")
+        case "REST":
+            // A marker this fixture only understands as a byte count, which
+            // is what `TYPE I` makes it (RFC 3659 section 5.1).
+            if let offset = Int(argument), offset >= 0 {
+                restartOffset = offset
+                try await send(350, "Restart position accepted.")
+            } else {
+                try await send(501, "Restart position not understood.")
+            }
         case "PASV":
             try await handlePassive(extended: false)
         case "EPSV":
-            try await handlePassive(extended: true)
+            if state.box.withLockedValue({ $0.refuseExtendedPassive }) {
+                try await send(500, "Unknown command.")
+            } else {
+                try await handlePassive(extended: true)
+            }
         case "LIST", "NLST", "RETR", "STOR":
             return try await handleTransfer(verb: verb, argument: argument)
         case "MLSD" where configuration.advertisesMLSD:
@@ -1315,6 +1360,11 @@ final class LoopbackFTPSession: @unchecked Sendable {
     // MARK: Transfers
 
     private func handleTransfer(verb: String, argument: String) async throws -> Outcome {
+        // Taken here and not where it is used, so every exit below leaves the
+        // marker spent -- a refused transfer must not carry one server-side
+        // offset into the next command.
+        let restart = restartOffset
+        restartOffset = 0
         guard let listener = passive else {
             try await send(425, "Use PASV or EPSV first.")
             return .keepGoing
@@ -1341,7 +1391,9 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 try await send(550, "No such file.")
                 return .keepGoing
             }
-            payload = content
+            // The marker is a byte count into the file: past its end is an
+            // empty transfer, not a refusal.
+            payload = restart >= content.count ? Data() : content.dropFirst(restart)
         case "STOR":
             let parent = (path as NSString).deletingLastPathComponent
             guard state.box.withLockedValue({ $0.directories.contains(parent) }) else {
@@ -1381,6 +1433,21 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 try await send(522, "SSL connection failed; session reuse required.")
                 return .keepGoing
             }
+        }
+
+        // The armed refusal (`refuseNextTransferWith522()`), read AFTER the
+        // real one so it can never stand in for it: a seam that fired first
+        // would answer for a data connection the policy above would have
+        // refused anyway.
+        let armedRefusal = state.box.withLockedValue { inner -> Bool in
+            let armed = inner.refuseNextTransferWithSessionReuse
+            inner.refuseNextTransferWithSessionReuse = false
+            return armed
+        }
+        if armedRefusal {
+            try? await data.channel.executeThenClose { _, _ in }
+            try await send(522, "SSL connection failed; session reuse required.")
+            return .keepGoing
         }
 
         try await send(150, "Opening the data connection.")
