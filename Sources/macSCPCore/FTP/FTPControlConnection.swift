@@ -429,7 +429,7 @@ actor FTPControlConnection {
     private var dataProtected = false
     private var commandInFlight = false
     private var waitingOrder: [UUID] = []
-    private var waiting: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var waiting: [UUID: CheckedContinuation<Void, any Error>] = [:]
     private var keepalive: Task<Void, Never>?
     private var lastActivity = ContinuousClock.now
     private var isClosed = false
@@ -697,7 +697,7 @@ actor FTPControlConnection {
     /// the wire never sees it.
     func send(_ command: String, argument: String? = nil) async throws -> FTPReply {
         let line = try Self.commandLine(command, argument: argument)
-        await acquire()
+        try await acquire()
         defer { release() }
         lastActivity = .now
         do {
@@ -758,7 +758,7 @@ actor FTPControlConnection {
         draining body: () async throws -> Void
     ) async throws -> (opening: FTPReply, completion: FTPReply?) {
         let line = try Self.commandLine(command, argument: argument)
-        await acquire()
+        try await acquire()
         defer { release() }
         lastActivity = .now
         do {
@@ -932,16 +932,84 @@ actor FTPControlConnection {
     /// implementation could also produce without holding a turn at all.
     var turnIsHeld: Bool { commandInFlight }
 
-    private func acquire() async {
+    /// How many callers are parked waiting for the turn.
+    ///
+    /// **One case reads it, twice**, and it is
+    /// `FTPControlConnectionTests.aWaiterForTheCommandTurnAnswersCancellation`:
+    /// once to know a waiter is really parked before it cancels one — a
+    /// cancellation that lands before the park takes `acquire()`'s own
+    /// `Task.isCancelled` arm and never reaches the release the case exists
+    /// to measure — and once afterwards, to say the queue is empty again.
+    /// Re-run from the repository root:
+    ///
+    ///     /usr/bin/grep -rn turnWaiterCount Sources Tests
+    ///
+    /// prints **5** lines: this declaration, the command line just above,
+    /// the two call sites, and one prose mention in that case's own doc
+    /// comment. Counted by running it, which is the point — the first draft
+    /// of this sentence said three, and was written in the fix round whose
+    /// R1 exists because the comment on `FTPConnectionPool.waiterCount` said
+    /// two callers and had one.
+    var turnWaiterCount: Int { waitingOrder.count }
+
+    /// Takes the turn, parking until it is free, and ANSWERS CANCELLATION
+    /// while it parks (Ruling T6.3).
+    ///
+    /// **The wait could be as long as a file**, which is what made the bare
+    /// `withCheckedContinuation` here a defect rather than untidiness: the
+    /// turn is held across both of a transfer's replies, so a command issued
+    /// during a download parked for the whole download and could not be
+    /// cancelled. The same shape in `FTPConnectionPool.acquireTransfer` was
+    /// measured outliving a 300-second time limit.
+    ///
+    /// It is also what makes `FTPTransferLease`'s concurrent-use path
+    /// answerable: two `transferring` calls on one un-returned lease both
+    /// pass the lease's own guard and are then serialised HERE, correctly —
+    /// but the second one parks, and before this it parked uncancellably.
+    ///
+    /// **The fast path is deliberately NOT cancellation-checked.** A caller
+    /// that finds the turn free is not made to fail for being cancelled: it
+    /// writes its command and reads its reply, and the reply read has its own
+    /// ending. What was unbounded, and is what this fixes, is the WAIT.
+    ///
+    /// Two races, closed on the actor and not with a second lock, the way
+    /// `FTPConnectionPool.waitForASlot` closes its own: `onCancel` cannot
+    /// touch actor state so it hops, and a hop that lands first finds no
+    /// waiter — whereupon the body refuses to park, because the cancellation
+    /// flag is set before `onCancel` runs. Removing the entry and resuming it
+    /// happen in one actor step here and in `release()`, so the continuation
+    /// is resumed exactly once and the turn is handed to exactly one waiter.
+    private func acquire() async throws {
         if !commandInFlight {
             commandInFlight = true
             return
         }
         let identifier = UUID()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            waiting[identifier] = continuation
-            waitingOrder.append(identifier)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Void, any Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waiting[identifier] = continuation
+                waitingOrder.append(identifier)
+            }
+        } onCancel: {
+            Task { await self.cancelTurnWaiter(identifier) }
         }
+    }
+
+    /// Releases one turn waiter with a `CancellationError`, if it is still
+    /// waiting.
+    ///
+    /// A waiter `release()` has already taken out of `waiting` is not here
+    /// any more, so a cancellation that arrives after the hand-off cannot
+    /// take the turn away from the caller that was just given it.
+    private func cancelTurnWaiter(_ identifier: UUID) {
+        guard let continuation = waiting.removeValue(forKey: identifier) else { return }
+        waitingOrder.removeAll { $0 == identifier }
+        continuation.resume(throwing: CancellationError())
     }
 
     private func release() {
@@ -950,7 +1018,7 @@ actor FTPControlConnection {
             return
         }
         waitingOrder.removeFirst()
-        waiting.removeValue(forKey: next)?.resume()
+        waiting.removeValue(forKey: next)?.resume(returning: ())
     }
 
     // MARK: - TLS

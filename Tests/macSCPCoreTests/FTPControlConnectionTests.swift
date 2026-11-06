@@ -1719,6 +1719,91 @@ struct FTPControlConnectionTests {
         #expect(presented != nil)
     }
 
+    /// A caller cancelled while it waits for the command turn is released,
+    /// and the turn stays with whoever holds it.
+    ///
+    /// **Ruling T6.3, and it is not hygiene.** `acquire()` parked on a bare
+    /// `withCheckedContinuation`, which ignores its task's cancellation, so a
+    /// command issued while a transfer holds the turn could not be cancelled
+    /// for as long as that transfer ran — and a transfer is as long as a file
+    /// is. The same shape in `FTPConnectionPool.acquireTransfer` was measured
+    /// outliving a 300-second time limit (fix round 1,
+    /// `aWaiterForASlotAnswersCancellationRatherThanParkingForever`), which
+    /// is what this one would do to a queue item too.
+    ///
+    /// It is also what makes `FTPTransferLease`'s concurrent-use path
+    /// answerable: two `transferring` calls on one un-returned lease both
+    /// pass the lease's guard, and they are correct — `transferCommand`'s
+    /// turn serialises them — but the second one parks HERE, and before this
+    /// it parked uncancellably.
+    ///
+    /// Three properties, because the first alone would hold for a connection
+    /// that dropped the turn on the floor: the cancelled waiter ends in a
+    /// cancellation; the turn is still held by the transfer that had it; and
+    /// the connection is in step afterwards, which is the turn having been
+    /// handed on exactly once. No clock — `turnWaiterCount` says when the
+    /// waiter is really parked, and the drain parks on a latch this test
+    /// raises itself.
+    @Test func aWaiterForTheCommandTurnAnswersCancellation() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(
+                host: passive.host, port: passive.port)
+            let drained = AsyncSignal()
+            let mayFinish = AsyncSignal()
+            let transfer = Task {
+                try await connection.transferCommand("LIST") {
+                    _ = try await data.readToEnd()
+                    drained.signal()
+                    _ = await mayFinish.wait()
+                }
+            }
+            _ = await drained.wait()
+
+            // A second command on the same connection, which can only park:
+            // the turn is held for the whole span of the transfer.
+            let blocked = Task { try await connection.send("PWD", argument: nil) }
+            try await pollUntil("the second command to park on the turn") {
+                await connection.turnWaiterCount == 1
+            }
+            blocked.cancel()
+            var waiterEnded = "no answer"
+            do {
+                waiterEnded = "answered(\(try await blocked.value.code))"
+            } catch is CancellationError {
+                waiterEnded = "cancelled"
+            } catch let failure as FTPConnectionFailure {
+                waiterEnded = "failed(\(failure))"
+            } catch {
+                waiterEnded = "otherError(\(String(describing: type(of: error))))"
+            }
+            // The turn did not move: the transfer still holds it.
+            let heldByTheTransfer = await connection.turnIsHeld
+            let waitersLeft = await connection.turnWaiterCount
+
+            mayFinish.signal()
+            let completion = try await transfer.value.completion?.code
+            // And the turn was handed on exactly once, which is what the
+            // next command getting its OWN reply proves.
+            let afterwards = try await connection.send("PWD", argument: nil).code
+            await data.close()
+            await connection.close()
+            return (
+                waiterEnded: waiterEnded, heldByTheTransfer: heldByTheTransfer,
+                waitersLeft: waitersLeft, completion: completion, afterwards: afterwards
+            )
+        }
+        #expect(outcome.waiterEnded == "cancelled")
+        #expect(outcome.heldByTheTransfer)
+        #expect(outcome.waitersLeft == 0)
+        #expect(outcome.completion == 226)
+        #expect(outcome.afterwards == 257)
+    }
+
     // MARK: - Failure text
 
     /// Every failure has a sentence of its own in all four catalogs, and the

@@ -501,6 +501,18 @@ struct FTPConnectionPoolTests {
             // cancellation and not a wait that never works.
             let patient = Task { await Self.outcome { _ = try await pool.acquireTransfer() } }
             await held.release(reusable: true)
+            // The same hang BOUND the case below carries, and for the same
+            // reason: `patient` is never cancelled by the property, so
+            // without this a plant that stops a release from waking a waiter
+            // parks it forever and the case hangs instead of reddening. The
+            // re-review measured exactly that by accident — a mis-anchored
+            // plant left this case recording `Time limit was exceeded:
+            // 300.000 seconds` and then never ending, which the probe
+            // reported as `RUN INCOMPLETE`. Not a race: `release` resumes
+            // the waiter inside its own actor step before it returns, and
+            // nothing `acquireTransfer` does after the resume observes
+            // cancellation.
+            patient.cancel()
             let served = await patient.value
             await pool.shutdown()
             return (cancelled: cancelled, served: served)
