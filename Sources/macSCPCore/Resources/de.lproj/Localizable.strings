@@ -90,6 +90,22 @@
 "core.connect.ftpPathForbidden.lineFeed" = "Dieser Name enthält einen Zeilenumbruch. Ein FTP-Server liest das als Ende eines Befehls, deshalb sendet macSCP ihn nicht. Benenne die Datei oder den Ordner um und versuche es erneut.";
 "core.connect.ftpPathForbidden.nul" = "Dieser Name enthält ein Nullzeichen, das sich nicht an einen FTP-Server senden lässt. Benenne die Datei oder den Ordner um und versuche es erneut.";
 
+/* FTPConnectionFailure: what stopped an FTP control or data connection
+   (FTP plan, Task 5). Keys are derived from the case, so a case added
+   without its four sentences fails everyConnectionFailureHasItsOwnSentence. */
+"core.connect.ftpGreetingRefused" = "Der FTP-Server hat die Verbindung noch vor der Anmeldung abgewiesen. Vielleicht ist er ausgelastet oder nimmt gerade keine Verbindungen an.";
+"core.connect.ftpTimedOut" = "Der FTP-Server hat nicht rechtzeitig geantwortet.";
+"core.connect.ftpConnectionClosed" = "Die Verbindung zum FTP-Server wurde beendet.";
+"core.connect.ftpProtocolViolation" = "Der FTP-Server hat etwas gesendet, das macSCP nicht als Antwort lesen konnte.";
+"core.connect.ftpTLSRequired" = "Dieser Server hat es abgelehnt, die Verbindung zu verschlüsseln. macSCP hat sie nicht unverschlüsselt fortgesetzt — prüfe, ob der Server FTPS anbietet, oder wähle eine andere Sicherheitseinstellung.";
+"core.connect.ftpTLSHandshakeFailed" = "Die verschlüsselte Verbindung zu diesem Server konnte nicht aufgebaut werden.";
+"core.connect.ftpCertificateRejected" = "Das Zertifikat des Servers wurde nicht akzeptiert, deshalb wurde die Verbindung nicht aufgebaut.";
+"core.connect.ftpCertificateMismatch" = "Dieser Server zeigt ein anderes Zertifikat als das, das macSCP sich gemerkt hat. Die Verbindung wurde abgelehnt. Wenn das Zertifikat des Servers wirklich ausgetauscht wurde, entferne das gemerkte und verbinde dich erneut.";
+"core.connect.ftpTrustStoreUnreadable" = "Die Liste der gemerkten Zertifikate konnte nicht gelesen werden, deshalb ließ sich das Zertifikat dieses Servers nicht prüfen.";
+"core.connect.ftpDataCertificateDiffers" = "Der Server hat für die Dateiübertragung ein anderes Zertifikat verwendet als für die Verbindung selbst, deshalb wurde die Übertragung abgelehnt.";
+"core.connect.ftpSessionScope" = "Diese Übertragung wollte die verschlüsselte Sitzung einer anderen Verbindung weiterverwenden, was macSCP nicht zulässt.";
+"core.connect.ftpSessionRefused" = "Die verschlüsselte Sitzung dieser Verbindung konnte für die Dateiübertragung nicht weiterverwendet werden.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";

@@ -92,6 +92,22 @@
 "core.connect.ftpPathForbidden.lineFeed" = "Ce nom contient un saut de ligne. Un serveur FTP l'interprète comme la fin d'une commande ; macSCP ne l'envoie donc pas. Renommez le fichier ou le dossier, puis réessayez.";
 "core.connect.ftpPathForbidden.nul" = "Ce nom contient un caractère nul, qui ne peut pas être envoyé à un serveur FTP. Renommez le fichier ou le dossier, puis réessayez.";
 
+/* FTPConnectionFailure: what stopped an FTP control or data connection
+   (FTP plan, Task 5). Keys are derived from the case, so a case added
+   without its four sentences fails everyConnectionFailureHasItsOwnSentence. */
+"core.connect.ftpGreetingRefused" = "Le serveur FTP a refusé la connexion avant même l'identification. Il est peut-être saturé ou n'accepte aucune connexion pour l'instant.";
+"core.connect.ftpTimedOut" = "Le serveur FTP n'a pas répondu à temps.";
+"core.connect.ftpConnectionClosed" = "La connexion au serveur FTP a pris fin.";
+"core.connect.ftpProtocolViolation" = "Le serveur FTP a envoyé quelque chose que macSCP n'a pas pu lire comme une réponse.";
+"core.connect.ftpTLSRequired" = "Ce serveur a refusé de chiffrer la connexion. macSCP ne l'a pas poursuivie en clair — vérifiez si le serveur propose FTPS, ou choisissez un autre réglage de sécurité.";
+"core.connect.ftpTLSHandshakeFailed" = "La connexion chiffrée à ce serveur n'a pas pu être établie.";
+"core.connect.ftpCertificateRejected" = "Le certificat du serveur n'a pas été accepté ; la connexion n'a donc pas été établie.";
+"core.connect.ftpCertificateMismatch" = "Ce serveur présente un certificat différent de celui dont macSCP se souvient. La connexion a été refusée. Si le certificat du serveur a réellement été remplacé, supprimez celui qui est mémorisé puis reconnectez-vous.";
+"core.connect.ftpTrustStoreUnreadable" = "La liste des certificats mémorisés n'a pas pu être lue ; le certificat de ce serveur n'a donc pas pu être vérifié.";
+"core.connect.ftpDataCertificateDiffers" = "Le serveur a utilisé un certificat différent pour le transfert de fichiers et pour la connexion elle-même ; le transfert a donc été refusé.";
+"core.connect.ftpSessionScope" = "Ce transfert a tenté de réutiliser la session chiffrée d'une autre connexion, ce que macSCP n'autorise pas.";
+"core.connect.ftpSessionRefused" = "La session chiffrée de cette connexion n'a pas pu être réutilisée pour le transfert de fichiers.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "L'hôte ne doit pas être vide.";
 "core.connect.emptyUsername" = "Le nom d'utilisateur ne doit pas être vide.";

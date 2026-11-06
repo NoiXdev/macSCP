@@ -92,6 +92,22 @@
 "core.connect.ftpPathForbidden.lineFeed" = "Ta nazwa zawiera znak nowego wiersza. Serwer FTP odczytuje go jako koniec polecenia, dlatego macSCP go nie wysyła. Zmień nazwę pliku lub folderu i spróbuj ponownie.";
 "core.connect.ftpPathForbidden.nul" = "Ta nazwa zawiera znak zerowy, którego nie można wysłać do serwera FTP. Zmień nazwę pliku lub folderu i spróbuj ponownie.";
 
+/* FTPConnectionFailure: what stopped an FTP control or data connection
+   (FTP plan, Task 5). Keys are derived from the case, so a case added
+   without its four sentences fails everyConnectionFailureHasItsOwnSentence. */
+"core.connect.ftpGreetingRefused" = "Serwer FTP odrzucił połączenie jeszcze przed zalogowaniem. Może być przeciążony albo chwilowo nie przyjmuje połączeń.";
+"core.connect.ftpTimedOut" = "Serwer FTP nie odpowiedział na czas.";
+"core.connect.ftpConnectionClosed" = "Połączenie z serwerem FTP zostało zakończone.";
+"core.connect.ftpProtocolViolation" = "Serwer FTP przesłał coś, czego macSCP nie potrafi odczytać jako odpowiedzi.";
+"core.connect.ftpTLSRequired" = "Ten serwer odmówił zaszyfrowania połączenia. macSCP nie kontynuował go bez szyfrowania — sprawdź, czy serwer udostępnia FTPS, albo wybierz inne ustawienie bezpieczeństwa.";
+"core.connect.ftpTLSHandshakeFailed" = "Nie udało się nawiązać szyfrowanego połączenia z tym serwerem.";
+"core.connect.ftpCertificateRejected" = "Certyfikat serwera nie został zaakceptowany, dlatego połączenie nie zostało nawiązane.";
+"core.connect.ftpCertificateMismatch" = "Ten serwer przedstawia inny certyfikat niż ten, który zapamiętał macSCP. Połączenie zostało odrzucone. Jeśli certyfikat serwera rzeczywiście został wymieniony, usuń zapamiętany i połącz się ponownie.";
+"core.connect.ftpTrustStoreUnreadable" = "Nie udało się odczytać listy zapamiętanych certyfikatów, dlatego certyfikat tego serwera nie został sprawdzony.";
+"core.connect.ftpDataCertificateDiffers" = "Serwer użył do przesyłania plików innego certyfikatu niż do samego połączenia, dlatego transfer został odrzucony.";
+"core.connect.ftpSessionScope" = "Ten transfer próbował użyć szyfrowanej sesji innego połączenia, na co macSCP nie pozwala.";
+"core.connect.ftpSessionRefused" = "Szyfrowanej sesji tego połączenia nie udało się użyć do przesłania plików.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host nie może być pusty.";
 "core.connect.emptyUsername" = "Nazwa użytkownika nie może być pusta.";

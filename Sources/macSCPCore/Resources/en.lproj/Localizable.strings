@@ -101,6 +101,22 @@
 "core.connect.ftpPathForbidden.lineFeed" = "This name contains a line break. An FTP server reads that as the end of a command, so macSCP will not send it. Rename the file or folder and try again.";
 "core.connect.ftpPathForbidden.nul" = "This name contains a null character, which cannot be sent to an FTP server. Rename the file or folder and try again.";
 
+/* FTPConnectionFailure: what stopped an FTP control or data connection
+   (FTP plan, Task 5). Keys are derived from the case, so a case added
+   without its four sentences fails everyConnectionFailureHasItsOwnSentence. */
+"core.connect.ftpGreetingRefused" = "The FTP server refused the connection before the login. It may be full, or closed to connections right now.";
+"core.connect.ftpTimedOut" = "The FTP server did not answer in time.";
+"core.connect.ftpConnectionClosed" = "The connection to the FTP server ended.";
+"core.connect.ftpProtocolViolation" = "The FTP server sent something macSCP could not read as a reply.";
+"core.connect.ftpTLSRequired" = "This server refused to protect the connection. macSCP did not continue in the clear — check whether the server offers FTPS, or choose a different security setting.";
+"core.connect.ftpTLSHandshakeFailed" = "The secure connection to this server could not be established.";
+"core.connect.ftpCertificateRejected" = "The server's certificate was not accepted, so the connection was not made.";
+"core.connect.ftpCertificateMismatch" = "This server is presenting a different certificate than the one macSCP remembers. The connection was refused. If the server's certificate really was replaced, remove the remembered one and connect again.";
+"core.connect.ftpTrustStoreUnreadable" = "The list of remembered certificates could not be read, so this server's certificate could not be checked.";
+"core.connect.ftpDataCertificateDiffers" = "The server used a different certificate for the file transfer than for the connection itself, so the transfer was refused.";
+"core.connect.ftpSessionScope" = "This transfer tried to reuse the secure session of a different connection, which macSCP does not allow.";
+"core.connect.ftpSessionRefused" = "The secure session of this connection could not be reused for the file transfer.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";
