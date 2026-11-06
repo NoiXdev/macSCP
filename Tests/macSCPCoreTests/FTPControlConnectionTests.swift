@@ -1771,6 +1771,22 @@ struct FTPControlConnectionTests {
                 await connection.turnWaiterCount == 1
             }
             blocked.cancel()
+            // **The bound, and it is this and not a `cancel()`** — the
+            // cancel IS the property here, so it cannot also be the
+            // backstop. `pollUntil` carries no deadline and ends only by
+            // cancellation, so the suite's own time limit ends the case
+            // LOUDLY if the waiter is never released, where
+            // `await blocked.value` would have parked past it. Written this
+            // way after the first draft used the value read and hung under
+            // the plant — the fourth instance of that shape in this task,
+            // inside the commit that removed the third.
+            try await pollUntil("the cancelled turn waiter to be released") {
+                await connection.turnWaiterCount == 0
+            }
+            // The turn did not move: the transfer still holds it.
+            let heldByTheTransfer = await connection.turnIsHeld
+            let waitersLeft = await connection.turnWaiterCount
+
             var waiterEnded = "no answer"
             do {
                 waiterEnded = "answered(\(try await blocked.value.code))"
@@ -1781,9 +1797,6 @@ struct FTPControlConnectionTests {
             } catch {
                 waiterEnded = "otherError(\(String(describing: type(of: error))))"
             }
-            // The turn did not move: the transfer still holds it.
-            let heldByTheTransfer = await connection.turnIsHeld
-            let waitersLeft = await connection.turnWaiterCount
 
             mayFinish.signal()
             let completion = try await transfer.value.completion?.code
