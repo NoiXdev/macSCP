@@ -94,6 +94,13 @@
 "core.connect.ftpNotAvailableYet" = "FTP connections are not available in this build yet.";
 "core.connect.ftpHostInvalid" = "Enter only the host name or address, such as ftp.example.com — no user name, no ftp://, no port and no path. The user name and the port have their own fields.";
 
+/* FTPPath.validated refused a path before it could reach a command line
+   (FTP plan, Task 5, Review Focus 1). One sentence per character class, so
+   the message says which rule the name broke. */
+"core.connect.ftpPathForbidden.carriageReturn" = "This name contains a carriage return. An FTP server reads that as the end of a command, so macSCP will not send it. Rename the file or folder and try again.";
+"core.connect.ftpPathForbidden.lineFeed" = "This name contains a line break. An FTP server reads that as the end of a command, so macSCP will not send it. Rename the file or folder and try again.";
+"core.connect.ftpPathForbidden.nul" = "This name contains a null character, which cannot be sent to an FTP server. Rename the file or folder and try again.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host must not be empty.";
 "core.connect.emptyUsername" = "Username must not be empty.";

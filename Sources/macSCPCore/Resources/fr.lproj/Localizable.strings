@@ -85,6 +85,13 @@
 "core.connect.ftpNotAvailableYet" = "Les connexions FTP ne sont pas encore disponibles dans cette version.";
 "core.connect.ftpHostInvalid" = "Saisissez uniquement le nom d'hôte ou l'adresse, par exemple ftp.example.com — sans nom d'utilisateur, sans ftp://, sans port et sans chemin. Le nom d'utilisateur et le port ont chacun leur propre champ.";
 
+/* FTPPath.validated refused a path before it could reach a command line
+   (FTP plan, Task 5, Review Focus 1). One sentence per character class, so
+   the message says which rule the name broke. */
+"core.connect.ftpPathForbidden.carriageReturn" = "Ce nom contient un retour chariot. Un serveur FTP l'interprète comme la fin d'une commande ; macSCP ne l'envoie donc pas. Renommez le fichier ou le dossier, puis réessayez.";
+"core.connect.ftpPathForbidden.lineFeed" = "Ce nom contient un saut de ligne. Un serveur FTP l'interprète comme la fin d'une commande ; macSCP ne l'envoie donc pas. Renommez le fichier ou le dossier, puis réessayez.";
+"core.connect.ftpPathForbidden.nul" = "Ce nom contient un caractère nul, qui ne peut pas être envoyé à un serveur FTP. Renommez le fichier ou le dossier, puis réessayez.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "L'hôte ne doit pas être vide.";
 "core.connect.emptyUsername" = "Le nom d'utilisateur ne doit pas être vide.";

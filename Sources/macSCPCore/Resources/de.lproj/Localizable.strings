@@ -83,6 +83,13 @@
 "core.connect.ftpNotAvailableYet" = "FTP-Verbindungen sind in diesem Build noch nicht verfügbar.";
 "core.connect.ftpHostInvalid" = "Gib nur den Hostnamen oder die Adresse ein, etwa ftp.example.com — ohne Benutzernamen, ohne ftp://, ohne Port und ohne Pfad. Benutzername und Port haben ihre eigenen Felder.";
 
+/* FTPPath.validated refused a path before it could reach a command line
+   (FTP plan, Task 5, Review Focus 1). One sentence per character class, so
+   the message says which rule the name broke. */
+"core.connect.ftpPathForbidden.carriageReturn" = "Dieser Name enthält einen Wagenrücklauf. Ein FTP-Server liest das als Ende eines Befehls, deshalb sendet macSCP ihn nicht. Benenne die Datei oder den Ordner um und versuche es erneut.";
+"core.connect.ftpPathForbidden.lineFeed" = "Dieser Name enthält einen Zeilenumbruch. Ein FTP-Server liest das als Ende eines Befehls, deshalb sendet macSCP ihn nicht. Benenne die Datei oder den Ordner um und versuche es erneut.";
+"core.connect.ftpPathForbidden.nul" = "Dieser Name enthält ein Nullzeichen, das sich nicht an einen FTP-Server senden lässt. Benenne die Datei oder den Ordner um und versuche es erneut.";
+
 /* ConnectionViewModel.failedState(for:) */
 "core.connect.emptyHost" = "Host darf nicht leer sein.";
 "core.connect.emptyUsername" = "Benutzername darf nicht leer sein.";
