@@ -225,6 +225,16 @@ let package = Package(
                 // in `NIOLockedValueBox` and read `TLSUserEvent` off the pipeline.
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOTLS", package: "swift-nio"),
+                // Five files in this target drive an `EmbeddedEventLoop`
+                // rather than a real one: `BytePumpTests`,
+                // `FTPControlConnectionTests`, `HostKeyValidationTests`,
+                // `SOCKS5HandshakeTests` and `SSHAgentClientTests`, counted
+                // with `/usr/bin/grep -rl 'import NIOEmbedded'
+                // Tests/macSCPCoreTests | wc -l`, which prints 5. Four of
+                // them imported it while it reached the target only through
+                // the graph; it is named here for the reason the
+                // `SwiftASN1` comment below gives.
+                .product(name: "NIOEmbedded", package: "swift-nio"),
                 // `LoopbackFTPServer` terminates TLS with `NIOSSLServerHandler`
                 // on a pipeline it can upgrade mid-connection (`AUTH TLS`).
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),

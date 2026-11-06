@@ -1,6 +1,7 @@
 import Foundation
 import MacSCPTestSupport
 import NIOCore
+import NIOEmbedded
 import Synchronization
 import Testing
 
@@ -39,6 +40,73 @@ struct FTPControlConnectionTests {
         } catch {
             await server.stop()
             throw error
+        }
+    }
+
+    /// An `FTPIdleWatchdog` whose whole notion of time this test owns: the
+    /// loop's manual clock drives the timer and `instant` drives the elapsed
+    /// span, and `advance(_:)` moves both by the same amount so they cannot
+    /// disagree. Advancing one and not the other is the half-injected shape
+    /// the watchdog's own comment records measuring.
+    private final class WatchdogRig: Sendable {
+        /// The fake clock and the firing count, in a class because a `Mutex`
+        /// is noncopyable and cannot be captured by the two escaping closures
+        /// the watchdog holds.
+        private final class State: Sendable {
+            private struct Inner {
+                var instant: ContinuousClock.Instant
+                var firings = 0
+            }
+
+            private let box: Mutex<Inner>
+
+            init() {
+                box = Mutex(Inner(instant: ContinuousClock.now))
+            }
+
+            var now: ContinuousClock.Instant { box.withLock { $0.instant } }
+            /// How many times the watchdog has given up. A count rather than
+            /// a flag, so a watchdog that fired twice does not read as one
+            /// that fired once.
+            var firings: Int { box.withLock { $0.firings } }
+
+            func advance(_ span: Duration) {
+                box.withLock { $0.instant = $0.instant.advanced(by: span) }
+            }
+
+            func noteFiring() {
+                box.withLock { $0.firings += 1 }
+            }
+        }
+
+        let watchdog: FTPIdleWatchdog
+        private let loop = EmbeddedEventLoop()
+        private let state = State()
+
+        /// How many times the watchdog gave up. A count and not a flag,
+        /// so a watchdog that fires twice does not read as one that fired
+        /// once.
+        var firings: Int { state.firings }
+
+        init(bound: Duration) {
+            let state = self.state
+            watchdog = FTPIdleWatchdog(
+                bound: Self.amount(bound), loop: loop,
+                now: { state.now },
+                onIdle: { state.noteFiring() })
+        }
+
+        /// Moves the fake clock and the loop's timer wheel by the same span,
+        /// so the two cannot disagree.
+        func advance(_ span: Duration) {
+            state.advance(span)
+            loop.advanceTime(by: Self.amount(span))
+        }
+
+        private static func amount(_ span: Duration) -> TimeAmount {
+            .nanoseconds(
+                span.components.seconds * 1_000_000_000
+                    + span.components.attoseconds / 1_000_000_000)
         }
     }
 
@@ -510,6 +578,53 @@ struct FTPControlConnectionTests {
         }
         #expect(outcome.failure == .timedOut)
         #expect(outcome.elapsed >= idleBound)
+    }
+
+    /// The watchdog R2's reads are bounded by: progress inside the bound
+    /// rearms it, and silence past the bound fires it.
+    ///
+    /// **No wall clock and no ceiling anywhere.** Both halves of the
+    /// watchdog's time are driven here — the timer by an
+    /// `EmbeddedEventLoop`'s manual time and the elapsed span by a clock this
+    /// case advances — so every figure below is one the test chose, and the
+    /// shape CLAUDE.md forbids (an assertion about the gap between the test's
+    /// own calls, which a starved runner widens) never arises.
+    ///
+    /// **Driving only the loop gives a test that passes for the wrong
+    /// reason**, which was measured before the clock was injectable: the tick
+    /// then runs on the loop's manual time but measures the REAL span since
+    /// the last progress, which is roughly zero, so it rearms every time and
+    /// the watchdog can never fire. The first half below passed and the
+    /// second failed —
+    /// `✘ Expectation failed: firedOnSilence.withLock { $0 }` — and "did not
+    /// fire" is exactly what the first half asserts. That is why the positive
+    /// check is not optional here.
+    @Test func theIdleWatchdogRearmsOnProgressAndFiresOnSilence() {
+        let bound = Duration.seconds(10)
+        let step = Duration.seconds(6)
+
+        // Progress inside the bound: four steps of 6 s, with a progress
+        // report after each, is 24 s of a 10 s bound and never 10 s of
+        // silence.
+        let withProgress = WatchdogRig(bound: bound)
+        withProgress.watchdog.start()
+        for _ in 1...4 {
+            withProgress.advance(step)
+            withProgress.watchdog.noteProgress()
+        }
+        #expect(withProgress.firings == 0)
+        withProgress.watchdog.stop()
+
+        // The positive beside it: the same bound, the same steps, no progress
+        // reported. A watchdog that could never fire would pass the check
+        // above and fail this one.
+        let silent = WatchdogRig(bound: bound)
+        silent.watchdog.start()
+        silent.advance(step)
+        #expect(silent.firings == 0)
+        silent.advance(step)
+        #expect(silent.firings == 1)
+        silent.watchdog.stop()
     }
 
     // MARK: - FEAT

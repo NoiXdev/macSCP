@@ -1277,9 +1277,22 @@ final class FTPSessionVault: Sendable {
 ///
 /// `onIdle` runs on the event loop, at most once. `stop()` cancels the pending
 /// timer, so a finished read leaves nothing scheduled.
+///
+/// **Both halves of its time are injectable, and that is one decision, not
+/// two.** The timer comes from `loop`, which a test can drive with an
+/// `EmbeddedEventLoop`; the elapsed span comes from `now`. Passing only the
+/// loop gives a watchdog that can never fire under test, because advancing
+/// the loop's manual time runs the tick while the real clock has barely
+/// moved, so every tick measures a span of roughly zero and REARMS —
+/// measured 2026-11-06 on exactly that half-injected shape: the "progress
+/// rearms it" half passed and the "silence fires it" half failed, which is
+/// the positive check beside the negative one earning its keep, since "did
+/// not fire" is also what a watchdog that cannot fire looks like. Half an
+/// injectable clock is worse than none, because the half still reading the
+/// real clock is the half an assertion rests on.
 final class FTPIdleWatchdog: Sendable {
     private struct Inner {
-        var lastProgress = ContinuousClock.now
+        var lastProgress: ContinuousClock.Instant
         var pending: Scheduled<Void>?
         var stopped = false
     }
@@ -1292,13 +1305,24 @@ final class FTPIdleWatchdog: Sendable {
 
     private let bound: TimeAmount
     private let loop: any EventLoop
+    private let now: @Sendable () -> ContinuousClock.Instant
     private let onIdle: @Sendable () -> Void
-    private let state = Mutex(Inner())
+    private let state: Mutex<Inner>
 
-    init(bound: TimeAmount, loop: any EventLoop, onIdle: @escaping @Sendable () -> Void) {
+    /// - Parameter now: where "how long ago was the last chunk" is read from.
+    ///   Defaults to the real clock, so no production call site names it; a
+    ///   test passes a clock it advances itself, together with an
+    ///   `EmbeddedEventLoop` for `loop`.
+    init(
+        bound: TimeAmount, loop: any EventLoop,
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
+        onIdle: @escaping @Sendable () -> Void
+    ) {
         self.bound = bound
         self.loop = loop
+        self.now = now
         self.onIdle = onIdle
+        self.state = Mutex(Inner(lastProgress: now()))
     }
 
     func start() {
@@ -1306,7 +1330,8 @@ final class FTPIdleWatchdog: Sendable {
     }
 
     func noteProgress() {
-        state.withLock { $0.lastProgress = .now }
+        let instant = now()
+        state.withLock { $0.lastProgress = instant }
     }
 
     func stop() {
@@ -1338,10 +1363,11 @@ final class FTPIdleWatchdog: Sendable {
     }
 
     private func tick() -> Tick {
-        state.withLock { inner in
+        let instant = now()
+        return state.withLock { inner in
             guard !inner.stopped else { return .stop }
             inner.pending = nil
-            let quiet = ContinuousClock.now - inner.lastProgress
+            let quiet = instant - inner.lastProgress
             guard quiet < Duration(bound) else {
                 inner.stopped = true
                 return .fire
