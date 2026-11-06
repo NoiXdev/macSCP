@@ -330,14 +330,19 @@ actor FTPControlConnection {
     ) async throws {
         if security == .implicitTLS { try await awaitHandshake() }
 
-        let greeting = try await readReply()
-        guard greeting.isPositive else {
+        let greeting = try await readGreeting()
+        guard greeting.isPositiveCompletion else {
             throw FTPConnectionFailure.greetingRefused(code: greeting.code)
         }
 
         if security == .explicitTLS {
+            // `234`, and nothing else. A 1xx would mean the upgrade has not
+            // happened yet and a 3xx that the server wants something more
+            // (`334` is the Kerberos-style "continue the exchange"); handing
+            // either to `startTLS()` would send a ClientHello to a peer that
+            // is not expecting one.
             let auth = try await send("AUTH", argument: "TLS")
-            guard auth.isPositive else {
+            guard auth.isPositiveCompletion else {
                 throw FTPConnectionFailure.tlsUpgradeRefused(code: auth.code)
             }
             try await startTLS()
@@ -349,21 +354,29 @@ actor FTPControlConnection {
             // buffer size is negotiated before the protection level, and a
             // server that refuses either leaves the data connections in the
             // clear, which is not what the user asked for.
-            _ = try await send("PBSZ", argument: "0")
+            let buffer = try await send("PBSZ", argument: "0")
+            guard buffer.isPositiveCompletion else {
+                throw FTPConnectionFailure.tlsUpgradeRefused(code: buffer.code)
+            }
             let protection = try await send("PROT", argument: "P")
-            guard protection.isPositive else {
+            guard protection.isPositiveCompletion else {
                 throw FTPConnectionFailure.tlsUpgradeRefused(code: protection.code)
             }
             dataProtected = true
         }
 
+        // `USER` is the one call site `isPositive` is right for: `331` asks
+        // for a password, `230` says none is needed, and both are the login
+        // going well.
         let user = try await send("USER", argument: username)
         guard user.isPositive else { throw FTPConnectionFailure.loginRefused }
-        // `230` is "logged in already" — an anonymous server that wants no
-        // password. Anything else positive is a request for one.
         if user.code != 230 {
+            // `PASS` wants a 2xx. A `332 Need account for login` is a server
+            // asking for an `ACCT` this backend does not send, and reading it
+            // as a successful login would carry on against a session that is
+            // not logged in.
             let accepted = try await send("PASS", argument: password)
-            guard accepted.isPositive else { throw FTPConnectionFailure.loginRefused }
+            guard accepted.isPositiveCompletion else { throw FTPConnectionFailure.loginRefused }
         }
 
         featureSet = Self.features(of: try await send("FEAT", argument: nil))
@@ -376,6 +389,32 @@ actor FTPControlConnection {
         // read under the per-reply idle bound (R2).
         replyBound = Self.timeAmount(tuning.replyIdleTimeout)
     }
+
+    /// The greeting, reading through any preliminary replies in front of it.
+    ///
+    /// RFC 959 section 5.4 allows `120 Service ready in nnn minutes` followed
+    /// by `220` when the greeting is ready. Taking the `120` as the greeting
+    /// is not a refused connection — it is a stream one reply behind for the
+    /// rest of its life, with every later reply answering the command before
+    /// it and `FTPReplyAccumulator` unable to notice, because each line is a
+    /// well-formed reply (fix round 1, R7).
+    ///
+    /// Bounded by a count as well as by the reply bound: a peer that answers
+    /// `120` forever would otherwise be read forever, one bounded wait at a
+    /// time.
+    private func readGreeting() async throws -> FTPReply {
+        var reply = try await readReply()
+        var preliminaries = 0
+        while reply.isPreliminary, preliminaries < Self.maximumPreliminaryGreetings {
+            preliminaries += 1
+            reply = try await readReply()
+        }
+        return reply
+    }
+
+    /// How many `1xx` replies may precede the greeting. One is what RFC 959
+    /// describes; the allowance is for a server that repeats its estimate.
+    private static let maximumPreliminaryGreetings = 4
 
     // MARK: - Commands
 

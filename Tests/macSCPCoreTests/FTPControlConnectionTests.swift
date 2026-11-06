@@ -179,6 +179,160 @@ struct FTPControlConnectionTests {
         #expect(await greeting.receivedCommands.map(\.verb).first == "USER")
     }
 
+    // MARK: - The reply codes a well-behaved server does not send
+
+    /// Dials a scripted server in plain mode and reports how it ended.
+    private static func dialScript(
+        _ server: ScriptedFTPServer, host: String, port: Int,
+        security: FTPSecurityMode = .plain, timeout: Duration = .seconds(30),
+        tuning: FTPControlConnection.Tuning = .default
+    ) async -> (outcome: DialOutcome, features: Set<String>) {
+        do {
+            let connection = try await FTPControlConnection.connect(
+                FTPConnectionConfig(
+                    host: host, port: port, username: "scripted", security: security,
+                    password: ""),
+                password: "unused-by-a-script", certificateDecider: .refusing,
+                timeout: timeout, trustStore: nil, tuning: tuning)
+            let features = await connection.features
+            await connection.close()
+            return (.connected, features)
+        } catch let failure as FTPConnectionFailure {
+            return (.failed(failure), [])
+        } catch {
+            return (.otherError(String(describing: type(of: error))), [])
+        }
+    }
+
+    private static func runningScript<T: Sendable>(
+        _ server: ScriptedFTPServer,
+        _ body: (_ host: String, _ port: Int) async throws -> T
+    ) async throws -> T {
+        let endpoint = try await server.start()
+        do {
+            let result = try await body(endpoint.host, endpoint.port)
+            await server.stop()
+            return result
+        } catch {
+            await server.stop()
+            throw error
+        }
+    }
+
+    /// A `120` in front of the greeting is read through, not taken for the
+    /// greeting.
+    ///
+    /// RFC 959 section 5.4 permits it. Taking it for the greeting is not a
+    /// refusal: every reply after it then answers the command before it, and
+    /// `FTPReplyAccumulator` cannot notice, because each line is a
+    /// well-formed reply. The script below makes the desynchronisation
+    /// VISIBLE — `FEAT`'s reply would be the one-line `230` and the feature
+    /// set would come back empty — because a dial that is one reply behind
+    /// still reports success.
+    @Test func a120BeforeTheGreetingIsReadThroughToThe220() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["120 Service ready in 1 minute."], ["220 Scripted server ready."]],
+            replies: [
+                ["331 Password required."],
+                ["230 Login successful."],
+                ["211-Features:", " UTF8", " SIZE", " MLSD", "211 End"],
+                ["200 Type set."],
+            ])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(server, host: host, port: port)
+        }
+        #expect(result.outcome == .connected)
+        // The positive that a desynchronised dial cannot produce: `FEAT`'s
+        // own reply was read against `FEAT`.
+        #expect(result.features.contains("UTF8"))
+        #expect(result.features.contains("MLSD"))
+        #expect(await server.receivedCommands == ["USER scripted", "PASS", "FEAT", "TYPE I"])
+    }
+
+    /// `332 Need account for login` is not a successful login.
+    ///
+    /// It is a server asking for an `ACCT` this backend does not send. It is
+    /// a 3xx, so the predicate that admits `331` admitted it too, and the
+    /// dial carried on against a session that is not logged in.
+    @Test func aPASSAnsweredWithAnAccountRequestIsNotALogin() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [["331 Password required."], ["332 Need account for login."]])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(server, host: host, port: port)
+        }
+        #expect(result.outcome == .failed(.loginRefused))
+        // The negative beside it: the dial stopped there. No `FEAT`, no
+        // `TYPE` against a session that is not logged in.
+        #expect(await server.receivedCommands == ["USER scripted", "PASS"])
+    }
+
+    /// `AUTH TLS` answered with anything but a 2xx does not start a
+    /// handshake.
+    ///
+    /// `334` is the "continue the exchange" of the Kerberos-style mechanisms.
+    /// Reading it as success sent a ClientHello to a peer that was not
+    /// expecting one, and the dial then waited for a handshake that could
+    /// never complete.
+    @Test func anAUTHAnsweredWithoutA2xxDoesNotStartAHandshake() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [["334 Adat must follow."]])
+        let result = try await Self.runningScript(server) { host, port in
+            await Self.dialScript(
+                server, host: host, port: port, security: .explicitTLS, timeout: .seconds(2))
+        }
+        #expect(result.outcome == .failed(.tlsUpgradeRefused(code: 334)))
+        #expect(await server.receivedCommands == ["AUTH TLS"])
+    }
+
+    /// A reply bound that fires takes the connection down.
+    ///
+    /// Ending the line stream alone blinded the connection: every later read
+    /// failed on a stream that could never deliver, while the socket stayed
+    /// open and the keepalive went on writing `NOOP` into it. The script
+    /// answers everything the dial needs and then goes silent, so the
+    /// timeout happens on a command AFTER the dial — which is where the
+    /// defect lived, since a dial that fails closes the connection on its own
+    /// error path.
+    @Test func aReplyBoundThatFiresClosesTheConnection() async throws {
+        let server = ScriptedFTPServer(
+            greeting: [["220 Scripted server ready."]],
+            replies: [
+                ["331 Password required."],
+                ["230 Login successful."],
+                ["211-Features:", " UTF8", "211 End"],
+                ["200 Type set."],
+                // `PWD` is answered with nothing at all.
+            ])
+        let outcome = try await Self.runningScript(server) { host, port in
+            let connection = try await FTPControlConnection.connect(
+                FTPConnectionConfig(
+                    host: host, port: port, username: "scripted", security: .plain, password: ""),
+                password: "unused-by-a-script", certificateDecider: .refusing,
+                timeout: .seconds(30), trustStore: nil,
+                tuning: FTPControlConnection.Tuning(
+                    keepaliveInterval: .milliseconds(20), replyIdleTimeout: .milliseconds(200)))
+            var failure: FTPConnectionFailure?
+            do {
+                _ = try await connection.send("PWD", argument: nil)
+            } catch let caught as FTPConnectionFailure {
+                failure = caught
+            }
+            // The connection took itself down, so the socket is closed. Waited
+            // on state and not on a clock.
+            try await pollUntil("the timed-out connection to close its socket") {
+                await server.peerClosed
+            }
+            await connection.close()
+            return failure
+        }
+        #expect(outcome == .timedOut)
+        // The positive the wait rests on: the dial really did complete, so
+        // what timed out was a command and not the greeting.
+        #expect(await server.receivedCommands.prefix(4) == ["USER scripted", "PASS", "FEAT", "TYPE I"])
+    }
+
     // MARK: - Login
 
     @Test func loginSendsUSERThenPASSAndReportsTheOutcome() async throws {
