@@ -713,6 +713,70 @@ struct FTPControlConnectionTests {
         #expect(outcome.pwd == 257)
     }
 
+    /// And when the OWED reply cannot be read either, the connection is
+    /// closed and the drain's own error still reaches the caller.
+    ///
+    /// The other half of the ruled shape (T5.11), and until fix round 3 the
+    /// untested one: the re-review planted
+    /// `throw FTPConnectionFailure.connectionClosed` after the `await close()`
+    /// on that path, and planted the `await close()` away, and **both were
+    /// GREEN across 37 tests** at `c65937c5` (fix round 3, G2). The code was
+    /// right and nothing held it there.
+    ///
+    /// `garbleNextTransferCompletion()` is what reaches the branch, with no
+    /// clock in it: the payload is served in full, so `readToEnd()` returns
+    /// and the drain throws of its own accord, and the line that should have
+    /// been the `226` has no reply code in front of it, so the bounded read
+    /// of the owed reply throws `protocolViolation`. The seam's own comment
+    /// says why a silent server would be the wrong fixture here — a read
+    /// that ends on `readReply`'s timeout closes the connection inside
+    /// `readReply`, which would leave the `await close()` this case is about
+    /// pinning nothing.
+    ///
+    /// Both properties are asserted, because neither implies the other: the
+    /// connection is closed — read through the next command on it, which is
+    /// the behaviour and not a flag — and the error the caller sees is still
+    /// the drain's, not `protocolViolation` and not `connectionClosed`.
+    @Test func anOwedReplyThatCannotBeReadClosesTheConnectionAndKeepsTheError() async throws {
+        struct DrainFailed: Error {}
+
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let outcome = try await Self.running(server) { host, port in
+            await server.garbleNextTransferCompletion()
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            let passive = try Self.passiveEndpoint(try await connection.send("PASV", argument: nil))
+            let data = try await connection.openDataConnection(host: passive.host, port: passive.port)
+            var fromTheDrain = false
+            do {
+                _ = try await connection.transferCommand("LIST") {
+                    _ = try await data.readToEnd()
+                    throw DrainFailed()
+                }
+            } catch is DrainFailed {
+                fromTheDrain = true
+            }
+            // What the connection does next IS whether it was closed. A
+            // closed connection cannot write, and its line stream has ended,
+            // so both ways this can end are `connectionClosed`; a connection
+            // still open gets a `257` from a server that is still answering.
+            var afterwards = "no answer"
+            do {
+                afterwards = "answered(\(try await connection.send("PWD", argument: nil).code))"
+            } catch let failure as FTPConnectionFailure {
+                afterwards = "failed(\(failure))"
+            } catch {
+                afterwards = "otherError(\(String(describing: type(of: error))))"
+            }
+            await data.close()
+            await connection.close()
+            return (fromTheDrain: fromTheDrain, afterwards: afterwards)
+        }
+        #expect(outcome.fromTheDrain)
+        #expect(outcome.afterwards == "failed(connectionClosed)")
+    }
+
     /// A refused transfer has ONE reply, and nothing waits for a second.
     ///
     /// `522`, `425` and `550` are the whole answer. A `transferCommand` that

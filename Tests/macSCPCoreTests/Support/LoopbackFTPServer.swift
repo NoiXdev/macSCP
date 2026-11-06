@@ -68,6 +68,7 @@ final class LoopbackFTPState: Sendable {
         var desynchroniseNextReply = false
         var pasvHost: String?
         var dropNextTransfer = false
+        var garbleNextCompletion = false
 
         var commands: [LoopbackFTPReceivedCommand] = []
         var handshakes: [LoopbackFTPHandshake] = []
@@ -490,6 +491,25 @@ actor LoopbackFTPServer {
     /// control connection (and the data connection) without a word. One shot.
     func dropControlConnectionMidTransfer() {
         state.box.withLockedValue { $0.dropNextTransfer = true }
+    }
+
+    /// The next data transfer serves its payload in full and then answers
+    /// with a line that is NOT a reply at all — text with no three-digit code
+    /// in front of it — where the `226` belongs. One shot, and the session
+    /// carries on afterwards, so the control connection is still answering
+    /// when the client decides what to do about it.
+    ///
+    /// For the one branch of `transferCommand` nothing else can reach (fix
+    /// round 3, G2): the drain throws, so the owed completion reply is read
+    /// under the reply bound, and THAT read fails too. Going silent instead
+    /// would reach the branch through `readReply`'s own timeout — which
+    /// closes the connection itself, so the `await close()` the branch exists
+    /// for would be measuring nothing. An unparseable line throws
+    /// `protocolViolation` without closing anything, so the close is the
+    /// client's own and a plant that removes it is red. It needs no clock
+    /// either.
+    func garbleNextTransferCompletion() {
+        state.box.withLockedValue { $0.garbleNextCompletion = true }
     }
 
     // MARK: Content and observations
@@ -1376,7 +1396,21 @@ final class LoopbackFTPSession: @unchecked Sendable {
             }
             if drop { return .end }
         }
-        try await send(226, "Transfer complete.")
+        let garble = state.box.withLockedValue { inner -> Bool in
+            let armed = inner.garbleNextCompletion
+            inner.garbleNextCompletion = false
+            return armed
+        }
+        if garble {
+            // No reply code in front of it, so the client's accumulator
+            // refuses the line instead of reading a reply off it. Consumed
+            // here and not beside `drop` above, so a transfer that is dropped
+            // mid-flight leaves this arm set for the next one rather than
+            // spending it on a reply that is never sent.
+            try await write("Transfer complete, and this line is not a reply.\r\n")
+        } else {
+            try await send(226, "Transfer complete.")
+        }
         return .keepGoing
     }
 
