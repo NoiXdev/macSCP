@@ -493,6 +493,29 @@ public enum DialSupport {
                     finding.readsAsConnectionFailure ? .connectionFailed : .serverAnswerUnusable,
                     finding.logSentence)
             }
+        case let failure as FTPConnectionFailure:
+            // Ruling T8.1 of the FTP plan. An FTP failure that reaches here
+            // as itself (a reconnect inside a browse action, a transfer step
+            // the file system left typed) used to fall to the `default:` arm
+            // and read "The operation couldn't be completed.
+            // (macSCPCore.FTPConnectionFailure error N.)" -- a case index, in
+            // English, beside finished catalogue sentences in four
+            // languages.
+            //
+            // The sentence is the failure's own `message`: a catalogue entry
+            // that holds no host, port, credential, fingerprint or reply
+            // code, which is what makes it safe to print here (the type's
+            // header states why). It is LOCALIZED, which the other sentences
+            // in this function are not; that follows the ruling, which named
+            // `message`, and is the one place a diagnostics row or a log line
+            // reads in the user's language where its neighbours read English.
+            //
+            // The KIND is preserved, not defaulted -- the `.finding` arm
+            // below carries the argument at length. Returning `.unknown` for
+            // every FTP failure would reclassify the login the server
+            // refused, which every other consumer of `failureKind(for:)`
+            // reads as `authenticationFailed`.
+            return (Self.tunnelKind(ofFTP: failure.kind), failure.message)
         case let ioError as IOError:
             // The one route left that still reduced to the case-index
             // bridge below: NIO's `IOError` carries only an `errnoCode`
@@ -513,6 +536,35 @@ public enum DialSupport {
             return (.unknown, Self.errnoText(for: ioError.errnoCode))
         default:
             return (.unknown, (error as NSError).localizedDescription)
+        }
+    }
+
+    /// The kind an FTP failure is classified as, by an exhaustive `switch`
+    /// over its payload-free tag with no `default`: a case added to
+    /// `FTPConnectionFailure.Kind` does not compile until it has been given a
+    /// kind here, which is the property the `.finding` arm's comment asks of
+    /// the other mappings in this function.
+    ///
+    /// Four readings. A login the server refused is `authenticationFailed`.
+    /// What ended or refused the connection itself -- the greeting, the
+    /// clock, the TLS upgrade and every certificate verdict -- is
+    /// `connectionFailed`. What the server ANSWERED and this client cannot
+    /// use is `serverAnswerUnusable`. macSCP's own guards and local faults
+    /// are `unknown`, as for every error a forwarding does not produce.
+    private static func tunnelKind(ofFTP kind: FTPConnectionFailure.Kind) -> TunnelFailureKind {
+        switch kind {
+        case .loginRefused:
+            return .authenticationFailed
+        case .greetingRefused, .timedOut, .connectionClosed, .tlsUpgradeRefused,
+            .tlsHandshakeFailed, .certificateRejected, .certificateMismatch,
+            .dataCertificateDiffers, .sessionRefusedByTLS:
+            return .connectionFailed
+        case .protocolViolation, .binaryModeRefused, .passiveAddressRefused,
+            .passiveModeRefused, .transferRefused, .restRefused:
+            return .serverAnswerUnusable
+        case .credentialNotSendable, .trustStoreUnreadable, .sessionFromAnotherConnection,
+            .leaseAlreadyReturned:
+            return .unknown
         }
     }
 
