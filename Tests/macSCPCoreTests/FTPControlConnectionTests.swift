@@ -1826,12 +1826,18 @@ struct FTPControlConnectionTests {
             // way after the first draft used the value read and hung under
             // the plant — the fourth instance of that shape in this task,
             // inside the commit that removed the third.
+            // This is also the assertion that the queue is empty again —
+            // `pollUntil` returns only when the count is 0. A second read
+            // of the same count, with an `#expect` on it, stood here and
+            // could not fail: nothing between the two statements can enter
+            // `acquire()`, so the value was 0 on every path. Removed rather
+            // than dressed up, because an expectation that cannot fail reads
+            // as a check and is not one.
             try await pollUntil("the cancelled turn waiter to be released") {
                 await connection.turnWaiterCount == 0
             }
             // The turn did not move: the transfer still holds it.
             let heldByTheTransfer = await connection.turnIsHeld
-            let waitersLeft = await connection.turnWaiterCount
 
             var waiterEnded = "no answer"
             do {
@@ -1845,6 +1851,17 @@ struct FTPControlConnectionTests {
             }
 
             mayFinish.signal()
+            // **The fifth instance of the un-backstopped `.value` shape, and
+            // the mildest** — its ending is `readReply()`'s own idle
+            // watchdog, which is IN the code under test, so the bound would
+            // be the thing under test. `pollUntil` on the turn being free
+            // gives it an ending of its own: the drain has been let go, so
+            // `transferCommand` reads its `226` and `release()` clears the
+            // flag, and a tree where that does not happen ends this case
+            // through the suite's time limit instead of parking past it.
+            try await pollUntil("the holder's transfer to give up the turn") {
+                await connection.turnIsHeld == false
+            }
             let completion = try await transfer.value.completion?.code
             // And the turn was handed on exactly once, which is what the
             // next command getting its OWN reply proves.
@@ -1853,12 +1870,11 @@ struct FTPControlConnectionTests {
             await connection.close()
             return (
                 waiterEnded: waiterEnded, heldByTheTransfer: heldByTheTransfer,
-                waitersLeft: waitersLeft, completion: completion, afterwards: afterwards
+                completion: completion, afterwards: afterwards
             )
         }
         #expect(outcome.waiterEnded == "cancelled")
         #expect(outcome.heldByTheTransfer)
-        #expect(outcome.waitersLeft == 0)
         #expect(outcome.completion == 226)
         #expect(outcome.afterwards == 257)
     }

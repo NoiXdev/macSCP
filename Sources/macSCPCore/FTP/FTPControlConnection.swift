@@ -92,15 +92,47 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     /// throw this, with four throw sites each** — counted, not remembered:
     /// `/usr/bin/grep -c passiveAddressRefused Sources/macSCPCore/FTP/FTPDataConnection.swift`
     /// prints 8, and `-c` is the right tool because each site is its own
-    /// line. A `227` is unusable in five ways: no parenthesised address at
+    /// line. The counting rule is one per CONDITION, so a compound guard
+    /// contributes more than one.
+    ///
+    /// A `227` is unusable in **five** ways: no parenthesised address at
     /// all, not six comma-separated fields, a field that is not a number, an
-    /// octet past 255, or a port of zero. A `229` is unusable in four, and
-    /// they are not the same four: no parenthesised field, a field with no
-    /// first character to use as a delimiter, a field that is not five
+    /// octet past 255, or a port of zero. Pinned by
+    /// `#expect(unusable.count == 5)` in
+    /// `FTPDataConnectionTests.aPASVReplyWithAnUnusableAddressIsRefusedRatherThanDialled`.
+    ///
+    /// A `229` carries **seven** conditions on its four sites — one, one,
+    /// then three at `parts.count == 5, parts[0].isEmpty, parts[4].isEmpty`,
+    /// then two at `let port = Int(parts[3]), (1...65535).contains(port)` —
+    /// of which **six are reachable**: no parenthesised field, an empty
+    /// field so no delimiter, not five delimiter-separated parts, a trailing
+    /// part that is not empty, a port field that is not a number, or a port
+    /// outside `1...65535`. The seventh, `parts[0].isEmpty`, cannot fail:
+    /// the delimiter is `field.first`, so everything before its first
+    /// occurrence is empty on every input. Pinned by
+    /// `#expect(unusable.count == 6)` in
+    /// `FTPDataConnectionTests.a229ThatCannotBeReadIsRefusedInEachOfItsSixWays`,
+    /// which also demonstrates the unreachable one.
+    ///
+    /// The port check is wider than the `227`'s because six octets cannot
+    /// express a port above 65535 while an `EPSV` reply's decimal field can;
+    /// a port of zero is not a separate `229` way, only a value in that one
+    /// range check.
+    ///
+    /// (Withdrawn wording, verbatim: "A `229` is unusable in four, and they
+    /// are not the same four: no parenthesised field, a field with no first
+    /// character to use as a delimiter, a field that is not five
     /// delimiter-separated parts with empty ends, or a port outside
-    /// `1...65535` — which is a wider check than the `227`'s, since six
-    /// octets cannot express a port above 65535 while an `EPSV` reply's
-    /// decimal field can. (Withdrawn wording, verbatim: "Unusable means one
+    /// `1...65535`". Four is wrong by this comment's own rule — it split the
+    /// `227`'s compound guard and left both of the `229`'s unsplit — and the
+    /// list omitted "a port field that is not a number" entirely. Five,
+    /// which Ruling T6.11's brief proposed, splits the port guard and still
+    /// leaves `parts.count == 5, parts[0].isEmpty, parts[4].isEmpty` as one:
+    /// counted by running the parser against each condition, it is seven
+    /// written and six reachable. This is the second correction to this
+    /// sentence, which is why it now cites the test that holds the number.)
+    ///
+    /// (Withdrawn wording, verbatim: "Unusable means one
     /// of five things, all of them the reply being unreadable: no
     /// parenthesised address at all, not six comma-separated fields, a field
     /// that is not a number, an octet past 255, or a port of zero." Those

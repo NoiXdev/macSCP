@@ -318,6 +318,83 @@ struct FTPDataConnectionTests {
         #expect(!verbs.contains("RETR"))
     }
 
+    /// A `229` this client cannot READ is refused, in each of the six ways
+    /// that can happen.
+    ///
+    /// **The `227` had a table and the `229` had none** — R9. Counted here
+    /// rather than remembered, by the rule the case-level comment on
+    /// `passiveAddressRefused` uses for the `227`, which splits a compound
+    /// guard into its conditions: `extendedPassiveEndpoint` has four throw
+    /// sites carrying **seven** conditions — one at
+    /// `guard let field = parenthesised`, one at `guard let delimiter`,
+    /// **three** at `guard parts.count == 5, parts[0].isEmpty, parts[4].isEmpty`
+    /// and two at `guard let port = Int(parts[3]), (1...65535).contains(port)`.
+    ///
+    /// **Six of the seven are reachable, and the seventh cannot fail.**
+    /// `parts[0].isEmpty` is the delimiter's own doing: the delimiter IS
+    /// `field.first`, so everything before its first occurrence is the empty
+    /// string, on every input. The last row below is the demonstration — a
+    /// reply built to put something in front of the delimiter makes that
+    /// character the delimiter instead, and the reply is refused by the part
+    /// COUNT, never by `parts[0]`. It is named rather than removed, because
+    /// deleting a never-false condition is a production change made to suit
+    /// a count.
+    @Test func a229ThatCannotBeReadIsRefusedInEachOfItsSixWays() async throws {
+        let peer = "127.0.0.1"
+        // The positive: the form every ordinary server sends parses, so the
+        // refusals below are not a parser that refuses everything.
+        let ordinary = try FTPDataConnection.extendedPassiveEndpoint(
+            FTPReply(code: 229, lines: ["Entering Extended Passive Mode (|||6446|)"]),
+            peerHost: peer)
+        let ordinaryParses = ordinary == FTPDataEndpoint(host: peer, port: 6446)
+        #expect(ordinaryParses)
+
+        let unusable: [(name: String, text: String)] = [
+            ("no parenthesised field at all", "Entering Extended Passive Mode."),
+            ("an empty field, so no delimiter", "Entering Extended Passive Mode ()"),
+            ("not five delimiter-separated parts", "Entering Extended Passive Mode (|||6446)"),
+            ("a trailing part that is not empty", "Entering Extended Passive Mode (|||6446|x)"),
+            ("a port field that is not a number", "Entering Extended Passive Mode (|||x|)"),
+            ("a port outside 1...65535", "Entering Extended Passive Mode (|||70000|)"),
+        ]
+        #expect(unusable.count == 6)
+        for candidate in unusable {
+            var refusal: FTPConnectionFailure?
+            do {
+                _ = try FTPDataConnection.extendedPassiveEndpoint(
+                    FTPReply(code: 229, lines: [candidate.text]), peerHost: peer)
+            } catch let failure as FTPConnectionFailure {
+                refusal = failure
+            }
+            #expect(refusal == .passiveAddressRefused, "\(candidate.name)")
+        }
+
+        // The seventh condition, shown unreachable: `x` becomes the
+        // delimiter, so `parts[0]` is empty here as it is everywhere, and
+        // what refuses this reply is the part count.
+        var withLeadingText: FTPConnectionFailure?
+        do {
+            _ = try FTPDataConnection.extendedPassiveEndpoint(
+                FTPReply(code: 229, lines: ["Entering Extended Passive Mode (x|||6446|)"]),
+                peerHost: peer)
+        } catch let failure as FTPConnectionFailure {
+            withLeadingText = failure
+        }
+        #expect(withLeadingText == .passiveAddressRefused)
+        // And a port of zero is the same condition as any other out-of-range
+        // port, not a seventh way: the `227`'s zero check is separate only
+        // because six octets cannot express a port above 65535.
+        var zeroPort: FTPConnectionFailure?
+        do {
+            _ = try FTPDataConnection.extendedPassiveEndpoint(
+                FTPReply(code: 229, lines: ["Entering Extended Passive Mode (|||0|)"]),
+                peerHost: peer)
+        } catch let failure as FTPConnectionFailure {
+            zeroPort = failure
+        }
+        #expect(zeroPort == .passiveAddressRefused)
+    }
+
     /// A passive reply naming a host that is not the peer is DIALLED AT THE
     /// PEER, not refused.
     ///

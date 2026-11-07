@@ -136,21 +136,32 @@ enum FTPDataConnection {
     /// A data connection on `control`, negotiated passively.
     ///
     /// `EPSV` first, `PASV` after it, and the preference is not a taste.
-    /// `EPSV` carries no address to parse, so a reply that is well-formed is
-    /// usable — where a `227` can be well-formed FTP and still unreadable
-    /// here, in the five ways `passiveEndpoint(_:peerHost:)` enumerates. And
-    /// RFC 2428 exists for IPv6: a `227`'s four octets cannot name an IPv6
-    /// peer at all, so `EPSV` is the only passive command with a future.
+    /// `EPSV` needs no HOST parse — its reply names no address this client
+    /// has to read, where a `227`'s four octets must be parsed and
+    /// range-checked before its port can be used at all. And RFC 2428 exists
+    /// for IPv6: a `227`'s four octets cannot name an IPv6 peer, so `EPSV`
+    /// is the only passive command with a future.
     ///
-    /// Withdrawn wording, verbatim: "The preference is not a taste: `EPSV`
-    /// carries no address at all, so the question
-    /// `passiveEndpoint(_:peerHost:)` has to answer — may this address be
-    /// dialled — never arises on the preferred path." Ruling T6.2 removed
-    /// that question from both parsers, so the reason given here named a
-    /// decision that no longer exists; eighty lines above, the same file now
-    /// says the address is read and then not used. The preference survives
-    /// the reason it was given for, which is why this is a rewrite and not a
-    /// deletion.
+    /// Two withdrawals, one on top of the other, which is why this paragraph
+    /// is careful.
+    ///
+    /// Verbatim, the original: "The preference is not a taste: `EPSV` carries
+    /// no address at all, so the question `passiveEndpoint(_:peerHost:)` has
+    /// to answer — may this address be dialled — never arises on the
+    /// preferred path." Ruling T6.2 removed that question from both parsers,
+    /// so it named a decision that no longer exists.
+    ///
+    /// Verbatim, its replacement: "`EPSV` carries no address to parse, so a
+    /// reply that is well-formed is usable — where a `227` can be well-formed
+    /// FTP and still unreadable here, in the five ways
+    /// `passiveEndpoint(_:peerHost:)` enumerates." That is false of the
+    /// `229`: `extendedPassiveEndpoint` refuses well-formed FTP replies too,
+    /// in the six ways the case-level comment on
+    /// `FTPConnectionFailure.passiveAddressRefused` enumerates — and that
+    /// comment was corrected in the same commit as the sentence contradicting
+    /// it. The asymmetry it offered is not there; what survives is the
+    /// narrower claim above, which is about the HOST and not about
+    /// well-formedness.
     ///
     /// A server that refuses `EPSV` is remembered on the connection, so the
     /// extra round trip is paid once rather than once per transfer.
