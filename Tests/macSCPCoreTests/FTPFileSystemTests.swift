@@ -1015,6 +1015,67 @@ struct FTPFileSystemTests {
         #expect(passwordArguments.count == 2)
     }
 
+    /// The config `connect` hands to the pool carries NO password.
+    ///
+    /// `connect`'s own comment argues this in the strongest available form —
+    /// "a value type that never held the secret cannot print it" — and the
+    /// review measured it held by nothing: replacing
+    /// `var secretFree = config` plus `secretFree.password = ""` with
+    /// `let secretFree = config`, so the pool's long-lived copy keeps the
+    /// credential, was GREEN against the whole suite.
+    /// `thePasswordIsReadFromTheConfigAndNowhereElse` measures something
+    /// adjacent and different: that the password is READ FROM the config.
+    ///
+    /// **A source scan rather than a reading**, because
+    /// `FTPConnectionPool`'s `config` is `private let` and so is out of reach
+    /// even under `@testable`, and relaxing that to buy one test would widen
+    /// a surface to narrow a guard. Read through `SourceCorpus.code(of:)`,
+    /// which blanks comments and string literals while preserving length, so
+    /// a comment quoting any of these spellings can neither satisfy nor trip
+    /// the scan (CLAUDE.md, "Source-scanning guards read comments too") and
+    /// the `""` in the clearing line survives as `""`.
+    ///
+    /// **Three POSITIVE checks before the negative**, which is what makes it
+    /// a guard rather than a comment that runs: the pool is constructed here
+    /// at all, the clearing line is present, and the CLEARED copy is what the
+    /// `config:` argument receives. Without them an emptied-out scan, or one
+    /// pointed at a file that no longer builds a pool, would read as
+    /// satisfied. The negative is that the ORIGINAL config is not what goes
+    /// in.
+    ///
+    /// The spellings are literals because there is no symbol to walk back to:
+    /// `secretFree` is a local and `config:` is an argument label on an
+    /// initializer the scan is checking the arguments of. Each is unique in
+    /// the file, which the counts below assert rather than assume.
+    @Test func theConfigHandedToThePoolCarriesNoPassword() throws {
+        let url = SourceCorpus.url(of: .sources)
+            .appendingPathComponent("macSCPCore/FTP/FTPFileSystem.swift")
+        let code = try SourceCorpus.code(of: url)
+
+        func occurrences(of token: String) -> Int {
+            guard !token.isEmpty else { return 0 }
+            var count = 0
+            var searched = code.startIndex
+            while let found = code.range(of: token, range: searched..<code.endIndex) {
+                count += 1
+                searched = found.upperBound
+            }
+            return count
+        }
+
+        // The three positives.
+        #expect(occurrences(of: "FTPConnectionPool(") == 1)
+        #expect(occurrences(of: "secretFree.password =") == 1)
+        #expect(occurrences(of: "config: secretFree") == 1)
+        // The negative: the config that still holds the credential is not
+        // what the pool is given.
+        #expect(occurrences(of: "config: config") == 0)
+        // The counter's own controls, so neither a 1 nor a 0 above is a
+        // pattern that can no longer match anything.
+        #expect(occurrences(of: "password") > 0)
+        #expect(occurrences(of: "thisTokenIsNotInTheFile") == 0)
+    }
+
     /// A pinned certificate that changed reaches the file system as a
     /// sentence that carries NO fingerprint, no host and no port.
     ///
