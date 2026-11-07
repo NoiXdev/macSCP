@@ -626,6 +626,39 @@ struct FTPFileSystemTests {
         #expect(refused == false)
     }
 
+    /// The third answer, and the one that is a decision rather than a reading:
+    /// a server that ANSWERED `SITE HELP` and said nothing about `CHMOD`.
+    ///
+    /// Inconclusive, so the editor is offered — hiding a working one on no
+    /// evidence takes a feature away, where showing one a particular file
+    /// refuses is what the design's decision 10 says a per-file error is for.
+    /// And an inconclusive pass is NOT remembered, which the second ask
+    /// measures: it probes again, and this time the server lists `CHMOD`, so
+    /// the answer that gets kept is the one with evidence behind it.
+    @Test func anInconclusivePermissionProbeOffersTheEditorAndIsAskedAgain() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let answers = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            await server.omitChmodFromNextSiteHelp()
+            let inconclusive = await fs.offersPermissionEditing()
+            let second = await fs.offersPermissionEditing()
+            let third = await fs.offersPermissionEditing()
+            await fs.disconnect()
+            return (inconclusive: inconclusive, second: second, third: third)
+        }
+        #expect(answers.inconclusive)
+        #expect(answers.second)
+        #expect(answers.third)
+        // Two `SITE HELP`s and not three: the inconclusive pass was re-asked
+        // and the conclusive one was kept. Three would mean nothing is ever
+        // remembered; one would mean an inconclusive answer is.
+        let helps = await server.receivedCommands.filter {
+            $0.verb == "SITE" && $0.argument.uppercased() == "HELP"
+        }
+        #expect(helps.count == 2)
+    }
+
     /// `PermissionsAvailability` reads the capability FIRST and the probe only
     /// narrows it — so the per-connection answer can agree with the per-kind
     /// one or be `false` where it said `true`, and never the other way round.
@@ -633,21 +666,38 @@ struct FTPFileSystemTests {
         // FTP's capability row says `.posixMode`, so the kind alone offers it.
         #expect(PermissionsAvailability.isOffered(for: .ftp))
 
+        // A server that DOES offer `SITE CHMOD`, asked against a kind whose
+        // permission model is not `.posixMode`. That pairing is the only one
+        // that can tell the two orders apart: capability-first answers
+        // `false`, probe-first answers `true`. A bare server would answer
+        // `false` either way and measure nothing — which is what the first
+        // version of this case did.
+        let offering = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let ordering = try await Self.running(offering) { host, port in
+            let fs = try await Self.connect(offering, host: host, port: port)
+            let probeSaysYes = await fs.offersPermissionEditing()
+            let asWebDAV = await PermissionsAvailability.isOffered(for: .webdav, on: fs)
+            let asFTP = await PermissionsAvailability.isOffered(for: .ftp, on: fs)
+            await fs.disconnect()
+            return (probeSaysYes: probeSaysYes, asWebDAV: asWebDAV, asFTP: asFTP)
+        }
+        #expect(ordering.probeSaysYes)
+        #expect(ordering.asWebDAV == false)
+        #expect(ordering.asFTP)
+
+        // And the narrowing half: a connection whose probe says `false`
+        // overrides a capability that says `true`.
         let bare = LoopbackFTPServer(
             security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
             offersSiteCommands: false)
-        let answers = try await Self.running(bare) { host, port in
+        let narrowed = try await Self.running(bare) { host, port in
             let fs = try await Self.connect(bare, host: host, port: port)
             let asFTP = await PermissionsAvailability.isOffered(for: .ftp, on: fs)
-            // The same connection against a kind whose model is NOT
-            // `.posixMode`: the capability refuses before the probe is
-            // reached, which is the ordering this case exists for.
-            let asWebDAV = await PermissionsAvailability.isOffered(for: .webdav, on: fs)
             await fs.disconnect()
-            return (asFTP: asFTP, asWebDAV: asWebDAV)
+            return asFTP
         }
-        #expect(answers.asFTP == false)
-        #expect(answers.asWebDAV == false)
+        #expect(narrowed == false)
 
         // A connection that is NOT a probe keeps the per-kind answer, which
         // is every other backend.

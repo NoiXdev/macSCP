@@ -72,6 +72,7 @@ final class LoopbackFTPState: Sendable {
         var refuseExtendedPassive = false
         var refuseNextTransferWithSessionReuse = false
         var refuseNextSiteChmod = false
+        var omitChmodFromNextSiteHelp = false
         var nextListingPayload: Data?
 
         var commands: [LoopbackFTPReceivedCommand] = []
@@ -621,6 +622,18 @@ actor LoopbackFTPServer {
     /// request's own — see `handleSite`.
     func refuseNextSiteChmodWith550() {
         state.box.withLockedValue { $0.refuseNextSiteChmod = true }
+    }
+
+    /// The next `SITE HELP` lists `UMASK` and `HELP` and NOT `CHMOD`, on a
+    /// server that has `SITE`. One shot.
+    ///
+    /// The third answer a permission probe can get, and the one no other
+    /// fixture state produces: a server that answered, and said nothing about
+    /// `CHMOD`. Not the same as having no `SITE` — that is
+    /// `offersSiteCommands: false` and a `500` on the verb — and the client
+    /// is required to treat the two differently.
+    func omitChmodFromNextSiteHelp() {
+        state.box.withLockedValue { $0.omitChmodFromNextSiteHelp = true }
     }
 
     /// The next `LIST`, `NLST` or `MLSD` serves `payload` verbatim instead of
@@ -1384,9 +1397,15 @@ final class LoopbackFTPSession: @unchecked Sendable {
             // What a real server's `SITE HELP` is: the subcommands it has,
             // as free text. The client reads it for one token and never
             // stores or logs it.
+            let terse = state.box.withLockedValue { inner -> Bool in
+                let armed = inner.omitChmodFromNextSiteHelp
+                inner.omitChmodFromNextSiteHelp = false
+                return armed
+            }
             try await sendMultiline(
                 214, head: "The following SITE commands are recognized:",
-                lines: ["CHMOD", "UMASK", "HELP"], tail: "Help OK.")
+                lines: terse ? ["UMASK", "HELP"] : ["CHMOD", "UMASK", "HELP"],
+                tail: "Help OK.")
             return
         }
         guard let verb = parts.first, verb.uppercased() == "CHMOD" else {
