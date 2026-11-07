@@ -98,7 +98,7 @@ struct FTPFailureRenderingTests {
         let sentence = DialSupport.reason(for: failure)
         let bridged = (failure as NSError).localizedDescription
 
-        let isItsOwn = sentence == failure.message
+        let isItsOwn = sentence == failure.logSentence
         let isTheBridge = sentence == bridged
         let isAKey = sentence == failure.messageKey
         #expect(isItsOwn)
@@ -112,6 +112,33 @@ struct FTPFailureRenderingTests {
     func theKindIsPreservedAndNotDefaulted(_ kind: FTPConnectionFailure.Kind) throws {
         let expected = try #require(Self.expectedKinds[kind])
         #expect(DialSupport.failureKind(for: Self.failure(of: kind)) == expected)
+    }
+
+    /// The log's sentence is its own text and fixed English: not the
+    /// catalogue's (that one is looked up per locale and is for the UI), not a
+    /// key, not empty, and one per kind. The catalogue half is held by
+    /// `FTPControlConnectionTests.everyConnectionFailureHasItsOwnSentence`;
+    /// this is the other half, walked over the same `CaseIterable` tag so a
+    /// kind added without a sentence cannot slip past.
+    @Test func everyKindHasAFixedEnglishLogSentenceOfItsOwn() {
+        var seen: [String: FTPConnectionFailure.Kind] = [:]
+        for kind in FTPConnectionFailure.Kind.allCases {
+            let sentence = Self.failure(of: kind).logSentence
+            #expect(!sentence.isEmpty, "\(kind) has no log sentence")
+            #expect(sentence != kind.messageKey, "\(kind) logs its catalogue key")
+            let isAKey = sentence.hasPrefix("core.")
+            #expect(isAKey == false, "\(kind) logs a key")
+            // Fixed English means ASCII words: a looked-up translation would
+            // carry accents or another script in some locale.
+            let isASCII = sentence.allSatisfy(\.isASCII)
+            #expect(isASCII, "\(kind)'s log sentence is not plain ASCII")
+            if let earlier = seen[sentence] {
+                Issue.record("\(kind) and \(earlier) share the log sentence")
+            }
+            seen[sentence] = kind
+        }
+        // The positive beside the walk: it found the kinds at all.
+        #expect(seen.count == FTPConnectionFailure.Kind.allCases.count)
     }
 
     /// The reason a failure's PAYLOAD does not reach the sentence: a reply

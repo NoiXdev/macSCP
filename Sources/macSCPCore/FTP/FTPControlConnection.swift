@@ -291,6 +291,49 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
             case .leaseAlreadyReturned: "core.connect.ftpLeaseReturned"
             }
         }
+
+        /// This kind as one fixed ENGLISH sentence, for the places that are
+        /// not localized: the diagnostic log, the diagnosis report and the
+        /// payload of a typed failure cause (Ruling T8.5).
+        ///
+        /// The split `RemoteFSFinding` states: `message` is the user's
+        /// language, from the catalogue, for anything a person reads in the
+        /// app; this is the paste artifact, the same in every locale. Written
+        /// as a `switch` over the `CaseIterable` tag with no `default`, so a
+        /// kind added without a sentence does not compile, and walked by
+        /// `FTPFailureRenderingTests.everyKindHasAFixedEnglishLogSentenceOfItsOwn`.
+        ///
+        /// Like `messageKey` it holds no host, port, credential, fingerprint
+        /// or reply code: a payload is the most any failure carries and none
+        /// of it is read here.
+        var logSentence: String {
+            switch self {
+            case .greetingRefused: "the FTP server refused the connection before the login"
+            case .timedOut: "the FTP server did not answer in time"
+            case .connectionClosed: "the connection to the FTP server ended"
+            case .protocolViolation: "the FTP server sent a reply that could not be read"
+            case .tlsUpgradeRefused: "the FTP server refused to switch to TLS"
+            case .tlsHandshakeFailed: "the TLS handshake with the FTP server failed"
+            case .loginRefused: "authentication failed"
+            case .binaryModeRefused: "the FTP server refused binary transfer mode"
+            case .credentialNotSendable:
+                "the user name or password holds a character that cannot be sent in an FTP command"
+            case .certificateRejected: "the server certificate was declined"
+            case .certificateMismatch:
+                "the server certificate differs from the one remembered for this server"
+            case .trustStoreUnreadable: "the list of remembered certificates could not be read"
+            case .dataCertificateDiffers:
+                "a data connection presented a different certificate from the control connection"
+            case .sessionFromAnotherConnection:
+                "a TLS session was offered to a connection that did not establish it"
+            case .sessionRefusedByTLS: "the TLS library refused the session offered for reuse"
+            case .passiveAddressRefused: "the passive-mode reply named no usable address"
+            case .passiveModeRefused: "the FTP server refused passive mode"
+            case .transferRefused: "the FTP server refused the transfer"
+            case .restRefused: "the FTP server refused to resume at an offset"
+            case .leaseAlreadyReturned: "a transfer was started on a connection already handed back"
+            }
+        }
     }
 
     /// Which kind of failure this is, with the payload dropped.
@@ -381,6 +424,9 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
 
     /// The localized sentence for this failure.
     var message: String { CoreL10n.string(messageKey) }
+
+    /// The fixed English sentence for this failure (`Kind.logSentence`).
+    var logSentence: String { kind.logSentence }
 }
 
 /// One FTP control connection: the socket, the greeting, the login, `FEAT`,

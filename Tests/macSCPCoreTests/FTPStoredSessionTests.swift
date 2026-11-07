@@ -361,7 +361,7 @@ struct FTPStoredSessionTests {
             let refused = await FTPProbe.connectRow(
                 values, context(secret: credentials.password), timer,
                 decider: .refusing, trustStore: nil)
-            #expect(refused.outcome == .failed(FTPConnectionFailure.certificateRejected.message))
+            #expect(refused.outcome == .failed(FTPConnectionFailure.certificateRejected.logSentence))
             #expect(refused.id == DiagnosticStepID.dial)
 
             // The same server, the certificate accepted: the dial is ok and
@@ -378,7 +378,7 @@ struct FTPStoredSessionTests {
             let wrong = await FTPProbe.connectRow(
                 values, context(secret: "not-the-password-\(UUID().uuidString)"), timer,
                 decider: accepting, trustStore: nil)
-            #expect(wrong.outcome == .failed(FTPConnectionFailure.loginRefused.message))
+            #expect(wrong.outcome == .failed(FTPConnectionFailure.loginRefused.logSentence))
 
             // No secret, no login attempt.
             let silent = await FTPProbe.connectRow(

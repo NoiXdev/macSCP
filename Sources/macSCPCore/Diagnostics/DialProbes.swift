@@ -528,20 +528,26 @@ public enum DialSupport {
             // English, beside finished catalogue sentences in four
             // languages.
             //
-            // The sentence is the failure's own `message`: a catalogue entry
-            // that holds no host, port, credential, fingerprint or reply
-            // code, which is what makes it safe to print here (the type's
-            // header states why). It is LOCALIZED, which the other sentences
-            // in this function are not; that follows the ruling, which named
-            // `message`, and is the one place a diagnostics row or a log line
-            // reads in the user's language where its neighbours read English.
+            // The sentence is the failure's fixed ENGLISH `logSentence`
+            // (Ruling T8.5), like every other sentence in this function and
+            // unlike its localized `message`: this text is the diagnostic
+            // log's and the report's, both paste artifacts, and
+            // `RemoteFSFinding` states the split. It holds no host, port,
+            // credential, fingerprint or reply code, which is what makes it
+            // safe to print here (the type's header states why).
+            //
+            // (Withdrawn wording, verbatim: "The sentence is the failure's own
+            // `message`: a catalogue entry ... It is LOCALIZED, which the
+            // other sentences in this function are not; that follows the
+            // ruling, which named `message`". The ruling was corrected, and
+            // the first version of this arm returned the localized text.)
             //
             // The KIND is preserved, not defaulted -- the `.finding` arm
             // below carries the argument at length. Returning `.unknown` for
             // every FTP failure would reclassify the login the server
             // refused, which every other consumer of `failureKind(for:)`
             // reads as `authenticationFailed`.
-            return (Self.tunnelKind(ofFTP: failure.kind), failure.message)
+            return (Self.tunnelKind(ofFTP: failure.kind), failure.logSentence)
         case let ioError as IOError:
             // The one route left that still reduced to the case-index
             // bridge below: NIO's `IOError` carries only an `errnoCode`
