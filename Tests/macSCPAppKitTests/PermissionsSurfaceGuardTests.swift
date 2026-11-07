@@ -197,13 +197,13 @@ struct PermissionsSurfaceGuardTests {
 
     /// The remote pane composes its offer through Core's function, handing it
     /// the connection's answer from the session, and the session start
-    /// installs the session through `SessionTab.adopt`, which is what asks.
+    /// installs the session through `SessionTab.installSession`, which is what asks.
     ///
     /// **This scan holds only that the two call sites exist.** What stands
     /// between the pieces is held by tests, because a scan cannot see it: the
     /// composition is `PermissionsAvailability.isOffered(for:answeredByConnection:)`
     /// and `PermissionsAvailabilityTests` holds its truth table; the asking is
-    /// `SessionTab.adopt` and `PermissionEditingRecordTests` drives it. The
+    /// `SessionTab.installSession` and `PermissionEditingRecordTests` drives it. The
     /// first version of this guard held both with substring scans, and a plant
     /// that turned the `&&` into `||` and one that wrapped the asking task in a
     /// condition that is never true both read GREEN (Task 8 review, finding 3).
@@ -212,7 +212,7 @@ struct PermissionsSurfaceGuardTests {
     /// Each check requires a name to be PRESENT, and the property's name is
     /// pinned at compile time by the key path, so a rename turns this file red
     /// instead of leaving the scans looking for text nothing writes.
-    @Test func theRemotePaneAsksCoreToComposeTheOfferAndTheSessionStartInstallsThroughAdopt() throws {
+    @Test func theRemotePaneAsksCoreToComposeTheOfferAndTheSessionStartInstallsThroughInstallSession() throws {
         let property: WritableKeyPath<BrowserSession, Bool> = \.permissionEditing
         #expect((property as AnyKeyPath) == \BrowserSession.permissionEditing)
 
@@ -225,9 +225,9 @@ struct PermissionsSurfaceGuardTests {
             """)
 
         let content = try Self.source("Sources/MacSCPAppKit/ContentView.swift")
-        let installs = content.contains("tab.adopt(")
+        let installs = content.contains("tab.installSession(")
         #expect(installs, """
-            ContentView.swift never installs a session through `tab.adopt(`, so nothing \
+            ContentView.swift never installs a session through `tab.installSession(`, so nothing \
             asks the connection and `permissionEditing` stays at its default.
             """)
         // The negative beside it: the session is no longer assigned directly

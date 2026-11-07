@@ -358,6 +358,14 @@ struct ReconnectWiringGuardTests {
         ChokePoint(
             pattern: #"\bstartSession\b"#,
             describes: "installing a session on a tab"),
+        // The one way `startSession` hands a built session to a tab
+        // (permission-editor wiring, Ruling T7.1): installing it is what asks
+        // the connection whether it will take a permission change, so the
+        // install is a function of its own and a second caller of it is a
+        // second place a session reaches a tab.
+        ChokePoint(
+            pattern: #"\binstallSession\b"#,
+            describes: "installing a built session on a tab"),
         ChokePoint(
             pattern: #"\bBrowserSession\s*(?:\(|\.init\b)"#,
             describes: "constructing a session"),
@@ -502,9 +510,19 @@ struct ReconnectWiringGuardTests {
             reason: "The hand-off function's own declaration."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView.swift",
-            code: "tab.session = BrowserSession(",
+            code: "let built = BrowserSession(",
             occurrences: 1,
-            reason: "Inside `startSession` — the only construction of a `BrowserSession` in the App layer."),
+            reason: "Inside `startSession` — the only construction of a `BrowserSession` in the App layer. (Withdrawn wording, verbatim: the site was `tab.session = BrowserSession(`, which assigned the session where it was built; the assignment moved into `SessionTab.installSession` so that installing a session is also what asks its connection about permission editing.)"),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/ContentView.swift",
+            code: "tab.installSession(built, over: fs, kind: form.kind)",
+            occurrences: 1,
+            reason: "Inside `startSession`, straight after the construction above — the only place a built session is handed to a tab, through the one function that also starts the permission probe."),
+        SanctionedSite(
+            file: "Sources/MacSCPAppKit/SessionTab.swift",
+            code: "func installSession(",
+            occurrences: 1,
+            reason: "The declaration of that function, whose body assigns the session and starts the probe. Sanctioned as a declaration only: its one caller is the line above."),
         SanctionedSite(
             file: "Sources/MacSCPAppKit/ContentView.swift",
             code: "startSession(in: tab, with: fs, startPath: home)",

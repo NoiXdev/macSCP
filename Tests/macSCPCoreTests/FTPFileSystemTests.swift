@@ -1061,7 +1061,7 @@ struct FTPFileSystemTests {
         let theRightPasswordLoggedIn = outcomes.accepted == .ok
         let theWrongPasswordDidNot =
             outcomes.refused
-            == .remote(.connectionFailed(reason: CoreL10n.string("core.connect.authFailed")))
+            == .remote(.authenticationFailed)
         #expect(theRightPasswordLoggedIn)
         #expect(theWrongPasswordDidNot)
 

@@ -85,14 +85,14 @@ struct PermissionEditingRecordTests {
     }
 
     /// Installing a session is what asks the connection: there is no way to
-    /// install one through `adopt` and not ask, which is the structural half of
+    /// install one through `installSession` and not ask, which is the structural half of
     /// Ruling T7.1 (a task wrapped in a condition inside `startSession` was
     /// invisible to every test, Task 8 review, finding 3). The answer lands on
     /// the session that was installed.
     @Test func installingASessionAsksTheConnectionAndRecordsItsAnswer() async {
         let tab = makeTab()
         let session = built(over: ProbedFileSystem(answer: false), tab: tab)
-        tab.adopt(session, over: ProbedFileSystem(answer: false), kind: .ftp)
+        tab.installSession(session, over: ProbedFileSystem(answer: false), kind: .ftp)
         #expect(tab.session?.id == session.id)
 
         await tab.permissionProbe?.value
@@ -106,7 +106,7 @@ struct PermissionEditingRecordTests {
     @Test func installingASessionOverAnAcceptingConnectionKeepsTheOffer() async {
         let tab = makeTab()
         let fileSystem = ProbedFileSystem(answer: true)
-        tab.adopt(built(over: fileSystem, tab: tab), over: fileSystem, kind: .ftp)
+        tab.installSession(built(over: fileSystem, tab: tab), over: fileSystem, kind: .ftp)
 
         await tab.permissionProbe?.value
 
@@ -118,10 +118,10 @@ struct PermissionEditingRecordTests {
     @Test func aSecondInstallIsNotAnsweredForByTheFirst() async {
         let tab = makeTab()
         let first = ProbedFileSystem(answer: false)
-        tab.adopt(built(over: first, tab: tab), over: first, kind: .ftp)
+        tab.installSession(built(over: first, tab: tab), over: first, kind: .ftp)
         let firstProbe = tab.permissionProbe
         let second = ProbedFileSystem(answer: true)
-        tab.adopt(built(over: second, tab: tab), over: second, kind: .ftp)
+        tab.installSession(built(over: second, tab: tab), over: second, kind: .ftp)
 
         await firstProbe?.value
         await tab.permissionProbe?.value

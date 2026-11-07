@@ -52,7 +52,7 @@ public enum PermissionsAvailability {
     ///
     /// **Read by the App, once per connection (Ruling T7.1 of the FTP plan).**
     /// The pane that shows the editor is built in a SwiftUI body and so is
-    /// synchronous; this one is asked from `SessionTab.adopt(_:over:kind:)`
+    /// synchronous; this one is asked from `SessionTab.installSession(_:over:kind:)`
     /// (through `recordPermissionEditing(of:kind:forSession:)`) as the session
     /// is installed, and the answer is held on
     /// `BrowserSession.permissionEditing`, which the body hands to
@@ -65,7 +65,7 @@ public enum PermissionsAvailability {
     /// call site, and it is inside a SwiftUI body and so synchronous; this one
     /// is asked from `SessionTab.recordPermissionEditing(of:kind:forSession:)`
     /// as the session starts". The body now calls the composing function
-    /// instead of the per-kind one, and the asking moved into `adopt`.)
+    /// instead of the per-kind one, and the asking moved into `installSession`.)
     ///
     /// (Withdrawn wording, verbatim: "**Owed: the App does not read this
     /// yet.**" The sentences after it, that an FTP server with no `SITE

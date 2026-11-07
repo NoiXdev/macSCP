@@ -2218,8 +2218,8 @@ struct ContentView: View {
         )
         // The one way a session is installed, because installing it is what
         // asks the connection whether it will take a permission change
-        // (Ruling T7.1 of the FTP plan): see `SessionTab.adopt`. Not awaited.
-        tab.adopt(built, over: fs, kind: form.kind)
+        // (Ruling T7.1 of the FTP plan): see `SessionTab.installSession`. Not awaited.
+        tab.installSession(built, over: fs, kind: form.kind)
         // Which buckets of this connection have Object Lock, read lazily and
         // kept for the session (S3 bucket settings, Task 10). Only a
         // connection that has the bucket-settings capability gets one; it is

@@ -330,7 +330,7 @@ final class SessionTab: Identifiable {
     var isConnected: Bool { session != nil }
 
     /// The task asking this tab's connection whether it will take a
-    /// permission change, started by `adopt(_:over:kind:)`. Kept so a test can
+    /// permission change, started by `installSession(_:over:kind:)`. Kept so a test can
     /// await it and a second install can cancel the first; not observable
     /// state, and not owned by teardown (it ends when the question is
     /// answered, and its write is refused for any session but the one it was
@@ -913,7 +913,7 @@ extension SessionTab {
     /// answer is written only to the session it was asked about
     /// (`recordPermissionEditing`), which is what makes a late first answer
     /// harmless to the second session.
-    func adopt(
+    func installSession(
         _ built: BrowserSession, over fileSystem: any RemoteFileSystem, kind: ConnectionKind
     ) {
         permissionProbe?.cancel()

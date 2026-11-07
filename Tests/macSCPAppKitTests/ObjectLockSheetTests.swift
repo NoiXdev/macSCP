@@ -1211,7 +1211,7 @@ struct ObjectLockSheetTests {
         let source = try Self.code("MacSCPAppKit/ContentView.swift")
         let call = "BrowserSession.objectLockStates(for:"
         #expect(source.matches(of: Regex<Substring>(verbatim: call)).count == 1)
-        let built = try #require(source.range(of: "tab.session = BrowserSession("))
+        let built = try #require(source.range(of: "let built = BrowserSession("))
         let placed = try #require(source.range(of: call))
         #expect(built.lowerBound < placed.lowerBound)
     }
