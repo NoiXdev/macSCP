@@ -23,8 +23,10 @@ import Testing
 ///    `RemoteFSFinding.readsAsConnectionFailure` for the whole argument.
 ///
 /// The source half exists because `CitadelFileSystem` needs a live
-/// connection and `S3FileSystem` has only a `private init` and an async
-/// `connect`, so neither can be instantiated here. It is read through
+/// connection, and `S3FileSystem` and `FTPFileSystem` each have only a
+/// `private init` and an async `connect` — FTP's dials its command connection
+/// there, so it cannot be built without a server — so none of the three can
+/// be instantiated here. It is read through
 /// `SourceCorpus.code(of:)`, which blanks comments and string literals, so a
 /// comment quoting a conformance or an override can neither satisfy nor trip
 /// it (CLAUDE.md, "Source-scanning guards read comments too").
@@ -136,7 +138,7 @@ struct RemoteFileSystemAppendResumeGuardTests {
 
         let conformers = Self.conformers(among: declarations)
         #expect(conformers == [
-            "S3FileSystem", "WebDAVFileSystem", "LocalFileSystem",
+            "S3FileSystem", "WebDAVFileSystem", "FTPFileSystem", "LocalFileSystem",
             "CitadelFileSystem", "ThroughputPayload", "ThroughputSink",
             "VersionDownloadSource",
         ], """
@@ -155,24 +157,26 @@ struct RemoteFileSystemAppendResumeGuardTests {
             rethinking, not a new expected value.
             """)
 
-        #expect(overridesByFile.count == 2, """
-            Expected exactly two files to override supportsAppendResume. \
+        #expect(overridesByFile.count == 3, """
+            Expected exactly three files to override supportsAppendResume. \
             Found \(overridesByFile.count): \
             \(overridesByFile.keys.sorted().joined(separator: ", "))
             """)
         for (file, answer) in overridesByFile {
             #expect(answer == "false", """
-                \(file) overrides supportsAppendResume to \(answer). Only S3 and \
-                WebDAV override, and both answer false — a backend that can \
-                append does not need to override at all, because the protocol \
-                extension already answers true.
+                \(file) overrides supportsAppendResume to \(answer). Only S3, \
+                WebDAV and FTP override, and all three answer false — a backend \
+                that can append does not need to override at all, because the \
+                protocol extension already answers true.
                 """)
             #expect(
-                file.hasSuffix("S3FileSystem.swift") || file.hasSuffix("WebDAVFileSystem.swift"),
+                file.hasSuffix("S3FileSystem.swift") || file.hasSuffix("WebDAVFileSystem.swift")
+                    || file.hasSuffix("FTPFileSystem.swift"),
                 """
                 \(file) overrides supportsAppendResume, which only \
                 S3FileSystem.swift and WebDAVFileSystem.swift did when this \
-                guard was written (2026-10-01).
+                guard was written (2026-10-01), and FTPFileSystem.swift since \
+                2026-11-07.
                 """)
         }
     }

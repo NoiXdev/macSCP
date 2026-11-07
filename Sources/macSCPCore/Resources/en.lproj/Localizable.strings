@@ -91,7 +91,6 @@
 "core.connect.webdavFieldRequired" = "Enter the WebDAV server URL.";
 
 /* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
-"core.connect.ftpNotAvailableYet" = "FTP connections are not available in this build yet.";
 "core.connect.ftpHostInvalid" = "Enter only the host name or address, such as ftp.example.com — no user name, no ftp://, no port and no path. The user name and the port have their own fields.";
 
 /* FTPPath.validated refused a path before it could reach a command line
@@ -248,6 +247,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Something is already at %@ and it is not a folder";
 "core.finding.nonHTTPResponse" = "The server's answer was not an HTTP response";
 "core.finding.listingUnparsable" = "The folder listing the server sent could not be read";
+"core.finding.listingLineUnreadable %@" = "Line %@ of the folder listing the server sent could not be read";
 "core.finding.resourceDetailsUnparsable" = "The information the server sent about this item could not be read";
 "core.finding.redirectUnreadable" = "The server redirected the request somewhere that could not be read, so it was refused";
 "core.finding.redirectBodyNotResendable" = "The server redirected an upload, and its data cannot be sent a second time, so the redirect was refused";

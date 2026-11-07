@@ -82,7 +82,6 @@
 "core.connect.webdavFieldRequired" = "Wprowadź adres URL serwera WebDAV.";
 
 /* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
-"core.connect.ftpNotAvailableYet" = "Połączenia FTP nie są jeszcze dostępne w tej wersji.";
 "core.connect.ftpHostInvalid" = "Wpisz tylko nazwę hosta lub adres, na przykład ftp.example.com — bez nazwy użytkownika, bez ftp://, bez portu i bez ścieżki. Nazwa użytkownika i port mają własne pola.";
 
 /* FTPPath.validated refused a path before it could reach a command line
@@ -234,6 +233,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Pod %@ już coś jest i nie jest to folder";
 "core.finding.nonHTTPResponse" = "Odpowiedź serwera nie była odpowiedzią HTTP";
 "core.finding.listingUnparsable" = "Nie udało się odczytać listy folderu przysłanej przez serwer";
+"core.finding.listingLineUnreadable %@" = "Nie udało się odczytać wiersza %@ listy folderu przysłanej przez serwer";
 "core.finding.resourceDetailsUnparsable" = "Nie udało się odczytać informacji o tym elemencie przysłanych przez serwer";
 "core.finding.redirectUnreadable" = "Serwer przekierował żądanie w miejsce, którego nie dało się odczytać, więc je odrzucono";
 "core.finding.redirectBodyNotResendable" = "Serwer przekierował wysyłanie, a jego danych nie można wysłać drugi raz, więc przekierowanie odrzucono";

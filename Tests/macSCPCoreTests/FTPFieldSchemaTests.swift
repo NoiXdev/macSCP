@@ -543,25 +543,48 @@ struct FTPFieldSchemaTests {
         #expect(descriptor.loginSetValues(set)[FTPField.username] == "tim")
     }
 
-    // MARK: - Until the file system exists
+    // MARK: - The descriptor dials the file system
 
-    /// Connecting says something true and does not trap. The sentence is
-    /// looked up, so a key no catalogue declares would come back as the key
-    /// itself; that is the second expectation.
-    @Test func connectingRefusesWithALocalizedSentenceUntilTheFileSystemExists() async {
-        let key = "core.connect.ftpNotAvailableYet"
+    /// The descriptor's connect closure reaches `FTPFileSystem` and reports
+    /// what the DIAL said.
+    ///
+    /// It used to throw `core.connect.ftpNotAvailableYet` — a true sentence
+    /// while Task 7's conformance did not exist, and a false one the moment it
+    /// did, so the key is gone from all four catalogues with the closure that
+    /// read it. The check below is POSITIVE and that is what makes it a
+    /// check: a closure that still refused without dialling would answer some
+    /// sentence that is not in the list, and the list is FTP's transport
+    /// sentences only.
+    ///
+    /// `127.0.0.1` and a port nothing listens on, so the refusal is an
+    /// immediate `ECONNREFUSED` rather than a DNS lookup: the old spelling
+    /// named `files.example.com`, which was harmless while nothing dialled
+    /// and is a network round trip now.
+    @Test func connectingReachesTheFTPFileSystemAndReportsWhatTheDialSaid() async {
+        let closed = FTPConnectionConfig(
+            host: "127.0.0.1", port: 1, username: "tim", security: .plain, password: "")
         do {
             _ = try await BackendDescriptor.openConnection(
-                .ftp(config(.explicitTLS)), hostKey: .refusing, certificate: .refusing,
-                timeoutSeconds: 1)
+                .ftp(closed), hostKey: .refusing, certificate: .refusing, timeoutSeconds: 1)
             Issue.record("expected a refusal")
         } catch let error as RemoteFSError {
             guard case .connectionFailed(let reason) = error else {
                 Issue.record("expected .connectionFailed")
                 return
             }
-            #expect(reason == CoreL10n.string(key))
-            #expect(reason != key)
+            // One of FTP's own transport sentences: a refused connect arrives
+            // as `connectionClosed`, and a peer that accepts and says nothing
+            // as `timedOut`. Which one is the kernel's business, not this
+            // test's.
+            let sentences = [
+                CoreL10n.string("core.connect.ftpConnectionClosed"),
+                CoreL10n.string("core.connect.ftpTimedOut"),
+            ]
+            #expect(sentences.contains(reason))
+            // The sentences are looked up, so a key no catalogue declares
+            // would come back as the key itself and the list would hold two
+            // key names rather than two sentences.
+            #expect(!sentences.contains { $0.hasPrefix("core.connect.") })
         } catch {
             Issue.record("expected a RemoteFSError")
         }
@@ -597,7 +620,9 @@ struct FTPFieldSchemaTests {
         let url = LocalizationCatalogs.repoRoot.appendingPathComponent(
             "Sources/macSCPCore/Resources/\(locale).lproj/Localizable.strings")
         let catalogue = try #require(NSDictionary(contentsOf: url) as? [String: String])
-        for key in ["core.connect.ftpNotAvailableYet", "core.connect.ftpHostInvalid"] {
+        // `core.connect.ftpNotAvailableYet` used to head this list and was
+        // removed with the descriptor closure that read it (Task 7).
+        for key in ["core.connect.ftpHostInvalid", "core.connect.ftpCertificateMismatch"] {
             #expect(catalogue[key]?.isEmpty == false, Comment(rawValue: "\(key) missing from \(locale)"))
         }
     }

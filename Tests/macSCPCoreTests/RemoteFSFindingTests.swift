@@ -76,6 +76,7 @@ import Testing
         case .unexpectedStatus(let code): return String(code)
         case .pathExistsAndIsNotADirectory(let path): return path
         case .uploadPartUnacknowledged(let part): return String(part)
+        case .listingLineUnreadable(let line): return String(line)
         case .objectUnderLegalHold(let path), .objectUnderRetention(let path): return path
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
@@ -197,10 +198,27 @@ extension RemoteFSFinding {
     /// the guards above.
     ///
     /// The payloads are placeholders: a status code, a path the caller
-    /// asked about and an upload part number this project counted out
-    /// itself, which is exactly what the payload-carrying findings are
-    /// allowed to hold (counted in the switch below, 2026-10-19: five of
-    /// twenty-three).
+    /// asked about, an upload part number and a listing-line position this
+    /// project counted out itself, which is exactly what the payload-carrying
+    /// findings are allowed to hold. **Six** of them carry one, out of
+    /// **twenty-seven** names, and both figures travel with the commands that
+    /// produced them — run from the repository root:
+    ///
+    ///     /usr/bin/grep -c 'core\.finding\..* %@' Sources/macSCPCore/Resources/en.lproj/Localizable.strings
+    ///     /usr/bin/grep -c '^"core\.finding\.' Sources/macSCPCore/Resources/en.lproj/Localizable.strings
+    ///
+    /// print 6 and 27. The catalogue is what they count, not the switch
+    /// below: `LocalizationParityTests.everyRemoteFSFindingHasItsOwnSentence`
+    /// holds the two sets equal, so a catalogue count IS a count of `Name`,
+    /// and it is one key per line where the switch's arms wrap.
+    ///
+    /// (Withdrawn wording, verbatim: "an upload part number this project
+    /// counted out itself, which is exactly what the payload-carrying
+    /// findings are allowed to hold (counted in the switch below, 2026-10-19:
+    /// five of twenty-three)". Both figures were stale — four names were
+    /// added after that date and `.listingLineUnreadable` is the fifth — and
+    /// neither had a command beside it, so recounting meant rereading the
+    /// switch, which is what nobody did.)
     ///
     /// `formatArgument` is `nil` for a finding whose key carries no format
     /// specifier, and the interpolated value as a string for the five that
@@ -221,6 +239,7 @@ extension RemoteFSFinding {
                 return (.pathExistsAndIsNotADirectory(path: "/srv/x"), "/srv/x")
             case .nonHTTPResponse: return (.nonHTTPResponse, nil)
             case .listingUnparsable: return (.listingUnparsable, nil)
+            case .listingLineUnreadable: return (.listingLineUnreadable(line: 12), "12")
             case .resourceDetailsUnparsable: return (.resourceDetailsUnparsable, nil)
             case .redirectUnreadable: return (.redirectUnreadable, nil)
             case .redirectBodyNotResendable: return (.redirectBodyNotResendable, nil)

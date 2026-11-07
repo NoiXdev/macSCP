@@ -82,7 +82,6 @@
 "core.connect.webdavFieldRequired" = "Saisissez l'URL du serveur WebDAV.";
 
 /* The FTP backend until its file system exists (FTP plan, Task 3; replaced in Task 7) */
-"core.connect.ftpNotAvailableYet" = "Les connexions FTP ne sont pas encore disponibles dans cette version.";
 "core.connect.ftpHostInvalid" = "Saisissez uniquement le nom d'hôte ou l'adresse, par exemple ftp.example.com — sans nom d'utilisateur, sans ftp://, sans port et sans chemin. Le nom d'utilisateur et le port ont chacun leur propre champ.";
 
 /* FTPPath.validated refused a path before it could reach a command line
@@ -235,6 +234,7 @@
 "core.finding.pathExistsAndIsNotADirectory %@" = "Quelque chose se trouve déjà à %@ et ce n'est pas un dossier";
 "core.finding.nonHTTPResponse" = "La réponse du serveur n'était pas une réponse HTTP";
 "core.finding.listingUnparsable" = "La liste du dossier envoyée par le serveur n'a pas pu être lue";
+"core.finding.listingLineUnreadable %@" = "La ligne %@ de la liste du dossier envoyée par le serveur n'a pas pu être lue";
 "core.finding.resourceDetailsUnparsable" = "Les informations envoyées par le serveur sur cet élément n'ont pas pu être lues";
 "core.finding.redirectUnreadable" = "Le serveur a redirigé la requête vers une cible illisible, elle a donc été refusée";
 "core.finding.redirectBodyNotResendable" = "Le serveur a redirigé un envoi, et ses données ne peuvent pas être envoyées une seconde fois : la redirection a été refusée";

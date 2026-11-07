@@ -617,14 +617,29 @@ public struct BackendDescriptor: Sendable {
         makeConfig: { values, secret in try FTPFieldSchema.makeConfig(values, secret) },
         displaySummary: { values in FTPFieldSchema.displaySummary(values) },
         apply: { values, session in FTPFieldSchema.apply(values, to: &session) },
-        // Replaced in Task 7, when `FTPFileSystem` exists. Until then a person
-        // who reaches this reads a true sentence rather than a crash.
-        connect: { config, _, _, _ in
-            guard case .ftp = config else {
+        // The certificate decider is the third argument, as WebDAV's is: an
+        // FTPS certificate is put to the same prompt, which is why
+        // `CertificateDecider` is WebDAV's type aliased rather than a second
+        // one (`FTPControlConnection.swift`).
+        //
+        // `transferSlots` is the SHIPPED DEFAULT and not the user's setting,
+        // which is a gap rather than a decision: spec §5b sizes the pool from
+        // `SettingsStore.maxConcurrentTransfers`, the store is `@MainActor`,
+        // and this closure is handed a config, two deciders and a timeout —
+        // the setting reaches it only once `openConnection` carries it, which
+        // is a signature change across all four backends. Named at
+        // `SettingsStore.defaultMaxConcurrentTransfers`, which is the one
+        // spelling of the number.
+        connect: { config, _, certificateDecider, connectTimeoutSeconds in
+            guard case .ftp(let ftp) = config else {
                 throw RemoteFSError.protocolError(reason: "wrong config for the FTP backend")
             }
-            throw RemoteFSError.connectionFailed(
-                reason: CoreL10n.string("core.connect.ftpNotAvailableYet"))
+            return try await FTPFileSystem.connect(
+                ftp,
+                transferSlots: SettingsStore.defaultMaxConcurrentTransfers,
+                certificateDecider: certificateDecider,
+                timeout: .seconds(Int64(connectTimeoutSeconds)),
+                trustStore: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
         },
         badgeLabelKey: "connection.badge.ftp", badgeLabelDefault: "FTP",
         // The same variable WebDAV reuses, for the same reason: a plain

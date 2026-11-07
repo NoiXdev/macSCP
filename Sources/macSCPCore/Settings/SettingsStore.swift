@@ -184,6 +184,25 @@ public final class SettingsStore {
 
     // MARK: - Typed accessors
 
+    /// The SHIPPED default for `maxConcurrentTransfers`, readable without a
+    /// store instance.
+    ///
+    /// It exists for one caller: `BackendDescriptor.ftpDescriptor`'s connect
+    /// closure, which sizes the FTP transfer pool (spec §5b) and cannot reach
+    /// a `SettingsStore` — the store is `@MainActor` and the closure is
+    /// handed only a config, two deciders and a timeout. It reads the SAME
+    /// constant the accessor below reads, so the number has one spelling; a
+    /// literal `3` at that call site would be a second copy of it.
+    ///
+    /// What this does NOT do is make the setting take effect for FTP: the
+    /// user's own value reaches that closure only once `openConnection` is
+    /// given it, which is a signature change across all four backends and
+    /// their call sites in the app and the command line. Until then an FTP
+    /// tab holds the default's worth of transfer connections whatever the
+    /// Transfers tab says, which is the `docs/BACKLOG.md` row this constant's
+    /// one caller names.
+    public static let defaultMaxConcurrentTransfers = Defaults.maxConcurrentTransfers
+
     /// Maximum concurrent transfers (clamped to 1...8, default 3).
     public var maxConcurrentTransfers: Int {
         get { clamp(intValue(for: Keys.maxConcurrentTransfers, default: Defaults.maxConcurrentTransfers), 1, 8) }

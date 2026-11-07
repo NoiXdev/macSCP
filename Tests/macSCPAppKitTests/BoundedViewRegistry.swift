@@ -287,7 +287,8 @@ enum BoundedViewRegistry {
         .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus(code: 503),
         .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
         .uploadStreamUnavailable, .pathExistsAndIsNotADirectory(path: "photos/2026/report.txt"),
-        .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
+        .nonHTTPResponse, .listingUnparsable, .listingLineUnreadable(line: 2317),
+        .resourceDetailsUnparsable,
         .redirectUnreadable, .redirectBodyNotResendable, .redirectNotResignable,
         .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged(part: 12),
         .requestBodyUnencodable, .objectUnderLegalHold(path: "photos/2026/report.txt"),
@@ -304,6 +305,7 @@ enum BoundedViewRegistry {
         switch finding {
         case .unexpectedStatus(let code): String(code)
         case .uploadPartUnacknowledged(let part): String(part)
+        case .listingLineUnreadable(let line): String(line)
         case .pathExistsAndIsNotADirectory(let path), .objectUnderLegalHold(let path),
             .objectUnderRetention(let path):
             path

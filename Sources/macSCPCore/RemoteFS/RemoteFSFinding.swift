@@ -95,6 +95,25 @@ public enum RemoteFSFinding: Equatable, Sendable {
     case nonHTTPResponse
     /// A directory listing arrived in a shape this backend could not read.
     case listingUnparsable
+    /// ONE LINE of a directory listing is in no dialect the reader knows, so
+    /// the whole directory failed rather than being shown with entries
+    /// missing. `line` is the line's position in the listing, counted from 1.
+    ///
+    /// The sibling of `.listingUnparsable` for a line-oriented listing. FTP's
+    /// is: `LIST` has no specified format at all, so a server dialect nobody
+    /// has met is a real outcome, and it is worth saying WHICH line could not
+    /// be read — a thousand-line listing with one bad line is otherwise a
+    /// folder that refuses to open for no stated reason.
+    ///
+    /// **The payload is the position and never the line**, which is the rule
+    /// this type states above and the reason `FTPListRefusal.unreadableLine`
+    /// carries an index too: the line is the server's text, and a file name
+    /// is in it. The position is this project's own count.
+    ///
+    /// Counted from 1 because it is read by a person: `FTPListParser` numbers
+    /// from 0, and the one place that converts is the backend that throws
+    /// this.
+    case listingLineUnreadable(line: Int)
     /// A PROPFIND answer describing ONE resource would not parse. The
     /// sibling of `.listingUnparsable` for the two Depth-0 readers: a
     /// `stat` and a session-root probe ask about a single resource, and
@@ -174,7 +193,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case resumeRangeIgnored, sourceChangedSinceInterruption, unexpectedStatus
         case directoryAlreadyExists, movePreconditionFailed, outOfStorage
         case uploadStreamUnavailable, pathExistsAndIsNotADirectory
-        case nonHTTPResponse, listingUnparsable, resourceDetailsUnparsable
+        case nonHTTPResponse, listingUnparsable, listingLineUnreadable
+        case resourceDetailsUnparsable
         case redirectUnreadable, redirectBodyNotResendable, redirectNotResignable
         case resumeNotSupported, noSuchBucket, uploadPartUnacknowledged
         case requestBodyUnencodable
@@ -195,6 +215,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .pathExistsAndIsNotADirectory: return .pathExistsAndIsNotADirectory
         case .nonHTTPResponse: return .nonHTTPResponse
         case .listingUnparsable: return .listingUnparsable
+        case .listingLineUnreadable: return .listingLineUnreadable
         case .resourceDetailsUnparsable: return .resourceDetailsUnparsable
         case .redirectUnreadable: return .redirectUnreadable
         case .redirectBodyNotResendable: return .redirectBodyNotResendable
@@ -218,9 +239,25 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// that iterates `allCases` can ask for the key without inventing a
     /// payload.
     ///
-    /// The five names that interpolate — counted in the switch below on
-    /// 2026-10-19 — carry the format specifier in the key, as this project's
-    /// other argument-taking keys do (`core.transfer.notFound %@`).
+    /// The names that interpolate carry the format specifier in the key, as
+    /// this project's other argument-taking keys do
+    /// (`core.transfer.notFound %@`). There are **six** of them, and the
+    /// figure travels with the command that produced it — run from the
+    /// repository root, one key per line so `-c` is the right tool:
+    ///
+    ///     /usr/bin/grep -c 'core\.finding\..* %@' Sources/macSCPCore/Resources/en.lproj/Localizable.strings
+    ///
+    /// prints 6. The catalogue is what it counts rather than the switch
+    /// below: the switch's first arm wraps over two lines, so no
+    /// line-oriented count of it is right, and the catalogue is the thing a
+    /// wrong answer here would break.
+    ///
+    /// (Withdrawn wording, verbatim: "The five names that interpolate —
+    /// counted in the switch below on 2026-10-19 — carry the format
+    /// specifier in the key". Five was right on that date and
+    /// `.listingLineUnreadable` has since joined them; the figure also had
+    /// no command beside it, so a reader could only recount it by rereading
+    /// the switch, which is how it went stale in silence.)
     ///
     /// No `default:`, here or in `message` below, for the same reason
     /// `readsAsConnectionFailure` refuses one: a finding added later with a
@@ -230,7 +267,7 @@ public enum RemoteFSFinding: Equatable, Sendable {
     /// derives the key exactly the same way.
     public static func messageKey(for name: Name) -> String {
         switch name {
-        case .unexpectedStatus, .pathExistsAndIsNotADirectory,
+        case .unexpectedStatus, .pathExistsAndIsNotADirectory, .listingLineUnreadable,
             .uploadPartUnacknowledged, .objectUnderLegalHold, .objectUnderRetention:
             return "core.finding.\(name.rawValue) %@"
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
@@ -256,6 +293,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return String(format: CoreL10n.string(messageKey), path)
         case .uploadPartUnacknowledged(let part):
             return String(format: CoreL10n.string(messageKey), String(part))
+        case .listingLineUnreadable(let line):
+            return String(format: CoreL10n.string(messageKey), String(line))
         case .objectUnderLegalHold(let path), .objectUnderRetention(let path):
             return String(format: CoreL10n.string(messageKey), path)
         case .resumeRangeIgnored, .sourceChangedSinceInterruption,
@@ -302,6 +341,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
             return "the server's answer was not an HTTP response"
         case .listingUnparsable:
             return "the folder listing the server sent could not be read"
+        case .listingLineUnreadable(let line):
+            return "line \(line) of the folder listing the server sent could not be read"
         case .resourceDetailsUnparsable:
             return "the information the server sent about this item could not be read"
         case .redirectUnreadable:
@@ -380,7 +421,8 @@ public enum RemoteFSFinding: Equatable, Sendable {
         case .resumeRangeIgnored, .sourceChangedSinceInterruption, .unexpectedStatus,
             .directoryAlreadyExists, .movePreconditionFailed, .outOfStorage,
             .uploadStreamUnavailable, .pathExistsAndIsNotADirectory,
-            .nonHTTPResponse, .listingUnparsable, .resourceDetailsUnparsable,
+            .nonHTTPResponse, .listingUnparsable, .listingLineUnreadable,
+            .resourceDetailsUnparsable,
             .resumeNotSupported, .noSuchBucket, .uploadPartUnacknowledged, .requestBodyUnencodable,
             .objectUnderLegalHold, .objectUnderRetention, .objectLockNotConfigured,
             .bucketNotEmpty, .operationNotSupported, .corsRuleInvalid,
