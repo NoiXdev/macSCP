@@ -221,6 +221,34 @@ struct FTPStoredSessionTests {
         #expect(saved.ftp?.username == "tim")
     }
 
+    /// No credential-bearing call sits inside a macro's operands in this file.
+    ///
+    /// `#require` and `#expect` print what their operands evaluated to on a
+    /// red run, and the operands of a `save(...)` are the `FieldValues` holding
+    /// the password and the password itself: the two tests above leaked both
+    /// through `try #require(sessions.save(...))` until the call was evaluated
+    /// outside the macro (Task 8 review, finding 1). The leak only appears when
+    /// the test is red, so no green run can show it is gone; this reads the
+    /// source for the shape instead. The patterns are assembled from pieces so
+    /// that this test's own literals do not match them, and the positive half
+    /// requires the safe shape to be present at least once per saving test.
+    @Test func noSaveCallSitsInsideAMacroOperand() throws {
+        let url = SourceCorpus.url(of: .tests)
+            .appendingPathComponent("macSCPCoreTests/FTPStoredSessionTests.swift")
+        let source = try SourceCorpus.commentFree(of: url)
+        let inRequire = "#require(sessions" + ".save("
+        let inExpect = "#expect(sessions" + ".save("
+        let safe = "let attempt = sessions" + ".save("
+        let requireLeaks = source.contains(inRequire)
+        let expectLeaks = source.contains(inExpect)
+        #expect(requireLeaks == false)
+        #expect(expectLeaks == false)
+        let calls = source.components(separatedBy: "sessions" + ".save(").count - 1
+        let safeCalls = source.components(separatedBy: safe).count - 1
+        #expect(calls >= 2, "the scan found fewer save calls than the file makes")
+        #expect(safeCalls == calls, "a save call is not evaluated into a let first")
+    }
+
     // MARK: - The overview
 
     /// The overview of a saved FTP login says where it goes, how it is
