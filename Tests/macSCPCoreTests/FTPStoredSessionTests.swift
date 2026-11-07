@@ -408,6 +408,62 @@ struct FTPStoredSessionTests {
         #expect(journal.contains { $0.verb == "USER" })
     }
 
+    /// A server the user has ALREADY trusted is not reported as refused.
+    ///
+    /// The store is the one thing between a diagnosis that refuses unknown
+    /// certificates and a diagnosis that refuses every certificate: with the
+    /// `.refusing` decider and no store, a remembered certificate is unknown to
+    /// the validator, is put to a decider that says no, and the row reads
+    /// `certificateRejected` for the exact connection that works (Task 8
+    /// review, finding 4: dropping the store from `FTPProbe.open` was GREEN
+    /// against the whole suite, because both behavioural cases here pass
+    /// `trustStore: nil` themselves).
+    ///
+    /// The store is built in a temporary directory and filled by a first dial
+    /// that accepts the certificate, which is how a real one gets there; the
+    /// second dial refuses everything unknown, and succeeds only because the
+    /// certificate is remembered. The user's own store is never read or
+    /// written.
+    @Test func anAlreadyTrustedCertificateIsNotReportedAsRefused() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TrustedCertificateStore(directory: directory)
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let credentials = server.credentials
+        try await running(server) { host, port in
+            let values = ftpValues(
+                host: host, port: port, username: credentials.username, security: .explicitTLS)
+            let timer = DiagnosticStepTimer(id: DiagnosticStepID.dial, titleKey: "unused")
+            let secret = context(secret: credentials.password)
+
+            // Nothing is remembered yet, so a refusing diagnosis refuses.
+            let before = await FTPProbe.connectRow(
+                values, secret, timer, decider: .refusing, trustStore: store)
+            #expect(before.outcome == .failed(FTPConnectionFailure.certificateRejected.logSentence))
+            let rememberedBefore = try store.allCertificates()
+            #expect(rememberedBefore.isEmpty)
+
+            // The first connect, which accepts, remembers it.
+            let accepted = await FTPProbe.connectRow(
+                values, secret, timer, decider: .asking { _ in true }, trustStore: store)
+            #expect(accepted.outcome == .ok)
+            let rememberedAfter = try store.allCertificates()
+            #expect(rememberedAfter.count == 1)
+
+            // The same server, the same refusing decider, the store that now
+            // knows it.
+            let afterwards = await FTPProbe.connectRow(
+                values, secret, timer, decider: .refusing, trustStore: store)
+            #expect(afterwards.outcome == .ok)
+            let features = await FTPProbe.featuresRow(
+                values, secret,
+                DiagnosticStepTimer(id: "ftp.features", titleKey: "unused"),
+                decider: .refusing, trustStore: store)
+            #expect(features.outcome == .ok)
+        }
+    }
+
     /// Neither registered row ever puts a certificate question to anyone.
     ///
     /// The behaviour is measured above through `FTPProbe`'s parameters; what
