@@ -266,6 +266,11 @@ struct ConnectionFormView: BoundedView {
     private static let s3BucketListKey =
         "\(S3Field.namespace).\(S3Field.startsAtBucketList.rawValue)"
 
+    /// The stored key of FTP's security picker, intercepted below. Derived
+    /// from the field enum for the reason `s3BucketListKey` gives.
+    private static let ftpSecurityKey =
+        "\(FTPField.namespace).\(FTPField.security.rawValue)"
+
     /// Sends the auth-kind picker's write through `selectAuthChoice` instead
     /// of letting it land in `values` (M22/T8 fix round 1).
     ///
@@ -278,12 +283,20 @@ struct ConnectionFormView: BoundedView {
     /// bypassed it and left `selectAuthChoice` with no production caller at
     /// all.
     ///
-    /// TWO fields need it now (counted here, against the arms below): SSH's
-    /// auth kind, and S3's "Start at the bucket list" toggle. Turning that
-    /// toggle on discards the bucket the user typed — a value change cannot
-    /// express that, and a post-hoc `.onChange` fires when `values` already
-    /// holds the new value, so `selectBucketListMode`'s own "did this change?"
-    /// guard could no longer tell. Exactly the shape the auth picker needed.
+    /// THREE fields need it now (counted here, against the arms below): SSH's
+    /// auth kind, S3's "Start at the bucket list" toggle, and FTP's security
+    /// picker. Turning that toggle on discards the bucket the user typed — a
+    /// value change cannot express that, and a post-hoc `.onChange` fires when
+    /// `values` already holds the new value, so `selectBucketListMode`'s own
+    /// "did this change?" guard could no longer tell. Exactly the shape the
+    /// auth picker needed. FTP's picker moves the port with the mode unless
+    /// the user typed one, and needs the PREVIOUS mode to know whether they
+    /// did (`selectFTPSecurity`).
+    ///
+    /// (Withdrawn wording, verbatim: "TWO fields need it now (counted here,
+    /// against the arms below): SSH's auth kind, and S3's "Start at the
+    /// bucket list" toggle." It was a count of the arms, and a third arm made
+    /// it false.)
     ///
     /// Returns false for every other field, which is then written normally.
     /// A value that names no auth kind — the "—" row — is deliberately NOT
@@ -294,6 +307,10 @@ struct ConnectionFormView: BoundedView {
             // subscript and `SchemaFormView.boolBinding` both write, so the
             // command stores exactly what a plain write would have.
             viewModel.selectBucketListMode(newValue == "true")
+            return true
+        }
+        if key == Self.ftpSecurityKey, let mode = FTPSecurityMode(rawValue: newValue) {
+            viewModel.selectFTPSecurity(mode)
             return true
         }
         guard key == Self.authKindKey,

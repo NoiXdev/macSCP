@@ -1687,6 +1687,39 @@ public final class ConnectionViewModel {
         }
     }
 
+    /// User-initiated switch of FTP's security picker: the mode is written,
+    /// and the port follows the mode's default until the user has put one of
+    /// their own there.
+    ///
+    /// "Follows" means the port field holds the PREVIOUS mode's default: that
+    /// is the only evidence this form has that nobody typed it, and it is why
+    /// a user who moves from explicit FTPS (21) to implicit (990) finds 990
+    /// there, and one who typed 2121 first finds 2121 still. The limit of that
+    /// evidence is stated rather than hidden: a user who types the default
+    /// itself ("21") is indistinguishable from one who left it, and the port
+    /// follows the next switch. A blank port is left blank -- blank already
+    /// means the mode's own (`FTPFieldSchema.port(_:for:)`), at the dial and
+    /// in the stored block alike, so there is nothing to follow.
+    ///
+    /// A command and not a value change, for the reason `selectBucketListMode`
+    /// gives: it is reached through `ConnectionFormView.interceptEdit`, which
+    /// runs BEFORE the write, so the previous mode is still readable here. A
+    /// post-hoc `onChange` would see only the new mode and could not tell a
+    /// default from a typed port.
+    ///
+    /// A session loaded into the edit form is NOT routed through this: its
+    /// port arrives with its mode in one assignment of `values`, and a stored
+    /// implicit-FTPS session on port 21 keeps 21.
+    public func selectFTPSecurity(_ mode: FTPSecurityMode) {
+        let previous = FTPFieldSchema.security(values)
+        values[FTPField.security] = mode.rawValue
+        guard mode != previous else { return }
+        let typed = values[FTPField.port].trimmingCharacters(in: .whitespacesAndNewlines)
+        if typed == String(previous.defaultPort) {
+            values[FTPField.port] = String(mode.defaultPort)
+        }
+    }
+
     /// User-initiated mode switch (picker) for the JUMP's own auth choice
     /// (final review M-2): mirrors `selectAuthChoice` above -- clears
     /// `jumpPassword` so it doesn't carry over into the other mode instead

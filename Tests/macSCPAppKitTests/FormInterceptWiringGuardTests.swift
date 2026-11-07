@@ -9,10 +9,13 @@ import macSCPCore
 /// that field's write is supposed to be — and leaves that command with no
 /// production caller at all, which no unit test of the command notices.
 ///
-/// Two commands go through the hook, counted against the file in the pass
+/// Three commands go through the hook, counted against the file in the pass
 /// that writes this: SSH's auth kind (`selectAuthChoice`, which clears the
-/// secret) and S3's bucket-list toggle (`selectBucketListMode`, which
-/// discards the typed bucket).
+/// secret), S3's bucket-list toggle (`selectBucketListMode`, which discards
+/// the typed bucket) and FTP's security picker (`selectFTPSecurity`, which
+/// moves the port with the mode unless the user typed one). (Withdrawn
+/// wording, verbatim: "Two commands go through the hook". The FTP arm made it
+/// three.)
 ///
 /// Every check is POSITIVE — it requires a name to be present — so a rename
 /// or a removal fails loudly rather than leaving a scan that matches nothing
@@ -78,17 +81,37 @@ struct FormInterceptWiringGuardTests {
             """)
     }
 
-    /// The compile-time half of the two scans above. Both commands are
+    /// The FTP arm, keyed off the field enum for the same reason. Without it
+    /// the security picker writes its field directly, the port stays on the
+    /// old mode's default, and `selectFTPSecurity` has no production caller.
+    @Test func theFTPSecurityPickerGoesThroughItsCommand() throws {
+        let source = try Self.strippedSource()
+
+        #expect(source.contains("viewModel.selectFTPSecurity("), """
+            ConnectionFormView's intercept no longer calls selectFTPSecurity, \
+            so choosing implicit FTPS leaves the port on 21 and the connection \
+            dials a port nothing listens on for that mode.
+            """)
+        #expect(source.contains("FTPField.security.rawValue"), """
+            the intercepted key is no longer derived from FTPField.security -- \
+            a second, hand-spelled copy of a field id is waiting for a rename \
+            to walk past it.
+            """)
+    }
+
+    /// The compile-time half of the scans above. Both commands are
     /// referenced by name as unbound method references — nothing is called
     /// and no view model is built — so renaming either one stops THIS FILE
     /// from compiling, instead of leaving its `contains` above looking for a
     /// string nothing writes any more. The assertion is the trivial half;
     /// the compiler is the check.
-    @Test @MainActor func coreStillOffersBothCommandsTheFormCalls() {
+    @Test @MainActor func coreStillOffersEveryCommandTheFormCalls() {
         let switchAuth: (ConnectionViewModel) -> (ConnectionViewModel.AuthChoice) -> Void =
             ConnectionViewModel.selectAuthChoice
         let switchBucketListMode: (ConnectionViewModel) -> (Bool) -> Void =
             ConnectionViewModel.selectBucketListMode
-        #expect(([switchAuth, switchBucketListMode] as [Any]).count == 2)
+        let switchFTPSecurity: (ConnectionViewModel) -> (FTPSecurityMode) -> Void =
+            ConnectionViewModel.selectFTPSecurity
+        #expect(([switchAuth, switchBucketListMode, switchFTPSecurity] as [Any]).count == 3)
     }
 }
