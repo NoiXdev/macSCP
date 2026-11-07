@@ -222,5 +222,13 @@ struct PermissionsSurfaceGuardTests {
             ContentView.swift never calls `recordPermissionEditing(`, so \
             `permissionEditing` stays at its default and the connection is never asked.
             """)
+        // And asks about the session it is building: the write is refused for
+        // any other id, so a call that names a different one is a call whose
+        // answer is always dropped -- present, and inert.
+        let namesItsOwnSession = content.contains("forSession: sessionID)")
+        #expect(namesItsOwnSession, """
+            ContentView.swift calls `recordPermissionEditing(` without the id of the \
+            session it just built (`sessionID`), so the answer is written nowhere.
+            """)
     }
 }
