@@ -201,6 +201,7 @@ actor LoopbackFTPServer {
     private let security: FTPSecurityMode
     private let advertisesMLSD: Bool
     private let offersSiteCommands: Bool
+    private let advertisesSiteChmodInFEAT: Bool
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let passiveDepth: Int
@@ -277,11 +278,13 @@ actor LoopbackFTPServer {
         requiresTLSSessionReuse: Bool,
         maximumTLSVersion: TLSVersion = .tlsv13,
         passiveDepth: Int = 1,
-        offersSiteCommands: Bool = true
+        offersSiteCommands: Bool = true,
+        advertisesSiteChmodInFEAT: Bool = false
     ) {
         self.security = security
         self.advertisesMLSD = advertisesMLSD
         self.offersSiteCommands = offersSiteCommands
+        self.advertisesSiteChmodInFEAT = advertisesSiteChmodInFEAT
         self.requiresTLSSessionReuse = requiresTLSSessionReuse
         self.maximumTLSVersion = maximumTLSVersion
         self.passiveDepth = max(1, passiveDepth)
@@ -318,6 +321,7 @@ actor LoopbackFTPServer {
         let configuration = Configuration(
             security: security, advertisesMLSD: advertisesMLSD,
             offersSiteCommands: offersSiteCommands,
+            advertisesSiteChmodInFEAT: advertisesSiteChmodInFEAT,
             requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
             passiveDepth: passiveDepth)
         let state = self.state
@@ -704,6 +708,7 @@ actor LoopbackFTPServer {
         let security: FTPSecurityMode
         let advertisesMLSD: Bool
         let offersSiteCommands: Bool
+        let advertisesSiteChmodInFEAT: Bool
         let requiresTLSSessionReuse: Bool
         let credentials: LoopbackFTPCredentials
         let passiveDepth: Int
@@ -1451,6 +1456,11 @@ final class LoopbackFTPSession: @unchecked Sendable {
 
     private func featureLines() -> [String] {
         var lines = ["UTF8", "SIZE", "MDTM"]
+        // A real server that lists its SITE subcommands in FEAT writes them
+        // on one line (Pure-FTPd does; vsftpd lists none, which is why the
+        // client needs a second signal and why this defaults OFF — every
+        // other case here measures the SITE HELP path).
+        if configuration.advertisesSiteChmodInFEAT { lines.append("SITE CHMOD UMASK") }
         if configuration.advertisesMLSD {
             lines.append("MLST type*;size*;modify*;")
             lines.append("MLSD")

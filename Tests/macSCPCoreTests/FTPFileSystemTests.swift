@@ -854,6 +854,68 @@ struct FTPFileSystemTests {
         #expect(refused == false)
     }
 
+    /// Signal 1: a server that lists its `SITE` subcommands in `FEAT` is
+    /// believed, and `SITE HELP` is never sent.
+    ///
+    /// The free signal, paid for by the dial, and the review measured it
+    /// exercised by nothing — `$0.hasPrefix("SITE")` →
+    /// `$0.hasPrefix("ZZZZNOSUCHFEATURE")` was GREEN. It could not have been
+    /// otherwise: the fixture's `FEAT` was `UTF8`, `SIZE`, `MDTM` plus
+    /// `MLST`/`MLSD`, so `thePermissionEditorIsProbedOncePerConnection`'s
+    /// `helps.count == 1` was itself the proof that signal 1 never fired.
+    ///
+    /// The `FEAT` line is written as a real server writes it — the
+    /// subcommands on one line, `SITE CHMOD UMASK` — which is why the probe
+    /// matches a `SITE` PREFIX containing `CHMOD` rather than an exact
+    /// spelling.
+    ///
+    /// Both halves: the answer is `true`, and no round trip was spent on it.
+    @Test func theFEATSignalAnswersThePermissionProbeWithNoRoundTrip() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            advertisesSiteChmodInFEAT: true)
+        let offered = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            let answer = await fs.offersPermissionEditing()
+            await fs.disconnect()
+            return answer
+        }
+        #expect(offered)
+        // The positive that says `FEAT` really carried it: the feature set
+        // the dial read holds the line.
+        let features = await server.receivedCommands.map(\.verb)
+        #expect(features.contains("FEAT"))
+        // And the negative that is the point: signal 2 was not needed.
+        let helps = await server.receivedCommands.filter { $0.verb == "SITE" }
+        #expect(helps.isEmpty)
+    }
+
+    /// Two asks that arrive together share ONE probing pass.
+    ///
+    /// Coverage rather than behaviour — the worst case is one extra round
+    /// trip — but it is cheap against this fixture, and the in-flight branch
+    /// is a third of the memory's logic. The two asks are started as separate
+    /// tasks so they really do overlap; `helps.count == 1` is what says the
+    /// second found the first's pass rather than starting its own.
+    @Test func twoPermissionAsksThatOverlapShareOneProbingPass() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let answers = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            async let first = fs.offersPermissionEditing()
+            async let second = fs.offersPermissionEditing()
+            let both = await (first, second)
+            await fs.disconnect()
+            return both
+        }
+        #expect(answers.0)
+        #expect(answers.1)
+        let helps = await server.receivedCommands.filter {
+            $0.verb == "SITE" && $0.argument.uppercased() == "HELP"
+        }
+        #expect(helps.count == 1)
+    }
+
     /// The third answer, and the one that is a decision rather than a reading:
     /// a server that ANSWERED `SITE HELP` and said nothing about `CHMOD`.
     ///
