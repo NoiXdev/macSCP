@@ -191,8 +191,13 @@ struct FTPStoredSessionTests {
         // beside the separate argument: both are on the path, so a block
         // built from a field it should not read can pick the secret up.
         values[FTPField.password] = Self.secret
-        let saved = try #require(sessions.save(
-            name: "files", values: values, password: Self.secret, kind: .ftp))
+        // Evaluated OUTSIDE the macro: a `#require` over the call would print
+        // its operands on a red run, and the operands are the `FieldValues`
+        // holding the password and the password itself. The optional that
+        // reaches the macro is a `StoredSession?`, which carries neither.
+        let attempt = sessions.save(
+            name: "files", values: values, password: Self.secret, kind: .ftp)
+        let saved = try #require(attempt)
 
         let reachedTheSecretStore = ((try secrets.password(for: saved.secretSlot)) ?? "") == Self.secret
         #expect(reachedTheSecretStore)
@@ -238,8 +243,13 @@ struct FTPStoredSessionTests {
         values[FTPField.username] = "tim"
         values[FTPField.initialPath] = "/pub"
         values[FTPField.password] = Self.secret
-        let saved = try #require(sessions.save(
-            name: "files", values: values, password: Self.secret, kind: .ftp))
+        // Evaluated OUTSIDE the macro: a `#require` over the call would print
+        // its operands on a red run, and the operands are the `FieldValues`
+        // holding the password and the password itself. The optional that
+        // reaches the macro is a `StoredSession?`, which carries neither.
+        let attempt = sessions.save(
+            name: "files", values: values, password: Self.secret, kind: .ftp)
+        let saved = try #require(attempt)
         let stored = try #require(try SessionStore(directory: directory).all().first { $0.id == saved.id })
 
         let overview = SessionOverviewModel(
