@@ -127,6 +127,35 @@ struct FTPControlConnectionTests {
         var value: Bool? { box.withLock { $0 } }
     }
 
+    /// The environment variable `theTurnIsHandedToExactlyOneWaiter` writes
+    /// its readings to, when one is named.
+    ///
+    /// **It exists because a plant on a tracked file goes through
+    /// `scripts/mutation-probe`, and the probe keeps the suite log on only
+    /// one of its nine endings** — not on `RED (caught)`, which is the
+    /// ending this case produces. So the reading under the plant would be
+    /// unobtainable, and the reading pair Ruling T6.11 asks to be reported
+    /// is the whole positive control: it is what says a red is a dropped
+    /// turn rather than a transfer that never ran. The case prints
+    /// unconditionally and appends here only when the variable is set, so an
+    /// ordinary run writes no files.
+    private static let readingVariable = "MACSCP_TURN_READING"
+
+    private static func recordReading(_ line: String) {
+        print(line)
+        guard let path = ProcessInfo.processInfo.environment[Self.readingVariable],
+            !path.isEmpty
+        else { return }
+        let bytes = Data((line + "\n").utf8)
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            try? handle.write(contentsOf: bytes)
+            try? handle.close()
+        } else {
+            try? bytes.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     /// A stand-in for `NIOSSLSession` in the vault's own tests.
     ///
     /// The vault's order is only visible with THREE sessions, and a
@@ -1935,7 +1964,7 @@ struct FTPControlConnectionTests {
                 holder: holderCompletion, waiter: waiterCompletion
             )
         }
-        print(
+        Self.recordReading(
             "TURN heldInside=\(String(describing: outcome.heldInside))"
                 + " heldFromOutside=\(outcome.heldFromOutside)"
                 + " holder=\(String(describing: outcome.holder))"
