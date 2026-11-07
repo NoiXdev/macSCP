@@ -1099,8 +1099,33 @@ struct FTPFileSystemTests {
     ///
     /// **Three POSITIVE checks before the negative**, which is what makes it
     /// a guard rather than a comment that runs: the pool is constructed here
-    /// at all, the clearing line is present, and the CLEARED copy is what the
-    /// `config:` argument receives. Without them an emptied-out scan, or one
+    /// at all, the clearing line is present AND CLEARS TO `""`, and the
+    /// CLEARED copy is what the `config:` argument receives.
+    ///
+    /// That second positive first read `occurrences(of: "secretFree.password =")`,
+    /// which was the left-hand side alone and therefore said only that
+    /// SOMETHING is assigned to the field. The re-review planted
+    /// `secretFree.password = config.password` — the clearing kept, spelled,
+    /// and neutered — and it was **GREEN over 238 FTP tests**: a copy that
+    /// re-reads the credential satisfied every check in this case. The
+    /// anchor is now the whole assignment — read through
+    /// `SourceCorpus.commentFree(of:)` rather than `code(of:)`, because the
+    /// `""` does NOT survive the blanked view.
+    ///
+    /// This comment first claimed the opposite, verbatim: "Read through
+    /// `SourceCorpus.code(of:)`, which blanks comments and string literals
+    /// while preserving length, so a comment quoting any of these spellings
+    /// can neither satisfy nor trip the scan (CLAUDE.md, "Source-scanning
+    /// guards read comments too") and the `""` in the clearing line survives
+    /// as `""`." The first half is true and is why every other check here
+    /// still reads the blanked view. The last clause is false, measured:
+    /// anchoring the clearing check on `secretFree.password = ""` against
+    /// `code(of:)` reports **0** and reddens this case on a correct tree.
+    /// `commentFree(of:)` blanks comments and KEEPS literals, which is
+    /// exactly the pair of properties this one check needs — so the clearing
+    /// check reads that view and gets its own two counter-controls, while
+    /// the negative keeps the blanked view, where no string literal can
+    /// spell `config: config` into a pass or a failure. Without them an emptied-out scan, or one
     /// pointed at a file that no longer builds a pool, would read as
     /// satisfied. The negative is that the ORIGINAL config is not what goes
     /// in.
@@ -1113,21 +1138,23 @@ struct FTPFileSystemTests {
         let url = SourceCorpus.url(of: .sources)
             .appendingPathComponent("macSCPCore/FTP/FTPFileSystem.swift")
         let code = try SourceCorpus.code(of: url)
+        let codeKeepingLiterals = try SourceCorpus.commentFree(of: url)
 
-        func occurrences(of token: String) -> Int {
+        func occurrences(of token: String, in text: String) -> Int {
             guard !token.isEmpty else { return 0 }
             var count = 0
-            var searched = code.startIndex
-            while let found = code.range(of: token, range: searched..<code.endIndex) {
+            var searched = text.startIndex
+            while let found = text.range(of: token, range: searched..<text.endIndex) {
                 count += 1
                 searched = found.upperBound
             }
             return count
         }
+        func occurrences(of token: String) -> Int { occurrences(of: token, in: code) }
 
         // The three positives.
         #expect(occurrences(of: "FTPConnectionPool(") == 1)
-        #expect(occurrences(of: "secretFree.password =") == 1)
+        #expect(occurrences(of: "secretFree.password = \"\"", in: codeKeepingLiterals) == 1)
         #expect(occurrences(of: "config: secretFree") == 1)
         // The negative: the config that still holds the credential is not
         // what the pool is given.
@@ -1136,6 +1163,10 @@ struct FTPFileSystemTests {
         // pattern that can no longer match anything.
         #expect(occurrences(of: "password") > 0)
         #expect(occurrences(of: "thisTokenIsNotInTheFile") == 0)
+        // And the literal-keeping view's own controls, because an empty
+        // string literal is the one token the blanked view cannot carry.
+        #expect(occurrences(of: "password", in: codeKeepingLiterals) > 0)
+        #expect(occurrences(of: "thisTokenIsNotInTheFile", in: codeKeepingLiterals) == 0)
     }
 
     /// A pinned certificate that changed reaches the file system as a
