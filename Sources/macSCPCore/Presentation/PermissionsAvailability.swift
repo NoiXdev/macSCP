@@ -50,13 +50,25 @@ public enum PermissionsAvailability {
     /// still pay only once, which is why the memory is the conformer's job
     /// and not the caller's.
     ///
-    /// **Owed: the App does not read this yet.** Its two call sites
-    /// (`ContentView+Detail.swift`) are inside a SwiftUI body and so are
-    /// synchronous; reading this means holding the answer on the session and
-    /// setting it when the connection opens. Until that is wired, an FTP
+    /// **Owed: the App does not read this yet.** The per-kind form above has
+    /// exactly ONE call site, and it is inside a SwiftUI body and so
+    /// synchronous; reading this one means holding the answer on the session
+    /// and setting it when the connection opens. Until that is wired, an FTP
     /// server with no `SITE CHMOD` still shows the editor and its Apply fails
     /// per file — which is the behaviour before the probe existed, not a new
     /// one.
+    ///
+    /// The figure has to be READ and not counted, which is why the command is
+    /// here with what it prints rather than a number on its own:
+    ///
+    ///     /usr/bin/grep -rn 'PermissionsAvailability\.isOffered(' Sources/MacSCPAppKit
+    ///
+    /// prints **two** lines, and one of them is `BrowserPane.swift`'s doc
+    /// comment naming the function in prose. The call is
+    /// `ContentView+Detail.swift`'s `supportsPermissions:`. Its neighbour at
+    /// the LOCAL pane calls `isOfferedByTheLocalFileSystem`, a different
+    /// function, and is not affected by any of this: "local" is not a
+    /// connection.
     public static func isOffered(
         for kind: ConnectionKind, on connection: any RemoteFileSystem
     ) async -> Bool {
