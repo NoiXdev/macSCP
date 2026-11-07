@@ -192,4 +192,35 @@ struct PermissionsSurfaceGuardTests {
             permissions block, it is not the decision the presentation tests hold.
             """)
     }
+
+    // MARK: - The connection's own answer (Ruling T7.1)
+
+    /// The remote pane narrows its per-kind offer by the answer the
+    /// connection gave, and the session start is what asks for it. Two
+    /// halves of one wiring, and either alone is inert: a session that asks
+    /// and nobody reads shows the editor as before, and a pane that reads a
+    /// value nothing ever writes reads `true` for ever.
+    ///
+    /// Both checks require a name to be PRESENT, and the property's name is
+    /// pinned at compile time by the key path, so a rename turns this file
+    /// red instead of leaving the scans below looking for text nothing
+    /// writes.
+    @Test func theRemotePaneReadsTheConnectionsAnswerAndTheSessionStartAsksForIt() throws {
+        let property: WritableKeyPath<BrowserSession, Bool> = \.permissionEditing
+        #expect((property as AnyKeyPath) == \BrowserSession.permissionEditing)
+
+        let detail = try Self.source(Self.detailPath)
+        let reads = detail.contains("session.permissionEditing")
+        #expect(reads, """
+            \(Self.detailPath) never reads `session.permissionEditing`, so a server with \
+            no SITE CHMOD is still shown a permission editor whose Apply fails per file.
+            """)
+
+        let content = try Self.source("Sources/MacSCPAppKit/ContentView.swift")
+        let asks = content.contains(".recordPermissionEditing(")
+        #expect(asks, """
+            ContentView.swift never calls `recordPermissionEditing(`, so \
+            `permissionEditing` stays at its default and the connection is never asked.
+            """)
+    }
 }

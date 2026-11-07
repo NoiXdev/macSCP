@@ -633,9 +633,15 @@ extension ContentView {
                                         backend: session.remoteFS) != nil,
                                     // Same shape: the descriptor's permission
                                     // model, read through the one function
-                                    // that turns it into an offer.
+                                    // that turns it into an offer -- narrowed
+                                    // by this CONNECTION's own answer, held on
+                                    // the session because this body is
+                                    // synchronous and the question may be a
+                                    // round trip (FTP's `SITE CHMOD`). The
+                                    // answer can only take the offer away.
                                     supportsPermissions: PermissionsAvailability.isOffered(
-                                        for: tab.connectionViewModel.kind),
+                                        for: tab.connectionViewModel.kind)
+                                        && session.permissionEditing,
                                     // A remote action is typed into THIS
                                     // session's shell (`session.terminal`,
                                     // named in both closures), through the

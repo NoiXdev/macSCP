@@ -76,6 +76,26 @@ struct BrowserSession {
     /// above and for the same reason: it is true of this connection and of no
     /// other, so it dies with it. Set once by `ContentView.startSession`.
     var bucketVersioning: BucketVersioningCache?
+    /// Whether THIS CONNECTION will take a permission change: the answer to
+    /// `PermissionsAvailability.isOffered(for:on:)`, written once after the
+    /// connection opened (`SessionTab.recordPermissionEditing`).
+    ///
+    /// On the SESSION for the reason `objectLockStates` is: it is true of this
+    /// connection and no other, so it dies with it and a reconnect asks again.
+    /// And held rather than computed, because the one place that reads it is a
+    /// SwiftUI body (`ContentView+Detail`'s `supportsPermissions:`), which is
+    /// synchronous, while the question may be a round trip -- FTP's
+    /// `SITE CHMOD` is a per-server extension (`PermissionEditingProbe`).
+    ///
+    /// **`true` until the connection has answered, and that direction is
+    /// deliberate.** It is today's behaviour: the editor is offered per
+    /// protocol, and the capability read beside this value
+    /// (`PermissionsAvailability.isOffered(for:)`) still has the final say for
+    /// a backend with no POSIX model. An answer can therefore only take an
+    /// offer away, never add one -- the same asymmetry the Core function has,
+    /// and for the same reason (an inconclusive probe answers `true` there, so
+    /// a transient failure does not hide a working editor).
+    var permissionEditing = true
 
     /// The cache for a connection over `fileSystem`: one when it has the
     /// bucket-settings capability, `nil` when it does not -- the question
@@ -865,5 +885,34 @@ extension SessionTab {
                 case .remote: self.session?.remoteChecksums = newValue
                 }
             })
+    }
+
+    /// Asks the connection whether it will take a permission change, and
+    /// records the answer on the session it was asked for (Ruling T7.1 of the
+    /// FTP plan).
+    ///
+    /// The question is `PermissionsAvailability.isOffered(for:on:)`: the
+    /// capability first, then the connection's own probe where it has one --
+    /// for FTP, whether the server has `SITE CHMOD`. It is asked once, as
+    /// the session starts, and the answer lands on
+    /// `BrowserSession.permissionEditing`, where the synchronous view body
+    /// can read it.
+    ///
+    /// **The write is refused unless the session is still the one that was
+    /// asked about.** The probe may be a round trip, and a tab can be torn
+    /// down and reconnected inside it; an answer about the old connection
+    /// written onto the new one would hide, or offer, an editor on a server
+    /// the question was never put to. `id` is compared, as
+    /// `checksumLedgerBinding` compares it, for the same reason.
+    ///
+    /// Not awaited by the connect: a server that answers `SITE HELP` slowly
+    /// must not hold the browser back, and until the answer arrives the
+    /// editor is offered as it always was.
+    func recordPermissionEditing(
+        of fileSystem: any RemoteFileSystem, kind: ConnectionKind, forSession sessionID: UUID
+    ) async {
+        let offered = await PermissionsAvailability.isOffered(for: kind, on: fileSystem)
+        guard session?.id == sessionID else { return }
+        session?.permissionEditing = offered
     }
 }

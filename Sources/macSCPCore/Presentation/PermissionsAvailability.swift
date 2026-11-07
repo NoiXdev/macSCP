@@ -50,25 +50,38 @@ public enum PermissionsAvailability {
     /// still pay only once, which is why the memory is the conformer's job
     /// and not the caller's.
     ///
-    /// **Owed: the App does not read this yet.** The per-kind form above has
-    /// exactly ONE call site, and it is inside a SwiftUI body and so
-    /// synchronous; reading this one means holding the answer on the session
-    /// and setting it when the connection opens. Until that is wired, an FTP
-    /// server with no `SITE CHMOD` still shows the editor and its Apply fails
-    /// per file — which is the behaviour before the probe existed, not a new
-    /// one.
+    /// **Read by the App, once per connection (Ruling T7.1 of the FTP plan).**
+    /// The per-kind form above has exactly ONE call site, and it is inside a
+    /// SwiftUI body and so synchronous; this one is asked from
+    /// `SessionTab.recordPermissionEditing(of:kind:forSession:)` as the
+    /// session starts, and the answer is held on
+    /// `BrowserSession.permissionEditing`, which that body reads beside the
+    /// per-kind answer and which can only take the offer away. Until the
+    /// connection has answered, an FTP server with no `SITE CHMOD` is offered
+    /// the editor as it was before the probe existed.
+    ///
+    /// (Withdrawn wording, verbatim: "**Owed: the App does not read this
+    /// yet.**" The sentences after it, that an FTP server with no `SITE
+    /// CHMOD` "still shows the editor and its Apply fails per file", are true
+    /// only of the moments before the answer arrives.)
     ///
     /// The figure has to be READ and not counted, which is why the command is
     /// here with what it prints rather than a number on its own:
     ///
-    ///     /usr/bin/grep -rn 'PermissionsAvailability\.isOffered(' Sources/MacSCPAppKit
+    ///     /usr/bin/grep -rn 'PermissionsAvailability\.isOffered(for: [a-zA-Z.]*, on:' Sources
     ///
-    /// prints **two** lines, and one of them is `BrowserPane.swift`'s doc
-    /// comment naming the function in prose. The call is
-    /// `ContentView+Detail.swift`'s `supportsPermissions:`. Its neighbour at
-    /// the LOCAL pane calls `isOfferedByTheLocalFileSystem`, a different
-    /// function, and is not affected by any of this: "local" is not a
-    /// connection.
+    /// prints **one** line, the call in `SessionTab.swift`, and exits 0
+    /// (checked 2026-11-07). The per-kind call is the other reader:
+    /// `ContentView+Detail.swift`'s `supportsPermissions:`, found with the
+    /// same command minus the `, on:` and read by eye, because the doc
+    /// comments in `SessionTab.swift` and `BrowserPane.swift` name the
+    /// function in prose and match it too. (Withdrawn wording, verbatim: "prints
+    /// **two** lines, and one of them is `BrowserPane.swift`'s doc comment
+    /// naming the function in prose." That command, run against
+    /// `Sources/MacSCPAppKit`, now prints six, four of them prose.) Its
+    /// neighbour at the LOCAL pane calls `isOfferedByTheLocalFileSystem`, a
+    /// different function, and is not affected by any of this: "local" is not
+    /// a connection.
     public static func isOffered(
         for kind: ConnectionKind, on connection: any RemoteFileSystem
     ) async -> Bool {
