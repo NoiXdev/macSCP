@@ -71,6 +71,8 @@ final class LoopbackFTPState: Sendable {
         var garbleNextCompletion = false
         var refuseExtendedPassive = false
         var refuseNextTransferWithSessionReuse = false
+        var refuseNextSiteChmod = false
+        var nextListingPayload: Data?
 
         var commands: [LoopbackFTPReceivedCommand] = []
         var handshakes: [LoopbackFTPHandshake] = []
@@ -81,6 +83,12 @@ final class LoopbackFTPState: Sendable {
         /// empty one exists.
         var files: [String: Data] = [:]
         var directories: Set<String> = ["/"]
+        /// Absolute path to the moment `MDTM` reports for it. Written beside
+        /// `files` by `seedFile` and by `STOR`, moved by `RNTO`, dropped by
+        /// `DELE`. A file with no entry here is answered `550` by `MDTM`,
+        /// which is what a server with no `MDTM` support would say — the
+        /// fixture never silently invents a timestamp.
+        var modificationTimes: [String: Date] = [:]
 
         /// Every channel this server opened or accepted and that has not
         /// closed yet, so `stop()` can close them itself.
@@ -591,10 +599,43 @@ actor LoopbackFTPServer {
         state.addReaper(task)
     }
 
-    /// Creates `path` (and its parent directories) with `contents`.
-    func seedFile(_ path: String, contents: Data) {
+    /// The next `SITE CHMOD` that this server would otherwise have performed
+    /// is answered `550 Permission denied.` instead of `200`. One shot.
+    ///
+    /// The refusal a real server gives most often: `SITE CHMOD` is an
+    /// extension, and a server that implements it still refuses it for a file
+    /// the account does not own. Behind every reason to refuse that is the
+    /// request's own — see `handleSite`.
+    func refuseNextSiteChmodWith550() {
+        state.box.withLockedValue { $0.refuseNextSiteChmod = true }
+    }
+
+    /// The next `LIST`, `NLST` or `MLSD` serves `payload` verbatim instead of
+    /// the listing this server would have composed. One shot.
+    ///
+    /// The seam a dialect this reader cannot read needs. Everything this
+    /// fixture composes is well formed by construction — `listing(of:verb:)`
+    /// writes one of three known formats — so the one outcome a real server
+    /// can produce and this one cannot is a line in no format at all, which
+    /// is exactly what `FTPListParser` exists to refuse. Served AFTER the
+    /// directory has been found, so it cannot stand in for a `550`: a listing
+    /// of a directory that is not there is still refused.
+    func answerNextListingWith(_ payload: Data) {
+        state.box.withLockedValue { $0.nextListingPayload = payload }
+    }
+
+    /// Creates `path` (and its parent directories) with `contents`, and the
+    /// moment `MDTM` will report for it.
+    ///
+    /// `modifiedAt` is a PARAMETER rather than always `Date()` so a test can
+    /// place two seedings at the same instant: `MDTM`'s resolution is one
+    /// second (RFC 3659 section 3), and a case about what that resolution
+    /// cannot distinguish must not depend on whether two calls happened to
+    /// land inside the same second.
+    func seedFile(_ path: String, contents: Data, modifiedAt: Date = Date()) {
         state.box.withLockedValue { inner in
             inner.files[path] = contents
+            inner.modificationTimes[path] = modifiedAt
             var parent = (path as NSString).deletingLastPathComponent
             while parent != "/", !parent.isEmpty {
                 inner.directories.insert(parent)
@@ -1011,6 +1052,12 @@ final class LoopbackFTPSession: @unchecked Sendable {
     /// it however that command ends (RFC 3659 section 5: the marker applies
     /// to the transfer command that immediately follows it).
     private var restartOffset = 0
+    /// What `RNFR` named, consumed by the `RNTO` that follows it and cleared
+    /// by it however that command ends (RFC 959 section 4.1.3: the two
+    /// commands are one operation). A `RNFR` that names nothing clears it
+    /// too, so a refused `RNFR` cannot leave an earlier one's target armed
+    /// for the next `RNTO`.
+    private var pendingRenameSource: String?
 
     init(
         configuration: LoopbackFTPServer.Configuration, state: LoopbackFTPState,
@@ -1173,9 +1220,37 @@ final class LoopbackFTPSession: @unchecked Sendable {
             } else {
                 try await send(550, "No such file.")
             }
+        case "MDTM":
+            let target = resolve(argument)
+            let stamp = state.box.withLockedValue { inner -> Date? in
+                guard inner.files[target] != nil else { return nil }
+                return inner.modificationTimes[target]
+            }
+            if let stamp {
+                try await send(213, Self.mdtmText(stamp))
+            } else {
+                try await send(550, "No such file.")
+            }
         case "DELE":
-            let removed = state.box.withLockedValue { $0.files.removeValue(forKey: resolve(argument)) != nil }
+            let target = resolve(argument)
+            let removed = state.box.withLockedValue { inner -> Bool in
+                inner.modificationTimes.removeValue(forKey: target)
+                return inner.files.removeValue(forKey: target) != nil
+            }
             try await send(removed ? 250 : 550, removed ? "File removed." : "No such file.")
+        case "RNFR":
+            let source = resolve(argument)
+            let known = state.box.withLockedValue {
+                $0.files[source] != nil || $0.directories.contains(source)
+            }
+            pendingRenameSource = known ? source : nil
+            try await send(
+                known ? 350 : 550,
+                known ? "Ready for RNTO." : "No such file or directory.")
+        case "RNTO":
+            try await handleRenameTo(argument)
+        case "SITE":
+            try await handleSite(argument)
         case "MKD", "XMKD":
             let path = resolve(argument)
             let created = state.box.withLockedValue { inner -> Bool in
@@ -1225,8 +1300,107 @@ final class LoopbackFTPSession: @unchecked Sendable {
         return .keepGoing
     }
 
+    /// `RNTO`: the second half of a rename, refusing an occupied destination.
+    ///
+    /// **An occupied destination is refused**, which several real servers do
+    /// not do — vsftpd and ProFTPD overwrite it silently. The fixture refuses
+    /// because `RemoteFileSystem.rename(from:to:)`'s contract says the call
+    /// "never silently overwrites", so a client that relies on the server for
+    /// that would be measured against a server that happens to agree. A
+    /// client that checks the destination itself passes here and against the
+    /// permissive servers alike.
+    private func handleRenameTo(_ argument: String) async throws {
+        guard let source = pendingRenameSource else {
+            try await send(503, "Use RNFR first.")
+            return
+        }
+        pendingRenameSource = nil
+        let destination = resolve(argument)
+        let moved = state.box.withLockedValue { inner -> Bool in
+            guard inner.files[destination] == nil, !inner.directories.contains(destination),
+                inner.directories.contains((destination as NSString).deletingLastPathComponent)
+            else { return false }
+            if let content = inner.files.removeValue(forKey: source) {
+                inner.files[destination] = content
+                inner.modificationTimes[destination] =
+                    inner.modificationTimes.removeValue(forKey: source)
+                return true
+            }
+            guard inner.directories.remove(source) != nil else { return false }
+            inner.directories.insert(destination)
+            // The subtree moves with it, keyed on the path PREFIX: a renamed
+            // folder whose children kept their old paths would list as empty
+            // and leave orphans no command could reach.
+            let prefix = source + "/"
+            for path in inner.directories where path.hasPrefix(prefix) {
+                inner.directories.remove(path)
+                inner.directories.insert(destination + "/" + path.dropFirst(prefix.count))
+            }
+            for (path, content) in inner.files where path.hasPrefix(prefix) {
+                inner.files.removeValue(forKey: path)
+                let moved = destination + "/" + path.dropFirst(prefix.count)
+                inner.files[moved] = content
+                inner.modificationTimes[moved] =
+                    inner.modificationTimes.removeValue(forKey: path)
+            }
+            return true
+        }
+        try await send(moved ? 250 : 553, moved ? "Rename successful." : "Rename refused.")
+    }
+
+    /// `SITE`, of which this server implements `CHMOD` and nothing else.
+    ///
+    /// **Every reason to refuse that is the request's own is read BEFORE the
+    /// seam**, for the reason `refuseNextPBSZWith503()` gives: a seam that
+    /// fired first would be spent by a `SITE CHMOD` this server would have
+    /// refused anyway, and a test armed against a well-formed request would
+    /// pass on the strength of a malformed one.
+    private func handleSite(_ argument: String) async throws {
+        let parts = argument.split(
+            separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard let verb = parts.first, verb.uppercased() == "CHMOD" else {
+            try await send(504, "SITE command not implemented.")
+            return
+        }
+        guard parts.count == 3, let bits = UInt32(parts[1], radix: 8), bits <= 0o7777 else {
+            try await send(501, "SITE CHMOD needs a mode and a path.")
+            return
+        }
+        let target = resolve(String(parts[2]))
+        let known = state.box.withLockedValue {
+            $0.files[target] != nil || $0.directories.contains(target)
+        }
+        guard known else {
+            try await send(550, "No such file or directory.")
+            return
+        }
+        let refused = state.box.withLockedValue { inner -> Bool in
+            let armed = inner.refuseNextSiteChmod
+            inner.refuseNextSiteChmod = false
+            return armed
+        }
+        try await send(
+            refused ? 550 : 200,
+            refused ? "Permission denied." : "SITE CHMOD command ok.")
+    }
+
+    /// A moment as `MDTM`'s reply text: `YYYYMMDDHHMMSS`, always UTC
+    /// (RFC 3659 section 3). No fraction, which is what the servers this
+    /// project has read send — and the resolution the client therefore has to
+    /// live with.
+    private static func mdtmText(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let parts = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second], from: date)
+        return String(
+            format: "%04d%02d%02d%02d%02d%02d",
+            parts.year ?? 0, parts.month ?? 0, parts.day ?? 0,
+            parts.hour ?? 0, parts.minute ?? 0, parts.second ?? 0)
+    }
+
     private func featureLines() -> [String] {
-        var lines = ["UTF8", "SIZE"]
+        var lines = ["UTF8", "SIZE", "MDTM"]
         if configuration.advertisesMLSD {
             lines.append("MLST type*;size*;modify*;")
             lines.append("MLSD")
@@ -1437,7 +1611,14 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 try await send(550, "No such directory.")
                 return .keepGoing
             }
-            payload = listing(of: directory, verb: verb)
+            // The armed payload is read AFTER the directory has been found,
+            // so it can never stand in for the `550` above.
+            let armed = state.box.withLockedValue { inner -> Data? in
+                let payload = inner.nextListingPayload
+                inner.nextListingPayload = nil
+                return payload
+            }
+            payload = armed ?? listing(of: directory, verb: verb)
         }
 
         let arrived = await listener.next()
@@ -1500,7 +1681,10 @@ final class LoopbackFTPSession: @unchecked Sendable {
                 _ = try? await awaitCancellably(control.close())
                 return .end
             }
-            state.box.withLockedValue { $0.files[path] = received }
+            state.box.withLockedValue {
+                $0.files[path] = received
+                $0.modificationTimes[path] = Date()
+            }
         } else {
             let dataChannel = data.channel.channel
             try await data.channel.executeThenClose { _, _ in
