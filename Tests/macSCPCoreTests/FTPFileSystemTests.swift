@@ -586,6 +586,100 @@ struct FTPFileSystemTests {
         #expect(!(await Self.verbs(server)).contains("SITE"))
     }
 
+    // MARK: - The permission editor, per connection
+
+    /// The editor is offered per CONNECTION, which is Ruling R5 of the plan
+    /// and the design's §14: `SITE CHMOD` is a per-server extension, so
+    /// `.posixMode` is true of FTP and may be false of the server.
+    ///
+    /// Three answers, and the third is the one that makes the first two
+    /// meaningful. A server that lists `CHMOD` in `SITE HELP` offers the
+    /// editor; a server with no `SITE` at all does not; and the answer is
+    /// asked ONCE, so a surface may ask per row.
+    @Test func thePermissionEditorIsProbedOncePerConnection() async throws {
+        let offering = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let offered = try await Self.running(offering) { host, port in
+            let fs = try await Self.connect(offering, host: host, port: port)
+            let first = await fs.offersPermissionEditing()
+            let second = await fs.offersPermissionEditing()
+            await fs.disconnect()
+            return (first: first, second: second)
+        }
+        #expect(offered.first)
+        #expect(offered.second)
+        // Asked once: the second ask read the memory, not the wire.
+        let helps = await offering.receivedCommands.filter {
+            $0.verb == "SITE" && $0.argument.uppercased() == "HELP"
+        }
+        #expect(helps.count == 1)
+
+        let bare = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            offersSiteCommands: false)
+        let refused = try await Self.running(bare) { host, port in
+            let fs = try await Self.connect(bare, host: host, port: port)
+            let answer = await fs.offersPermissionEditing()
+            await fs.disconnect()
+            return answer
+        }
+        #expect(refused == false)
+    }
+
+    /// `PermissionsAvailability` reads the capability FIRST and the probe only
+    /// narrows it — so the per-connection answer can agree with the per-kind
+    /// one or be `false` where it said `true`, and never the other way round.
+    @Test func theAvailabilityHelperReadsTheCapabilityBeforeTheProbe() async throws {
+        // FTP's capability row says `.posixMode`, so the kind alone offers it.
+        #expect(PermissionsAvailability.isOffered(for: .ftp))
+
+        let bare = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            offersSiteCommands: false)
+        let answers = try await Self.running(bare) { host, port in
+            let fs = try await Self.connect(bare, host: host, port: port)
+            let asFTP = await PermissionsAvailability.isOffered(for: .ftp, on: fs)
+            // The same connection against a kind whose model is NOT
+            // `.posixMode`: the capability refuses before the probe is
+            // reached, which is the ordering this case exists for.
+            let asWebDAV = await PermissionsAvailability.isOffered(for: .webdav, on: fs)
+            await fs.disconnect()
+            return (asFTP: asFTP, asWebDAV: asWebDAV)
+        }
+        #expect(answers.asFTP == false)
+        #expect(answers.asWebDAV == false)
+
+        // A connection that is NOT a probe keeps the per-kind answer, which
+        // is every other backend.
+        let local: any RemoteFileSystem = LocalFileSystem()
+        let localIsNotAProbe = (local as? any PermissionEditingProbe) == nil
+        #expect(localIsNotAProbe)
+        #expect(await PermissionsAvailability.isOffered(for: .ssh, on: local))
+    }
+
+    // MARK: - MDTM's own format
+
+    /// `MDTM`'s fourteen digits, and the four ways they are refused.
+    ///
+    /// Read off the parser directly because a server cannot be made to send
+    /// a malformed `MDTM`: this fixture composes its own, and the shapes
+    /// below are what a real server's clock or locale produces.
+    @Test func anMDTMStampIsFourteenUTCDigitsOrNothing() {
+        #expect(
+            FTPTimestamp.parse("20260304050607")
+                == Date(timeIntervalSince1970: 1_772_600_767))
+        // A fraction is tolerated and DISCARDED: nothing here compares a
+        // sub-second modification time, and `MLSD`'s own reader adds it.
+        #expect(
+            FTPTimestamp.parse("20260304050607.250")
+                == Date(timeIntervalSince1970: 1_772_600_767))
+        // Thirteen digits, a non-digit, a date that is not a date, and empty.
+        #expect(FTPTimestamp.parse("2026030405060") == nil)
+        #expect(FTPTimestamp.parse("2026030405060x") == nil)
+        #expect(FTPTimestamp.parse("20260230050607") == nil)
+        #expect(FTPTimestamp.parse("") == nil)
+    }
+
     // MARK: - The password, and what a failure may carry
 
     /// The password is read from the CONFIG and nothing else supplies it.

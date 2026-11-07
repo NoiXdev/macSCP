@@ -199,6 +199,7 @@ actor LoopbackFTPServer {
 
     private let security: FTPSecurityMode
     private let advertisesMLSD: Bool
+    private let offersSiteCommands: Bool
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
     private let passiveDepth: Int
@@ -260,15 +261,26 @@ actor LoopbackFTPServer {
     ///   `FTPControlConnectionTests.theTurnIsHandedToExactlyOneWaiter`. At
     ///   depth 1 the waiter's `PASV` would discard the holder's listener
     ///   before the holder reached it, so the shape is inexpressible.
+    /// - Parameter offersSiteCommands: whether `SITE` exists at all. `false`
+    ///   answers every `SITE` — `HELP` and `CHMOD` alike — with
+    ///   `500 Unknown command.`, which is a server with no `SITE` extension,
+    ///   the shape `FTPFileSystem`'s permission probe has to tell apart from
+    ///   a server that has one. It defaults to `true` because that is what
+    ///   this fixture did before the parameter existed, and because 97
+    ///   constructions of it would otherwise have to say so
+    ///   (`/usr/bin/grep -rno 'LoopbackFTPServer(' Tests | wc -l`, 97 on
+    ///   2026-11-07, counted with `-o` because several lines carry two).
     init(
         security: FTPSecurityMode,
         advertisesMLSD: Bool,
         requiresTLSSessionReuse: Bool,
         maximumTLSVersion: TLSVersion = .tlsv13,
-        passiveDepth: Int = 1
+        passiveDepth: Int = 1,
+        offersSiteCommands: Bool = true
     ) {
         self.security = security
         self.advertisesMLSD = advertisesMLSD
+        self.offersSiteCommands = offersSiteCommands
         self.requiresTLSSessionReuse = requiresTLSSessionReuse
         self.maximumTLSVersion = maximumTLSVersion
         self.passiveDepth = max(1, passiveDepth)
@@ -304,6 +316,7 @@ actor LoopbackFTPServer {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
         let configuration = Configuration(
             security: security, advertisesMLSD: advertisesMLSD,
+            offersSiteCommands: offersSiteCommands,
             requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
             passiveDepth: passiveDepth)
         let state = self.state
@@ -677,6 +690,7 @@ actor LoopbackFTPServer {
     struct Configuration: Sendable {
         let security: FTPSecurityMode
         let advertisesMLSD: Bool
+        let offersSiteCommands: Bool
         let requiresTLSSessionReuse: Bool
         let credentials: LoopbackFTPCredentials
         let passiveDepth: Int
@@ -1356,8 +1370,25 @@ final class LoopbackFTPSession: @unchecked Sendable {
     /// refused anyway, and a test armed against a well-formed request would
     /// pass on the strength of a malformed one.
     private func handleSite(_ argument: String) async throws {
+        // A server with no `SITE` at all answers the VERB, not the
+        // subcommand: `500 Unknown command.` is what `SITE HELP` and
+        // `SITE CHMOD` both get, which is the shape the client's permission
+        // probe has to tell apart from a server that has the extension.
+        guard configuration.offersSiteCommands else {
+            try await send(500, "Unknown command.")
+            return
+        }
         let parts = argument.split(
             separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        if parts.first?.uppercased() == "HELP" {
+            // What a real server's `SITE HELP` is: the subcommands it has,
+            // as free text. The client reads it for one token and never
+            // stores or logs it.
+            try await sendMultiline(
+                214, head: "The following SITE commands are recognized:",
+                lines: ["CHMOD", "UMASK", "HELP"], tail: "Help OK.")
+            return
+        }
         guard let verb = parts.first, verb.uppercased() == "CHMOD" else {
             try await send(504, "SITE command not implemented.")
             return

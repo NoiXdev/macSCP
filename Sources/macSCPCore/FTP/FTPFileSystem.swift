@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// The FTP and FTPS backend: `RemoteFileSystem` over the control connection,
 /// the data connection, the pool and the lease.
@@ -38,6 +39,10 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// (`FTPConnectionConfig.initialPath`). `nil` means whatever the server
     /// starts in, which is what `PWD` answers.
     private let initialPath: String?
+
+    /// Whether THIS server has `SITE CHMOD`, asked once (Ruling R5 of the FTP
+    /// plan; the design's §14).
+    private let siteChmod = FTPSiteChmodMemory()
 
     private init(pool: FTPConnectionPool, initialPath: String?) {
         self.pool = pool
@@ -500,6 +505,23 @@ public final class FTPFileSystem: RemoteFileSystem {
     }
 }
 
+/// Whether this server has `SITE CHMOD`, so the permission editor is offered
+/// per connection rather than per protocol (Ruling R5 of the FTP plan, from
+/// the design's §14).
+extension FTPFileSystem: PermissionEditingProbe {
+    public func offersPermissionEditing() async -> Bool {
+        let connection = try? await pool.command()
+        guard let connection else {
+            // No connection, no answer. `true` so a transient failure here
+            // does not take a working editor away; the probe is asked again
+            // on the next connection, because the memory is per connection
+            // and this one never recorded anything.
+            return true
+        }
+        return await siteChmod.isAvailable(on: connection)
+    }
+}
+
 /// FTP's answer to the checksum question, which is that it has none.
 ///
 /// Said as an outcome rather than left as a hole, for the reason
@@ -526,6 +548,97 @@ extension FTPFileSystem: RemoteChecksumProvider {
     }
 }
 
+/// Whether one connection's server has `SITE CHMOD` — asked once, and then
+/// kept.
+///
+/// Once, because the answer is a property of the far side and not of the
+/// request, which is `ChecksumFormMemory`'s own argument and the shape the
+/// design's §14 names: no server grows a `SITE` subcommand mid-session.
+///
+/// **Every mechanism FTP offers for this question is a heuristic, and that is
+/// stated rather than hidden.** `SITE` is an extension with no registry: RFC
+/// 959 section 4.1.3 defines the verb and leaves the subcommands entirely to
+/// the server, and `FEAT` (RFC 2389) is not obliged to mention any of them.
+/// So there are exactly two signals, and this reads both:
+///
+/// 1. **`FEAT`, free**, because the dial already read it. A server that lists
+///    a `SITE` line naming `CHMOD` has said so itself. Pure-FTPd lists its
+///    `SITE` subcommands this way; vsftpd lists none, which is why this is
+///    the first signal and not the only one.
+/// 2. **`SITE HELP`, one round trip.** A server that has `SITE` answers it
+///    with the subcommands it has; a server that has no `SITE` answers the
+///    VERB with `500`/`502`, and that is the case the design's §14 wanted
+///    caught — "an editor that always fails".
+///
+/// **An inconclusive probe answers `true`**, and that direction is a
+/// decision. A server that answers `SITE HELP` tersely, or refuses it for
+/// this account, or whose reply cannot be read, has said nothing about
+/// `CHMOD` — and hiding a working editor on no evidence takes a feature away,
+/// where showing one that a particular file refuses is exactly what the
+/// design's decision 10 says a per-file error is for. The failure this falls
+/// back into is therefore the lesser one, and it is the pre-probe behaviour.
+///
+/// **What it cannot tell apart**, named so nobody reads more into a `true`
+/// than is there: a server that implements `SITE CHMOD` and refuses it for
+/// every file this account owns. That is a permission fact per file, invisible
+/// to any probe that does not change a file, and this probe changes nothing.
+actor FTPSiteChmodMemory {
+    private enum Memory {
+        case unasked
+        case answered(Bool)
+    }
+
+    private var memory: Memory = .unasked
+    /// `nil` is an INCONCLUSIVE pass — one that learned nothing about the far
+    /// side, and so the one result that is not remembered.
+    private var inFlight: Task<Bool?, Never>?
+
+    /// What an inconclusive probe answers. See the type's own comment for why
+    /// it is this way round.
+    private static let whenInconclusive = true
+
+    func isAvailable(on connection: FTPControlConnection) async -> Bool {
+        if case .answered(let remembered) = memory { return remembered }
+        // Two asks that arrive together share one pass: the first stores the
+        // task before it suspends, the second finds it and awaits the same
+        // answer instead of probing again.
+        if let inFlight { return await inFlight.value ?? Self.whenInconclusive }
+
+        let pass = Task { await Self.probe(on: connection) }
+        inFlight = pass
+        let result = await pass.value
+        inFlight = nil
+        if let result { memory = .answered(result) }
+        return result ?? Self.whenInconclusive
+    }
+
+    /// `true`, `false`, or `nil` for a pass that learned nothing.
+    private static func probe(on connection: FTPControlConnection) async -> Bool? {
+        // `FEAT`'s lines are keyed by the whole line and by its first word
+        // (`FTPControlConnection.features`), so a `SITE` line is matched by
+        // its prefix rather than by an exact spelling: a server may write
+        // `SITE CHMOD`, `SITE CHMOD;UMASK` or `SITE UMASK CHMOD`.
+        let features = await connection.features
+        if features.contains(where: { $0.hasPrefix("SITE") && $0.contains("CHMOD") }) {
+            return true
+        }
+        guard let reply = try? await connection.send("SITE", argument: "HELP") else { return nil }
+        // Read for ONE token and neither stored nor logged. It is server
+        // text, which this backend otherwise keeps out of every value it
+        // carries — the same reading `FEAT` already gets, and for the same
+        // reason: there is no other way to learn this.
+        if reply.isPositiveCompletion {
+            let text = reply.lines.joined(separator: " ").uppercased()
+            return text.contains("CHMOD") ? true : nil
+        }
+        // `500 Syntax error, command unrecognized` and `502 Command not
+        // implemented` are the two RFC 959 section 4.2 replies for a verb the
+        // server does not have. Anything else — `530`, a `4xx` — is a refusal
+        // of this ASK and says nothing about `CHMOD`.
+        return (reply.code == 500 || reply.code == 502) ? false : nil
+    }
+}
+
 /// `MDTM`'s timestamp format, read.
 ///
 /// Its own type rather than a method on `FTPFileSystem` because
@@ -535,10 +648,17 @@ extension FTPFileSystem: RemoteChecksumProvider {
 /// is `MDTM`'s reply and that one is a fact value, and they are the same
 /// fourteen digits. If a third reader appears, they merge.
 enum FTPTimestamp {
-    /// `YYYYMMDDHHMMSS`, optionally with a `.sss` fraction, always UTC
-    /// (RFC 3659 section 2.3). `nil` for anything else — a timestamp is best
-    /// effort, and a server that writes a local time with no zone cannot be
-    /// distinguished from one that obeys the RFC.
+    /// `YYYYMMDDHHMMSS`, always UTC (RFC 3659 section 2.3). `nil` for
+    /// anything else — a timestamp is best effort, and a server that writes a
+    /// local time with no zone cannot be distinguished from one that obeys
+    /// the RFC.
+    ///
+    /// A `.sss` fraction is TOLERATED AND DISCARDED, which is where this
+    /// differs from `FTPListParser.parseMLSDTime`: that one adds the fraction
+    /// to the date. Nothing here compares a sub-second modification time —
+    /// the resume heuristic reads sizes and the browser shows minutes — so
+    /// the difference is visible to no caller, and it is named because the
+    /// two readers are otherwise the same fourteen digits.
     static func parse(_ value: String) -> Date? {
         let whole = value.prefix { $0 != "." }
         guard whole.count == 14, whole.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
@@ -571,17 +691,21 @@ enum FTPTimestamp {
 ///
 /// A reference type because the drain is a `@Sendable` closure
 /// (`FTPDataConnection.transfer` hands it across an actor boundary), so it
-/// cannot capture a mutable local. `@unchecked Sendable` with no lock, and
-/// that is argued rather than assumed: `FTPDataChannel.read` awaits its sink
-/// before it reads on, so the appends are strictly sequential and there is
-/// never a second writer — the same single-consumer property
-/// `FTPSingleReader` makes a `precondition` out of, here with no concurrent
-/// reader to race.
-final class FTPListingSink: @unchecked Sendable {
-    private var bytes = Data()
+/// cannot capture a mutable local.
+///
+/// **Under a `Mutex` rather than `@unchecked Sendable`**, although the
+/// appends really are sequential: `FTPDataChannel.read` awaits its sink
+/// before it reads on, so there is one writer and no concurrent reader. That
+/// argument is correct today and it is an argument, where the lock is a fact
+/// — and it costs one uncontended acquire per 64 KiB chunk of a directory
+/// listing. `FTPSingleReader` next door makes the same property a
+/// `precondition` because it has an iterator that cannot be locked; this has
+/// a `Data` that can.
+final class FTPListingSink: Sendable {
+    private let bytes = Mutex(Data())
 
     func append(_ chunk: Data) {
-        bytes.append(chunk)
+        bytes.withLock { $0.append(chunk) }
     }
 
     /// The lines, CR LF or LF terminated, with their terminators dropped.
@@ -592,8 +716,9 @@ final class FTPListingSink: @unchecked Sendable {
     /// correct outcome for a listing that arrived mangled. What is dropped is
     /// the CR that belongs to a CR LF pair.
     func lines() -> [Data] {
+        let raw = bytes.withLock { $0 }
         var lines: [Data] = []
-        for line in bytes.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false) {
+        for line in raw.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: false) {
             if line.last == UInt8(ascii: "\r") {
                 lines.append(Data(line.dropLast()))
             } else {

@@ -27,6 +27,44 @@ public enum PermissionsAvailability {
         BackendDescriptor.descriptor(for: kind).capabilities.permissionModel == .posixMode
     }
 
+    /// The same question of a LIVE CONNECTION, which is the only form that
+    /// can be right for FTP.
+    ///
+    /// `setPermissions` maps to `SITE CHMOD` there, which is not in RFC 959
+    /// and is a per-server extension, so `.posixMode` is true of the protocol
+    /// and may be false of the server in front of you. The FTP design's §14
+    /// settles that the editor is offered per connection for exactly that
+    /// reason, "so a server that refuses `SITE CHMOD` shows no editor instead
+    /// of an editor that always fails".
+    ///
+    /// **The capability is read FIRST and the probe only narrows it.** A
+    /// backend whose `permissionModel` is not `.posixMode` is never asked:
+    /// the editor it would be offered is a POSIX one, and no answer from a
+    /// connection makes that the right editor for an ACL model or for none at
+    /// all. So this can only ever be the same answer as the per-kind one, or
+    /// a `false` where that one said `true`.
+    ///
+    /// `async`, because the first ask may be a round trip. A conformer
+    /// remembers its answer (`FTPSiteChmodMemory`), so a surface that asks
+    /// once per connection pays once — and a surface that asks per ROW would
+    /// still pay only once, which is why the memory is the conformer's job
+    /// and not the caller's.
+    ///
+    /// **Owed: the App does not read this yet.** Its two call sites
+    /// (`ContentView+Detail.swift`) are inside a SwiftUI body and so are
+    /// synchronous; reading this means holding the answer on the session and
+    /// setting it when the connection opens. Until that is wired, an FTP
+    /// server with no `SITE CHMOD` still shows the editor and its Apply fails
+    /// per file — which is the behaviour before the probe existed, not a new
+    /// one.
+    public static func isOffered(
+        for kind: ConnectionKind, on connection: any RemoteFileSystem
+    ) async -> Bool {
+        guard isOffered(for: kind) else { return false }
+        guard let probe = connection as? any PermissionEditingProbe else { return true }
+        return await probe.offersPermissionEditing()
+    }
+
     /// The LOCAL pane's answer, which cannot be the one above: "local" is
     /// not a `ConnectionKind`, so there is no descriptor and no flag to
     /// read. What stands in its place is the local file system's own
