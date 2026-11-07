@@ -636,6 +636,118 @@ struct FTPFileSystemTests {
         #expect(sites == ["CHMOD 644 /pub/file.txt", "CHMOD 600 /pub/file.txt"])
     }
 
+    /// The mask is the low TWELVE bits, not the low nine.
+    ///
+    /// Its own case because the one above cannot see the difference: its
+    /// inputs are `0o100_644`, which masks to `0o644` under either width, and
+    /// `0o600`. Measured by the review — `permissions & 0o7777` → `& 0o777`
+    /// was GREEN against the whole suite, so the contract's "only the low 12
+    /// bits (rwx for owner/group/other + setuid/setgid/sticky)" was held to
+    /// nine of them.
+    ///
+    /// What a user feels under that plant: `0o4755 & 0o777 == 0o755`, so
+    /// setting setuid, setgid or sticky silently drops the bit and
+    /// `setPermissions` reports success. All three are checked, and the file
+    /// type bits above them are checked to be dropped — the same contract
+    /// says "file-type bits are never written".
+    @Test func thePermissionMaskKeepsTheSpecialBitsAndDropsTheTypeBits() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/file.txt", contents: Data("a".utf8))
+        try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            // setuid, setgid, sticky, all three at once, and a mode whose
+            // file-type bits (0o100000, a regular file) must not be sent.
+            for mode: UInt32 in [0o4755, 0o2755, 0o1777, 0o7000, 0o100_755] {
+                try await fs.setPermissions(path: "/pub/file.txt", permissions: mode)
+            }
+            await fs.disconnect()
+        }
+        let sites = await server.receivedCommands.filter { $0.verb == "SITE" }.map(\.argument)
+        #expect(sites == [
+            "CHMOD 4755 /pub/file.txt",
+            "CHMOD 2755 /pub/file.txt",
+            "CHMOD 1777 /pub/file.txt",
+            "CHMOD 7000 /pub/file.txt",
+            "CHMOD 755 /pub/file.txt",
+        ])
+    }
+
+    /// `deleteTree`'s COOPERATIVE cancellation: the `try
+    /// Task.checkCancellation()` the method's own contract comment promises
+    /// ("cooperatively cancellable per entry").
+    ///
+    /// Measured by the review as unmeasured — deleting all three checks from
+    /// the file was GREEN — and below this project's own precedent, which is
+    /// `HTTPTransferCancelTests
+    /// .aTreeDeleteCancelledBeforeItsFirstBatchEndsInACancellation` for S3
+    /// and `deleteTreeCancellationLeavesConsistentServerState` for SSH. The
+    /// S3 case is a cancelled-before-its-first-request case, and so is this
+    /// one, for a reason worth writing down.
+    ///
+    /// **On FTP the cooperative check is only observable while NO command is
+    /// in flight, and that is a property of the transport rather than a
+    /// choice here.** A cancellation that lands while a reply is outstanding
+    /// ends the read instead: `readReply` iterates an `AsyncStream`, an
+    /// iteration in a cancelled task ends at once with no element, and the
+    /// connection reports `connectionClosed`. So a mid-walk cancel stops the
+    /// walk whether the checks are there or not, and a case built on one
+    /// could not tell the two apart — it would be the "tests that watch a
+    /// defect heal" shape with the healing done by the transport.
+    ///
+    /// The one window with nothing in flight that a test can address from
+    /// outside is before the first command, so the task is cancelled while it
+    /// is still parked on a gate and then let go. `AsyncSignal.wait()`
+    /// answers `.cancelled` at once for an already-cancelled task, so the
+    /// body reaches `deleteTree` in a cancelled task deterministically —
+    /// there is no clock here and no race.
+    ///
+    /// **Every postcondition is read before anything heals**: the outcome
+    /// first, then the commands, then the files, with nothing restarted or
+    /// retried in between. Nothing heals a cancelled `deleteTree` anyway —
+    /// its contract says it leaves a partly deleted tree in place — which is
+    /// the second half of what is asserted.
+    @Test func aTreeDeleteCancelledBeforeItsFirstCommandEndsInACancellation() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/tree/a.txt", contents: Data("a".utf8))
+        await server.seedFile("/pub/tree/b.txt", contents: Data("b".utf8))
+        await server.seedFile("/pub/tree/deeper/c.txt", contents: Data("c".utf8))
+
+        let measured = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port)
+            // The commands the dial itself sent, so the sweep below counts
+            // only what the delete sent.
+            let beforeTheDelete = await server.receivedCommands.count
+            let gate = AsyncSignal()
+            let run = Task { try await fs.deleteTree(at: "/pub/tree") }
+            run.cancel()
+            gate.signal()
+            let outcome = await Self.outcome { _ = try await run.value }
+            // Read in this order, and nothing between them heals anything.
+            let sent = await server.receivedCommands.dropFirst(beforeTheDelete).map(\.verb)
+            let survivors = [
+                await server.contents(of: "/pub/tree/a.txt"),
+                await server.contents(of: "/pub/tree/b.txt"),
+                await server.contents(of: "/pub/tree/deeper/c.txt"),
+            ].compactMap { $0 }.count
+            await fs.disconnect()
+            return (outcome: outcome, sent: sent, survivors: survivors)
+        }
+
+        #expect(measured.outcome == .other("CancellationError"))
+        // Nothing of the walk reached the wire. `NOOP` is the keepalive and
+        // is not the delete's, so the sweep names the verbs the delete would
+        // have sent rather than asserting an empty list.
+        let walked = measured.sent.filter {
+            ["SIZE", "MDTM", "MLSD", "LIST", "DELE", "RMD"].contains($0)
+        }
+        #expect(walked.isEmpty, "\(measured.sent)")
+        // And the tree is whole, which is the half that says the cancellation
+        // stopped a delete rather than merely reporting one.
+        #expect(measured.survivors == 3)
+    }
+
     // MARK: - The session
 
     @Test func homeDirectoryPathReadsPWDAfterLogin() async throws {
