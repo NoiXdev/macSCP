@@ -1654,6 +1654,68 @@ struct FTPControlConnectionTests {
         #expect(body.contains("FTPPath.validated("))
     }
 
+    /// The system-trust diagnostic is LOG-ONLY, and nothing reads it.
+    ///
+    /// TOFU is an architecture invariant here: a certificate mismatch is a
+    /// hard stop with the decider never consulted, an unknown certificate
+    /// needs explicit consent, and there is no accept-anything path. A
+    /// chain evaluation that leaked into that decision would reverse the
+    /// second of those — a server the system trusts would stop being asked
+    /// about, or one it does not would stop being offerable.
+    ///
+    /// The structural half of the argument is that the function returns
+    /// `Void`, so there is no value to read; this is the half that says the
+    /// structure is still there. Three checks, read off the blanked source so
+    /// that a comment quoting a call cannot satisfy or trip them:
+    ///
+    /// - POSITIVE: the declaration is found at all, and it is in the file
+    ///   this guard thinks it is in. Without this the two negatives below
+    ///   would both be satisfied by a function that had been deleted or
+    ///   renamed, which is CLAUDE.md's "only a NEGATIVE check can go stale
+    ///   in silence".
+    /// - The declaration has no return arrow before its body.
+    /// - Every call site is a bare STATEMENT: `reportSystemTrust(` is never
+    ///   preceded on its line by `=`, `return`, `if`, `guard`, `while` or
+    ///   `(`, which is every spelling that would read its value or branch on
+    ///   it. There is one call site, which the count pins.
+    @Test func theTrustDiagnosticIsLogOnly() throws {
+        let url = Self.ftpSourceDirectory.appendingPathComponent("FTPControlConnection.swift")
+        let code = try SourceCorpus.code(of: url)
+
+        // The positive control: the thing the negatives scan for is there.
+        let declarations = Self.occurrences(of: "func reportSystemTrust(chain:", in: code)
+        #expect(declarations == 1)
+
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let declaration = try #require(
+            lines.first { $0.contains("func reportSystemTrust(") },
+            "no `func reportSystemTrust(` in FTPControlConnection.swift")
+        // `-> ` anywhere in the declaration line would be a return type. The
+        // body brace is on the same line as the parameter list here, so the
+        // whole declaration is one line and this reads all of it.
+        #expect(!declaration.contains("->"))
+
+        let callSites = lines.filter {
+            $0.contains("reportSystemTrust(") && !$0.contains("func reportSystemTrust(")
+        }
+        #expect(callSites.count == 1)
+        let reads = ["=", "return", "if ", "guard", "while", "("]
+        /// Everything on the line BEFORE the call — not `prefix(while:)` on a
+        /// character, which would stop at the first `r` of `trusted` and read
+        /// nothing.
+        func head(of line: String) -> String {
+            line.components(separatedBy: "reportSystemTrust(").first ?? ""
+        }
+        for site in callSites {
+            let isReadOrBranched = reads.contains { head(of: site).contains($0) }
+            #expect(!isReadOrBranched, Comment(rawValue: "call site reads its value: \(site)"))
+        }
+        // And the negative check's own positive control: the scan WOULD see a
+        // read if one were written.
+        let planted = "        let trusted = reportSystemTrust(chain: chain)"
+        #expect(reads.contains { head(of: planted).contains($0) })
+    }
+
     // MARK: - The connect timeout
 
     @Test func theConnectTimeoutIsHonouredRatherThanDropped() async throws {

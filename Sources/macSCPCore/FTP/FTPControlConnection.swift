@@ -2106,7 +2106,12 @@ final class FTPTrustDecision: Sendable {
                 return
             }
             let notAfter = leaf.notValidAfter
+            let chain = certificates.compactMap { try? $0.toDERBytes() }
             Task { [self] in
+                // A DIAGNOSTIC, before the decision and reaching no part of
+                // it: `reportSystemTrust` returns nothing, so there is no
+                // value for the line below to read. See its own comment.
+                reportSystemTrust(chain: chain)
                 let accepted = await decide(der: der, notAfter: notAfter)
                 promise.succeed(accepted ? .certificateVerified : .failed)
             }
@@ -2181,6 +2186,66 @@ final class FTPTrustDecision: Sendable {
             accept(der)
             return true
         }
+    }
+
+    /// Writes ONE log line saying what the system trust store would have made
+    /// of this chain, and influences nothing.
+    ///
+    /// **Why it exists.** This connection's trust decision is TOFU: an
+    /// unknown certificate is put to a person who compares a fingerprint, and
+    /// the chain is never evaluated against the system's anchors. That is the
+    /// design, and it is right — a NAS with a self-signed certificate is the
+    /// common case and a chain check would refuse it. But it leaves nobody
+    /// able to answer the question a user actually asks, which is "my browser
+    /// trusts this server, why am I being asked?", and the answer is usually a
+    /// missing intermediate the server did not send. This line answers it.
+    ///
+    /// **Why it cannot reach the decision, structurally rather than by
+    /// discipline.** It returns `Void`. There is no value for
+    /// `verification`'s `Task` to read, no stored property it writes, and
+    /// `decide(der:notAfter:)` does not take it as an argument — so the three
+    /// TOFU outcomes are exactly what they were. `theTrustDiagnosticIsLogOnly`
+    /// is the guard that says so, and the behavioural proof is
+    /// `aPinnedCertificateThatChangedIsAHardStopWithNoPrompt`, whose second
+    /// half dials a server whose SELF-SIGNED certificate this function
+    /// reports as untrusted and is `.connected` on consent.
+    ///
+    /// **Network fetching is turned off.** `SecTrustEvaluateWithError` will
+    /// otherwise fetch missing intermediates and CRL/OCSP responses, which on
+    /// a dial path is an unbounded wait on a third party for a line nobody is
+    /// blocked on. `SecTrustSetNetworkFetchAllowed(_:false)` makes it a local
+    /// evaluation; the cost is that a chain completable only by fetching
+    /// reads as untrusted, which is the honest answer for a server that did
+    /// not send its intermediate and is exactly the case the line is for.
+    ///
+    /// **What reaches the log.** The verdict, and the OSStatus-style code of
+    /// the `CFError` when there is one — both `.public`, because neither is
+    /// about this peer. Never the error's localized text, which embeds the
+    /// certificate's subject and so the host; never a fingerprint; never the
+    /// DER. The host and port are already in this connection's other log
+    /// lines and are not repeated here, because this line's subject is the
+    /// chain and not the endpoint.
+    private func reportSystemTrust(chain: [[UInt8]]) {
+        guard !chain.isEmpty else { return }
+        let certificates = chain.compactMap {
+            SecCertificateCreateWithData(nil, Data($0) as CFData)
+        }
+        guard certificates.count == chain.count else { return }
+        var trust: SecTrust?
+        let policy = SecPolicyCreateSSL(true, host as CFString)
+        guard SecTrustCreateWithCertificates(certificates as CFArray, policy, &trust) == errSecSuccess,
+            let trust
+        else { return }
+        _ = SecTrustSetNetworkFetchAllowed(trust, false)
+        var failure: CFError?
+        let trusted = SecTrustEvaluateWithError(trust, &failure)
+        let code = failure.map { String(CFErrorGetCode($0)) } ?? "none"
+        Self.logger.info(
+            """
+            system trust store verdict for this FTPS chain (diagnostic only, \
+            it decides nothing): trusted=\(trusted, privacy: .public) \
+            code=\(code, privacy: .public) depth=\(chain.count, privacy: .public)
+            """)
     }
 
     private func accept(_ der: [UInt8]) {
