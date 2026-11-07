@@ -471,7 +471,8 @@ struct FTPStoredSessionTests {
     /// closures hand them, because running a closure means reading the user's
     /// own trust store (`SessionStore.defaultDirectory`), and a closure that
     /// accepted would WRITE to it. So the choice is read off the source: the
-    /// body of each closure passes `.refusing` and mentions no `.asking`. The
+    /// body of each closure passes `.refusing`, mentions no `.asking`, and hands
+    /// the user's own trust store. The
     /// positive half is that each body reaches `FTPProbe` at all, so a rename
     /// that moved the call leaves this red instead of scanning an empty body.
     @Test func neitherFTPRowAsksAboutACertificate() throws {
@@ -493,6 +494,13 @@ struct FTPStoredSessionTests {
             #expect(reachesTheProbe, "\(row.anchor) no longer calls FTPProbe")
             #expect(refuses, "\(row.anchor) does not pass the refusing decider")
             #expect(asks == false, "\(row.anchor) mentions a deciding closure")
+            // And hands the user's own store, so a certificate they already
+            // trust is known to the validator (the behaviour is measured in
+            // `anAlreadyTrustedCertificateIsNotReportedAsRefused`, which
+            // cannot run these closures for the reason above).
+            let remembers = body.contains(
+                "TrustedCertificateStore(directory: SessionStore.defaultDirectory)")
+            #expect(remembers, "\(row.anchor) does not hand FTPProbe the user's trust store")
         }
     }
 
