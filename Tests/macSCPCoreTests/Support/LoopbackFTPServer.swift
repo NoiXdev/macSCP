@@ -193,6 +193,7 @@ actor LoopbackFTPServer {
     private let advertisesMLSD: Bool
     private let requiresTLSSessionReuse: Bool
     private let maximumTLSVersion: TLSVersion
+    private let passiveDepth: Int
     private let state = LoopbackFTPState()
 
     /// `idle` before the first `start()` and after a finished `stop()`; the only
@@ -235,16 +236,34 @@ actor LoopbackFTPServer {
     /// - Parameter maximumTLSVersion: exists so a test can pin TLS 1.2, whose
     ///   abbreviated handshake is the one `openssl s_client -reconnect` of the
     ///   LibreSSL on macOS completes reliably; the default is the library's.
+    /// - Parameter passiveDepth: how many announced-but-unused passive
+    ///   listeners this server will hold, oldest discarded past the depth.
+    ///   **The default of 1 is what a real server does** and what this
+    ///   fixture did before the parameter existed: a new `PASV` replaces the
+    ///   previous listener. It is also the only value every other case here
+    ///   can use — `aDataConnectionPresentingAnotherCertificateIsRefused`
+    ///   announces two listeners and uses only the second, so at depth 2 its
+    ///   transfer would take the first, spent one and be answered `425`
+    ///   instead of `150`. Measured, not reasoned: raising the depth for
+    ///   everyone reddened exactly that case.
+    ///
+    ///   A depth of 2 exists for one shape, which needs two transfers in
+    ///   flight on one control connection:
+    ///   `FTPControlConnectionTests.theTurnIsHandedToExactlyOneWaiter`. At
+    ///   depth 1 the waiter's `PASV` would discard the holder's listener
+    ///   before the holder reached it, so the shape is inexpressible.
     init(
         security: FTPSecurityMode,
         advertisesMLSD: Bool,
         requiresTLSSessionReuse: Bool,
-        maximumTLSVersion: TLSVersion = .tlsv13
+        maximumTLSVersion: TLSVersion = .tlsv13,
+        passiveDepth: Int = 1
     ) {
         self.security = security
         self.advertisesMLSD = advertisesMLSD
         self.requiresTLSSessionReuse = requiresTLSSessionReuse
         self.maximumTLSVersion = maximumTLSVersion
+        self.passiveDepth = max(1, passiveDepth)
     }
 
     // MARK: Lifecycle
@@ -277,7 +296,8 @@ actor LoopbackFTPServer {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
         let configuration = Configuration(
             security: security, advertisesMLSD: advertisesMLSD,
-            requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials)
+            requiresTLSSessionReuse: requiresTLSSessionReuse, credentials: credentials,
+            passiveDepth: passiveDepth)
         let state = self.state
         let context = self.context
         let (accepted, acceptedContinuation) = AsyncStream.makeStream(
@@ -618,6 +638,7 @@ actor LoopbackFTPServer {
         let advertisesMLSD: Bool
         let requiresTLSSessionReuse: Bool
         let credentials: LoopbackFTPCredentials
+        let passiveDepth: Int
     }
 
     /// Delivers a control channel to the accept loop, or, if the loop's stream has
@@ -982,7 +1003,10 @@ final class LoopbackFTPSession: @unchecked Sendable {
     private var username: String?
     private var authenticated = false
     private var workingDirectory = "/"
-    private var passive: LoopbackFTPPassiveListener?
+    /// The passive listeners this session has announced and not yet used,
+    /// oldest first, at most `configuration.passiveDepth` of them. Taken
+    /// FIFO, so each transfer gets the listener its own `PASV` announced.
+    private var passiveListeners: [LoopbackFTPPassiveListener] = []
     /// What `REST` set, consumed by the NEXT transfer command and cleared by
     /// it however that command ends (RFC 3659 section 5: the marker applies
     /// to the transfer command that immediately follows it).
@@ -1000,9 +1024,9 @@ final class LoopbackFTPSession: @unchecked Sendable {
     }
 
     func releasePassiveListener() async {
-        let listener = passive
-        passive = nil
-        await listener?.discard()
+        let listeners = passiveListeners
+        passiveListeners = []
+        for listener in listeners { await listener.discard() }
     }
 
     private enum Outcome { case keepGoing, end }
@@ -1302,9 +1326,14 @@ final class LoopbackFTPSession: @unchecked Sendable {
     // MARK: Passive mode
 
     private func handlePassive(extended: Bool) async throws {
-        await releasePassiveListener()
+        // Past the depth the oldest goes. At the default depth of 1 that is
+        // exactly what this did before the depth existed: discard the
+        // previous listener and announce a new one.
+        while passiveListeners.count >= configuration.passiveDepth {
+            await passiveListeners.removeFirst().discard()
+        }
         let listener = try await openPassiveListener()
-        passive = listener
+        passiveListeners.append(listener)
         if extended {
             try await send(229, "Entering Extended Passive Mode (|||\(listener.port)|)")
         } else {
@@ -1365,11 +1394,11 @@ final class LoopbackFTPSession: @unchecked Sendable {
         // offset into the next command.
         let restart = restartOffset
         restartOffset = 0
-        guard let listener = passive else {
+        guard !passiveListeners.isEmpty else {
             try await send(425, "Use PASV or EPSV first.")
             return .keepGoing
         }
-        passive = nil
+        let listener = passiveListeners.removeFirst()
 
         // `require_ssl_reuse` is paired with protected data (see the
         // `requiresTLSSessionReuse` parameter): clear data is refused, so the

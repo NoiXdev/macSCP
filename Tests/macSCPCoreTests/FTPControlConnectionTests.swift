@@ -110,6 +110,23 @@ struct FTPControlConnectionTests {
         }
     }
 
+    /// One `Bool` read from inside a transfer's drain, in a reference a
+    /// `@Sendable` closure can hold.
+    ///
+    /// `transferCommand`'s drain crosses into the actor, so it cannot
+    /// capture a mutable local — the same constraint `FTPByteSink` exists
+    /// for. Optional, so "never recorded" is distinguishable from `false`:
+    /// a drain that did not run must not read as a dropped turn.
+    private final class FTPTurnReading: Sendable {
+        private let box = Mutex<Bool?>(nil)
+
+        func record(_ held: Bool) {
+            box.withLock { $0 = held }
+        }
+
+        var value: Bool? { box.withLock { $0 } }
+    }
+
     /// A stand-in for `NIOSSLSession` in the vault's own tests.
     ///
     /// The vault's order is only visible with THREE sessions, and a
@@ -1815,6 +1832,121 @@ struct FTPControlConnectionTests {
         #expect(outcome.waitersLeft == 0)
         #expect(outcome.completion == 226)
         #expect(outcome.afterwards == 257)
+    }
+
+    /// The turn is handed to exactly one caller: a waiter that is resumed
+    /// finds it HELD, not free.
+    ///
+    /// **Ruling T6.11, and the round that deferred this was wrong about
+    /// why.** `release()` hands the turn on without clearing
+    /// `commandInFlight`, because the resumed waiter owns it. Planting
+    /// `commandInFlight = false` in front of the hand-off was GREEN across
+    /// 62 tests, and fix round 2 recorded that as needing "a seam that can
+    /// observe the turn is held by exactly one caller", called such a seam
+    /// unavailable without a probabilistic three-way wire crossing, and
+    /// deferred it to a backlog row. Withdrawn: the seam needs no third
+    /// caller and no wire at all.
+    ///
+    /// What it needs is for the WAITER to be a transfer. A transfer's drain
+    /// is the one suspension a test owns while the turn is held, so the flag
+    /// can be read from inside the resumed waiter's own span — which is
+    /// exactly the window the plant corrupts. Everything is ordered by a
+    /// latch or by `turnWaiterCount`; there is no clock and no race.
+    ///
+    /// The reading pair, reproduced here rather than inherited (fixture
+    /// depth 2 alone, then the same plus the plant):
+    ///
+    ///     heldInside=true  heldFromOutside=true  holder=226 waiter=226
+    ///     heldInside=false heldFromOutside=false holder=226 waiter=226
+    ///
+    /// Both completions are `226` in both runs, which is the positive
+    /// control "Guards that name what they watch" asks for: a `false`
+    /// reading is a dropped turn and not a transfer that never ran.
+    ///
+    /// **The structural form is preferred and is owed.** Making the holder an
+    /// identity — `private var turn: UUID?` with `commandInFlight` a computed
+    /// `turn != nil` — stops `commandInFlight = false` being writable at all,
+    /// and CLAUDE.md prefers a violation that will not compile to another
+    /// anchor. It rewrites Task 5's turn representation across every caller,
+    /// so it is not a fix-round edit; the closeout owns the row, and this
+    /// case is what holds the property until then.
+    @Test func theTurnIsHandedToExactlyOneWaiter() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false,
+            passiveDepth: 2)
+        let outcome = try await Self.running(server) { host, port in
+            let connection = try await Self.connect(
+                server, host: host, port: port, security: .plain)
+            // Both data connections are opened BEFORE either transfer takes
+            // the turn: `PASV` and `openDataConnection` are themselves
+            // commands, and one of them would otherwise park behind the
+            // holder.
+            let holderEndpoint = try Self.passiveEndpoint(
+                try await connection.send("PASV", argument: nil))
+            let holderData = try await connection.openDataConnection(
+                host: holderEndpoint.host, port: holderEndpoint.port)
+            let waiterEndpoint = try Self.passiveEndpoint(
+                try await connection.send("PASV", argument: nil))
+            let waiterData = try await connection.openDataConnection(
+                host: waiterEndpoint.host, port: waiterEndpoint.port)
+
+            let holderDrained = AsyncSignal()
+            let holderMayFinish = AsyncSignal()
+            let holder = Task {
+                try await connection.transferCommand("LIST") {
+                    _ = try await holderData.readToEnd()
+                    holderDrained.signal()
+                    _ = await holderMayFinish.wait()
+                }
+            }
+            _ = await holderDrained.wait()
+
+            // The waiter is a transfer too, so its drain runs inside the
+            // span it was handed.
+            let heldInside = FTPTurnReading()
+            let waiterDrained = AsyncSignal()
+            let waiterMayFinish = AsyncSignal()
+            let waiter = Task {
+                try await connection.transferCommand("LIST") {
+                    heldInside.record(await connection.turnIsHeld)
+                    _ = try await waiterData.readToEnd()
+                    waiterDrained.signal()
+                    _ = await waiterMayFinish.wait()
+                }
+            }
+            try await pollUntil("the second transfer to park on the turn") {
+                await connection.turnWaiterCount == 1
+            }
+
+            // Hand the turn over, then read the flag from inside the
+            // waiter's own span and again from outside it.
+            holderMayFinish.signal()
+            let holderCompletion = try await holder.value.completion?.code
+            _ = await waiterDrained.wait()
+            let heldFromOutside = await connection.turnIsHeld
+            waiterMayFinish.signal()
+            let waiterCompletion = try await waiter.value.completion?.code
+
+            await holderData.close()
+            await waiterData.close()
+            await connection.close()
+            return (
+                heldInside: heldInside.value, heldFromOutside: heldFromOutside,
+                holder: holderCompletion, waiter: waiterCompletion
+            )
+        }
+        print(
+            "TURN heldInside=\(String(describing: outcome.heldInside))"
+                + " heldFromOutside=\(outcome.heldFromOutside)"
+                + " holder=\(String(describing: outcome.holder))"
+                + " waiter=\(String(describing: outcome.waiter))")
+        // The property.
+        #expect(outcome.heldInside == true)
+        #expect(outcome.heldFromOutside)
+        // The positive control: both transfers really ran, so a `false`
+        // above would be a dropped turn and not a transfer that never began.
+        #expect(outcome.holder == 226)
+        #expect(outcome.waiter == 226)
     }
 
     // MARK: - Failure text
