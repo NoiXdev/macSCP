@@ -90,10 +90,24 @@ enum FTPConnectionFailure: Error, Equatable, Sendable {
     ///
     /// Unusable always means the reply being unreadable, and **both parsers
     /// throw this, with four throw sites each** — counted, not remembered:
-    /// `/usr/bin/grep -c passiveAddressRefused Sources/macSCPCore/FTP/FTPDataConnection.swift`
+    ///
+    ///     /usr/bin/grep -c 'throw FTPConnectionFailure\.passiveAddressRefused' Sources/macSCPCore/FTP/FTPDataConnection.swift
+    ///
     /// prints 8, and `-c` is the right tool because each site is its own
     /// line. The counting rule is one per CONDITION, so a compound guard
     /// contributes more than one.
+    ///
+    /// This comment first wrote that command as
+    /// `/usr/bin/grep -c passiveAddressRefused Sources/macSCPCore/FTP/FTPDataConnection.swift`,
+    /// which printed 8 when it was written and prints **9** now: the same
+    /// commit that corrected the enumeration below added a prose line naming
+    /// `FTPConnectionFailure.passiveAddressRefused` to
+    /// `FTPDataConnection.openPassive(on:)`'s doc comment, and an unanchored
+    /// search counts the sentence about the throw sites alongside the throw
+    /// sites. Anchoring on `throw` is what makes the figure survive the next
+    /// paragraph that mentions the case — the third point of CLAUDE.md's
+    /// "A number travels with the command that produced it", arriving through
+    /// the pattern rather than through the quoting.
     ///
     /// A `227` is unusable in **five** ways: no parenthesised address at
     /// all, not six comma-separated fields, a field that is not a number, an
@@ -1001,19 +1015,27 @@ actor FTPControlConnection {
 
     /// How many callers are parked waiting for the turn.
     ///
-    /// **One case reads it, three times**, and it is
-    /// `FTPControlConnectionTests.aWaiterForTheCommandTurnAnswersCancellation`:
-    /// to know a waiter is really parked before it cancels one — a
-    /// cancellation that lands before the park takes `acquire()`'s own
-    /// `Task.isCancelled` arm and never reaches the release the case exists
-    /// to measure — to know the cancelled waiter has been released, which is
-    /// that case's hang bound, and once afterwards to say the queue is empty.
-    /// Re-run from the repository root:
+    /// **Two cases read it, three times between them.** Re-run from the
+    /// repository root:
     ///
     ///     /usr/bin/grep -rno 'connection\.turnWaiterCount' Tests
     ///
-    /// prints **3** lines, all in that one case — the park, the release, and
-    /// the queue read afterwards. It is spelled with the
+    /// prints **3** lines. Two are in
+    /// `FTPControlConnectionTests.aWaiterForTheCommandTurnAnswersCancellation`
+    /// — to know a waiter is really parked before it cancels one, since a
+    /// cancellation that lands before the park takes `acquire()`'s own
+    /// `Task.isCancelled` arm and never reaches the release the case exists
+    /// to measure, and to know the cancelled waiter has been released, which
+    /// is that case's hang bound. The third is in
+    /// `theTurnIsHandedToExactlyOneWaiter`, for its own park.
+    ///
+    /// This paragraph first said **"One case reads it, three times"** and
+    /// enumerated the three as **"the park, the release, and the queue read
+    /// afterwards"**. Both were made false by the round that wrote them:
+    /// `theTurnIsHandedToExactlyOneWaiter` is a second case, and the queue
+    /// read afterwards was removed as an expectation that could not fail.
+    /// The figure 3 was never wrong — the attribution was, which is why a
+    /// reader re-running the command above was confirmed in it. It is spelled with the
     /// receiver and scoped to `Tests` for the reason
     /// `FTPConnectionPool.waiterCount`'s own comment gives: a bare
     /// `turnWaiterCount` over `Sources Tests` also matches every sentence
