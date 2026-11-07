@@ -582,6 +582,20 @@ extension FTPFileSystem: RemoteChecksumProvider {
 /// than is there: a server that implements `SITE CHMOD` and refuses it for
 /// every file this account owns. That is a permission fact per file, invisible
 /// to any probe that does not change a file, and this probe changes nothing.
+///
+/// **Three mutation probes, run through `scripts/mutation-probe` on
+/// 2026-11-07, all RED.** They are recorded here rather than left in a commit
+/// message because the commit that added this type claimed a red it had not
+/// observed — the cases were written beside the code and passed on their
+/// first run — and these are the measurement that stands in its place:
+///
+/// | plant | caught by |
+/// |---|---|
+/// | the answer is not remembered (`if case .answered … , false`) | `anInconclusivePermissionProbeOffersTheEditorAndIsAskedAgain`, `thePermissionEditorIsProbedOncePerConnection` |
+/// | a `500` on `SITE` is read as inconclusive rather than absent | `theAvailabilityHelperReadsTheCapabilityBeforeTheProbe`, `thePermissionEditorIsProbedOncePerConnection` |
+/// | `isOffered(for:on:)` asks the probe before the capability | `theAvailabilityHelperReadsTheCapabilityBeforeTheProbe` |
+///
+/// Each ran against a 21-test control with no pre-existing failure.
 actor FTPSiteChmodMemory {
     private enum Memory {
         case unasked
