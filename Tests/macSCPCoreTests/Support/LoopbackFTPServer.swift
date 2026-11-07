@@ -268,10 +268,54 @@ actor LoopbackFTPServer {
     ///   `500 Unknown command.`, which is a server with no `SITE` extension,
     ///   the shape `FTPFileSystem`'s permission probe has to tell apart from
     ///   a server that has one. It defaults to `true` because that is what
-    ///   this fixture did before the parameter existed, and because 97
-    ///   constructions of it would otherwise have to say so
+    ///   this fixture did before the parameter existed, and because every
+    ///   construction of this type would otherwise have to say so — 109 of
+    ///   them, which this prints, run from the repository root:
+    ///
+    ///       /usr/bin/grep -rn 'LoopbackFTPServer(' Tests | /usr/bin/grep -vE ':[0-9]+: *(///|//)' | /usr/bin/grep -oE 'LoopbackFTPServer\(' | wc -l
+    ///
+    ///   **The middle stage is the load-bearing part**, not decoration: it
+    ///   drops every match whose line STARTS with a comment marker, which is
+    ///   what stops the count including the prose about it — this paragraph,
+    ///   and the verbatim withdrawal below, which has to spell the token in
+    ///   order to quote it.
+    ///
+    ///   **109 is the only figure stated here, and that is deliberate.** The
+    ///   unfiltered count
+    ///   (`/usr/bin/grep -rn 'LoopbackFTPServer(' Tests | /usr/bin/grep -oE 'LoopbackFTPServer\(' | wc -l`)
+    ///   and the number of comment lines it includes
+    ///   (`… | /usr/bin/grep -cE ':[0-9]+: *(///|//)'`) both MOVE whenever
+    ///   this paragraph is edited, because both count it — writing either
+    ///   down would be committing a figure that the next sentence about it
+    ///   falsifies, which is the mistake being corrected. Only the filtered
+    ///   count is a figure about the code, and it is stable under any amount
+    ///   of prose. A bracketed
+    ///   `[L]oopbackFTPServer\(` was tried first and is NOT enough: it keeps
+    ///   a pattern out of its own text but not out of a verbatim quotation of
+    ///   the wording being withdrawn, which still spells the token plainly —
+    ///   measured here by re-running after writing the sentence, which is
+    ///   exactly the step that catches this.
+    ///
+    ///   `-o` and `wc -l` because this is a count of OCCURRENCES and several
+    ///   lines carry two, where `-c` would count lines. The control that says
+    ///   the pattern can match at all is the first stage's own output: its
+    ///   first two hits are the two constructions in this file's
+    ///   `start()`-adjacent cases.
+    ///
+    ///   (Withdrawn wording, verbatim: "and because 97 constructions of it
+    ///   would otherwise have to say so
     ///   (`/usr/bin/grep -rno 'LoopbackFTPServer(' Tests | wc -l`, 97 on
-    ///   2026-11-07, counted with `-o` because several lines carry two).
+    ///   2026-11-07, counted with `-o` because several lines carry two)".
+    ///   Two defects, both measured by the review. The figure went stale
+    ///   INSIDE its own task's commit range — `git grep -o
+    ///   'LoopbackFTPServer(' <commit> -- Tests | wc -l` prints 80 at
+    ///   `d69c253b`, 97 at the commit that wrote the sentence, and more at
+    ///   each of the three after it — while that task's last two commits were
+    ///   themselves figure corrections. And the unbracketed pattern counted
+    ///   its own prose: the line stating the figure was one of its matches,
+    ///   so the number of CONSTRUCTIONS was 96 when 97 was written. That is
+    ///   the third instance of a pattern counting its own prose on this
+    ///   plan.)
     init(
         security: FTPSecurityMode,
         advertisesMLSD: Bool,
