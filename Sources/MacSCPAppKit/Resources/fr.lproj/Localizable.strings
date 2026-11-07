@@ -1519,6 +1519,7 @@
 "diagnostics.step.sshConnect" = "Connexion SSH";
 "diagnostics.step.s3Endpoint" = "Point de terminaison";
 "diagnostics.step.webdavOptions" = "Capacités du serveur";
+"diagnostics.step.ftpConnect" = "Connexion FTP";
 "diagnostics.step.jump.resolve" = "Hôte relais : résolution du nom";
 "diagnostics.step.jump.tcp" = "Hôte relais : tentative de connexion";
 "diagnostics.step.jump.icmp" = "Hôte relais : ping";
@@ -1531,6 +1532,7 @@
 "diagnostics.step.target.traceFromJump" = "Cible via l’hôte relais : itinéraire";
 "diagnostics.contribution.s3Access" = "Droits de la clé";
 "diagnostics.contribution.webdavClaims" = "Déclarations du serveur";
+"diagnostics.contribution.ftpFeatures" = "Fonctions du serveur";
 // Tableau des sauts de l’étape d’itinéraire (2026-09-03) : les quatre en-têtes de colonne dessinés par le panneau. Les cellules sont la mesure du cœur et ne sont jamais traduites.
 "diagnostics.trace.column.hop" = "Saut";
 "diagnostics.trace.column.address" = "Adresse";
@@ -1562,6 +1564,7 @@
 "diagnostics.reason.secretSourceFailed" = "Le mot de passe n’a pas pu être lu depuis le trousseau.";
 "diagnostics.reason.noEndpoint" = "Cette connexion ne nomme aucun point de terminaison.";
 "diagnostics.reason.noServerURL" = "Cette connexion ne nomme aucune adresse de serveur.";
+"diagnostics.reason.plaintextLogin" = "Cette connexion n’est pas chiffrée ; la vérification n’envoie donc pas votre mot de passe. Passez en FTPS pour inclure la connexion dans la vérification.";
 "diagnostics.reason.noIPv6Route" = "Ce Mac n’a pas de route IPv6.";
 "diagnostics.reason.ipv6TraceUnmeasured" = "La vérification d’itinéraire ne couvre pas encore IPv6 — elle n’a jamais été mesurée sur un Mac disposant d’une route IPv6.";
 "diagnostics.reason.traceNeedsIPv4" = "La vérification d’itinéraire nécessite une adresse IPv4.";

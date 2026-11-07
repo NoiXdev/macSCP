@@ -148,8 +148,9 @@ public struct BackendDescriptor: Sendable {
 
     /// The protocol's own probes, run after the dial (design §3).
     ///
-    /// S3 and WebDAV each carry one (`ContributionProbes`): what the key may
-    /// do, and what the server claims to be. SSH carries none — its question
+    /// S3, WebDAV and FTP each carry one (`ContributionProbes`): what the key
+    /// may do, what the server claims to be, and what its feature list says.
+    /// SSH carries none — its question
     /// is the negotiation NIOSSH already knows after a connect (KEX,
     /// host-key type, cipher, which auth method succeeded), and the fork
     /// exposes no observer to read it from yet, so the row would have to
@@ -648,9 +649,11 @@ public struct BackendDescriptor: Sendable {
         fileActions: [],
         connectionActions: [],
         endpoint: { values in FTPFieldSchema.endpoint(values) },
-        // No dial row and no probes yet: the diagnostics contribution is
-        // Task 8's, and a row that guessed would diagnose nothing.
-        dial: nil, diagnostics: [])
+        // The login as the dial and the server's feature list as the probe
+        // (`FTPProbe`). Both are authenticated, which is why neither runs
+        // for plain FTP: a diagnosis cannot ask the user to accept an
+        // unencrypted password.
+        dial: .ftpConnect, diagnostics: [.ftpFeatures])
 }
 
 extension BackendDescriptor {

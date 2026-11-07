@@ -1522,6 +1522,7 @@
 "diagnostics.step.sshConnect" = "SSH connect";
 "diagnostics.step.s3Endpoint" = "Endpoint";
 "diagnostics.step.webdavOptions" = "Server capabilities";
+"diagnostics.step.ftpConnect" = "FTP login";
 "diagnostics.step.jump.resolve" = "Jump host: name resolution";
 "diagnostics.step.jump.tcp" = "Jump host: connection attempt";
 "diagnostics.step.jump.icmp" = "Jump host: ping";
@@ -1534,6 +1535,7 @@
 "diagnostics.step.target.traceFromJump" = "Target via the jump host: route";
 "diagnostics.contribution.s3Access" = "Key access level";
 "diagnostics.contribution.webdavClaims" = "Server claims";
+"diagnostics.contribution.ftpFeatures" = "Server features";
 // The route step's hop table (2026-09-03): the four column headers the panel draws. The cells are Core's own measurement and are never translated.
 "diagnostics.trace.column.hop" = "Hop";
 "diagnostics.trace.column.address" = "Address";
@@ -1565,6 +1567,7 @@
 "diagnostics.reason.secretSourceFailed" = "The password could not be read from the keychain.";
 "diagnostics.reason.noEndpoint" = "This connection names no endpoint.";
 "diagnostics.reason.noServerURL" = "This connection names no server address.";
+"diagnostics.reason.plaintextLogin" = "This connection is not encrypted, so the check does not send your password. Switch to FTPS to include the login in the check.";
 "diagnostics.reason.noIPv6Route" = "This Mac has no IPv6 route.";
 "diagnostics.reason.ipv6TraceUnmeasured" = "The route check does not cover IPv6 yet — it has never been measured on a Mac with an IPv6 route.";
 "diagnostics.reason.traceNeedsIPv4" = "The route check needs an IPv4 address.";

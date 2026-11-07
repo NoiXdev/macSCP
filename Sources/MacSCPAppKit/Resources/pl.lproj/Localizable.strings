@@ -1517,6 +1517,7 @@
 "diagnostics.step.sshConnect" = "Połączenie SSH";
 "diagnostics.step.s3Endpoint" = "Punkt końcowy";
 "diagnostics.step.webdavOptions" = "Możliwości serwera";
+"diagnostics.step.ftpConnect" = "Logowanie FTP";
 "diagnostics.step.jump.resolve" = "Host pośredniczący: rozwiązywanie nazwy";
 "diagnostics.step.jump.tcp" = "Host pośredniczący: próba połączenia";
 "diagnostics.step.jump.icmp" = "Host pośredniczący: ping";
@@ -1529,6 +1530,7 @@
 "diagnostics.step.target.traceFromJump" = "Cel przez host pośredniczący: trasa";
 "diagnostics.contribution.s3Access" = "Uprawnienia klucza";
 "diagnostics.contribution.webdavClaims" = "Deklaracje serwera";
+"diagnostics.contribution.ftpFeatures" = "Funkcje serwera";
 // Tabela przeskoków kroku trasy (2026-09-03): cztery nagłówki kolumn rysowane przez panel. Komórki są pomiarem z rdzenia i nigdy nie są tłumaczone.
 "diagnostics.trace.column.hop" = "Przeskok";
 "diagnostics.trace.column.address" = "Adres";
@@ -1560,6 +1562,7 @@
 "diagnostics.reason.secretSourceFailed" = "Nie udało się odczytać hasła z pęku kluczy.";
 "diagnostics.reason.noEndpoint" = "To połączenie nie wskazuje żadnego punktu końcowego.";
 "diagnostics.reason.noServerURL" = "To połączenie nie wskazuje żadnego adresu serwera.";
+"diagnostics.reason.plaintextLogin" = "To połączenie nie jest szyfrowane, więc sprawdzenie nie wysyła hasła. Przełącz na FTPS, aby uwzględnić logowanie w sprawdzeniu.";
 "diagnostics.reason.noIPv6Route" = "Ten Mac nie ma trasy IPv6.";
 "diagnostics.reason.ipv6TraceUnmeasured" = "Sprawdzanie trasy nie obejmuje jeszcze IPv6 — nigdy nie zmierzono go na Macu z trasą IPv6.";
 "diagnostics.reason.traceNeedsIPv4" = "Sprawdzanie trasy wymaga adresu IPv4.";

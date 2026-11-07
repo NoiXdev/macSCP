@@ -1,7 +1,10 @@
 import Foundation
 
-/// The first two entries of the per-protocol seam (design §3): the S3 key's
-/// access level and the WebDAV server's claims.
+/// The entries of the per-protocol seam (design §3): the S3 key's access
+/// level, the WebDAV server's claims and the FTP server's features.
+/// (Withdrawn wording, verbatim: "The first two entries of the per-protocol
+/// seam (design §3): the S3 key's access level and the WebDAV server's
+/// claims." FTP's is a third.)
 ///
 /// The difference from the dials in `DialProbes` is authentication. A dial
 /// asks "is anything there", and answers it without a credential wherever the
@@ -9,9 +12,10 @@ import Foundation
 /// session's credentials, resolved through `DiagnosticContext.secret()` — the
 /// same source the connect path uses, never a second copy of a secret.
 ///
-/// Neither of them prints a URL. The dials render their target through
+/// None of them prints a URL. The dials render their target through
 /// `URLText.hostPortPath(of:)` because they have one to name; these two are
 /// about what the server said, and the endpoint is already on the row above.
+/// FTP's does not print the host either, nor anything the server wrote.
 /// The rule they do share: no probe interpolates a raw endpoint string into a
 /// message (`URLText`'s own doc comment states why the redaction backstop is
 /// not the defence).
@@ -67,6 +71,22 @@ extension DiagnosticContribution {
             config: config, transport: URLSessionHTTPTransport(session: session)
         ).run()
         return timer.finish(S3AccessProbe.outcome(of: results), S3AccessProbe.detail(results))
+    }
+
+    /// FTP: what the server says it can do -- which of the features macSCP
+    /// acts on its `FEAT` list carries, and whether the permission editor
+    /// would be offered on this connection. Opened and rendered by
+    /// `FTPProbe`, which holds the three rules every probe in this file keeps
+    /// (the secret from the same source, an unknown certificate refused, no
+    /// server text in the row) and the one FTP adds: plain FTP is skipped,
+    /// because the password would cross the network unencrypted and a
+    /// diagnosis cannot ask.
+    static let ftpFeatures = DiagnosticContribution.measured(
+        id: "ftp.features", titleKey: "diagnostics.contribution.ftpFeatures"
+    ) { values, context, timer in
+        await FTPProbe.featuresRow(
+            values, context, timer, decider: .refusing,
+            trustStore: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
     }
 
     /// WebDAV: what the server claims to be — the `DAV:` compliance classes

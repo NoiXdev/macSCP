@@ -5,8 +5,10 @@ import NIOCore
 /// The `dial` step, one per backend: the app's own connection attempt, timed
 /// and reported as a single row (design §2.4).
 ///
-/// Each of the three is written against what its backend can actually do
-/// WITHOUT authenticating, and says so honestly where it cannot:
+/// Each is written against what its backend can actually do WITHOUT
+/// authenticating, and says so honestly where it cannot. (Withdrawn wording,
+/// verbatim: "Each of the three is written against what its backend can
+/// actually do". A fourth backend made it false.)
 ///
 /// * **SSH** — Citadel exposes no transport-only connect (there is no way to
 ///   run the KEX and stop before user-auth), so this step is the FULL connect
@@ -19,6 +21,12 @@ import NIOCore
 ///   this machine accepts.
 /// * **WebDAV** — an unauthenticated `OPTIONS` on the base URL, which also
 ///   brings back what the server claims to be (`DAV:` and `Allow`).
+///
+/// * **FTP** — the login itself, like SSH's, for the same reason: an FTP
+///   server has nothing to answer a client that has not logged in. Plain FTP
+///   is skipped (the password would cross the network unencrypted, and a
+///   diagnosis cannot ask), and an unknown certificate is refused. See
+///   `FTPProbe`.
 ///
 /// A row is `ok` when the server ANSWERED, whatever it answered: a 401 to an
 /// unauthenticated probe is a working server, and calling it a failure would
@@ -78,6 +86,24 @@ extension DiagnosticContribution {
         } catch {
             return timer.finish(.failed(DialSupport.reason(for: error)), "")
         }
+    }
+
+    /// FTP: the login, over the mode the session names -- greeting, the TLS
+    /// upgrade where there is one, `USER`/`PASS`, `FEAT` and binary mode, as
+    /// one row.
+    ///
+    /// The second dial after SSH's that reads a secret, for SSH's reason: an
+    /// FTP server has nothing to say to a client that has not logged in, and
+    /// the first question about a failed connection is whether the transport
+    /// or the login is at fault. It is opened by `FTPProbe`, which says why
+    /// that is not `BackendDescriptor.openConnection`, and which refuses an
+    /// unknown certificate and skips plain FTP (a diagnosis cannot ask).
+    static let ftpConnect = DiagnosticContribution.measured(
+        id: DiagnosticStepID.dial, titleKey: "diagnostics.step.ftpConnect"
+    ) { values, context, timer in
+        await FTPProbe.connectRow(
+            values, context, timer, decider: .refusing,
+            trustStore: TrustedCertificateStore(directory: SessionStore.defaultDirectory))
     }
 
     /// S3: an unsigned `HEAD` on the endpoint.

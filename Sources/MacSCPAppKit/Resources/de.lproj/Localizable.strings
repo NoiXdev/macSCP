@@ -1516,6 +1516,7 @@
 "diagnostics.step.sshConnect" = "SSH-Verbindung";
 "diagnostics.step.s3Endpoint" = "Endpunkt";
 "diagnostics.step.webdavOptions" = "Serverfähigkeiten";
+"diagnostics.step.ftpConnect" = "FTP-Anmeldung";
 "diagnostics.step.jump.resolve" = "Jump-Host: Namensauflösung";
 "diagnostics.step.jump.tcp" = "Jump-Host: Verbindungsversuch";
 "diagnostics.step.jump.icmp" = "Jump-Host: Ping";
@@ -1528,6 +1529,7 @@
 "diagnostics.step.target.traceFromJump" = "Ziel über den Jump-Host: Route";
 "diagnostics.contribution.s3Access" = "Zugriffsrechte des Schlüssels";
 "diagnostics.contribution.webdavClaims" = "Angaben des Servers";
+"diagnostics.contribution.ftpFeatures" = "Funktionen des Servers";
 // Hop-Tabelle des Routenschritts (2026-09-03): die vier Spaltenüberschriften, die das Panel zeichnet. Die Zellen sind die Messung aus Core und werden nie übersetzt.
 "diagnostics.trace.column.hop" = "Hop";
 "diagnostics.trace.column.address" = "Adresse";
@@ -1559,6 +1561,7 @@
 "diagnostics.reason.secretSourceFailed" = "Das Passwort konnte nicht aus dem Schlüsselbund gelesen werden.";
 "diagnostics.reason.noEndpoint" = "Diese Verbindung nennt keinen Endpunkt.";
 "diagnostics.reason.noServerURL" = "Diese Verbindung nennt keine Serveradresse.";
+"diagnostics.reason.plaintextLogin" = "Diese Verbindung ist nicht verschlüsselt, deshalb sendet die Prüfung dein Passwort nicht. Wechsle zu FTPS, um die Anmeldung mitzuprüfen.";
 "diagnostics.reason.noIPv6Route" = "Dieser Mac hat keine IPv6-Route.";
 "diagnostics.reason.ipv6TraceUnmeasured" = "Die Routenprüfung deckt IPv6 noch nicht ab — sie wurde nie auf einem Mac mit IPv6-Route gemessen.";
 "diagnostics.reason.traceNeedsIPv4" = "Die Routenprüfung braucht eine IPv4-Adresse.";

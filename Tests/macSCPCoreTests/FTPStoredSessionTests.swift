@@ -19,7 +19,7 @@ import Testing
 /// subexpressions evaluated to, so a secret written into an expectation, or a
 /// carrier that holds one, would print it in the very failure that says it
 /// leaked.
-@Suite("FTP stored sessions")
+@Suite("FTP stored sessions", .timeLimit(.minutes(5)))
 @MainActor
 struct FTPStoredSessionTests {
     private static let secret = "ftp-secret-\(UUID().uuidString)"
@@ -267,5 +267,170 @@ struct FTPStoredSessionTests {
         // The positive beside both: the rendering is not empty, so the
         // negative checks are about something.
         #expect(overview.facts.count >= 5)
+    }
+
+    // MARK: - Diagnostics
+
+    /// Hands out one fixed secret, or none. A struct and not a store: the
+    /// probe asks a `SecretSource` through `DiagnosticContext`, the same door
+    /// the connect path uses.
+    private struct Source: SecretSource {
+        let value: String?
+        var label: String { "test" }
+        func secret(for sessionID: UUID) throws -> String? { value }
+    }
+
+    private func context(secret: String?) -> DiagnosticContext {
+        DiagnosticContext(
+            secrets: secret.map { Source(value: $0) }, sessionID: UUID(), timeout: .seconds(20))
+    }
+
+    private func ftpValues(
+        host: String = "127.0.0.1", port: Int, username: String, security: FTPSecurityMode
+    ) -> FieldValues {
+        var values = FieldValues()
+        values[FTPField.host] = host
+        values[FTPField.port] = String(port)
+        values[FTPField.security] = security.rawValue
+        values[FTPField.username] = username
+        return values
+    }
+
+    private func running<T: Sendable>(
+        _ server: LoopbackFTPServer,
+        _ body: (_ host: String, _ port: Int) async throws -> T
+    ) async throws -> T {
+        let endpoint = try await server.start()
+        do {
+            let result = try await body(endpoint.host, endpoint.port)
+            await server.stop()
+            return result
+        } catch {
+            await server.stop()
+            throw error
+        }
+    }
+
+    /// FTP contributes a dial and a feature probe to a diagnosis, and both
+    /// say what they found.
+    ///
+    /// Four things, asked of the rows as the runner would receive them:
+    /// the descriptor names the two steps and their titles are declared in all
+    /// four catalogues; against a server whose certificate nobody has trusted
+    /// a diagnosis REFUSES it and says so in the sentence the failure carries
+    /// (the dial mapper's FTP arm, end to end); against one whose certificate
+    /// is accepted the dial is `ok` and the feature row reports `FEAT` and the
+    /// permission editor; and plain FTP is never sent a password.
+    @Test func theDiagnosticsProbeContributesTheFTPSteps() async throws {
+        let descriptor = BackendDescriptor.descriptor(for: .ftp)
+        let dial = try #require(descriptor.dial)
+        #expect(dial.id == DiagnosticStepID.dial)
+        #expect(descriptor.diagnostics.map(\.id) == ["ftp.features"])
+        let titleKeys = [dial.titleKey] + descriptor.diagnostics.map(\.titleKey)
+        #expect(titleKeys.count == 2)
+        for locale in ["en", "de", "fr", "pl"] {
+            let url = LocalizationCatalogs.repoRoot.appendingPathComponent(
+                "Sources/MacSCPAppKit/Resources/\(locale).lproj/Localizable.strings")
+            let catalogue = try #require(NSDictionary(contentsOf: url) as? [String: String])
+            for key in titleKeys + ["diagnostics.reason.plaintextLogin"] {
+                #expect(catalogue[key]?.isEmpty == false, "\(key) is missing from \(locale)")
+            }
+        }
+        #expect(DiagnosticReason.key(for: DiagnosticReason.plaintextLogin) == "diagnostics.reason.plaintextLogin")
+
+        let server = LoopbackFTPServer(
+            security: .explicitTLS, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let credentials = server.credentials
+        try await running(server) { _, port in
+            let values = ftpValues(port: port, username: credentials.username, security: .explicitTLS)
+            let timer = DiagnosticStepTimer(id: dial.id, titleKey: dial.titleKey)
+
+            // An unknown certificate is refused, and the row says which
+            // refusal it was in the sentence the failure carries.
+            let refused = await FTPProbe.connectRow(
+                values, context(secret: credentials.password), timer,
+                decider: .refusing, trustStore: nil)
+            #expect(refused.outcome == .failed(FTPConnectionFailure.certificateRejected.message))
+            #expect(refused.id == DiagnosticStepID.dial)
+
+            // The same server, the certificate accepted: the dial is ok and
+            // names what it consisted of.
+            let accepting = CertificateDecider.asking { _ in true }
+            let dialled = await FTPProbe.connectRow(
+                values, context(secret: credentials.password), timer,
+                decider: accepting, trustStore: nil)
+            #expect(dialled.outcome == .ok)
+            #expect(dialled.detail == FTPProbe.connectDetail(.explicitTLS))
+
+            // A wrong password is the login being refused, not a transport
+            // problem -- and it is the failure's sentence, not a case index.
+            let wrong = await FTPProbe.connectRow(
+                values, context(secret: "not-the-password-\(UUID().uuidString)"), timer,
+                decider: accepting, trustStore: nil)
+            #expect(wrong.outcome == .failed(FTPConnectionFailure.loginRefused.message))
+
+            // No secret, no login attempt.
+            let silent = await FTPProbe.connectRow(
+                values, context(secret: nil), timer, decider: accepting, trustStore: nil)
+            #expect(silent.outcome == .skipped(DiagnosticReason.noSecret))
+
+            // The feature row: what FEAT advertised, and the editor's offer.
+            let featureTimer = DiagnosticStepTimer(
+                id: "ftp.features", titleKey: "diagnostics.contribution.ftpFeatures")
+            let features = await FTPProbe.featuresRow(
+                values, context(secret: credentials.password), featureTimer,
+                decider: accepting, trustStore: nil)
+            #expect(features.outcome == .ok)
+            for advertised in ["MLSD", "MDTM", "SIZE", "UTF8"] {
+                #expect(features.detail.contains(advertised), "\(advertised) is missing from the row")
+            }
+            // The loopback server advertises no `REST STREAM` and no `EPSV`.
+            #expect(features.detail.contains("not advertised: REST STREAM"))
+            #expect(features.detail.contains("permission editor offered"))
+        }
+        // Everything above happened over TLS: no command reached the server
+        // before it, which the server's own journal records per line.
+        let sentInTheClear = await server.receivedCommands.contains { !$0.overTLS && $0.verb != "AUTH" }
+        #expect(sentInTheClear == false)
+        // And the positive beside it: the journal is not empty.
+        let journal = await server.receivedCommands
+        #expect(journal.contains { $0.verb == "USER" })
+    }
+
+    /// Plain FTP is skipped by BOTH rows, through the closures the descriptor
+    /// registers, and no connection is opened to find that out. The connect
+    /// flow asks before it sends a password unencrypted; a diagnosis cannot
+    /// ask, so it does not send one.
+    @Test func plainFTPIsNeverSentAPasswordByADiagnosis() async throws {
+        let descriptor = BackendDescriptor.descriptor(for: .ftp)
+        let dial = try #require(descriptor.dial)
+        let probe = try #require(descriptor.diagnostics.first)
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        let credentials = server.credentials
+        try await running(server) { _, port in
+            let values = ftpValues(port: port, username: credentials.username, security: .plain)
+            for contribution in [dial, probe] {
+                let step = await contribution.run(values, context(secret: credentials.password))
+                #expect(step.outcome == .skipped(DiagnosticReason.plaintextLogin))
+            }
+        }
+        let dialled = await server.controlConnectionCount
+        #expect(dialled == 0, "a diagnosis of plain FTP opened a connection")
+        // The positive beside it: the same server DOES count a connection
+        // when one is opened, so the zero above is a count.
+        let probeServer = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        try await running(probeServer) { host, port in
+            let fs = try await FTPFileSystem.connect(
+                FTPConnectionConfig(
+                    host: host, port: port, username: probeServer.credentials.username,
+                    security: .plain, password: probeServer.credentials.password),
+                transferSlots: 1, certificateDecider: .refusing, timeout: .seconds(30),
+                trustStore: nil)
+            await fs.disconnect()
+        }
+        let counted = await probeServer.controlConnectionCount
+        #expect(counted >= 1)
     }
 }

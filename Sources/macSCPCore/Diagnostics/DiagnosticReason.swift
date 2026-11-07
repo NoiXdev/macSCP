@@ -79,6 +79,13 @@ public enum DiagnosticReason {
     /// The WebDAV dial has no base URL to probe.
     static let noServerURL = "this session names no server URL"
 
+    /// An FTP session in plain mode: the login would cross the network
+    /// unencrypted. The connect flow asks the user first
+    /// (`PlaintextTransportGate`) and a diagnosis cannot ask, so the rows
+    /// that need a login are skipped with this reason.
+    static let plaintextLogin =
+        "this connection is not encrypted, so a diagnosis does not send the password"
+
     /// The session dials through a jump host, and where that jump is could
     /// not be read: a saved connection it names is gone, a login set it names
     /// is not an SSH login, or its host is empty. The jump's first row, and
@@ -342,6 +349,7 @@ public enum DiagnosticReason {
         managedKeyStoreUnreadable: "diagnostics.reason.managedKeyStoreUnreadable",
         noEndpoint: "diagnostics.reason.noEndpoint",
         noServerURL: "diagnostics.reason.noServerURL",
+        plaintextLogin: "diagnostics.reason.plaintextLogin",
         jumpUnresolvable: "diagnostics.reason.jumpUnresolvable",
         jumpNotReached: "diagnostics.reason.jumpNotReached",
         noJumpSecret: "diagnostics.reason.noJumpSecret",
