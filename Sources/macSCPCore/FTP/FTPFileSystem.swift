@@ -577,9 +577,29 @@ public final class FTPFileSystem: RemoteFileSystem {
     /// collapsed (RFC 959 section 4.2's `"` escaping). `nil` when the reply
     /// carries no quoted pair.
     ///
-    /// Outermost rather than first-to-first, like
-    /// `FTPDataConnection.parenthesised`: a path may contain quotes and the
-    /// server's human text follows the path.
+    /// **Outermost rather than first-to-first, and the choice is not forced
+    /// — it is the same one `FTPDataConnection.parenthesised` already made.**
+    /// Withdrawn wording, verbatim: "Outermost rather than first-to-first,
+    /// like `FTPDataConnection.parenthesised`: a path may contain quotes and
+    /// the server's human text follows the path." That argued both sides at
+    /// once, which is how it read as a derivation: a path containing quotes
+    /// is exactly the case where the server's human tail can hold one too,
+    /// and the two readings then disagree.
+    ///
+    /// What each gets wrong, so the cost is named rather than hidden. A
+    /// quoted path with a quoted human tail — `257 "/home" is the "current"
+    /// directory` — reads back `/home" is the "current` here, where
+    /// first-to-first would read `/home`. A path that really contains a
+    /// doubled quote — `257 "/a ""b"" c" is it` — reads back `/a "b" c`
+    /// here, where first-to-first would read `/a `.
+    ///
+    /// Outermost is kept for consistency with `parenthesised`, which faces
+    /// the same ambiguity on a `227`'s address and resolves it the same way,
+    /// and because the RFC's doubling rule is written for the path and not
+    /// for the tail. `aQuotedPWDReplyIsReadIncludingItsDoubledQuotes` covers
+    /// the second case; the first is accepted, and a server that produces it
+    /// loses only the folder the browser opens at, which
+    /// `homeDirectoryPath` falls back to `/` for.
     static func quotedPath(in text: String) -> String? {
         guard let open = text.firstIndex(of: "\""), let close = text.lastIndex(of: "\""),
             open < close

@@ -1673,7 +1673,16 @@ struct FTPControlConnectionTests {
     ///   would both be satisfied by a function that had been deleted or
     ///   renamed, which is CLAUDE.md's "only a NEGATIVE check can go stale
     ///   in silence".
-    /// - The declaration has no return arrow before its body.
+    /// - The declaration has no return arrow before its body. **This one
+    ///   relies on the declaration being ONE line**, because it reads the
+    ///   single line that carries `func reportSystemTrust(` and a return
+    ///   type on a continuation line would be out of its reach. The positive
+    ///   control beside it proves the declaration exists, not that it is
+    ///   still one line. The call-site check does not share that limit, so
+    ///   the pair still catches a diagnostic whose value is read — which is
+    ///   the violation that matters; a `-> Bool` nobody reads decides
+    ///   nothing. Anchored by saying so rather than by parsing: a reader who
+    ///   wraps that declaration has to re-read this.
     /// - Every call site is a bare STATEMENT: `reportSystemTrust(` is never
     ///   preceded on its line by `=`, `return`, `if`, `guard`, `while` or
     ///   `(`, which is every spelling that would read its value or branch on
