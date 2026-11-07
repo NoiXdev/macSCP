@@ -49,6 +49,14 @@ enum FTPProbe {
         _ values: FieldValues, _ context: DiagnosticContext,
         decider: CertificateDecider, trustStore: TrustedCertificateStore?
     ) async -> Opened {
+        // BEFORE the secret is read. A plain-mode login is never sent, so
+        // "no credential is saved, save one and run the check again" would be
+        // advice about a login this diagnosis will not make, and the keychain
+        // would be read (on a locked one, prompted for) for nothing. The mode
+        // is read from the values with the function `makeConfig` reads it with.
+        if FTPFieldSchema.security(values) == .plain {
+            return .unanswered(.skipped(DiagnosticReason.plaintextLogin))
+        }
         let secret: String
         switch DialSupport.dialSecret(
             usesAgent: false,
@@ -69,9 +77,6 @@ enum FTPProbe {
             config = built
         } catch {
             return .unanswered(.failed(DialSupport.reason(for: error)))
-        }
-        if config.security == .plain {
-            return .unanswered(.skipped(DiagnosticReason.plaintextLogin))
         }
         config.password = ""
 
@@ -143,9 +148,13 @@ enum FTPProbe {
         let advertised = await connection.features
         let present = reportedFeatures.filter { advertised.contains($0) }
         let absent = reportedFeatures.filter { !advertised.contains($0) }
-        // Asked of the connection, once, the way the browser asks it
-        // (`FTPSiteChmodMemory`): the answer here is the answer the editor's
-        // offer will be made from.
+        // The same QUESTION the browser asks (`FTPSiteChmodMemory`), asked of
+        // this diagnosis's own connection. It is a fresh memory, not the
+        // session's, so it is not the same cached ANSWER: a server that
+        // answers `SITE HELP` differently twice can make this row and the
+        // editor's offer disagree. (Withdrawn wording, verbatim: "Asked of the
+        // connection, once, the way the browser asks it (`FTPSiteChmodMemory`):
+        // the answer here is the answer the editor's offer will be made from.")
         let offered = await FTPSiteChmodMemory().isAvailable(on: connection)
         var parts: [String] = []
         parts.append("FEAT advertises " + (present.isEmpty ? "none of the features used" : present.joined(separator: ", ")))

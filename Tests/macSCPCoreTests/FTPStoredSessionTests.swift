@@ -156,8 +156,14 @@ struct FTPStoredSessionTests {
         #expect(editing.values[FTPField.port] == "21")
 
         // And a blank one stays blank: blank already means "the mode's own".
+        // The mode must CHANGE for this to measure the blank rule: the loop
+        // above leaves the model on `.implicitTLS`, and selecting it again is
+        // a same-mode no-op that returns before the port is looked at (Task 8
+        // review, finding 5: a plant making blank follow the mode was GREEN).
+        model.selectFTPSecurity(.plain)
         model.values[FTPField.port] = ""
         model.selectFTPSecurity(.implicitTLS)
+        #expect(model.values[FTPField.security] == FTPSecurityMode.implicitTLS.rawValue)
         #expect(model.values[FTPField.port] == "")
         #expect(FTPFieldSchema.stored(from: model.values).port == 990)
     }
@@ -520,6 +526,13 @@ struct FTPStoredSessionTests {
             for contribution in [dial, probe] {
                 let step = await contribution.run(values, context(secret: credentials.password))
                 #expect(step.outcome == .skipped(DiagnosticReason.plaintextLogin))
+                // With no password saved the reason is still the plaintext
+                // one: a diagnosis will never send the password, so "save one
+                // and run the check again" would be the wrong advice, and the
+                // keychain is not read for a login nothing sends (Task 8
+                // review, finding 6).
+                let unsaved = await contribution.run(values, context(secret: nil))
+                #expect(unsaved.outcome == .skipped(DiagnosticReason.plaintextLogin))
             }
         }
         let dialled = await server.controlConnectionCount
