@@ -118,6 +118,66 @@ public final class FTPFileSystem: RemoteFileSystem {
         return RemoteFSError.connectionFailed(reason: failure.message)
     }
 
+    /// What a failure from a TRANSFER is reported as.
+    ///
+    /// **This is classification, and the transfer queue is what reads it.**
+    /// `TransferQueueViewModel`'s `catch let error as RemoteFSError where
+    /// error.isConnectionFailure` is the only path to `.interrupted` with the
+    /// job retained for a resume, and the only call site of
+    /// `isConnectionFailure` in `Sources`
+    /// (`/usr/bin/grep -rno 'isConnectionFailure' Sources/MacSCPAppKit Sources/macSCPCore/Presentation`
+    /// prints one line, at `TransferQueueViewModel.swift`). An
+    /// `FTPConnectionFailure` is not a `RemoteFSError`, so leaving one
+    /// unconverted sends every dropped download to the generic catch, which
+    /// marks it `.failed` and drops the job — while FTP download resume
+    /// demonstrably works (`REST` before `RETR`) onto a local destination
+    /// that answers `supportsAppendResume == true`. SSH and WebDAV get a
+    /// resume in the same situation.
+    ///
+    /// **Three readings, and the split is a property that already exists.**
+    ///
+    /// 1. `550` on the transfer command is the FILE: `notFound`. It is what
+    ///    `stat` and `delete` already map, and mapping it here removes the
+    ///    inconsistency where the same `550` meant two things depending on
+    ///    which call met it. On a `STOR` the missing thing is the parent
+    ///    directory rather than `path`; the finding still names the path the
+    ///    caller asked about, which is this project's rule for a payload.
+    /// 2. `leavesConnectionInStep == false` is a CONNECTION LOSS — the
+    ///    failure cases where nothing established the stream's state, which
+    ///    is `timedOut`, `connectionClosed`, `protocolViolation` and the
+    ///    login/greeting/TLS pair. Those become `.connectionFailed`, so
+    ///    `isConnectionFailure` answers `true` about something that is one.
+    /// 3. Everything else the server ANSWERED stays typed and is NOT
+    ///    converted. Calling a `553 Filename not allowed` a connection
+    ///    failure would tell the queue to resume something a retry meets
+    ///    again, and `.protocolError(reason:)` is the carrier the
+    ///    typed-findings change exists to retire.
+    ///
+    /// **It cannot affect the pool's reuse decision**, which is why reading
+    /// `leavesConnectionInStep` here is not a second owner of it:
+    /// `FTPTransferLease.transferring` and `.readStream` compute
+    /// `reusable(after:)` on the RAW error before it leaves the lease, so by
+    /// the time this runs the connection has already been pooled or dropped.
+    ///
+    /// A `CancellationError` is not an `FTPConnectionFailure` and passes
+    /// through untouched, which the queue's own cancel path needs.
+    static func transferFailure(_ error: any Error, path: String) -> any Error {
+        guard let failure = error as? FTPConnectionFailure else { return error }
+        if case .transferRefused(let code) = failure, code == Self.fileUnavailable {
+            return RemoteFSError.notFound(path: path)
+        }
+        guard failure.leavesConnectionInStep else {
+            return RemoteFSError.connectionFailed(reason: failure.message)
+        }
+        return failure
+    }
+
+    /// `550 Requested action not taken. File unavailable` (RFC 959 section
+    /// 4.2). FTP answers it for "no such file" and for "no access" alike, and
+    /// the RFC's own text runs them together; `notFound` is the reading every
+    /// client here makes of it, and `stat` and `delete` already made it.
+    private static let fileUnavailable = 550
+
     // MARK: - Listing
 
     /// One directory, through `MLSD` when the server advertises it and `LIST`
@@ -263,7 +323,28 @@ public final class FTPFileSystem: RemoteFileSystem {
     ) async throws -> AsyncThrowingStream<Data, Error> {
         let target = RemotePath.normalizedAbsolute(path)
         let lease = try await pool.acquireTransfer()
-        return lease.readStream(target, startingAt: Int64(clamping: offset))
+        let inner = lease.readStream(target, startingAt: Int64(clamping: offset))
+        // Wrapped so the terminal error gets the reading `transferFailure`
+        // gives it — see there for why the queue cannot resume a download
+        // without it.
+        //
+        // **An UNFOLDING stream with no task in it**, which is what keeps
+        // spec §5a: the closure below holds the inner stream's only
+        // iterator, so releasing the outer stream releases the inner one,
+        // whose own termination is what returns the lease. A pump task
+        // between the two would break exactly that — dropping the outer
+        // would no longer terminate the inner, and an abandoned download
+        // would leak its connection.
+        // `anAbandonedDownloadStillReturnsItsLeaseThroughTheMapping` is what
+        // says so.
+        let reader = FTPSingleThrowingReader(inner)
+        return AsyncThrowingStream {
+            do {
+                return try await reader.next()
+            } catch {
+                throw Self.transferFailure(error, path: target)
+            }
+        }
     }
 
     // MARK: - Writing
@@ -283,10 +364,17 @@ public final class FTPFileSystem: RemoteFileSystem {
         guard mode == .overwrite else { throw RemoteFSError.finding(.resumeNotSupported) }
         let target = RemotePath.normalizedAbsolute(path)
         let lease = try await pool.acquireTransfer()
-        try await lease.transferring("STOR", argument: target) { channel in
-            for try await chunk in contents {
-                try await channel.write(chunk)
+        do {
+            try await lease.transferring("STOR", argument: target) { channel in
+                for try await chunk in contents {
+                    try await channel.write(chunk)
+                }
             }
+        } catch {
+            // The same reading a download gets, for the same reason: an
+            // upload the connection dropped is resumable to the queue and a
+            // refusal is not. The lease has already released itself by here.
+            throw Self.transferFailure(error, path: target)
         }
     }
 

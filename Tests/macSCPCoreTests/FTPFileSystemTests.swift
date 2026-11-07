@@ -323,6 +323,122 @@ struct FTPFileSystemTests {
         #expect(commands.contains { $0.verb == "RETR" })
     }
 
+    // MARK: - What the queue reads off a failed transfer
+
+    /// A download the connection DROPPED is a connection failure, so the
+    /// transfer queue keeps the job and resumes it; a transfer the server
+    /// REFUSED is not, so the queue fails it.
+    ///
+    /// **This is classification in Core, not rendering in the App.**
+    /// `TransferQueueViewModel.swift:1340` —
+    /// `catch let error as RemoteFSError where error.isConnectionFailure` — is
+    /// the only path to `.interrupted` with the job retained for
+    /// `retryInterrupted`, and the only call site of `isConnectionFailure` in
+    /// `Sources`. Everything else falls to the generic catch and the job is
+    /// dropped. So an `FTPConnectionFailure` leaving this backend uncon­verted
+    /// costs the user a download that FTP can demonstrably resume (`REST`
+    /// before `RETR`, which `readStreamResumesWithRESTAndReturnsItsLease`
+    /// asserts) onto a local destination that answers
+    /// `supportsAppendResume == true`.
+    ///
+    /// The split is read off `FTPConnectionFailure.leavesConnectionInStep`,
+    /// which already exists and is already tested: a failure that leaves the
+    /// connection OUT of step is one nothing established the state of — the
+    /// connection ended — and that is exactly a connection failure. One the
+    /// server ANSWERED is a refusal, and converting it would assert
+    /// `isConnectionFailure == true` about something a retry meets again.
+    ///
+    /// Both halves here, because the `true` alone would hold for a backend
+    /// that called everything a connection failure.
+    @Test func aDroppedDownloadIsAConnectionFailureAndARefusalIsNot() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await server.seedFile("/pub/big.bin", contents: Data(repeating: 0x41, count: 256 * 1024))
+
+        let dropped = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port, slots: 1)
+            await server.dropControlConnectionMidTransfer()
+            let outcome = await Self.outcome {
+                for try await _ in try await fs.readStream(path: "/pub/big.bin", fromOffset: 0) {}
+            }
+            await fs.disconnect()
+            return outcome
+        }
+        let droppedReadsAsAConnectionFailure: Bool
+        if case .remote(let error) = dropped { droppedReadsAsAConnectionFailure = error.isConnectionFailure }
+        else { droppedReadsAsAConnectionFailure = false }
+        #expect(droppedReadsAsAConnectionFailure, "\(dropped)")
+
+        // The other half, on a fresh server because the first one's control
+        // connection is gone: a `550` is the server answering, so it is
+        // `notFound` and NOT a connection failure. That also closes the
+        // inconsistency where `stat` and `delete` mapped `550` and a transfer
+        // did not.
+        let second = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        await second.seedFile("/pub/present.bin", contents: Data("x".utf8))
+        let refused = try await Self.running(second) { host, port in
+            let fs = try await Self.connect(second, host: host, port: port, slots: 1)
+            let outcome = await Self.outcome {
+                for try await _ in try await fs.readStream(path: "/pub/gone.bin", fromOffset: 0) {}
+            }
+            await fs.disconnect()
+            return outcome
+        }
+        #expect(refused == .remote(.notFound(path: "/pub/gone.bin")))
+        let refusalReadsAsAConnectionFailure: Bool
+        if case .remote(let error) = refused { refusalReadsAsAConnectionFailure = error.isConnectionFailure }
+        else { refusalReadsAsAConnectionFailure = true }
+        #expect(refusalReadsAsAConnectionFailure == false)
+    }
+
+    /// The §5a release invariant survives the error mapping above.
+    ///
+    /// Mapping a stream's terminal error means wrapping the lease's stream,
+    /// and spec §5a is what that can break: `FTPTransferLease.readStream`
+    /// releases the lease on every way the stream can end INCLUDING a
+    /// consumer that stops iterating and drops it, and a pump TASK between
+    /// the two streams would make dropping the outer one no longer terminate
+    /// the inner one — one leak per abandoned download, and a permanently
+    /// starved pool.
+    ///
+    /// The wrapper is therefore an unfolding stream with no task in it: its
+    /// closure holds the inner stream's iterator, so releasing the outer
+    /// releases the inner, whose own termination is what returns the lease.
+    /// This case is what says so. `FTPConnectionPoolTests
+    /// .anAbandonedReadStreamReturnsItsLeaseToThePool` measures the same
+    /// property one layer down, on the lease itself.
+    @Test func anAbandonedDownloadStillReturnsItsLeaseThroughTheMapping() async throws {
+        let server = LoopbackFTPServer(
+            security: .plain, advertisesMLSD: true, requiresTLSSessionReuse: false)
+        // Big enough that one chunk is not the whole file, so the stream is
+        // dropped with the transfer still running.
+        await server.seedFile(
+            "/pub/big.bin", contents: Data((0..<(512 * 1024)).map { UInt8($0 % 251) }))
+        let free = try await Self.running(server) { host, port in
+            let fs = try await Self.connect(server, host: host, port: port, slots: 1)
+            // A function, not a `do` block: the stream AND its iterator have
+            // to go out of scope, and a block leaves both alive in the
+            // enclosing scope (`FTPConnectionPoolTests.firstChunkThenDrop`).
+            func firstChunkThenDrop() async throws -> Int {
+                let stream = try await fs.readStream(path: "/pub/big.bin", fromOffset: 0)
+                var iterator = stream.makeAsyncIterator()
+                return try await iterator.next()?.count ?? 0
+            }
+            let first = try await firstChunkThenDrop()
+            try await pollUntil("the abandoned download's lease to go back to the pool") {
+                await fs.pool.freeTransferSlots == 1
+            }
+            let free = await fs.pool.freeTransferSlots
+            await fs.disconnect()
+            return (first: first, free: free)
+        }
+        // The positive beside the release: a chunk really did arrive, so the
+        // stream was abandoned mid-transfer rather than never started.
+        #expect(free.first > 0)
+        #expect(free.free == 1)
+    }
+
     // MARK: - supportsAppendResume
 
     /// **The decision this task owns, and its evidence.**
